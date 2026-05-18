@@ -1,0 +1,72 @@
+import type { SymbolMap } from '@scrubr/shared'
+
+const PBKDF2_ITERATIONS = 100_000
+const ALG = 'AES-GCM'
+
+async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+  const enc = new TextEncoder()
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  )
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt.buffer, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    { name: ALG, length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
+function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
+  const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+  return btoa(String.fromCharCode(...bytes))
+}
+
+function fromBase64(s: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>
+}
+
+export interface ScrubrFile {
+  v: 1
+  alg: 'AES-256-GCM-PBKDF2'
+  salt: string
+  iv: string
+  data: string
+}
+
+export async function exportMap(map: SymbolMap, passphrase: string): Promise<string> {
+  const enc = new TextEncoder()
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await deriveKey(passphrase, salt)
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: ALG, iv },
+    key,
+    enc.encode(JSON.stringify(map))
+  )
+  const file: ScrubrFile = {
+    v: 1,
+    alg: 'AES-256-GCM-PBKDF2',
+    salt: toBase64(salt),
+    iv: toBase64(iv),
+    data: toBase64(ciphertext),
+  }
+  return JSON.stringify(file, null, 2)
+}
+
+export async function importMap(fileContent: string, passphrase: string): Promise<SymbolMap> {
+  const file = JSON.parse(fileContent) as ScrubrFile
+  if (file.v !== 1 || file.alg !== 'AES-256-GCM-PBKDF2')
+    throw new Error('Invalid .scrubr file format')
+  const salt = fromBase64(file.salt)
+  const iv = fromBase64(file.iv)
+  const data = fromBase64(file.data)
+  const key = await deriveKey(passphrase, salt)
+  const dec = new TextDecoder()
+  const plaintext = await crypto.subtle.decrypt({ name: ALG, iv }, key, data)
+  return JSON.parse(dec.decode(plaintext)) as SymbolMap
+}
