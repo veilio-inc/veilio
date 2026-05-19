@@ -33,19 +33,19 @@ const PLANS: PlanCard[] = [
     edition: 'ce',
   },
   {
-    name: 'Team (Cloud)',
-    price: '$19',
-    period: 'per month, flat',
-    tagline: 'One price. Whole team. No headcount math.',
+    name: 'Cloud',
+    price: 'from $9',
+    period: '/ user / month',
+    tagline: 'Cloud sync, team features, and compliance for engineering teams.',
     features: [
       'Everything in CE',
+      'Multiple tiers: Pro ($9/user), Team ($19/seat), Enterprise (custom)',
       'Cloud saved maps — unlimited',
       'Access maps from any device',
-      'Team shared maps',
-      'Team member invites',
-      'Priority support',
+      'Team shared maps + SSO + audit (Team tier)',
+      'Compliance + SAML + on-prem (Enterprise tier)',
     ],
-    cta: 'Go to Cloud →',
+    cta: 'See Cloud pricing →',
     highlight: true,
     edition: 'cloud',
   },
@@ -62,7 +62,7 @@ const FAQS = [
   },
   {
     q: 'What does the Cloud edition add?',
-    a: 'Cloud adds encrypted server-side map storage (accessible from any device), team shared maps, team member invites, and billing. The anonymizer engine is identical — only the persistence layer and team features differ.',
+    a: 'Cloud has four tiers. Free is the same engine as CE, hosted, with limited cloud-map storage. Pro adds unlimited cloud sync, custom rules, and the browser extension for $9/user/mo. Team ($19/seat/mo) adds shared maps, SSO, and audit. Enterprise (custom) adds SAML, SIEM export, and on-prem. The anonymizer engine is identical across all editions — only persistence and team features differ.',
   },
   {
     q: 'Is my source code ever sent anywhere in CE?',
@@ -153,7 +153,7 @@ export default function PricingPage() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  Flat price
+                  Cloud edition
                 </div>
               )}
 
@@ -305,10 +305,10 @@ export default function PricingPage() {
               marginBottom: 8,
             }}
           >
-            Want accounts, cloud sync, and teams?
+            Want cloud sync, teams, or compliance?
           </h3>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 16 }}>
-            The hosted Cloud edition adds all of that — same engine, no self-hosting required.
+            The hosted Cloud edition has four tiers — Free, Pro, Team, Enterprise — adding cloud sync, team features, and compliance on top of CE. Same engine; no self-hosting required.
           </p>
           <a
             href={`${CLOUD_URL}/pricing`}
