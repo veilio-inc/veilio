@@ -114,6 +114,21 @@ export default function ScrubPage() {
     <div className="page">
       <Navbar />
 
+      <div
+        role="note"
+        style={{
+          background: 'var(--bg-elevated)',
+          borderBottom: '1px solid var(--border)',
+          padding: '8px 24px',
+          fontSize: 12,
+          color: 'var(--text-secondary)',
+          textAlign: 'center',
+        }}
+      >
+        ⚠️ Best-effort anonymization — always review the output before sharing. You are responsible
+        for what you paste into AI tools.
+      </div>
+
       <div style={{ padding: '16px 24px', maxWidth: 1400, margin: '0 auto', width: '100%' }}>
         {/* Mode pills */}
         <div
