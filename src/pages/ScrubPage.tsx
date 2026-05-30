@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore } from '@scrubr/shared'
-import type { SymbolMap, StrippedItem } from '@scrubr/shared'
+import { anonymize, restore } from '@veilio/shared'
+import type { SymbolMap, StrippedItem } from '@veilio/shared'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import StrippedPanel from '../components/StrippedPanel.js'
@@ -70,7 +70,7 @@ export default function ScrubPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'map.scrubr'
+      a.download = 'map.veilio'
       a.click()
       URL.revokeObjectURL(url)
       showToast('Map exported')
@@ -82,7 +82,7 @@ export default function ScrubPage() {
   async function handleImport() {
     const fileInput = document.createElement('input')
     fileInput.type = 'file'
-    fileInput.accept = '.scrubr,.json'
+    fileInput.accept = '.veilio,.json'
     fileInput.onchange = async () => {
       const file = fileInput.files?.[0]
       if (!file) return
@@ -166,7 +166,7 @@ export default function ScrubPage() {
                   style={{ padding: '5px 12px', fontSize: 12 }}
                   onClick={handleExport}
                 >
-                  Export .scrubr
+                  Export .veilio
                 </button>
               </>
             )}
@@ -175,7 +175,7 @@ export default function ScrubPage() {
               style={{ padding: '5px 12px', fontSize: 12 }}
               onClick={handleImport}
             >
-              Import .scrubr
+              Import .veilio
             </button>
             {mapCount > 0 && (
               <button className="btn-danger" style={{ fontSize: 12 }} onClick={handleClearMap}>

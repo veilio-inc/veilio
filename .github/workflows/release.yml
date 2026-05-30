@@ -29,14 +29,14 @@ jobs:
       - name: Build static bundle
         run: npm run build
         env:
-          VITE_SCRUBR_CLOUD_URL: https://scrubr.app
+          VITE_Veilio_CLOUD_URL: https://veilio.app
 
       - name: Package and tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          tar -czf "scrubr-${TAG}.tar.gz" dist/
-          echo "BUNDLE=scrubr-${TAG}.tar.gz" >> "$GITHUB_ENV"
+          tar -czf "veilio-${TAG}.tar.gz" dist/
+          echo "BUNDLE=veilio-${TAG}.tar.gz" >> "$GITHUB_ENV"
           echo "VERSION=${TAG}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
@@ -56,7 +56,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           build-args: |
-            VITE_SCRUBR_CLOUD_URL=https://scrubr.app
+            VITE_Veilio_CLOUD_URL=https://veilio.app
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

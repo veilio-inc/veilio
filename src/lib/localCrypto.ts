@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@scrubr/shared'
+import type { SymbolMap } from '@veilio/shared'
 
 const PBKDF2_ITERATIONS = 100_000
 const ALG = 'AES-GCM'
@@ -30,7 +30,7 @@ function fromBase64(s: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>
 }
 
-export interface ScrubrFile {
+export interface VeilioFile {
   v: 1
   alg: 'AES-256-GCM-PBKDF2'
   salt: string
@@ -48,7 +48,7 @@ export async function exportMap(map: SymbolMap, passphrase: string): Promise<str
     key,
     enc.encode(JSON.stringify(map))
   )
-  const file: ScrubrFile = {
+  const file: VeilioFile = {
     v: 1,
     alg: 'AES-256-GCM-PBKDF2',
     salt: toBase64(salt),
@@ -59,9 +59,9 @@ export async function exportMap(map: SymbolMap, passphrase: string): Promise<str
 }
 
 export async function importMap(fileContent: string, passphrase: string): Promise<SymbolMap> {
-  const file = JSON.parse(fileContent) as ScrubrFile
+  const file = JSON.parse(fileContent) as VeilioFile
   if (file.v !== 1 || file.alg !== 'AES-256-GCM-PBKDF2')
-    throw new Error('Invalid .scrubr file format')
+    throw new Error('Invalid .veilio file format')
   const salt = fromBase64(file.salt)
   const iv = fromBase64(file.iv)
   const data = fromBase64(file.data)

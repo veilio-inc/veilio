@@ -29,7 +29,7 @@ export default function Navbar() {
           letterSpacing: '-0.01em',
         }}
       >
-        SCRUBR
+        Veilio
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

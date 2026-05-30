@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
-import type { SymbolMap } from '@scrubr/shared'
+import type { SymbolMap } from '@veilio/shared'
 
-const STORAGE_KEY = 'scrubr_local_maps'
+const STORAGE_KEY = 'veilio_local_maps'
 
 interface LocalMapEntry {
   id: string

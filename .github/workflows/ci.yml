@@ -28,4 +28,4 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_SCRUBR_CLOUD_URL: https://scrubr.app
+          VITE_Veilio_CLOUD_URL: https://veilio.app

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Navbar from '../components/Navbar.js'
 
-const CLOUD_URL = import.meta.env.VITE_SCRUBR_CLOUD_URL ?? 'https://scrubr.app'
+const CLOUD_URL = import.meta.env.VITE_VEILIO_CLOUD_URL ?? 'https://veilio.dev'
 
 interface PlanCard {
   name: string
@@ -25,7 +25,7 @@ const PLANS: PlanCard[] = [
       'Stripped metadata panel',
       'Session maps (browser memory)',
       'Local localStorage maps',
-      'Export / import .scrubr files',
+      'Export / import .veilio files',
       'MIT licensed — run anywhere',
     ],
     cta: 'Current edition',
@@ -54,11 +54,11 @@ const PLANS: PlanCard[] = [
 const FAQS = [
   {
     q: 'What is the Community Edition?',
-    a: 'CE is the MIT-licensed, self-hostable version of SCRUBR. It includes the full anonymize/restore engine, .scrubr file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine.',
+    a: 'CE is the MIT-licensed, self-hostable version of Veilio. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine.',
   },
   {
     q: 'How do I save maps permanently in CE?',
-    a: 'Maps are stored in your browser\'s localStorage by default. For durable backups — or to move a map to another device — use "Export .scrubr" to save a passphrase-encrypted file to disk, then "Import .scrubr" to load it back.',
+    a: 'Maps are stored in your browser\'s localStorage by default. For durable backups — or to move a map to another device — use "Export .veilio" to save a passphrase-encrypted file to disk, then "Import .veilio" to load it back.',
   },
   {
     q: 'What does the Cloud edition add?',
@@ -66,10 +66,10 @@ const FAQS = [
   },
   {
     q: 'Is my source code ever sent anywhere in CE?',
-    a: 'No. The engine runs entirely in your browser. Source code, identifier names, and symbol maps never leave your machine. Even .scrubr files are encrypted client-side before being written to disk.',
+    a: 'No. The engine runs entirely in your browser. Source code, identifier names, and symbol maps never leave your machine. Even .veilio files are encrypted client-side before being written to disk.',
   },
   {
-    q: 'How is the .scrubr file encrypted?',
+    q: 'How is the .veilio file encrypted?',
     a: 'AES-256-GCM with a key derived from your passphrase via PBKDF2 (100,000 iterations, SHA-256). The passphrase is never stored or transmitted. Losing the passphrase means losing the map.',
   },
 ]

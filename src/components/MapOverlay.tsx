@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@scrubr/shared'
+import type { SymbolMap } from '@veilio/shared'
 
 interface Props {
   map: SymbolMap

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { SymbolMap } from '@scrubr/shared'
+import type { SymbolMap } from '@veilio/shared'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 
 interface Props {

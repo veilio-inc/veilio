@@ -17,7 +17,7 @@ export default function DashboardPage() {
     setTimeout(() => setToast({ msg: '', type: '' }), 3500)
   }
 
-  async function handleExportScrubr(id: string, name: string) {
+  async function handleExportVeilio(id: string, name: string) {
     const map = maps.find((m) => m.id === id)?.map
     if (!map) return
     const passphrase = prompt('Enter a passphrase to encrypt the export:')
@@ -28,7 +28,7 @@ export default function DashboardPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${name.replace(/\s+/g, '-')}.scrubr`
+      a.download = `${name.replace(/\s+/g, '-')}.veilio`
       a.click()
       URL.revokeObjectURL(url)
       showToast('Map exported')
@@ -73,7 +73,7 @@ export default function DashboardPage() {
             Saved maps
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-            Stored in this browser. Export as <code>.scrubr</code> to back up or move between devices.
+            Stored in this browser. Export as <code>.veilio</code> to back up or move between devices.
           </p>
         </div>
 
@@ -127,9 +127,9 @@ export default function DashboardPage() {
                   <button
                     className="btn-ghost"
                     style={{ padding: '4px 10px', fontSize: 12 }}
-                    onClick={() => handleExportScrubr(m.id, m.name)}
+                    onClick={() => handleExportVeilio(m.id, m.name)}
                   >
-                    .scrubr
+                    .veilio
                   </button>
                   <button
                     className="btn-ghost"

@@ -1,4 +1,4 @@
-import type { StrippedItem, StrippedItemType } from '@scrubr/shared'
+import type { StrippedItem, StrippedItemType } from '@veilio/shared'
 
 const TYPE_LABELS: Record<StrippedItemType, string> = {
   jsdoc: 'JSDoc block',
