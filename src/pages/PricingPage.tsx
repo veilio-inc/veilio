@@ -1,7 +1,12 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar.js'
 
 const CLOUD_URL = import.meta.env.VITE_VEILIO_CLOUD_URL ?? 'https://veilio.dev'
+const ENTERPRISE_CONTACT = 'mailto:hello@veilio.dev'
+
+type PlanId = 'free' | 'pro' | 'team' | 'enterprise'
+type CtaType = 'tool' | 'cloud' | 'mailto'
 
 interface PlanCard {
   name: string
@@ -11,43 +16,90 @@ interface PlanCard {
   features: string[]
   cta: string
   highlight: boolean
-  edition: 'ce' | 'cloud'
+  badge?: string
+  planId: PlanId
+  ctaType: CtaType
 }
 
+// Mirrors Veilio Cloud's four tiers. In the Community Edition, Free is what
+// you're self-hosting; the paid tiers live on Veilio Cloud, so their CTAs link
+// out rather than running checkout (there's no billing in the CE).
 const PLANS: PlanCard[] = [
   {
-    name: 'Community Edition',
+    name: 'Free',
     price: '$0',
     period: 'forever',
-    tagline: 'Everything you need to protect your code. Self-hosted.',
+    tagline: 'Everything you need to protect your code. Self-hosted, MIT licensed.',
     features: [
       'Full anonymize / restore tool',
       'Stripped metadata panel',
       'Session maps (browser memory)',
       'Local localStorage maps',
       'Export / import .veilio files',
-      'MIT licensed — run anywhere',
+      'Self-host: run your own instance',
     ],
-    cta: 'Current edition',
+    cta: 'Open the tool',
     highlight: false,
-    edition: 'ce',
+    badge: 'You are here',
+    planId: 'free',
+    ctaType: 'tool',
   },
   {
-    name: 'Cloud',
-    price: 'from $9',
-    period: '/ user / month',
-    tagline: 'Cloud sync, team features, and compliance for engineering teams.',
+    name: 'Pro',
+    price: '$9',
+    period: 'per user, per month',
+    tagline: 'Cloud sync, custom rules, and the browser extension — for one developer.',
     features: [
-      'Everything in CE',
-      'Multiple tiers: Pro ($9/user), Team ($19/seat), Enterprise (custom)',
-      'Cloud saved maps — unlimited',
-      'Access maps from any device',
-      'Team shared maps + SSO + audit (Team tier)',
-      'Compliance + SAML + on-prem (Enterprise tier)',
+      'Everything in Free',
+      'Unlimited cloud maps',
+      'Cross-device history sync',
+      'Custom rules',
+      'Browser extension',
+      'Email support',
     ],
-    cta: 'See Cloud pricing →',
+    cta: 'Get Pro on Cloud →',
+    highlight: false,
+    planId: 'pro',
+    ctaType: 'cloud',
+  },
+  {
+    name: 'Team',
+    price: '$19',
+    period: 'per seat, per month',
+    tagline: 'Shared dictionaries, SSO, and audit — for a team.',
+    features: [
+      'Everything in Pro',
+      'Team shared maps',
+      'Team member invites',
+      'SSO (Google / Microsoft)',
+      'Audit log',
+      'Shared dictionaries',
+      'Policy console',
+      'Priority support',
+    ],
+    cta: 'Get Team on Cloud →',
     highlight: true,
-    edition: 'cloud',
+    badge: 'Most popular',
+    planId: 'team',
+    ctaType: 'cloud',
+  },
+  {
+    name: 'Enterprise',
+    price: 'Custom',
+    period: 'talk to us',
+    tagline: 'Compliance, SAML, on-prem. SLA-backed.',
+    features: [
+      'Everything in Team',
+      'SAML SSO',
+      'SIEM export',
+      'On-prem deployment',
+      'Dedicated success manager',
+      '99.9% SLA',
+    ],
+    cta: 'Contact us',
+    highlight: false,
+    planId: 'enterprise',
+    ctaType: 'mailto',
   },
 ]
 
@@ -76,11 +128,18 @@ const FAQS = [
 
 export default function PricingPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null)
+  const navigate = useNavigate()
 
   function handleCta(plan: PlanCard) {
-    if (plan.edition === 'cloud') {
-      window.open(`${CLOUD_URL}/pricing`, '_blank', 'noopener,noreferrer')
+    if (plan.ctaType === 'tool') {
+      navigate('/')
+      return
     }
+    if (plan.ctaType === 'mailto') {
+      window.location.href = ENTERPRISE_CONTACT
+      return
+    }
+    window.open(`${CLOUD_URL}/pricing`, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -88,7 +147,7 @@ export default function PricingPage() {
       <Navbar />
 
       <div style={{ padding: '48px 24px', maxWidth: 960, margin: '0 auto', width: '100%' }}>
-        <div style={{ textAlign: 'center', marginBottom: 48 }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <h1
             style={{
               fontFamily: 'var(--font-display)',
@@ -104,18 +163,39 @@ export default function PricingPage() {
             style={{
               color: 'var(--text-secondary)',
               fontSize: 16,
-              maxWidth: 480,
+              maxWidth: 520,
               margin: '0 auto',
             }}
           >
-            CE is free forever. Pay only for cloud sync and team sharing.
+            Free forever and self-hostable. Pro, Team, and Enterprise add cloud sync,
+            collaboration, and compliance on Veilio Cloud.
           </p>
         </div>
 
+        {/* Community Edition context banner */}
         <div
           style={{
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '12px 16px',
+            marginBottom: 28,
+            textAlign: 'center',
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          You're running the <strong style={{ color: 'var(--text-primary)' }}>Community Edition</strong> —
+          the Free tier, self-hosted. The paid tiers run on{' '}
+          <a href={`${CLOUD_URL}/pricing`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>
+            Veilio Cloud
+          </a>.
+        </div>
+
+        <div
+          className="pricing-grid"
+          style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
             gap: 20,
             marginBottom: 64,
           }}
@@ -134,15 +214,16 @@ export default function PricingPage() {
                 boxShadow: plan.highlight ? '0 0 32px rgba(249,115,22,0.12)' : 'none',
               }}
             >
-              {plan.highlight && (
+              {plan.badge && (
                 <div
                   style={{
                     position: 'absolute',
                     top: -12,
                     left: '50%',
                     transform: 'translateX(-50%)',
-                    background: 'var(--accent)',
-                    color: '#000',
+                    background: plan.highlight ? 'var(--accent)' : 'var(--bg-elevated)',
+                    color: plan.highlight ? '#000' : 'var(--text-secondary)',
+                    border: plan.highlight ? 'none' : '1px solid var(--border)',
                     fontSize: 11,
                     fontWeight: 700,
                     fontFamily: 'var(--font-mono)',
@@ -153,30 +234,22 @@ export default function PricingPage() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  Cloud edition
+                  {plan.badge}
                 </div>
               )}
 
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span
-                    style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}
-                  >
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>
                     {plan.name}
                   </span>
-                  {plan.edition === 'ce' && (
-                    <span className="badge badge-accent">You are here</span>
-                  )}
+                  {plan.planId === 'free' && <span className="badge badge-accent">CE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span
-                    style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 800 }}
-                  >
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 800 }}>
                     {plan.price}
                   </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                    {plan.period}
-                  </span>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{plan.period}</span>
                 </div>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>
                   {plan.tagline}
@@ -207,7 +280,6 @@ export default function PricingPage() {
               <button
                 className={plan.highlight ? 'btn-primary' : 'btn-ghost'}
                 onClick={() => handleCta(plan)}
-                disabled={plan.edition === 'ce'}
                 style={{ width: '100%', padding: '10px' }}
               >
                 {plan.cta}
@@ -284,41 +356,6 @@ export default function PricingPage() {
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Cloud callout */}
-        <div
-          style={{
-            marginTop: 48,
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 10,
-            padding: 28,
-            textAlign: 'center',
-          }}
-        >
-          <h3
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 20,
-              fontWeight: 700,
-              marginBottom: 8,
-            }}
-          >
-            Want cloud sync, teams, or compliance?
-          </h3>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 16 }}>
-            The hosted Cloud edition has four tiers — Free, Pro, Team, Enterprise — adding cloud sync, team features, and compliance on top of CE. Same engine; no self-hosting required.
-          </p>
-          <a
-            href={`${CLOUD_URL}/pricing`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary"
-            style={{ display: 'inline-block', padding: '8px 20px' }}
-          >
-            See Cloud pricing →
-          </a>
         </div>
       </div>
     </div>

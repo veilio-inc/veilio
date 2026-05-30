@@ -189,3 +189,13 @@ textarea::placeholder, input::placeholder { color: var(--text-dim); }
 
 .page { min-height: 100vh; display: flex; flex-direction: column; }
 .page-content { flex: 1; padding: 24px; max-width: 1280px; margin: 0 auto; width: 100%; }
+
+/* Pricing: 2x2 on desktop, single column on narrow screens */
+.pricing-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (max-width: 720px) {
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+}
