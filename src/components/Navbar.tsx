@@ -6,10 +6,13 @@ export default function Navbar() {
   return (
     <nav
       style={{
-        background: 'var(--bg-surface)',
+        background: 'rgba(28,25,23,0.72)',
+        backdropFilter: 'blur(14px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
         borderBottom: '1px solid var(--border)',
+        boxShadow: '0 1px 0 rgba(204,120,92,0.10), 0 8px 24px -16px rgba(0,0,0,0.8)',
         padding: '0 24px',
-        height: 52,
+        height: 56,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -21,14 +24,30 @@ export default function Navbar() {
       <Link
         to="/"
         style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 9,
           fontFamily: 'var(--font-display)',
-          fontSize: 24,
+          fontSize: 25,
           fontWeight: 700,
           fontStyle: 'italic',
           color: 'var(--accent)',
           letterSpacing: '-0.01em',
+          textShadow: '0 0 24px rgba(204,120,92,0.35)',
         }}
       >
+        {/* Veil mark: a redaction bar half-covering a glyph — the brand gesture. */}
+        <span
+          aria-hidden
+          style={{
+            width: 16,
+            height: 16,
+            borderRadius: 4,
+            background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+            boxShadow: '0 0 14px rgba(204,120,92,0.5), inset 0 0 0 1px rgba(250,249,247,0.25)',
+            display: 'inline-block',
+          }}
+        />
         Veilio
       </Link>
 
@@ -74,11 +93,13 @@ function NavLink({
     <Link
       to={to}
       style={{
-        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+        color: active ? 'var(--accent)' : 'var(--text-secondary)',
         fontSize: 14,
-        padding: '4px 10px',
+        fontWeight: active ? 600 : 400,
+        padding: '5px 11px',
         borderRadius: 'var(--radius)',
-        background: active ? 'var(--bg-elevated)' : 'transparent',
+        background: active ? 'var(--accent-dim)' : 'transparent',
+        boxShadow: active ? 'inset 0 0 0 1px rgba(204,120,92,0.30)' : 'none',
         transition: 'all 0.15s',
       }}
     >

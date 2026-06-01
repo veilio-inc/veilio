@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar.js'
 const CLOUD_URL = import.meta.env.VITE_VEILIO_CLOUD_URL ?? 'https://veilio.dev'
 const ENTERPRISE_CONTACT = 'mailto:hello@veilio.dev'
 
-type PlanId = 'free' | 'pro' | 'team' | 'enterprise'
+type PlanId = 'free' | 'individual' | 'pro' | 'team' | 'enterprise'
 type CtaType = 'tool' | 'cloud' | 'mailto'
 
 interface PlanCard {
@@ -45,17 +45,32 @@ const PLANS: PlanCard[] = [
     ctaType: 'tool',
   },
   {
+    name: 'Individual',
+    price: '$3',
+    period: 'per month',
+    tagline: 'Cloud sync for one developer.',
+    features: [
+      'Cloud map storage (up to 500 maps)',
+      'Cross-device history sync',
+      'Export / import .veilio files',
+      'Email support',
+    ],
+    cta: 'Get Individual on Cloud →',
+    highlight: false,
+    planId: 'individual',
+    ctaType: 'cloud',
+  },
+  {
     name: 'Pro',
     price: '$9',
     period: 'per user, per month',
-    tagline: 'Cloud sync, custom rules, and the browser extension — for one developer.',
+    tagline: 'More maps, custom rules, and the browser extension — for one developer.',
     features: [
-      'Everything in Free',
-      'Unlimited cloud maps',
-      'Cross-device history sync',
+      'Everything in Individual',
+      'Up to 2,000 cloud maps',
       'Custom rules',
       'Browser extension',
-      'Email support',
+      'Priority email support',
     ],
     cta: 'Get Pro on Cloud →',
     highlight: false,
@@ -114,7 +129,7 @@ const FAQS = [
   },
   {
     q: 'What does the Cloud edition add?',
-    a: 'Cloud has four tiers. Free is the same engine as CE, hosted, with limited cloud-map storage. Pro adds unlimited cloud sync, custom rules, and the browser extension for $9/user/mo. Team ($19/seat/mo) adds shared maps, SSO, and audit. Enterprise (custom) adds SAML, SIEM export, and on-prem. The anonymizer engine is identical across all editions — only persistence and team features differ.',
+    a: 'Cloud is the paid, hosted edition — there is no free Cloud tier (the free option is self-hosting this Community Edition). Individual ($3/mo) adds hosted cloud sync with up to 500 maps. Pro ($9/user/mo) raises that to 2,000 maps and adds custom rules and the browser extension. Team ($19/seat/mo) adds shared maps, SSO, and audit. Enterprise (custom) adds SAML, SIEM export, and on-prem. The anonymizer engine is identical across all editions — only persistence and team features differ.',
   },
   {
     q: 'Is my source code ever sent anywhere in CE?',
@@ -203,15 +218,12 @@ export default function PricingPage() {
           {PLANS.map((plan) => (
             <div
               key={plan.name}
+              className={`price-card ${plan.highlight ? 'surface-accent' : 'surface'}`}
               style={{
-                background: 'var(--bg-surface)',
-                border: `1px solid ${plan.highlight ? 'var(--accent)' : 'var(--border)'}`,
-                borderRadius: 10,
                 padding: 28,
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',
-                boxShadow: plan.highlight ? '0 0 32px rgba(249,115,22,0.12)' : 'none',
               }}
             >
               {plan.badge && (
@@ -221,17 +233,20 @@ export default function PricingPage() {
                     top: -12,
                     left: '50%',
                     transform: 'translateX(-50%)',
-                    background: plan.highlight ? 'var(--accent)' : 'var(--bg-elevated)',
-                    color: plan.highlight ? '#000' : 'var(--text-secondary)',
+                    background: plan.highlight
+                      ? 'linear-gradient(180deg, #D98968, var(--accent-hover))'
+                      : 'var(--bg-elevated)',
+                    color: plan.highlight ? '#fff' : 'var(--text-secondary)',
                     border: plan.highlight ? 'none' : '1px solid var(--border)',
                     fontSize: 11,
                     fontWeight: 700,
                     fontFamily: 'var(--font-mono)',
-                    padding: '3px 12px',
+                    padding: '4px 13px',
                     borderRadius: 20,
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
                     whiteSpace: 'nowrap',
+                    boxShadow: plan.highlight ? '0 6px 18px -6px var(--accent-glow)' : 'none',
                   }}
                 >
                   {plan.badge}

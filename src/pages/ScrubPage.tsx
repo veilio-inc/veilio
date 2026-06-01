@@ -117,17 +117,40 @@ export default function ScrubPage() {
       <div
         role="note"
         style={{
-          background: 'var(--bg-elevated)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 10,
+          background:
+            'linear-gradient(180deg, rgba(204,120,92,0.07), rgba(204,120,92,0.02))',
           borderBottom: '1px solid var(--border)',
-          padding: '8px 24px',
+          padding: '7px 24px',
           fontSize: 12,
           color: 'var(--text-secondary)',
           textAlign: 'center',
         }}
       >
-        ⚠️ Best-effort anonymization — always review the output before sharing. You are responsible
-        for what you paste into AI tools.
+        <span
+          aria-hidden
+          style={{
+            flexShrink: 0,
+            fontSize: 10,
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
+            color: 'var(--accent)',
+            background: 'var(--accent-dim)',
+            border: '1px solid rgba(204,120,92,0.35)',
+            borderRadius: 20,
+            padding: '1px 8px',
+          }}
+        >
+          BEST-EFFORT
+        </span>
+        Always review the output before sharing. You are responsible for what you paste into AI
+        tools.
       </div>
+
+      <LandingHero />
 
       <div style={{ padding: '16px 24px', maxWidth: 1400, margin: '0 auto', width: '100%' }}>
         {/* Mode pills */}
@@ -304,6 +327,144 @@ export default function ScrubPage() {
   )
 }
 
+function LandingHero() {
+  return (
+    <header
+      style={{
+        maxWidth: 1400,
+        margin: '0 auto',
+        width: '100%',
+        padding: '40px 24px 8px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 40,
+      }}
+    >
+      <div style={{ flex: '1 1 460px', maxWidth: 600 }}>
+        <div
+          className="rise"
+          style={{
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...({ '--i': 0 } as any),
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            color: 'var(--accent)',
+            background: 'var(--accent-dim)',
+            border: '1px solid rgba(204,120,92,0.30)',
+            borderRadius: 20,
+            padding: '4px 12px',
+            marginBottom: 20,
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)' }} />
+          Client-side · nothing leaves your browser
+        </div>
+
+        <h1
+          className="rise"
+          style={{
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...({ '--i': 1 } as any),
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(34px, 5vw, 52px)',
+            fontWeight: 700,
+            lineHeight: 1.04,
+            letterSpacing: '-0.02em',
+            margin: 0,
+          }}
+        >
+          Send your code to AI.
+          <br />
+          <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>Keep your secrets.</span>
+        </h1>
+
+        <p
+          className="rise"
+          style={{
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...({ '--i': 2 } as any),
+            color: 'var(--text-secondary)',
+            fontSize: 16,
+            lineHeight: 1.6,
+            maxWidth: 480,
+            marginTop: 18,
+          }}
+        >
+          Veilio veils real identifiers behind placeholders before they ever leave your browser —
+          then restores them when the answer comes back.
+        </p>
+      </div>
+
+      <RedactionDemo />
+    </header>
+  )
+}
+
+/** The brand gesture: a code card whose secrets are swept under redaction bars. */
+function RedactionDemo() {
+  const Line = ({ children, indent = 0 }: { children: React.ReactNode; indent?: number }) => (
+    <div style={{ paddingLeft: indent * 18, whiteSpace: 'pre', minHeight: 22 }}>{children}</div>
+  )
+  const kw = { color: '#C99B6E' }
+  const fn = { color: '#7FB3D5' }
+  const str = { color: '#8FB98F' }
+  return (
+    <div
+      className="rise surface"
+      style={{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ '--i': 3 } as any),
+        flex: '0 1 440px',
+        padding: 0,
+        overflow: 'hidden',
+        fontFamily: 'var(--font-mono)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--border)',
+          background: 'rgba(20,18,16,0.5)',
+        }}
+      >
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#E05C5C' }} />
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#D9A441' }} />
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--success)' }} />
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-dim)' }}>auth.service.ts</span>
+      </div>
+      <div style={{ padding: '16px 18px', fontSize: 13, lineHeight: 1.85, background: 'var(--code-bg)', color: 'var(--code-text)' }}>
+        <Line>
+          <span style={kw}>const</span> <span className="redact">apiKey</span> = <span style={str}>&quot;<span className="redact">sk-live-9f2a</span>&quot;</span>
+        </Line>
+        <Line>
+          <span style={kw}>function</span> <span style={fn}>connect</span>(<span className="redact">dbPassword</span>) &#123;
+        </Line>
+        <Line indent={1}>
+          <span style={kw}>return</span> <span style={fn}>db</span>.<span style={fn}>auth</span>(<span className="redact">dbPassword</span>)
+        </Line>
+        <Line>&#125;</Line>
+        <div style={{ height: 10 }} />
+        <Line>
+          <span style={{ color: 'var(--text-dim)' }}>{'// → veiled before it reaches the model'}</span>
+        </Line>
+        <Line>
+          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__P1__</span> = <span style={str}>&quot;__P2__&quot;</span>
+        </Line>
+      </div>
+    </div>
+  )
+}
+
 function ModeButton({
   active,
   onClick,
@@ -319,12 +480,15 @@ function ModeButton({
       style={{
         padding: '6px 16px',
         borderRadius: 6,
-        background: active ? 'var(--accent)' : 'transparent',
-        color: active ? '#000' : 'var(--text-secondary)',
+        background: active
+          ? 'linear-gradient(180deg, #D98968, var(--accent-hover))'
+          : 'transparent',
+        color: active ? '#fff' : 'var(--text-secondary)',
         fontWeight: active ? 600 : 400,
         fontSize: 13,
         fontFamily: 'var(--font-mono)',
         border: 'none',
+        boxShadow: active ? '0 6px 16px -8px var(--accent-glow)' : 'none',
         transition: 'all 0.15s',
       }}
     >
@@ -350,14 +514,19 @@ function ActionButton({
       disabled={disabled}
       style={{
         padding: '10px 16px',
-        background: secondary ? 'var(--bg-elevated)' : 'var(--accent)',
-        color: secondary ? 'var(--text-secondary)' : '#000',
+        background: secondary
+          ? 'var(--bg-elevated)'
+          : 'linear-gradient(180deg, #D98968 0%, var(--accent) 55%, var(--accent-hover) 100%)',
+        color: secondary ? 'var(--text-secondary)' : '#fff',
         fontWeight: 600,
         fontSize: 13,
         borderRadius: 6,
         border: secondary ? '1px solid var(--border)' : 'none',
+        boxShadow: secondary
+          ? 'none'
+          : '0 1px 0 rgba(250,249,247,0.18) inset, 0 8px 22px -8px var(--accent-glow)',
         whiteSpace: 'nowrap',
-        transition: 'background 0.15s',
+        transition: 'transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease',
       }}
     >
       {label}

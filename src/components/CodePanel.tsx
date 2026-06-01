@@ -128,8 +128,9 @@ export default function CodePanel({
         flexDirection: 'column',
         background: 'var(--code-bg)',
         border: '1px solid var(--border)',
-        borderRadius: 8,
+        borderRadius: 10,
         overflow: 'hidden',
+        boxShadow: 'var(--shadow-md), var(--edge-light)',
       }}
     >
       {/* Header */}
