@@ -29,7 +29,7 @@ jobs:
       - name: Build static bundle
         run: npm run build
         env:
-          VITE_Veilio_CLOUD_URL: https://veilio.app
+          VITE_Veilio_CLOUD_URL: https://veilio.dev
 
       - name: Package and tag
         env:
@@ -56,7 +56,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           build-args: |
-            VITE_Veilio_CLOUD_URL=https://veilio.app
+            VITE_Veilio_CLOUD_URL=https://veilio.dev
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

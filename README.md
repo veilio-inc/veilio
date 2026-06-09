@@ -2,7 +2,7 @@
 
 Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back. The engine runs entirely in your browser — source code never leaves your machine.
 
-**This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.app](https://veilio.app).
+**This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
 ## Features
 
@@ -40,7 +40,7 @@ CE has one optional env var:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `VITE_Veilio_CLOUD_URL` | `https://veilio.app` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
+| `VITE_Veilio_CLOUD_URL` | `https://veilio.dev` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
 
 ## How this relates to Cloud
 
