@@ -1,0 +1,57 @@
+name: Publish @dlgshi/engine
+
+# Publishes the engine package to npm with build provenance, using npm OIDC
+# "trusted publishing" — no long-lived NPM_TOKEN is stored (plan controls
+# S2/S3/S4). Triggered only by an `engine-v*` tag push or a manual dispatch,
+# never by a (fork) pull_request, so secrets/identity are never exposed to
+# untrusted PR code. The `release` environment should require manual approval.
+
+on:
+  push:
+    tags:
+      - 'engine-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # required for OIDC trusted publishing + provenance
+    defaults:
+      run:
+        working-directory: packages/engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # OIDC trusted publishing requires a recent npm CLI.
+      - name: Update npm
+        run: npm install -g npm@latest
+        working-directory: .
+
+      - name: Install (pinned, deterministic)
+        run: npm ci
+
+      - name: Test (incl. purity/privacy gate)
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify tarball is dist-only
+        run: npm publish --dry-run
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public

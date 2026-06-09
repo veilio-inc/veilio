@@ -1,0 +1,49 @@
+{
+  "name": "@dlgshi/engine",
+  "version": "1.0.0",
+  "description": "Two-way code anonymizer: replace real identifiers with __P1__ tokens before sending source code to an LLM, restore them afterward. Pure, local, no network, no telemetry, zero runtime dependencies.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {},
+  "sideEffects": false,
+  "license": "MIT",
+  "keywords": [
+    "anonymizer",
+    "llm",
+    "ai",
+    "privacy",
+    "code",
+    "identifiers",
+    "redaction",
+    "veilio"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}
