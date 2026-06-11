@@ -38,6 +38,7 @@ export default function ScrubPage() {
     const result = anonymize(input, currentMap)
     setCurrentMap(result.map)
     setOutput(result.anonymized)
+    setInput('')
     setMode('send')
   }, [input, currentMap])
 
@@ -46,6 +47,7 @@ export default function ScrubPage() {
     const result = restore(input, currentMap)
     setOutput(result.restored)
     setStrippedItems(result.strippedItems)
+    setInput('')
     setMode('restore')
   }, [input, currentMap])
 
