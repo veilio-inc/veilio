@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore } from '@veilio/shared'
-import type { SymbolMap, StrippedItem } from '@veilio/shared'
+import { anonymize, restore } from '@dlgshi/engine'
+import type { SymbolMap, StrippedItem } from '@dlgshi/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import StrippedPanel from '../components/StrippedPanel.js'
@@ -124,7 +124,8 @@ export default function ScrubPage() {
           background:
             'linear-gradient(180deg, rgba(204,120,92,0.07), rgba(204,120,92,0.02))',
           borderBottom: '1px solid var(--border)',
-          padding: '7px 24px',
+          padding: '9px 24px',
+          marginTop: 12,
           fontSize: 12,
           color: 'var(--text-secondary)',
           textAlign: 'center',
@@ -164,16 +165,12 @@ export default function ScrubPage() {
             gap: 12,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              gap: 4,
-              background: 'var(--bg-surface)',
-              padding: 4,
-              borderRadius: 8,
-              border: '1px solid var(--border)',
-            }}
-          >
+          <div className="seg">
+            <span
+              aria-hidden
+              className="seg-indicator"
+              style={{ transform: mode === 'restore' ? 'translateX(100%)' : 'translateX(0)' }}
+            />
             <ModeButton active={mode === 'send'} onClick={() => setMode('send')}>
               ① Send to AI
             </ModeButton>
@@ -373,8 +370,8 @@ function LandingHero() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             ...({ '--i': 1 } as any),
             fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(34px, 5vw, 52px)',
-            fontWeight: 700,
+            fontSize: 'clamp(38px, 5.5vw, 58px)',
+            fontWeight: 400,
             lineHeight: 1.04,
             letterSpacing: '-0.02em',
             margin: 0,
@@ -382,7 +379,9 @@ function LandingHero() {
         >
           Send your code to AI.
           <br />
-          <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>Keep your secrets.</span>
+          <span className="text-gradient" style={{ fontStyle: 'italic' }}>
+            Keep your secrets.
+          </span>
         </h1>
 
         <p
@@ -400,6 +399,16 @@ function LandingHero() {
           Veilio veils real identifiers behind placeholders before they ever leave your browser —
           then restores them when the answer comes back.
         </p>
+
+        <div
+          className="trust-strip rise"
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          style={{ ...({ '--i': 3 } as any) }}
+        >
+          <span className="trust-item">100% client-side</span>
+          <span className="trust-item">Zero runtime deps</span>
+          <span className="trust-item">MIT licensed</span>
+        </div>
       </div>
 
       <RedactionDemo />
@@ -475,23 +484,7 @@ function ModeButton({
   children: React.ReactNode
 }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '6px 16px',
-        borderRadius: 6,
-        background: active
-          ? 'linear-gradient(180deg, #D98968, var(--accent-hover))'
-          : 'transparent',
-        color: active ? '#fff' : 'var(--text-secondary)',
-        fontWeight: active ? 600 : 400,
-        fontSize: 13,
-        fontFamily: 'var(--font-mono)',
-        border: 'none',
-        boxShadow: active ? '0 6px 16px -8px var(--accent-glow)' : 'none',
-        transition: 'all 0.15s',
-      }}
-    >
+    <button className={`seg-btn${active ? ' active' : ''}`} onClick={onClick}>
       {children}
     </button>
   )

@@ -60,50 +60,61 @@ export default function DashboardPage() {
       <Navbar />
 
       <div style={{ padding: '24px', maxWidth: 800, margin: '0 auto', width: '100%' }}>
-        <div style={{ marginBottom: 24 }}>
-          <h1
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 28,
-              fontWeight: 800,
-              letterSpacing: '-0.02em',
-              marginBottom: 4,
-            }}
-          >
-            Saved maps
-          </h1>
+        <div style={{ marginBottom: 24, marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <h1
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 36,
+                fontWeight: 400,
+                letterSpacing: '-0.02em',
+                marginBottom: 4,
+              }}
+            >
+              Saved maps
+            </h1>
+            {maps.length > 0 && <span className="badge badge-accent">{maps.length}</span>}
+          </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
             Stored in this browser. Export as <code>.veilio</code> to back up or move between devices.
           </p>
         </div>
 
         {maps.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '64px 0' }}>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>No maps saved yet.</p>
-            <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>
-              Anonymize some code on the{' '}
-              <a href="/" style={{ color: 'var(--accent)' }}>
-                main page
-              </a>{' '}
-              and click "Save map".
+          <div className="empty-state">
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-block',
+                width: 44,
+                height: 14,
+                borderRadius: 4,
+                marginBottom: 18,
+                background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+                boxShadow: '0 0 18px rgba(204,120,92,0.4)',
+              }}
+            />
+            <p
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 22,
+                color: 'var(--text-primary)',
+                marginBottom: 6,
+              }}
+            >
+              Nothing veiled yet.
             </p>
+            <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 20 }}>
+              Anonymize some code, then click &ldquo;Save map&rdquo; to keep its symbol map here.
+            </p>
+            <a href="/" className="btn-primary" style={{ display: 'inline-block', padding: '9px 20px' }}>
+              Open the tool
+            </a>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {maps.map((m) => (
-              <div
-                key={m.id}
-                style={{
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding: '14px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                }}
-              >
+              <div key={m.id} className="map-card">
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <span
                     style={{
@@ -117,7 +128,13 @@ export default function DashboardPage() {
                   >
                     {m.name}
                   </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                  <span
+                    style={{
+                      color: 'var(--text-secondary)',
+                      fontSize: 11.5,
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
                     {m.identifierCount} identifiers ·{' '}
                     {new Date(m.savedAt).toLocaleDateString()}
                   </span>

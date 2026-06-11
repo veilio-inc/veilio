@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@veilio/shared'
+import type { SymbolMap } from '@dlgshi/engine'
 
 interface Props {
   map: SymbolMap
@@ -23,7 +23,7 @@ export default function MapOverlay({ map, onClose }: Props) {
           }}
         >
           <div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700 }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 400 }}>
               Symbol map
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>

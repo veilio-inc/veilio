@@ -4,5 +4,3 @@ dist/
 .env.local
 .DS_Store
 *.log
-# Vendored until @veilio/shared is published to npm
-shared/

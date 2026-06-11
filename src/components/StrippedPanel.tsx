@@ -1,4 +1,4 @@
-import type { StrippedItem, StrippedItemType } from '@veilio/shared'
+import type { StrippedItem, StrippedItemType } from '@dlgshi/engine'
 
 const TYPE_LABELS: Record<StrippedItemType, string> = {
   jsdoc: 'JSDoc block',
@@ -34,14 +34,7 @@ export default function StrippedPanel({ items }: Props) {
   }, {})
 
   return (
-    <div
-      style={{
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        overflow: 'hidden',
-      }}
-    >
+    <div className="surface" style={{ overflow: 'hidden' }}>
       <div
         style={{
           padding: '8px 12px',

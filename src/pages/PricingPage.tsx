@@ -166,9 +166,9 @@ export default function PricingPage() {
           <h1
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 40,
-              fontWeight: 800,
-              letterSpacing: '-0.03em',
+              fontSize: 44,
+              fontWeight: 400,
+              letterSpacing: '-0.02em',
               marginBottom: 12,
             }}
           >
@@ -215,11 +215,13 @@ export default function PricingPage() {
             marginBottom: 64,
           }}
         >
-          {PLANS.map((plan) => (
+          {PLANS.map((plan, i) => (
             <div
               key={plan.name}
-              className={`price-card ${plan.highlight ? 'surface-accent' : 'surface'}`}
+              className={`price-card ticks rise ${plan.highlight ? 'surface-accent surface' : 'surface'}`}
               style={{
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                ...({ '--i': i } as any),
                 padding: 28,
                 display: 'flex',
                 flexDirection: 'column',
@@ -255,13 +257,13 @@ export default function PricingPage() {
 
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 400 }}>
                     {plan.name}
                   </span>
                   {plan.planId === 'free' && <span className="badge badge-accent">CE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 800 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}>
                     {plan.price}
                   </span>
                   <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{plan.period}</span>
@@ -308,61 +310,49 @@ export default function PricingPage() {
           <h2
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 24,
-              fontWeight: 700,
+              fontSize: 30,
+              fontWeight: 400,
               marginBottom: 24,
               textAlign: 'center',
             }}
           >
-            FAQ
+            Questions, answered.
           </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {FAQS.map((faq, i) => (
-              <div
-                key={i}
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 6,
-                  overflow: 'hidden',
-                  marginBottom: 4,
-                }}
-              >
+              <div key={i} className={`faq-item${openFaq === i ? ' open' : ''}`}>
                 <button
                   onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                  aria-expanded={openFaq === i}
                   style={{
                     width: '100%',
                     textAlign: 'left',
-                    padding: '14px 16px',
-                    background: 'var(--bg-surface)',
+                    padding: '15px 18px',
+                    background: 'transparent',
                     color: 'var(--text-primary)',
                     fontSize: 14,
                     fontWeight: 500,
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: 12,
                     border: 'none',
                     borderRadius: 0,
                   }}
                 >
                   {faq.q}
-                  <span
-                    style={{
-                      color: 'var(--text-dim)',
-                      transition: 'transform 0.15s',
-                      transform: openFaq === i ? 'rotate(180deg)' : 'none',
-                    }}
-                  >
-                    ▾
+                  <span aria-hidden className="faq-plus">
+                    +
                   </span>
                 </button>
                 {openFaq === i && (
                   <div
+                    className="faq-answer"
                     style={{
-                      padding: '12px 16px 16px',
+                      padding: '0 18px 16px',
                       color: 'var(--text-secondary)',
                       fontSize: 14,
                       lineHeight: 1.6,
-                      background: 'var(--bg-elevated)',
                     }}
                   >
                     {faq.a}

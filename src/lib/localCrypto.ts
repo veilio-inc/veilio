@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@veilio/shared'
+import type { SymbolMap } from '@dlgshi/engine'
 
 const PBKDF2_ITERATIONS = 100_000
 const ALG = 'AES-GCM'

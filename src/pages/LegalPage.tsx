@@ -74,7 +74,7 @@ function renderMarkdown(md: string): ReactNode[] {
           style={{
             fontFamily: 'var(--font-display)',
             fontSize: sizes[level as 1 | 2 | 3],
-            fontWeight: 700,
+            fontWeight: 400,
             lineHeight: 1.25,
             margin: level === 1 ? '0 0 20px' : '28px 0 8px',
             color: 'var(--text-primary)',

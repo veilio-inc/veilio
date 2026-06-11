@@ -122,17 +122,7 @@ export default function CodePanel({
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--code-bg)',
-        border: '1px solid var(--border)',
-        borderRadius: 10,
-        overflow: 'hidden',
-        boxShadow: 'var(--shadow-md), var(--edge-light)',
-      }}
-    >
+    <div className="code-panel">
       {/* Header */}
       <div
         style={{

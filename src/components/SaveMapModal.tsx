@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { SymbolMap } from '@veilio/shared'
+import type { SymbolMap } from '@dlgshi/engine'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 
 interface Props {
@@ -29,8 +29,8 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
         <h2
           style={{
             fontFamily: 'var(--font-display)',
-            fontSize: 20,
-            fontWeight: 700,
+            fontSize: 22,
+            fontWeight: 400,
             marginBottom: 6,
           }}
         >
