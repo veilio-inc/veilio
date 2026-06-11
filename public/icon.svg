@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E89A78"/>
+      <stop offset="1" stop-color="#B8633F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.65">
+      <stop offset="0" stop-color="#CC785C" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#CC785C" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- The Veilio mark: a redaction bar glowing on warm stone. -->
+  <rect width="64" height="64" rx="14" fill="#171412"/>
+  <rect width="64" height="64" rx="14" fill="url(#glow)"/>
+  <rect x="14" y="26" width="36" height="12" rx="4" fill="url(#bar)"/>
+  <rect x="14.5" y="26.5" width="35" height="11" rx="3.5" fill="none" stroke="#FAF7F4" stroke-opacity="0.22"/>
+</svg>

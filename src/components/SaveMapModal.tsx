@@ -26,18 +26,31 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-block',
+            width: 30,
+            height: 10,
+            borderRadius: 3,
+            marginBottom: 12,
+            background: 'linear-gradient(135deg, var(--accent-bright), var(--accent-hover))',
+            boxShadow: '0 0 14px rgba(204,120,92,0.4)',
+          }}
+        />
         <h2
           style={{
             fontFamily: 'var(--font-display)',
-            fontSize: 22,
+            fontSize: 24,
             fontWeight: 400,
             marginBottom: 6,
           }}
         >
-          Save map
+          Save this map
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
-          {Object.keys(map).length} identifiers · Saved locally in browser
+          <span className="badge badge-accent">{Object.keys(map).length} identifiers</span>{' '}
+          <span style={{ marginLeft: 6 }}>Saved locally — never leaves this browser.</span>
         </p>
 
         <form onSubmit={handleSave}>

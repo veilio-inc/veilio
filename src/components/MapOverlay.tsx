@@ -12,7 +12,7 @@ export default function MapOverlay({ map, onClose }: Props) {
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div
         className="modal"
-        style={{ maxWidth: 520, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+        style={{ maxWidth: 560, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
       >
         <div
           style={{
@@ -26,72 +26,38 @@ export default function MapOverlay({ map, onClose }: Props) {
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 400 }}>
               Symbol map
             </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-              {entries.length} identifiers
+            <p
+              style={{
+                color: 'var(--text-secondary)',
+                fontSize: 12,
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              {entries.length} identifiers veiled
             </p>
           </div>
-          <button className="btn-ghost" style={{ padding: '5px 12px' }} onClick={onClose}>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}>
             ✕
           </button>
         </div>
 
-        <div style={{ overflowY: 'auto', flex: 1 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowY: 'auto', flex: 1, borderRadius: 8 }}>
+          <table className="map-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th
-                  style={{
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    color: 'var(--text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    fontWeight: 400,
-                  }}
-                >
-                  Placeholder
-                </th>
-                <th
-                  style={{
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    color: 'var(--text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    fontWeight: 400,
-                  }}
-                >
-                  Real name
-                </th>
+              <tr>
+                <th>Placeholder</th>
+                <th aria-hidden style={{ width: 28 }} />
+                <th>Real name</th>
               </tr>
             </thead>
             <tbody>
               {entries.map(([placeholder, realName]) => (
-                <tr key={placeholder} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td
-                    style={{
-                      padding: '7px 8px',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12,
-                      color: 'var(--accent)',
-                    }}
-                  >
-                    {placeholder}
+                <tr key={placeholder}>
+                  <td style={{ color: 'var(--accent-bright)' }}>{placeholder}</td>
+                  <td aria-hidden style={{ color: 'var(--text-dim)', textAlign: 'center' }}>
+                    →
                   </td>
-                  <td
-                    style={{
-                      padding: '7px 8px',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12,
-                      color: 'var(--code-text)',
-                    }}
-                  >
-                    {realName}
-                  </td>
+                  <td style={{ color: 'var(--code-text)' }}>{realName}</td>
                 </tr>
               ))}
             </tbody>

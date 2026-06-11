@@ -383,7 +383,7 @@ textarea::placeholder, input::placeholder { color: var(--text-dim); }
 @keyframes rise { to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise, .redact::after, .btn-primary::after, .faq-answer { animation: none; transition: none; }
+  .rise, .redact::after, .btn-primary::after, .faq-answer, .skeleton::after { animation: none; transition: none; }
   .rise { opacity: 1; transform: none; }
   body::after { animation: none; }
   .seg-indicator { transition: none; }
@@ -543,6 +543,89 @@ textarea::placeholder, input::placeholder { color: var(--text-dim); }
 @keyframes faq-open {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: none; }
+}
+
+/* ── Skeleton shimmer (loading states) ────────────────────────────────────── */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(250,247,244,0.06), transparent);
+  animation: shimmer 1.4s ease infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+
+/* ── Round icon button (modal close etc.) ─────────────────────────────────── */
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s ease;
+}
+.icon-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--text-dim);
+  transform: rotate(90deg);
+}
+
+/* ── Symbol-map table ─────────────────────────────────────────────────────── */
+.map-table { width: 100%; border-collapse: collapse; }
+.map-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+  text-align: left;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--border);
+}
+.map-table tbody tr { transition: background 0.12s ease; }
+.map-table tbody tr:nth-child(even) { background: rgba(250,247,244,0.02); }
+.map-table tbody tr:hover { background: var(--accent-dim); }
+.map-table td {
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-bottom: 1px solid rgba(66,58,54,0.5);
+}
+
+/* ── Legal doc switcher pills ─────────────────────────────────────────────── */
+.doc-pill {
+  display: inline-block;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.doc-pill:hover { color: var(--text-primary); border-color: var(--text-dim); }
+.doc-pill.active {
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  border-color: rgba(204,120,92,0.35);
 }
 
 /* ── Footer hairline ──────────────────────────────────────────────────────── */

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { useParams, Navigate } from 'react-router-dom'
+import { useParams, Navigate, Link } from 'react-router-dom'
 import Navbar from '../components/Navbar.js'
 
 // Allow-listed legal documents. The slug maps 1:1 to a static file in
@@ -34,10 +34,55 @@ export default function LegalPage() {
   return (
     <div className="page">
       <Navbar />
-      <div style={{ maxWidth: 760, margin: '0 auto', width: '100%', padding: '40px 24px 80px' }}>
-        {error && <p style={{ color: 'var(--danger)' }}>Could not load this document. Please try again.</p>}
-        {!error && md === null && <p style={{ color: 'var(--text-secondary)' }}>Loading…</p>}
-        {md !== null && <article style={{ lineHeight: 1.7 }}>{renderMarkdown(md)}</article>}
+      <div style={{ maxWidth: 800, margin: '0 auto', width: '100%', padding: '36px 24px 80px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+            marginBottom: 20,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--text-dim)',
+            }}
+          >
+            Legal / <span style={{ color: 'var(--accent)' }}>{DOCS[slug]}</span>
+          </span>
+          <nav style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Object.entries(DOCS).map(([s, label]) => (
+              <Link key={s} to={`/legal/${s}`} className={`doc-pill${s === slug ? ' active' : ''}`}>
+                {label.replace(' Policy', '').replace(' of Service', '')}
+              </Link>
+            ))}
+          </nav>
+        </div>
+
+        <div className="surface ticks" style={{ padding: 'clamp(24px, 5vw, 44px)' }}>
+          {error && (
+            <p style={{ color: 'var(--danger)' }}>Could not load this document. Please try again.</p>
+          )}
+          {!error && md === null && (
+            <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="skeleton" style={{ height: 30, width: '55%' }} />
+              <div className="skeleton" style={{ height: 13, width: '100%' }} />
+              <div className="skeleton" style={{ height: 13, width: '92%' }} />
+              <div className="skeleton" style={{ height: 13, width: '97%' }} />
+              <div className="skeleton" style={{ height: 13, width: '40%' }} />
+              <div className="skeleton" style={{ height: 20, width: '35%', marginTop: 16 }} />
+              <div className="skeleton" style={{ height: 13, width: '95%' }} />
+              <div className="skeleton" style={{ height: 13, width: '88%' }} />
+            </div>
+          )}
+          {md !== null && <article style={{ lineHeight: 1.7 }}>{renderMarkdown(md)}</article>}
+        </div>
       </div>
     </div>
   )

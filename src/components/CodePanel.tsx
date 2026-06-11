@@ -107,6 +107,7 @@ export default function CodePanel({
   minHeight = 320,
 }: Props) {
   const [lang, setLang] = useState<LangKey>('auto')
+  const [copied, setCopied] = useState(false)
 
   const extensions = useCallback(() => {
     const langExt = LANGS[lang]
@@ -118,7 +119,10 @@ export default function CodePanel({
   }, [lang, label])
 
   async function copyToClipboard() {
-    if (value) await navigator.clipboard.writeText(value)
+    if (!value) return
+    await navigator.clipboard.writeText(value)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1400)
   }
 
   return (
@@ -178,10 +182,17 @@ export default function CodePanel({
           {value && (
             <button
               className="btn-ghost"
-              style={{ padding: '3px 10px', fontSize: 12 }}
+              style={{
+                padding: '3px 10px',
+                fontSize: 12,
+                minWidth: 64,
+                ...(copied
+                  ? { color: 'var(--success)', borderColor: 'rgba(91,169,139,0.45)' }
+                  : {}),
+              }}
               onClick={copyToClipboard}
             >
-              Copy
+              {copied ? 'Copied ✓' : 'Copy'}
             </button>
           )}
         </div>
