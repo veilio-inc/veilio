@@ -1,5 +1,5 @@
-// Public engine types for @veilio/shared. Keep this engine-only — Cloud product
-// types (plans, billing, teams, SSO) live in ./app.ts and are NOT published.
+// Public engine types for @dlgshi/engine. Keep this engine-only — product
+// types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
 // ─── Engine types ────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export interface RestoreResult {
   strippedItems: StrippedItem[]
 }
 
-// ─── Custom rules (Pro tier, with team scope for #5c) ─────────────────────────
+// ─── Custom rules ─────────────────────────────────────────────────────────────
 
 export type CustomRuleScope = 'personal' | 'team'
 

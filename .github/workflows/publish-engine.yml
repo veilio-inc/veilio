@@ -38,6 +38,26 @@ jobs:
         run: npm install -g npm@latest
         working-directory: .
 
+      # Releases must be tag-anchored and the tag must equal package.json's
+      # version, so every published artifact is traceable to one engine-v* tag.
+      # workflow_dispatch stays usable for retries — run it on the tag ref.
+      - name: Verify ref is an engine-v* tag matching package.json
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "Refusing to publish from a non-tag ref ($GITHUB_REF_TYPE $GITHUB_REF_NAME). Run this workflow on an engine-v* tag." >&2
+            exit 1
+          fi
+          case "$GITHUB_REF_NAME" in engine-v*) ;; *)
+            echo "Tag '$GITHUB_REF_NAME' does not match engine-v*." >&2
+            exit 1
+          ;; esac
+          TAG_VERSION="${GITHUB_REF_NAME#engine-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)." >&2
+            exit 1
+          fi
+
       - name: Install (pinned, deterministic)
         run: npm ci
 
@@ -50,8 +70,18 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Verify tarball is dist-only
-        run: npm publish --dry-run
+      # Fail (not just print) if anything beyond the allowlist would ship.
+      - name: Verify tarball contains only allowlisted files
+        run: |
+          npm pack --dry-run --json | node -e '
+            const allowed = /^(dist\/|src\/)|^(README\.md|LICENSE|CHANGELOG\.md|package\.json)$/
+            const [pkg] = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            const bad = pkg.files.map(f => f.path).filter(p => !allowed.test(p))
+            if (bad.length) {
+              console.error("Unexpected files in tarball:", bad)
+              process.exit(1)
+            }
+          '
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
