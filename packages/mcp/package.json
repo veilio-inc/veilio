@@ -1,0 +1,45 @@
+{
+  "name": "@veilio/mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing the anonymizer to coding agents, so a model can work on masked code without the real identifiers ever entering its context.",
+  "type": "module",
+  "bin": {
+    "veilio-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "anonymizer",
+    "llm",
+    "privacy",
+    "secret-scanning",
+    "veilio"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@veilio/cli": "*",
+    "@veilio/shared": "*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.0.0"
+  }
+}
