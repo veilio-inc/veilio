@@ -1,21 +1,16 @@
-# Cookie & Local Storage Notice — DRAFT
+# Veilio Community Edition — Cookie & Local Storage Notice
 
-> ⚠️ **DRAFT skeleton — NOT legal advice.** Finalize with a Polish radca prawny
-> (Prawo telekomunikacyjne / ePrivacy).
+_Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Community Edition only._
 
-_Last updated: [DATE]_
+> **Scope.** This notice covers the **Veilio Community Edition (CE)**. **Veilio Cloud** (the hosted service, which uses a session token and an anti-abuse widget) has its own [Cookie Policy](https://veilio.dev/legal/cookies). This notice does not cover Cloud.
 
-Veilio uses **no third-party advertising or tracking cookies.** We use only:
+**The Community Edition sets no cookies and uses no third-party advertising or tracking technology.** It uses only strictly-necessary browser storage to make the tool work:
 
 | Item | Type | Purpose | Consent |
 |---|---|---|---|
-| `veilio_token` | localStorage | Keeps you signed in (session JWT) | Strictly necessary — no consent required |
-| Cloudflare **Turnstile** | script/cookie | Bot/abuse protection on sign-up & sign-in | Strictly necessary (security) |
-| Vault key (optional) | in-memory / sessionStorage (only if you opt into "remember this tab") | Decrypt cloud maps client-side | Strictly necessary for the feature you enabled |
+| Symbol maps | `localStorage` | Keeps your anonymization maps on your device between sessions | Strictly necessary — no consent required |
+| Vault key (optional) | in-memory / `sessionStorage` | Holds a `.veilio` passphrase-derived key only while you keep a tab open, if you choose to | Strictly necessary for the feature you enabled |
 
-Because we only use strictly-necessary storage, a consent banner is generally
-not required — **[lawyer to confirm given Turnstile]**. If we later add
-analytics or marketing, we will add a consent mechanism first.
+Because CE uses only strictly-necessary, first-party storage and contacts no servers, a consent banner is not required. You can clear this data anytime through your browser; doing so removes any locally stored maps and forgets any opted-in vault key.
 
-You can clear this data anytime via your browser; clearing it signs you out and
-forgets an opted-in vault key.
+_Questions: `support@veilio.dev`._

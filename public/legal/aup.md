@@ -1,20 +1,23 @@
-# Acceptable Use Policy — DRAFT
+# Veilio Community Edition — Acceptable Use Policy
 
-> ⚠️ **DRAFT skeleton — NOT legal advice.** Finalize with a Polish radca prawny.
+_Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Community Edition only._
 
-_Last updated: [DATE] · Version: [v1]_
+> **Scope.** The Community Edition is a **local tool that runs entirely in your browser** — there is no Veilio-operated service to abuse, and we host nothing on your behalf. This policy therefore covers only how you may **use and redistribute CE**. The hosted **Veilio Cloud** service has its own, fuller [Acceptable Use Policy](https://veilio.dev/legal/aup) governing accounts, messaging, rate limits, and shared infrastructure.
 
-Using Veilio, you agree NOT to:
+Using or redistributing Veilio CE, you agree **not** to:
 
-1. **Break the law** — process, store, or transmit content that is illegal under Polish/EU law (incl. CSAM, terrorist content, stolen data).
-2. **Infringe rights** — use the Service with code or data you have no right to use, or to violate third-party IP, trade secrets, or privacy.
-3. **Evade security/abuse controls** — use anonymization to bypass other parties' security, DLP, or detection systems for malicious ends; circumvent Veilio's rate limits, CAPTCHA, or seat metering.
-4. **Abuse messaging** — trigger account/verification/invite emails to people without their consent; use the Service to spam.
-5. **Attack the Service** — DoS, scraping, automated bulk account creation, vulnerability testing without written permission (see [SECURITY.md](../SECURITY.md) for coordinated disclosure).
-6. **Resell or misrepresent** — resell the hosted Service without authorization, or misrepresent Veilio's anonymization as a guarantee of safety/compliance.
+- **Break the law** — use CE to process, store, or transmit content that is illegal where you operate (including CSAM, terrorist content, or stolen data).
+- **Infringe rights** — use CE with code or data you have no right to use, or to violate third-party intellectual property, trade secrets, or privacy.
+- **Misrepresent the tool** — present CE's best-effort anonymization as a guarantee of safety, compliance, or complete removal of sensitive data, or imply that the Veilio project has reviewed or endorsed your output.
+- **Resell or repackage it** — sell, resell, sublicense, rebrand, or republish CE or its engine as a standalone product or service that competes with Veilio. (Using CE in your own projects, including commercial ones, is fine.) For a competing-use or redistribution license, contact `hello@veilio.dev`.
+- **Misuse the brand** — redistribute a modified build as the official "Veilio", or otherwise use the Veilio name or logo in violation of the [Trademark Policy](https://github.com/DlgSHi/veilio-oss/blob/main/TRADEMARKS.md).
+- **Weaponize anonymization** — deliberately use identifier obfuscation to bypass another party's security, data-loss-prevention, or detection controls for malicious ends.
+
+## No monitoring
+Because CE runs only on your own machine, the Veilio project does not — and cannot — monitor, access, or review your use of it.
 
 ## Enforcement
-We may **warn, throttle, suspend, or terminate** accounts that violate this policy, and remove offending content, with or without notice depending on severity and legal obligations.
+CE is source-available software (PolyForm Shield 1.0.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and IP terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
 
-## Reporting abuse
-Report violations to **`abuse@veilio.dev`**. Security vulnerabilities: see [SECURITY.md](../SECURITY.md).
+## Reporting
+Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/DlgSHi/veilio-oss/blob/main/SECURITY.md).

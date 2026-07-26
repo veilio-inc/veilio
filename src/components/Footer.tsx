@@ -56,7 +56,7 @@ export default function Footer() {
                 maxWidth: 320,
               }}
             >
-              Your identifiers never leave this browser. Self-hostable, open source, MIT.
+              Your identifiers never leave this browser. Self-hostable and source-available — free to use, even commercially. Not for resale.
             </p>
           </div>
 

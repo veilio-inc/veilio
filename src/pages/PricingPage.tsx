@@ -29,7 +29,7 @@ const PLANS: PlanCard[] = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    tagline: 'Everything you need to protect your code. Self-hosted, MIT licensed.',
+    tagline: 'Everything you need to protect your code. Self-hosted, free for any use — even commercial.',
     features: [
       'Full anonymize / restore tool',
       'Stripped metadata panel',
@@ -121,7 +121,11 @@ const PLANS: PlanCard[] = [
 const FAQS = [
   {
     q: 'What is the Community Edition?',
-    a: 'CE is the MIT-licensed, self-hostable version of Veilio. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine.',
+    a: 'CE is the source-available, self-hostable version of Veilio, free to use for any purpose — including commercial projects — under the PolyForm Shield 1.0.0 license. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine. The license only prohibits reselling or republishing Veilio as a competing product or service.',
+  },
+  {
+    q: 'Can I use the Community Edition at work or commercially?',
+    a: 'Yes. CE is free to use for any purpose, including inside a business and on commercial projects, under the PolyForm Shield 1.0.0 license. The one thing you may not do is sell, resell, rebrand, or republish Veilio (or its engine) as a standalone product or service that competes with Veilio. For that kind of redistribution, contact hello@veilio.dev.',
   },
   {
     q: 'How do I save maps permanently in CE?',
@@ -182,7 +186,7 @@ export default function PricingPage() {
               margin: '0 auto',
             }}
           >
-            Free forever and self-hostable. Pro, Team, and Enterprise add cloud sync,
+            Free to use — even commercially — and self-hostable. The paid plans add cloud sync,
             collaboration, and compliance on Veilio Cloud.
           </p>
         </div>

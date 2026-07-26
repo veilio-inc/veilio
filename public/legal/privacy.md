@@ -1,49 +1,30 @@
-# Privacy Policy / Polityka Prywatności — DRAFT
+# Veilio Community Edition — Privacy Notice
 
-> ⚠️ **DRAFT skeleton — NOT legal advice.** Must be reviewed and finalized by a
-> Polish radca prawny / adwokat (IT + RODO) before publication. Bracketed
-> `[…]` items need founder/lawyer input. Aligned to RODO (GDPR) + Polish UODO.
+_Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Community Edition only._
 
-_Last updated: [DATE] · Version: [v1]_
+> **Scope.** This notice covers the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository. **Veilio Cloud** (the hosted service) is a separate service with its own [Privacy Policy](https://veilio.dev/legal/privacy). This notice does not cover Cloud.
 
-## 1. Administrator (Controller)
-- Entity: **[legal name / JDG or sp. z o.o.]**, **[address]**, NIP **[…]**, REGON **[…]**.
-- Contact: `privacy@veilio.dev` · `support@veilio.dev`.
-- Data Protection contact / IOD: **[appoint or state "not required, rationale documented"]**.
+**The Community Edition collects no personal data.** It has no backend, no accounts, no analytics, and **no telemetry**. The anonymizer engine (`@dlgshi/engine`) performs **no network requests at all** — this is enforced by an automated purity test in our CI suite (`packages/engine/tests/purity.test.ts`). Your source code, identifiers, and symbol maps **never leave your machine.**
 
-## 2. What data we process & why (legal basis — RODO art. 6)
-| Data | Purpose | Legal basis |
+## What stays on your device
+| Data | Where | Notes |
 |---|---|---|
-| Email, password hash | Account + authentication | art. 6(1)(b) contract |
-| IP, user-agent, session + audit logs | Security, fraud prevention, abuse handling | art. 6(1)(f) legitimate interest |
-| Subscription + billing metadata (via Stripe) | Provide paid service, invoicing | art. 6(1)(b) + (c) legal obligation (tax) |
-| **Encrypted map envelopes** | Cloud sync of symbol maps | art. 6(1)(b) — **zero-knowledge: we store only ciphertext and cannot read map contents** |
-| Team membership / invites | Team features | art. 6(1)(b) |
-| Marketing email (if any) | Product updates | art. 6(1)(a) consent (opt-in) |
+| Symbol maps | Browser `localStorage` | Kept locally for convenience; never transmitted. |
+| `.veilio` exports | Files you save to disk | Encrypted on your device with **AES-256-GCM**; key derived from your passphrase via **PBKDF2** (100,000 iterations, SHA-256). The passphrase is never stored or transmitted. |
 
-We do **not** receive or store your source code. Cloud maps are encrypted in your
-browser with a passphrase only you hold; we cannot decrypt them.
+There is nothing for us to access, export, or delete, because we never receive it. You can clear this data anytime through your browser.
 
-## 3. Retention
-| Data | Retention |
-|---|---|
-| Account data | Until deletion + [30] days backup window |
-| Audit/security logs | [12 months], then pseudonymized/erased |
-| Sessions | Until expiry/revocation |
-| Invoices | [5 years] (Polish tax law) |
+## If you self-host CE for other people
+If you deploy CE so others can use it, **you** are the data controller for anything your own hosting stack records (for example, web-server access logs). CE itself adds no such logging and sends nothing back to the Veilio project.
 
-## 4. Recipients / Subprocessors
-- **Stripe** (payments) · **Resend** (email) · **Cloudflare** (CAPTCHA/DNS) · **Hetzner** (EU hosting) · **Google / Microsoft** (SSO, only if you use SSO).
-- International transfers covered by **Standard Contractual Clauses** where applicable. Hosting is in the **EU**.
+## Telemetry
+CE sends **zero telemetry**. There is no opt-out to configure because there is nothing to opt out of.
 
-## 5. Your rights (RODO art. 15–22)
-Access, rectification, **erasure** (in-app: Delete account), **portability** (in-app: Export my data), restriction, objection, withdraw consent. Exercise via `privacy@veilio.dev`. You may lodge a complaint with **UODO** (ul. Stawki 2, Warszawa).
+## Minimum age
+CE is not directed to children. We set a **minimum age of 16** for use of Veilio, consistent with the threshold used by Veilio Cloud.
 
-## 6. Cookies / local storage
-We use **strictly-necessary** browser `localStorage` (the `veilio_token` session) and the **Cloudflare Turnstile** anti-abuse widget. No third-party advertising/tracking cookies. See [COOKIES.md](./COOKIES.md).
+## Cookies & local storage
+CE sets no cookies and uses no third-party trackers. It uses only the strictly-necessary browser `localStorage` described above. See the [Cookie Notice](./cookies.md).
 
-## 7. Security & breaches
-Encryption in transit (TLS) and at rest where applicable; zero-knowledge cloud maps. In a breach affecting your rights we notify **UODO within 72h** and you where required.
-
-## 8. Changes
-We post updates here and bump the version; material changes are notified in-app.
+## Changes & contact
+We post updates here and bump the version. Privacy questions: `privacy@veilio.dev` (or `support@veilio.dev`).

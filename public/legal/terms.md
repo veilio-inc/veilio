@@ -1,43 +1,30 @@
-# Terms of Service / Regulamin — DRAFT
+# Veilio Community Edition — Terms of Use
 
-> ⚠️ **DRAFT skeleton — NOT legal advice.** Finalize with a Polish radca prawny.
-> Drafted to satisfy the Polish *ustawa o świadczeniu usług drogą elektroniczną*
-> (UŚUDE) and *ustawa o prawach konsumenta* (Consumer Rights Act / CRD + Omnibus).
+_Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Community Edition only._
 
-_Last updated: [DATE] · Version: [TERMS_VERSION = v1]_
+> **Scope.** These terms govern the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository, free to use for any purpose including commercial. **Veilio Cloud** (the hosted service at veilio.dev, with accounts, sync, teams, and billing) has its own separate [Terms of Service](https://veilio.dev/legal/terms), which do not apply to CE — and these CE terms do not apply to Cloud.
 
-## §1 Provider (Usługodawca)
-**[legal name]**, **[address]**, NIP **[…]**, contact `support@veilio.dev`.
+Veilio CE is **source-available** software licensed under the **PolyForm Shield License 1.0.0** (see the `LICENSE` file): **free to use for any purpose, including personal, educational, and commercial projects.** What it does **not** permit is selling, reselling, sublicensing, redistributing, rebranding, or republishing CE — or its engine, or any derivative — **as a standalone product or service that competes with Veilio.** For a competing-use or redistribution license, contact `hello@veilio.dev`. These Terms supplement — and do not replace or limit — the PolyForm license. If anything here conflicts with that license about the software grant itself, the **PolyForm license controls**.
 
-## §2 Definitions
-Service, Account, Community Edition (self-hosted, MIT), Cloud, Map, Vault Passphrase, Consumer, Entrepreneur.
+## 1. What CE is
+CE is a **best-effort** code-anonymization tool that runs **entirely in your browser**. It replaces source-code identifiers with placeholder tokens (e.g. `__P1__`) and restores them. **It does not guarantee that all sensitive data, secrets, or personal data are removed.** You are responsible for reviewing anonymized output before sharing it with any third party, including AI tools.
 
-## §3 The Service
-Veilio is a **best-effort** code-anonymization tool. It replaces identifiers with placeholders and restores them. **It does not guarantee that all sensitive data, secrets, or personal data are removed.** You remain responsible for reviewing output before sharing it with any third party, including AI tools.
+## 2. No accounts, no data collection
+CE has no backend, no accounts, no analytics, and **no telemetry**. It collects, transmits, and stores **no data** about you. Symbol maps live only in your browser's `localStorage`; `.veilio` exports are encrypted on your device. **If you lose a `.veilio` passphrase, that file is permanently unrecoverable** — no one, including the authors, can recover it. See the [Privacy Notice](./privacy.md).
 
-## §4 Accounts & eligibility
-Min age **[16]**. Accurate info; one person per account; keep credentials safe. We may suspend/terminate for breach of these Terms or the [AUP](./AUP.md).
+## 3. Your responsibilities
+You run your own instance. You are responsible for the code and data you process with CE, for complying with all laws that apply to you, and for any deployment you expose to other people (including any logging your own hosting stack performs).
 
-## §5 Vault passphrase & data loss
-Cloud maps are encrypted in your browser with a passphrase **only you hold**. **We cannot recover it. If you lose it, your cloud maps are permanently unrecoverable.** Likewise, lost `.veilio` export passphrases are unrecoverable.
+## 4. License, redistribution & trademarks
+The PolyForm Shield License lets you use, copy, modify, and redistribute the **code** for any purpose except providing a product or service that competes with Veilio. It does **not** grant any right to the **"Veilio" name or logo**. You may not use the Veilio name or logo in a way that implies endorsement by, or affiliation with, the Veilio project, and you must not present a modified version as the official Veilio. See the [Trademark Policy](https://github.com/DlgSHi/veilio-oss/blob/main/TRADEMARKS.md).
 
-## §6 Plans, payment, renewal, cancellation
-Prices per the pricing page (VAT shown for consumers). Paid plans **auto-renew** each period until cancelled; cancel anytime via the billing portal — access continues to period end. Payments processed by **Stripe**.
+## 5. Acceptable use
+Don't use CE to break the law or to misrepresent its anonymization as a guarantee of safety or compliance. The full [Acceptable Use Policy](./aup.md) applies.
 
-## §7 Consumer right of withdrawal (14 days)
-A Consumer normally has **14 days** to withdraw. By starting a paid plan you **expressly consent to immediate provision** of the digital service and **acknowledge you thereby lose the right of withdrawal** once provision begins (captured at checkout). [Lawyer: confirm wording per CRD art. 16(m).]
+## 6. Warranty disclaimer & limitation of liability
+CE is provided **"AS IS", without warranty of any kind**, to the maximum extent permitted by applicable law. There is **no warranty that anonymization is complete, accurate, or error-free.** To the maximum extent permitted by applicable law, the authors and copyright holders are **not liable** for any claim, damage, loss, or other liability — including any sensitive data exposed despite anonymization — arising from or in connection with CE or its use.
 
-## §8 Warranties & limitation of liability
-Service provided **"as is"** to the maximum extent permitted by law. **No warranty** that anonymization is complete or error-free. Liability is **limited to fees paid in the preceding [12] months** and **excludes indirect/consequential damages**, except where Polish law prohibits such limits (incl. consumer mandatory rights, intent, gross negligence).
+## 7. Changes
+We may update these Terms; the version and date above reflect the current text. Material changes will be reflected by a version bump in this file.
 
-## §9 Acceptable use
-The [AUP](./AUP.md) applies.
-
-## §10 Complaints (reklamacje)
-Send to `support@veilio.dev`; we respond within **[14] days**. Consumers may use ODR/UOKiK channels.
-
-## §11 Governing law & disputes
-Polish law; for Consumers, mandatory protections of their residence apply. [Jurisdiction clause — lawyer.]
-
-## §12 Changes
-We may amend these Terms; material changes require re-acceptance (version bump). Continued use after notice constitutes acceptance where lawful.
+_Questions: `support@veilio.dev`._

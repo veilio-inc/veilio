@@ -31,9 +31,9 @@
   --edge-light:     inset 0 1px 0 rgba(250,247,244,0.06);
 
   /* ── Typography ─────────────────────────────────────────────────────────── */
-  --font-display:   'Instrument Serif', 'Crimson Pro', Georgia, serif;
-  --font-body:      'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono:      'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  --font-display:   'Crimson Pro', Georgia, serif;
+  --font-body:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:      'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
 html { scroll-behavior: smooth; }
