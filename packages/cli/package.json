@@ -1,0 +1,49 @@
+{
+  "name": "@veilio/cli",
+  "version": "0.1.0",
+  "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM — from the terminal, a pipe, or a pre-commit hook.",
+  "type": "module",
+  "bin": {
+    "veilio": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "anonymizer",
+    "llm",
+    "ai",
+    "privacy",
+    "secret-scanning",
+    "pre-commit",
+    "cli",
+    "veilio"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@veilio/shared": "*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./store": "./dist/store.js"
+  }
+}
