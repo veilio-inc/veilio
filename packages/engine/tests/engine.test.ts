@@ -70,8 +70,10 @@ describe('extractIdentifiers', () => {
 // ─── anonymize ────────────────────────────────────────────────────────────────
 
 describe('anonymize', () => {
-  it('replaces identifiers with __P1__, __P2__, etc.', () => {
-    const { anonymized } = anonymize('class UserAuthService { validateToken() {} }')
+  it('replaces identifiers with __P1__, __P2__, etc. (legacy plain style)', () => {
+    const { anonymized } = anonymize('class UserAuthService { validateToken() {} }', {
+      style: 'plain',
+    })
     expect(anonymized).toContain('__P')
     expect(anonymized).not.toContain('UserAuthService')
     expect(anonymized).not.toContain('validateToken')
@@ -92,15 +94,15 @@ describe('anonymize', () => {
 
   it('longest-first substitution prevents partial matches', () => {
     const code = 'class OrderService extends Service {}'
-    const { anonymized } = anonymize(code)
+    const { anonymized } = anonymize(code, { style: 'plain' })
     // "Service" inside "OrderService" should not produce a double-replaced name
     expect(anonymized).not.toMatch(/__P\d+__Service/)
     expect(anonymized).not.toMatch(/Order__P\d+__/)
   })
 
-  it('continues numbering from existingMap', () => {
+  it('continues numbering from existingMap (legacy plain style)', () => {
     const existing = { __P1__: 'FirstName', __P2__: 'LastName' }
-    const { map } = anonymize('class NewService {}', existing)
+    const { map } = anonymize('class NewService {}', { existingMap: existing, style: 'plain' })
     const placeholders = Object.keys(map)
     expect(placeholders).toContain('__P3__')
   })
@@ -120,8 +122,8 @@ describe('anonymize', () => {
     expect(identifierCount).toBe(0)
   })
 
-  it('handles identifiers containing $', () => {
-    const { anonymized } = anonymize('const $myStore = null')
+  it('handles identifiers containing $ (legacy plain style)', () => {
+    const { anonymized } = anonymize('const $myStore = null', { style: 'plain' })
     expect(anonymized).not.toContain('$myStore')
     expect(anonymized).toContain('__P')
   })
@@ -237,16 +239,16 @@ describe('anonymize with custom rules', () => {
       : { ...base, type: 'whitelist' as const }
   }
 
-  it('passes options shape: { existingMap, rules } works', () => {
-    const { anonymized, map } = anonymize('class Foo {}', { rules: [] })
+  it('passes options shape: { existingMap, rules } works (legacy plain style)', () => {
+    const { anonymized, map } = anonymize('class Foo {}', { rules: [], style: 'plain' })
     expect(anonymized).toContain('__P1__')
     expect(map['__P1__']).toBe('Foo')
   })
 
-  it('legacy 2-arg shape still works: anonymize(code, symbolMap)', () => {
+  it('existingMap + plain style via options object (legacy plain style)', () => {
     // existing tests cover this; explicit regression case here:
     const seed: SymbolMap = { '__P1__': 'OldName' }
-    const { map } = anonymize('class NewName {}', seed)
+    const { map } = anonymize('class NewName {}', { existingMap: seed, style: 'plain' })
     // OldName stays mapped, NewName gets __P2__
     expect(map['__P1__']).toBe('OldName')
     expect(map['__P2__']).toBe('NewName')
@@ -270,13 +272,16 @@ describe('anonymize with custom rules', () => {
     expect(map['__APIKEY__2']).toBeDefined()
   })
 
-  it('whitelist rule prevents anonymization', () => {
+  it('whitelist rule prevents anonymization (legacy plain style)', () => {
     // Use a non-keyword name as the whitelisted token (React is already in KEYWORDS).
     // ReactHelper (11 chars) sorts before Foo (3 chars) in the identifier list,
     // so it is processed first, whitelisted, and does NOT consume a placeholder.
     // Foo then becomes __P1__.
     const rulesH = [helper(1, 'whitelist', '^ReactHelper$')]
-    const { anonymized, map } = anonymize('const ReactHelper = null; class Foo {}', { rules: rulesH })
+    const { anonymized, map } = anonymize('const ReactHelper = null; class Foo {}', {
+      rules: rulesH,
+      style: 'plain',
+    })
     expect(anonymized).toContain('ReactHelper')       // whitelisted: left in source
     expect(map['__P1__']).toBe('Foo')                 // Foo is numbered normally
     // ReactHelper is NOT in the map (it wasn't anonymized)
@@ -305,9 +310,9 @@ describe('anonymize with custom rules', () => {
     expect(map['__FIRST__1']).toBe('apiSecret')
   })
 
-  it('disabled rules are ignored', () => {
+  it('disabled rules are ignored (legacy plain style)', () => {
     const rules = [{ ...helper(1, 'replace', '^api', '__APIKEY__'), enabled: false }]
-    const { anonymized, map } = anonymize('const apiKey = "x"', { rules })
+    const { anonymized, map } = anonymize('const apiKey = "x"', { rules, style: 'plain' })
     // falls through to default __P1__
     expect(anonymized).toContain('__P1__')
     expect(map['__P1__']).toBe('apiKey')
@@ -324,19 +329,19 @@ describe('anonymize with custom rules', () => {
     expect(restored).toContain('Foo')
   })
 
-  it('mixed: some identifiers match rules, some fall through to __P<n>__', () => {
+  it('mixed: some identifiers match rules, some fall through to __P<n>__ (legacy plain style)', () => {
     const rules = [helper(1, 'replace', '^api', '__APIKEY__')]
     const code = 'const apiKey = "x"; const userName = "y"'
-    const { anonymized, map } = anonymize(code, { rules })
+    const { anonymized, map } = anonymize(code, { rules, style: 'plain' })
     expect(anonymized).toContain('__APIKEY__1')
     expect(anonymized).toContain('__P1__')
     expect(map['__APIKEY__1']).toBe('apiKey')
     expect(map['__P1__']).toBe('userName')
   })
 
-  it('invalid regex in a rule does not crash; rule is silently skipped', () => {
+  it('invalid regex in a rule does not crash; rule is silently skipped (legacy plain style)', () => {
     const rules = [helper(1, 'replace', '[invalid(regex', '__BAD__')]
-    const { anonymized, map } = anonymize('const apiKey = "x"', { rules })
+    const { anonymized, map } = anonymize('const apiKey = "x"', { rules, style: 'plain' })
     // rule skipped, falls through to default
     expect(anonymized).toContain('__P1__')
     expect(map['__P1__']).toBe('apiKey')

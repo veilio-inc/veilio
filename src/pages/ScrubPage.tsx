@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react'
 import { anonymize, restore } from '@dlgshi/engine'
-import type { SymbolMap, StrippedItem } from '@dlgshi/engine'
+import type { SecretFinding, SymbolMap, StrippedItem } from '@dlgshi/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
+import SecretPanel from '../components/SecretPanel.js'
 import StrippedPanel from '../components/StrippedPanel.js'
 import SaveMapModal from '../components/SaveMapModal.js'
 import MapOverlay from '../components/MapOverlay.js'
@@ -24,6 +25,7 @@ export default function ScrubPage() {
   const [strippedItems, setStrippedItems] = useState<StrippedItem[]>([])
   const [showSave, setShowSave] = useState(false)
   const [showOverlay, setShowOverlay] = useState(false)
+  const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
@@ -35,9 +37,10 @@ export default function ScrubPage() {
 
   const handleAnonymize = useCallback(() => {
     if (!input.trim()) return
-    const result = anonymize(input, currentMap)
+    const result = anonymize(input, { existingMap: currentMap })
     setCurrentMap(result.map)
     setOutput(result.anonymized)
+    setSecretFindings(result.secrets)
     setInput('')
     setMode('send')
   }, [input, currentMap])
@@ -47,6 +50,8 @@ export default function ScrubPage() {
     const result = restore(input, currentMap)
     setOutput(result.restored)
     setStrippedItems(result.strippedItems)
+    // Findings describe the anonymize pass; they'd be stale next to a restore.
+    setSecretFindings([])
     setInput('')
     setMode('restore')
   }, [input, currentMap])
@@ -56,6 +61,7 @@ export default function ScrubPage() {
     setOutput('')
     setInput('')
     setStrippedItems([])
+    setSecretFindings([])
     showToast('Map cleared')
   }
 
@@ -252,6 +258,11 @@ export default function ScrubPage() {
           </div>
         )}
 
+        {/* Credentials found in the last anonymize pass. Above the panels, and
+            therefore above the copy action — a warning placed after the thing
+            it warns about gets read too late. */}
+        {mode === 'send' && <SecretPanel findings={secretFindings} />}
+
         {/* Main panels */}
         <div
           style={{
@@ -409,7 +420,7 @@ function LandingHero() {
         >
           <span className="trust-item">100% client-side</span>
           <span className="trust-item">Zero runtime deps</span>
-          <span className="trust-item">MIT licensed</span>
+          <span className="trust-item">Free, even commercially</span>
         </div>
       </div>
 

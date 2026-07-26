@@ -6,7 +6,15 @@ import { readFileSync } from 'node:fs'
 // no environment reads, and zero runtime dependencies. These checks fail CI if a
 // future change (or a malicious PR) tries to add an exfiltration path.
 
-const src = readFileSync(new URL('../src/engine.ts', import.meta.url), 'utf8')
+// Every engine source, not just engine.ts. The credential detector in
+// secrets.ts sees more sensitive material than anything else in the package —
+// exempting it from the invariant would be exactly backwards.
+const SOURCES = ['engine.ts', 'languages.ts', 'product.ts', 'secrets.ts', 'types.ts', 'index.ts'] as const
+
+const sources = SOURCES.map((name) => ({
+  name,
+  text: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'),
+}))
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 describe('engine purity (privacy invariant)', () => {
@@ -23,14 +31,33 @@ describe('engine purity (privacy invariant)', () => {
       'require("http")',
       "require('http')",
     ]
-    for (const token of banned) {
-      expect(src.includes(token), `engine.ts must not reference ${token}`).toBe(false)
+    for (const { name, text } of sources) {
+      for (const token of banned) {
+        expect(text.includes(token), `${name} must not reference ${token}`).toBe(false)
+      }
+    }
+  })
+
+  it('touches no filesystem', () => {
+    const banned = ["from 'fs'", "from 'node:fs'", 'readFileSync', 'writeFileSync']
+    for (const { name, text } of sources) {
+      for (const token of banned) {
+        expect(text.includes(token), `${name} must not reference ${token}`).toBe(false)
+      }
     }
   })
 
   it('reads no environment or process globals', () => {
-    expect(src.includes('process.env')).toBe(false)
-    expect(src.includes('process.argv')).toBe(false)
+    for (const { name, text } of sources) {
+      expect(text.includes('process.env'), `${name} reads process.env`).toBe(false)
+      expect(text.includes('process.argv'), `${name} reads process.argv`).toBe(false)
+    }
+  })
+
+  it('never logs — a console call in the engine would print users’ real code', () => {
+    for (const { name, text } of sources) {
+      expect(text.includes('console.'), `${name} must not log`).toBe(false)
+    }
   })
 
   it('declares zero runtime dependencies', () => {

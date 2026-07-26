@@ -1,320 +1,32 @@
 import type {
   AnonymizeOptions,
   AnonymizeResult,
-  CustomRule,
   CustomRuleReplace,
   CustomRuleWhitelist,
+  IdentifierRole,
   RestoreResult,
   StrippedItem,
   StrippedItemType,
   SymbolMap,
 } from './types.js'
+import {
+  classKeywordsFor,
+  commentSyntaxFor,
+  fnKeywordsFor,
+  isKeyword,
+  resolveLanguage,
+  type CommentSyntax,
+  type Language,
+  type LanguageOption,
+} from './languages.js'
+import { scanSecrets, type SecretFinding } from './secrets.js'
+import { PRODUCT_NAME } from './product.js'
 
-// ─── Keyword exclusion set ───────────────────────────────────────────────────
+// Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
+// helpers default to TypeScript so existing callers keep their exact behavior;
+// `anonymize` resolves the language from its options (auto-detecting by default).
+const DEFAULT_LANGUAGE: Language = 'typescript'
 
-const KEYWORDS = new Set<string>([
-  // JS/TS reserved words
-  'abstract',
-  'any',
-  'as',
-  'asserts',
-  'async',
-  'await',
-  'bigint',
-  'boolean',
-  'break',
-  'case',
-  'catch',
-  'class',
-  'const',
-  'constructor',
-  'continue',
-  'declare',
-  'default',
-  'delete',
-  'do',
-  'else',
-  'enum',
-  'export',
-  'extends',
-  'false',
-  'finally',
-  'for',
-  'from',
-  'function',
-  'get',
-  'if',
-  'implements',
-  'import',
-  'in',
-  'infer',
-  'instanceof',
-  'interface',
-  'is',
-  'keyof',
-  'let',
-  'module',
-  'namespace',
-  'never',
-  'new',
-  'null',
-  'number',
-  'object',
-  'of',
-  'override',
-  'package',
-  'private',
-  'protected',
-  'public',
-  'readonly',
-  'return',
-  'satisfies',
-  'set',
-  'static',
-  'string',
-  'super',
-  'switch',
-  'symbol',
-  'this',
-  'throw',
-  'true',
-  'try',
-  'type',
-  'typeof',
-  'undefined',
-  'unique',
-  'unknown',
-  'using',
-  'var',
-  'void',
-  'while',
-  'with',
-  'yield',
-  // Node / browser globals
-  'Buffer',
-  'Error',
-  'JSON',
-  'Map',
-  'Math',
-  'Object',
-  'Promise',
-  'Proxy',
-  'Reflect',
-  'RegExp',
-  'Set',
-  'Symbol',
-  'WeakMap',
-  'WeakSet',
-  'Array',
-  'Boolean',
-  'Date',
-  'Function',
-  'Number',
-  'String',
-  'TypeError',
-  'RangeError',
-  'console',
-  'process',
-  'require',
-  'module',
-  'exports',
-  'global',
-  'window',
-  'document',
-  'navigator',
-  'location',
-  'setTimeout',
-  'setInterval',
-  'clearTimeout',
-  'clearInterval',
-  'fetch',
-  'URL',
-  'URLSearchParams',
-  'FormData',
-  'Blob',
-  'File',
-  'FileReader',
-  'Event',
-  'EventTarget',
-  'CustomEvent',
-  'AbortController',
-  'AbortSignal',
-  'Headers',
-  'Request',
-  'Response',
-  'TextEncoder',
-  'TextDecoder',
-  'crypto',
-  'performance',
-  'queueMicrotask',
-  'structuredClone',
-  'parseInt',
-  'parseFloat',
-  'isNaN',
-  'isFinite',
-  'encodeURI',
-  'decodeURI',
-  'encodeURIComponent',
-  'decodeURIComponent',
-  'atob',
-  'btoa',
-  // React
-  'React',
-  'Component',
-  'Fragment',
-  'StrictMode',
-  'Suspense',
-  'useState',
-  'useEffect',
-  'useRef',
-  'useCallback',
-  'useMemo',
-  'useContext',
-  'useReducer',
-  'useLayoutEffect',
-  'useImperativeHandle',
-  'useDebugValue',
-  'useId',
-  'createContext',
-  'createElement',
-  'forwardRef',
-  'memo',
-  'lazy',
-  'startTransition',
-  'children',
-  'props',
-  'state',
-  'render',
-  'key',
-  'ref',
-  'defaultProps',
-  'displayName',
-  // Express / Node HTTP
-  'express',
-  'router',
-  'app',
-  'req',
-  'res',
-  'next',
-  'err',
-  'ctx',
-  'db',
-  'sql',
-  // Common short/generic names
-  'args',
-  'cb',
-  'fn',
-  'val',
-  'obj',
-  'arr',
-  'str',
-  'num',
-  'idx',
-  'len',
-  'msg',
-  'url',
-  'env',
-  'cfg',
-  'opts',
-  'data',
-  'body',
-  'head',
-  'tail',
-  'node',
-  'root',
-  'path',
-  'file',
-  'dir',
-  'tmp',
-  'buf',
-  'raw',
-  'out',
-  'log',
-  'row',
-  'col',
-  'pos',
-  'end',
-  'start',
-  'stop',
-  'done',
-  'ok',
-  'id',
-  'ts',
-  'ms',
-  // Standard-library method names — public API, not private identifiers. Masking
-  // them strips structural signal a downstream AI needs (e.g. that a loop is a
-  // `.forEach` with an un-awaited async callback), for no privacy gain.
-  // Array
-  'forEach',
-  'map',
-  'filter',
-  'reduce',
-  'reduceRight',
-  'find',
-  'findIndex',
-  'findLast',
-  'findLastIndex',
-  'some',
-  'every',
-  'includes',
-  'indexOf',
-  'lastIndexOf',
-  'push',
-  'pop',
-  'shift',
-  'unshift',
-  'slice',
-  'splice',
-  'concat',
-  'flat',
-  'flatMap',
-  'fill',
-  'reverse',
-  'sort',
-  'join',
-  // Map / Set / collection
-  'has',
-  'add',
-  'clear',
-  'keys',
-  'values',
-  'entries',
-  'size',
-  // Promise
-  'then',
-  'catch',
-  'finally',
-  'all',
-  'race',
-  'allSettled',
-  'resolve',
-  'reject',
-  // String
-  'split',
-  'trim',
-  'trimStart',
-  'trimEnd',
-  'replace',
-  'replaceAll',
-  'toLowerCase',
-  'toUpperCase',
-  'startsWith',
-  'endsWith',
-  'padStart',
-  'padEnd',
-  'repeat',
-  'charAt',
-  'substring',
-  'toString',
-  'valueOf',
-  // Object / JSON / Number
-  'assign',
-  'freeze',
-  'parse',
-  'stringify',
-  'toFixed',
-  'hasOwnProperty',
-])
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -329,16 +41,79 @@ function escapeRegex(s: string): string {
 // are an intentional privacy measure and to answer normally.
 
 export const AI_PREAMBLE = [
-  'The code below was processed by Veilio: real identifiers have been replaced',
-  'with privacy placeholders such as __P1__, __P2__ (and similar). This is a',
+  `The code below was processed by ${PRODUCT_NAME}: real identifiers have been replaced`,
+  'with privacy placeholders such as __CLS__1, __FN__2, __P1__ (and similar). This is a',
   'deliberate anonymization step, not obfuscation — please do not refuse on those',
   'grounds. Treat each placeholder as an ordinary name, keep every placeholder',
   'spelled exactly as-is in your reply, and otherwise answer as normal.',
 ].join(' ')
 
-/** Prepend the downstream-AI preamble to anonymized code, ready to paste. */
-export function withAiPreamble(anonymized: string): string {
-  return `${AI_PREAMBLE}\n\n${anonymized}`
+const ROLE_LEGEND_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ['__CLS__', 'class or type names'],
+  ['__FN__', 'function or method names'],
+  ['__VAR__', 'variable or parameter names'],
+  ['__PKG__', 'package or module names'],
+  ['__STR__', 'words that appeared inside string literals'],
+]
+
+/** Human/AI-readable summary of what the placeholder bases in `map` mean.
+ *  Derived purely from placeholder KEYS — real names never appear.
+ *  Pass `snippet` to scope the legend to the placeholders actually present
+ *  in it (used by withAiPreamble and the UI legend toggle). */
+export function buildLegend(map: SymbolMap, snippet?: string): string {
+  let scoped = map
+  if (snippet !== undefined) {
+    const present = new Set<string>()
+    const scan = new RegExp(PLACEHOLDER_SCAN)
+    let m: RegExpExecArray | null
+    while ((m = scan.exec(snippet)) !== null) present.add(m[0])
+    scoped = {}
+    for (const key of Object.keys(map)) {
+      if (present.has(key)) scoped[key] = map[key]
+    }
+  }
+  const baseCounts = new Map<string, number>()
+  let plainCount = 0
+  for (const ph of Object.keys(scoped)) {
+    if (/^__P\d+__$/.test(ph)) {
+      plainCount++
+      continue
+    }
+    const m = /^(__[A-Z][A-Z0-9_]*__)\d+$/.exec(ph)
+    if (m) baseCounts.set(m[1], (baseCounts.get(m[1]) ?? 0) + 1)
+  }
+  if (baseCounts.size === 0 && plainCount === 0) return ''
+
+  const parts: string[] = []
+  for (const [base, label] of ROLE_LEGEND_LABELS) {
+    const count = baseCounts.get(base)
+    if (count !== undefined) {
+      parts.push(`${base}* are ${label} (${count})`)
+      baseCounts.delete(base)
+    }
+  }
+  for (const [base, count] of baseCounts) {
+    parts.push(`${base}* are project-specific identifiers (${count})`)
+  }
+  if (plainCount > 0) parts.push(`__P<n>__ are opaque identifiers (${plainCount})`)
+  return `Placeholder legend: ${parts.join('; ')}.`
+}
+
+/** Matches placeholder-shaped tokens as whole words, used both to detect
+ *  placeholders already in source (anonymize) and to scope a legend to the
+ *  placeholders actually present in a snippet (withAiPreamble). */
+const PLACEHOLDER_SCAN = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
+
+/** Prepend the downstream-AI preamble (and, when a map is given, a placeholder
+ *  legend) to anonymized code, ready to paste. The legend is scoped to the
+ *  placeholders actually present in `anonymized` — not the whole map — so a
+ *  one-line snippet doesn't advertise the full size (or namespace) of a
+ *  larger (e.g. team-shared) map it happens to be a subset of. */
+export function withAiPreamble(anonymized: string, map?: SymbolMap): string {
+  const legend = map ? buildLegend(map, anonymized) : ''
+  return legend
+    ? `${AI_PREAMBLE}\n${legend}\n\n${anonymized}`
+    : `${AI_PREAMBLE}\n\n${anonymized}`
 }
 
 // ─── Comment-aware scanning ──────────────────────────────────────────────────
@@ -352,13 +127,41 @@ export function withAiPreamble(anonymized: string): string {
 // templates stay in non-comment segments (still maskable). This is a lexical
 // scanner, not a full parser: a `/` always reads as division, so the rare case
 // of a regex literal containing a quote (e.g. `/'/`) is not handled.
+//
+// Comment syntax is per-language. Assuming `//` everywhere meant Python and
+// Ruby `#` comments were scanned as code and their prose masked into
+// ciphertext — the precise failure this exemption exists to prevent.
 
 interface Segment {
   text: string
   isComment: boolean
+  isString?: boolean
+  isModuleSpecifier?: boolean
 }
 
-function tokenizeForMasking(code: string): Segment[] {
+/** True when the string starting at `quotePos` is a module specifier:
+ *  preceded (ignoring whitespace) by the word `from`/`import`, or by `(`
+ *  belonging to `require(...)` / `import(...)`. */
+function isModuleSpecifierContext(code: string, quotePos: number): boolean {
+  let j = quotePos - 1
+  while (j >= 0 && /\s/.test(code[j])) j--
+  if (j < 0) return false
+  if (code[j] === '(') {
+    let k = j - 1
+    while (k >= 0 && /\s/.test(code[k])) k--
+    const end = k + 1
+    while (k >= 0 && /[a-zA-Z0-9_$]/.test(code[k])) k--
+    const word = code.slice(k + 1, end)
+    return word === 'require' || word === 'import'
+  }
+  const end = j + 1
+  while (j >= 0 && /[a-zA-Z0-9_$]/.test(code[j])) j--
+  const word = code.slice(j + 1, end)
+  return word === 'from' || word === 'import'
+}
+
+function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE): Segment[] {
+  const syntax: CommentSyntax = commentSyntaxFor(language)
   const segments: Segment[] = []
   let buf = ''
   let bufIsComment = false
@@ -369,39 +172,64 @@ function tokenizeForMasking(code: string): Segment[] {
     bufIsComment = nextIsComment
   }
 
+  const startsWithAt = (token: string, at: number): boolean => code.startsWith(token, at)
+
   let i = 0
   const n = code.length
   while (i < n) {
     const c = code[i]
-    const next = code[i + 1]
 
-    if (c === '/' && next === '/') {
+    // Triple-quoted prose (Python docstrings) is documentation, not data —
+    // treat it as a comment so its sentences survive intact.
+    const doc = syntax.docstring.find((d) => startsWithAt(d, i))
+    if (doc !== undefined) {
+      flush(true)
+      buf += doc
+      i += doc.length
+      while (i < n && !startsWithAt(doc, i)) buf += code[i++]
+      if (i < n) {
+        buf += doc
+        i += doc.length
+      }
+      flush(false)
+      continue
+    }
+
+    const lineOpener = syntax.line.find((o) => startsWithAt(o, i))
+    if (lineOpener !== undefined) {
       flush(true)
       while (i < n && code[i] !== '\n') buf += code[i++]
       flush(false)
       continue
     }
-    if (c === '/' && next === '*') {
+
+    const blockPair = syntax.block.find(([open]) => startsWithAt(open, i))
+    if (blockPair !== undefined) {
+      const [open, close] = blockPair
       flush(true)
-      buf += '/*'
-      i += 2
-      while (i < n && !(code[i] === '*' && code[i + 1] === '/')) buf += code[i++]
+      buf += open
+      i += open.length
+      while (i < n && !startsWithAt(close, i)) buf += code[i++]
       if (i < n) {
-        buf += '*/'
-        i += 2
+        buf += close
+        i += close.length
       }
       flush(false)
       continue
     }
-    if (c === '"' || c === "'" || c === '`') {
-      // Consume the whole string/template literal into the (maskable) buffer,
-      // honoring backslash escapes so an escaped quote doesn't end it early.
-      buf += c
+
+    if (syntax.quotes.includes(c)) {
+      // Emit the whole string/template literal as its own tagged segment so
+      // role classification can tell string words and module specifiers apart.
+      // Still maskable (isComment: false); escape handling unchanged.
+      flush(false)
+      const isModuleSpecifier = isModuleSpecifierContext(code, i)
+      let str = c
       i++
       while (i < n) {
-        buf += code[i]
+        str += code[i]
         if (code[i] === '\\') {
-          if (i + 1 < n) buf += code[++i]
+          if (i + 1 < n) str += code[++i]
           i++
           continue
         }
@@ -411,6 +239,7 @@ function tokenizeForMasking(code: string): Segment[] {
         }
         i++
       }
+      segments.push({ text: str, isComment: false, isString: true, isModuleSpecifier })
       continue
     }
 
@@ -423,23 +252,122 @@ function tokenizeForMasking(code: string): Segment[] {
 
 /** Replace comment characters with spaces (newlines kept) so identifier
  *  extraction skips comments while preserving token boundaries and line counts. */
-function blankComments(code: string): string {
-  return tokenizeForMasking(code)
+function blankComments(code: string, language: Language = DEFAULT_LANGUAGE): string {
+  return tokenizeForMasking(code, language)
     .map((s) => (s.isComment ? s.text.replace(/[^\n]/g, ' ') : s.text))
     .join('')
 }
 
+// ─── Role classification ─────────────────────────────────────────────────────
+//
+// Lexical, per-occurrence role detection. An identifier seen in several roles
+// takes the highest-priority one. Mislabels are cheap: restore is format-
+// agnostic, and a wrong role still carries more signal than an opaque __P<n>__.
+
+const ROLE_PRIORITY: Record<IdentifierRole, number> = {
+  class: 4,
+  function: 3,
+  package: 2,
+  variable: 1,
+  string: 0,
+}
+
+/** Placeholder base per role — these ride the same named-counter machinery
+ *  as custom replace rules (__CLS__1, __FN__2, ...). */
+export const ROLE_BASES: Record<IdentifierRole, string> = {
+  class: '__CLS__',
+  function: '__FN__',
+  package: '__PKG__',
+  variable: '__VAR__',
+  string: '__STR__',
+}
+
+/** The identifier-shaped word ending right before `pos` (only whitespace between
+ *  it and `pos`), or undefined if there isn't one. Mirrors the backward scan in
+ *  isModuleSpecifierContext; index-based so it never copies the source string. */
+function precedingWord(text: string, pos: number): string | undefined {
+  let j = pos - 1
+  while (j >= 0 && /\s/.test(text[j])) j--
+  if (j < 0) return undefined
+  const end = j + 1
+  while (j >= 0 && /[a-zA-Z0-9_$]/.test(text[j])) j--
+  const word = text.slice(j + 1, end)
+  if (word.length === 0 || !/[a-zA-Z_$]/.test(word[0])) return undefined
+  return word
+}
+
+/** True when the next non-whitespace character at/after `pos` is `(` — used to
+ *  detect call-site identifiers (`foo(...)`) without slicing the source string. */
+function isCallParen(text: string, pos: number): boolean {
+  let j = pos
+  while (j < text.length && /\s/.test(text[j])) j++
+  return text[j] === '('
+}
+
+/** Classify every identifier-shaped token (keywords excluded in code context) by
+ *  its strongest observed role. `language` selects the keyword and role-hint
+ *  sets; it defaults to TypeScript so standalone callers keep prior behavior. */
+export function classifyIdentifiers(
+  code: string,
+  language: Language = DEFAULT_LANGUAGE
+): Record<string, IdentifierRole> {
+  const roles: Record<string, IdentifierRole> = {}
+  const classKeywords = classKeywordsFor(language)
+  const fnKeywords = fnKeywordsFor(language)
+  const bump = (name: string, role: IdentifierRole): void => {
+    const current = roles[name]
+    if (current === undefined || ROLE_PRIORITY[role] > ROLE_PRIORITY[current]) {
+      roles[name] = role
+    }
+  }
+
+  for (const seg of tokenizeForMasking(code, language)) {
+    if (seg.isComment) continue
+    const regex = /(?<![a-zA-Z0-9_$])([a-zA-Z_$][a-zA-Z0-9_$]*)(?![a-zA-Z0-9_$])/g
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(seg.text)) !== null) {
+      const name = match[1]
+      if (seg.isString) {
+        bump(name, seg.isModuleSpecifier ? 'package' : 'string')
+        continue
+      }
+      if (isKeyword(name, language)) continue
+      const prevWord = precedingWord(seg.text, match.index)
+      if (prevWord !== undefined && classKeywords.has(prevWord)) {
+        bump(name, 'class')
+      } else if (
+        (prevWord !== undefined && fnKeywords.has(prevWord)) ||
+        isCallParen(seg.text, regex.lastIndex)
+      ) {
+        bump(name, 'function')
+      } else if (/^[A-Z]/.test(name) && /[a-z]/.test(name)) {
+        bump(name, 'class') // PascalCase fallback
+      } else {
+        bump(name, 'variable')
+      }
+    }
+  }
+  return roles
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
+
+/** Matches our placeholder shapes: __P1__, __CLS__2, __APIKEY__3, __API_KEY__7,
+ *  and bases without a trailing number (__DEV__). Skipped during extraction so
+ *  already-anonymized code is never re-masked. */
+const PLACEHOLDER_TOKEN = /^__[A-Z][A-Z0-9_]*__\d*$/
 
 /**
  * Extract qualifying identifiers from source code, sorted longest-first.
- * Filters out keywords, ALL_CAPS constants, and names ≤ 2 chars.
+ * Filters out keywords, ALL_CAPS constants, placeholder-shaped tokens, and names ≤ 2 chars.
+ * `language` selects the keyword set; it defaults to TypeScript so standalone
+ * callers keep prior behavior.
  */
-export function extractIdentifiers(code: string): string[] {
+export function extractIdentifiers(code: string, language: Language = DEFAULT_LANGUAGE): string[] {
   const seen = new Set<string>()
   // Blank out comments first so their prose words are never extracted; strings
   // are left intact (identifiers in them are masked on purpose).
-  const scannable = blankComments(code)
+  const scannable = blankComments(code, language)
   // `\b` doesn't treat `$` as a word char, so use explicit negative look-around
   // to capture identifiers like `$myStore` while avoiding partial matches.
   const regex = /(?<![a-zA-Z0-9_$])([a-zA-Z_$][a-zA-Z0-9_$]*)(?![a-zA-Z0-9_$])/g
@@ -447,7 +375,12 @@ export function extractIdentifiers(code: string): string[] {
 
   while ((match = regex.exec(scannable)) !== null) {
     const name = match[1]
-    if (name.length > 2 && !KEYWORDS.has(name) && !/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    if (
+      name.length > 2 &&
+      !isKeyword(name, language) &&
+      !/^[A-Z][A-Z0-9_]*$/.test(name) &&
+      !PLACEHOLDER_TOKEN.test(name)
+    ) {
       seen.add(name)
     }
   }
@@ -463,6 +396,16 @@ function safeMatch(pattern: string, name: string): boolean {
   }
 }
 
+function isAnonymizeOptions(o: AnonymizeOptions | SymbolMap): o is AnonymizeOptions {
+  return (
+    'existingMap' in o ||
+    'rules' in o ||
+    'style' in o ||
+    'language' in o ||
+    'secrets' in o
+  )
+}
+
 function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
   for (const v of Object.values(o)) {
     if (typeof v !== 'string') return false
@@ -471,7 +414,7 @@ function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
 }
 
 /**
- * Anonymize source code, replacing real identifiers with __P1__, __P2__, etc.
+ * Anonymize source code, replacing real identifiers with role-typed placeholders (__CLS__1, __FN__2, ...) by default, or __P1__, __P2__ with style: 'plain'.
  * Pass an existing map to continue numbering from a previous session.
  *
  * Pro-tier custom rules (sub-project #4a):
@@ -480,16 +423,32 @@ function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
  * - Replace rules (type='replace'): identifiers matching the pattern get a
  *   named placeholder (e.g., __APIKEY__1, __APIKEY__2) instead of __P<n>__.
  * Precedence: whitelist → replace (first match by sort_order) → default.
+ *
+ * Credentials are handled before identifier masking. Under the default
+ * `secrets: 'redact'` policy, critical/high findings are replaced with
+ * `__REDACTED_*__` tokens that are never written to the map — so `restore()`
+ * cannot bring a live key back, and a synced map can never carry one.
  */
 export function anonymize(
   code: string,
   options: AnonymizeOptions | SymbolMap = {}
 ): AnonymizeResult {
-  const { existingMap, rules } = isSymbolMap(options)
-    ? { existingMap: options, rules: [] as CustomRule[] }
-    : { existingMap: options.existingMap ?? {}, rules: options.rules ?? [] }
+  // Option-key check FIRST: { style: 'plain' } has only string values and
+  // would otherwise be misread as a SymbolMap by the legacy positional check.
+  const opts: AnonymizeOptions =
+    isAnonymizeOptions(options) ? options : isSymbolMap(options) ? { existingMap: options } : options
+  const existingMap = opts.existingMap ?? {}
+  const rules = opts.rules ?? []
+  const style = opts.style ?? 'roles'
+  const language = resolveLanguage(code, opts.language)
 
-  const identifiers = extractIdentifiers(code)
+  // Redact BEFORE extraction: a credential that reaches extractIdentifiers
+  // becomes a reversible map value, which is worse than leaving it alone.
+  const scan = scanSecrets(code, opts.secrets ?? 'redact')
+  const source = scan.code
+
+  const identifiers = extractIdentifiers(source, language)
+  const roleOf = style === 'roles' ? classifyIdentifiers(source, language) : {}
 
   // Find the highest __P<n>__ counter already in use AND seed namedCounters
   // for any pre-existing named placeholders (e.g. __APIKEY__3 → counter at 3
@@ -515,6 +474,34 @@ export function anonymize(
         namedCounters[base] = n
       }
     }
+  }
+
+  // Placeholder-shaped tokens already present in the RAW code (preserved by the
+  // idempotency guard in extractIdentifiers/PLACEHOLDER_TOKEN) also need to bump
+  // the counters — otherwise a fresh identifier can be assigned a placeholder
+  // that collides with one already in the source (comments included: restore()
+  // rewrites placeholders in comments too, so a stray __CLS__1 in a comment is
+  // just as much a collision risk as one in code).
+  const codePlaceholderRegex =
+    /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
+  let codeMatch: RegExpExecArray | null
+  while ((codeMatch = codePlaceholderRegex.exec(source)) !== null) {
+    const token = codeMatch[0]
+    const plainMatch = token.match(/^__P(\d+)__$/)
+    if (plainMatch) {
+      const n = parseInt(plainMatch[1], 10)
+      if (!isNaN(n) && n > counter) counter = n
+      continue
+    }
+    const namedMatch = token.match(/^(__[A-Z][A-Z0-9_]*__)(\d+)$/)
+    if (namedMatch) {
+      const [, base, nStr] = namedMatch
+      const n = parseInt(nStr, 10)
+      if (!isNaN(n) && n > (namedCounters[base] ?? 0)) {
+        namedCounters[base] = n
+      }
+    }
+    // Digitless tokens (__DEV__) carry no counter to bump.
   }
 
   const map: SymbolMap = { ...existingMap }
@@ -550,11 +537,20 @@ export function anonymize(
       continue
     }
 
-    // 3. Default: existing __P<n>__ numbering
-    counter++
-    const ph = `__P${counter}__`
-    map[ph] = name
-    reverseExisting[name] = ph
+    // 3. Default: role-typed placeholder ('roles') or legacy __P<n>__ ('plain')
+    if (style === 'roles') {
+      const base = ROLE_BASES[roleOf[name] ?? 'variable']
+      const num = (namedCounters[base] ?? 0) + 1
+      namedCounters[base] = num
+      const ph = `${base}${num}`
+      map[ph] = name
+      reverseExisting[name] = ph
+    } else {
+      counter++
+      const ph = `__P${counter}__`
+      map[ph] = name
+      reverseExisting[name] = ph
+    }
   }
 
   // Substitute longest-first (identifiers already sorted by extractIdentifiers).
@@ -574,11 +570,17 @@ export function anonymize(
     return text
   }
 
-  const anonymized = tokenizeForMasking(code)
+  const anonymized = tokenizeForMasking(source, language)
     .map((s) => (s.isComment ? s.text : substitute(s.text)))
     .join('')
 
-  return { anonymized, map, identifierCount: Object.keys(map).length }
+  return {
+    anonymized,
+    map,
+    identifierCount: Object.keys(map).length,
+    language,
+    secrets: scan.findings,
+  }
 }
 
 /**

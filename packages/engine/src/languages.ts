@@ -1,0 +1,661 @@
+// Per-language keyword sets, comment syntax, and heuristic detection.
+//
+// The engine masks every identifier-shaped word it does not recognise. That
+// makes the keyword set load-bearing: anything missing from it gets masked, and
+// masking a language's reserved words (`func`, `def`, `nil`, `struct`) produces
+// output no model can read as source code. One JS/TS set therefore silently
+// broke every other language.
+//
+// Composition is `COMMON ∪ LANGUAGE_KEYWORDS[lang]`. COMMON ∪ TYPESCRIPT is
+// exactly the set the engine used before this module existed, so JS/TS callers
+// see no change.
+
+export type Language =
+  | 'typescript'
+  | 'python'
+  | 'go'
+  | 'java'
+  | 'csharp'
+  | 'rust'
+  | 'ruby'
+  | 'php'
+  | 'c'
+  | 'sql'
+
+/** Languages the engine can be pointed at, plus `auto` for detection. */
+export type LanguageOption = Language | 'auto'
+
+export const LANGUAGES: readonly Language[] = [
+  'typescript',
+  'python',
+  'go',
+  'java',
+  'csharp',
+  'rust',
+  'ruby',
+  'php',
+  'c',
+  'sql',
+]
+
+/** Display names for UI surfaces. */
+export const LANGUAGE_LABELS: Record<Language, string> = {
+  typescript: 'TypeScript / JavaScript',
+  python: 'Python',
+  go: 'Go',
+  java: 'Java / Kotlin',
+  csharp: 'C#',
+  rust: 'Rust',
+  ruby: 'Ruby',
+  php: 'PHP',
+  c: 'C / C++',
+  sql: 'SQL',
+}
+
+// ─── Common keywords ─────────────────────────────────────────────────────────
+//
+// Generic short names and standard-library method names. These are public API
+// or noise in every language — masking them strips structural signal a
+// downstream AI needs (e.g. that a loop is a `.forEach` with an un-awaited
+// async callback) for no privacy gain.
+
+const COMMON = [
+  // Common short/generic names
+  'args', 'cb', 'fn', 'val', 'obj', 'arr', 'str', 'num', 'idx', 'len', 'msg',
+  'url', 'env', 'cfg', 'opts', 'data', 'body', 'head', 'tail', 'node', 'root',
+  'path', 'file', 'dir', 'tmp', 'buf', 'raw', 'out', 'log', 'row', 'col',
+  'pos', 'end', 'start', 'stop', 'done', 'ok', 'id', 'ts', 'ms',
+  // Array
+  'forEach', 'map', 'filter', 'reduce', 'reduceRight', 'find', 'findIndex',
+  'findLast', 'findLastIndex', 'some', 'every', 'includes', 'indexOf',
+  'lastIndexOf', 'push', 'pop', 'shift', 'unshift', 'slice', 'splice',
+  'concat', 'flat', 'flatMap', 'fill', 'reverse', 'sort', 'join',
+  // Map / Set / collection
+  'has', 'add', 'clear', 'keys', 'values', 'entries', 'size',
+  // Promise
+  'then', 'catch', 'finally', 'all', 'race', 'allSettled', 'resolve', 'reject',
+  // String
+  'split', 'trim', 'trimStart', 'trimEnd', 'replace', 'replaceAll',
+  'toLowerCase', 'toUpperCase', 'startsWith', 'endsWith', 'padStart',
+  'padEnd', 'repeat', 'charAt', 'substring', 'toString', 'valueOf',
+  // Object / JSON / Number
+  'assign', 'freeze', 'parse', 'stringify', 'toFixed', 'hasOwnProperty',
+]
+
+// ─── Per-language keywords ───────────────────────────────────────────────────
+
+const TYPESCRIPT = [
+  // JS/TS reserved words
+  'abstract', 'any', 'as', 'asserts', 'async', 'await', 'bigint', 'boolean',
+  'break', 'case', 'catch', 'class', 'const', 'constructor', 'continue',
+  'declare', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends',
+  'false', 'finally', 'for', 'from', 'function', 'get', 'if', 'implements',
+  'import', 'in', 'infer', 'instanceof', 'interface', 'is', 'keyof', 'let',
+  'module', 'namespace', 'never', 'new', 'null', 'number', 'object', 'of',
+  'override', 'package', 'private', 'protected', 'public', 'readonly',
+  'return', 'satisfies', 'set', 'static', 'string', 'super', 'switch',
+  'symbol', 'this', 'throw', 'true', 'try', 'type', 'typeof', 'undefined',
+  'unique', 'unknown', 'using', 'var', 'void', 'while', 'with', 'yield',
+  // Node / browser globals
+  'Buffer', 'Error', 'JSON', 'Map', 'Math', 'Object', 'Promise', 'Proxy',
+  'Reflect', 'RegExp', 'Set', 'Symbol', 'WeakMap', 'WeakSet', 'Array',
+  'Boolean', 'Date', 'Function', 'Number', 'String', 'TypeError',
+  'RangeError', 'console', 'process', 'require', 'module', 'exports',
+  'global', 'window', 'document', 'navigator', 'location', 'setTimeout',
+  'setInterval', 'clearTimeout', 'clearInterval', 'fetch', 'URL',
+  'URLSearchParams', 'FormData', 'Blob', 'File', 'FileReader', 'Event',
+  'EventTarget', 'CustomEvent', 'AbortController', 'AbortSignal', 'Headers',
+  'Request', 'Response', 'TextEncoder', 'TextDecoder', 'crypto',
+  'performance', 'queueMicrotask', 'structuredClone', 'parseInt',
+  'parseFloat', 'isNaN', 'isFinite', 'encodeURI', 'decodeURI',
+  'encodeURIComponent', 'decodeURIComponent', 'atob', 'btoa',
+  // React
+  'React', 'Component', 'Fragment', 'StrictMode', 'Suspense', 'useState',
+  'useEffect', 'useRef', 'useCallback', 'useMemo', 'useContext', 'useReducer',
+  'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+  'createContext', 'createElement', 'forwardRef', 'memo', 'lazy',
+  'startTransition', 'children', 'props', 'state', 'render', 'key', 'ref',
+  'defaultProps', 'displayName',
+  // Express / Node HTTP
+  'express', 'router', 'app', 'req', 'res', 'next', 'err', 'ctx', 'db', 'sql',
+]
+
+const PYTHON = [
+  // Reserved words
+  'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+  'def', 'del', 'elif', 'else', 'except', 'False', 'finally', 'for', 'from',
+  'global', 'if', 'import', 'in', 'is', 'lambda', 'None', 'nonlocal', 'not',
+  'or', 'pass', 'raise', 'return', 'True', 'try', 'while', 'with', 'yield',
+  'match', 'case',
+  // Conventional names
+  'self', 'cls', 'super', 'args', 'kwargs',
+  // Builtins and stdlib types
+  'abs', 'all', 'any', 'bool', 'bytes', 'bytearray', 'callable', 'chr',
+  'dict', 'dir', 'divmod', 'enumerate', 'eval', 'filter', 'float', 'format',
+  'frozenset', 'getattr', 'hasattr', 'hash', 'hex', 'input', 'int',
+  'isinstance', 'issubclass', 'iter', 'len', 'list', 'map', 'max', 'min',
+  'next', 'object', 'oct', 'open', 'ord', 'pow', 'print', 'property', 'range',
+  'repr', 'reversed', 'round', 'set', 'setattr', 'slice', 'sorted',
+  'staticmethod', 'classmethod', 'str', 'sum', 'tuple', 'type', 'vars', 'zip',
+  // Common exceptions
+  'Exception', 'BaseException', 'ValueError', 'TypeError', 'KeyError',
+  'IndexError', 'AttributeError', 'RuntimeError', 'StopIteration',
+  'NotImplementedError', 'FileNotFoundError', 'ZeroDivisionError',
+  'OSError', 'IOError', 'ImportError', 'AssertionError',
+  // Typing / very common stdlib modules
+  'Optional', 'Union', 'List', 'Dict', 'Tuple', 'Any', 'Callable', 'Iterable',
+  'Iterator', 'Sequence', 'Mapping', 'TypeVar', 'Generic', 'Literal',
+  'Annotated', 'Final', 'Protocol', 'dataclass', 'field',
+  'os', 'sys', 're', 'json', 'math', 'time', 'datetime', 'typing',
+  'logging', 'asyncio', 'pathlib', 'collections', 'itertools', 'functools',
+]
+
+const GO = [
+  // Reserved words
+  'break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else',
+  'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface',
+  'map', 'package', 'range', 'return', 'select', 'struct', 'switch', 'type',
+  'var',
+  // Predeclared types and values
+  'bool', 'byte', 'complex64', 'complex128', 'error', 'float32', 'float64',
+  'int', 'int8', 'int16', 'int32', 'int64', 'rune', 'string', 'uint',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uintptr', 'any', 'comparable',
+  'true', 'false', 'iota', 'nil',
+  // Builtins
+  'append', 'cap', 'close', 'complex', 'copy', 'delete', 'imag', 'len',
+  'make', 'new', 'panic', 'print', 'println', 'real', 'recover', 'min', 'max',
+  // Ubiquitous stdlib packages and idioms
+  'fmt', 'errors', 'strings', 'strconv', 'context', 'sync', 'time', 'http',
+  'json', 'io', 'os', 'sort', 'bytes', 'testing', 'Sprintf', 'Errorf',
+  'Printf', 'Println', 'Context', 'Time', 'Duration', 'WaitGroup', 'Mutex',
+  'err', 'ctx', 'ok',
+]
+
+const JAVA = [
+  // Reserved words (Java) plus Kotlin's distinct ones
+  'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char',
+  'class', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum',
+  'extends', 'final', 'finally', 'float', 'for', 'goto', 'if', 'implements',
+  'import', 'instanceof', 'int', 'interface', 'long', 'native', 'new',
+  'package', 'private', 'protected', 'public', 'return', 'short', 'static',
+  'strictfp', 'super', 'switch', 'synchronized', 'this', 'throw', 'throws',
+  'transient', 'try', 'void', 'volatile', 'while', 'record', 'sealed',
+  'permits', 'yield', 'var', 'true', 'false', 'null',
+  // Kotlin
+  'fun', 'val', 'when', 'object', 'companion', 'data', 'suspend', 'lateinit',
+  'init', 'internal', 'open', 'override', 'is', 'in', 'out', 'typealias',
+  // Core types and stdlib
+  'String', 'Integer', 'Long', 'Double', 'Float', 'Boolean', 'Character',
+  'Byte', 'Short', 'Object', 'Class', 'System', 'Math', 'List', 'ArrayList',
+  'Map', 'HashMap', 'Set', 'HashSet', 'Collection', 'Collections', 'Arrays',
+  'Optional', 'Stream', 'Exception', 'RuntimeException', 'Throwable',
+  'IllegalArgumentException', 'IllegalStateException', 'Override',
+  'Deprecated', 'SuppressWarnings', 'Comparable', 'Iterable', 'Thread',
+  'StringBuilder', 'BigDecimal', 'LocalDate', 'LocalDateTime', 'Unit',
+  'println', 'toString', 'equals', 'hashCode', 'main', 'length',
+]
+
+const CSHARP = [
+  // Reserved words
+  'abstract', 'as', 'base', 'bool', 'break', 'byte', 'case', 'catch', 'char',
+  'checked', 'class', 'const', 'continue', 'decimal', 'default', 'delegate',
+  'do', 'double', 'else', 'enum', 'event', 'explicit', 'extern', 'false',
+  'finally', 'fixed', 'float', 'for', 'foreach', 'goto', 'if', 'implicit',
+  'in', 'int', 'interface', 'internal', 'is', 'lock', 'long', 'namespace',
+  'new', 'null', 'object', 'operator', 'out', 'override', 'params',
+  'private', 'protected', 'public', 'readonly', 'ref', 'return', 'sbyte',
+  'sealed', 'short', 'sizeof', 'stackalloc', 'static', 'string', 'struct',
+  'switch', 'this', 'throw', 'true', 'try', 'typeof', 'uint', 'ulong',
+  'unchecked', 'unsafe', 'ushort', 'using', 'virtual', 'void', 'volatile',
+  'while', 'var', 'dynamic', 'async', 'await', 'yield', 'nameof', 'record',
+  'when', 'where', 'select', 'from', 'init', 'global', 'partial',
+  // Contextual accessor keywords — `{ get; set; }` is ubiquitous in C#.
+  'get', 'set', 'value', 'remove',
+  // BCL types
+  'System', 'Console', 'String', 'Int32', 'Int64', 'Double', 'Decimal',
+  'Boolean', 'DateTime', 'TimeSpan', 'Guid', 'List', 'Dictionary',
+  'IEnumerable', 'IList', 'IDictionary', 'Task', 'ValueTask', 'Exception',
+  'ArgumentException', 'ArgumentNullException', 'InvalidOperationException',
+  'NotImplementedException', 'Nullable', 'Func', 'Action', 'Linq',
+  'WriteLine', 'ToString', 'Equals', 'GetHashCode', 'Length', 'Count', 'Main',
+]
+
+const RUST = [
+  // Reserved words
+  'as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn',
+  'else', 'enum', 'extern', 'false', 'fn', 'for', 'if', 'impl', 'in', 'let',
+  'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return', 'self',
+  'Self', 'static', 'struct', 'super', 'trait', 'true', 'type', 'unsafe',
+  'use', 'where', 'while', 'union',
+  // Primitives and core types
+  'bool', 'char', 'f32', 'f64', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize',
+  'str', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'String', 'Vec',
+  'Option', 'Result', 'Some', 'None', 'Ok', 'Err', 'Box', 'Rc', 'Arc',
+  'RefCell', 'Cell', 'Mutex', 'RwLock', 'HashMap', 'HashSet', 'BTreeMap',
+  'Cow', 'Path', 'PathBuf',
+  // Traits and macros
+  'Clone', 'Copy', 'Debug', 'Default', 'Display', 'Drop', 'Eq', 'PartialEq',
+  'Ord', 'PartialOrd', 'Hash', 'From', 'Into', 'TryFrom', 'TryInto',
+  'Iterator', 'IntoIterator', 'Send', 'Sync', 'Sized', 'Fn', 'FnMut',
+  'FnOnce', 'println', 'print', 'eprintln', 'format', 'vec', 'panic',
+  'unwrap', 'expect', 'derive', 'todo', 'unimplemented', 'matches',
+  'collect', 'iter', 'into_iter', 'as_ref', 'as_str', 'to_string',
+]
+
+const RUBY = [
+  // Reserved words
+  'alias', 'and', 'begin', 'break', 'case', 'class', 'def', 'defined',
+  'do', 'else', 'elsif', 'end', 'ensure', 'false', 'for', 'if', 'in',
+  'module', 'next', 'nil', 'not', 'or', 'redo', 'rescue', 'retry', 'return',
+  'self', 'super', 'then', 'true', 'undef', 'unless', 'until', 'when',
+  'while', 'yield', 'lambda', 'proc',
+  // Core methods and types
+  'attr_accessor', 'attr_reader', 'attr_writer', 'require', 'require_relative',
+  'include', 'extend', 'prepend', 'puts', 'print', 'raise', 'loop', 'new',
+  'initialize', 'to_s', 'to_i', 'to_a', 'to_h', 'to_sym', 'each',
+  'each_with_index', 'select', 'reject', 'inject', 'nil?', 'empty?',
+  'String', 'Integer', 'Float', 'Array', 'Hash', 'Symbol', 'Struct',
+  'Exception', 'StandardError', 'ArgumentError', 'RuntimeError', 'Comparable',
+  'Enumerable', 'Kernel', 'Object', 'Module', 'Class', 'Proc', 'Range',
+]
+
+const PHP = [
+  // Reserved words
+  'abstract', 'and', 'array', 'as', 'break', 'callable', 'case', 'catch',
+  'class', 'clone', 'const', 'continue', 'declare', 'default', 'do', 'echo',
+  'else', 'elseif', 'empty', 'enddeclare', 'endfor', 'endforeach', 'endif',
+  'endswitch', 'endwhile', 'enum', 'extends', 'final', 'finally', 'fn',
+  'for', 'foreach', 'function', 'global', 'goto', 'if', 'implements',
+  'include', 'instanceof', 'insteadof', 'interface', 'isset', 'list',
+  'match', 'namespace', 'new', 'or', 'print', 'private', 'protected',
+  'public', 'readonly', 'require', 'return', 'static', 'switch', 'throw',
+  'trait', 'try', 'unset', 'use', 'var', 'while', 'xor', 'yield',
+  'true', 'false', 'null', 'int', 'float', 'bool', 'string', 'void',
+  'iterable', 'object', 'mixed', 'never', 'self', 'parent', 'this',
+  // Very common stdlib
+  'count', 'strlen', 'array_map', 'array_filter', 'array_merge', 'array_keys',
+  'array_values', 'implode', 'explode', 'sprintf', 'printf', 'json_encode',
+  'json_decode', 'in_array', 'is_array', 'is_null', 'var_dump', 'die',
+  'Exception', 'Throwable', 'ArrayObject', 'Closure', 'Generator', 'stdClass',
+]
+
+const C = [
+  // C reserved words
+  'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
+  'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline',
+  'int', 'long', 'register', 'restrict', 'return', 'short', 'signed',
+  'sizeof', 'static', 'struct', 'switch', 'typedef', 'union', 'unsigned',
+  'void', 'volatile', 'while', 'bool', 'true', 'false', 'NULL',
+  // Preprocessor directives — `#include` is the single most common line in C.
+  'include', 'define', 'undef', 'ifdef', 'ifndef', 'endif', 'elif', 'pragma',
+  'defined', 'line',
+  // C++ additions
+  'alignas', 'alignof', 'asm', 'catch', 'class', 'concept', 'constexpr',
+  'consteval', 'const_cast', 'decltype', 'delete', 'dynamic_cast',
+  'explicit', 'export', 'friend', 'mutable', 'namespace', 'new', 'noexcept',
+  'nullptr', 'operator', 'private', 'protected', 'public', 'reinterpret_cast',
+  'requires', 'static_assert', 'static_cast', 'template', 'this',
+  'thread_local', 'throw', 'try', 'typeid', 'typename', 'using', 'virtual',
+  // Standard library
+  'std', 'printf', 'sprintf', 'fprintf', 'scanf', 'malloc', 'calloc',
+  'realloc', 'free', 'memcpy', 'memset', 'strcpy', 'strncpy', 'strlen',
+  'strcmp', 'fopen', 'fclose', 'fread', 'fwrite', 'exit', 'main', 'argc',
+  'argv', 'size_t', 'ssize_t', 'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',
+  'int8_t', 'int16_t', 'int32_t', 'int64_t', 'FILE', 'string', 'vector',
+  'cout', 'cerr', 'cin', 'endl', 'unique_ptr', 'shared_ptr', 'nullptr_t',
+]
+
+const SQL = [
+  'select', 'from', 'where', 'insert', 'into', 'values', 'update', 'set',
+  'delete', 'create', 'alter', 'drop', 'table', 'view', 'index', 'join',
+  'inner', 'left', 'right', 'full', 'outer', 'cross', 'on', 'using',
+  'group', 'order', 'having', 'limit', 'offset', 'union', 'all', 'distinct',
+  'and', 'or', 'not', 'null', 'is', 'in', 'between', 'like', 'ilike',
+  'exists', 'case', 'when', 'then', 'else', 'end', 'as', 'asc', 'desc',
+  'primary', 'foreign', 'unique', 'references', 'constraint', 'default',
+  'check', 'cascade', 'with', 'recursive', 'returning', 'conflict',
+  'begin', 'commit', 'rollback', 'transaction', 'grant', 'revoke',
+  'int', 'integer', 'bigint', 'smallint', 'serial', 'text', 'varchar',
+  'char', 'boolean', 'date', 'timestamp', 'timestamptz', 'numeric',
+  'decimal', 'real', 'json', 'jsonb', 'uuid', 'array', 'count', 'sum',
+  'avg', 'min', 'max', 'coalesce', 'cast', 'now', 'nullif', 'true', 'false',
+]
+
+const RAW_KEYWORDS: Record<Language, string[]> = {
+  typescript: TYPESCRIPT,
+  python: PYTHON,
+  go: GO,
+  java: JAVA,
+  csharp: CSHARP,
+  rust: RUST,
+  ruby: RUBY,
+  php: PHP,
+  c: C,
+  sql: SQL,
+}
+
+/** SQL is case-insensitive in practice, so its keywords are matched lowercased. */
+const CASE_INSENSITIVE: ReadonlySet<Language> = new Set<Language>(['sql'])
+
+const KEYWORD_CACHE = new Map<Language, ReadonlySet<string>>()
+
+/** Words the engine must never mask for `language`: COMMON plus that language's
+ *  reserved words, built-in types, and ubiquitous stdlib names. */
+export function keywordsFor(language: Language): ReadonlySet<string> {
+  const cached = KEYWORD_CACHE.get(language)
+  if (cached) return cached
+  const set = new Set<string>(COMMON)
+  for (const word of RAW_KEYWORDS[language]) set.add(word)
+  KEYWORD_CACHE.set(language, set)
+  return set
+}
+
+/** True when `name` is a keyword in `language`. Handles SQL's case-insensitivity. */
+export function isKeyword(name: string, language: Language): boolean {
+  const set = keywordsFor(language)
+  if (set.has(name)) return true
+  return CASE_INSENSITIVE.has(language) && set.has(name.toLowerCase())
+}
+
+// ─── Role-classification hints ───────────────────────────────────────────────
+
+const BASE_CLASS_KEYWORDS = ['class', 'interface', 'enum', 'extends', 'implements', 'new']
+const BASE_FN_KEYWORDS = ['function', 'def', 'async']
+
+const EXTRA_CLASS_KEYWORDS: Partial<Record<Language, string[]>> = {
+  go: ['struct', 'type'],
+  rust: ['struct', 'trait', 'impl', 'enum', 'union'],
+  java: ['record', 'data', 'object', 'sealed'],
+  csharp: ['record', 'struct', 'namespace'],
+  c: ['struct', 'union', 'typedef', 'template'],
+  ruby: ['module'],
+  php: ['trait'],
+  python: ['dataclass'],
+}
+
+const EXTRA_FN_KEYWORDS: Partial<Record<Language, string[]>> = {
+  go: ['func'],
+  rust: ['fn'],
+  java: ['fun', 'suspend'],
+  php: ['fn'],
+  ruby: ['def'],
+  csharp: ['void', 'task'],
+}
+
+const CLASS_KW_CACHE = new Map<Language, ReadonlySet<string>>()
+const FN_KW_CACHE = new Map<Language, ReadonlySet<string>>()
+
+function cachedSet(
+  cache: Map<Language, ReadonlySet<string>>,
+  language: Language,
+  base: string[],
+  extra: Partial<Record<Language, string[]>>
+): ReadonlySet<string> {
+  const hit = cache.get(language)
+  if (hit) return hit
+  const set = new Set<string>([...base, ...(extra[language] ?? [])])
+  cache.set(language, set)
+  return set
+}
+
+/** Words that, immediately before an identifier, mark it as a type name. */
+export function classKeywordsFor(language: Language): ReadonlySet<string> {
+  return cachedSet(CLASS_KW_CACHE, language, BASE_CLASS_KEYWORDS, EXTRA_CLASS_KEYWORDS)
+}
+
+/** Words that, immediately before an identifier, mark it as a function name. */
+export function fnKeywordsFor(language: Language): ReadonlySet<string> {
+  return cachedSet(FN_KW_CACHE, language, BASE_FN_KEYWORDS, EXTRA_FN_KEYWORDS)
+}
+
+// ─── Comment syntax ──────────────────────────────────────────────────────────
+//
+// Comments are prose. Masking their words produces ciphertext that reads as
+// obfuscation and trips downstream-AI refusals — so the engine leaves comments
+// verbatim. That only works if it knows what a comment looks like: assuming
+// `//` everywhere means Python and Ruby `#` comments get masked as if they were
+// code, which is the exact failure the exemption exists to prevent.
+
+export interface CommentSyntax {
+  /** Line-comment openers, longest-first so `--` wins over a hypothetical `-`. */
+  line: readonly string[]
+  /** Block-comment delimiter pairs. */
+  block: readonly (readonly [string, string])[]
+  /** Triple-quoted prose (Python docstrings), treated as comments. */
+  docstring: readonly string[]
+  /** Quote characters that open a string literal. */
+  quotes: readonly string[]
+}
+
+const C_STYLE: CommentSyntax = {
+  line: ['//'],
+  block: [['/*', '*/']],
+  docstring: [],
+  quotes: ['"', "'", '`'],
+}
+
+const COMMENT_SYNTAX: Record<Language, CommentSyntax> = {
+  typescript: C_STYLE,
+  go: C_STYLE,
+  java: C_STYLE,
+  csharp: C_STYLE,
+  rust: C_STYLE,
+  c: C_STYLE,
+  python: {
+    line: ['#'],
+    block: [],
+    docstring: ['"""', "'''"],
+    quotes: ['"', "'"],
+  },
+  ruby: {
+    line: ['#'],
+    block: [['=begin', '=end']],
+    docstring: [],
+    quotes: ['"', "'"],
+  },
+  php: {
+    line: ['//', '#'],
+    block: [['/*', '*/']],
+    docstring: [],
+    quotes: ['"', "'"],
+  },
+  sql: {
+    line: ['--'],
+    block: [['/*', '*/']],
+    docstring: [],
+    quotes: ["'", '"'],
+  },
+}
+
+export function commentSyntaxFor(language: Language): CommentSyntax {
+  return COMMENT_SYNTAX[language]
+}
+
+// ─── Detection ───────────────────────────────────────────────────────────────
+//
+// Marker-based scoring, not parsing. Each marker contributes `weight` once per
+// match, capped so one repeated token cannot dominate. Ties and zero-score
+// input fall back to TypeScript, which keeps behavior identical to the
+// single-set engine for every JS/TS caller and every existing test.
+
+interface Marker {
+  re: RegExp
+  weight: number
+}
+
+/** No single marker may contribute more than this, so a file with 200 `self`
+ *  references does not out-vote a file's actual structural markers. */
+const MARKER_CAP = 3
+
+const MARKERS: Record<Language, Marker[]> = {
+  typescript: [
+    { re: /\b(?:const|let)\s+[\w$]+\s*[=:]/g, weight: 2 },
+    { re: /=>/g, weight: 1 },
+    { re: /\binterface\s+\w+\s*\{/g, weight: 3 },
+    { re: /\bexport\s+(?:default|const|function|class|interface|type)\b/g, weight: 3 },
+    { re: /\bimport\s+[^;\n]*\bfrom\s+['"]/g, weight: 3 },
+    { re: /:\s*(?:string|number|boolean|void|unknown|any)\b/g, weight: 2 },
+    { re: /\bconsole\.(?:log|error|warn)\b/g, weight: 2 },
+    { re: /\bfunction\s+\w+\s*\(/g, weight: 1 },
+    { re: /\basync\s+function\b/g, weight: 2 },
+    { re: /\bnull\b|\bundefined\b/g, weight: 1 },
+  ],
+  python: [
+    { re: /^[ \t]*def\s+\w+\s*\(/gm, weight: 3 },
+    { re: /^[ \t]*(?:async\s+)?def\s+\w+\s*\([^)]*\)\s*(?:->[^:]+)?:/gm, weight: 3 },
+    { re: /^[ \t]*class\s+\w+[^{]*:[ \t]*$/gm, weight: 3 },
+    { re: /\belif\b/g, weight: 3 },
+    { re: /\bself\b/g, weight: 2 },
+    { re: /__init__|__name__|__main__/g, weight: 3 },
+    { re: /^[ \t]*from\s+[\w.]+\s+import\s+/gm, weight: 3 },
+    { re: /\b(?:True|False|None)\b/g, weight: 2 },
+    { re: /^[ \t]*#[^!]/gm, weight: 1 },
+    { re: /"""|'''/g, weight: 2 },
+  ],
+  go: [
+    { re: /^package\s+\w+/gm, weight: 3 },
+    { re: /\bfunc\s+(?:\(\s*\w+\s+\*?\w+\s*\)\s*)?\w*\s*\(/g, weight: 3 },
+    { re: /:=/g, weight: 3 },
+    { re: /\bnil\b/g, weight: 2 },
+    { re: /\bstruct\s*\{/g, weight: 3 },
+    { re: /\berr\s*!=\s*nil\b/g, weight: 3 },
+    { re: /\bfmt\.\w+/g, weight: 3 },
+    { re: /\b(?:int64|float64|uint8|rune|byte)\b/g, weight: 2 },
+    { re: /\bdefer\s+/g, weight: 2 },
+    { re: /\bchan\s+\w+|<-/g, weight: 2 },
+  ],
+  java: [
+    { re: /\bpublic\s+(?:static\s+)?(?:final\s+)?(?:class|void|int|String|abstract)\b/g, weight: 3 },
+    { re: /\bSystem\.out\.print/g, weight: 3 },
+    { re: /^import\s+(?:java|javax|kotlin)[\w.]*;?/gm, weight: 3 },
+    { re: /@(?:Override|Deprecated|SuppressWarnings|Autowired|Component|Service)\b/g, weight: 3 },
+    { re: /\bpublic\s+static\s+void\s+main\b/g, weight: 3 },
+    { re: /\bfun\s+\w+\s*\(/g, weight: 3 },
+    { re: /\bval\s+\w+\s*[:=]/g, weight: 2 },
+    { re: /\bnew\s+[A-Z]\w*\s*\(/g, weight: 1 },
+    { re: /\bimplements\s+\w+|\bextends\s+\w+/g, weight: 1 },
+    { re: /\bthrows\s+\w+Exception\b/g, weight: 3 },
+  ],
+  csharp: [
+    { re: /^using\s+System[\w.]*;/gm, weight: 3 },
+    { re: /\bnamespace\s+[\w.]+/g, weight: 3 },
+    { re: /\bConsole\.Write(?:Line)?\b/g, weight: 3 },
+    { re: /\bpublic\s+(?:async\s+)?(?:Task|void|string|int|bool)\b/g, weight: 2 },
+    { re: /\bvar\s+\w+\s*=\s*new\b/g, weight: 2 },
+    { re: /\{\s*get;\s*(?:set;)?\s*\}/g, weight: 3 },
+    { re: /\bstring\[\]\s+args\b/g, weight: 3 },
+    { re: /\bIEnumerable<|\bList<\w+>\s+\w+/g, weight: 2 },
+    { re: /\bnameof\s*\(/g, weight: 3 },
+  ],
+  rust: [
+    { re: /\bfn\s+\w+\s*[(<]/g, weight: 3 },
+    { re: /\blet\s+mut\b/g, weight: 3 },
+    { re: /\bimpl(?:\s*<[^>]*>)?\s+\w+/g, weight: 3 },
+    { re: /\bpub\s+(?:fn|struct|enum|mod|trait|const)\b/g, weight: 3 },
+    { re: /->\s*(?:Result|Option)</g, weight: 3 },
+    { re: /\buse\s+[\w:]+::/g, weight: 3 },
+    { re: /&(?:mut\s+)?self\b|&str\b/g, weight: 3 },
+    { re: /\bmatch\s+\w+\s*\{/g, weight: 2 },
+    { re: /\.unwrap\(\)|\.expect\(|\?;/g, weight: 2 },
+    { re: /#\[derive\(|#\[cfg\(/g, weight: 3 },
+  ],
+  ruby: [
+    { re: /^[ \t]*def\s+\w+[?!]?/gm, weight: 2 },
+    { re: /^[ \t]*end[ \t]*$/gm, weight: 3 },
+    { re: /\bputs\b/g, weight: 3 },
+    { re: /\belsif\b/g, weight: 3 },
+    { re: /\brequire(?:_relative)?\s+['"]/g, weight: 3 },
+    { re: /\bdo\s*\|[\w, ]*\|/g, weight: 3 },
+    { re: /@\w+\s*=/g, weight: 2 },
+    { re: /\battr_(?:accessor|reader|writer)\b/g, weight: 3 },
+    { re: /\bunless\b|\bnil\?/g, weight: 2 },
+    { re: /:\w+\s*=>|\bdef\s+initialize\b/g, weight: 2 },
+  ],
+  php: [
+    { re: /<\?php/g, weight: 3 },
+    { re: /\$\w+\s*=/g, weight: 3 },
+    { re: /\becho\b/g, weight: 2 },
+    { re: /\bfunction\s+\w+\s*\([^)]*\)\s*(?::\s*\w+\s*)?\{/g, weight: 1 },
+    { re: /\$this->\w+/g, weight: 3 },
+    { re: /\bpublic\s+function\b/g, weight: 3 },
+    { re: /\buse\s+[\w\\]+\\[\w]+;/g, weight: 3 },
+    { re: /\barray\s*\(|\[\s*['"]\w+['"]\s*=>/g, weight: 2 },
+    { re: /\bnamespace\s+[\w\\]+;/g, weight: 2 },
+  ],
+  c: [
+    { re: /^\s*#include\s*[<"]/gm, weight: 3 },
+    { re: /\bint\s+main\s*\(/g, weight: 3 },
+    { re: /\bprintf\s*\(|\bfprintf\s*\(/g, weight: 3 },
+    { re: /\bstd::\w+/g, weight: 3 },
+    { re: /\b(?:malloc|calloc|free|memcpy|memset)\s*\(/g, weight: 3 },
+    { re: /\btypedef\s+struct\b/g, weight: 3 },
+    { re: /\bvoid\s*\*|\bchar\s*\*/g, weight: 2 },
+    { re: /\b(?:size_t|uint\d+_t|int\d+_t)\b/g, weight: 2 },
+    { re: /^\s*#(?:define|ifndef|pragma)\b/gm, weight: 3 },
+    { re: /\bcout\s*<<|\bstd::endl\b/g, weight: 3 },
+  ],
+  sql: [
+    { re: /\bSELECT\b[\s\S]{0,400}?\bFROM\b/gi, weight: 3 },
+    { re: /\bINSERT\s+INTO\b/gi, weight: 3 },
+    { re: /\bCREATE\s+(?:TABLE|INDEX|VIEW|OR\s+REPLACE)\b/gi, weight: 3 },
+    { re: /\bALTER\s+TABLE\b/gi, weight: 3 },
+    { re: /\b(?:INNER|LEFT|RIGHT|FULL|CROSS)\s+(?:OUTER\s+)?JOIN\b/gi, weight: 3 },
+    { re: /\bGROUP\s+BY\b|\bORDER\s+BY\b/gi, weight: 3 },
+    { re: /\bWHERE\b[\s\S]{0,200}?[=<>]/gi, weight: 2 },
+    { re: /\bPRIMARY\s+KEY\b|\bFOREIGN\s+KEY\b/gi, weight: 3 },
+    { re: /\bUPDATE\b[\s\S]{0,200}?\bSET\b/gi, weight: 3 },
+  ],
+}
+
+function scoreLanguage(code: string, markers: Marker[]): number {
+  let total = 0
+  for (const { re, weight } of markers) {
+    // Fresh lastIndex per call — these regexes are module-level and global.
+    re.lastIndex = 0
+    let hits = 0
+    while (re.exec(code) !== null) {
+      hits++
+      if (hits >= MARKER_CAP) break
+    }
+    re.lastIndex = 0
+    total += hits * weight
+  }
+  return total
+}
+
+export interface LanguageGuess {
+  language: Language
+  /** Raw marker score. 0 means nothing matched and the fallback was used. */
+  score: number
+  /** True when no marker matched and `language` is the TypeScript fallback. */
+  fallback: boolean
+}
+
+/** Score every language's markers against `code` and return the best guess.
+ *  Ties and empty input resolve to TypeScript, preserving the pre-multi-language
+ *  behavior for JS/TS callers exactly. */
+export function guessLanguage(code: string): LanguageGuess {
+  let best: Language = 'typescript'
+  let bestScore = 0
+  for (const language of LANGUAGES) {
+    const score = scoreLanguage(code, MARKERS[language])
+    // Strict `>` keeps the earliest language in LANGUAGES order on a tie, and
+    // TypeScript is first — so ambiguous input stays on the safe default.
+    if (score > bestScore) {
+      best = language
+      bestScore = score
+    }
+  }
+  return { language: best, score: bestScore, fallback: bestScore === 0 }
+}
+
+/** Convenience wrapper returning just the detected language. */
+export function detectLanguage(code: string): Language {
+  return guessLanguage(code).language
+}
+
+/** Resolve a caller's `language` option to a concrete language. */
+export function resolveLanguage(code: string, option: LanguageOption | undefined): Language {
+  if (option === undefined || option === 'auto') return detectLanguage(code)
+  return option
+}
