@@ -16,6 +16,7 @@ import {
   summarizeSecrets,
   withAiPreamble,
   LANGUAGE_LABELS,
+  STRIPPABLE_TYPES,
   BIN_NAME,
   STORE_DIR,
   type SecretFinding,
@@ -100,7 +101,11 @@ export async function runRestore(args: ParsedArgs, io: Io): Promise<number> {
     return EXIT_ERROR
   }
 
-  const result = restore(source, map)
+  // Without --keep-docs the default strips JSDoc along with the narration and
+  // TODOs. That is right for noise, wrong when the model was asked to document
+  // its output — so the escape hatch is a flag, not a code change.
+  const strip = args.keepDocs ? STRIPPABLE_TYPES.filter((t) => t !== 'jsdoc') : 'all'
+  const result = restore(source, map, { strip })
   io.stdout(result.restored)
   if (!args.quiet) {
     io.stderr(
@@ -185,7 +190,8 @@ OPTIONS
   -m, --map <path>        Use a specific map file
       --json              Machine-readable output (scan, map)
       --strict            scan: also fail on advisory findings
-  -q, --quiet             Suppress the stderr summary
+      --keep-docs         restore: keep JSDoc blocks the model wrote
+  -q, --quiet             Suppress the all-clear summary (findings always show)
   -h, --help              Show this help
   -v, --version           Show the version
 

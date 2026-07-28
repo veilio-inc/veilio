@@ -57,3 +57,46 @@ git diff --cached | veilio scan || {
 `scrub` writes `.veilio/map.json` at the project root and `restore` reads it, so placeholders stay stable across runs and across a whole session. The store is created `0600` with its own `.gitignore` — it holds the real identifier names, so committing it would undo the anonymization for anyone reading the repo.
 
 Redacted credentials are **not** in the map. `restore` cannot bring them back, by construction.
+
+## In CI
+
+### GitHub Action
+
+```yaml
+- uses: DlgSHi/veilio/packages/cli@v0.1.0
+  with:
+    strict: false          # also fail on emails / private IPs
+    sarif: veilio.sarif    # optional: upload to code scanning
+```
+
+Scans the **pull-request diff** by default, not the whole tree. A repo adopting
+this mid-life almost always has a historical finding somewhere; blocking every PR
+on that is how a security check gets switched off in week one. Pass `paths:` to
+scan a fixed set instead.
+
+Findings land in the job summary and, with `sarif:`, in GitHub code scanning.
+Reports carry truncated previews only — a stored, shareable artifact must never
+contain the credential it is reporting.
+
+### Pre-commit
+
+Via the [pre-commit framework](https://pre-commit.com):
+
+```yaml
+repos:
+  - repo: https://github.com/DlgSHi/veilio
+    rev: v0.1.0
+    hooks:
+      - id: veilio-scan
+```
+
+Or a plain git hook:
+
+```bash
+cp packages/cli/hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+It scans the **staged** diff — what you are about to commit is what matters, and
+a finding in an unstaged scratch file shouldn't block you. `--no-verify`
+overrides, as usual.

@@ -389,3 +389,28 @@ describe('map store robustness', () => {
     expect(out).toContain('PaymentGateway')
   })
 })
+
+describe('restore --keep-docs', () => {
+  const DOCUMENTED = '/**\n * Settles an invoice.\n */\nexport class PaymentGateway {}\n'
+
+  it('strips JSDoc by default', async () => {
+    await run(['scrub'], DOCUMENTED)
+    const r = await run(['restore'], '/**\n * Settles an invoice.\n */\nconst x = 1\n')
+    expect(r.out).not.toContain('Settles an invoice')
+  })
+
+  it('keeps JSDoc with --keep-docs', async () => {
+    // When the model was asked to document its output, stripping the docs is
+    // destroying requested work rather than removing noise.
+    await run(['scrub'], DOCUMENTED)
+    const r = await run(['restore', '--keep-docs'], '/**\n * Settles an invoice.\n */\nconst x = 1\n')
+    expect(r.out).toContain('Settles an invoice')
+  })
+
+  it('still strips genuine noise with --keep-docs', async () => {
+    await run(['scrub'], DOCUMENTED)
+    const r = await run(['restore', '--keep-docs'], '/** Doc. */\n// TODO: fix\nconst x = 1\n')
+    expect(r.out).toContain('Doc.')
+    expect(r.out).not.toContain('TODO')
+  })
+})

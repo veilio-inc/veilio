@@ -25,6 +25,8 @@ export interface ParsedArgs {
   clear: boolean
   /** Treat medium-severity findings as failures too (scan). */
   strict: boolean
+  /** Keep JSDoc blocks when restoring. */
+  keepDocs: boolean
 }
 
 export class UsageError extends Error {}
@@ -52,6 +54,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     quiet: false,
     clear: false,
     strict: false,
+    keepDocs: false,
   }
 
   if (argv.length === 0) return parsed
@@ -117,6 +120,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         break
       case '--strict':
         parsed.strict = true
+        break
+      case '--keep-docs':
+        parsed.keepDocs = true
         break
       default:
         if (arg.startsWith('-') && arg !== '-') {
