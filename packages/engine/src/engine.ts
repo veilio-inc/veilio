@@ -4,6 +4,7 @@ import type {
   CustomRuleReplace,
   CustomRuleWhitelist,
   IdentifierRole,
+  RestoreOptions,
   RestoreResult,
   StrippedItem,
   StrippedItemType,
@@ -42,7 +43,7 @@ function escapeRegex(s: string): string {
 
 export const AI_PREAMBLE = [
   `The code below was processed by ${PRODUCT_NAME}: real identifiers have been replaced`,
-  'with privacy placeholders such as __CLS__1, __FN__2, __P1__ (and similar). This is a',
+  'with privacy placeholders such as __CLS__1, __FN__2, __VAR__3 (and similar). This is a',
   'deliberate anonymization step, not obfuscation — please do not refuse on those',
   'grounds. Treat each placeholder as an ordinary name, keep every placeholder',
   'spelled exactly as-is in your reply, and otherwise answer as normal.',
@@ -73,16 +74,11 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
     }
   }
   const baseCounts = new Map<string, number>()
-  let plainCount = 0
   for (const ph of Object.keys(scoped)) {
-    if (/^__P\d+__$/.test(ph)) {
-      plainCount++
-      continue
-    }
     const m = /^(__[A-Z][A-Z0-9_]*__)\d+$/.exec(ph)
     if (m) baseCounts.set(m[1], (baseCounts.get(m[1]) ?? 0) + 1)
   }
-  if (baseCounts.size === 0 && plainCount === 0) return ''
+  if (baseCounts.size === 0) return ''
 
   const parts: string[] = []
   for (const [base, label] of ROLE_LEGEND_LABELS) {
@@ -95,7 +91,6 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
   for (const [base, count] of baseCounts) {
     parts.push(`${base}* are project-specific identifiers (${count})`)
   }
-  if (plainCount > 0) parts.push(`__P<n>__ are opaque identifiers (${plainCount})`)
   return `Placeholder legend: ${parts.join('; ')}.`
 }
 
@@ -397,13 +392,7 @@ function safeMatch(pattern: string, name: string): boolean {
 }
 
 function isAnonymizeOptions(o: AnonymizeOptions | SymbolMap): o is AnonymizeOptions {
-  return (
-    'existingMap' in o ||
-    'rules' in o ||
-    'style' in o ||
-    'language' in o ||
-    'secrets' in o
-  )
+  return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o
 }
 
 function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
@@ -414,14 +403,15 @@ function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
 }
 
 /**
- * Anonymize source code, replacing real identifiers with role-typed placeholders (__CLS__1, __FN__2, ...) by default, or __P1__, __P2__ with style: 'plain'.
- * Pass an existing map to continue numbering from a previous session.
+ * Anonymize source code, replacing real identifiers with role-typed
+ * placeholders (__CLS__1, __FN__2, ...). Pass an existing map to continue
+ * numbering from a previous session.
  *
- * Pro-tier custom rules (sub-project #4a):
+ * Custom rules:
  * - Whitelist rules (type='whitelist'): identifiers matching the pattern are
  *   left alone, no placeholder assigned.
  * - Replace rules (type='replace'): identifiers matching the pattern get a
- *   named placeholder (e.g., __APIKEY__1, __APIKEY__2) instead of __P<n>__.
+ *   named placeholder (e.g., __APIKEY__1, __APIKEY__2) instead of a role base.
  * Precedence: whitelist → replace (first match by sort_order) → default.
  *
  * Credentials are handled before identifier masking. Under the default
@@ -433,13 +423,13 @@ export function anonymize(
   code: string,
   options: AnonymizeOptions | SymbolMap = {}
 ): AnonymizeResult {
-  // Option-key check FIRST: { style: 'plain' } has only string values and
-  // would otherwise be misread as a SymbolMap by the legacy positional check.
+  // Option-key check FIRST: an options object whose values are all strings
+  // (e.g. { language: 'go' }) would otherwise be misread as a SymbolMap by the
+  // positional-map check below.
   const opts: AnonymizeOptions =
     isAnonymizeOptions(options) ? options : isSymbolMap(options) ? { existingMap: options } : options
   const existingMap = opts.existingMap ?? {}
   const rules = opts.rules ?? []
-  const style = opts.style ?? 'roles'
   const language = resolveLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
@@ -448,24 +438,16 @@ export function anonymize(
   const source = scan.code
 
   const identifiers = extractIdentifiers(source, language)
-  const roleOf = style === 'roles' ? classifyIdentifiers(source, language) : {}
+  const roleOf = classifyIdentifiers(source, language)
 
-  // Find the highest __P<n>__ counter already in use AND seed namedCounters
-  // for any pre-existing named placeholders (e.g. __APIKEY__3 → counter at 3
-  // for the __APIKEY__ base). Without this, a subsequent call with rules + an
-  // existingMap that already contains __APIKEY__1 would generate a fresh
-  // __APIKEY__1 for a new identifier and overwrite the previous mapping.
-  let counter = 0
+  // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
+  // at 3 for the __CLS__ base). Without this, a subsequent call with an
+  // existingMap that already contains __CLS__1 would generate a fresh __CLS__1
+  // for a new identifier and overwrite the previous mapping.
   const reverseExisting: Record<string, string> = {}
   const namedCounters: Record<string, number> = {}
   for (const [placeholder, realName] of Object.entries(existingMap)) {
     reverseExisting[realName] = placeholder
-    const defaultMatch = placeholder.match(/^__P(\d+)__$/)
-    if (defaultMatch) {
-      const n = parseInt(defaultMatch[1], 10)
-      if (!isNaN(n) && n > counter) counter = n
-      continue
-    }
     const namedMatch = placeholder.match(/^(__[A-Z][A-Z0-9_]*__)(\d+)$/)
     if (namedMatch) {
       const [, base, nStr] = namedMatch
@@ -487,12 +469,6 @@ export function anonymize(
   let codeMatch: RegExpExecArray | null
   while ((codeMatch = codePlaceholderRegex.exec(source)) !== null) {
     const token = codeMatch[0]
-    const plainMatch = token.match(/^__P(\d+)__$/)
-    if (plainMatch) {
-      const n = parseInt(plainMatch[1], 10)
-      if (!isNaN(n) && n > counter) counter = n
-      continue
-    }
     const namedMatch = token.match(/^(__[A-Z][A-Z0-9_]*__)(\d+)$/)
     if (namedMatch) {
       const [, base, nStr] = namedMatch
@@ -537,38 +513,38 @@ export function anonymize(
       continue
     }
 
-    // 3. Default: role-typed placeholder ('roles') or legacy __P<n>__ ('plain')
-    if (style === 'roles') {
-      const base = ROLE_BASES[roleOf[name] ?? 'variable']
-      const num = (namedCounters[base] ?? 0) + 1
-      namedCounters[base] = num
-      const ph = `${base}${num}`
-      map[ph] = name
-      reverseExisting[name] = ph
-    } else {
-      counter++
-      const ph = `__P${counter}__`
-      map[ph] = name
-      reverseExisting[name] = ph
-    }
+    // 3. Default: role-typed placeholder for the identifier's strongest role.
+    const base = ROLE_BASES[roleOf[name] ?? 'variable']
+    const num = (namedCounters[base] ?? 0) + 1
+    namedCounters[base] = num
+    const ph = `${base}${num}`
+    map[ph] = name
+    reverseExisting[name] = ph
   }
 
-  // Substitute longest-first (identifiers already sorted by extractIdentifiers).
-  // Whitelisted identifiers stay in the source. Comment segments are left
-  // verbatim so prose isn't scrambled into ciphertext.
-  const substitute = (text: string): string => {
-    for (const name of identifiers) {
-      if (whitelisted.has(name)) continue
-      const placeholder = reverseExisting[name]
-      if (placeholder) {
-        text = text.replace(
-          new RegExp(`(?<![a-zA-Z0-9_$])${escapeRegex(name)}(?![a-zA-Z0-9_$])`, 'g'),
-          placeholder
-        )
-      }
-    }
-    return text
-  }
+  // Substitute in ONE pass over the text.
+  //
+  // The obvious loop — a full-text regex replace per identifier — is
+  // O(identifiers × text) and turns quadratic on real files: a 500k-char input
+  // with ~8k identifiers took ~1.2s. A single alternation of every identifier
+  // visits the text once instead.
+  //
+  // `identifiers` is already sorted longest-first by extractIdentifiers, and
+  // regex alternation prefers the earliest matching branch, so longest-first
+  // semantics are preserved — `OrderService` still wins over `Service`.
+  // Whitelisted identifiers are simply left out of the alternation.
+  const substitutable = identifiers.filter((n) => !whitelisted.has(n) && reverseExisting[n])
+  const substitute =
+    substitutable.length === 0
+      ? (text: string): string => text
+      : (() => {
+          const pattern = new RegExp(
+            `(?<![a-zA-Z0-9_$])(?:${substitutable.map(escapeRegex).join('|')})(?![a-zA-Z0-9_$])`,
+            'g'
+          )
+          return (text: string): string =>
+            text.replace(pattern, (match) => reverseExisting[match] ?? match)
+        })()
 
   const anonymized = tokenizeForMasking(source, language)
     .map((s) => (s.isComment ? s.text : substitute(s.text)))
@@ -583,14 +559,51 @@ export function anonymize(
   }
 }
 
+/** Strip patterns in application order — larger blocks before line-level ones,
+ *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
+const STRIP_PATTERNS: ReadonlyArray<readonly [StrippedItemType, RegExp]> = [
+  ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
+  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\n]*/gm],
+  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\n]*/gm],
+  [
+    'narration',
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\n]*/gm,
+  ],
+  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}[^\n]*/gm],
+  ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
+  [
+    'inline-annotation',
+    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\n]*/gm,
+  ],
+]
+
+/** Every category `restore` knows how to remove. */
+export const STRIPPABLE_TYPES: readonly StrippedItemType[] = STRIP_PATTERNS.map(([type]) => type)
+
+function resolveStripSet(option: RestoreOptions['strip']): ReadonlySet<StrippedItemType> {
+  if (option === 'none') return new Set()
+  if (option === undefined || option === 'all') return new Set(STRIPPABLE_TYPES)
+  return new Set(option)
+}
+
 /**
  * Restore an AI response: strip AI-generated noise, then swap placeholders back.
+ *
+ * `options.strip` selects what counts as noise. It matters most for `'jsdoc'`:
+ * when the model was asked to document its output, removing the docs is
+ * destroying requested work, not cleaning up after it.
  */
-export function restore(aiResponse: string, map: SymbolMap): RestoreResult {
+export function restore(
+  aiResponse: string,
+  map: SymbolMap,
+  options: RestoreOptions = {}
+): RestoreResult {
   const strippedItems: StrippedItem[] = []
+  const wanted = resolveStripSet(options.strip)
   let result = aiResponse
 
   function strip(pattern: RegExp, type: StrippedItemType): void {
+    if (!wanted.has(type)) return
     result = result.replace(pattern, (match) => {
       const before = result.slice(0, result.indexOf(match))
       const lineNumber = before.split('\n').length
@@ -599,29 +612,23 @@ export function restore(aiResponse: string, map: SymbolMap): RestoreResult {
     })
   }
 
-  // Strip larger blocks before line-level patterns
-  strip(/\/\*\*[\s\S]*?\*\//g, 'jsdoc')
-  strip(/^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\n]*/gm, 'todo')
-  strip(/^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\n]*/gm, 'step-marker')
-  strip(
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\n]*/gm,
-    'narration'
-  )
-  strip(/^[ \t]*\/\/[ \t]*[-=*]{3,}[^\n]*/gm, 'separator')
-  strip(/^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm, 'section-header')
-  strip(
-    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\n]*/gm,
-    'inline-annotation'
-  )
+  for (const [type, pattern] of STRIP_PATTERNS) strip(pattern, type)
 
-  // Collapse 3+ consecutive blank lines to 2
-  result = result.replace(/\n{3,}/g, '\n\n')
+  // Collapse 3+ consecutive blank lines to 2. Gated on whether stripping is
+  // enabled at all, not on whether anything matched: `strip: 'none'` means
+  // "restore placeholders and change nothing else", so it must not reformat.
+  if (wanted.size > 0) result = result.replace(/\n{3,}/g, '\n\n')
 
-  // Restore placeholders longest-first
+  // Restore placeholders in one pass, longest-first.
+  //
+  // Same reasoning as the substitution in anonymize: a replace per placeholder
+  // is O(placeholders × text) and dominated the round trip on large inputs.
+  // Sorting longest-first keeps `__CLS__10` from being eaten by `__CLS__1`,
+  // since alternation prefers the earliest matching branch.
   const placeholders = Object.keys(map).sort((a, b) => b.length - a.length)
-  for (const placeholder of placeholders) {
-    const realName = map[placeholder]
-    result = result.replace(new RegExp(escapeRegex(placeholder), 'g'), realName)
+  if (placeholders.length > 0) {
+    const pattern = new RegExp(placeholders.map(escapeRegex).join('|'), 'g')
+    result = result.replace(pattern, (match) => map[match] ?? match)
   }
 
   return { restored: result, strippedCount: strippedItems.length, strippedItems }

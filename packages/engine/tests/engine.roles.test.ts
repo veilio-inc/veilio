@@ -140,7 +140,7 @@ describe('ROLE_BASES', () => {
 import { anonymize, restore } from '../src/engine.js'
 import type { CustomRuleReplace, CustomRuleWhitelist } from '../src/types.js'
 
-describe('anonymize — role-typed placeholders (default style)', () => {
+describe('anonymize — role-typed placeholders', () => {
   it('emits role-based placeholders by default', () => {
     const { anonymized, map } = anonymize('class UserAuthService { validateToken() {} }')
     expect(anonymized).toBe('class __CLS__1 { __FN__1() {} }')
@@ -160,19 +160,20 @@ describe('anonymize — role-typed placeholders (default style)', () => {
     expect(restore(anonymized, map).restored).toBe(code)
   })
 
-  it('style "plain" preserves legacy __P<n>__ output', () => {
-    const { anonymized, map } = anonymize('class UserAuthService {}', { style: 'plain' })
-    expect(anonymized).toBe('class __P1__ {}')
-    expect(map).toEqual({ __P1__: 'UserAuthService' })
+  it('emits a role-typed placeholder for a class declaration', () => {
+    const { anonymized, map } = anonymize('class UserAuthService {}')
+    expect(anonymized).toBe('class __CLS__1 {}')
+    expect(map).toEqual({ __CLS__1: 'UserAuthService' })
   })
 })
 
 describe('anonymize — options disambiguation (negative)', () => {
-  it('does NOT treat { style: "plain" } as an existingMap', () => {
-    const { map } = anonymize('class Foo {}', { style: 'plain' })
-    // A buggy isSymbolMap would have seeded reverseExisting with {style: 'plain'}
-    expect(Object.values(map)).not.toContain('plain')
-    expect(map.__P1__).toBe('Foo')
+  it('does NOT treat an all-string options object as an existingMap', () => {
+    // Every value in { language: 'go' } is a string, so a naive isSymbolMap
+    // check would seed reverseExisting with the option value itself.
+    const { map } = anonymize('func settleLedger() {}', { language: 'go' })
+    expect(Object.values(map)).not.toContain('go')
+    expect(Object.values(map)).toContain('settleLedger')
   })
 
   it('still accepts the legacy positional SymbolMap argument', () => {
@@ -265,8 +266,10 @@ describe('idempotency — placeholder-shaped tokens are never re-masked', () => 
     expect(map.__CLS__1).toBeUndefined()
   })
 
-  it('continues plain numbering past __P tokens in the code', () => {
-    const { map } = anonymize('const __P3__ = 1\nrealThing()', { style: 'plain' })
-    expect(map.__P4__).toBe('realThing')
+  it('continues numbering past a role placeholder already in the source', () => {
+    // __FN__3 is preserved by the idempotency guard, so a fresh function name
+    // must land at __FN__4 rather than colliding at __FN__1.
+    const { map } = anonymize('const __FN__3 = 1\nrealThing()')
+    expect(map.__FN__4).toBe('realThing')
   })
 })

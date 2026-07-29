@@ -365,3 +365,65 @@ describe('integration — a credential can never round-trip', () => {
     expect(Object.values(map).join('')).not.toContain('MIIEvQIBADANBgkq')
   })
 })
+
+// ─── Expanded provider coverage ─────────────────────────────────────────────
+
+const MORE_SAMPLES: { type: SecretType; code: string }[] = [
+  { type: 'gitlab-token', code: 'const t = "glpat-abcdefghij1234567890"' },
+  {
+    type: 'slack-webhook',
+    code: 'const u = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"',
+  },
+  { type: 'sendgrid-key', code: 'const k = "SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABC"' },
+  { type: 'twilio-key', code: 'const sid = "AC0123456789abcdef0123456789abcdef"' },
+  { type: 'mailgun-key', code: 'const k = "key-0123456789abcdef0123456789abcdef"' },
+  { type: 'hugging-face-token', code: 'const t = "hf_abcdefghijklmnopqrstuvwxyz01234567"' },
+  { type: 'supabase-key', code: 'const k = "sbp_0123456789abcdef0123456789abcdef01234567"' },
+  { type: 'shopify-token', code: 'const t = "shpat_0123456789abcdef0123456789abcdef"' },
+  { type: 'square-token', code: 'const t = "sq0atp-abcdefghijklmnopqrstuv"' },
+  { type: 'pypi-token', code: 'const t = "pypi-AgEIcHlwaS5vcmc' + 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP' + '"' },
+  { type: 'discord-token', code: 'const t = "MTIzNDU2Nzg5MDEyMzQ1Njc4.GaBcDe.abcdefghijklmnopqrstuvwxyz01234"' },
+  { type: 'azure-key', code: 'AccountKey=' + 'a'.repeat(43) + 'bC9/' + 'd'.repeat(39) + '==' },
+  { type: 'datadog-key', code: 'dd_api_key = "0123456789abcdef0123456789abcdef"' },
+  { type: 'cloudflare-token', code: 'cloudflare_api_token = "abcdefghij1234567890ABCDEFGHIJ1234567890"' },
+  { type: 'basic-auth', code: 'headers: { Authorization: "Basic dXNlcjpzM2NyM3RwYXNzdzByZA==" }' },
+]
+
+describe('detectSecrets — expanded provider coverage', () => {
+  for (const { type, code } of MORE_SAMPLES) {
+    it(`detects ${type}`, () => {
+      expect(detectSecrets(code).map((f) => f.type)).toContain(type)
+    })
+  }
+
+  it('redacts every expanded provider irreversibly', () => {
+    for (const { code } of MORE_SAMPLES) {
+      const scan = scanSecrets(code)
+      expect(scan.code).toContain('__REDACTED_')
+    }
+  })
+})
+
+describe('high-entropy catch-all', () => {
+  it('flags a credential-named assignment from an unknown provider', () => {
+    const code = 'const acmeWidgetApiToken = "Zk3n8QpL2vX9mB4tR7wY1cF6hJ0sD5gA"'
+    expect(detectSecrets(code).map((f) => f.type)).toContain('high-entropy-string')
+  })
+
+  it('does not flag a long low-entropy value', () => {
+    expect(detectSecrets('const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"')).toEqual([])
+  })
+
+  it('does not flag a long value in a non-credential variable', () => {
+    // Restricted to credential-named assignments on purpose: a bare long token
+    // is more often a hash or a UUID than a live key, and a detector that cries
+    // wolf gets switched off.
+    expect(detectSecrets('const commitSha = "Zk3n8QpL2vX9mB4tR7wY1cF6hJ0sD5gA"')).toEqual([])
+  })
+
+  it('yields to a specific provider pattern for the same span', () => {
+    const findings = detectSecrets('const apiKey = "sk_live_51H8xQ2ABCDEFGHIJKLMNOP"')
+    expect(findings.map((f) => f.type)).toContain('stripe-key')
+    expect(findings).toHaveLength(1)
+  })
+})

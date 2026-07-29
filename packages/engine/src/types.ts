@@ -43,6 +43,18 @@ export interface RestoreResult {
   strippedItems: StrippedItem[]
 }
 
+export interface RestoreOptions {
+  /** Which AI-artifact categories to remove.
+   *  - `'all'` (default) — every category below.
+   *  - `'none'` — restore placeholders only, touch nothing else.
+   *  - an explicit list — remove exactly those.
+   *
+   *  Worth setting: `'all'` deletes JSDoc, and when a model was *asked* to
+   *  document its output that is destroying requested work rather than removing
+   *  noise. Pass a list without `'jsdoc'` to keep documentation. */
+  strip?: StrippedItemType[] | 'all' | 'none'
+}
+
 // ─── Custom rules ─────────────────────────────────────────────────────────────
 
 export type CustomRuleScope = 'personal' | 'team'
@@ -77,9 +89,6 @@ export type CustomRule = CustomRuleReplace | CustomRuleWhitelist
 export interface AnonymizeOptions {
   existingMap?: SymbolMap
   rules?: CustomRule[]
-  /** 'roles' (default): __CLS__1/__FN__2/... role-typed placeholders.
-   *  'plain': legacy __P<n>__ numbering. */
-  style?: 'roles' | 'plain'
   /** Language whose keywords and comment syntax to honour. 'auto' (default)
    *  detects from the source and falls back to TypeScript when unsure. */
   language?: LanguageOption

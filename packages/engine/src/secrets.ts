@@ -19,13 +19,29 @@ export type SecretType =
   | 'private-key'
   | 'stripe-key'
   | 'github-token'
+  | 'gitlab-token'
   | 'slack-token'
+  | 'slack-webhook'
+  | 'discord-token'
   | 'openai-key'
   | 'anthropic-key'
   | 'google-api-key'
+  | 'gcp-service-account'
+  | 'azure-key'
   | 'npm-token'
+  | 'pypi-token'
+  | 'sendgrid-key'
+  | 'twilio-key'
+  | 'mailgun-key'
+  | 'datadog-key'
+  | 'hugging-face-token'
+  | 'supabase-key'
+  | 'square-token'
+  | 'shopify-token'
+  | 'cloudflare-token'
   | 'jwt'
   | 'bearer-token'
+  | 'basic-auth'
   | 'connection-string'
   | 'password-assignment'
   | 'high-entropy-string'
@@ -132,6 +148,107 @@ const PATTERNS: Pattern[] = [
     re: /\bnpm_[A-Za-z0-9]{36}\b/g,
   },
   {
+    type: 'gitlab-token',
+    severity: 'critical',
+    label: 'GitLab token',
+    re: /\bglpat-[A-Za-z0-9_-]{20,50}\b/g,
+  },
+  {
+    type: 'slack-webhook',
+    severity: 'critical',
+    label: 'Slack webhook URL',
+    re: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_-]{6,20}\/B[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_-]{20,30}/g,
+  },
+  {
+    type: 'discord-token',
+    severity: 'critical',
+    label: 'Discord bot token',
+    re: /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}\b/g,
+  },
+  {
+    type: 'gcp-service-account',
+    severity: 'critical',
+    label: 'GCP service-account key',
+    re: /"type"\s*:\s*"service_account"[\s\S]{0,400}?"private_key_id"\s*:\s*"([a-f0-9]{40})"/g,
+    group: 1,
+  },
+  {
+    type: 'azure-key',
+    severity: 'critical',
+    label: 'Azure storage key',
+    re: /\bAccountKey\s*=\s*([A-Za-z0-9+/]{86}==)/g,
+    group: 1,
+  },
+  {
+    type: 'pypi-token',
+    severity: 'critical',
+    label: 'PyPI upload token',
+    re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\b/g,
+  },
+  {
+    type: 'sendgrid-key',
+    severity: 'critical',
+    label: 'SendGrid API key',
+    re: /\bSG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{39,50}\b/g,
+  },
+  {
+    type: 'twilio-key',
+    severity: 'critical',
+    label: 'Twilio account SID',
+    re: /\bAC[a-f0-9]{32}\b/g,
+  },
+  {
+    type: 'mailgun-key',
+    severity: 'critical',
+    label: 'Mailgun API key',
+    re: /\bkey-[a-f0-9]{32}\b/g,
+  },
+  {
+    type: 'datadog-key',
+    severity: 'critical',
+    label: 'Datadog API key',
+    re: /(?:datadog|dd)[_-]?api[_-]?key["'\s:=]{1,10}([a-f0-9]{32})\b/gi,
+    group: 1,
+  },
+  {
+    type: 'hugging-face-token',
+    severity: 'critical',
+    label: 'Hugging Face token',
+    re: /\bhf_[A-Za-z0-9]{34,40}\b/g,
+  },
+  {
+    type: 'supabase-key',
+    severity: 'critical',
+    label: 'Supabase service key',
+    re: /\bsbp_[a-f0-9]{40}\b/g,
+  },
+  {
+    type: 'square-token',
+    severity: 'critical',
+    label: 'Square access token',
+    re: /\b(?:sq0atp|sq0csp|EAAA)[A-Za-z0-9_-]{22,60}\b/g,
+  },
+  {
+    type: 'shopify-token',
+    severity: 'critical',
+    label: 'Shopify access token',
+    re: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g,
+  },
+  {
+    type: 'cloudflare-token',
+    severity: 'critical',
+    label: 'Cloudflare API token',
+    re: /(?:cloudflare|cf)[_-]?api[_-]?(?:token|key)["'\s:=]{1,10}([A-Za-z0-9_-]{37,45})\b/gi,
+    group: 1,
+  },
+  {
+    type: 'basic-auth',
+    severity: 'high',
+    label: 'HTTP Basic credentials',
+    re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
+    group: 1,
+  },
+  {
     type: 'jwt',
     severity: 'high',
     label: 'JSON Web Token',
@@ -156,6 +273,17 @@ const PATTERNS: Pattern[] = [
     severity: 'high',
     label: 'Hardcoded credential',
     re: /\b(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?token|encryption[_-]?key)\b["'\s]{0,6}[:=]{1,2}[>\s]{0,3}["'`]([^"'`\n]{6,256})["'`]/gi,
+    group: 1,
+  },
+  {
+    // Catch-all for providers with no dedicated pattern above. Restricted to
+    // *assignment* context and gated on entropy, because a bare long token in
+    // prose is far more often a hash, a UUID or a base64 blob than a live
+    // credential — and a detector that cries wolf gets switched off.
+    type: 'high-entropy-string',
+    severity: 'high',
+    label: 'High-entropy credential',
+    re: /\b(?:[a-z0-9_]*(?:key|token|secret|credential|auth|pass)[a-z0-9_]*)\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
     group: 1,
   },
   {
@@ -327,15 +455,32 @@ const TYPE_TOKENS: Record<SecretType, string> = {
   'aws-access-key': 'AWS_KEY',
   'aws-secret-key': 'AWS_SECRET',
   'private-key': 'PRIVATE_KEY',
+
   'stripe-key': 'STRIPE_KEY',
   'github-token': 'GITHUB_TOKEN',
+  'gitlab-token': 'GITLAB_TOKEN',
   'slack-token': 'SLACK_TOKEN',
+  'slack-webhook': 'SLACK_WEBHOOK',
+  'discord-token': 'DISCORD_TOKEN',
   'openai-key': 'OPENAI_KEY',
   'anthropic-key': 'ANTHROPIC_KEY',
   'google-api-key': 'GOOGLE_KEY',
+  'gcp-service-account': 'GCP_SERVICE_ACCOUNT',
+  'azure-key': 'AZURE_KEY',
   'npm-token': 'NPM_TOKEN',
+  'pypi-token': 'PYPI_TOKEN',
+  'sendgrid-key': 'SENDGRID_KEY',
+  'twilio-key': 'TWILIO_SID',
+  'mailgun-key': 'MAILGUN_KEY',
+  'datadog-key': 'DATADOG_KEY',
+  'hugging-face-token': 'HF_TOKEN',
+  'supabase-key': 'SUPABASE_KEY',
+  'square-token': 'SQUARE_TOKEN',
+  'shopify-token': 'SHOPIFY_TOKEN',
+  'cloudflare-token': 'CLOUDFLARE_TOKEN',
   jwt: 'JWT',
   'bearer-token': 'BEARER_TOKEN',
+  'basic-auth': 'BASIC_AUTH',
   'connection-string': 'DB_PASSWORD',
   'password-assignment': 'CREDENTIAL',
   'high-entropy-string': 'SECRET',

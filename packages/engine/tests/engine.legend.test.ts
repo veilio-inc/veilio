@@ -15,17 +15,15 @@ describe('buildLegend', () => {
     expect(legend.startsWith('Placeholder legend:')).toBe(true)
   })
 
-  it('describes legacy __P<n>__ maps as opaque identifiers', () => {
-    expect(buildLegend({ __P1__: 'Foo', __P2__: 'Bar' })).toContain(
-      '__P<n>__ are opaque identifiers (2)'
-    )
-  })
-
-  it('handles mixed legacy + role + custom-rule maps', () => {
-    const legend = buildLegend({ __P1__: 'Old', __CLS__1: 'New', __APIKEY__1: 'stripeKey' })
+  it('handles role + custom-rule maps together', () => {
+    const legend = buildLegend({ __CLS__1: 'New', __APIKEY__1: 'stripeKey' })
     expect(legend).toContain('__CLS__*')
     expect(legend).toContain('__APIKEY__* are project-specific identifiers (1)')
-    expect(legend).toContain('__P<n>__ are opaque identifiers (1)')
+  })
+
+  it('ignores placeholder keys that carry no counter', () => {
+    // A base with no trailing number cannot be attributed to a role bucket.
+    expect(buildLegend({ __DEV__: 'internalFlag' })).toBe('')
   })
 
   it('never leaks real names into the legend (negative)', () => {

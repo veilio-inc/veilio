@@ -68,13 +68,15 @@ describe('determinism', () => {
     expect(a.map).toEqual(b.map)
   })
 
-  it('placeholder numbering is stable across runs (longest-first ordering, legacy plain style)', () => {
+  it('placeholder numbering is stable across runs (longest-first ordering)', () => {
     const code = 'class A_long_name_class { short() {} medium_length() {} }'
-    const { map } = anonymize(code, { style: 'plain' })
-    const placeholders = Object.keys(map).sort()
-    // The longest identifier (A_long_name_class is 17 chars) should get __P1__
-    expect(map['__P1__']).toBe('A_long_name_class')
-    expect(placeholders).toEqual(['__P1__', '__P2__', '__P3__'])
+    const { map } = anonymize(code)
+    // The longest identifier is processed first and so takes __CLS__1; the two
+    // methods take __FN__1/__FN__2 in longest-first order.
+    expect(map['__CLS__1']).toBe('A_long_name_class')
+    expect(map['__FN__1']).toBe('medium_length')
+    expect(map['__FN__2']).toBe('short')
+    expect(anonymize(code).map).toEqual(map)
   })
 
   it('restore is deterministic for the same map', () => {
@@ -114,21 +116,21 @@ describe('idempotency and namespace safety', () => {
 // ─── Counter handling with gaps and edge cases in existingMap ─────────────────
 
 describe('counter handling for existingMap', () => {
-  it('continues from the highest existing placeholder number, even with gaps (legacy plain style)', () => {
-    const existing = { __P1__: 'A', __P5__: 'B', __P10__: 'C' }
-    const { map } = anonymize('class NewlyAddedService {}', { existingMap: existing, style: 'plain' })
-    expect(map['__P11__']).toBe('NewlyAddedService')
+  it('continues from the highest existing placeholder number, even with gaps', () => {
+    const existing = { __CLS__1: 'A', __CLS__5: 'B', __CLS__10: 'C' }
+    const { map } = anonymize('class NewlyAddedService {}', { existingMap: existing })
+    expect(map['__CLS__11']).toBe('NewlyAddedService')
   })
 
-  it('starts from 1 when existingMap is empty (legacy plain style)', () => {
-    const { map } = anonymize('class FirstClass {}', { style: 'plain' })
-    expect(map['__P1__']).toBe('FirstClass')
+  it('starts from 1 when existingMap is empty', () => {
+    const { map } = anonymize('class FirstClass {}')
+    expect(map['__CLS__1']).toBe('FirstClass')
   })
 
-  it('ignores malformed placeholder keys in existingMap (legacy plain style)', () => {
-    const existing = { 'not-a-placeholder': 'X', __P3__: 'Y' }
-    const { map } = anonymize('class NewService {}', { existingMap: existing, style: 'plain' })
-    expect(map['__P4__']).toBe('NewService')
+  it('ignores malformed placeholder keys in existingMap', () => {
+    const existing = { 'not-a-placeholder': 'X', __CLS__3: 'Y' }
+    const { map } = anonymize('class NewService {}', { existingMap: existing })
+    expect(map['__CLS__4']).toBe('NewService')
   })
 
   it('does not re-add identifiers already mapped to a different placeholder', () => {
@@ -249,6 +251,34 @@ describe('extractIdentifiers boundary cases', () => {
 // ─── Performance ──────────────────────────────────────────────────────────────
 
 describe('performance on large input', () => {
+  // These are regression tripwires for the single-pass substitution, not
+  // benchmarks. The per-identifier loop they replaced was O(identifiers × text)
+  // and took ~1.2s to anonymize a 500k blob; one pass does it in ~160ms.
+  it('stays linear enough to handle a ~500KB blob', () => {
+    const unit = `
+export class LedgerEntryProcessor%N% {
+  private readonly settlementGateway%N% = new SettlementGateway%N%()
+  reconcileBatch%N%(invoiceRecords: InvoiceRecord%N%[], tenantSlug: string) {
+    return this.settlementGateway%N%.settle(invoiceRecords, tenantSlug)
+  }
+}
+`
+    let code = ''
+    let i = 0
+    while (code.length < 500_000) code += unit.replaceAll('%N%', String(i++))
+
+    const t0 = performance.now()
+    const { anonymized, map } = anonymize(code)
+    const t1 = performance.now()
+    const { restored } = restore(anonymized, map)
+    const elapsed = performance.now() - t0
+
+    expect(restored).toBe(code)
+    // Generous vs the ~180ms typical, tight enough to catch a return to
+    // quadratic substitution (which was >3s for this input).
+    expect(elapsed).toBeLessThan(1500)
+  })
+
   it('anonymizes a ~50KB code blob in under 500ms', () => {
     // Generate ~50KB of synthetic code with many unique identifiers
     const lines: string[] = []
