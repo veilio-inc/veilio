@@ -23,7 +23,15 @@ async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Pro
 
 function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
   const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
-  return btoa(String.fromCharCode(...bytes))
+  // Converted in chunks, not as String.fromCharCode(...bytes): spreading a
+  // whole export's worth of bytes passes them as individual arguments and
+  // overflows the call stack (~64k args in Safari, ~125k in V8). A real
+  // project's symbol map encrypts to far more than that.
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(s)
 }
 
 function fromBase64(s: string): Uint8Array<ArrayBuffer> {
