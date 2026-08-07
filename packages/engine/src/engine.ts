@@ -18,9 +18,8 @@ import {
   resolveLanguage,
   type CommentSyntax,
   type Language,
-  type LanguageOption,
 } from './languages.js'
-import { scanSecrets, type SecretFinding } from './secrets.js'
+import { scanSecrets } from './secrets.js'
 import { PRODUCT_NAME } from './product.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone

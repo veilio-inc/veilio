@@ -13,8 +13,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src --ext .ts,.tsx",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
+    "lint": "eslint src packages/engine/src packages/engine/tests --ext .ts,.tsx",
+    "lint:fix": "eslint src packages/engine/src packages/engine/tests --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"packages/engine/{src,tests}/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"packages/engine/{src,tests}/**/*.ts\"",
+    "verify": "npm run lint && npm run format:check",
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -40,6 +44,8 @@
     "@vitejs/plugin-react": "^4.2.1",
     "@vitest/coverage-v8": "^2.0.0",
     "eslint": "^8.57.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
     "prettier": "^3.2.5",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",

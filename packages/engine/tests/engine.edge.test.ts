@@ -269,7 +269,6 @@ export class LedgerEntryProcessor%N% {
 
     const t0 = performance.now()
     const { anonymized, map } = anonymize(code)
-    const t1 = performance.now()
     const { restored } = restore(anonymized, map)
     const elapsed = performance.now() - t0
 
