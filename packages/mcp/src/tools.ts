@@ -80,7 +80,10 @@ function safeResolve(path: string, cwd: string): string {
   return abs
 }
 
-function readTarget(args: Record<string, unknown>, ctx: ToolContext): { text: string; label: string } {
+function readTarget(
+  args: Record<string, unknown>,
+  ctx: ToolContext
+): { text: string; label: string } {
   const path = str(args, 'path')
   const text = str(args, 'text')
   if (path !== undefined && text !== undefined) {
@@ -138,7 +141,8 @@ function runAnonymize(
   const result = anonymize(source, { existingMap, language, secrets: 'redact' })
   saveMap(mapPath, result.map)
 
-  const body = args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
+  const body =
+    args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
   const notes = [
     `Source: ${label}`,
     `Language: ${LANGUAGE_LABELS[result.language]}`,

@@ -1,14 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs, UsageError } from './args.js'
-import {
-  EXIT_ERROR,
-  HELP,
-  runMap,
-  runRestore,
-  runScan,
-  runScrub,
-  type Io,
-} from './commands.js'
+import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
 
 export const VERSION = '0.1.0'
 

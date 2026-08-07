@@ -45,10 +45,7 @@ function fail(id: string | number | null, code: number, message: string): JsonRp
 
 /** Handle one parsed message. Returns null for notifications, which by spec
  *  MUST NOT be answered. */
-export function handleMessage(
-  message: unknown,
-  ctx: ToolContext
-): JsonRpcResponse | null {
+export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcResponse | null {
   if (typeof message !== 'object' || message === null || Array.isArray(message)) {
     return fail(null, INVALID_REQUEST, 'request must be a JSON object')
   }

@@ -130,7 +130,13 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
   }
 
   if (args.json) {
-    io.stdout(`${JSON.stringify(all.map((r) => ({ file: r.file, ...r.finding })), null, 2)}\n`)
+    io.stdout(
+      `${JSON.stringify(
+        all.map((r) => ({ file: r.file, ...r.finding })),
+        null,
+        2
+      )}\n`
+    )
   } else if (all.length === 0) {
     if (!args.quiet) io.stderr(`${BIN_NAME}: no credentials detected\n`)
   } else {
