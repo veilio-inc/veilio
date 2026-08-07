@@ -15,6 +15,27 @@ describe('exportMap / importMap', () => {
     await expect(importMap(file, 'wrong-passphrase')).rejects.toThrow()
   })
 
+  it('records the KDF parameters it used', async () => {
+    const file = JSON.parse(await exportMap({ __P1__: 'X' }, 'pw'))
+    expect(file.kdf).toEqual({ name: 'PBKDF2-SHA256', iterations: 100_000 })
+  })
+
+  // Files exported before the parameters were recorded have no kdf field. They
+  // were written at the legacy iteration count and must keep importing, or the
+  // change orphans every .veilio file already on a user's disk.
+  it('imports a legacy file that predates recorded KDF parameters', async () => {
+    const plain = { __P1__: 'LegacyService' }
+    const file = JSON.parse(await exportMap(plain, 'pw'))
+    delete file.kdf
+    expect(await importMap(JSON.stringify(file), 'pw')).toEqual(plain)
+  })
+
+  it('refuses a file whose KDF parameters would pin the browser', async () => {
+    const file = JSON.parse(await exportMap({ __P1__: 'X' }, 'pw'))
+    file.kdf = { name: 'PBKDF2-SHA256', iterations: 1_000_000_000 }
+    await expect(importMap(JSON.stringify(file), 'pw')).rejects.toThrow(/iteration count/i)
+  })
+
   // A real export — a whole project's symbol map — is far larger than the
   // handful of entries above, and the base64 step used to be written in a way
   // that blew the call stack once the ciphertext passed a few tens of KB.
