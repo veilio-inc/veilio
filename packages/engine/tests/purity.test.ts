@@ -9,7 +9,14 @@ import { readFileSync } from 'node:fs'
 // Every engine source, not just engine.ts. The credential detector in
 // secrets.ts sees more sensitive material than anything else in the package —
 // exempting it from the invariant would be exactly backwards.
-const SOURCES = ['engine.ts', 'languages.ts', 'product.ts', 'secrets.ts', 'types.ts', 'index.ts'] as const
+const SOURCES = [
+  'engine.ts',
+  'languages.ts',
+  'product.ts',
+  'secrets.ts',
+  'types.ts',
+  'index.ts',
+] as const
 
 const sources = SOURCES.map((name) => ({
   name,

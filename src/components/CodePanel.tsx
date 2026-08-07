@@ -35,40 +35,40 @@ const scrubTheme = createTheme({
     lineHighlight: 'rgba(255,255,255,0.04)',
   },
   styles: [
-    { tag: t.comment,             color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.lineComment,         color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.blockComment,        color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.keyword,             color: '#CC785C' },       // terracotta — keywords
-    { tag: t.controlKeyword,      color: '#CC785C' },
-    { tag: t.definitionKeyword,   color: '#CC785C' },
-    { tag: t.moduleKeyword,       color: '#CC785C' },
-    { tag: t.operatorKeyword,     color: '#CC785C' },
-    { tag: t.string,              color: '#8DB38B' },       // muted green — strings
-    { tag: t.special(t.string),   color: '#8DB38B' },
-    { tag: t.regexp,              color: '#8DB38B' },
-    { tag: t.number,              color: '#A8C0D6' },       // muted blue — numbers
-    { tag: t.bool,                color: '#A8C0D6' },
-    { tag: t.null,                color: '#A8C0D6' },
-    { tag: t.function(t.variableName), color: '#E0C97F' },  // warm yellow — function names
+    { tag: t.comment, color: '#6B6360', fontStyle: 'italic' },
+    { tag: t.lineComment, color: '#6B6360', fontStyle: 'italic' },
+    { tag: t.blockComment, color: '#6B6360', fontStyle: 'italic' },
+    { tag: t.keyword, color: '#CC785C' }, // terracotta — keywords
+    { tag: t.controlKeyword, color: '#CC785C' },
+    { tag: t.definitionKeyword, color: '#CC785C' },
+    { tag: t.moduleKeyword, color: '#CC785C' },
+    { tag: t.operatorKeyword, color: '#CC785C' },
+    { tag: t.string, color: '#8DB38B' }, // muted green — strings
+    { tag: t.special(t.string), color: '#8DB38B' },
+    { tag: t.regexp, color: '#8DB38B' },
+    { tag: t.number, color: '#A8C0D6' }, // muted blue — numbers
+    { tag: t.bool, color: '#A8C0D6' },
+    { tag: t.null, color: '#A8C0D6' },
+    { tag: t.function(t.variableName), color: '#E0C97F' }, // warm yellow — function names
     { tag: t.function(t.propertyName), color: '#E0C97F' },
-    { tag: t.className,           color: '#C49AC0' },       // soft purple — classes/types
-    { tag: t.typeName,            color: '#C49AC0' },
-    { tag: t.typeOperator,        color: '#C49AC0' },
-    { tag: t.propertyName,        color: '#C4A882' },       // warm tan — properties
-    { tag: t.variableName,        color: '#FAF9F7' },
+    { tag: t.className, color: '#C49AC0' }, // soft purple — classes/types
+    { tag: t.typeName, color: '#C49AC0' },
+    { tag: t.typeOperator, color: '#C49AC0' },
+    { tag: t.propertyName, color: '#C4A882' }, // warm tan — properties
+    { tag: t.variableName, color: '#FAF9F7' },
     { tag: t.definition(t.variableName), color: '#FAF9F7' },
-    { tag: t.operator,            color: '#A89F99' },
-    { tag: t.punctuation,         color: '#A89F99' },
-    { tag: t.angleBracket,        color: '#A89F99' },
-    { tag: t.bracket,             color: '#A89F99' },
-    { tag: t.squareBracket,       color: '#A89F99' },
-    { tag: t.brace,               color: '#A89F99' },
-    { tag: t.meta,                color: '#6B6360' },
-    { tag: t.emphasis,            fontStyle: 'italic' },
-    { tag: t.strong,              fontWeight: 'bold' },
-    { tag: t.tagName,             color: '#CC785C' },
-    { tag: t.attributeName,       color: '#C4A882' },
-    { tag: t.attributeValue,      color: '#8DB38B' },
+    { tag: t.operator, color: '#A89F99' },
+    { tag: t.punctuation, color: '#A89F99' },
+    { tag: t.angleBracket, color: '#A89F99' },
+    { tag: t.bracket, color: '#A89F99' },
+    { tag: t.squareBracket, color: '#A89F99' },
+    { tag: t.brace, color: '#A89F99' },
+    { tag: t.meta, color: '#6B6360' },
+    { tag: t.emphasis, fontStyle: 'italic' },
+    { tag: t.strong, fontWeight: 'bold' },
+    { tag: t.tagName, color: '#CC785C' },
+    { tag: t.attributeName, color: '#C4A882' },
+    { tag: t.attributeValue, color: '#8DB38B' },
   ],
 })
 

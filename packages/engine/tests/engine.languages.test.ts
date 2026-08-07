@@ -18,10 +18,7 @@ import {
 // words and built-ins that MUST survive masking (masking them makes the output
 // unreadable as source, which is the bug this module exists to fix) and the
 // proprietary identifiers that MUST NOT survive.
-const SAMPLES: Record<
-  Language,
-  { code: string; keep: string[]; mask: string[] }
-> = {
+const SAMPLES: Record<Language, { code: string; keep: string[]; mask: string[] }> = {
   typescript: {
     code: `import { Router } from 'express'
 export class PaymentGateway {
@@ -30,7 +27,20 @@ export class PaymentGateway {
     return receipt !== null
   }
 }`,
-    keep: ['import', 'export', 'class', 'async', 'number', 'Promise', 'boolean', 'const', 'await', 'return', 'null', 'this'],
+    keep: [
+      'import',
+      'export',
+      'class',
+      'async',
+      'number',
+      'Promise',
+      'boolean',
+      'const',
+      'await',
+      'return',
+      'null',
+      'this',
+    ],
     mask: ['PaymentGateway', 'chargeCard', 'receipt', 'processor'],
   },
   python: {
@@ -41,7 +51,19 @@ class InvoiceService:
         if rate is None:
             raise ValueError("missing rate")
         return self.subtotal * (1 - rate)`,
-    keep: ['from', 'import', 'class', 'def', 'self', 'if', 'is', 'None', 'raise', 'ValueError', 'return'],
+    keep: [
+      'from',
+      'import',
+      'class',
+      'def',
+      'self',
+      'if',
+      'is',
+      'None',
+      'raise',
+      'ValueError',
+      'return',
+    ],
     mask: ['InvoiceService', 'apply_discount', 'subtotal'],
   },
   go: {
@@ -58,7 +80,20 @@ func (i *Invoice) Apply(rate float64) error {
 	i.Total = i.Total * (1 - rate)
 	return nil
 }`,
-    keep: ['package', 'import', 'type', 'struct', 'float64', 'func', 'error', 'if', 'return', 'nil', 'fmt', 'Errorf'],
+    keep: [
+      'package',
+      'import',
+      'type',
+      'struct',
+      'float64',
+      'func',
+      'error',
+      'if',
+      'return',
+      'nil',
+      'fmt',
+      'Errorf',
+    ],
     mask: ['Invoice', 'Total', 'Apply'],
   },
   java: {
@@ -84,7 +119,18 @@ namespace Acme.Billing
         public void Flush() => Console.WriteLine(TenantSlug);
     }
 }`,
-    keep: ['using', 'System', 'namespace', 'public', 'class', 'string', 'void', 'Console', 'get', 'set'],
+    keep: [
+      'using',
+      'System',
+      'namespace',
+      'public',
+      'class',
+      'string',
+      'void',
+      'Console',
+      'get',
+      'set',
+    ],
     mask: ['LedgerWriter', 'TenantSlug', 'Flush'],
   },
   rust: {
@@ -147,7 +193,23 @@ INNER JOIN customer_accounts ON customer_accounts.id = billing_invoices.account_
 WHERE settled_at IS NOT NULL
 GROUP BY tenant_slug
 ORDER BY revenue DESC;`,
-    keep: ['SELECT', 'SUM', 'AS', 'FROM', 'INNER', 'JOIN', 'ON', 'WHERE', 'IS', 'NOT', 'NULL', 'GROUP', 'BY', 'ORDER', 'DESC'],
+    keep: [
+      'SELECT',
+      'SUM',
+      'AS',
+      'FROM',
+      'INNER',
+      'JOIN',
+      'ON',
+      'WHERE',
+      'IS',
+      'NOT',
+      'NULL',
+      'GROUP',
+      'BY',
+      'ORDER',
+      'DESC',
+    ],
     mask: ['tenant_slug', 'billing_invoices', 'customer_accounts', 'settled_at'],
   },
 }
@@ -260,10 +322,9 @@ describe('anonymize — per-language masking', () => {
     it(`masks ${language} proprietary identifiers`, () => {
       const { anonymized, map } = anonymize(code, { language })
       for (const word of mask) {
-        expect(
-          anonymized.includes(word),
-          `${language}: expected "${word}" to be masked`
-        ).toBe(false)
+        expect(anonymized.includes(word), `${language}: expected "${word}" to be masked`).toBe(
+          false
+        )
         expect(Object.values(map)).toContain(word)
       }
     })

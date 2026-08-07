@@ -129,8 +129,7 @@ export default function ScrubPage() {
           alignItems: 'center',
           justifyContent: 'center',
           gap: 10,
-          background:
-            'linear-gradient(180deg, rgba(204,120,92,0.07), rgba(204,120,92,0.02))',
+          background: 'linear-gradient(180deg, rgba(204,120,92,0.07), rgba(204,120,92,0.02))',
           borderBottom: '1px solid var(--border)',
           padding: '9px 24px',
           marginTop: 12,
@@ -251,8 +250,7 @@ export default function ScrubPage() {
                 style={{ padding: '3px 10px', fontSize: 12 }}
                 onClick={() => handleLoadLocalMap(m.id)}
               >
-                {m.name}{' '}
-                <span style={{ color: 'var(--text-dim)' }}>({m.identifierCount})</span>
+                {m.name} <span style={{ color: 'var(--text-dim)' }}>({m.identifierCount})</span>
               </button>
             ))}
           </div>
@@ -373,7 +371,15 @@ function LandingHero() {
             marginBottom: 20,
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)' }} />
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: 'var(--accent)',
+              boxShadow: '0 0 8px var(--accent)',
+            }}
+          />
           Client-side · nothing leaves your browser
         </div>
 
@@ -461,26 +467,46 @@ function RedactionDemo() {
       >
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#E05C5C' }} />
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#D9A441' }} />
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--success)' }} />
-        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-dim)' }}>auth.service.ts</span>
+        <span
+          style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--success)' }}
+        />
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-dim)' }}>
+          auth.service.ts
+        </span>
       </div>
-      <div style={{ padding: '16px 18px', fontSize: 13, lineHeight: 1.85, background: 'var(--code-bg)', color: 'var(--code-text)' }}>
+      <div
+        style={{
+          padding: '16px 18px',
+          fontSize: 13,
+          lineHeight: 1.85,
+          background: 'var(--code-bg)',
+          color: 'var(--code-text)',
+        }}
+      >
         <Line>
-          <span style={kw}>const</span> <span className="redact">apiKey</span> = <span style={str}>&quot;<span className="redact">sk-live-9f2a</span>&quot;</span>
+          <span style={kw}>const</span> <span className="redact">apiKey</span> ={' '}
+          <span style={str}>
+            &quot;<span className="redact">sk-live-9f2a</span>&quot;
+          </span>
         </Line>
         <Line>
-          <span style={kw}>function</span> <span style={fn}>connect</span>(<span className="redact">dbPassword</span>) &#123;
+          <span style={kw}>function</span> <span style={fn}>connect</span>(
+          <span className="redact">dbPassword</span>) &#123;
         </Line>
         <Line indent={1}>
-          <span style={kw}>return</span> <span style={fn}>db</span>.<span style={fn}>auth</span>(<span className="redact">dbPassword</span>)
+          <span style={kw}>return</span> <span style={fn}>db</span>.<span style={fn}>auth</span>(
+          <span className="redact">dbPassword</span>)
         </Line>
         <Line>&#125;</Line>
         <div style={{ height: 10 }} />
         <Line>
-          <span style={{ color: 'var(--text-dim)' }}>{'// → veiled before it reaches the model'}</span>
+          <span style={{ color: 'var(--text-dim)' }}>
+            {'// → veiled before it reaches the model'}
+          </span>
         </Line>
         <Line>
-          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__P1__</span> = <span style={str}>&quot;__P2__&quot;</span>
+          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__P1__</span> ={' '}
+          <span style={str}>&quot;__P2__&quot;</span>
         </Line>
       </div>
     </div>

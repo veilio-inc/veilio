@@ -28,7 +28,6 @@ import { PRODUCT_NAME } from './product.js'
 // `anonymize` resolves the language from its options (auto-detecting by default).
 const DEFAULT_LANGUAGE: Language = 'typescript'
 
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function escapeRegex(s: string): string {
@@ -106,9 +105,7 @@ const PLACEHOLDER_SCAN = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_
  *  larger (e.g. team-shared) map it happens to be a subset of. */
 export function withAiPreamble(anonymized: string, map?: SymbolMap): string {
   const legend = map ? buildLegend(map, anonymized) : ''
-  return legend
-    ? `${AI_PREAMBLE}\n${legend}\n\n${anonymized}`
-    : `${AI_PREAMBLE}\n\n${anonymized}`
+  return legend ? `${AI_PREAMBLE}\n${legend}\n\n${anonymized}` : `${AI_PREAMBLE}\n\n${anonymized}`
 }
 
 // ─── Comment-aware scanning ──────────────────────────────────────────────────
@@ -426,8 +423,11 @@ export function anonymize(
   // Option-key check FIRST: an options object whose values are all strings
   // (e.g. { language: 'go' }) would otherwise be misread as a SymbolMap by the
   // positional-map check below.
-  const opts: AnonymizeOptions =
-    isAnonymizeOptions(options) ? options : isSymbolMap(options) ? { existingMap: options } : options
+  const opts: AnonymizeOptions = isAnonymizeOptions(options)
+    ? options
+    : isSymbolMap(options)
+      ? { existingMap: options }
+      : options
   const existingMap = opts.existingMap ?? {}
   const rules = opts.rules ?? []
   const language = resolveLanguage(code, opts.language)
@@ -464,8 +464,7 @@ export function anonymize(
   // that collides with one already in the source (comments included: restore()
   // rewrites placeholders in comments too, so a stray __CLS__1 in a comment is
   // just as much a collision risk as one in code).
-  const codePlaceholderRegex =
-    /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
+  const codePlaceholderRegex = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
   let codeMatch: RegExpExecArray | null
   while ((codeMatch = codePlaceholderRegex.exec(source)) !== null) {
     const token = codeMatch[0]
@@ -494,7 +493,7 @@ export function anonymize(
   const whitelisted = new Set<string>()
 
   for (const name of identifiers) {
-    if (reverseExisting[name]) continue  // already mapped
+    if (reverseExisting[name]) continue // already mapped
 
     // 1. Whitelist: skip
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {

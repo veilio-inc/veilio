@@ -7,14 +7,18 @@ import { extractIdentifiers, anonymize, restore } from '../src/engine.js'
 
 describe('extractIdentifiers leaves standard built-in methods unmasked', () => {
   it('does not extract Array iteration methods', () => {
-    const ids = extractIdentifiers('items.forEach(f); items.map(g); items.filter(h); items.reduce(r); items.find(p); items.some(s); items.every(e)')
+    const ids = extractIdentifiers(
+      'items.forEach(f); items.map(g); items.filter(h); items.reduce(r); items.find(p); items.some(s); items.every(e)'
+    )
     for (const m of ['forEach', 'map', 'filter', 'reduce', 'find', 'some', 'every']) {
       expect(ids).not.toContain(m)
     }
   })
 
   it('does not extract Array mutation/query methods', () => {
-    const ids = extractIdentifiers('a.push(1); a.includes(2); a.indexOf(3); a.slice(0); a.concat(b); a.flatMap(f)')
+    const ids = extractIdentifiers(
+      'a.push(1); a.includes(2); a.indexOf(3); a.slice(0); a.concat(b); a.flatMap(f)'
+    )
     for (const m of ['push', 'includes', 'indexOf', 'slice', 'concat', 'flatMap']) {
       expect(ids).not.toContain(m)
     }
@@ -35,7 +39,9 @@ describe('extractIdentifiers leaves standard built-in methods unmasked', () => {
   })
 
   it('does not extract common string methods', () => {
-    const ids = extractIdentifiers('s.split(","); s.trim(); s.replace(a, b); s.toLowerCase(); s.startsWith(p); s.padStart(3)')
+    const ids = extractIdentifiers(
+      's.split(","); s.trim(); s.replace(a, b); s.toLowerCase(); s.startsWith(p); s.padStart(3)'
+    )
     for (const m of ['split', 'trim', 'replace', 'toLowerCase', 'startsWith', 'padStart']) {
       expect(ids).not.toContain(m)
     }

@@ -284,9 +284,7 @@ describe('entropy helper', () => {
 
 describe('summary helpers', () => {
   it('counts findings by severity', () => {
-    const findings = detectSecrets(
-      'a = "AKIAIOSFODNN7EXAMPLE"\nb = "x@y.com"\nc = "10.0.3.14"'
-    )
+    const findings = detectSecrets('a = "AKIAIOSFODNN7EXAMPLE"\nb = "x@y.com"\nc = "10.0.3.14"')
     const summary = summarizeSecrets(findings)
     expect(summary.critical).toBe(1)
     expect(summary.medium).toBe(2)
@@ -374,18 +372,33 @@ const MORE_SAMPLES: { type: SecretType; code: string }[] = [
     type: 'slack-webhook',
     code: 'const u = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"',
   },
-  { type: 'sendgrid-key', code: 'const k = "SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABC"' },
+  {
+    type: 'sendgrid-key',
+    code: 'const k = "SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABC"',
+  },
   { type: 'twilio-key', code: 'const sid = "AC0123456789abcdef0123456789abcdef"' },
   { type: 'mailgun-key', code: 'const k = "key-0123456789abcdef0123456789abcdef"' },
   { type: 'hugging-face-token', code: 'const t = "hf_abcdefghijklmnopqrstuvwxyz01234567"' },
   { type: 'supabase-key', code: 'const k = "sbp_0123456789abcdef0123456789abcdef01234567"' },
   { type: 'shopify-token', code: 'const t = "shpat_0123456789abcdef0123456789abcdef"' },
   { type: 'square-token', code: 'const t = "sq0atp-abcdefghijklmnopqrstuv"' },
-  { type: 'pypi-token', code: 'const t = "pypi-AgEIcHlwaS5vcmc' + 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP' + '"' },
-  { type: 'discord-token', code: 'const t = "MTIzNDU2Nzg5MDEyMzQ1Njc4.GaBcDe.abcdefghijklmnopqrstuvwxyz01234"' },
+  {
+    type: 'pypi-token',
+    code:
+      'const t = "pypi-AgEIcHlwaS5vcmc' +
+      'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP' +
+      '"',
+  },
+  {
+    type: 'discord-token',
+    code: 'const t = "MTIzNDU2Nzg5MDEyMzQ1Njc4.GaBcDe.abcdefghijklmnopqrstuvwxyz01234"',
+  },
   { type: 'azure-key', code: 'AccountKey=' + 'a'.repeat(43) + 'bC9/' + 'd'.repeat(39) + '==' },
   { type: 'datadog-key', code: 'dd_api_key = "0123456789abcdef0123456789abcdef"' },
-  { type: 'cloudflare-token', code: 'cloudflare_api_token = "abcdefghij1234567890ABCDEFGHIJ1234567890"' },
+  {
+    type: 'cloudflare-token',
+    code: 'cloudflare_api_token = "abcdefghij1234567890ABCDEFGHIJ1234567890"',
+  },
   { type: 'basic-auth', code: 'headers: { Authorization: "Basic dXNlcjpzM2NyM3RwYXNzdzByZA==" }' },
 ]
 

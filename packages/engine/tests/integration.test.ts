@@ -2,12 +2,7 @@
 // AND verifies the public API contract that npm consumers will see.
 
 import { describe, it, expect } from 'vitest'
-import {
-  anonymize,
-  restore,
-  extractIdentifiers,
-  type SymbolMap,
-} from '../src/index.js'
+import { anonymize, restore, extractIdentifiers, type SymbolMap } from '../src/index.js'
 
 describe('public API surface (via package entry point)', () => {
   it('exports anonymize, restore, extractIdentifiers as functions', () => {

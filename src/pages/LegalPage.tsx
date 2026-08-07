@@ -67,7 +67,9 @@ export default function LegalPage() {
 
         <div className="surface ticks" style={{ padding: 'clamp(24px, 5vw, 44px)' }}>
           {error && (
-            <p style={{ color: 'var(--danger)' }}>Could not load this document. Please try again.</p>
+            <p style={{ color: 'var(--danger)' }}>
+              Could not load this document. Please try again.
+            </p>
           )}
           {!error && md === null && (
             <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -210,7 +212,11 @@ function renderMarkdown(md: string): ReactNode[] {
 
 function renderTable(rows: string[], key: number): ReactNode {
   const cells = (row: string) =>
-    row.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim())
+    row
+      .replace(/^\s*\|/, '')
+      .replace(/\|\s*$/, '')
+      .split('|')
+      .map((c) => c.trim())
   const header = cells(rows[0])
   // rows[1] is the |---|---| separator.
   const body = rows.slice(2).map(cells)
@@ -303,7 +309,11 @@ function renderInline(text: string): ReactNode[] {
         </code>
       )
     } else if (m[6]) {
-      nodes.push(<strong key={key++} style={{ color: 'var(--text-primary)' }}>{m[7]}</strong>)
+      nodes.push(
+        <strong key={key++} style={{ color: 'var(--text-primary)' }}>
+          {m[7]}
+        </strong>
+      )
     } else if (m[8]) {
       nodes.push(<em key={key++}>{m[9]}</em>)
     }

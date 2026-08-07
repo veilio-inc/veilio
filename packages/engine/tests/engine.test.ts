@@ -85,9 +85,7 @@ describe('anonymize', () => {
   })
 
   it('identifierCount equals number of unique placeholders', () => {
-    const { map, identifierCount } = anonymize(
-      'class UserAuthService { validateToken() {} }',
-    )
+    const { map, identifierCount } = anonymize('class UserAuthService { validateToken() {} }')
     expect(identifierCount).toBe(Object.keys(map).length)
   })
 
@@ -223,7 +221,12 @@ describe('restore', () => {
 // ─── anonymize with custom rules (sub-project #4a) ───────────────────────────
 
 describe('anonymize with custom rules', () => {
-  const helper = (n: number, type: 'replace' | 'whitelist', pattern: string, placeholder?: string) => {
+  const helper = (
+    n: number,
+    type: 'replace' | 'whitelist',
+    pattern: string,
+    placeholder?: string
+  ) => {
     const base = {
       id: `r${n}`,
       type,
@@ -244,7 +247,7 @@ describe('anonymize with custom rules', () => {
   })
 
   it('existingMap via options object continues the role counter', () => {
-    const seed: SymbolMap = { '__CLS__1': 'OldName' }
+    const seed: SymbolMap = { __CLS__1: 'OldName' }
     const { map } = anonymize('class NewName {}', { existingMap: seed })
     // OldName stays mapped, NewName continues the __CLS__ counter.
     expect(map['__CLS__1']).toBe('OldName')
@@ -278,8 +281,8 @@ describe('anonymize with custom rules', () => {
     const { anonymized, map } = anonymize('const ReactHelper = null; class Foo {}', {
       rules: rulesH,
     })
-    expect(anonymized).toContain('ReactHelper')       // whitelisted: left in source
-    expect(map['__CLS__1']).toBe('Foo')               // Foo is numbered normally
+    expect(anonymized).toContain('ReactHelper') // whitelisted: left in source
+    expect(map['__CLS__1']).toBe('Foo') // Foo is numbered normally
     // ReactHelper is NOT in the map (it wasn't anonymized)
     expect(Object.values(map)).not.toContain('ReactHelper')
   })
@@ -290,8 +293,8 @@ describe('anonymize with custom rules', () => {
       helper(2, 'replace', '^api[A-Z]\\w*Key$', '__APIKEY__'),
     ]
     const { anonymized, map } = anonymize('const apiSecretKey = "x"', { rules })
-    expect(anonymized).toContain('apiSecretKey')           // whitelisted
-    expect(anonymized).not.toContain('__APIKEY__')         // replace skipped
+    expect(anonymized).toContain('apiSecretKey') // whitelisted
+    expect(anonymized).not.toContain('__APIKEY__') // replace skipped
     expect(Object.values(map)).not.toContain('apiSecretKey')
   })
 

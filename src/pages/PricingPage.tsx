@@ -29,7 +29,8 @@ const PLANS: PlanCard[] = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    tagline: 'Everything you need to protect your code. Self-hosted, free for any use — even commercial.',
+    tagline:
+      'Everything you need to protect your code. Self-hosted, free for any use — even commercial.',
     features: [
       'Full anonymize / restore tool',
       'Stripped metadata panel',
@@ -204,11 +205,18 @@ export default function PricingPage() {
             color: 'var(--text-secondary)',
           }}
         >
-          You're running the <strong style={{ color: 'var(--text-primary)' }}>Community Edition</strong> —
-          the Free tier, self-hosted. The paid tiers run on{' '}
-          <a href={`${CLOUD_URL}/pricing`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>
+          You're running the{' '}
+          <strong style={{ color: 'var(--text-primary)' }}>Community Edition</strong> — the Free
+          tier, self-hosted. The paid tiers run on{' '}
+          <a
+            href={`${CLOUD_URL}/pricing`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--accent)' }}
+          >
             Veilio Cloud
-          </a>.
+          </a>
+          .
         </div>
 
         <div
@@ -261,16 +269,22 @@ export default function PricingPage() {
 
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 400 }}>
+                  <span
+                    style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 400 }}
+                  >
                     {plan.name}
                   </span>
                   {plan.planId === 'free' && <span className="badge badge-accent">CE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}>
+                  <span
+                    style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}
+                  >
                     {plan.price}
                   </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{plan.period}</span>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    {plan.period}
+                  </span>
                 </div>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>
                   {plan.tagline}

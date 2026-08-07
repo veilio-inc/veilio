@@ -56,11 +56,14 @@ export default function Footer() {
                 maxWidth: 320,
               }}
             >
-              Your identifiers never leave this browser. Self-hostable and source-available — free to use, even commercially. Not for resale.
+              Your identifiers never leave this browser. Self-hostable and source-available — free
+              to use, even commercially. Not for resale.
             </p>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+          <div
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}
+          >
             <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 18, fontSize: 13 }}>
               {LEGAL.map(([to, label]) => (
                 <Link key={to} to={to} className="footer-link">
@@ -76,7 +79,9 @@ export default function Footer() {
                 GitHub ↗
               </a>
             </nav>
-            <span style={{ color: 'var(--text-dim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+            <span
+              style={{ color: 'var(--text-dim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}
+            >
               © {new Date().getFullYear()} Veilio
             </span>
           </div>

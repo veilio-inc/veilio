@@ -8,7 +8,9 @@ import { anonymize, restore, extractIdentifiers } from '../src/engine.js'
 
 describe('anonymize leaves comments unmasked', () => {
   it('does not mask words inside a line comment', () => {
-    const { anonymized, map } = anonymize('const userToken = grabToken() // resolve the credential later')
+    const { anonymized, map } = anonymize(
+      'const userToken = grabToken() // resolve the credential later'
+    )
     expect(anonymized).toContain('// resolve the credential later')
     // a word that lives ONLY in the comment never enters the map
     expect(Object.values(map)).not.toContain('credential')

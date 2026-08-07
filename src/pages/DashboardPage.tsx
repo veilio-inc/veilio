@@ -76,7 +76,8 @@ export default function DashboardPage() {
             {maps.length > 0 && <span className="badge badge-accent">{maps.length}</span>}
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-            Stored in this browser. Export as <code>.veilio</code> to back up or move between devices.
+            Stored in this browser. Export as <code>.veilio</code> to back up or move between
+            devices.
           </p>
         </div>
 
@@ -107,7 +108,11 @@ export default function DashboardPage() {
             <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 20 }}>
               Anonymize some code, then click &ldquo;Save map&rdquo; to keep its symbol map here.
             </p>
-            <a href="/" className="btn-primary" style={{ display: 'inline-block', padding: '9px 20px' }}>
+            <a
+              href="/"
+              className="btn-primary"
+              style={{ display: 'inline-block', padding: '9px 20px' }}
+            >
               Open the tool
             </a>
           </div>
@@ -135,8 +140,7 @@ export default function DashboardPage() {
                       fontFamily: 'var(--font-mono)',
                     }}
                   >
-                    {m.identifierCount} identifiers ·{' '}
-                    {new Date(m.savedAt).toLocaleDateString()}
+                    {m.identifierCount} identifiers · {new Date(m.savedAt).toLocaleDateString()}
                   </span>
                 </div>
 

@@ -304,10 +304,30 @@ const PATTERNS: Pattern[] = [
  *  these is pure noise, and noisy warnings are the fastest way to teach a user
  *  to ignore the panel that matters. */
 const KNOWN_DUMMY = new Set([
-  'password', 'changeme', 'secret', 'example', 'placeholder', 'your-api-key',
-  'yourapikey', 'xxxxxxxx', 'redacted', 'todo', 'none', 'null', 'undefined',
-  'test', 'dummy', 'sample', 'foobar', 'hunter2', '********', '<password>',
-  'your_password_here', 'my-secret', 'supersecret', 'notarealkey',
+  'password',
+  'changeme',
+  'secret',
+  'example',
+  'placeholder',
+  'your-api-key',
+  'yourapikey',
+  'xxxxxxxx',
+  'redacted',
+  'todo',
+  'none',
+  'null',
+  'undefined',
+  'test',
+  'dummy',
+  'sample',
+  'foobar',
+  'hunter2',
+  '********',
+  '<password>',
+  'your_password_here',
+  'my-secret',
+  'supersecret',
+  'notarealkey',
 ])
 
 function isDummy(value: string): boolean {
@@ -421,8 +441,7 @@ const SEVERITY_RANK: Record<SecretSeverity, number> = { critical: 3, high: 2, me
  *  key inside a connection string should be reported once, as the Stripe key. */
 function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   const sorted = [...matches].sort((a, b) => {
-    const bySeverity =
-      SEVERITY_RANK[b.pattern.severity] - SEVERITY_RANK[a.pattern.severity]
+    const bySeverity = SEVERITY_RANK[b.pattern.severity] - SEVERITY_RANK[a.pattern.severity]
     if (bySeverity !== 0) return bySeverity
     const byLength = b.end - b.start - (a.end - a.start)
     if (byLength !== 0) return byLength

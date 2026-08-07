@@ -110,7 +110,9 @@ describe('classifyIdentifiers — priority resolution across occurrences', () =>
 
 describe('classifyIdentifiers — negative and edge cases', () => {
   it('ignores comment contents entirely', () => {
-    const roles = classifyIdentifiers('// secretHelper does things\n/* also secretHelper */\nconst a = 1')
+    const roles = classifyIdentifiers(
+      '// secretHelper does things\n/* also secretHelper */\nconst a = 1'
+    )
     expect(roles.secretHelper).toBeUndefined()
   })
 
@@ -201,8 +203,14 @@ describe('anonymize — roles with existing maps and rules', () => {
 
   it('whitelist rules still win over role placeholders (negative)', () => {
     const wl: CustomRuleWhitelist = {
-      id: 'w1', scope: 'personal', team_id: null, type: 'whitelist',
-      name: 'keep', pattern: '^KeepMe$', enabled: true, sort_order: 1,
+      id: 'w1',
+      scope: 'personal',
+      team_id: null,
+      type: 'whitelist',
+      name: 'keep',
+      pattern: '^KeepMe$',
+      enabled: true,
+      sort_order: 1,
     }
     const { anonymized, map } = anonymize('class KeepMe {}', { rules: [wl] })
     expect(anonymized).toBe('class KeepMe {}')
@@ -211,8 +219,15 @@ describe('anonymize — roles with existing maps and rules', () => {
 
   it('replace rules still win over role placeholders (negative)', () => {
     const rr: CustomRuleReplace = {
-      id: 'r1', scope: 'personal', team_id: null, type: 'replace',
-      name: 'keys', pattern: 'ApiKey$', placeholder: '__APIKEY__', enabled: true, sort_order: 1,
+      id: 'r1',
+      scope: 'personal',
+      team_id: null,
+      type: 'replace',
+      name: 'keys',
+      pattern: 'ApiKey$',
+      placeholder: '__APIKEY__',
+      enabled: true,
+      sort_order: 1,
     }
     const { map } = anonymize('const stripeApiKey = load()', { rules: [rr] })
     expect(map.__APIKEY__1).toBe('stripeApiKey')
@@ -221,8 +236,15 @@ describe('anonymize — roles with existing maps and rules', () => {
 
   it('a custom rule sharing a role base shares its counter (documented behavior)', () => {
     const rr: CustomRuleReplace = {
-      id: 'r2', scope: 'personal', team_id: null, type: 'replace',
-      name: 'fns', pattern: '^special', placeholder: '__FN__', enabled: true, sort_order: 1,
+      id: 'r2',
+      scope: 'personal',
+      team_id: null,
+      type: 'replace',
+      name: 'fns',
+      pattern: '^special',
+      placeholder: '__FN__',
+      enabled: true,
+      sort_order: 1,
     }
     const { map } = anonymize('specialThing = 1\nplainHelper()', { rules: [rr] })
     const fnKeys = Object.keys(map).filter((k) => k.startsWith('__FN__'))
@@ -259,7 +281,9 @@ describe('idempotency — placeholder-shaped tokens are never re-masked', () => 
   })
 
   it('continues numbering past placeholder tokens already present in the code', () => {
-    const { anonymized, map } = anonymize('class __CLS__1 { helper() {} }\nclass BrandNewService {}')
+    const { anonymized, map } = anonymize(
+      'class __CLS__1 { helper() {} }\nclass BrandNewService {}'
+    )
     expect(map.__CLS__2).toBe('BrandNewService')
     expect(anonymized).toContain('class __CLS__1 {')
     expect(anonymized).toContain('class __CLS__2 {}')
