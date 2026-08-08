@@ -16,14 +16,41 @@ Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSes
 ### Docker
 
 ```bash
-docker run -p 8080:80 ghcr.io/dlugosh/veilio:latest
+docker run -p 8080:80 ghcr.io/dlgshi/veilio-oss:latest
 ```
 
 Open `http://localhost:8080`.
 
 ### Static bundle
 
-Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/dlugosh/veilio-oss/releases), extract, and serve `dist/` with any static host (nginx, Caddy, GitHub Pages, Vercel, `python -m http.server`).
+Use this when Docker isn't an option — locked-down or air-gapped environments,
+or an existing nginx / IIS / CDN you'd rather drop files into.
+
+Veilio has **no backend and no server-side code**: the engine runs entirely in
+the browser, so "hosting" it is just serving static files. The Docker image above
+is nothing more than nginx serving exactly this bundle.
+
+Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/DlgSHi/veilio-oss/releases), extract, and serve `dist/` with any static web server.
+
+> **One requirement: SPA fallback.** Veilio uses client-side routing, so the
+> server must serve `index.html` for unknown paths. Without it, `/pricing` and
+> `/legal/terms` return 404 when opened directly or refreshed — the app looks
+> broken even though it isn't. The Docker image already handles this.
+
+- **nginx** — `try_files $uri $uri/ /index.html;` (see [`docker/nginx.conf`](./docker/nginx.conf) for a complete, working config)
+- **Caddy** — `try_files {path} /index.html`
+- **Vercel / Netlify** — add a rewrite of `/*` to `/index.html`
+- **`python -m http.server`** — fine for a quick look at `/`, but it has no
+  fallback, so deep links will 404
+
+**GitHub Pages needs extra work** and isn't recommended: it has no SPA fallback,
+and a project page serves under `/veilio-oss/` while this build assumes root, so
+assets 404 as well. Use a custom domain plus a `404.html` fallback, or pick
+another host.
+
+You can't open `dist/index.html` straight off disk — browsers refuse to load ES
+modules over `file://`. Any HTTP server works; the requirement is only the
+fallback above.
 
 ### Develop locally
 

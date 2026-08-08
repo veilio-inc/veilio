@@ -4,3 +4,11 @@ dist/
 .env.local
 .DS_Store
 *.log
+
+# Local AI/agent tooling — never part of the published source.
+.claude/
+.cursor/
+.aider*
+CLAUDE.md
+AGENTS.md
+.mcp.json
