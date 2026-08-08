@@ -17,7 +17,11 @@ async function deriveKey(
     ['deriveKey']
   )
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt.buffer, iterations: kdf.iterations, hash: 'SHA-256' },
+    // Pass the TypedArray view directly, not salt.buffer: a raw ArrayBuffer
+    // fails WebCrypto's cross-realm instanceof check under jsdom
+    // ("salt is not instance of ArrayBuffer…"). ArrayBufferView checks are
+    // realm-agnostic, so the view works everywhere.
+    { name: 'PBKDF2', salt, iterations: kdf.iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: ALG, length: 256 },
     false,
@@ -26,7 +30,11 @@ async function deriveKey(
 }
 
 function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
-  const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+  // Cross-realm safe: instanceof ArrayBuffer fails when the buffer crossed
+  // realms (e.g. jsdom in tests), sending a real ArrayBuffer down the
+  // typed-array branch and yielding an empty string. ArrayBuffer.isView returns
+  // true for any typed-array view, false for raw ArrayBuffers — flip the check.
+  const bytes = (ArrayBuffer.isView(buf) ? buf : new Uint8Array(buf)) as Uint8Array
   // Converted in chunks, not as String.fromCharCode(...bytes): spreading a
   // whole export's worth of bytes passes them as individual arguments and
   // overflows the call stack (~64k args in Safari, ~125k in V8). A real

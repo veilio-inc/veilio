@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+//
+// This module is browser code, so it is exercised in a browser-like realm
+// rather than bare Node. That matters beyond realism: values crossing the
+// jsdom realm boundary fail `instanceof` checks against Node's own globals, so
+// a node-environment run silently skips the very code paths that break in
+// practice. The rest of the suite (the engine) stays on the default env.
 import { describe, it, expect } from 'vitest'
 import { exportMap, importMap } from './localCrypto.js'
 
