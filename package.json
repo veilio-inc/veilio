@@ -2,7 +2,7 @@
   "name": "veilio-oss",
   "version": "0.1.0",
   "description": "Veilio Community Edition — self-hostable, frontend-only AI code anonymizer",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "private": true,
   "scripts": {

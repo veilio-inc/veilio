@@ -2,10 +2,11 @@
 
 _Version 1.0 · Last updated: 2026-06-23_
 
-> **Why this exists.** The Veilio **code** is source-available under the PolyForm
-> Shield License 1.0.0 — anyone may use, modify, and redistribute it for any purpose,
-> including commercial, except to resell or republish it as a competing product or
-> service. That license covers the code only. It does **not** grant any rights to the
+> **Why this exists.** The Veilio **code** is source-available under the Veilio
+> Community License 1.0 — anyone may use, modify, and fork it for any purpose,
+> including inside their own business, except to resell it, host it as a service for
+> others, or republish it as a competing product. That license covers the code only.
+> It says so itself (§11), and it does **not** grant any rights to the
 > **"Veilio" name or logo**. The brand is
 > how users tell the official project and service apart from forks, so we govern it separately
 > here. *(This is a common-law trademark policy; it does not by itself assert any registered
@@ -16,7 +17,7 @@ _Version 1.0 · Last updated: 2026-06-23_
 trademarks of **Igor Dlugosh** / the Veilio project (the "Project").
 
 ## What you may do (no permission needed)
-- Use, fork, modify, and build on the **code** for any purpose, including commercial, under the PolyForm Shield License (just not to resell Veilio as a competing product or service).
+- Use, fork, modify, and build on the **code** for any purpose, including inside your own business, under the Veilio Community License (just not to resell Veilio, host it as a service for others, or ship it as a competing product).
 - State **truthfully** that your product "is built on Veilio", "uses Veilio", or "is
   compatible with Veilio" (nominative use), as long as you don't imply endorsement.
 - Use the name "Veilio" to refer to the project in articles, talks, tutorials, and

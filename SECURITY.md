@@ -7,7 +7,7 @@ anything exploitable.
 
 - Preferred: GitHub **Private vulnerability reporting** (this repo → **Security**
   tab → *Report a vulnerability*).
-- Or email: `security@veilio.dev`  <!-- TODO: confirm/replace with the real inbox -->
+- Or email: `security@veilio.dev` 
 
 We aim to acknowledge within 72 hours and to ship fixes for confirmed issues in
 the anonymization engine promptly, since it is the privacy-critical core.

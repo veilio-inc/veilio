@@ -90,8 +90,9 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 
 ## License
 
-PolyForm Shield License 1.0.0 — **free to use for any purpose, including
-commercial projects.** You may not resell, rebrand, or republish it as a
-standalone product or service that competes with Veilio; for that, contact
-`hello@veilio.dev`. See the `LICENSE` file. This is a source-available license,
-not OSI "open source."
+Veilio Community License 1.0 — **free to use for any purpose, including inside
+your own business commercially.** You may not resell it, host it as a service for
+others, rebrand it, or republish it as a product that competes with Veilio Cloud;
+for that, contact `hello@veilio.dev`. See the `LICENSE` file. This is a
+source-available, community-developed license, not an OSI-approved "open source"
+license.

@@ -48,11 +48,11 @@ The anonymizer engine (`@dlgshi/engine`) is the same in both editions. The Cloud
 
 ## License, contributing & trademarks
 
-- **License:** [PolyForm Shield 1.0.0](./LICENSE) — **free to use for any purpose, including personal, educational, and commercial projects.** Self-host, modify, and build on it. You may **not** sell, resell, sublicense, rebrand, or republish Veilio (or its engine, or a derivative) **as a standalone product or service that competes with Veilio.** It is **source-available, not OSI "open source."** For a competing-use or redistribution license, email `hello@veilio.dev`.
+- **License:** [Veilio Community License 1.0](./LICENSE) — **free to use for any purpose, including personal, educational, and internal commercial use.** Self-host it, modify it, fork it, run your business on it. You may **not** sell, resell, sublicense, white-label, or operate Veilio (or its engine, or a derivative) **as a commercial hosted service or a product that competes with Veilio Cloud.** It is **source-available and community-developed, but not an OSI-approved "open source" license.** For a commercial or redistribution license, email `hello@veilio.dev`.
 - **Contributing:** see [CONTRIBUTING.md](./CONTRIBUTING.md). Contributions are accepted under a [CLA](./CLA.md) so they can be used across both the Community and Cloud editions.
 - **Trademarks:** the code is source-available, but the **"Veilio" name and logo are not** licensed for reuse — see [TRADEMARKS.md](./TRADEMARKS.md).
 - **Security:** report vulnerabilities privately per [SECURITY.md](./SECURITY.md).
 
 ## Credits
 
-Built on prior work by Igor Dlugosh in the (private) Veilio codebase. Source-available under the PolyForm Shield License 1.0.0 — free to use, including commercially; not for competing resale.
+Built on prior work by Igor Dlugosh in the (private) Veilio codebase. Source-available under the Veilio Community License 1.0 — free to use, including inside your own business; not for competing resale or hosting.

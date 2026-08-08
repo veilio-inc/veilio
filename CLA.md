@@ -28,8 +28,9 @@ software distributed by the Project a **perpetual, worldwide, non-exclusive, roy
 irrevocable copyright license** to reproduce, prepare derivative works of, publicly
 display, publicly perform, sublicense, and distribute Your Contribution and such
 derivative works. **This expressly includes the right to license Your Contribution under
-both the PolyForm Shield License 1.0.0 (Community Edition) and under the Project's
-proprietary and commercial terms (Veilio Cloud and paid commercial licenses).**
+the Veilio Community License (Community Edition), under any future version of that
+license, and under the Project's proprietary and commercial terms (Veilio Cloud and paid
+commercial licenses).**
 
 ## 3. Patent license
 You grant the Project and recipients a **perpetual, worldwide, non-exclusive, royalty-free,

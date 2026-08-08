@@ -1,107 +1,248 @@
-Required Notice: Copyright 2026 Igor Dlugosh (https://veilio.dev)
+# Veilio Community License
 
-Veilio is licensed under the PolyForm Shield License 1.0.0, reproduced in full
-below.
+_Version 1.0 · Effective 2026-08-08_
 
-Plain-language summary (non-binding; the license text below controls):
-This software may be used freely for personal, educational, and commercial
-projects. However, you may not sell, resell, sublicense, redistribute, rebrand,
-or republish this software, its engine, or any derivative or source-available
-version of it as a standalone product or service that competes with Veilio for
-commercial gain. For a competing-use or redistribution license, contact
-hello@veilio.dev.
+**Copyright © 2026 Igor Dlugosh**
 
-This is a source-available license. It is NOT an OSI-approved "open source"
-license.
+> **Plain-language summary (non-binding; the numbered terms below control).**
+> Use Veilio for anything you like — personally, or inside your company, including
+> to make money. Read it, fork it, change it, self-host it, ship products with it.
+> The one thing you may not do without written permission is sell Veilio itself:
+> reselling it, white-labeling it, or running it as a hosted service for other
+> people. Contributions are welcome. For a commercial or redistribution license,
+> email `hello@veilio.dev`.
 
-----------------------------------------------------------------------
+---
 
-# PolyForm Shield License 1.0.0
+## 1. Project Model
 
-<https://polyformproject.org/licenses/shield/1.0.0>
+This project follows an **open-source and community-driven development model** with a separate commercial Cloud Edition.
 
-## Acceptance
+The **Open-source Core** is publicly available and intended to be freely used, inspected, modified, forked, and improved by the community. Contributions from the community are welcome and are an important part of the project's development.
 
-In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
+The **Cloud Edition** is a separate commercial offering operated by Igor Dlugosh. It provides hosted and managed functionality and may include additional proprietary features, infrastructure, services, and support.
 
-## Copyright License
+The Software may be used for personal purposes as well as for internal commercial purposes. Organizations may deploy and use the Software within their own businesses without requiring a commercial license.
 
-The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose.  However, you may only distribute the software according to [Distribution License](#distribution-license) and make changes or new works based on the software according to [Changes and New Works License](#changes-and-new-works-license).
+However, the Software may not be commercially redistributed, resold, white-labeled, or offered as a third-party hosted service without prior written permission from Igor Dlugosh.
 
-## Distribution License
+The purpose of this model is to keep the core technology open and community-driven while allowing the project owner to maintain and commercially operate the official Cloud Edition.
 
-The licensor grants you an additional copyright license to distribute copies of the software.  Your license to distribute covers distributing the software with changes and new works permitted by [Changes and New Works License](#changes-and-new-works-license).
+---
 
-## Notices
+## 2. Definitions
 
-You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software.  For example:
+For the purposes of this License:
 
-> Required Notice: Copyright 2026 Igor Dlugosh (https://veilio.dev)
+**"Software"** means the source code, binaries, documentation, configuration, and other materials distributed as part of this project.
 
-## Changes and New Works License
+**"Open-source Core"** means the publicly available portion of the Software developed and distributed under this License.
 
-The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
+**"Modified Version"** means any work based on, derived from, or incorporating substantial portions of the Software.
 
-## Patent License
+**"Cloud Edition"** means the hosted, managed, or subscription-based version of the Software operated and commercially provided by Igor Dlugosh, including any proprietary services, infrastructure, features, or components associated with it.
 
-The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
+**"Commercial Distribution"** means selling, licensing, renting, leasing, sublicensing, or otherwise providing the Software or a Modified Version to third parties in exchange for payment or other commercial consideration.
 
-## Noncompete
+**"Hosted Service"** means making the Software or a Modified Version available to third parties over a network, including as a SaaS, PaaS, managed service, hosted application, or similar commercial offering.
 
-Any purpose is a permitted purpose, except for providing any product that competes with the software or any product the licensor or any of its affiliates provides using the software.
+**"Competing Product"** means a commercially offered product or service whose primary purpose and core functionality substantially overlap with the Software or Cloud Edition.
 
-## Competition
+---
 
-Goods and services compete even when they provide functionality through different kinds of interfaces or for different technical platforms.  Applications can compete with services, libraries with plugins, frameworks with development tools, and so on, even if they're written in different programming languages or for different computer architectures.  Goods and services compete even when provided free of charge.  If you market a product as a practical substitute for the software or another product, it definitely competes.
+## 3. Permissions
 
-## New Products
+Subject to the restrictions in this License, you are granted a worldwide, royalty-free, non-exclusive license to:
 
-If you are using the software to provide a product that does not compete, but the licensor or any of its affiliates brings your product into competition by providing a new version of the software or another product using the software, you may continue using versions of the software available under these terms beforehand to provide your competing product, but not any later versions.
+* use the Software for personal purposes;
+* use the Software for internal commercial purposes;
+* inspect and study the source code;
+* modify the Software;
+* create forks and derivative works;
+* submit contributions, patches, bug fixes, and improvements to the project;
+* use modified versions for personal purposes or internal commercial operations;
+* share the Software and Modified Versions for non-commercial purposes.
 
-## Discontinued Products
+These permissions are intended to enable community development, experimentation, self-hosting, internal business use, and collaboration.
 
-You may begin using the software to compete with a product or service that the licensor or any of its affiliates has stopped providing, unless the licensor includes a plain-text line beginning with `Licensor Line of Business:` with the software that mentions that line of business.  For example:
+---
 
-> Licensor Line of Business: YoyodyneCMS Content Management System (http://example.com/cms)
+## 4. Internal Commercial Use
 
-## Sales of Business
+Commercial use of the Software is permitted when the Software is used as an internal tool or component of your own business activities.
 
-If the licensor or any of its affiliates sells a line of business developing the software or using the software to provide a product, the buyer can also enforce [Noncompete](#noncompete) for that product.
+For example, an organization may deploy the Software on its own infrastructure and use it to:
 
-## Fair Use
+* operate internal business processes;
+* support its employees;
+* develop its own products;
+* provide its own services;
+* manage its own operations; or
+* otherwise conduct its own commercial activities.
 
-You may have "fair use" rights for the software under the law. These terms do not limit them.
+The fact that an organization generates revenue through its business does not, by itself, constitute a violation of this License.
 
-## No Other Rights
+The restriction applies to **commercializing the Software itself**, rather than using the Software as part of your own business.
 
-These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else.  These terms do not imply any other licenses.
+---
 
-## Patent Defense
+## 5. Commercial Restrictions
 
-If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
+Without prior written permission from Igor Dlugosh, you may not:
 
-## Violations
+### 5.1 Sell or Resell the Software
 
-The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice.  Otherwise, all your licenses end immediately.
+Sell, license, rent, lease, sublicense, or otherwise commercially distribute the Software or a Modified Version as a standalone product.
 
-## No Liability
+### 5.2 Offer the Software as a Hosted Service
 
-***As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.***
+Operate the Software or a Modified Version as a commercial SaaS, PaaS, hosted application, managed service, or similar service for third parties.
 
-## Definitions
+### 5.3 Create a Competing Commercial Product
 
-The **licensor** is the individual or entity offering these terms, and the **software** is the software the licensor makes available under these terms.
+Use the Software or a Modified Version as the basis for a commercially offered product or service that substantially competes with the Cloud Edition.
 
-A **product** can be a good or service, or a combination of them.
+### 5.4 White-Label or Rebrand the Software
 
-**You** refers to the individual or entity agreeing to these terms.
+Repackage, white-label, rebrand, or otherwise present the Software or a Modified Version as your own commercial software product.
 
-**Your company** is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all its affiliates.
+### 5.5 Commercially Redistribute Modified Versions
 
-**Affiliates** means the other organizations than an organization has control over, is under the control of, or is under common control with.
+Commercially distribute a Modified Version where the primary value or functionality being sold is provided by the Software.
 
-**Control** means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise.  Control can be direct or indirect.
+Requests for written permission may be sent to `hello@veilio.dev`.
 
-**Your licenses** are all the licenses granted to you for the software under these terms.
+---
 
-**Use** means anything you do with the software requiring one of your licenses.
+## 6. Cloud Edition
+
+The Cloud Edition is the official commercial hosted offering of the project.
+
+The Cloud Edition may be provided through paid subscriptions and may include:
+
+* managed hosting;
+* automatic updates;
+* backups;
+* infrastructure and scalability;
+* monitoring;
+* enterprise functionality;
+* technical support;
+* proprietary features;
+* other hosted or managed services.
+
+The Open-source Core and Cloud Edition may share common code, concepts, or functionality. However, access to the Open-source Core does not grant any right to commercially operate a competing hosted version of the Cloud Edition.
+
+The Cloud Edition may be governed by separate Terms of Service, subscription agreements, privacy policies, and commercial licenses.
+
+---
+
+## 7. Forks and Modified Versions
+
+You are permitted to create forks and Modified Versions of the Software for:
+
+* personal use;
+* internal business use;
+* research;
+* education;
+* development;
+* experimentation; and
+* other purposes permitted by this License.
+
+Forks and Modified Versions must retain applicable copyright notices and a copy of this License.
+
+Creating a fork does not grant permission to commercially distribute that fork, offer it as a commercial Hosted Service, or use it to create a Competing Product.
+
+---
+
+## 8. Contributions
+
+Contributions to the Open-source Core are welcome.
+
+By submitting a contribution, you represent that you have the necessary rights to submit that contribution and agree that it may be incorporated into the project and distributed under this License.
+
+Unless otherwise agreed in writing, contributions will be made available under the same licensing terms as the Software.
+
+Contributors retain ownership of their original contributions to the extent permitted by applicable law.
+
+---
+
+## 9. Redistribution
+
+You may redistribute the Software and Modified Versions for non-commercial purposes, provided that:
+
+* applicable copyright notices are retained;
+* the original project is appropriately credited;
+* a copy of this License is included;
+* recipients are informed of the applicable licensing terms; and
+* the redistribution does not imply endorsement by Igor Dlugosh.
+
+Commercial redistribution requires prior written permission from Igor Dlugosh.
+
+---
+
+## 10. Attribution
+
+Redistributions of the Software or Modified Versions must retain:
+
+* applicable copyright notices;
+* notices identifying the original project; and
+* a copy of this License.
+
+You may add your own copyright notices for your modifications, provided that they do not imply ownership of the original Software.
+
+---
+
+## 11. Trademarks
+
+This License does not grant permission to use the project's name, logo, trademarks, service marks, domain names, or branding except as reasonably necessary to identify the original Software.
+
+You may not use the project's trademarks to imply endorsement, sponsorship, affiliation, or official status without prior written permission.
+
+Creating a fork does not grant the right to use the project's trademarks for that fork.
+
+---
+
+## 12. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE AUTHORS AND COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+---
+
+## 13. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, CONTRIBUTORS, OR PROJECT OWNERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR THE USE OR INABILITY TO USE THE SOFTWARE.
+
+---
+
+## 14. Termination
+
+Your rights under this License terminate automatically if you materially violate its terms.
+
+Upon termination, you must cease the activities that are prohibited by this License.
+
+Permissions granted to recipients who are not in violation of this License remain unaffected.
+
+---
+
+## 15. Reservation of Rights
+
+All rights not expressly granted by this License are reserved by Igor Dlugosh.
+
+In particular, this License does not grant rights to commercially sell, redistribute, host, white-label, or operate a competing commercial service based on the Software beyond the permissions expressly stated above.
+
+---
+
+## 16. License Versions
+
+The project owner may publish future versions of this License.
+
+Each version will be identified by a version number. Unless explicitly stated otherwise, versions of the Software already distributed under a particular version of this License remain subject to that version.
+
+---
+
+**Project:** Veilio
+**Copyright:** © 2026 Igor Dlugosh
+**License:** Veilio Community License, Version 1.0
+**Contact:** `hello@veilio.dev`

@@ -122,11 +122,11 @@ const PLANS: PlanCard[] = [
 const FAQS = [
   {
     q: 'What is the Community Edition?',
-    a: 'CE is the source-available, self-hostable version of Veilio, free to use for any purpose — including commercial projects — under the PolyForm Shield 1.0.0 license. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine. The license only prohibits reselling or republishing Veilio as a competing product or service.',
+    a: 'CE is the source-available, self-hostable version of Veilio, free to use for any purpose — including inside your own business — under the Veilio Community License 1.0. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine. The license only prohibits selling Veilio itself, hosting it as a commercial service for others, or basing a competing product on it.',
   },
   {
     q: 'Can I use the Community Edition at work or commercially?',
-    a: 'Yes. CE is free to use for any purpose, including inside a business and on commercial projects, under the PolyForm Shield 1.0.0 license. The one thing you may not do is sell, resell, rebrand, or republish Veilio (or its engine) as a standalone product or service that competes with Veilio. For that kind of redistribution, contact hello@veilio.dev.',
+    a: 'Yes. CE is free to use for any purpose, including inside a business and on commercial projects, under the Veilio Community License 1.0 — deploying it on your own infrastructure and running your business on it needs no commercial license. The one thing you may not do is sell, resell, rebrand, or host Veilio (or its engine) as a commercial service or a product that competes with Veilio Cloud. For that kind of redistribution, contact hello@veilio.dev.',
   },
   {
     q: 'How do I save maps permanently in CE?',

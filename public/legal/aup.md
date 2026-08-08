@@ -17,7 +17,7 @@ Using or redistributing Veilio CE, you agree **not** to:
 Because CE runs only on your own machine, the Veilio project does not — and cannot — monitor, access, or review your use of it.
 
 ## Enforcement
-CE is source-available software (PolyForm Shield 1.0.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and IP terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
+CE is source-available software (Veilio Community License 1.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and IP terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
 
 ## Reporting
 Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/DlgSHi/veilio-oss/blob/main/SECURITY.md).
