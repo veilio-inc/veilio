@@ -14,12 +14,17 @@ export interface KdfParams {
 
 // What NEW files are written with. Safe to raise: every existing file carries
 // its own parameters, or falls back to the frozen legacy value below.
-export const CURRENT_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 100_000 }
+//
+// This sits at the OWASP floor for PBKDF2-HMAC-SHA256. Exported files used to be
+// derived at 100k, which is weak for the one artifact that actually leaves the
+// machine and can be attacked offline at leisure.
+export const CURRENT_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 600_000 }
 
 // What files created BEFORE this recording existed must be read with. This is a
 // historical fact, not policy — it must never be edited to track CURRENT_FILE_KDF
-// above, or previously exported files stop decrypting. It is deliberately a
-// separate constant that happens to coincide with the current value today.
+// above, or previously exported files stop decrypting. It has already diverged
+// from the current value (files were raised from 100k to 600k) and is exactly
+// what keeps .veilio files written before that raise importable.
 export const LEGACY_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 100_000 }
 
 // An imported .veilio file is untrusted input, and its iteration count drives a

@@ -22,20 +22,48 @@ describe('exportMap / importMap', () => {
     await expect(importMap(file, 'wrong-passphrase')).rejects.toThrow()
   })
 
-  it('records the KDF parameters it used', async () => {
+  // Hardcoded rather than compared against CURRENT_FILE_KDF, which would make
+  // this tautological: a silent change to the constant should fail here.
+  it('records the KDF parameters it used', { timeout: 15_000 }, async () => {
     const file = JSON.parse(await exportMap({ __P1__: 'X' }, 'pw'))
-    expect(file.kdf).toEqual({ name: 'PBKDF2-SHA256', iterations: 100_000 })
+    expect(file.kdf).toEqual({ name: 'PBKDF2-SHA256', iterations: 600_000 })
   })
 
-  // Files exported before the parameters were recorded have no kdf field. They
-  // were written at the legacy iteration count and must keep importing, or the
-  // change orphans every .veilio file already on a user's disk.
-  it('imports a legacy file that predates recorded KDF parameters', async () => {
-    const plain = { __P1__: 'LegacyService' }
-    const file = JSON.parse(await exportMap(plain, 'pw'))
-    delete file.kdf
-    expect(await importMap(JSON.stringify(file), 'pw')).toEqual(plain)
-  })
+  // A real .veilio file captured from before parameters were recorded:
+  // encrypted at the legacy 100k iterations, with no kdf field. FROZEN ON
+  // PURPOSE — do not regenerate it. Rebuilding this fixture with the current
+  // code would make it re-encrypt at the current cost and quietly stop testing
+  // anything, which is precisely how a cost increase would ship having silently
+  // orphaned every .veilio file already on a user's disk.
+  const LEGACY_FILE = {
+    v: 1,
+    alg: 'AES-256-GCM-PBKDF2',
+    salt: 'tKulO4yTGC7keBxb//eO4Q==',
+    iv: 'dFFe2/R28m70GJZ2',
+    data: '3Eq4s85IfR6/d7ohzGYEM7ys6lzoB4KTdYsrUQ9V44gf2r25PE8rA99Kf2q8RkyDeWfyE3BEo+6qYkDVR3xIEg==',
+  }
+  const LEGACY_PASSPHRASE = 'legacy-passphrase'
+  const LEGACY_MAP = { __P1__: 'LegacyService', __P2__: 'chargeCard' }
+
+  it(
+    'imports a file written before KDF parameters were recorded',
+    { timeout: 15_000 },
+    async () => {
+      expect(await importMap(JSON.stringify(LEGACY_FILE), LEGACY_PASSPHRASE)).toEqual(LEGACY_MAP)
+    }
+  )
+
+  // The file records 100k while new files are written at a higher cost, so this
+  // only passes if the recorded value drives derivation instead of the current
+  // constant. That is the whole point of recording them.
+  it(
+    'derives with the parameters recorded in the file, not the current ones',
+    { timeout: 15_000 },
+    async () => {
+      const recorded = { ...LEGACY_FILE, kdf: { name: 'PBKDF2-SHA256', iterations: 100_000 } }
+      expect(await importMap(JSON.stringify(recorded), LEGACY_PASSPHRASE)).toEqual(LEGACY_MAP)
+    }
+  )
 
   it('refuses a file whose KDF parameters would pin the browser', async () => {
     const file = JSON.parse(await exportMap({ __P1__: 'X' }, 'pw'))
