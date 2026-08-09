@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1](https://github.com/veilio-inc/veilio/compare/engine-v1.0.0...engine-v1.0.1) (2026-08-09)
+
+### Build
+
+* **release:** generate engine versions with semantic-release ([85d55af](https://github.com/veilio-inc/veilio/commit/85d55af269fe15db41051fd7d01dc8d8cf5fea06))
+
 ## 1.0.0
 
 First release of `@veilio-inc/engine` — a two-way code anonymizer that replaces real
