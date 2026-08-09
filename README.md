@@ -6,7 +6,7 @@ Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSes
 
 ## Features
 
-- Two-way anonymize / restore in-browser via `@dlgshi/engine`
+- Two-way anonymize / restore in-browser via `@veilio-inc/engine`
 - Maps saved to browser localStorage for convenience
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
 - Zero backend. Zero database. Zero secrets to manage.
@@ -16,7 +16,7 @@ Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSes
 ### Docker
 
 ```bash
-docker run -p 8080:80 ghcr.io/dlgshi/veilio-oss:latest
+docker run -p 8080:80 ghcr.io/veilio-inc/veilio:latest
 ```
 
 Open `http://localhost:8080`.
@@ -30,7 +30,7 @@ Veilio has **no backend and no server-side code**: the engine runs entirely in
 the browser, so "hosting" it is just serving static files. The Docker image above
 is nothing more than nginx serving exactly this bundle.
 
-Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/DlgSHi/veilio-oss/releases), extract, and serve `dist/` with any static web server.
+Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/veilio-inc/veilio/releases), extract, and serve `dist/` with any static web server.
 
 > **One requirement: SPA fallback.** Veilio uses client-side routing, so the
 > server must serve `index.html` for unknown paths. Without it, `/pricing` and
@@ -59,7 +59,7 @@ npm install
 npm run dev
 ```
 
-> The anonymizer engine (`@dlgshi/engine`) is bundled in this repo at `packages/engine` and is built automatically on `npm install` via the `postinstall` script — no extra setup or npm link needed.
+> The anonymizer engine (`@veilio-inc/engine`) is bundled in this repo at `packages/engine` and is built automatically on `npm install` via the `postinstall` script — no extra setup or npm link needed.
 
 ## Configuration
 
@@ -71,7 +71,7 @@ CE has one optional env var:
 
 ## How this relates to Cloud
 
-The anonymizer engine (`@dlgshi/engine`) is the same in both editions. The Cloud edition adds auth, encrypted server-side map storage, teams, and billing — none of which lives in this repo.
+The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The Cloud edition adds auth, encrypted server-side map storage, teams, and billing — none of which lives in this repo.
 
 ## License, contributing & trademarks
 

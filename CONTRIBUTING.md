@@ -93,7 +93,7 @@ visibly.
 
 ## Engine privacy invariants (do not break these)
 
-`@dlgshi/engine` is a **pure, local transform: no network, no telemetry, no
+`@veilio-inc/engine` is a **pure, local transform: no network, no telemetry, no
 environment reads, zero runtime dependencies.** These invariants are enforced in
 CI by `packages/engine/tests/purity.test.ts`. A change that violates them will fail
 CI and is treated as a security regression — see [SECURITY.md](./SECURITY.md).

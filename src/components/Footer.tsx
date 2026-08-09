@@ -71,7 +71,7 @@ export default function Footer() {
                 </Link>
               ))}
               <a
-                href="https://github.com/DlgSHi/veilio-oss"
+                href="https://github.com/veilio-inc/veilio"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="footer-link"

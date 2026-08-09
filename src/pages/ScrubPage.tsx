@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore } from '@dlgshi/engine'
-import type { SecretFinding, SymbolMap, StrippedItem } from '@dlgshi/engine'
+import { anonymize, restore } from '@veilio-inc/engine'
+import type { SecretFinding, SymbolMap, StrippedItem } from '@veilio-inc/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import SecretPanel from '../components/SecretPanel.js'

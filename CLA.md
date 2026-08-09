@@ -10,7 +10,7 @@ _Version 1.0 · Last updated: 2026-06-23_
 This Contributor License Agreement ("Agreement") is between you ("You", the individual
 or entity making a Contribution) and **Igor Dlugosh**, maintainer of the Veilio project
 ("the Project"). It applies to Your Contributions to any Veilio repository, including
-`github.com/DlgSHi/veilio-oss`.
+`github.com/veilio-inc/veilio`.
 
 By submitting a Contribution (for example, via a pull request) and indicating Your
 agreement as described in [CONTRIBUTING.md](./CONTRIBUTING.md), You accept these terms.

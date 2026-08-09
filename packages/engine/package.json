@@ -1,5 +1,5 @@
 {
-  "name": "@dlgshi/engine",
+  "name": "@veilio-inc/engine",
   "version": "1.0.0",
   "description": "Two-way code anonymizer: replace real identifiers with __P1__ tokens before sending source code to an LLM, restore them afterward. Pure, local, no network, no telemetry, zero runtime dependencies.",
   "type": "module",
@@ -25,13 +25,13 @@
   "author": "Igor Dlugosh",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DlgSHi/veilio-oss.git",
+    "url": "git+https://github.com/veilio-inc/veilio.git",
     "directory": "packages/engine"
   },
   "bugs": {
-    "url": "https://github.com/DlgSHi/veilio-oss/issues"
+    "url": "https://github.com/veilio-inc/veilio/issues"
   },
-  "homepage": "https://github.com/DlgSHi/veilio-oss/tree/main/packages/engine#readme",
+  "homepage": "https://github.com/veilio-inc/veilio/tree/main/packages/engine#readme",
   "keywords": [
     "anonymizer",
     "llm",

@@ -1,4 +1,4 @@
-import type { SecretFinding, SecretSeverity } from '@dlgshi/engine'
+import type { SecretFinding, SecretSeverity } from '@veilio-inc/engine'
 
 // Credentials are the leak that actually costs money, so this panel sits above
 // the copy action rather than below the output — it has to be read, not

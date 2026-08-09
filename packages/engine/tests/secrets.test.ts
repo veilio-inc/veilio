@@ -229,12 +229,16 @@ describe('false-positive suppression', () => {
     expect(detectSecrets('password: "aaaaaaaaaaaaaaaaa"')).toEqual([])
   })
 
-  it('ignores a low-entropy value in a credential-shaped assignment', () => {
-    // Not a repeated single character, so it clears the dummy check — the
-    // entropy floor is what rejects it. Real tokens are near-uniform over
-    // their alphabet; flagging patterned filler trains users to dismiss the
-    // panel that matters.
-    expect(detectSecrets('password: "abababababab"')).toEqual([])
+  it('never redacts or blocks on a low-entropy value in a credential assignment', () => {
+    // Not a repeated single character, so it clears the placeholder check — the
+    // entropy floor is what demotes it. Real tokens are near-uniform over their
+    // alphabet, so patterned filler is reported at `medium` and goes no
+    // further: the code is returned untouched and CI still passes.
+    const scan = scanSecrets('password: "abababababab"')
+    expect(scan.findings.map((f) => f.severity)).toEqual(['medium'])
+    expect(scan.findings[0]?.redacted).toBe(false)
+    expect(hasBlockingSecrets(scan.findings)).toBe(false)
+    expect(scan.code).toBe('password: "abababababab"')
   })
 
   it('still flags a genuine high-entropy assignment', () => {
@@ -438,5 +442,168 @@ describe('high-entropy catch-all', () => {
     const findings = detectSecrets('const apiKey = "sk_live_51H8xQ2ABCDEFGHIJKLMNOP"')
     expect(findings.map((f) => f.type)).toContain('stripe-key')
     expect(findings).toHaveLength(1)
+  })
+})
+
+// ─── Prose and HTML-spec values are not credentials ──────────────────────────
+//
+// The assignment pattern reads `<keyword> <sep> "<value>"`, which a ternary
+// satisfies by accident: in
+//   autoComplete={x ? 'new-password' : 'current-password'}
+// the `" : "` between the branches is the separator and the second branch is
+// read as the secret. That is a `high` finding, so it is both redacted and
+// blocking — a login form would corrupt on scrub and fail `veilio scan` in CI.
+//
+// These fixes originated in the Veilio Cloud copy of the engine and are ported
+// here so the published package does not regress a consumer that adopts it.
+
+describe('false positives that would train users to ignore the panel', () => {
+  it('ignores HTML autocomplete tokens in a ternary', () => {
+    const code = `autoComplete={isRegister ? "new-password" : "current-password"}`
+    expect(detectSecrets(code)).toHaveLength(0)
+  })
+
+  it('ignores each HTML autocomplete token on its own', () => {
+    for (const token of ['current-password', 'new-password', 'one-time-code']) {
+      expect(detectSecrets(`password: "${token}"`)).toHaveLength(0)
+    }
+  })
+
+  it('never redacts or blocks on an ordinary lowercase word in a credential field', () => {
+    // These read as configuration, not secrets. Nothing in the syntax separates
+    // them from a weak-but-real password, so they are reported at `medium` —
+    // which is the tier that neither rewrites the code nor fails a scan.
+    for (const code of ['client_secret: "disabled"', 'const password = "inherited"']) {
+      const scan = scanSecrets(code)
+      expect(scan.findings.map((f) => f.type)).toEqual(['possible-credential'])
+      expect(hasBlockingSecrets(scan.findings)).toBe(false)
+      expect(scan.code).toBe(code)
+    }
+  })
+
+  // The suppressions must not blunt the detector: anything carrying mixed case,
+  // digits or symbols is still reported.
+  it('still reports real credentials', () => {
+    expect(detectSecrets('const password = "S3cr3tP@ss!"')).not.toHaveLength(0)
+    expect(detectSecrets('client_secret: "9f8e7d6c5b4a3210"')).not.toHaveLength(0)
+    expect(detectSecrets('api_key: "abc123def456ghi789"')).not.toHaveLength(0)
+  })
+})
+
+// ─── Prefixed credential keywords ────────────────────────────────────────────
+//
+// The assignment pattern anchored its keyword with a leading \b, which does not
+// exist after an underscore or inside camelCase — `_` and letters are both word
+// characters. So `DB_PASSWORD=`, `MY_API_KEY=` and `userPassword=` were all
+// missed while the bare `password=` was caught: a false negative in the
+// security-critical path, and those prefixed forms are the common ones in real
+// code and .env-style config.
+//
+// The TRAILING \b is what keeps this honest — it requires the keyword to end at
+// a non-word character, so `passwordless`, `passwordHash` and `secretary` still
+// do not match.
+
+describe('credential keywords carrying a prefix', () => {
+  it('detects SCREAMING_SNAKE_CASE credential assignments', () => {
+    expect(detectSecrets('DB_PASSWORD="Tr0ub4dor&3"')).not.toHaveLength(0)
+    expect(detectSecrets('MY_SECRET="9f8e7D6c5b4a"')).not.toHaveLength(0)
+    expect(detectSecrets('const DATABASE_PASSWORD = "P@ssw0rd123"')).not.toHaveLength(0)
+  })
+
+  it('detects camelCase credential assignments', () => {
+    expect(detectSecrets('userPassword = "S3cr3tP@ss"')).not.toHaveLength(0)
+    expect(detectSecrets('dbPassword: "Xy9$kL2mNp"')).not.toHaveLength(0)
+  })
+
+  it('detects a prefixed api key', () => {
+    expect(detectSecrets('MY_API_KEY = "abc123def456ghi789"')).not.toHaveLength(0)
+  })
+
+  // Relaxing the leading boundary must not let the keyword match a longer word
+  // that merely starts with it — the trailing boundary is what prevents that.
+  it('does not fire when the keyword is only a prefix of a longer word', () => {
+    expect(detectSecrets('passwordless = "Enabled123"')).toHaveLength(0)
+    expect(detectSecrets('passwordHash = "a1b2c3d4e5"')).toHaveLength(0)
+    expect(detectSecrets('secretary = "Jane Smith"')).toHaveLength(0)
+  })
+})
+
+// ─── Lower-case credentials ──────────────────────────────────────────────────
+//
+// A value made only of lower-case letters was treated as prose and dropped
+// outright, for every pattern. Two separate holes came out of that:
+//
+//   1. It was applied to patterns where prose is not a possible reading. The
+//      password slot of a connection string and the value of an Authorization
+//      header are structurally credentials, so a lower-case password there was
+//      silently unprotected — the leak the redactor exists to prevent.
+//   2. Where prose IS a possible reading — an assignment — dropping the finding
+//      resolved a genuine ambiguity by guessing. `client_secret: "disabled"`
+//      and `password = "correcthorse"` are the same shape; the first is config,
+//      the second is a live password.
+//
+// Hole 1 is fixed by scoping the heuristic to assignments. Hole 2 is fixed by
+// reporting at `medium` instead of dropping: the user sees it, and because
+// `medium` is neither redacted nor blocking, a wrong guess cannot corrupt code
+// through a redaction that `restore()` is designed never to undo.
+
+describe('lower-case credentials outside an assignment', () => {
+  it('detects a lower-case password in a connection string', () => {
+    const scan = scanSecrets('postgresql://admin:mypassword@db.internal:5432/prod')
+    expect(scan.findings.map((f) => f.type)).toEqual(['connection-string'])
+    expect(hasBlockingSecrets(scan.findings)).toBe(true)
+    expect(scan.code).not.toContain('mypassword')
+  })
+
+  it('detects a lower-case password in a redis URL', () => {
+    const scan = scanSecrets('REDIS_URL=redis://default:supersecure@cache:6379')
+    expect(hasBlockingSecrets(scan.findings)).toBe(true)
+    expect(scan.code).not.toContain('supersecure')
+  })
+
+  it('detects a lower-case bearer token', () => {
+    const scan = scanSecrets('Authorization: Bearer abcdefghijklmnopqrstuvwx')
+    expect(scan.findings.map((f) => f.type)).toEqual(['bearer-token'])
+    expect(scan.code).not.toContain('abcdefghijklmnopqrstuvwx')
+  })
+
+  // The placeholder list still applies everywhere — a documented example
+  // connection string must not start failing anyone's CI.
+  it('still ignores a placeholder password in a connection string', () => {
+    expect(detectSecrets('postgresql://admin:changeme@localhost:5432/dev')).toHaveLength(0)
+  })
+})
+
+describe('lower-case credentials inside an assignment', () => {
+  it('surfaces a weak but real password instead of dropping it', () => {
+    for (const code of ['const password = "correcthorse"', 'const password = "letmein"']) {
+      const findings = detectSecrets(code)
+      expect(findings.map((f) => f.type)).toEqual(['possible-credential'])
+      expect(findings[0]?.severity).toBe('medium')
+    }
+  })
+
+  // The whole point of the `medium` tier: visible, but it can neither rewrite
+  // the user's code nor fail their build on a guess.
+  it('never redacts or blocks a possible credential', () => {
+    const code = 'const password = "correcthorse"'
+    const scan = scanSecrets(code, 'redact')
+    expect(scan.findings[0]?.redacted).toBe(false)
+    expect(hasBlockingSecrets(scan.findings)).toBe(false)
+    expect(scan.code).toBe(code)
+  })
+
+  it('leaves a confident credential at full severity', () => {
+    const scan = scanSecrets('const password = "S3cr3tP@ss!"')
+    expect(scan.findings.map((f) => f.type)).toEqual(['password-assignment'])
+    expect(hasBlockingSecrets(scan.findings)).toBe(true)
+    expect(scan.code).not.toContain('S3cr3tP@ss!')
+  })
+
+  // A value a concrete pattern can name is reported as that thing, not as the
+  // catch-all — both are `medium`, so only the tie-break in dropOverlaps
+  // decides which label the user is shown.
+  it('prefers a concrete type over the catch-all on an identical span', () => {
+    expect(detectSecrets('secret: "10.0.3.14"').map((f) => f.type)).toEqual(['private-ip'])
   })
 })

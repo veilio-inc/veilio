@@ -2,39 +2,59 @@
 
 ## 1.0.0
 
-First release of `@dlgshi/engine`. This package supersedes the previously
-published `@veilio/shared` 0.1.0 as the canonical, engine-only anonymizer.
+First release of `@veilio-inc/engine` — a two-way code anonymizer that replaces real
+identifiers with placeholder tokens before source code is sent to an LLM, and
+restores them in the answer.
 
-### Added
+### Anonymize and restore
 
-- Stdlib builtins skiplist (~70 common method/global names such as `map`,
-  `push`, `filter`, `then`, `parse`) — these are no longer masked, so
-  anonymized output stays readable to the downstream AI.
-- Comment-aware masking: comments are tokenized separately so prose is not
-  scrambled into placeholders.
-- `AI_PREAMBLE` / `withAiPreamble(anonymized)` — a note to paste above masked
-  code so a downstream AI treats the placeholders as intentional.
-- `anonymize(code, options)` accepts an `AnonymizeOptions` object (custom
-  rules, existing map). The legacy `anonymize(code, existingMap)` call shape
-  is still accepted for backward compatibility.
-- Purity test suite (`tests/purity.test.ts`): no network, no env access,
-  zero runtime dependencies — enforced in CI.
+- `anonymize(code, options)` returns the masked code and the symbol map.
+  Identifiers are replaced with role-typed placeholders (`__CLS__1`, `__FN__2`,
+  `__VAR__3`) so the output still reads as code to a model.
+- `restore(text, map, options)` puts the real names back, and can strip
+  AI-generated noise (JSDoc, TODO comments, narration) on the way through.
+- `withAiPreamble(anonymized)` / `AI_PREAMBLE` prepend a note telling the model
+  the placeholders are intentional.
 
-### Removed (migrating from `@veilio/shared` 0.1.0)
+### Languages
 
-- `PLAN_LIMITS` and all Cloud product types (`Plan`, `User`, `Team`, …) are
-  not part of this package. They were application concerns, not engine
-  concerns; consumers should define them in their own app layer.
+Ten, with per-language keyword sets and comment syntax, detected from the source
+or set explicitly: TypeScript/JavaScript, Python, Go, Java, C#, Rust, Ruby, PHP,
+C, and SQL. Reserved words are never masked — masking `func` or `def` would
+leave output no model can read.
 
-### Migration
+A 105-name skiplist is left intact for the same reason: generic identifiers
+(`args`, `fn`, `obj`, `val`) and common stdlib methods (`map`, `push`,
+`filter`). Masking these carries no information and costs readability.
 
-Replace imports of `@veilio/shared` engine symbols with `@dlgshi/engine`:
+### Credentials are redacted, not masked
 
-```ts
-import { anonymize, restore, withAiPreamble } from '@dlgshi/engine'
-import type { SymbolMap, StrippedItem, CustomRule } from '@dlgshi/engine'
-```
+`detectSecrets` / `scanSecrets` recognize 33 credential patterns — AWS, GCP,
+Azure, Stripe, GitHub, Slack, OpenAI, Anthropic, private-key blocks, JWTs and
+more. A detected credential is replaced irreversibly and **never enters the
+symbol map**, so `restore()` cannot bring it back and a shared map can never
+carry a live key. A reversible mask on a secret would store the secret.
 
-Persisted symbol maps from 0.1.0 remain fully compatible: `restore()`
-resolves existing placeholders unchanged, and re-anonymizing with an
-existing map never re-masks builtins (they simply stop being added).
+Emails and private IPs are reported at `medium` severity but left in place —
+only `critical` and `high` findings are redacted, and only those block.
+
+`medium` also carries `possible-credential`: a value that is credential-shaped
+but could equally be configuration, such as `client_secret: "disabled"` next to
+`password = "correcthorse"`. Nothing in the syntax separates those two, so the
+engine reports the ambiguity rather than guessing. Reporting is the safe side of
+that call — redaction is irreversible by design, so a wrong guess would corrupt
+code that `restore()` can never repair, while a wrong warning costs a line in a
+panel. Values that are unambiguously credentials, including a lower-case
+password inside a connection string or an `Authorization` header, stay at `high`
+and are still redacted.
+
+### Comment-aware masking
+
+Comments are tokenized separately, so prose is not scrambled into placeholders.
+
+### Privacy invariants
+
+Pure, local transform: **no network, no telemetry, no environment reads, zero
+runtime dependencies.** Enforced by `tests/purity.test.ts` in CI, not promised in
+a README — for a package that reads your source code, the supply chain is the
+product.

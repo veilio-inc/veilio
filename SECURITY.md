@@ -14,7 +14,7 @@ the anonymization engine promptly, since it is the privacy-critical core.
 
 ## Scope and known limitations
 
-### `@dlgshi/engine` privacy invariants
+### `@veilio-inc/engine` privacy invariants
 The engine is a pure, local transform: **no network, no telemetry, no
 environment reads, zero runtime dependencies.** These are enforced in CI
 (`packages/engine/tests/purity.test.ts`). A change that violates them should be
@@ -28,7 +28,7 @@ patterns for *validity* (try/catch) but **not** for *complexity*.
 
 - In the first-party apps the pattern author is the authenticated user editing
   their own rules, so the blast radius is self-inflicted.
-- If you embed `@dlgshi/engine` somewhere that compiles **untrusted** rule
+- If you embed `@veilio-inc/engine` somewhere that compiles **untrusted** rule
   patterns, treat them as hostile input (length-cap them, run on a worker with a
   timeout, or pre-validate with a non-backtracking matcher such as RE2).
 

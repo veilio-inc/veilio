@@ -16,9 +16,9 @@ _Version 1.0 · Effective 2026-08-08_
 
 ## 1. Project Model
 
-This project follows an **open-source and community-driven development model** with a separate commercial Cloud Edition.
+This project follows a **source-available and community-driven development model** with a separate commercial Cloud Edition. The source is public and contributions are welcome, but this is deliberately **not an OSI-approved open-source license**: the commercial restrictions in Section 5 go beyond what that definition permits.
 
-The **Open-source Core** is publicly available and intended to be freely used, inspected, modified, forked, and improved by the community. Contributions from the community are welcome and are an important part of the project's development.
+The **Community Core** is publicly available and intended to be freely used, inspected, modified, forked, and improved by the community. Contributions from the community are welcome and are an important part of the project's development.
 
 The **Cloud Edition** is a separate commercial offering operated by Igor Dlugosh. It provides hosted and managed functionality and may include additional proprietary features, infrastructure, services, and support.
 
@@ -36,7 +36,7 @@ For the purposes of this License:
 
 **"Software"** means the source code, binaries, documentation, configuration, and other materials distributed as part of this project.
 
-**"Open-source Core"** means the publicly available portion of the Software developed and distributed under this License.
+**"Community Core"** means the publicly available portion of the Software developed and distributed under this License.
 
 **"Modified Version"** means any work based on, derived from, or incorporating substantial portions of the Software.
 
@@ -130,7 +130,7 @@ The Cloud Edition may be provided through paid subscriptions and may include:
 * proprietary features;
 * other hosted or managed services.
 
-The Open-source Core and Cloud Edition may share common code, concepts, or functionality. However, access to the Open-source Core does not grant any right to commercially operate a competing hosted version of the Cloud Edition.
+The Community Core and Cloud Edition may share common code, concepts, or functionality. However, access to the Community Core does not grant any right to commercially operate a competing hosted version of the Cloud Edition.
 
 The Cloud Edition may be governed by separate Terms of Service, subscription agreements, privacy policies, and commercial licenses.
 
@@ -156,7 +156,7 @@ Creating a fork does not grant permission to commercially distribute that fork, 
 
 ## 8. Contributions
 
-Contributions to the Open-source Core are welcome.
+Contributions to the Community Core are welcome.
 
 By submitting a contribution, you represent that you have the necessary rights to submit that contribution and agree that it may be incorporated into the project and distributed under this License.
 

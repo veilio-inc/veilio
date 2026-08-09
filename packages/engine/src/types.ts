@@ -1,4 +1,4 @@
-// Public engine types for @dlgshi/engine. Keep this engine-only — product
+// Public engine types for @veilio-inc/engine. Keep this engine-only — product
 // types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
 import type { Language, LanguageOption } from './languages.js'

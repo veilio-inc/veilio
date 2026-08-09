@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@dlgshi/engine'
+import type { SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
 
 const ALG = 'AES-GCM'

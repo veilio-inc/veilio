@@ -4,7 +4,7 @@ _Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Com
 
 > **Scope.** This notice covers the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository. **Veilio Cloud** (the hosted service) is a separate service with its own [Privacy Policy](https://veilio.dev/legal/privacy). This notice does not cover Cloud.
 
-**The Community Edition collects no personal data.** It has no backend, no accounts, no analytics, and **no telemetry**. The anonymizer engine (`@dlgshi/engine`) performs **no network requests at all** — this is enforced by an automated purity test in our CI suite (`packages/engine/tests/purity.test.ts`). Your source code, identifiers, and symbol maps **never leave your machine.**
+**The Community Edition collects no personal data.** It has no backend, no accounts, no analytics, and **no telemetry**. The anonymizer engine (`@veilio-inc/engine`) performs **no network requests at all** — this is enforced by an automated purity test in our CI suite (`packages/engine/tests/purity.test.ts`). Your source code, identifiers, and symbol maps **never leave your machine.**
 
 ## What stays on your device
 | Data | Where | Notes |

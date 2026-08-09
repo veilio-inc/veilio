@@ -10,11 +10,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      # jsdom 30 (devDependency, used by the cross-realm crypto tests) requires
+      # ^22.22.2 || ^24.15.0 || >=26, and its undici 8 requires >=22.19. Node 20
+      # is also past end-of-life, so CI was testing an unsupported runtime.
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci

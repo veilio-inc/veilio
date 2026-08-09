@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize, restore, extractIdentifiers } from '../src/engine.js'
+import type { CustomRuleWhitelist } from '../src/types.js'
 
 // ─── Realistic round-trips ────────────────────────────────────────────────────
 
@@ -311,5 +312,104 @@ export class LedgerEntryProcessor%N% {
     restore(anonymized, map)
     const elapsed = performance.now() - t0
     expect(elapsed).toBeLessThan(500)
+  })
+})
+
+// ─── Oversized tokens ─────────────────────────────────────────────────────────
+//
+// The substitution pass joins every identifier into one regex alternation. V8
+// refuses to compile a regex whose single alternation atom reaches 32767
+// characters, and the refusal surfaces on FIRST EXECUTION, not construction —
+// so `new RegExp` succeeds and the throw lands inside `.replace()`. Only the
+// largest single atom matters; a 60M-character alternation of ordinary-length
+// atoms compiles fine.
+//
+// This is not a synthetic worry: an inline `data:image/png;base64,...` URI is
+// routine in CSS/JS/TS, and it tokenizes as one enormous identifier. Other JS
+// engines have their own limits, so the guard is deliberately well below V8's.
+
+describe('tokens too large for a regex alternation', () => {
+  const bigToken = (n: number): string => 'a'.repeat(n)
+
+  it('does not throw on an inline base64 data URI', () => {
+    const code = `const logo = "data:image/png;base64,${bigToken(40_000)}"`
+    expect(() => anonymize(code)).not.toThrow()
+  })
+
+  it('masks an oversized token instead of leaking it to the model', () => {
+    const blob = bigToken(40_000)
+    const { anonymized, map } = anonymize(`const logo = "${blob}"`)
+    expect(anonymized).not.toContain(blob)
+    expect(Object.values(map)).toContain(blob)
+  })
+
+  it('round-trips an oversized token losslessly', () => {
+    const original = `const logo = "${bigToken(40_000)}"`
+    const { anonymized, map } = anonymize(original)
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(original)
+  })
+
+  it('handles a token at the exact 32767 limit and one just under', () => {
+    for (const size of [32_766, 32_767]) {
+      const original = `const x = "${bigToken(size)}"`
+      const { anonymized, map } = anonymize(original)
+      expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(original)
+    }
+  })
+
+  it('masks oversized and ordinary identifiers in the same file', () => {
+    const blob = bigToken(40_000)
+    const original = `class OrderProcessor { run() { return "${blob}" } }`
+    const { anonymized, map } = anonymize(original)
+    expect(anonymized).not.toContain(blob)
+    expect(anonymized).not.toContain('OrderProcessor')
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(original)
+  })
+
+  // The regex path enforces (?<![a-zA-Z0-9_$]) / (?![a-zA-Z0-9_$]); whatever
+  // replaces it for oversized tokens must enforce the same boundaries.
+  //
+  // A whitelist rule is what makes this observable. Normally every token
+  // containing an oversized one is itself mapped, so a boundary-blind replace
+  // would be consumed before it could misfire and the round-trip still passes.
+  // Whitelisting the longer token means it must survive VERBATIM in the output,
+  // so a replace that ignores boundaries visibly corrupts it.
+  it('respects word boundaries for oversized tokens', () => {
+    const blob = bigToken(40_000)
+    const kept = `${blob}KeepMe`
+    const rules: CustomRuleWhitelist[] = [
+      {
+        id: 'w1',
+        scope: 'personal',
+        team_id: null,
+        type: 'whitelist',
+        name: 'keep',
+        pattern: 'KeepMe$',
+        enabled: true,
+        sort_order: 1,
+      },
+    ]
+    const { anonymized } = anonymize(`const x = ${blob}\nconst y = ${kept}`, { rules })
+    // The whitelisted identifier must come through untouched; a boundary-blind
+    // replace rewrites the `blob` inside it and yields `__VAR__1KeepMe`.
+    expect(anonymized).toContain(kept)
+  })
+
+  it('gives distinct placeholders to overlapping oversized tokens', () => {
+    const blob = bigToken(40_000)
+    const longer = `${blob}Suffix`
+    const original = `const x = ${longer}\nconst y = ${blob}`
+    const { anonymized, map } = anonymize(original)
+    const values = Object.values(map)
+    expect(values).toContain(blob)
+    expect(values).toContain(longer)
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(original)
+  })
+
+  it('stays idempotent when re-anonymized with its own map', () => {
+    const original = `const logo = "${bigToken(40_000)}"`
+    const first = anonymize(original)
+    const second = anonymize(first.anonymized, { existingMap: first.map })
+    expect(second.anonymized).toBe(first.anonymized)
   })
 })

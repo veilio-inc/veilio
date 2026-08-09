@@ -44,6 +44,7 @@ export type SecretType =
   | 'basic-auth'
   | 'connection-string'
   | 'password-assignment'
+  | 'possible-credential'
   | 'high-entropy-string'
   | 'email'
   | 'private-ip'
@@ -272,7 +273,22 @@ const PATTERNS: Pattern[] = [
     type: 'password-assignment',
     severity: 'high',
     label: 'Hardcoded credential',
-    re: /\b(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?token|encryption[_-]?key)\b["'\s]{0,6}[:=]{1,2}[>\s]{0,3}["'`]([^"'`\n]{6,256})["'`]/gi,
+    // No LEADING \b: underscores and letters are both word characters, so a
+    // leading boundary never exists after a prefix. Assignments to
+    // DB_PASSWORD, MY_API_KEY and userPassword were all missed while a bare
+    // password assignment was caught. Those prefixed forms are the common ones
+    // in application code and in .env-style config, so the boundary was
+    // excluding the majority case.
+    //
+    // (Written without backtick-quoted examples on purpose: this rule reads a
+    // backtick as a value delimiter, so the illustration would flag itself.)
+    //
+    // The TRAILING \b is what keeps this from over-matching: the keyword must
+    // end at a non-word character, so `passwordless`, `passwordHash` and
+    // `secretary` still do not match. An identifier that *ends* in `password`
+    // or `secret` and is assigned a 6+ character literal is a credential
+    // whatever precedes it.
+    re: /(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?token|encryption[_-]?key)\b["'\s]{0,6}[:=]{1,2}[>\s]{0,3}["'`]([^"'`\n]{6,256})["'`]/gi,
     group: 1,
   },
   {
@@ -328,20 +344,59 @@ const KNOWN_DUMMY = new Set([
   'my-secret',
   'supersecret',
   'notarealkey',
+  // HTML `autocomplete` tokens. `autoComplete={... ? 'new-password' :
+  // 'current-password'}` appears in essentially every login form, and the
+  // assignment pattern reads the attribute value as a credential. Fixed strings
+  // from the HTML spec, so suppressing them costs no detection.
+  'current-password',
+  'new-password',
+  'one-time-code',
 ])
 
-function isDummy(value: string): boolean {
+/**
+ * How confident we are that a matched value is a live credential.
+ *
+ * `placeholder` is dropped. `credential` is reported at the pattern's own
+ * severity, which means redacted and blocking. `ambiguous` is reported at
+ * `medium` — visible in the panel, but neither redacted nor blocking.
+ *
+ * That middle tier exists because the two mistakes are not symmetrical.
+ * Redaction is irreversible by design: the value never enters the SymbolMap, so
+ * blanking `client_secret: "disabled"` corrupts code that `restore()` can never
+ * repair. Staying silent on `password = "correcthorse"` leaks a live password.
+ * Nothing in the syntax separates those two, so the engine reports the
+ * ambiguity instead of guessing which one it is.
+ */
+type ValueVerdict = 'placeholder' | 'ambiguous' | 'credential'
+
+function classifyValue(value: string, assignmentShaped: boolean): ValueVerdict {
   const trimmed = value.trim()
-  if (KNOWN_DUMMY.has(trimmed.toLowerCase())) return true
+  if (KNOWN_DUMMY.has(trimmed.toLowerCase())) return 'placeholder'
   // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
   // case-insensitively against the ORIGINAL — lowercasing first would stop
   // `$DB_PASSWORD` matching an upper-case-only shell-variable pattern.
   if (/^\$\{[^}]*\}$|^\{\{[^}]*\}\}$|^%[sdv]$|^\$[a-z_][a-z0-9_]*$|^<[^>]*>$/i.test(trimmed)) {
-    return true
+    return 'placeholder'
   }
   // A run of one repeated character conveys nothing.
-  if (/^(.)\1{3,}$/.test(trimmed)) return true
-  return false
+  if (/^(.)\1{3,}$/.test(trimmed)) return 'placeholder'
+
+  // Everything below is a guess about prose, and prose is only a plausible
+  // reading where the value could have been an enum or a mode. A connection
+  // string or an Authorization header puts its value in a slot that is
+  // structurally a credential: nothing but a password can legitimately sit
+  // between the colon and the @ of a database URL. Those keep the pattern's own
+  // severity — applying the prose heuristic to them silently dropped real
+  // database passwords and bearer tokens for no reason beyond their being
+  // lower-case. (Spelled out rather than illustrated: a working example URL in
+  // this comment would match the rule it describes.)
+  if (!assignmentShaped) return 'credential'
+
+  // A single run of lowercase letters is usually a word: `client_secret:
+  // "disabled"` is configuration, not a secret. But `password = "correcthorse"`
+  // has the identical shape, so this reports rather than decides.
+  if (/^[a-z]+$/.test(trimmed)) return 'ambiguous'
+  return 'credential'
 }
 
 /** Shannon entropy in bits per character. */
@@ -368,8 +423,12 @@ export function previewSecret(value: string): string {
   return `${clean.slice(0, 4)}…${clean.slice(-4)} (${clean.length} chars)`
 }
 
+/** A match with its verdict already applied, so `type`, `severity` and `label`
+ *  may differ from the pattern that produced it. */
 interface RawMatch {
-  pattern: Pattern
+  type: SecretType
+  severity: SecretSeverity
+  label: string
   start: number
   end: number
   value: string
@@ -399,6 +458,11 @@ function positionOf(starts: number[], offset: number): { line: number; column: n
 function collectMatches(code: string): RawMatch[] {
   const found: RawMatch[] = []
   for (const pattern of PATTERNS) {
+    // The only two patterns that read their value out of an assignment, and so
+    // the only two where an ordinary configuration word is a plausible reading
+    // of what matched.
+    const assignmentShaped =
+      pattern.type === 'password-assignment' || pattern.type === 'high-entropy-string'
     pattern.re.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = pattern.re.exec(code)) !== null) {
@@ -418,17 +482,23 @@ function collectMatches(code: string): RawMatch[] {
         start = m.index + offset
         value = captured
       }
-      if (isDummy(value)) continue
-      // Assignment-shaped findings need an entropy check: `password: "the user's
-      // password"` in prose is not a credential, and flagging it trains the user
-      // to dismiss the panel.
-      if (
-        (pattern.type === 'password-assignment' || pattern.type === 'high-entropy-string') &&
-        shannonEntropy(value) < ENTROPY_FLOOR
-      ) {
-        continue
-      }
-      found.push({ pattern, start, end: start + value.length, value })
+      let verdict = classifyValue(value, assignmentShaped)
+      if (verdict === 'placeholder') continue
+      // Assignment-shaped findings also get an entropy check: `password: "the
+      // user's password"` in prose is not a credential. Patterned filler such as
+      // `password: "abababababab"` is the same judgement call as a lowercase
+      // word — weak-but-real and enum-value are indistinguishable here — so it
+      // lands in the same tier: surfaced, not acted on.
+      if (assignmentShaped && shannonEntropy(value) < ENTROPY_FLOOR) verdict = 'ambiguous'
+      const ambiguous = verdict === 'ambiguous'
+      found.push({
+        type: ambiguous ? 'possible-credential' : pattern.type,
+        severity: ambiguous ? 'medium' : pattern.severity,
+        label: ambiguous ? 'Possible hardcoded credential' : pattern.label,
+        start,
+        end: start + value.length,
+        value,
+      })
     }
     pattern.re.lastIndex = 0
   }
@@ -441,10 +511,16 @@ const SEVERITY_RANK: Record<SecretSeverity, number> = { critical: 3, high: 2, me
  *  key inside a connection string should be reported once, as the Stripe key. */
 function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   const sorted = [...matches].sort((a, b) => {
-    const bySeverity = SEVERITY_RANK[b.pattern.severity] - SEVERITY_RANK[a.pattern.severity]
+    const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]
     if (bySeverity !== 0) return bySeverity
     const byLength = b.end - b.start - (a.end - a.start)
     if (byLength !== 0) return byLength
+    // `possible-credential` is the least-confident classification there is, so
+    // it yields to any pattern that identified the same span concretely —
+    // `secret: "10.0.3.14"` should be reported as the private IP it is.
+    const byConfidence =
+      Number(a.type === 'possible-credential') - Number(b.type === 'possible-credential')
+    if (byConfidence !== 0) return byConfidence
     return a.start - b.start
   })
   const kept: RawMatch[] = []
@@ -502,6 +578,9 @@ const TYPE_TOKENS: Record<SecretType, string> = {
   'basic-auth': 'BASIC_AUTH',
   'connection-string': 'DB_PASSWORD',
   'password-assignment': 'CREDENTIAL',
+  // Unreachable while `medium` stays out of REDACTED_SEVERITIES, but present so
+  // that widening the policy cannot produce an undefined token.
+  'possible-credential': 'CREDENTIAL',
   'high-entropy-string': 'SECRET',
   email: 'EMAIL',
   'private-ip': 'PRIVATE_IP',
@@ -534,12 +613,12 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
   const replacements: { start: number; end: number; token: string }[] = []
 
   for (const m of matches) {
-    const willRedact = policy === 'redact' && REDACTED_SEVERITIES.has(m.pattern.severity)
+    const willRedact = policy === 'redact' && REDACTED_SEVERITIES.has(m.severity)
     const { line, column } = positionOf(starts, m.start)
     findings.push({
-      type: m.pattern.type,
-      severity: m.pattern.severity,
-      label: m.pattern.label,
+      type: m.type,
+      severity: m.severity,
+      label: m.label,
       line,
       column,
       length: m.value.length,
@@ -547,7 +626,7 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
       redacted: willRedact,
     })
     if (willRedact) {
-      const base = TYPE_TOKENS[m.pattern.type]
+      const base = TYPE_TOKENS[m.type]
       const n = (counters[base] ?? 0) + 1
       counters[base] = n
       replacements.push({ start: m.start, end: m.end, token: `__REDACTED_${base}_${n}__` })

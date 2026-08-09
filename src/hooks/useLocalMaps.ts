@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import type { SymbolMap } from '@dlgshi/engine'
+import type { SymbolMap } from '@veilio-inc/engine'
 
 const STORAGE_KEY = 'veilio_local_maps'
 

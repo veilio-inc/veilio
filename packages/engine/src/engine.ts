@@ -33,6 +33,44 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** Longest token that may go into the substitution alternation.
+ *
+ *  V8 refuses to compile a regex whose single alternation atom reaches 32767
+ *  characters, and it refuses on FIRST EXECUTION rather than construction — so
+ *  `new RegExp` succeeds and the throw lands inside `.replace()`. Only the
+ *  largest atom matters: a 60M-character alternation of ordinary-length atoms
+ *  compiles fine, so this is a per-token cap, not a budget.
+ *
+ *  The cap sits far below V8's limit because this is browser code and other
+ *  engines set their own. Nothing legitimate is affected: no identifier in any
+ *  supported language is 1024 characters. What is that long is an inline
+ *  `data:image/png;base64,...` URI, a hex blob, or minified output — routine in
+ *  pasted source, and previously a hard crash. */
+const MAX_REGEX_ATOM = 1024
+
+const IDENTIFIER_CHAR = /[a-zA-Z0-9_$]/
+
+/** Whole-word replace with no regex, for tokens too large to put in one.
+ *  Enforces exactly the boundaries the alternation's lookbehind and lookahead
+ *  do, so an oversized token is not rewritten where it is merely a substring of
+ *  something longer. */
+function replaceWholeWord(text: string, needle: string, replacement: string): string {
+  if (needle.length === 0) return text
+  let out = ''
+  let from = 0
+  let at = text.indexOf(needle)
+  if (at === -1) return text
+  while (at !== -1) {
+    const before = at > 0 ? (text[at - 1] ?? '') : ''
+    const after = text[at + needle.length] ?? ''
+    const bounded = !IDENTIFIER_CHAR.test(before) && !IDENTIFIER_CHAR.test(after)
+    out += text.slice(from, at) + (bounded ? replacement : needle)
+    from = at + needle.length
+    at = text.indexOf(needle, from)
+  }
+  return out + text.slice(from)
+}
+
 // ─── Downstream-AI preamble ──────────────────────────────────────────────────
 //
 // Masked code can read as "deliberately obfuscated" to another AI, which then
@@ -531,18 +569,38 @@ export function anonymize(
   // regex alternation prefers the earliest matching branch, so longest-first
   // semantics are preserved — `OrderService` still wins over `Service`.
   // Whitelisted identifiers are simply left out of the alternation.
+  // A token at or above MAX_REGEX_ATOM cannot go in the alternation without
+  // making the regex uncompilable, so it is replaced separately, before the
+  // alternation runs.
+  //
+  // The ordering is defensive rather than load-bearing: both paths assert the
+  // same identifier boundaries, so neither can match a proper substring of a
+  // longer run of identifier characters, and swapping them is unobservable.
+  // Oversized tokens are nonetheless the longest ones (`identifiers` is sorted
+  // longest-first), so applying them first is the order that stays correct if
+  // either path's boundary handling is ever relaxed.
   const substitutable = identifiers.filter((n) => !whitelisted.has(n) && reverseExisting[n])
+  const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
+  const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
+
+  const pattern =
+    inAlternation.length === 0
+      ? null
+      : new RegExp(
+          `(?<![a-zA-Z0-9_$])(?:${inAlternation.map(escapeRegex).join('|')})(?![a-zA-Z0-9_$])`,
+          'g'
+        )
+
   const substitute =
     substitutable.length === 0
       ? (text: string): string => text
-      : (() => {
-          const pattern = new RegExp(
-            `(?<![a-zA-Z0-9_$])(?:${substitutable.map(escapeRegex).join('|')})(?![a-zA-Z0-9_$])`,
-            'g'
-          )
-          return (text: string): string =>
-            text.replace(pattern, (match) => reverseExisting[match] ?? match)
-        })()
+      : (text: string): string => {
+          let out = text
+          for (const name of oversized) {
+            out = replaceWholeWord(out, name, reverseExisting[name] as string)
+          }
+          return pattern === null ? out : out.replace(pattern, (m) => reverseExisting[m] ?? m)
+        }
 
   const anonymized = tokenizeForMasking(source, language)
     .map((s) => (s.isComment ? s.text : substitute(s.text)))

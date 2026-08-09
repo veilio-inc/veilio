@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { SymbolMap } from '@dlgshi/engine'
+import type { SymbolMap } from '@veilio-inc/engine'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 
 interface Props {

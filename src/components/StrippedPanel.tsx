@@ -1,4 +1,4 @@
-import type { StrippedItem, StrippedItemType } from '@dlgshi/engine'
+import type { StrippedItem, StrippedItemType } from '@veilio-inc/engine'
 
 const TYPE_LABELS: Record<StrippedItemType, string> = {
   jsdoc: 'JSDoc block',

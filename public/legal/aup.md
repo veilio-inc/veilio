@@ -10,7 +10,7 @@ Using or redistributing Veilio CE, you agree **not** to:
 - **Infringe rights** — use CE with code or data you have no right to use, or to violate third-party intellectual property, trade secrets, or privacy.
 - **Misrepresent the tool** — present CE's best-effort anonymization as a guarantee of safety, compliance, or complete removal of sensitive data, or imply that the Veilio project has reviewed or endorsed your output.
 - **Resell or repackage it** — sell, resell, sublicense, rebrand, or republish CE or its engine as a standalone product or service that competes with Veilio. (Using CE in your own projects, including commercial ones, is fine.) For a competing-use or redistribution license, contact `hello@veilio.dev`.
-- **Misuse the brand** — redistribute a modified build as the official "Veilio", or otherwise use the Veilio name or logo in violation of the [Trademark Policy](https://github.com/DlgSHi/veilio-oss/blob/main/TRADEMARKS.md).
+- **Misuse the brand** — redistribute a modified build as the official "Veilio", or otherwise use the Veilio name or logo in violation of the [Trademark Policy](https://github.com/veilio-inc/veilio/blob/main/TRADEMARKS.md).
 - **Weaponize anonymization** — deliberately use identifier obfuscation to bypass another party's security, data-loss-prevention, or detection controls for malicious ends.
 
 ## No monitoring
@@ -20,4 +20,4 @@ Because CE runs only on your own machine, the Veilio project does not — and ca
 CE is source-available software (Veilio Community License 1.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and IP terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
 
 ## Reporting
-Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/DlgSHi/veilio-oss/blob/main/SECURITY.md).
+Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/veilio-inc/veilio/blob/main/SECURITY.md).

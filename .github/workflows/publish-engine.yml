@@ -1,4 +1,4 @@
-name: Publish @dlgshi/engine
+name: Publish @veilio-inc/engine
 
 # Publishes the engine package to npm with build provenance, using npm OIDC
 # "trusted publishing" — no long-lived NPM_TOKEN is stored (plan controls
@@ -26,9 +26,12 @@ jobs:
       run:
         working-directory: packages/engine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      # Kept at 22 while the app CI runs 24: the engine declares engines
+      # ">=20" and has zero runtime dependencies, so publishing from the
+      # lowest realistic runtime is the closer test of that claim.
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'

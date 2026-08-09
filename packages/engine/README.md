@@ -1,11 +1,11 @@
-# @dlgshi/engine
+# @veilio-inc/engine
 
 Two-way code anonymizer. Replace real identifiers in source code with role-typed
 placeholder tokens (`__CLS__1`, `__FN__2`, …) **before** sending it to an LLM,
 then restore them in the reply.
 
 ```ts
-import { anonymize, restore } from '@dlgshi/engine'
+import { anonymize, restore } from '@veilio-inc/engine'
 
 const { anonymized, map } = anonymize('class PaymentService { charge(orderId) {} }')
 // anonymized → "class __CLS__1 { __FN__1(__VAR__1) {} }"

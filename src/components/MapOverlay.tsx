@@ -1,4 +1,4 @@
-import type { SymbolMap } from '@dlgshi/engine'
+import type { SymbolMap } from '@veilio-inc/engine'
 
 interface Props {
   map: SymbolMap
