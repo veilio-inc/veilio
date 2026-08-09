@@ -8,7 +8,7 @@ _Version 1.0 · Last updated: 2026-06-23_
 > employer may need a separate corporate CLA.
 
 This Contributor License Agreement ("Agreement") is between you ("You", the individual
-or entity making a Contribution) and **Igor Dlugosh**, maintainer of the Veilio project
+or entity making a Contribution) and the **Veilio** project and its maintainers
 ("the Project"). It applies to Your Contributions to any Veilio repository, including
 `github.com/veilio-inc/veilio`.
 

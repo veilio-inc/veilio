@@ -46,9 +46,8 @@ person who knows what the engine is still missing.
 
 ## Who builds it
 
-Veilio is maintained by **Igor Dlugosh**, and this Community Edition grew out of a
-private codebase that was opened up because a privacy tool nobody can read is a
-privacy tool nobody should trust. A commercial hosted **Cloud Edition** funds the
+This Community Edition grew out of a private codebase that was opened up because
+a privacy tool nobody can read is a privacy tool nobody should trust. A commercial hosted **Cloud Edition** funds the
 work; the core anonymizer is the same code in both, and it lives here, in the
 open, where you can audit it before you run it.
 

@@ -31,4 +31,4 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_Veilio_CLOUD_URL: https://veilio.dev
+          VITE_VEILIO_CLOUD_URL: https://veilio.dev

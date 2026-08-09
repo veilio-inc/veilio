@@ -82,4 +82,4 @@ The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The C
 
 ## Credits
 
-Built on prior work by Igor Dlugosh in the (private) Veilio codebase. Source-available under the Veilio Community License 1.0 — free to use, including inside your own business; not for competing resale or hosting.
+Built on prior work in the private Veilio codebase. Source-available under the Veilio Community License 1.0 — free to use, including inside your own business; not for competing resale or hosting.

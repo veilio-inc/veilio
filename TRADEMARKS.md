@@ -14,7 +14,7 @@ _Version 1.0 · Last updated: 2026-06-23_
 
 ## Marks covered
 "**Veilio**" (the word mark) and the Veilio logo (collectively, the "Marks"). The Marks are
-trademarks of **Igor Dlugosh** / the Veilio project (the "Project").
+trademarks of the **Veilio** project (the "Project").
 
 ## What you may do (no permission needed)
 - Use, fork, modify, and build on the **code** for any purpose, including inside your own business, under the Veilio Community License (just not to resell Veilio, host it as a service for others, or ship it as a competing product).

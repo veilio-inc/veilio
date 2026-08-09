@@ -91,8 +91,8 @@ const SAMPLES: { type: SecretType; code: string; secret: string }[] = [
   },
   {
     type: 'email',
-    code: 'const owner = "igor.dlugosh@acme.com"',
-    secret: 'igor.dlugosh@acme.com',
+    code: 'const owner = "a.person@acme.com"',
+    secret: 'a.person@acme.com',
   },
 ]
 
@@ -157,7 +157,7 @@ describe('previews never carry the secret', () => {
 describe('redaction policy', () => {
   const code = [
     'const stripe = "sk_live_51H8xQ2ABCDEFGHIJKLMNOP"',
-    'const owner = "igor.dlugosh@acme.com"',
+    'const owner = "a.person@acme.com"',
   ].join('\n')
 
   it('redacts critical findings by default', () => {
@@ -168,7 +168,7 @@ describe('redaction policy', () => {
 
   it('leaves medium findings in place but still reports them', () => {
     const scan = scanSecrets(code)
-    expect(scan.code).toContain('igor.dlugosh@acme.com')
+    expect(scan.code).toContain('a.person@acme.com')
     const email = scan.findings.find((f) => f.type === 'email')
     expect(email?.redacted).toBe(false)
   })

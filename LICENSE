@@ -2,7 +2,7 @@
 
 _Version 1.0 · Effective 2026-08-08_
 
-**Copyright © 2026 Igor Dlugosh**
+**Copyright © 2026 Veilio**
 
 > **Plain-language summary (non-binding; the numbered terms below control).**
 > Use Veilio for anything you like — personally, or inside your company, including
@@ -20,11 +20,11 @@ This project follows a **source-available and community-driven development model
 
 The **Community Core** is publicly available and intended to be freely used, inspected, modified, forked, and improved by the community. Contributions from the community are welcome and are an important part of the project's development.
 
-The **Cloud Edition** is a separate commercial offering operated by Igor Dlugosh. It provides hosted and managed functionality and may include additional proprietary features, infrastructure, services, and support.
+The **Cloud Edition** is a separate commercial offering operated by Veilio. It provides hosted and managed functionality and may include additional proprietary features, infrastructure, services, and support.
 
 The Software may be used for personal purposes as well as for internal commercial purposes. Organizations may deploy and use the Software within their own businesses without requiring a commercial license.
 
-However, the Software may not be commercially redistributed, resold, white-labeled, or offered as a third-party hosted service without prior written permission from Igor Dlugosh.
+However, the Software may not be commercially redistributed, resold, white-labeled, or offered as a third-party hosted service without prior written permission from Veilio.
 
 The purpose of this model is to keep the core technology open and community-driven while allowing the project owner to maintain and commercially operate the official Cloud Edition.
 
@@ -40,7 +40,7 @@ For the purposes of this License:
 
 **"Modified Version"** means any work based on, derived from, or incorporating substantial portions of the Software.
 
-**"Cloud Edition"** means the hosted, managed, or subscription-based version of the Software operated and commercially provided by Igor Dlugosh, including any proprietary services, infrastructure, features, or components associated with it.
+**"Cloud Edition"** means the hosted, managed, or subscription-based version of the Software operated and commercially provided by Veilio, including any proprietary services, infrastructure, features, or components associated with it.
 
 **"Commercial Distribution"** means selling, licensing, renting, leasing, sublicensing, or otherwise providing the Software or a Modified Version to third parties in exchange for payment or other commercial consideration.
 
@@ -88,7 +88,7 @@ The restriction applies to **commercializing the Software itself**, rather than 
 
 ## 5. Commercial Restrictions
 
-Without prior written permission from Igor Dlugosh, you may not:
+Without prior written permission from Veilio, you may not:
 
 ### 5.1 Sell or Resell the Software
 
@@ -174,9 +174,9 @@ You may redistribute the Software and Modified Versions for non-commercial purpo
 * the original project is appropriately credited;
 * a copy of this License is included;
 * recipients are informed of the applicable licensing terms; and
-* the redistribution does not imply endorsement by Igor Dlugosh.
+* the redistribution does not imply endorsement by Veilio.
 
-Commercial redistribution requires prior written permission from Igor Dlugosh.
+Commercial redistribution requires prior written permission from Veilio.
 
 ---
 
@@ -228,7 +228,7 @@ Permissions granted to recipients who are not in violation of this License remai
 
 ## 15. Reservation of Rights
 
-All rights not expressly granted by this License are reserved by Igor Dlugosh.
+All rights not expressly granted by this License are reserved by Veilio.
 
 In particular, this License does not grant rights to commercially sell, redistribute, host, white-label, or operate a competing commercial service based on the Software beyond the permissions expressly stated above.
 
@@ -243,6 +243,6 @@ Each version will be identified by a version number. Unless explicitly stated ot
 ---
 
 **Project:** Veilio
-**Copyright:** © 2026 Igor Dlugosh
+**Copyright:** © 2026 Veilio
 **License:** Veilio Community License, Version 1.0
 **Contact:** `hello@veilio.dev`
