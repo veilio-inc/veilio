@@ -55,7 +55,11 @@
     [
       "@semantic-release/git",
       {
-        "assets": ["packages/engine/package.json", "packages/engine/CHANGELOG.md"],
+        "assets": [
+          "packages/engine/package.json",
+          "packages/engine/package-lock.json",
+          "packages/engine/CHANGELOG.md"
+        ],
         "message": "chore(release): engine ${nextRelease.version} [skip ci]"
       }
     ],
