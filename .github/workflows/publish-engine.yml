@@ -36,9 +36,13 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
 
-      # OIDC trusted publishing requires a recent npm CLI.
+      # OIDC trusted publishing requires a recent npm CLI. Pinned to a major
+      # rather than `latest`: npm 12 changed the shape of `npm pack --json` from
+      # an array to an object, which silently broke the tarball allowlist check
+      # below. A release pipeline should not adopt breaking CLI changes the day
+      # they ship.
       - name: Update npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@12
         working-directory: .
 
       # Releases must be tag-anchored and the tag must equal package.json's
@@ -78,7 +82,15 @@ jobs:
         run: |
           npm pack --dry-run --json | node -e '
             const allowed = /^(dist\/|src\/)|^(README\.md|LICENSE|CHANGELOG\.md|package\.json)$/
-            const [pkg] = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            // npm 11 emits an array of packages; npm 12 emits an object keyed by
+            // package name. The inner shape is identical, so normalise the wrapper
+            // rather than pinning this check to one CLI major.
+            const raw = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            const [pkg] = Array.isArray(raw) ? raw : Object.values(raw)
+            if (!pkg || !Array.isArray(pkg.files)) {
+              console.error("Unrecognised `npm pack --json` output; refusing to publish unchecked.")
+              process.exit(1)
+            }
             const bad = pkg.files.map(f => f.path).filter(p => !allowed.test(p))
             if (bad.length) {
               console.error("Unexpected files in tarball:", bad)
