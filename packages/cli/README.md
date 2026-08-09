@@ -63,7 +63,7 @@ Redacted credentials are **not** in the map. `restore` cannot bring them back, b
 ### GitHub Action
 
 ```yaml
-- uses: DlgSHi/veilio/packages/cli@v0.1.0
+- uses: veilio-inc/veilio/packages/cli@v0.1.0
   with:
     strict: false          # also fail on emails / private IPs
     sarif: veilio.sarif    # optional: upload to code scanning
@@ -84,7 +84,7 @@ Via the [pre-commit framework](https://pre-commit.com):
 
 ```yaml
 repos:
-  - repo: https://github.com/DlgSHi/veilio
+  - repo: https://github.com/veilio-inc/veilio
     rev: v0.1.0
     hooks:
       - id: veilio-scan
