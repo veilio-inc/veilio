@@ -1,7 +1,22 @@
-FROM node:20-alpine AS build
+# Node 24 matches what CI builds with; the root package requires >=22.19.0, so
+# the previous node:20 base was below the declared floor.
+FROM node:24-alpine AS build
 WORKDIR /app
+
+# The root package pulls the anonymization engine in through
+# `file:./packages/engine`, and the postinstall script builds it from source.
+# Both need the engine present before `npm ci` runs — copying only the two root
+# manifests made the install fail with ENOENT on packages/engine/package.json,
+# so this image could not be built at all. The engine is copied as its own
+# layer, ahead of the app sources, so editing a component still reuses the
+# cached dependency install.
 COPY package.json package-lock.json ./
+COPY packages/engine packages/engine
 RUN npm ci
+
+# Relies on .dockerignore keeping node_modules and dist out of the context: a
+# host node_modules copied over the installed one would replace Linux binaries
+# with the build machine's (macOS esbuild, fsevents) and break the Vite build.
 COPY . .
 RUN npm run build
 

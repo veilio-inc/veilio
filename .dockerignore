@@ -1,0 +1,27 @@
+# Keep the build context to source only.
+#
+# node_modules matters most: the Dockerfile installs dependencies before it
+# copies the app, so a host node_modules in the context would land on top of the
+# installed one and swap Linux binaries for the build machine's.
+node_modules
+**/node_modules
+dist
+**/dist
+
+.git
+.github
+.husky
+docs
+
+.env
+.env.local
+*.log
+.DS_Store
+
+# Local AI/agent tooling — never part of an image, same as .gitignore.
+.claude/
+.cursor/
+.aider*
+CLAUDE.md
+AGENTS.md
+.mcp.json
