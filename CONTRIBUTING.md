@@ -89,6 +89,12 @@ visibly.
   improvement, open an issue before writing code so we can agree on the approach.
 - **Bring a test.** For this project specifically, a test *is* the argument: it is
   the difference between "I think it handles Rust lifetimes" and knowing.
+- **Write [conventional commits](https://www.conventionalcommits.org).** Not
+  bookkeeping: the engine's version and changelog are generated from these
+  messages, so `fix(engine): …` ships a patch, `feat(engine): …` a minor, and a
+  `!` or a `BREAKING CHANGE:` footer a major. `docs`, `style`, `test`, `ci` and
+  `chore` release nothing. A vague subject line becomes a vague changelog entry
+  that users read.
 
 ## Engine privacy invariants (do not break these)
 

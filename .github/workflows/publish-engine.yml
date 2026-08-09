@@ -1,32 +1,47 @@
 name: Publish @veilio-inc/engine
 
-# Publishes the engine package to npm with build provenance, using npm OIDC
-# "trusted publishing" — no long-lived NPM_TOKEN is stored (plan controls
-# S2/S3/S4). Triggered only by an `engine-v*` tag push or a manual dispatch,
-# never by a (fork) pull_request, so secrets/identity are never exposed to
-# untrusted PR code. The `release` environment should require manual approval.
+# semantic-release owns the version. It reads the conventional-commit history
+# since the last `engine-v*` tag, decides the bump, writes the CHANGELOG, tags,
+# publishes to npm with provenance, and opens the GitHub Release.
+#
+# Publishing still uses npm OIDC "trusted publishing" — no long-lived NPM_TOKEN
+# is stored. The `release` environment gates the job behind manual approval, so
+# an automated version bump is still a human decision to ship.
+#
+# `paths` keeps app-only changes from triggering an engine release. Note the
+# trade-off this does NOT solve: once the workflow does run, commit analysis
+# covers every commit since the last engine tag, so an unrelated `feat(...)`
+# landed in between will inflate the bump (minor instead of patch). With one
+# publishable package that is noise, not breakage. When the CLI and MCP packages
+# land (ROADMAP E5), replace this with per-package commit scoping.
 
 on:
   push:
-    tags:
-      - 'engine-v*'
+    branches: [main]
+    paths:
+      - 'packages/engine/**'
+      - '.releaserc.json'
+      - '.github/workflows/publish-engine.yml'
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: read-all
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     environment: release
     permissions:
-      contents: read
-      id-token: write # required for OIDC trusted publishing + provenance
-    defaults:
-      run:
-        working-directory: packages/engine
+      contents: write # semantic-release pushes the version commit + tag
+      issues: write
+      pull-requests: write
+      id-token: write # OIDC trusted publishing + provenance
     steps:
+      # semantic-release needs the full history to read commits since the last
+      # tag, and the checkout credentials to push the release commit back.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       # Kept at 22 while the app CI runs 24: the engine declares engines
       # ">=20" and has zero runtime dependencies, so publishing from the
@@ -43,42 +58,22 @@ jobs:
       # they ship.
       - name: Update npm
         run: npm install -g npm@12
-        working-directory: .
 
-      # Releases must be tag-anchored and the tag must equal package.json's
-      # version, so every published artifact is traceable to one engine-v* tag.
-      # workflow_dispatch stays usable for retries — run it on the tag ref.
-      - name: Verify ref is an engine-v* tag matching package.json
-        run: |
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-            echo "Refusing to publish from a non-tag ref ($GITHUB_REF_TYPE $GITHUB_REF_NAME). Run this workflow on an engine-v* tag." >&2
-            exit 1
-          fi
-          case "$GITHUB_REF_NAME" in engine-v*) ;; *)
-            echo "Tag '$GITHUB_REF_NAME' does not match engine-v*." >&2
-            exit 1
-          ;; esac
-          TAG_VERSION="${GITHUB_REF_NAME#engine-v}"
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)." >&2
-            exit 1
-          fi
-
+      # Root install also builds the engine via the postinstall script.
       - name: Install (pinned, deterministic)
         run: npm ci
 
       - name: Test (incl. purity/privacy gate)
-        run: npm test
+        run: npm test --prefix packages/engine
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck --prefix packages/engine
 
-      - name: Build
-        run: npm run build
-
-      # Fail (not just print) if anything beyond the allowlist would ship.
+      # Fail (not just print) if anything beyond the allowlist would ship. Runs
+      # before semantic-release so a bad tarball never reaches a published
+      # version — the file list does not depend on the version number.
       - name: Verify tarball contains only allowlisted files
+        working-directory: packages/engine
         run: |
           npm pack --dry-run --json | node -e '
             const allowed = /^(dist\/|src\/)|^(README\.md|LICENSE|CHANGELOG\.md|package\.json)$/
@@ -96,7 +91,10 @@ jobs:
               console.error("Unexpected files in tarball:", bad)
               process.exit(1)
             }
+            console.log(`Tarball OK — ${pkg.files.length} allowlisted files.`)
           '
 
-      - name: Publish with provenance
-        run: npm publish --provenance --access public
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
