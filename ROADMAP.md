@@ -33,16 +33,43 @@ The first ninety seconds: find the repo, run the thing.
 
 | | Item | State |
 | --- | --- | --- |
-| A1 | Base the runtime image on `nginx:1.27-alpine-slim` | **done** |
+| A1 | Shrink the runtime image | **done — 77.4 MB → 10.4 MB** |
 | A2 | Cut a version tag so the Releases tarball exists | ready |
 | A3 | Vulnerability scan as a release gate | ready |
 
-**A1 — done.** The image was 77.4 MB, of which 76.8 MB was the
-`nginx:1.27-alpine` base; the site itself is 1.1 MB, so the base was very nearly
-all of it. On `alpine-slim` it is **21.7 MB**, a 72% reduction from a one-line
-change. The slim variant drops the njs, geoip and perl modules; gzip is nginx
-core, so compression, the SPA fallback and both cache-control rules are
-unaffected — all four were re-checked against a running container.
+**A1 — done, in two steps.**
+
+The image was 77.4 MB, of which 76.8 MB was the `nginx:1.27-alpine` base. The
+site is 1.1 MB, so the distro was roughly 99% of what anyone pulled.
+`alpine-slim` took it to 21.7 MB. Then nginx went too: the image is now a
+~140-line standard-library static server ([`docker/serve.go`](./docker/serve.go))
+on `scratch` — **10.4 MB**, of which 5.8 MB is the Go binary and 1.5 MB the site
+plus its pre-built gzip sidecars.
+
+**This roadmap previously said we would not do that.** The stated objection was
+that a busybox or distroless runtime costs gzip, the cache-control rules, and an
+nginx config a self-hoster can read and adapt. That turned out to be addressable
+rather than fundamental, so the entry changed:
+
+- The server implements all four behaviours the nginx config specified — SPA
+  fallback returning **200** (busybox httpd's `E404` returns 404, which is the
+  trap), `immutable` caching for fingerprinted assets, `no-store` for
+  `index.html`, and gzip served from sidecars built at image time.
+- [`docker/nginx.conf`](./docker/nginx.conf) stays in the repo and stays
+  correct, as the reference for serving the release tarball behind an nginx you
+  already run.
+- Only the standard library is used. A tool whose argument is supply chain
+  should not pull in a third-party server to save megabytes.
+- The image now contains no shell, no package manager and no distro to patch.
+
+Verified against a running container: all routes, deep-link routing, gzip
+negotiation including `gzip;q=0`, both cache-control rules, path traversal
+(rejected — falls back to the app, nothing leaks), `POST` → 405, and the
+healthcheck reaching `healthy`.
+
+**Not doing:** chasing the last 5.8 MB. A Rust or C server would reach ~2.5 MB
+total, but the remaining bytes are a Go binary we can read, and the difference
+between a 10 MB and a 3 MB pull is not something a self-hoster will notice.
 
 **A2.** The README offers a static-bundle install for locked-down and air-gapped
 environments, pointing at Releases. There are no releases yet, so that path is
@@ -50,10 +77,6 @@ currently a dead end for exactly the users most likely to need it.
 
 **A3.** The image is nginx plus static files, so its attack surface is the base
 image. That argues for scanning it on every publish rather than trusting the tag.
-
-**Not doing:** a busybox or distroless runtime. It would reach roughly 4 MB, but
-costs gzip, the cache-control rules and an nginx config any self-hoster can read
-and adapt — to save 17 MB.
 
 ---
 

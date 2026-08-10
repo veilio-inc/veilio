@@ -51,7 +51,9 @@ or an existing nginx / IIS / CDN you'd rather drop files into.
 
 Veilio has **no backend and no server-side code**: the engine runs entirely in
 the browser, so "hosting" it is just serving static files. The Docker image above
-is nothing more than nginx serving exactly this bundle.
+is nothing more than this bundle plus a ~140-line static file server
+([`docker/serve.go`](./docker/serve.go)) on an otherwise empty image — no distro,
+no shell, no package manager. That is why it is 10 MB.
 
 Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/veilio-inc/veilio/releases), extract, and serve `dist/` with any static web server.
 
@@ -60,7 +62,7 @@ Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/veilio
 > `/legal/terms` return 404 when opened directly or refreshed — the app looks
 > broken even though it isn't. The Docker image already handles this.
 
-- **nginx** — `try_files $uri $uri/ /index.html;` (see [`docker/nginx.conf`](./docker/nginx.conf) for a complete, working config)
+- **nginx** — `try_files $uri $uri/ /index.html;` (see [`docker/nginx.conf`](./docker/nginx.conf) for a complete, working config, kept as a reference for exactly this case — the image itself no longer runs nginx)
 - **Caddy** — `try_files {path} /index.html`
 - **Vercel / Netlify** — add a rewrite of `/*` to `/index.html`
 - **`python -m http.server`** — fine for a quick look at `/`, but it has no
