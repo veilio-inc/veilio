@@ -94,6 +94,12 @@ does nothing.
 |---|---|---|
 | `VITE_VEILIO_CLOUD_URL` | `https://veilio.dev` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
 
+## Roadmap
+
+[ROADMAP.md](./ROADMAP.md) is the public plan: what the engine gets wrong today,
+what is queued, and what we have decided not to build. Engine and community work
+only — no commercial sequencing.
+
 ## How this relates to Cloud
 
 The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The Cloud edition adds auth, encrypted server-side map storage, teams, and billing — none of which lives in this repo.
