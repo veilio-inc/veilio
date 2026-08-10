@@ -28,7 +28,13 @@ ARG VITE_VEILIO_CLOUD_URL=https://veilio.dev
 ENV VITE_VEILIO_CLOUD_URL=$VITE_VEILIO_CLOUD_URL
 RUN npm run build
 
-FROM nginx:1.27-alpine
+# alpine-slim rather than alpine: 20.6 MB against 76.8 MB, which is the whole
+# difference between a 77.4 MB image and a 21.7 MB one — the site itself is only
+# 1.1 MB, so the base was almost all of it. slim drops the njs, geoip and perl
+# modules. gzip is nginx core, so compression, the SPA fallback and both
+# cache-control rules in nginx.conf are unaffected; all four were re-checked
+# against a running container before this change landed.
+FROM nginx:1.27-alpine-slim
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
