@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Veilio">
+  <title>Veilio</title>
+  <!--
+    Avatar variant of public/icon.svg, for GitHub org/user profile pictures.
+
+    Two deliberate differences from the app icon:
+
+    1. No rx on the tile. GitHub masks avatars itself (rounded square for an
+       org, circle for a user), so shipping our own corner radius would either
+       be masked away or, worse, show as a double-rounded edge.
+    2. The window is scaled 1.22x about the centre. The app icon leaves ~19% of
+       the frame as margin, which is right for a favicon sitting next to other
+       chrome but leaves the mark looking shrunken once GitHub crops it. 1.22 is
+       the largest scale that keeps the window's corners inside the inscribed
+       circle, so it survives a circular crop as well as a rounded-square one.
+
+    Keep this in sync with public/icon.svg if the mark itself ever changes.
+  -->
+  <defs>
+    <linearGradient id="veilio-avatar-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#322a25" />
+      <stop offset="1" stop-color="#1c1917" />
+    </linearGradient>
+    <linearGradient id="veilio-avatar-coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d98968" />
+      <stop offset="1" stop-color="#b8633f" />
+    </linearGradient>
+  </defs>
+
+  <!-- full-bleed tile; GitHub supplies the corner radius -->
+  <rect width="100" height="100" fill="url(#veilio-avatar-tile)" />
+
+  <g transform="translate(50,50) scale(1.22) translate(-50,-50)">
+    <!-- editor / console window -->
+    <rect x="19" y="25" width="62" height="50" rx="11" fill="#28211e" stroke="#4a4240" stroke-width="2.5" />
+
+    <!-- title-bar dots (one accent) -->
+    <circle cx="29" cy="35" r="3" fill="#cc785c" />
+    <circle cx="39" cy="35" r="3" fill="#4a4240" />
+    <circle cx="49" cy="35" r="3" fill="#4a4240" />
+
+    <!-- the redacted identifier (hero) -->
+    <rect x="29" y="49" width="40" height="9.5" rx="4.75" fill="url(#veilio-avatar-coral)" />
+
+    <!-- a remaining line of code -->
+    <rect x="29" y="63" width="27" height="7" rx="3.5" fill="#4a4240" />
+  </g>
+</svg>
