@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Veilio for regulated industries — in development</title>
-<meta name="description" content="Veilio strips real identifiers out of code before it reaches a model, and puts them back in the answer. We're building the version of that for organizations where the current policy is 'don't paste it'." />
+<title>Veilio — two-way AI code anonymizer · in development</title>
+<meta name="description" content="Veilio strips real identifiers out of code before it reaches a model, and puts them back in the answer. For teams whose policy is 'don't paste it' — and for everyone who would simply rather their code never left their machine." />
 <meta name="theme-color" content="#1C1917" />
 <meta name="robots" content="index, follow" />
 
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://veilio.dev/" />
-<meta property="og:title" content="Veilio for regulated industries — in development" />
-<meta property="og:description" content="Send the problem. Keep the names. In development for organizations that can't put their material into a public model." />
+<meta property="og:title" content="Veilio — two-way AI code anonymizer · in development" />
+<meta property="og:description" content="Send the problem. Keep the names. In development, for anyone who would rather their code never reached a model in the first place." />
 <meta name="twitter:card" content="summary_large_image" />
 
 <!-- The Veilio mark, inlined so the page stays a single portable file. -->
@@ -140,10 +140,12 @@ a:hover { color: var(--accent-light); }
 .wordmark { display: flex; align-items: center; gap: 10px; }
 
 .wordmark__mark {
-  width: 15px; height: 15px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--accent-light), var(--accent-hover));
-  box-shadow: 0 0 14px rgba(204,120,92,0.45);
+  width: 18px; height: 18px;
+  /* The product mark — the same drawing this page already uses as its favicon.
+     A plain gradient square read as a placeholder for a logo rather than as
+     one, which is exactly what it was. */
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InRpbGUiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMzIyYTI1IiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxYzE5MTciIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJjb3JhbCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNkOTg5NjgiIC8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2I4NjMzZiIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgoKICA8IS0tIGZ1bGwtYmxlZWQgcm91bmRlZCBhcHAgdGlsZSAod2FybSBzdG9uZSwgbWF0Y2hlcyB0aGUgYXBwIGJnKSAtLT4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIzIiBmaWxsPSJ1cmwoI3RpbGUpIiAvPgoKICA8IS0tIGVkaXRvciAvIGNvbnNvbGUgd2luZG93IC0tPgogIDxyZWN0IHg9IjE5IiB5PSIyNSIgd2lkdGg9IjYyIiBoZWlnaHQ9IjUwIiByeD0iMTEiIGZpbGw9IiMyODIxMWUiIHN0cm9rZT0iIzRhNDI0MCIgc3Ryb2tlLXdpZHRoPSIyLjUiIC8+CgogIDwhLS0gdGl0bGUtYmFyIGRvdHMgKG9uZSBhY2NlbnQpIC0tPgogIDxjaXJjbGUgY3g9IjI5IiBjeT0iMzUiIHI9IjMiIGZpbGw9IiNjYzc4NWMiIC8+CiAgPGNpcmNsZSBjeD0iMzkiIGN5PSIzNSIgcj0iMyIgZmlsbD0iIzRhNDI0MCIgLz4KICA8Y2lyY2xlIGN4PSI0OSIgY3k9IjM1IiByPSIzIiBmaWxsPSIjNGE0MjQwIiAvPgoKICA8IS0tIHRoZSByZWRhY3RlZCBpZGVudGlmaWVyIChoZXJvKSAtLT4KICA8cmVjdCB4PSIyOSIgeT0iNDkiIHdpZHRoPSI0MCIgaGVpZ2h0PSI5LjUiIHJ4PSI0Ljc1IiBmaWxsPSJ1cmwoI2NvcmFsKSIgLz4KCiAgPCEtLSBhIHJlbWFpbmluZyBsaW5lIG9mIGNvZGUgLS0+CiAgPHJlY3QgeD0iMjkiIHk9IjYzIiB3aWR0aD0iMjciIGhlaWdodD0iNyIgcng9IjMuNSIgZmlsbD0iIzRhNDI0MCIgLz4KPC9zdmc+Cg==") center / contain no-repeat;
+  filter: drop-shadow(0 0 10px rgba(204,120,92,0.40));
   flex: none;
 }
 
@@ -580,14 +582,17 @@ a:hover { color: var(--accent-light); }
   <main>
     <!-- ── Hero ────────────────────────────────────────────────────────────── -->
     <section class="hero">
-      <p class="eyebrow rise">Veilio for regulated industries</p>
+      <!-- Deliberately not "for regulated industries": a compliance rule is one
+           reason to want this, not the only one, and leading with it told most
+           of the audience the product wasn't for them. -->
+      <p class="eyebrow rise">For anyone who'd rather not paste their code into AI</p>
 
       <h1 class="hero__title rise">Send the problem.<br /><em>Keep the names.</em></h1>
 
       <p class="lede hero__lede rise">
         Veilio strips real identifiers out of code before it reaches a model, and puts
-        them back in the answer. We're building the version of that for organizations
-        where the current policy is <em>don't paste it</em>.
+        them back in the answer. For teams whose policy is <em>don't paste it</em> — and
+        for everyone who would simply rather it never left their machine.
       </p>
 
       <figure class="demo rise" id="demo">
@@ -783,10 +788,12 @@ a:hover { color: var(--accent-light); }
       <span class="wordmark__name" style="font-size:16px">Veilio</span>
       <span style="margin-left:4px">© <span id="yr">2026</span></span>
     </div>
+    <!-- Privacy / Terms / Acceptable Use used to sit here, pointing at
+         veilio.dev/legal/*. Those routes belong to the Cloud app, which is not
+         deployed yet — veilio.dev currently serves this static page, so all
+         three returned 404. A dead legal link is worse than no link, so they
+         come back when the app that serves them does. -->
     <nav class="foot__nav">
-      <a href="https://veilio.dev/legal/privacy">Privacy</a>
-      <a href="https://veilio.dev/legal/terms">Terms</a>
-      <a href="https://veilio.dev/legal/aup">Acceptable Use</a>
       <a href="mailto:hello@veilio.dev">Contact</a>
     </nav>
   </div>
