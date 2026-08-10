@@ -1,17 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Veilio">
+  <title>Veilio</title>
+  <!--
+    The Veilio mark: an editor window with the identifier on it redacted — the
+    product in one frame, rather than the abstract bar this file used to hold.
+    Shared with the veilio.dev placeholder page so the tab icon, the app nav and
+    the marketing site are all the same drawing.
+
+    Gradient ids are namespaced because this file also gets inlined; a bare
+    "tile"/"coral" would collide with whatever else is on the page.
+  -->
   <defs>
-    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#E89A78"/>
-      <stop offset="1" stop-color="#B8633F"/>
+    <linearGradient id="veilio-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#322a25" />
+      <stop offset="1" stop-color="#1c1917" />
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.65">
-      <stop offset="0" stop-color="#CC785C" stop-opacity="0.5"/>
-      <stop offset="1" stop-color="#CC785C" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="veilio-coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d98968" />
+      <stop offset="1" stop-color="#b8633f" />
+    </linearGradient>
   </defs>
-  <!-- The Veilio mark: a redaction bar glowing on warm stone. -->
-  <rect width="64" height="64" rx="14" fill="#171412"/>
-  <rect width="64" height="64" rx="14" fill="url(#glow)"/>
-  <rect x="14" y="26" width="36" height="12" rx="4" fill="url(#bar)"/>
-  <rect x="14.5" y="26.5" width="35" height="11" rx="3.5" fill="none" stroke="#FAF7F4" stroke-opacity="0.22"/>
+
+  <!-- full-bleed rounded app tile (warm stone, matches the app bg) -->
+  <rect width="100" height="100" rx="23" fill="url(#veilio-tile)" />
+
+  <!-- editor / console window -->
+  <rect x="19" y="25" width="62" height="50" rx="11" fill="#28211e" stroke="#4a4240" stroke-width="2.5" />
+
+  <!-- title-bar dots (one accent) -->
+  <circle cx="29" cy="35" r="3" fill="#cc785c" />
+  <circle cx="39" cy="35" r="3" fill="#4a4240" />
+  <circle cx="49" cy="35" r="3" fill="#4a4240" />
+
+  <!-- the redacted identifier (hero) -->
+  <rect x="29" y="49" width="40" height="9.5" rx="4.75" fill="url(#veilio-coral)" />
+
+  <!-- a remaining line of code -->
+  <rect x="29" y="63" width="27" height="7" rx="3.5" fill="#4a4240" />
 </svg>

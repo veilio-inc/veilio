@@ -20,16 +20,18 @@ export default function Navbar() {
             textShadow: '0 0 24px rgba(204,120,92,0.35)',
           }}
         >
-          {/* Veil mark: a redaction bar half-covering a glyph — the brand gesture. */}
-          <span
+          {/* The mark, not a stand-in for one: this is the same /icon.svg the
+              browser puts in the tab, so the nav and the tab can never drift.
+              22px rather than the old 16 — the window detail needs the room. */}
+          <img
+            src="/icon.svg"
+            alt=""
             aria-hidden
+            width={22}
+            height={22}
             style={{
-              width: 16,
-              height: 16,
-              borderRadius: 5,
-              background: 'linear-gradient(135deg, var(--accent-bright), var(--accent-hover))',
-              boxShadow: '0 0 14px rgba(204,120,92,0.5), inset 0 0 0 1px rgba(250,247,244,0.25)',
-              display: 'inline-block',
+              display: 'block',
+              filter: 'drop-shadow(0 0 10px rgba(204,120,92,0.35))',
             }}
           />
           Veilio

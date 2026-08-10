@@ -1,4 +1,10 @@
-# Veilio — Community Edition
+<p align="center">
+  <img src="public/icon.svg" width="96" alt="" />
+</p>
+
+<h1 align="center">Veilio — Community Edition</h1>
+
+<p align="center"><em>Send the problem. Keep the names.</em></p>
 
 Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back. The engine runs entirely in your browser — source code never leaves your machine.
 
@@ -20,6 +26,23 @@ docker run -p 8080:80 ghcr.io/veilio-inc/veilio:latest
 ```
 
 Open `http://localhost:8080`.
+
+Images are built for `linux/amd64` and `linux/arm64` and pushed on every merge to
+`main`:
+
+| Tag | Points at |
+|---|---|
+| `latest` | the current `main` build |
+| `sha-<short>` | one exact commit — use this to pin |
+| `1.2.3`, `1.2` | a tagged release, once one is cut |
+
+The Cloud CTA target is compiled into the bundle, so redirecting it needs a
+rebuild rather than `docker run -e` (see [Configuration](#configuration)):
+
+```bash
+docker build -f docker/Dockerfile \
+  --build-arg VITE_VEILIO_CLOUD_URL=https://cloud.example.com -t veilio .
+```
 
 ### Static bundle
 
@@ -63,11 +86,13 @@ npm run dev
 
 ## Configuration
 
-CE has one optional env var:
+CE has one optional setting. Vite inlines it when the bundle is compiled, so it
+is a **build argument, not a runtime variable** — passing it to `docker run -e`
+does nothing.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `VITE_Veilio_CLOUD_URL` | `https://veilio.dev` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
+| `VITE_VEILIO_CLOUD_URL` | `https://veilio.dev` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
 
 ## How this relates to Cloud
 

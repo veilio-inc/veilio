@@ -7,14 +7,15 @@
       {
         "preset": "conventionalcommits",
         "releaseRules": [
-          { "type": "docs", "release": false },
-          { "type": "style", "release": false },
-          { "type": "test", "release": false },
-          { "type": "ci", "release": false },
-          { "type": "chore", "release": false },
-          { "type": "build", "release": "patch" },
+          { "breaking": true, "release": "major" },
+          { "revert": true, "release": "patch" },
+          { "type": "feat", "release": "minor" },
+          { "type": "fix", "release": "patch" },
+          { "type": "perf", "release": "patch" },
           { "type": "refactor", "release": "patch" },
-          { "type": "perf", "release": "patch" }
+          { "type": "build", "release": "patch" },
+          { "subject": "*\\[skip release\\]*", "release": false },
+          { "body": "*\\[skip release\\]*", "release": false }
         ]
       }
     ],

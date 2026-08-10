@@ -18,6 +18,14 @@ RUN npm ci
 # host node_modules copied over the installed one would replace Linux binaries
 # with the build machine's (macOS esbuild, fsevents) and break the Vite build.
 COPY . .
+
+# Vite inlines env vars at build time, so the Cloud CTA target is baked into the
+# bundle here — it cannot be changed later with `docker run -e`. The release
+# workflow passes this with --build-arg; without the ARG line Docker accepts the
+# flag and silently discards it, so the value never reached the build. The
+# default matches the fallback in src/pages/PricingPage.tsx.
+ARG VITE_VEILIO_CLOUD_URL=https://veilio.dev
+ENV VITE_VEILIO_CLOUD_URL=$VITE_VEILIO_CLOUD_URL
 RUN npm run build
 
 FROM nginx:1.27-alpine

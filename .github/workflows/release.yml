@@ -1,9 +1,21 @@
 name: Release
 
+# Publishes the self-host artefacts: the GHCR container image, and — for
+# version tags — a static bundle attached to a GitHub Release.
+#
+# This used to trigger on `v*.*.*` tags only. No such tag has ever existed:
+# semantic-release owns tagging in this repo and its tagFormat is `engine-v*`,
+# which does not match. The workflow therefore never ran, and the
+# `ghcr.io/veilio-inc/veilio:latest` pull documented in the README returned
+# "denied" because nothing had ever been pushed. Building the image on every
+# push to main fixes that without waiting on a release process the app side
+# does not have yet.
 on:
   push:
+    branches: [main]
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -30,19 +42,29 @@ jobs:
         env:
           VITE_VEILIO_CLOUD_URL: https://veilio.dev
 
-      - name: Package and tag
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          tar -czf "veilio-${TAG}.tar.gz" dist/
-          echo "BUNDLE=veilio-${TAG}.tar.gz" >> "$GITHUB_ENV"
-          echo "VERSION=${TAG}" >> "$GITHUB_ENV"
+      # metadata-action lowercases the image name itself, which is what the old
+      # hand-rolled ${GITHUB_REPOSITORY,,} step existed to do.
+      #
+      # `latest` is applied unconditionally so the README's pull command works
+      # off main; semver tags are added only on a `v*` tag push.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
 
-      # Container references must be lowercase, and the owner is "DlgSHi", so
-      # ${{ github.repository }} used directly produces an invalid tag and the
-      # push fails. Lowercase it here rather than hardcoding the name.
-      - name: Compute lowercase image name
-        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      # The runtime image is nginx plus static files, so its contents are
+      # architecture-independent — but the manifest is not. Publishing both
+      # arches means Apple Silicon self-hosters get a native pull instead of an
+      # emulation warning. QEMU makes the arm64 leg slower; the build is a few
+      # seconds natively, so that is affordable here.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -52,18 +74,30 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             VITE_VEILIO_CLOUD_URL=https://veilio.dev
 
+      # Everything below is release-only. Main pushes stop at the image.
+      - name: Package static bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          tar -czf "veilio-${TAG}.tar.gz" dist/
+          echo "BUNDLE=veilio-${TAG}.tar.gz" >> "$GITHUB_ENV"
+
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.BUNDLE }}
