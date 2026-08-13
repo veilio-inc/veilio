@@ -5,11 +5,17 @@ import Navbar from '../components/Navbar.js'
 // Allow-listed legal documents. The slug maps 1:1 to a static file in
 // public/legal/<slug>.md, so a user can never coerce LegalPage into fetching
 // an arbitrary path.
-const DOCS: Record<string, string> = {
-  terms: 'Terms of Service',
-  privacy: 'Privacy Policy',
-  aup: 'Acceptable Use Policy',
-  cookies: 'Cookie Policy',
+// `title` must match the <h1> of the corresponding file in public/legal/, so the
+// breadcrumb never disagrees with the document it is introducing. CE is software
+// you run yourself, not a service we operate, so these are "Terms of Use" and
+// "Notice" rather than the "Terms of Service" / "Policy" wording that belongs to
+// Veilio Cloud. `pill` is the short nav label — derived by hand rather than by
+// trimming the title, which broke as soon as a title stopped ending in "Policy".
+const DOCS: Record<string, { title: string; pill: string }> = {
+  terms: { title: 'Terms of Use', pill: 'Terms' },
+  privacy: { title: 'Privacy Notice', pill: 'Privacy' },
+  aup: { title: 'Acceptable Use Policy', pill: 'Acceptable Use' },
+  cookies: { title: 'Cookie & Local Storage Notice', pill: 'Cookies' },
 }
 
 export default function LegalPage() {
@@ -54,12 +60,12 @@ export default function LegalPage() {
               color: 'var(--text-dim)',
             }}
           >
-            Legal / <span style={{ color: 'var(--accent)' }}>{DOCS[slug]}</span>
+            Legal / <span style={{ color: 'var(--accent)' }}>{DOCS[slug].title}</span>
           </span>
           <nav style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {Object.entries(DOCS).map(([s, label]) => (
+            {Object.entries(DOCS).map(([s, doc]) => (
               <Link key={s} to={`/legal/${s}`} className={`doc-pill${s === slug ? ' active' : ''}`}>
-                {label.replace(' Policy', '').replace(' of Service', '')}
+                {doc.pill}
               </Link>
             ))}
           </nav>

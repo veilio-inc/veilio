@@ -142,7 +142,7 @@ const FAQS = [
   },
   {
     q: 'How is the .veilio file encrypted?',
-    a: 'AES-256-GCM with a key derived from your passphrase via PBKDF2 (100,000 iterations, SHA-256). The passphrase is never stored or transmitted. Losing the passphrase means losing the map.',
+    a: 'AES-256-GCM with a key derived from your passphrase via PBKDF2-SHA256 at 600,000 iterations. Each file records the parameters it was written under, so files exported before that raise (100,000 iterations) still open. The passphrase is never stored or transmitted. Losing the passphrase means losing the map.',
   },
 ]
 
