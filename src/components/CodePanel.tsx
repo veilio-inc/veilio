@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import CodeMirror, { EditorView } from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -94,6 +94,9 @@ interface Props {
   actions?: React.ReactNode
   badge?: string
   minHeight?: number
+  /** Called with the selected text, or '' when the selection is emptied.
+   *  Lets the page offer an action on a span the engine did not mask. */
+  onSelectionChange?: (text: string) => void
 }
 
 export default function CodePanel({
@@ -105,17 +108,35 @@ export default function CodePanel({
   actions,
   badge,
   minHeight = 320,
+  onSelectionChange,
 }: Props) {
   const [lang, setLang] = useState<LangKey>('auto')
   const [copied, setCopied] = useState(false)
 
-  const extensions = useCallback(() => {
+  // Held in a ref so the listener extension stays referentially stable. Putting
+  // the callback in the extensions dep array rebuilds them on every parent
+  // render, which tears down and recreates the editor mid-selection.
+  const selectionCb = useRef(onSelectionChange)
+  useEffect(() => {
+    selectionCb.current = onSelectionChange
+  }, [onSelectionChange])
+
+  // Memoized so the array identity is stable. Previously this was a function
+  // invoked in JSX, which handed CodeMirror a fresh array on every parent
+  // render and made it reconfigure the editor each time. That churn was not
+  // causing a visible defect, but it is pure waste on every keystroke.
+  const extensions = useMemo(() => {
     const langExt = LANGS[lang]
     // Give CodeMirror's contenteditable an accessible name. Without this, axe
     // flags `aria-input-field-name` (serious WCAG 4.1.2 violation).
     const labelAttr = EditorView.contentAttributes.of({ 'aria-label': label })
-    const exts = langExt ? [...baseExtensions, langExt, labelAttr] : [...baseExtensions, labelAttr]
-    return exts
+    const selectionWatcher = EditorView.updateListener.of((u) => {
+      if (!u.selectionSet && !u.docChanged) return
+      const { from, to } = u.state.selection.main
+      selectionCb.current?.(from === to ? '' : u.state.sliceDoc(from, to))
+    })
+    const exts = [...baseExtensions, labelAttr, selectionWatcher]
+    return langExt ? [...exts, langExt] : exts
   }, [lang, label])
 
   async function copyToClipboard() {
@@ -206,7 +227,7 @@ export default function CodePanel({
           readOnly={readOnly}
           placeholder={placeholder}
           theme={scrubTheme}
-          extensions={extensions()}
+          extensions={extensions}
           basicSetup={{
             lineNumbers: true,
             highlightActiveLineGutter: true,

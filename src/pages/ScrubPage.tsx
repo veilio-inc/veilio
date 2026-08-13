@@ -1,13 +1,16 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore } from '@veilio-inc/engine'
-import type { SecretFinding, SymbolMap, StrippedItem } from '@veilio-inc/engine'
+import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
+import type { RestoreReport, SecretFinding, SymbolMap, StrippedItem } from '@veilio-inc/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import SecretPanel from '../components/SecretPanel.js'
 import StrippedPanel from '../components/StrippedPanel.js'
+import RestoreReportPanel from '../components/RestoreReportPanel.js'
+import ManualMarksPanel from '../components/ManualMarksPanel.js'
 import SaveMapModal from '../components/SaveMapModal.js'
 import MapOverlay from '../components/MapOverlay.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
+import { maskSelection, unmaskTerm, previewTerm, stripOption } from '../lib/manualMarks.js'
 import { exportMap, importMap } from '../lib/localCrypto.js'
 
 type Mode = 'send' | 'restore'
@@ -23,6 +26,9 @@ export default function ScrubPage() {
   const [output, setOutput] = useState('')
   const [currentMap, setCurrentMap] = useState<SymbolMap>({})
   const [strippedItems, setStrippedItems] = useState<StrippedItem[]>([])
+  const [restoreReport, setRestoreReport] = useState<RestoreReport | null>(null)
+  const [selection, setSelection] = useState('')
+  const [keepDocs, setKeepDocs] = useState(false)
   const [showSave, setShowSave] = useState(false)
   const [showOverlay, setShowOverlay] = useState(false)
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
@@ -41,20 +47,62 @@ export default function ScrubPage() {
     setCurrentMap(result.map)
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
+    // Describes the previous restore; stale the moment we anonymize again.
+    setRestoreReport(null)
+    setSelection('')
     setInput('')
     setMode('send')
   }, [input, currentMap])
 
+  // Restoring strips AI narration by default. JSDoc is the one category worth a
+  // control: deleting it is correct when the model volunteered it and destroys
+  // requested work when the model was asked to document.
   const handleRestore = useCallback(() => {
     if (!input.trim()) return
-    const result = restore(input, currentMap)
+    const result = restore(input, currentMap, { strip: stripOption(keepDocs) })
     setOutput(result.restored)
     setStrippedItems(result.strippedItems)
+    setRestoreReport(result.report)
+    setSelection('')
     // Findings describe the anonymize pass; they'd be stale next to a restore.
     setSecretFindings([])
     setInput('')
     setMode('restore')
-  }, [input, currentMap])
+  }, [input, currentMap, keepDocs])
+
+  // The mark/unmark transforms live in lib/manualMarks so they can be tested
+  // without standing up CodeMirror in jsdom; these handlers are the wiring only.
+  const handleMaskSelection = useCallback(() => {
+    const term = selection.trim()
+    if (!term) return
+    try {
+      const next = maskSelection({ output, map: currentMap }, term)
+      setCurrentMap(next.map)
+      setOutput(next.output)
+      setSelection('')
+      showToast(`Masked “${previewTerm(term)}”`)
+    } catch (e) {
+      // The engine refuses for more than one reason — a credential, or an
+      // existing placeholder — and it words each refusal itself. Repeating one
+      // of them here meant the other refusal showed the wrong explanation.
+      showToast(
+        e instanceof ManualMaskError ? e.message : 'Could not mask that selection.',
+        'error'
+      )
+    }
+  }, [selection, output, currentMap])
+
+  const handleUnmask = useCallback(
+    (placeholder: string) => {
+      const term = currentMap[placeholder]
+      if (term === undefined) return
+      const next = unmaskTerm({ output, map: currentMap }, placeholder)
+      setCurrentMap(next.map)
+      setOutput(next.output)
+      showToast(`Unmasked “${previewTerm(term)}”`)
+    },
+    [output, currentMap]
+  )
 
   const handleClearMap = () => {
     setCurrentMap({})
@@ -62,6 +110,8 @@ export default function ScrubPage() {
     setInput('')
     setStrippedItems([])
     setSecretFindings([])
+    setRestoreReport(null)
+    setSelection('')
     showToast('Map cleared')
   }
 
@@ -276,8 +326,32 @@ export default function ScrubPage() {
             onChange={setInput}
             placeholder={
               mode === 'send'
-                ? 'Paste your code here. Real identifier names will be replaced with __P1__, __P2__, ...'
+                ? 'Paste your code here. Real identifier names will be replaced with __FN__1, __VAR__2, ...'
                 : "Paste the AI's response here. Placeholders will be restored to real names."
+            }
+            actions={
+              mode === 'restore' && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 11,
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title="Restoring removes AI narration, TODOs and step markers. JSDoc is removed too unless you keep it — useful when you asked the model to document its work."
+                >
+                  <input
+                    type="checkbox"
+                    checked={keepDocs}
+                    onChange={(e) => setKeepDocs(e.target.checked)}
+                    style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  Keep docs
+                </label>
+              )
             }
           />
 
@@ -309,8 +383,36 @@ export default function ScrubPage() {
                 : 'Restored code with real names will appear here.'
             }
             badge={mode === 'send' && mapCount > 0 ? `${mapCount} placeholders` : undefined}
+            onSelectionChange={mode === 'send' ? setSelection : undefined}
+            actions={
+              mode === 'send' &&
+              selection.trim().length > 0 && (
+                <button
+                  className="btn-ghost"
+                  style={{ padding: '3px 10px', fontSize: 12, color: 'var(--accent)' }}
+                  onClick={handleMaskSelection}
+                  title="Mask this text everywhere it appears"
+                >
+                  Mask selection
+                </button>
+              )
+            }
           />
         </div>
+
+        {mode === 'send' && (
+          <div style={{ marginTop: 16 }}>
+            <ManualMarksPanel map={currentMap} onUnmask={handleUnmask} />
+          </div>
+        )}
+
+        {/* Round-trip report first: a placeholder that never came back matters
+            more than a stripped TODO. */}
+        {mode === 'restore' && restoreReport && (
+          <div style={{ marginTop: 16 }}>
+            <RestoreReportPanel report={restoreReport} />
+          </div>
+        )}
 
         {/* Stripped panel in restore mode */}
         {mode === 'restore' && strippedItems.length > 0 && (
@@ -505,9 +607,19 @@ function RedactionDemo() {
           </span>
         </Line>
         <Line>
-          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__P1__</span> ={' '}
-          <span style={str}>&quot;__P2__&quot;</span>
+          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__VAR__2</span> ={' '}
+          <span style={str}>&quot;__REDACTED_CREDENTIAL_1__&quot;</span>
         </Line>
+        <Line>
+          <span style={kw}>function</span> <span style={{ color: 'var(--accent)' }}>__FN__1</span>(
+          <span style={{ color: 'var(--accent)' }}>__VAR__1</span>) &#123;
+        </Line>
+        <Line indent={1}>
+          <span style={kw}>return</span> <span style={fn}>db</span>.
+          <span style={{ color: 'var(--accent)' }}>__FN__2</span>(
+          <span style={{ color: 'var(--accent)' }}>__VAR__1</span>)
+        </Line>
+        <Line>&#125;</Line>
       </div>
     </div>
   )
