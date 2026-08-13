@@ -13,6 +13,15 @@ dist
 .husky
 docs
 
+# Tests and their output. tsconfig.json includes only `src` and vite.config.ts,
+# so nothing here is needed to build the bundle.
+e2e
+playwright.config.ts
+coverage
+test-results
+playwright-report
+blob-report
+
 .env
 .env.local
 *.log

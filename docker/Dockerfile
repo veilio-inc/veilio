@@ -12,6 +12,11 @@ WORKDIR /app
 # cached dependency install.
 COPY package.json package-lock.json ./
 COPY packages/engine packages/engine
+
+# @playwright/test is a devDependency (the e2e suite), and devDependencies are
+# required here because Vite and TypeScript are among them. Its install step
+# would otherwise pull ~100 MB of browsers into a build that never runs a test.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci
 
 # Relies on .dockerignore keeping node_modules and dist out of the context: a
