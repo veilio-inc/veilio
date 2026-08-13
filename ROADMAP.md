@@ -36,6 +36,7 @@ The first ninety seconds: find the repo, run the thing.
 | A1 | Shrink the runtime image | **done — 77.4 MB → 10.4 MB** |
 | A2 | Cut a version tag so the Releases tarball exists | ready |
 | A3 | Vulnerability scan as a release gate | ready |
+| A4 | Self-host the web fonts | ready |
 
 **A1 — done, in two steps.**
 
@@ -75,8 +76,16 @@ between a 10 MB and a 3 MB pull is not something a self-hoster will notice.
 environments, pointing at Releases. There are no releases yet, so that path is
 currently a dead end for exactly the users most likely to need it.
 
-**A3.** The image is nginx plus static files, so its attack surface is the base
-image. That argues for scanning it on every publish rather than trusting the tag.
+**A3.** The image is a static binary plus static files, so its attack surface is
+what we compile in rather than a distro. That argues for scanning it on every
+publish rather than trusting the tag.
+
+**A4.** `index.html` loads Crimson Pro, Inter and JetBrains Mono from Google
+Fonts. Every page load therefore discloses the user's IP address and User-Agent
+to a third party — from a tool whose entire argument is that nothing leaves your
+machine. It also breaks the air-gapped install in A2, where the fonts simply fail
+to resolve. The fix is to vendor the woff2 files into the bundle; the cost is
+roughly 200 kB and the removal of the last external request the app makes.
 
 ---
 
@@ -87,9 +96,10 @@ The engine is the product. Everything here is a way it currently falls short.
 | | Item | State |
 | --- | --- | --- |
 | B1 | Make the advisory panel worth reading | ready |
-| B2 | Regulated identifiers | ready |
-| B3 | Comments are an open channel | needs design |
+| B2 | Regulated identifiers | **partly addressed — manual marking** |
+| B3 | Comments are an open channel | **partly addressed — manual marking** |
 | B4 | Language honesty, then coverage | ready |
+| B5 | Report what the round trip failed to restore | **done** |
 
 **B1.** The overwhelming majority of advisory findings are not actionable. A panel
 that cries wolf trains people to dismiss it, which is worse than no panel: the one
@@ -108,6 +118,22 @@ engine's guarantees rest on it *not* guessing.
 **B4.** An unsupported language currently produces a weak result rather than a
 refusal. Silence is the wrong failure mode for a privacy tool: say plainly that a
 file is unsupported, then widen coverage.
+
+**B5 — done.** `restore()` now returns a report of what came back: which
+placeholders resolved, which never appeared, and which placeholder-shaped tokens
+the map cannot explain. A model asked to echo placeholders verbatim is under no
+obligation to comply, and when it renames one the restored text looks exactly as
+confident as a clean run. That failure was previously invisible.
+
+**Manual marking, and what it does not solve.** B2 and B3 are both cases of the
+engine not seeing something. Rather than teach it to guess — which would mean the
+ML dependency ruled out below — the author can now mark a span by hand and have
+it masked as literal text, anywhere in the file, comments included. The mark is
+stored in the map, so it restores and syncs like any other placeholder.
+
+This is a real answer for material you already know is sensitive, and no answer
+at all for material you have not noticed. Both items stay open on that basis: a
+human in the loop raises the ceiling and does nothing for the floor.
 
 **Not doing:** taking on an NER or ML dependency for B3. The engine has **zero
 runtime dependencies**, and that is the whole supply-chain argument for pasting
