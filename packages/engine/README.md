@@ -79,7 +79,40 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.style` — `'roles'` (default) | `'plain'` for legacy `__P<n>__`
   - `options.existingMap` — continue numbering from a previous session
   - `options.rules` — whitelist / named-replacement rules
-- `restore(text, map)` → `{ restored, strippedItems, strippedCount }`
+  - `options.manual` — literal strings to mask by hand (see below)
+- `restore(text, map)` → `{ restored, strippedItems, strippedCount, report }`
+  - `report` — `{ resolved, missing, unresolved }`: which placeholders came back,
+    which never appeared, and which placeholder-shaped tokens the map cannot
+    explain. A model that renames `__FN__1` leaves no trace in the restored text,
+    so this is the only place that failure is visible.
+- `manualTermsIn(map)` → `string[]` — terms previously marked by hand
+- `MANUAL_BASE` / `ManualMaskError` — the manual placeholder base, and the error
+  thrown when a mark is refused
+
+### Marking spans by hand
+
+Custom rules can only rename identifiers the extractor already found. That
+leaves out the two things most often needing masking: a name inside a comment,
+and a bare account or case number. Both are prose as far as extraction is
+concerned.
+
+```ts
+anonymize('// escalated by Kowalska, acct 88412037', {
+  manual: ['Kowalska', '88412037'],
+})
+// → '// escalated by __MANUAL__1, acct __MANUAL__2'
+```
+
+Matching is literal, case-sensitive and longest-first, and runs before
+extraction — so a marked token beats whatever role the classifier would have
+given it. Marks are stored in the map under `__MANUAL__n`, which means
+`restore()` reverses them with no special handling and they survive export,
+import and sync without a second store. Pass `manualTermsIn(previousMap)` back
+in, or just reuse the map as `existingMap`, and prior marks re-apply.
+
+A term that scans as a credential is refused with a `ManualMaskError`: a manual
+mask is reversible and is written to the map, so masking a live key would
+persist the secret. Credentials take the one-way redaction path instead.
 - `detectSecrets(code)` → `SecretFinding[]` — scan without modifying
 - `scanSecrets(code, policy?)` → `{ findings, code }`
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`

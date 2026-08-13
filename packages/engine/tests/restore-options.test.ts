@@ -35,6 +35,25 @@ describe('restore — strip options', () => {
     expect(strippedCount).toBe(0)
   })
 
+  it('leaves no whitespace-only line where an indented comment was', () => {
+    // Stripping removes the comment text but not the indentation in front of it,
+    // so a stripped JSDoc block became a line of spaces: invisible in the UI,
+    // trailing whitespace in the editor it is pasted into, and a lint error in
+    // any project that enables no-trailing-spaces.
+    const input = ['class A {', '  /** Docs. */', '  method() {}', '}'].join('\n')
+    const { restored } = restore(input, {})
+
+    expect(restored).not.toContain('Docs')
+    expect(restored.split('\n').every((line) => line === line.trimEnd())).toBe(true)
+  })
+
+  it("'none' leaves an indented comment's whitespace alone", () => {
+    // The same guarantee as the blank-run case: opting out of stripping must not
+    // reformat anything, including whitespace we would otherwise tidy.
+    const input = 'class A {\n  /** Docs. */\n}'
+    expect(restore(input, {}, { strip: 'none' }).restored).toBe(input)
+  })
+
   it("'none' does not even reformat blank runs", () => {
     // Restoring placeholders must not double as a formatter.
     const spaced = 'a\n\n\n\n\nb'

@@ -5,6 +5,7 @@ import type {
   CustomRuleWhitelist,
   IdentifierRole,
   RestoreOptions,
+  RestoreReport,
   RestoreResult,
   StrippedItem,
   StrippedItemType,
@@ -19,8 +20,8 @@ import {
   type CommentSyntax,
   type Language,
 } from './languages.js'
-import { scanSecrets } from './secrets.js'
-import { PRODUCT_NAME } from './product.js'
+import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
+import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -91,6 +92,7 @@ const ROLE_LEGEND_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['__VAR__', 'variable or parameter names'],
   ['__PKG__', 'package or module names'],
   ['__STR__', 'words that appeared inside string literals'],
+  ['__MANUAL__', 'values the author marked as sensitive'],
 ]
 
 /** Human/AI-readable summary of what the placeholder bases in `map` mean.
@@ -301,6 +303,93 @@ const ROLE_PRIORITY: Record<IdentifierRole, number> = {
   string: 0,
 }
 
+/** Base for spans the author marked by hand. Not an IdentifierRole: a manual
+ *  mark is frequently not an identifier at all — a surname in a comment, a bare
+ *  account number — which is the entire reason the feature exists. */
+export const MANUAL_BASE = '__MANUAL__'
+
+/** Raised when a manual mark is refused. Carries the offending term so a caller
+ *  can point at it rather than re-deriving which one failed. */
+export class ManualMaskError extends Error {
+  readonly term: string
+  constructor(term: string, message: string) {
+    super(message)
+    this.name = 'ManualMaskError'
+    this.term = term
+  }
+}
+
+/** Mask author-marked spans as literal text, before identifier extraction.
+ *
+ *  One pass over an alternation sorted longest-first, matching the substitution
+ *  in `anonymize` and `restore`: replacing term by term would let a later term
+ *  match inside a placeholder an earlier one just inserted.
+ *
+ *  A term that scans as a credential is refused rather than masked. A manual
+ *  mask is reversible and lands in the SymbolMap — the same map that gets
+ *  exported to disk and synced — so masking a live key would persist the
+ *  secret, which is precisely what the one-way redaction path exists to stop.
+ *  The credential has already been redacted irreversibly by the time we get
+ *  here; there is nothing left for the user to usefully mark. */
+function applyManualMasks(
+  code: string,
+  terms: readonly string[],
+  map: SymbolMap,
+  reverseExisting: Record<string, string>,
+  namedCounters: Record<string, number>
+): string {
+  const wanted = [...new Set(terms)].filter((t) => t.trim().length > 0)
+  if (wanted.length === 0) return code
+
+  for (const term of wanted) {
+    if (hasBlockingSecrets(detectSecrets(term))) {
+      throw new ManualMaskError(
+        term,
+        'Refusing to mask a detected credential: a manual mask is reversible and is written to the map. Credentials are redacted one-way instead.'
+      )
+    }
+    // Marking a placeholder would map one placeholder to another, and restore
+    // is a single pass — it would substitute `__MANUAL__1` back to the literal
+    // text `__FN__1` and stop, silently dropping the real name. Reachable by
+    // double-clicking a placeholder in the output, which is the most visually
+    // obvious thing in that panel.
+    if (PLACEHOLDER_TOKEN.test(term)) {
+      throw new ManualMaskError(
+        term,
+        'That is already a placeholder. Marking it would map one placeholder to another, and the original name would not survive restore.'
+      )
+    }
+    if (reverseExisting[term]) continue
+    const n = (namedCounters[MANUAL_BASE] ?? 0) + 1
+    namedCounters[MANUAL_BASE] = n
+    const placeholder = `${MANUAL_BASE}${n}`
+    map[placeholder] = term
+    reverseExisting[term] = placeholder
+  }
+
+  // Placeholder-shaped spans are matched FIRST and passed through untouched, so
+  // a term can never match inside one. Without this, marking `FN` rewrites the
+  // middle of `__FN__1` and produces `____MANUAL__1__1` — the UI re-anonymizes
+  // its own output, so the text being masked is full of placeholders by then.
+  const ordered = wanted.slice().sort((a, b) => b.length - a.length)
+  const pattern = new RegExp(
+    `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
+    'g'
+  )
+  return code.replace(pattern, (match) => reverseExisting[match] ?? match)
+}
+
+/** Terms already masked by hand in a prior pass, recovered from the map.
+ *
+ *  Re-derived rather than stored alongside it: the map is the only artifact
+ *  that survives a reload, a `.veilio` export and a sync, so anything kept
+ *  beside it would be the thing that goes missing. */
+export function manualTermsIn(map: SymbolMap): string[] {
+  return Object.entries(map)
+    .filter(([placeholder]) => placeholder.startsWith(MANUAL_BASE))
+    .map(([, term]) => term)
+}
+
 /** Placeholder base per role — these ride the same named-counter machinery
  *  as custom replace rules (__CLS__1, __FN__2, ...). */
 export const ROLE_BASES: Record<IdentifierRole, string> = {
@@ -472,10 +561,7 @@ export function anonymize(
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
   // becomes a reversible map value, which is worse than leaving it alone.
   const scan = scanSecrets(code, opts.secrets ?? 'redact')
-  const source = scan.code
-
-  const identifiers = extractIdentifiers(source, language)
-  const roleOf = classifyIdentifiers(source, language)
+  const redacted = scan.code
 
   // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
   // at 3 for the __CLS__ base). Without this, a subsequent call with an
@@ -503,7 +589,7 @@ export function anonymize(
   // just as much a collision risk as one in code).
   const codePlaceholderRegex = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
   let codeMatch: RegExpExecArray | null
-  while ((codeMatch = codePlaceholderRegex.exec(source)) !== null) {
+  while ((codeMatch = codePlaceholderRegex.exec(redacted)) !== null) {
     const token = codeMatch[0]
     const namedMatch = token.match(/^(__[A-Z][A-Z0-9_]*__)(\d+)$/)
     if (namedMatch) {
@@ -517,6 +603,21 @@ export function anonymize(
   }
 
   const map: SymbolMap = { ...existingMap }
+
+  // Manual marks run before extraction, so the extractor sees placeholders
+  // rather than the terms — and a mark therefore wins over whatever role the
+  // classifier would have given the same token. Terms already in the map are
+  // re-applied so a mark made in an earlier pass survives the round trip.
+  const source = applyManualMasks(
+    redacted,
+    [...manualTermsIn(existingMap), ...(opts.manual ?? [])],
+    map,
+    reverseExisting,
+    namedCounters
+  )
+
+  const identifiers = extractIdentifiers(source, language)
+  const roleOf = classifyIdentifiers(source, language)
 
   // Split rules by type, sort by sort_order ASC (lower = earlier)
   const whitelist = rules
@@ -670,10 +771,19 @@ export function restore(
 
   for (const [type, pattern] of STRIP_PATTERNS) strip(pattern, type)
 
-  // Collapse 3+ consecutive blank lines to 2. Gated on whether stripping is
-  // enabled at all, not on whether anything matched: `strip: 'none'` means
-  // "restore placeholders and change nothing else", so it must not reformat.
-  if (wanted.size > 0) result = result.replace(/\n{3,}/g, '\n\n')
+  // Tidy up after stripping. Gated on whether stripping is enabled at all, not
+  // on whether anything matched: `strip: 'none'` means "restore placeholders and
+  // change nothing else", so it must not reformat.
+  if (wanted.size > 0) {
+    // Removing a comment leaves its indentation behind, so a stripped block
+    // becomes a line of spaces rather than a blank line — invisible in the UI,
+    // trailing whitespace in the editor it gets pasted into, and a lint error in
+    // any project with no-trailing-spaces. Blanked before the run collapse below
+    // so those lines can actually be collapsed.
+    result = result.replace(/^[ \t]+$/gm, '')
+    // Collapse 3+ consecutive blank lines to 2.
+    result = result.replace(/\n{3,}/g, '\n\n')
+  }
 
   // Restore placeholders in one pass, longest-first.
   //
@@ -682,10 +792,54 @@ export function restore(
   // Sorting longest-first keeps `__CLS__10` from being eaten by `__CLS__1`,
   // since alternation prefers the earliest matching branch.
   const placeholders = Object.keys(map).sort((a, b) => b.length - a.length)
+  const seen = new Set<string>()
   if (placeholders.length > 0) {
     const pattern = new RegExp(placeholders.map(escapeRegex).join('|'), 'g')
-    result = result.replace(pattern, (match) => map[match] ?? match)
+    result = result.replace(pattern, (match) => {
+      seen.add(match)
+      return map[match] ?? match
+    })
   }
 
-  return { restored: result, strippedCount: strippedItems.length, strippedItems }
+  return {
+    restored: result,
+    strippedCount: strippedItems.length,
+    strippedItems,
+    report: buildRestoreReport(map, seen, result),
+  }
+}
+
+/** Compare what the map offered against what the response actually used.
+ *
+ *  Scans the restored text rather than the raw response: every exact match has
+ *  already been substituted by then, so whatever still looks like a placeholder
+ *  is by definition something the map could not account for.
+ *
+ *  Deliberately uses the strict `PLACEHOLDER_SCAN` and does no fuzzy matching. A
+ *  case-insensitive scan would flag every Python dunder — `__init__`, `__name__`
+ *  — as a mangled placeholder, and a panel that cries wolf is worse than no
+ *  panel. A re-cased `__fn__1` therefore shows up as `missing`, not
+ *  `unresolved`, which is the honest classification: we know the placeholder
+ *  never came back, and we are not going to guess that the lowercase token
+ *  nearby is what it became. */
+function buildRestoreReport(
+  map: SymbolMap,
+  seen: ReadonlySet<string>,
+  restored: string
+): RestoreReport {
+  const resolved: string[] = []
+  const missing: string[] = []
+  for (const key of Object.keys(map)) (seen.has(key) ? resolved : missing).push(key)
+
+  const unresolved: string[] = []
+  const already = new Set<string>()
+  // Fresh instance rather than the shared one: PLACEHOLDER_SCAN is a global
+  // regex, and matchAll seeds its clone from the original's lastIndex.
+  for (const [token] of restored.matchAll(new RegExp(PLACEHOLDER_SCAN))) {
+    if (token.startsWith(REDACTION_PREFIX) || already.has(token)) continue
+    already.add(token)
+    unresolved.push(token)
+  }
+
+  return { resolved, missing, unresolved }
 }
