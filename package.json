@@ -16,10 +16,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src packages/engine/src packages/engine/tests --ext .ts,.tsx",
-    "lint:fix": "eslint src packages/engine/src packages/engine/tests --ext .ts,.tsx --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"packages/engine/{src,tests}/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"packages/engine/{src,tests}/**/*.ts\"",
+    "test:e2e": "playwright test",
+    "lint": "eslint src e2e packages/engine/src packages/engine/tests --ext .ts,.tsx",
+    "lint:fix": "eslint src e2e packages/engine/src packages/engine/tests --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/engine/{src,tests}/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/engine/{src,tests}/**/*.ts\"",
     "verify": "npm run lint && npm run format:check",
     "prepare": "husky || true"
   },
@@ -39,8 +40,11 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/git": "11.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.4",
     "@types/node": "^20.12.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

@@ -12,3 +12,12 @@ dist/
 CLAUDE.md
 AGENTS.md
 .mcp.json
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright-mcp/
+
+# Coverage output
+/coverage/
