@@ -5,14 +5,6 @@
 ### Features
 
 * **engine:** mask author-marked spans and report restore failures ([cc6cd87](https://github.com/veilio-inc/veilio/commit/cc6cd87a9668eff6ec9b25d99c68505991e671a3))
-* **ui:** mark spans by hand and surface round-trip failures ([875cef0](https://github.com/veilio-inc/veilio/commit/875cef09adf4854854a11a302f7d04fda41a92f0))
-* update release workflow and Dockerfile for improved image building and tagging ([0ce8f88](https://github.com/veilio-inc/veilio/commit/0ce8f8821de75f1c73d1c9127070a68a0d7c01fd))
-
-### Build
-
-* **docker:** base the runtime image on nginx alpine-slim [skip release] ([95c8526](https://github.com/veilio-inc/veilio/commit/95c85262f86299bf56451d1b84ab3256dd45301d))
-* **docker:** keep test tooling out of the image [skip release] ([22bb745](https://github.com/veilio-inc/veilio/commit/22bb7458fedd8c946864b7e54f3fc5457229bc0f))
-* **docker:** serve from a static binary on scratch, 21.7 MB to 10.4 MB [skip release] ([37c6984](https://github.com/veilio-inc/veilio/commit/37c69840bc4078c59a2d82972d61ddf77d2a482d))
 
 ## [1.0.1](https://github.com/veilio-inc/veilio/compare/engine-v1.0.0...engine-v1.0.1) (2026-08-09)
 
