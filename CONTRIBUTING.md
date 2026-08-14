@@ -92,9 +92,13 @@ visibly.
 - **Write [conventional commits](https://www.conventionalcommits.org).** Not
   bookkeeping: the engine's version and changelog are generated from these
   messages, so `fix(engine): …` ships a patch, `feat(engine): …` a minor, and a
-  `!` or a `BREAKING CHANGE:` footer a major. `docs`, `style`, `test`, `ci` and
-  `chore` release nothing. A vague subject line becomes a vague changelog entry
-  that users read.
+  `!` or a `BREAKING CHANGE:` footer a major. A vague subject line becomes a vague
+  changelog entry that users read.
+- **The `(engine)` scope is what publishes.** Only `engine`-scoped commits release
+  a version; `feat(ui)`, `build(docker)` and everything unscoped release nothing,
+  whatever their type. The scope is doing real work here, so a genuine engine fix
+  written without it ships to nobody — and a UI change written *with* it republishes
+  the engine over unchanged code and claims a feature the package never gained.
 
 ## Engine privacy invariants (do not break these)
 
