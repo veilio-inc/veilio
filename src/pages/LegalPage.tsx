@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, Navigate, Link } from 'react-router-dom'
 import Navbar from '../components/Navbar.js'
+import { safeHref, isExternal } from '../lib/safeHref.js'
 
 // Allow-listed legal documents. The slug maps 1:1 to a static file in
 // public/legal/<slug>.md, so a user can never coerce LegalPage into fetching
@@ -284,19 +285,26 @@ function renderInline(text: string): ReactNode[] {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     if (m[1]) {
       // Link — rewrite a relative ./Doc.md reference to its in-app route.
-      let href = m[3]
-      const rel = /^\.\/(\w+)\.md$/i.exec(href)
-      if (rel) href = `/legal/${rel[1].toLowerCase()}`
-      const external = /^https?:/i.test(href)
+      let raw = m[3]
+      const rel = /^\.\/(\w+)\.md$/i.exec(raw)
+      if (rel) raw = `/legal/${rel[1].toLowerCase()}`
+      // An href out of a document is executable, so it is allow-listed rather
+      // than trusted (ROADMAP E6). A refused link degrades to its own text: the
+      // sentence still reads, and nothing navigable is rendered.
+      const href = safeHref(raw)
       nodes.push(
-        <a
-          key={key++}
-          href={href}
-          {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-          style={{ color: 'var(--accent)' }}
-        >
-          {m[2]}
-        </a>
+        href === null ? (
+          m[2]
+        ) : (
+          <a
+            key={key++}
+            href={href}
+            {...(isExternal(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            style={{ color: 'var(--accent)' }}
+          >
+            {m[2]}
+          </a>
+        )
       )
     } else if (m[4]) {
       nodes.push(
