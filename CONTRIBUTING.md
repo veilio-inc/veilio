@@ -113,6 +113,29 @@ with a postinstall script undoes every other guarantee on this page. If your
 change seems to need a runtime dependency, open an issue first — the answer is
 usually that it doesn't.
 
+## Editing the legal notices
+
+The four documents in `public/legal/` each carry their own header line:
+
+```
+_Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
+```
+
+**The version belongs to that document, not to the Community Edition.** Bump it —
+and the date — on the notice you actually revised, and leave the other three
+alone. They are separate instruments, and raising the Acceptable Use Policy's
+version because the Privacy Notice changed would assert a revision that never
+happened and put the number at odds with its own date. Expect the four to sit at
+different versions; that is the history showing through, not drift.
+
+A typo fix or a reworded sentence that changes no meaning does not need a bump.
+A change to what the software does, what data it touches, or what a reader is
+permitted to do does.
+
+`LegalPage.tsx` reads these files at runtime, so a new document needs an entry in
+its `DOCS` allow-list — the slug maps 1:1 to `public/legal/<slug>.md`, and
+anything not on the list is refused rather than fetched.
+
 ## Contributor License Agreement (CLA)
 
 Veilio is an open-core project: the same anonymizer engine powers both the

@@ -1,6 +1,6 @@
 # Veilio Community Edition — Terms of Use
 
-_Last updated: 2026-08-12 · Version: CE v1.1 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-08-12 · Document version 1.1 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** These terms govern the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository, free to use for any purpose including commercial. **Veilio Cloud** (the hosted service at veilio.dev, with accounts, sync, teams, and billing) has its own separate [Terms of Service](https://veilio.dev/legal/terms), which do not apply to CE — and these CE terms do not apply to Cloud.
 

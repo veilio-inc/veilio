@@ -1,6 +1,6 @@
 # Veilio Community Edition — Cookie & Local Storage Notice
 
-_Last updated: 2026-08-14 · Version: CE v1.2 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** This notice covers the **Veilio Community Edition (CE)**. **Veilio Cloud** (the hosted service, which uses a session token and an anti-abuse widget) has its own [Cookie Policy](https://veilio.dev/legal/cookies). This notice does not cover Cloud.
 

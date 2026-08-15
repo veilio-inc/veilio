@@ -1,6 +1,6 @@
 # Veilio Community Edition — Privacy Notice
 
-_Last updated: 2026-08-14 · Version: CE v1.2 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** This notice covers the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository. **Veilio Cloud** (the hosted service) is a separate service with its own [Privacy Policy](https://veilio.dev/legal/privacy). This notice does not cover Cloud.
 

@@ -1,6 +1,6 @@
 # Veilio Community Edition — Acceptable Use Policy
 
-_Last updated: 2026-06-23 · Version: CE v1.0 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-06-23 · Document version 1.0 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** The Community Edition is a **local tool that runs entirely in your browser** — there is no Veilio-operated service to abuse, and we host nothing on your behalf. This policy therefore covers only how you may **use and redistribute CE**. The hosted **Veilio Cloud** service has its own, fuller [Acceptable Use Policy](https://veilio.dev/legal/aup) governing accounts, messaging, rate limits, and shared infrastructure.
 

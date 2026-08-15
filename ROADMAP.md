@@ -108,7 +108,7 @@ reproduced verbatim beside the fonts (`public/fonts/OFL-*.txt`) as that licence
 requires, with `README.txt` recording what is vendored and why.
 
 The Privacy and Cookie notices previously disclosed the Google Fonts request.
-Both now state that CE makes no third-party requests, and are versioned CE v1.2.
+Both now state that CE makes no third-party requests, at document version 1.2.
 
 ---
 
