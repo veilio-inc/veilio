@@ -1,5 +1,7 @@
 import type { SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
+import { parseSymbolMap } from './importedMap.js'
+import { assertUsablePassphrase } from './passphrase.js'
 
 const ALG = 'AES-GCM'
 
@@ -62,6 +64,9 @@ export interface VeilioFile {
 }
 
 export async function exportMap(map: SymbolMap, passphrase: string): Promise<string> {
+  // Enforced here rather than at the call site so no future caller can write a
+  // file that skips the floor (ROADMAP E8).
+  assertUsablePassphrase(passphrase)
   const enc = new TextEncoder()
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const iv = crypto.getRandomValues(new Uint8Array(12))
@@ -93,5 +98,8 @@ export async function importMap(fileContent: string, passphrase: string): Promis
   const key = await deriveKey(passphrase, salt, kdf)
   const dec = new TextDecoder()
   const plaintext = await crypto.subtle.decrypt({ name: ALG, iv }, key, data)
-  return JSON.parse(dec.decode(plaintext)) as SymbolMap
+  // Decryption succeeding proves the author knew the passphrase, which in a
+  // workflow built around sharing maps is not the same as proving the contents
+  // are well formed. Validate before the map is handed to a restore (ROADMAP E7).
+  return parseSymbolMap(JSON.parse(dec.decode(plaintext)))
 }

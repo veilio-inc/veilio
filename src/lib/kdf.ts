@@ -30,8 +30,20 @@ export const LEGACY_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 1
 // An imported .veilio file is untrusted input, and its iteration count drives a
 // loop in the reader's browser. A hostile file claiming a billion iterations
 // would pin the tab, so the value is bounded rather than believed.
+//
+// The ceiling is set from what a file could legitimately need, not from what a
+// browser can survive. Nothing this project has ever written exceeds
+// CURRENT_FILE_KDF, and the ceiling leaves roughly 6x of headroom above it — far
+// more than any plausible raise before PBKDF2 is replaced outright, and the
+// constant is editable in the same release as that raise. The old ceiling of
+// 10,000,000 was ~17x current cost for no reachable purpose, which on a low-end
+// phone is the difference between a pause and an apparent crash.
+//
+// This bounds a denial of service, nothing more: derivation runs on the main
+// thread, so even an accepted value stalls the tab for its duration. Moving it
+// to a worker is a responsiveness fix and is tracked separately.
 const MIN_ITERATIONS = 1
-const MAX_ITERATIONS = 10_000_000
+const MAX_ITERATIONS = 4_000_000
 
 export class KdfParamsError extends Error {
   constructor(message = 'Unsupported key-derivation parameters') {

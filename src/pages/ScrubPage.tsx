@@ -12,6 +12,8 @@ import MapOverlay from '../components/MapOverlay.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 import { maskSelection, unmaskTerm, previewTerm, stripOption } from '../lib/manualMarks.js'
 import { exportMap, importMap } from '../lib/localCrypto.js'
+import { importErrorMessage } from '../lib/importedMap.js'
+import { exportErrorMessage, MIN_PASSPHRASE_LENGTH } from '../lib/passphrase.js'
 
 type Mode = 'send' | 'restore'
 
@@ -120,7 +122,9 @@ export default function ScrubPage() {
       showToast('No map to export', 'error')
       return
     }
-    const passphrase = prompt('Enter a passphrase to encrypt the export:')
+    const passphrase = prompt(
+      `Enter a passphrase to encrypt the export (at least ${MIN_PASSPHRASE_LENGTH} characters):`
+    )
     if (!passphrase) return
     try {
       const json = await exportMap(currentMap, passphrase)
@@ -132,8 +136,8 @@ export default function ScrubPage() {
       a.click()
       URL.revokeObjectURL(url)
       showToast('Map exported')
-    } catch {
-      showToast('Export failed', 'error')
+    } catch (err) {
+      showToast(exportErrorMessage(err), 'error')
     }
   }
 
@@ -151,8 +155,8 @@ export default function ScrubPage() {
         const map = await importMap(text, passphrase)
         setCurrentMap(map)
         showToast(`Loaded ${Object.keys(map).length} identifiers`)
-      } catch {
-        showToast('Import failed — wrong passphrase?', 'error')
+      } catch (err) {
+        showToast(importErrorMessage(err), 'error')
       }
     }
     fileInput.click()
