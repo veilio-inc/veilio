@@ -26,16 +26,18 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <span
+        {/* Same mark as the nav and the footer. This was the other place the
+            old gradient bar survived. */}
+        <img
+          src="/icon.svg"
+          alt=""
           aria-hidden
+          width={24}
+          height={24}
           style={{
-            display: 'inline-block',
-            width: 30,
-            height: 10,
-            borderRadius: 3,
+            display: 'block',
             marginBottom: 12,
-            background: 'linear-gradient(135deg, var(--accent-bright), var(--accent-hover))',
-            boxShadow: '0 0 14px rgba(204,120,92,0.4)',
+            filter: 'drop-shadow(0 0 12px rgba(204,120,92,0.35))',
           }}
         />
         <h2

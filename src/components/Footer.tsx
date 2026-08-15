@@ -26,15 +26,18 @@ export default function Footer() {
         >
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-              <span
+              {/* The real mark, same /icon.svg the nav and the browser tab use,
+                  rather than the abstract gradient square this used to hold.
+                  18px, not the 12 the old square sat at: the mark is an editor
+                  window with a redacted line on it, and below ~16 that detail
+                  collapses into a dash — which is the very shape it replaced. */}
+              <img
+                src="/icon.svg"
+                alt=""
                 aria-hidden
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: 3,
-                  background: 'linear-gradient(135deg, var(--accent-bright), var(--accent-hover))',
-                  boxShadow: '0 0 10px rgba(204,120,92,0.4)',
-                }}
+                width={18}
+                height={18}
+                style={{ display: 'block', filter: 'drop-shadow(0 0 8px rgba(204,120,92,0.35))' }}
               />
               <span
                 style={{
