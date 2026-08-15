@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0](https://github.com/veilio-inc/veilio/compare/engine-v1.1.0...engine-v1.2.0) (2026-08-15)
+
+### Features
+
+* **engine:** expose isPlaceholder for validating untrusted maps ([fe4794c](https://github.com/veilio-inc/veilio/commit/fe4794c43c49feb7daebf19c08063f67e09c95cb))
+
 ## [1.1.0](https://github.com/veilio-inc/veilio/compare/engine-v1.0.1...engine-v1.1.0) (2026-08-13)
 
 ### Features
