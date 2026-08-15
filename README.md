@@ -36,6 +36,26 @@ Images are built for `linux/amd64` and `linux/arm64` and pushed on every merge t
 | `sha-<short>` | one exact commit — use this to pin |
 | `1.2.3`, `1.2` | a tagged release, once one is cut |
 
+#### Verify what you pulled
+
+Every image is published with signed [SLSA](https://slsa.dev) build provenance,
+so you can check it was built by this repository's workflow from this source —
+rather than by someone who obtained a registry token:
+
+```bash
+gh attestation verify oci://ghcr.io/veilio-inc/veilio:latest --repo veilio-inc/veilio
+```
+
+The image also carries a BuildKit provenance attestation and an SBOM, which
+answer "how was this built?" and "what is inside it?":
+
+```bash
+docker buildx imagetools inspect ghcr.io/veilio-inc/veilio:latest \
+  --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/veilio-inc/veilio:latest \
+  --format '{{ json .SBOM }}'
+```
+
 The Cloud CTA target is compiled into the bundle, so redirecting it needs a
 rebuild rather than `docker run -e` (see [Configuration](#configuration)):
 

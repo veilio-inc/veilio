@@ -34,6 +34,40 @@ patterns for *validity* (try/catch) but **not** for *complexity*.
 
 A hardening follow-up (bounded execution for rule patterns) is tracked separately.
 
+### Imported symbol maps are authenticated, not trusted
+A `.veilio` file is encrypted with AES-256-GCM, so decrypting one proves the
+author knew the passphrase. Sharing maps with colleagues is the point of the
+format, so that proves the author was someone you gave the passphrase to — **not
+that the contents are what you expect.** Everything in a map is substituted into
+restored source, which you then read and often paste into an editor.
+
+On import the app validates the decrypted map before it reaches a restore
+(`src/lib/importedMap.ts`): keys must be placeholder-shaped, values must be
+strings, and both the entry count and value length are bounded. This makes a
+malformed or hostile file fail loudly at the boundary instead of quietly
+deforming a restore, and it is what refuses prototype-pollution keys such as
+`__proto__`.
+
+It does **not** make an imported map safe. A well-formed map from someone else
+can still map `__FN__1` to text you did not write. Import maps only from people
+you would accept a patch from, and read restored output before running it.
+
+### Export passphrases have a floor, not a strength guarantee
+A `.veilio` file is the one artifact designed to leave the machine, so once it
+has, its passphrase is attacked offline at whatever rate the attacker's hardware
+allows. New exports are derived with PBKDF2-HMAC-SHA256 at 600,000 iterations
+(recorded per-file, so the cost can be raised without orphaning old files), and
+exports require a passphrase of at least 12 characters that is not a trivially
+guessable pattern.
+
+That is a floor. It rejects choices that are bad by construction; it cannot tell
+that an otherwise-valid passphrase is a poor one, and the app deliberately shows
+no strength score rather than implying approval it cannot give.
+
+The floor is **not** applied on import: a file written by an older build may be
+protected by a passphrase that would now be rejected, and refusing to open it
+would be data loss.
+
 ### Anonymization is best-effort
 The engine reduces, but cannot guarantee elimination of, identifying information
 (e.g. identifiers embedded in unusual string formats). Always review anonymized

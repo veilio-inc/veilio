@@ -1,6 +1,6 @@
 # Roadmap — Veilio Community Edition
 
-_Last updated 2026-08-10._
+_Last updated 2026-08-15._
 
 This is the public roadmap for the Community Edition and the anonymizer engine:
 what the engine gets wrong today, what we intend to do about it, and what we have
@@ -36,7 +36,7 @@ The first ninety seconds: find the repo, run the thing.
 | A1 | Shrink the runtime image | **done — 77.4 MB → 10.4 MB** |
 | A2 | Cut a version tag so the Releases tarball exists | ready |
 | A3 | Vulnerability scan as a release gate | ready |
-| A4 | Self-host the web fonts | ready |
+| A4 | Self-host the web fonts | **done** |
 
 **A1 — done, in two steps.**
 
@@ -80,12 +80,35 @@ currently a dead end for exactly the users most likely to need it.
 what we compile in rather than a distro. That argues for scanning it on every
 publish rather than trusting the tag.
 
-**A4.** `index.html` loads Crimson Pro, Inter and JetBrains Mono from Google
-Fonts. Every page load therefore discloses the user's IP address and User-Agent
-to a third party — from a tool whose entire argument is that nothing leaves your
-machine. It also breaks the air-gapped install in A2, where the fonts simply fail
-to resolve. The fix is to vendor the woff2 files into the bundle; the cost is
-roughly 200 kB and the removal of the last external request the app makes.
+**A4 — done.** `index.html` loaded Crimson Pro, Inter and JetBrains Mono from
+Google Fonts. Every page load therefore disclosed the user's IP address and
+User-Agent to a third party — from a tool whose entire argument is that nothing
+leaves your machine. It also broke the air-gapped install in A2, where the fonts
+simply failed to resolve.
+
+The nine faces in use are now vendored as woff2 under `public/fonts/`, declared
+with local `@font-face` rules and `font-display: swap`. The app makes **no
+external requests at all**, which is what makes the strict CSP in E3 possible:
+with a third-party font host, `style-src`/`font-src` would have had to name it.
+
+**This entry previously estimated "roughly 200 kB". That was wrong.** Measured:
+nine faces × latin and latin-ext = **18 files, 761.5 kB on disk**, which took the
+image from 10.4 MB to 12 MB. The estimate had not accounted for latin-ext, and
+Inter's is unusually large at 83 kB per weight.
+
+Page weight is the number that actually matters, and it is much smaller: the
+`unicode-range` on each rule means a browser fetches only the subsets it needs.
+A measured English page load fetches **7 of the 18 files**, and they are cached
+immutably for a year. Dropping latin-ext would have saved disk at the cost of
+correctly rendering Polish, Czech and Hungarian text, which is a poor trade for a
+tool sold into the EU.
+
+All three families are SIL Open Font License 1.1. Each upstream licence is
+reproduced verbatim beside the fonts (`public/fonts/OFL-*.txt`) as that licence
+requires, with `README.txt` recording what is vendored and why.
+
+The Privacy and Cookie notices previously disclosed the Google Fonts request.
+Both now state that CE makes no third-party requests, and are versioned CE v1.2.
 
 ---
 
@@ -150,9 +173,14 @@ size.
 The web app costs four copy/pastes per turn, and people increasingly work inside
 editors and agents rather than a browser tab.
 
-The direction is a **CLI** and an **MCP server**, both consuming the published
-engine. An MCP tool that takes a *file path* rather than a blob means masked code
-reaches the agent while the real identifiers never enter its context.
+| | Item | State |
+| --- | --- | --- |
+| C1 | A CLI consuming the published engine | needs design |
+| C2 | An MCP server taking file paths, not blobs | needs design |
+
+Both consume the published engine. An MCP tool that takes a *file path* rather
+than a blob means masked code reaches the agent while the real identifiers never
+enter its context.
 
 This is stated as intent, not as a commitment to a date or a package name. It is
 sequenced after the engine work above, because shipping more surfaces on top of
@@ -171,6 +199,253 @@ The governance files exist — [CONTRIBUTING](./CONTRIBUTING.md), [CLA](./CLA.md
   a vague report into something mergeable. Highest-leverage item in this section.
 - **PR template** carrying the CLA sign-off line, plus CODEOWNERS and a CLA bot —
   CONTRIBUTING already promises the bot.
+
+---
+
+## E — Security and supply chain
+
+A tool that reads your source code is only worth its claims if the claims are
+enforced rather than asserted. This section came out of a full audit of the
+repository on 2026-08-14; every item below is a finding from it, including the
+ones we have not fixed yet.
+
+| | Item | State |
+| --- | --- | --- |
+| E1 | Patch the shipping router advisory | **done** |
+| E10 | Decide on React Router 7 | needs design |
+| E2 | Least-privilege CI token | **done** |
+| E3 | Content-Security-Policy and security headers | **done** |
+| E4 | Pin actions and base images by digest | **done** |
+| E5 | Make the purity gate executable, not textual | **done** |
+| E6 | Validate link schemes in rendered documents | **done** |
+| E7 | Treat an imported map as untrusted input | **done** |
+| E8 | Passphrase strength, and a tighter KDF ceiling | **done** |
+| E9 | Provenance for the container image | **done** |
+| E11 | Derive off the main thread | ready |
+
+**E1 — done.** `@remix-run/router` shipped in the bundle at a version inside the
+range for [GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42),
+an open redirect via protocol-relative URL reinterpretation. The fix was inside
+the existing semver range — `react-router-dom` 6.30.3 → 6.30.4 — so it cost a
+lockfile bump and nothing else. Everything else `npm audit` reports is a
+devDependency that never reaches a user.
+
+**`npm audit` does not come back clean, and that is a decision rather than an
+oversight.** Two advisories remain against `react-router`, and their affected
+range is `6.0.0 - 7.17.0` — there is no 6.x that clears them. Neither is
+reachable here:
+
+- *Arbitrary constructor injection via `deserializeErrors()` in SSR hydration.*
+  CE has no SSR. It mounts with `createRoot` and ships as a static bundle, so the
+  hydration path the advisory describes does not exist in this app.
+- *Open redirect via backslash in `<Link>` and `useNavigate`.* Every navigation
+  target in the app is a hard-coded literal — `/`, `/pricing`, `/dashboard`, a
+  module constant in the footer, and `/legal/<slug>` where the slug is checked
+  against an allow-list before use. Nothing user-controlled reaches a navigation
+  API.
+
+See E10 for the standing decision.
+
+**E10.** Clearing the two advisories above means React Router 7, which is a major
+migration for a four-route application. We have not taken it, because the
+advisories are not reachable (E1) and a rushed major upgrade of the routing layer
+is a larger risk to correctness than the thing it would silence.
+
+The cost of that choice is honest and worth stating: `npm audit` reports two
+moderate findings, and anyone running it — including a prospective customer's
+security review — will see them. This entry exists so the answer is written down
+rather than reconstructed each time. Revisit when the app grows a route with a
+user-controlled destination, when an advisory becomes reachable, or when v7 is
+warranted on its own merits.
+
+**E2 — done.** `ci.yml` declared no `permissions:` block, so it ran with whatever
+the repository default grants rather than least privilege. It now starts from
+`contents: read`, matching the posture `publish-engine.yml` already had.
+
+**E3 — done.** The app made exactly one network request — same-origin, for a
+legal document — and that was a property of the current code rather than an
+enforced boundary. It is now enforced: the image serves a
+`Content-Security-Policy` of `default-src 'self'` with `connect-src 'self'`,
+alongside `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` and
+`frame-ancestors 'none'`.
+
+This is the difference between "we do not exfiltrate your source" and "we
+cannot", and it is the reason A4 had to come first: while the fonts were loaded
+from a third party, the policy would have had to name that third party and the
+guarantee would have been correspondingly weaker.
+
+`docker/nginx.conf` carries the same headers, since the README points
+self-hosters at it as the reference for serving the release tarball.
+
+**E4 — done.** Every GitHub Action was pinned to a mutable major tag — `@v5`,
+`@v3`, `@v6` — and so were the `node:24-alpine` and `golang:1.24-alpine` base
+images. The release job holds `contents: write` and `packages: write`, and the
+publish job holds `id-token: write` for npm trusted publishing, so a re-pointed
+tag on any of them — including the third-party `softprops/action-gh-release` —
+was arbitrary code with permission to publish the package.
+
+All **12** action references across the three workflows are now pinned to a
+40-character commit SHA with the released version in a trailing comment, and
+both base images to a digest. Verified rather than assumed: each SHA was checked
+to resolve in its repository and to carry a tag matching its comment, and the
+image builds and passes the full e2e suite from the pinned digests.
+
+Both image digests are multi-arch OCI **indexes**, which is load-bearing — the
+release builds `linux/amd64` and `linux/arm64`, and pinning a single-platform
+manifest by mistake breaks the arm64 leg at build time rather than at review.
+
+**Pinning alone would have made things worse**, so it did not ship alone. An
+immutable pin nobody moves is an unpatched dependency with better provenance;
+the risk changes shape rather than going away. `.github/dependabot.yml` now
+covers Actions, the Docker base images and both npm lockfiles, grouped so the
+queue stays small enough to actually read. Updates arrive as a reviewable diff,
+which is what a floating tag never offered.
+
+**E5 — done.** The purity invariant was enforced by searching source text for
+banned substrings. Its own comment claimed it stopped "a malicious PR", and
+against a deliberate one it did not: `globalThis['fet'+'ch']` and
+`new Function('return fetch')()` both passed, and the word list did not cover
+`localStorage`, `indexedDB` or `document.cookie` at all.
+
+The gate now has two halves. The textual scan stays, with the missing tokens
+added and comments stripped before scanning — this engine documents what it
+looks for in *users'* code, so prose legitimately mentions `import(...)`, and a
+token in a comment executes nothing. String literals are deliberately kept, so
+`globalThis["fetch"]` is still caught.
+
+The second half executes. Every network and storage global is replaced with a
+recording accessor, and the engine is run through a full anonymize/restore
+cycle — including deliberately hostile input. Because *any* route to a global is
+ultimately a property read on the global object, computed names and indirect
+`Function` construction are caught along with the literal spelling.
+
+**The first version of this was wrong in an instructive way.** It trapped only
+function calls, so a probe that captured `fetch` at module scope — the obvious
+way to write the thing the gate exists to stop — passed cleanly. The suite now
+re-imports the engine with the traps already installed, and that case fails as
+it should. Verified by injecting
+`globalThis[String.fromCharCode(102,101,116,99,104)]` into `engine.ts`,
+confirming zero literal occurrences of `fetch(`, and watching the gate fail;
+then reverting.
+
+A test that has never failed proves nothing, so one test asserts the trap
+mechanism itself fires. Without it a broken `defineProperty` would turn the
+whole suite into assertions that cannot fail.
+
+**E6 — done.** The dependency-free markdown renderer behind `/legal/*` took an
+`href` straight from the document. React 18 warns about `javascript:` URLs and
+renders them anyway. The documents are ours, so nothing was exploitable — but
+this is a source-available repository that accepts pull requests, and a legal
+notice is an unremarkable file to skim.
+
+Links are now allow-listed to `https:`, `http:`, `mailto:`, site-relative paths
+and in-page anchors; anything else renders as plain text, so the sentence still
+reads and nothing navigable is produced.
+
+The check normalises the way a URL parser does before deciding, which is the
+part that makes or breaks it: browsers strip leading whitespace and remove tabs,
+newlines and carriage returns from *anywhere* in a URL before resolving the
+scheme, so `java&#9;script:alert(1)` executes and a naive `startsWith` test waves
+it through. It returns the normalised href rather than the original, so the
+string tested is the string rendered. Protocol-relative `//evil.example` is
+refused too — it reads as a local path and is not one, which is the same
+confusion behind the router advisory in E1.
+
+The logic lives in `src/lib/safeHref.ts` rather than inside the renderer so it
+can be tested directly, and it carries 17 tests covering each bypass.
+
+**E7 — done.** `importMap` returned whatever a decrypted `.veilio` file
+contained. The file is authenticated, so its author knew the passphrase — which
+in the team workflow is exactly the point, and therefore proves a colleague wrote
+it rather than that the contents are benign. Whatever a map holds is substituted
+into restored source, which the reader then pastes into an editor.
+
+The design question was what validation is worth imposing on a format built to be
+shared, and the answer is: enough to fail loudly, not enough to pretend the
+result is trusted. `src/lib/importedMap.ts` requires placeholder-shaped keys and
+string values, bounds entry count and value length, and builds a fresh object
+rather than handing back the parsed one — validating one object and returning
+another is how a check gets bypassed by a getter or a stray prototype.
+
+Two things fell out of the key check. It must accept the legacy `__P<n>__` style,
+or every map exported before role-typed placeholders becomes unimportable — that
+is data loss, not hardening. And because the engine's pattern requires an
+uppercase first character, it refuses `__proto__`, `constructor` and `prototype`
+for free. That is load-bearing rather than incidental, so it is asserted in both
+suites; loosening the pattern would silently reopen it.
+
+The shape check is `isPlaceholder()`, newly exported from the engine rather than
+duplicated here, so the app and the engine cannot drift on what a placeholder is.
+
+Validation is wired inside `importMap` rather than at the call site, and tested
+by removing the wiring and confirming the suite fails — a perfect validator that
+nothing calls is the failure mode worth guarding against. The residual risk is
+documented in [SECURITY.md](./SECURITY.md): a well-formed map from someone else
+can still map `__FN__1` to text you did not write.
+
+**E8 — done, in the two parts that are security.** Nothing required an export
+passphrase to be strong, and 600,000 PBKDF2 iterations do not rescue a weak one
+once the file leaks and can be attacked offline.
+
+`src/lib/passphrase.ts` sets a floor of 12 characters — counted in code points,
+so an emoji passphrase cannot clear it on UTF-16 units alone — and refuses
+single-character runs, straight sequential runs and a short list of common
+choices. It follows NIST SP 800-63B in putting the lever on length rather than
+composition rules, which push people toward predictable substitutions without
+adding entropy. It is a floor, not a strength meter, and deliberately returns
+nothing: a green tick on a mediocre passphrase is worse than no tick, because it
+converts the user's own judgement into misplaced confidence.
+
+It is enforced inside `exportMap`, before any derivation, so no caller can skip
+it and a rejected passphrase fails instantly instead of after 600k iterations.
+It is deliberately **not** applied on import — a file written by an older build
+may be protected by a passphrase this check would now reject, and refusing to
+open it is data loss dressed up as hardening. Same reasoning that keeps
+`LEGACY_FILE_KDF` frozen.
+
+The hostile-file iteration ceiling drops from 10,000,000 to 4,000,000. The old
+value bought no legitimate capability — nothing this project writes exceeds
+600,000 — while costing ~17x current derivation on whatever hardware the reader
+has. The new ceiling keeps ~6x headroom above current cost, which is more than
+any plausible raise before PBKDF2 gives way to a memory-hard KDF entirely. A test
+asserts the ceiling can never fall below what this build writes, which is the
+invariant that would otherwise make the app unable to read its own exports.
+
+**E11** carries the remaining third of the original item.
+
+**E9 — done.** npm publishes carried provenance through OIDC trusted publishing;
+the container image did not, so the artefact most self-hosters actually run had
+the weaker chain of custody.
+
+The image now ships two complementary things. BuildKit attestations
+(`provenance: mode=max`, `sbom: true`) travel with the image and record the full
+build definition — every step, both pinned base-image digests, the build args —
+plus an SBOM. And `actions/attest-build-provenance` signs a SLSA statement
+through Sigstore against a short-lived OIDC identity, binding the image to this
+repository, workflow and commit.
+
+Both were needed. The BuildKit attestation is unsigned metadata: it states what
+the build claims, and anyone who can push to the registry can write it. The
+signed statement is what a stranger can actually verify, with
+`gh attestation verify oci://ghcr.io/veilio-inc/veilio:latest --repo veilio-inc/veilio`.
+The README documents both checks, since a provenance nobody knows how to verify
+is decoration.
+
+Verified rather than assumed: the image was built locally with the exact flags,
+the resulting OCI index unpacked, and the SLSA v1 predicate read to confirm
+`mode=max` records the 16-step build definition where `mode=min` records none of
+it. The attested image was then run and put through the full e2e suite.
+
+**E11.** Key derivation runs on the main thread, so even a legitimate 600,000
+iterations freezes the tab for the duration, and an accepted-but-large value from
+an imported file freezes it for longer. Moving the derive to a worker is a
+responsiveness fix rather than a security one — E8 bounded the damage, which is
+the part that belonged with the security work — so it is tracked on its own
+rather than folded into a hardening item where it would overstate what it buys.
+
+**Not doing:** a bug bounty. Handling reports properly requires a response
+capacity CE does not have; [SECURITY.md](./SECURITY.md) describes what we can
+honestly commit to, which is private disclosure and a fix.
 
 ---
 
