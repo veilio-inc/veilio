@@ -475,6 +475,21 @@ export function classifyIdentifiers(
  *  already-anonymized code is never re-masked. */
 const PLACEHOLDER_TOKEN = /^__[A-Z][A-Z0-9_]*__\d*$/
 
+/** Whether a token is one of our placeholders.
+ *
+ *  Exported because a symbol map read back from a `.veilio` file is untrusted
+ *  input, and the only way to check its keys are placeholders is to ask the
+ *  thing that mints them. A copy of this pattern elsewhere would drift, and the
+ *  shape has to keep admitting the legacy `__P1__` style or importing an old
+ *  map would fail.
+ *
+ *  The requirement for an uppercase first character does double duty: it refuses
+ *  `__proto__`, `constructor` and `prototype`, so a map validated with this
+ *  cannot carry a prototype-pollution key. */
+export function isPlaceholder(token: string): boolean {
+  return PLACEHOLDER_TOKEN.test(token)
+}
+
 /**
  * Extract qualifying identifiers from source code, sorted longest-first.
  * Filters out keywords, ALL_CAPS constants, placeholder-shaped tokens, and names ≤ 2 chars.
