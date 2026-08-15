@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { FrameReader, handleFrame, handleMessage, SUPPORTED_PROTOCOL_VERSIONS } from '../src/server.js'
 import { TOOLS, callTool, type ToolContext } from '../src/tools.js'
+import { resolveMapPath, saveMap } from '@veilio/cli/store'
 
 let cwd: string
 let ctx: ToolContext
@@ -26,6 +27,14 @@ function write(name: string, content: string): void {
 
 function call(name: string, args: Record<string, unknown> = {}) {
   return callTool(name, args, ctx)
+}
+
+/** Seed the project store for cases a real anonymize pass cannot produce on
+ *  demand — a legacy plain-style map, or a key that is not a placeholder at
+ *  all. Goes through the store's own writer rather than hand-rolling the file,
+ *  so the envelope format stays the store's business. */
+function writeMap(map: Record<string, string>): void {
+  saveMap(resolveMapPath(null, cwd), map)
 }
 
 describe('protocol', () => {
@@ -265,6 +274,74 @@ describe('restore_text', () => {
   })
 })
 
+// This report matters more over MCP than anywhere else in the product: the
+// caller here is the model, and the model is usually what broke the
+// placeholder. Told which token it mangled, it can go back and fix its own
+// reply — a correction loop no human-facing panel can close.
+describe('restore_text — round-trip report', () => {
+  function seedMap() {
+    write('billing.ts', TS)
+    call('anonymize_file', { path: 'billing.ts' })
+  }
+
+  it('counts what came back rather than what the map holds', () => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1()' })
+    expect(res.text).toContain('Restored 1 of 3 placeholders')
+  })
+
+  it('names a token no map entry explains and says what to do about it', () => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1().__FN__9()' })
+    expect(res.text).toContain('WARNING')
+    expect(res.text).toContain('__FN__9')
+    expect(res.text).toMatch(/invented or altered/)
+    expect(res.text).toMatch(/restore again/)
+  })
+
+  it('reports placeholders that never appeared, without calling them an error', () => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1()' })
+    expect(res.text).toMatch(/never appeared in the text/)
+    expect(res.text).toContain('__FN__1')
+    expect(res.text).not.toContain('WARNING')
+  })
+
+  it('stays quiet on a clean round trip', () => {
+    // A model that echoed everything correctly should not have to read a
+    // paragraph about it; noise here costs context on every single call.
+    write('billing.ts', TS)
+    const masked = call('anonymize_file', { path: 'billing.ts' })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    const res = call('restore_text', { text: body })
+
+    expect(res.text).toContain('Restored 3 of 3 placeholders')
+    expect(res.text).not.toContain('WARNING')
+    expect(res.text).not.toMatch(/never appeared/)
+  })
+
+  it('does not flag a redacted credential as an invented token', () => {
+    // __REDACTED_*__ is never written to the map by design, so it remaining in
+    // the text is correct. Warning about it would fire the alarm on every
+    // restore involving a credential.
+    write('cfg.ts', `const stripeClient = init("${KEY}")\n`)
+    const masked = call('anonymize_file', { path: 'cfg.ts' })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    const res = call('restore_text', { text: body })
+
+    expect(res.text).toContain('__REDACTED_STRIPE_KEY_1__')
+    expect(res.text).not.toContain('WARNING')
+  })
+
+  it('still returns the restored text alongside the warning', () => {
+    // The report is additional information, not a replacement for the output.
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1().__FN__9()' })
+    expect(res.text).toContain('--- restored ---')
+    expect(res.text).toContain('PaymentGateway')
+  })
+})
+
 describe('scan_secrets', () => {
   it('reports a clean file', () => {
     write('billing.ts', TS)
@@ -325,6 +402,38 @@ describe('symbol_map_summary', () => {
     const res = call('symbol_map_summary')
     expect(res.text).not.toContain('PaymentGateway')
     expect(res.text).not.toContain('chargeCard')
+  })
+
+  // Grouping asks the engine whether a key is a placeholder instead of keeping
+  // a local copy of the pattern. These pin the behaviour that swap must
+  // preserve — mis-grouping is silent, so nothing else would catch it.
+  it('groups every role the engine mints, not just a listed few', () => {
+    writeMap({ __CLS__1: 'A', __CLS__2: 'B', __FN__1: 'c', __VAR__1: 'd', __MANUAL__1: 'e' })
+    const res = call('symbol_map_summary').text
+
+    expect(res).toContain('__CLS__* × 2')
+    expect(res).toContain('__FN__* × 1')
+    expect(res).toContain('__VAR__* × 1')
+    expect(res).toContain('__MANUAL__* × 1')
+  })
+
+  it('keeps legacy plain placeholders under their own key', () => {
+    // __P1__ carries no role and no trailing counter to strip, so it groups as
+    // itself. Refusing or mangling it would misreport every map exported before
+    // role-typed placeholders existed.
+    writeMap({ __P1__: 'A', __P2__: 'B' })
+    const res = call('symbol_map_summary').text
+
+    expect(res).toContain('__P1__')
+    expect(res).toContain('2 placeholders at')
+  })
+
+  it('leaves a key that is not a placeholder ungrouped rather than guessing', () => {
+    writeMap({ notAPlaceholder: 'A', __FN__1: 'b' })
+    const res = call('symbol_map_summary').text
+
+    expect(res).toContain('notAPlaceholder')
+    expect(res).toContain('__FN__* × 1')
   })
 })
 

@@ -21,6 +21,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import {
   anonymize,
   detectSecrets,
+  isPlaceholder,
   restore,
   summarizeSecrets,
   withAiPreamble,
@@ -28,6 +29,7 @@ import {
   LANGUAGES,
   LANGUAGE_LABELS,
   PRODUCT_NAME,
+  type RestoreReport,
   type SecretFinding,
 } from '@veilio/shared'
 import { loadMap, resolveMapPath, saveMap } from '@veilio/cli/store'
@@ -119,6 +121,37 @@ function secretSummary(findings: readonly SecretFinding[]): string {
   if (s.high) parts.push(`${s.high} high`)
   if (s.medium) parts.push(`${s.medium} advisory`)
   return `Credentials detected — ${parts.join(', ')}:\n${findingLines(findings)}`
+}
+
+/** Tell the caller what did not survive the round trip.
+ *
+ *  Worth more here than anywhere else in the product: over MCP the caller is the
+ *  model, and the model is usually the thing that broke the placeholder. Told
+ *  which token it mangled, it can go back and fix its own reply — a correction
+ *  loop no human-facing panel can close.
+ *
+ *  `unresolved` leads because it is always wrong: the restored text now carries
+ *  a token that means nothing. `missing` is reported as information, since a
+ *  reply about one function legitimately omits the rest of the file. Silence
+ *  when both are empty keeps a clean restore from growing a paragraph nobody
+ *  needs to read. */
+function restoreReportLines(report: RestoreReport): string {
+  const parts: string[] = []
+  if (report.unresolved.length > 0) {
+    parts.push(
+      `WARNING: ${report.unresolved.length} placeholder-shaped token(s) match no map entry — ` +
+        `they were invented or altered somewhere in the reply and are still in the output: ` +
+        `${report.unresolved.join(', ')}. Replace them with the correct placeholders and restore again.`
+    )
+  }
+  if (report.missing.length > 0) {
+    parts.push(
+      `${report.missing.length} placeholder(s) never appeared in the text: ` +
+        `${report.missing.join(', ')}. Expected if the text only covered part of the source; ` +
+        `if it covered all of it, those names came back renamed and are not recoverable from it.`
+    )
+  }
+  return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : ''
 }
 
 const LANGUAGE_ENUM = ['auto', ...LANGUAGES]
@@ -238,7 +271,10 @@ export const TOOLS: ToolDefinition[] = [
       }
       const result = restore(text, map)
       return {
-        text: `Restored using ${Object.keys(map).length} placeholders; stripped ${result.strippedCount} AI artifact(s).\n\n--- restored ---\n${result.restored}`,
+        text:
+          `Restored ${result.report.resolved.length} of ${Object.keys(map).length} placeholders; ` +
+          `stripped ${result.strippedCount} AI artifact(s).` +
+          `${restoreReportLines(result.report)}\n\n--- restored ---\n${result.restored}`,
       }
     },
   },
@@ -279,7 +315,12 @@ export const TOOLS: ToolDefinition[] = [
       if (keys.length === 0) return { text: 'No symbol map yet.' }
       const byBase = new Map<string, number>()
       for (const key of keys) {
-        const base = /^(__[A-Z][A-Z0-9_]*__)\d+$/.exec(key)?.[1] ?? key
+        // Whether a key is a placeholder is the engine's question, so it is
+        // asked rather than re-encoded here — a local copy of the pattern goes
+        // stale the first time the engine mints a role it does not describe,
+        // and mis-grouping is silent. Stripping the trailing counter to get the
+        // role is presentation, and stays here.
+        const base = isPlaceholder(key) ? key.replace(/\d+$/, '') : key
         byBase.set(base, (byBase.get(base) ?? 0) + 1)
       }
       const breakdown = [...byBase].map(([base, n]) => `  ${base}* × ${n}`).join('\n')

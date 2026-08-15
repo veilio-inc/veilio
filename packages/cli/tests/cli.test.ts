@@ -254,6 +254,95 @@ describe('restore', () => {
   })
 })
 
+// An AI asked to echo placeholders verbatim is under no obligation to comply.
+// When it renames one, restore() has nothing to substitute and stdout carries
+// the AI's invention where a real name belonged — indistinguishable, in the
+// text alone, from a clean run. stderr is where that difference has to show.
+describe('restore — round-trip report', () => {
+  // TS masks to exactly three: __CLS__1, __FN__1, __VAR__1.
+  it('counts what came back rather than what the map holds', async () => {
+    const scrubbed = await run(['scrub'], TS)
+    const r = await run(['restore'], scrubbed.out)
+    expect(r.err).toMatch(/restored 3 of 3 placeholders/)
+  })
+
+  it('counts only what the text actually carried', async () => {
+    // The old line reported the map size, which is the same number whether the
+    // AI echoed every placeholder or none of them.
+    await run(['scrub'], TS)
+    const r = await run(['restore'], 'new __CLS__1().__FN__1()\n')
+    expect(r.err).toMatch(/restored 2 of 3 placeholders/)
+  })
+
+  it('names a placeholder-shaped token that matches no map entry', async () => {
+    await run(['scrub'], TS)
+    const r = await run(['restore'], 'new __CLS__1().__FN__9()\n')
+    expect(r.err).toContain('__FN__9')
+    expect(r.err).toMatch(/not in the map/)
+    expect(r.err).toMatch(/invented or altered/)
+  })
+
+  it('reports an invented token even under --quiet', async () => {
+    // --quiet suppresses the all-clear summary; findings always show. Silently
+    // dropping this would hide the one case where stdout is wrong.
+    await run(['scrub'], TS)
+    const r = await run(['restore', '--quiet'], 'new __CLS__1().__FN__9()\n')
+    expect(r.err).toContain('__FN__9')
+    expect(r.err).not.toMatch(/restored \d+ of/)
+  })
+
+  it('keeps a partial answer quiet under --quiet', async () => {
+    // A reply covering one function legitimately omits the rest, so this is
+    // information, not a finding, and belongs with the summary it sits under.
+    await run(['scrub'], TS)
+    const r = await run(['restore', '--quiet'], 'new __CLS__1()\n')
+    expect(r.err).toBe('')
+  })
+
+  it('mentions absent placeholders in the normal summary', async () => {
+    await run(['scrub'], TS)
+    const r = await run(['restore'], 'new __CLS__1()\n')
+    expect(r.err).toMatch(/2 placeholders did not appear/)
+    expect(r.err).toMatch(/not recoverable/)
+  })
+
+  it('says "placeholder" when exactly one is absent', async () => {
+    // Pluralisation is the kind of detail that reads as sloppiness in the one
+    // message asking the user to go re-check their code by hand.
+    await run(['scrub'], TS)
+    const r = await run(['restore'], 'new __CLS__1().__FN__1()\n')
+    expect(r.err).toMatch(/1 placeholder did not appear/)
+  })
+
+  it('says nothing extra when every placeholder came back', async () => {
+    const scrubbed = await run(['scrub'], TS)
+    const r = await run(['restore'], scrubbed.out)
+    expect(r.err).not.toMatch(/not in the map/)
+    expect(r.err).not.toMatch(/did not appear/)
+  })
+
+  it('still exits 0 with an unexplained token, so pipelines do not break', async () => {
+    // The restored text on stdout is still usable, and `... | veilio restore >
+    // file` under `set -e` must not die over a warning the user can act on.
+    // Gating that behind a flag is a separate decision from reporting it.
+    await run(['scrub'], TS)
+    const r = await run(['restore'], 'new __CLS__1().__FN__9()\n')
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.out).toContain('PaymentGateway')
+  })
+
+  it('does not count a redacted credential as an unexplained token', async () => {
+    // __REDACTED_*__ never enters the map by design, so remaining in the output
+    // is exactly correct. Flagging it would make the warning fire on every
+    // restore that involved a credential, and a warning that always fires is
+    // one nobody reads.
+    const scrubbed = await run(['scrub'], WITH_KEY)
+    const r = await run(['restore'], scrubbed.out)
+    expect(r.out).toContain('__REDACTED_STRIPE_KEY_1__')
+    expect(r.err).not.toMatch(/not in the map/)
+  })
+})
+
 describe('scan', () => {
   it('exits 0 and rewrites nothing on clean input', async () => {
     const r = await run(['scan'], TS)

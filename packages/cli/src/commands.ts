@@ -107,11 +107,41 @@ export async function runRestore(args: ParsedArgs, io: Io): Promise<number> {
   const strip = args.keepDocs ? STRIPPABLE_TYPES.filter((t) => t !== 'jsdoc') : 'all'
   const result = restore(source, map, { strip })
   io.stdout(result.restored)
-  if (!args.quiet) {
+
+  const { resolved, missing, unresolved } = result.report
+
+  // A token the map cannot explain is a finding, not a summary line: the text on
+  // stdout now contains something that means nothing, and the user is about to
+  // paste it into an editor. --quiet suppresses the all-clear, never findings —
+  // the same contract `scan` follows.
+  if (unresolved.length > 0) {
     io.stderr(
-      `${BIN_NAME}: restored from ${Object.keys(map).length} placeholders, stripped ${result.strippedCount} AI artifact${result.strippedCount === 1 ? '' : 's'}\n`
+      `${BIN_NAME}: ${unresolved.length} placeholder-shaped token${unresolved.length === 1 ? '' : 's'} not in the map — ` +
+        `${unresolved.join(', ')}\n`
+    )
+    io.stderr(
+      `${BIN_NAME}: the AI invented or altered these; they are still in the output above.\n`
     )
   }
+
+  if (!args.quiet) {
+    io.stderr(
+      `${BIN_NAME}: restored ${resolved.length} of ${Object.keys(map).length} placeholders, stripped ${result.strippedCount} AI artifact${result.strippedCount === 1 ? '' : 's'}\n`
+    )
+    // Usually innocent — an answer about one function omits the rest of the
+    // file — so this sits under --quiet with the summary rather than above it.
+    if (missing.length > 0) {
+      io.stderr(
+        `${BIN_NAME}: ${missing.length} placeholder${missing.length === 1 ? '' : 's'} did not appear in the input; ` +
+          `if the AI covered the whole file, it renamed them and those names are not recoverable from this text.\n`
+      )
+    }
+  }
+
+  // Deliberately still EXIT_OK. `restore` writes usable text to stdout even when
+  // a token is unexplained, and exiting non-zero would break every
+  // `... | veilio restore > file` pipeline under `set -e` for a warning the user
+  // can act on. Gating that behind a flag is a separate decision from reporting.
   return EXIT_OK
 }
 
