@@ -1,6 +1,14 @@
 # Node 24 matches what CI builds with; the root package requires >=22.19.0, so
 # the previous node:20 base was below the declared floor.
-FROM node:24-alpine AS build
+# Base images are pinned by digest, not by tag (ROADMAP E4). A tag is a mutable
+# pointer: `node:24-alpine` today and `node:24-alpine` next week are different
+# bytes, so an unpinned build is a build nobody can reproduce or audit.
+#
+# Both digests below are multi-arch OCI *indexes*, which matters — the release
+# workflow builds linux/amd64 and linux/arm64, and pinning a single-platform
+# manifest by mistake breaks the arm64 leg at build time. Dependabot moves these
+# forward; see .github/dependabot.yml.
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
 WORKDIR /app
 
 # The root package pulls the anonymization engine in through
@@ -44,7 +52,7 @@ RUN find dist -type f \
 # The server is ~140 lines of standard library (docker/serve.go). Trading nginx
 # for it is what lets the final stage be `scratch`: with alpine-slim the distro
 # was 20.6 MB of a 21.7 MB image, so the site was under 5% of what users pulled.
-FROM golang:1.24-alpine AS server
+FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS server
 WORKDIR /src
 COPY docker/serve.go .
 # CGO off gives a genuinely static binary — mandatory, since scratch has no libc

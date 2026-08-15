@@ -26,11 +26,17 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # Both are for build provenance (ROADMAP E9). `id-token` mints the OIDC
+      # token that Sigstore binds the signature to; `attestations` lets the run
+      # record the signed statement against the repository. Neither grants
+      # anything else, and both are why every action here is pinned by digest.
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
@@ -49,7 +55,7 @@ jobs:
       # off main; semver tags are added only on a `v*` tag push.
       - name: Derive image tags
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
@@ -63,18 +69,19 @@ jobs:
       # arches means Apple Silicon self-hosters get a native pull instead of an
       # emulation warning. QEMU makes the arm64 leg slower; the build is a few
       # seconds natively, so that is affordable here.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
@@ -84,8 +91,38 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BuildKit attestations, attached to the image index and readable with
+          # `docker buildx imagetools inspect --format '{{json .Provenance}}'`.
+          # `mode=max` records the full build definition — source, base image
+          # digests, build args — rather than the minimal materials list, which
+          # is what makes the image answerable to "what went into this?".
+          # The SBOM is the companion question: "what is in this?".
+          provenance: mode=max
+          sbom: true
           build-args: |
             VITE_VEILIO_CLOUD_URL=https://veilio.dev
+
+      # The BuildKit attestation above is unsigned metadata: it says what the
+      # build claims, and anyone who can push to the registry can write it. This
+      # step signs a SLSA provenance statement with a short-lived OIDC identity
+      # through Sigstore, so the claim is bound to this repository, this
+      # workflow file and this commit — verifiable by a stranger with
+      #
+      #   gh attestation verify oci://ghcr.io/veilio-inc/veilio:latest \
+      #     --repo veilio-inc/veilio
+      #
+      # npm publishes already carry this through trusted publishing. The image
+      # is the artefact most self-hosters actually run, so it was the weaker
+      # link (ROADMAP E9).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          # Also stores the attestation alongside the image in GHCR, so it is
+          # discoverable from the registry rather than only through the GitHub
+          # API — self-hosters who never touch this repo can still check it.
+          push-to-registry: true
 
       # Everything below is release-only. Main pushes stop at the image.
       - name: Package static bundle
@@ -98,7 +135,7 @@ jobs:
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: ${{ env.BUNDLE }}
           generate_release_notes: true

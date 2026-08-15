@@ -13,7 +13,7 @@ name: Publish @veilio-inc/engine
 # — but both the bump and the changelog are now scoped to `(engine)` commits in
 # `.releaserc.js`, so an unrelated `feat(ui)` landing in between neither inflates
 # the version nor appears in the engine's changelog. When the CLI and MCP
-# packages land (ROADMAP E5), each takes its own scope and its own workflow.
+# packages land (ROADMAP C1, C2), each takes its own scope and its own workflow.
 
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
     steps:
       # semantic-release needs the full history to read commits since the last
       # tag, and the checkout credentials to push the release commit back.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -46,7 +46,7 @@ jobs:
       # Kept at 22 while the app CI runs 24: the engine declares engines
       # ">=20" and has zero runtime dependencies, so publishing from the
       # lowest realistic runtime is the closer test of that claim.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'

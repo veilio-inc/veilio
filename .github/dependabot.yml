@@ -1,0 +1,62 @@
+# Pinning by digest (ROADMAP E4) is only half an answer. An immutable pin that
+# nobody moves is an unpatched dependency with better provenance — the risk
+# changes shape rather than going away. This is the other half: Dependabot opens
+# a PR when a pinned digest falls behind, and the PR carries the diff a human
+# can actually review, which is the thing a floating tag never offered.
+version: 2
+
+updates:
+  # GitHub Actions. These run with contents: write, packages: write and
+  # id-token: write, so a compromised action is a compromised release.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      # `ci:` releases nothing under the rules in .releaserc.js, which is
+      # correct: bumping an action is not a change to the published engine.
+      prefix: ci
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Base images for the build and server stages. Nothing from these layers
+  # reaches the final image — it is `scratch` plus the site and one static
+  # binary — but they compile the binary and build the bundle, so they are
+  # squarely in the supply chain.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      prefix-development: build
+
+  # The app's own dependencies. Security updates matter most here: this is the
+  # only ecosystem whose contents are served to a browser.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    groups:
+      # One PR per group rather than per package: a repo this size drowns
+      # otherwise, and a drowned queue gets ignored, which defeats the point.
+      production:
+        dependency-type: production
+      development:
+        dependency-type: development
+
+  # The engine has zero runtime dependencies and that is enforced in CI, so this
+  # only ever moves its devDependencies. Kept separate because its lockfile is
+  # separate and semantic-release publishes from it.
+  - package-ecosystem: npm
+    directory: /packages/engine
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    groups:
+      engine-dev:
+        patterns: ['*']
