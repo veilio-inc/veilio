@@ -31,6 +31,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Format
+        run: npm run format:check
+
       - name: Test
         run: npm test
 
@@ -38,3 +44,45 @@ jobs:
         run: npm run build
         env:
           VITE_VEILIO_CLOUD_URL: https://veilio.dev
+
+      # The e2e suite is the only thing here that exercises a real browser, and
+      # it holds the assertions this project exists for: that a full page load
+      # contacts nothing off-origin, and that no request carries the user's
+      # source. jsdom cannot check either. Until now it gated nothing — it ran
+      # only when someone remembered, which for a privacy guarantee is the same
+      # as not running.
+      #
+      # Steps rather than a second job: this repository is public so the minutes
+      # are free, but a separate job would repeat checkout, setup-node and
+      # `npm ci` to save nothing, and the build above is exactly what Playwright
+      # previews.
+      - name: Cache Playwright browser
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the resolved Playwright version: the browser build is a
+          # property of that release, so an unrelated dependency bump should not
+          # discard a 170 MiB download.
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browser
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      # Binaries live in the cache; the OS libraries they link against are
+      # installed into the runner image by apt, so this runs either way.
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: E2E
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
