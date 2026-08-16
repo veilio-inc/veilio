@@ -5,8 +5,9 @@
  *
  *  Why this exists (ROADMAP E6): the legal documents are markdown fetched at
  *  runtime and rendered through a hand-written renderer, and an href taken
- *  straight from a document is executable. React 18 warns about `javascript:`
- *  URLs and renders them anyway. The documents are ours today, so nothing here
+ *  straight from a document is executable, and React's own handling of that has
+ *  never been something to rely on — 18 warned about `javascript:` URLs and
+ *  rendered them anyway. The documents are ours today, so nothing here
  *  is exploitable — but this is a source-available repository that accepts pull
  *  requests, and a legal notice is an unremarkable file to skim.
  */
