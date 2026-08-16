@@ -1,4 +1,8 @@
-import { defineConfig } from 'vite'
+// `defineConfig` comes from vitest/config, not vite: the `test` block below is
+// vitest's, and vite's own overload does not know about it. Under vitest 2 the
+// looser typing let it pass; under 4 it is a type error, which is the honest
+// result — this file has always been a vitest config as well as a vite one.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
