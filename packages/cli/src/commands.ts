@@ -20,7 +20,7 @@ import {
   BIN_NAME,
   STORE_DIR,
   type SecretFinding,
-} from '@veilio/shared'
+} from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 

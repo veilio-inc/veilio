@@ -27,6 +27,7 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@veilio-inc/engine": "^1.2.0",
     "@veilio/cli": "*",
     "@veilio/shared": "*"
   },

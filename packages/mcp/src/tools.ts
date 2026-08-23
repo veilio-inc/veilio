@@ -31,7 +31,7 @@ import {
   PRODUCT_NAME,
   type RestoreReport,
   type SecretFinding,
-} from '@veilio/shared'
+} from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio/cli/store'
 
 export interface ToolContext {

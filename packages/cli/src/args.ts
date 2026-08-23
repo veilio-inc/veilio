@@ -2,8 +2,8 @@
 // privacy invariant (an audited supply chain is the point), and a CLI that
 // wraps it should not undo that for the sake of flag parsing.
 
-import { LANGUAGES, type Language, type LanguageOption } from '@veilio/shared'
-import type { SecretPolicy } from '@veilio/shared'
+import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engine'
+import type { SecretPolicy } from '@veilio-inc/engine'
 
 export type Command = 'scrub' | 'restore' | 'scan' | 'map' | 'help' | 'version'
 

@@ -11,7 +11,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { STORE_DIR, type SymbolMap } from '@veilio/shared'
+import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
 
 export { STORE_DIR }
 export const STORE_FILE = 'map.json'

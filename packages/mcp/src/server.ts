@@ -5,7 +5,7 @@
 // component that reads your files to undercut that would be an odd trade for
 // ~150 lines of message plumbing.
 
-import { PRODUCT_NAME } from '@veilio/shared'
+import { PRODUCT_NAME } from '@veilio-inc/engine'
 import { callTool, TOOLS, type ToolContext } from './tools.js'
 
 export const SERVER_VERSION = '0.1.0'
