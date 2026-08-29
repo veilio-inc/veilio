@@ -8,7 +8,7 @@
 # workflow builds linux/amd64 and linux/arm64, and pinning a single-platform
 # manifest by mistake breaks the arm64 leg at build time. Dependabot moves these
 # forward; see .github/dependabot.yml.
-FROM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS build
+FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS build
 WORKDIR /app
 
 # The root package pulls the anonymization engine in through
