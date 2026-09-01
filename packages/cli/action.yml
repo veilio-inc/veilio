@@ -37,9 +37,17 @@ runs:
     - name: Resolve scan targets
       id: targets
       shell: bash
+      # Inputs arrive through the environment, never through `${{ }}` inside the
+      # script. GitHub substitutes those expressions into the source text before
+      # bash ever parses it, so a caller who routes untrusted data into `paths` —
+      # a PR title, a branch name, an issue body — is writing shell, not passing
+      # an argument, and no amount of quoting in the script can help. The SARIF
+      # step below already did it this way.
+      env:
+        PATHS: ${{ inputs.paths }}
       run: |
         set -euo pipefail
-        if [ -n "${{ inputs.paths }}" ]; then
+        if [ -n "$PATHS" ]; then
           echo "mode=paths" >> "$GITHUB_OUTPUT"
           exit 0
         fi
@@ -64,15 +72,27 @@ runs:
     - name: Scan
       id: scan
       shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        STRICT: ${{ inputs.strict }}
+        VERSION: ${{ inputs.version }}
+        MODE: ${{ steps.targets.outputs.mode }}
       run: |
         set -uo pipefail
         args=""
-        if [ "${{ inputs.strict }}" = "true" ]; then args="--strict"; fi
+        if [ "$STRICT" = "true" ]; then args="--strict"; fi
 
-        if [ "${{ steps.targets.outputs.mode }}" = "paths" ]; then
-          npx --yes @veilio-inc/cli@${{ inputs.version }} scan ${{ inputs.paths }} $args --json > /tmp/veilio.json 2> /tmp/veilio.log
+        # $PATHS is deliberately unquoted: it is documented as space-separated
+        # files or globs, and word-splitting plus globbing is the behaviour
+        # callers ask for. Bash does not re-run command substitution on the
+        # result of an expansion, so this splits and globs without executing.
+        # No `--` separator: the CLI's parser rejects it as an unknown flag, and
+        # it also rejects any bare argument starting with `-`, so there is
+        # nothing for a separator to protect against.
+        if [ "$MODE" = "paths" ]; then
+          npx --yes "@veilio-inc/cli@$VERSION" scan $PATHS $args --json > /tmp/veilio.json 2> /tmp/veilio.log
         else
-          npx --yes @veilio-inc/cli@${{ inputs.version }} scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
+          npx --yes "@veilio-inc/cli@$VERSION" scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
         fi
         status=$?
 
