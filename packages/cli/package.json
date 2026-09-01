@@ -10,7 +10,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=24"
@@ -25,8 +26,8 @@
     "cli",
     "veilio"
   ],
-  "license": "UNLICENSED",
-  "//private": "Still unpublished, and `private` is the only switch left — the metadata above is publish-ready. Two things must be decided first, neither of them mechanical: (1) `license` still reads UNLICENSED, which contradicts publishing at all — the public artifacts ship under the Veilio Community License 1.0 (see docs/RELEASE_RUNBOOK.md) and this needs to say so before a stranger installs it; (2) flipping this arms `changeset publish` in CI, which publishes on the next Version Packages merge rather than when somebody decides to release. See ROADMAP.md E5/E6.",
+  "license": "SEE LICENSE IN LICENSE",
+  "//private": "Still unpublished. `license` is now settled — the Veilio Community License 1.0, the same terms the engine this wraps ships under, and the only terms compatible with the `npx @veilio-inc/cli` usage packages/cli/action.yml advertises. One decision remains: flipping `private` arms `changeset publish` in CI, which publishes on the next Version Packages merge rather than when somebody decides to release. Note also that docs/RELEASE_RUNBOOK.md states nothing publishes from this repo — publishing these two from here amends that policy, or they move to the public repo first. See ROADMAP.md E5/E6.",
   "private": true,
   "dependencies": {
     "@veilio-inc/engine": "^1.2.0"
