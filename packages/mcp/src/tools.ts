@@ -32,7 +32,7 @@ import {
   type RestoreReport,
   type SecretFinding,
 } from '@veilio-inc/engine'
-import { loadMap, resolveMapPath, saveMap } from '@veilio/cli/store'
+import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */

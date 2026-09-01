@@ -70,9 +70,9 @@ runs:
         if [ "${{ inputs.strict }}" = "true" ]; then args="--strict"; fi
 
         if [ "${{ steps.targets.outputs.mode }}" = "paths" ]; then
-          npx --yes @veilio/cli@${{ inputs.version }} scan ${{ inputs.paths }} $args --json > /tmp/veilio.json 2> /tmp/veilio.log
+          npx --yes @veilio-inc/cli@${{ inputs.version }} scan ${{ inputs.paths }} $args --json > /tmp/veilio.json 2> /tmp/veilio.log
         else
-          npx --yes @veilio/cli@${{ inputs.version }} scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
+          npx --yes @veilio-inc/cli@${{ inputs.version }} scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
         fi
         status=$?
 

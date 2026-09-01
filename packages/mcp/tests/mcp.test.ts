@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { FrameReader, handleFrame, handleMessage, SUPPORTED_PROTOCOL_VERSIONS } from '../src/server.js'
 import { TOOLS, callTool, type ToolContext } from '../src/tools.js'
-import { resolveMapPath, saveMap } from '@veilio/cli/store'
+import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 
 let cwd: string
 let ctx: ToolContext

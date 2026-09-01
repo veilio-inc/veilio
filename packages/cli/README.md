@@ -1,4 +1,4 @@
-# @veilio/cli
+# @veilio-inc/cli
 
 Anonymize code before it reaches an LLM, restore it after — from a terminal, a pipe, or a pre-commit hook.
 

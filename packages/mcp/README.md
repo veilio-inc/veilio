@@ -1,4 +1,4 @@
-# @veilio/mcp
+# @veilio-inc/mcp
 
 MCP server that lets a coding agent work on your code **without the real identifiers ever entering its context.**
 
@@ -44,7 +44,7 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
   "mcpServers": {
     "veilio": {
       "command": "npx",
-      "args": ["-y", "@veilio/mcp", "--root", "."]
+      "args": ["-y", "@veilio-inc/mcp", "--root", "."]
     }
   }
 }
