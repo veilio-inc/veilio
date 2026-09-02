@@ -30,7 +30,7 @@
   "//private": "Still unpublished. `license` is now settled — the Veilio Community License 1.0, the same terms the engine this wraps ships under, and the only terms compatible with the `npx @veilio-inc/cli` usage packages/cli/action.yml advertises. One decision remains: flipping `private` arms `changeset publish` in CI, which publishes on the next Version Packages merge rather than when somebody decides to release. Note also that docs/RELEASE_RUNBOOK.md states nothing publishes from this repo — publishing these two from here amends that policy, or they move to the public repo first. See ROADMAP.md E5/E6.",
   "private": true,
   "dependencies": {
-    "@veilio-inc/engine": "^1.2.0"
+    "@veilio-inc/engine": "^1.3.0"
   },
   "scripts": {
     "build": "tsc",

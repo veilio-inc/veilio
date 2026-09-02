@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK } from '../src/commands.js'
 import type { Io } from '../src/commands.js'
+import { MapOverwriteError, saveMap } from '../src/store.js'
 
 let cwd: string
 
@@ -492,7 +493,10 @@ describe('restore --keep-docs', () => {
     // When the model was asked to document its output, stripping the docs is
     // destroying requested work rather than removing noise.
     await run(['scrub'], DOCUMENTED)
-    const r = await run(['restore', '--keep-docs'], '/**\n * Settles an invoice.\n */\nconst x = 1\n')
+    const r = await run(
+      ['restore', '--keep-docs'],
+      '/**\n * Settles an invoice.\n */\nconst x = 1\n'
+    )
     expect(r.out).toContain('Settles an invoice')
   })
 
@@ -501,5 +505,180 @@ describe('restore --keep-docs', () => {
     const r = await run(['restore', '--keep-docs'], '/** Doc. */\n// TODO: fix\nconst x = 1\n')
     expect(r.out).toContain('Doc.')
     expect(r.out).not.toContain('TODO')
+  })
+})
+
+describe('what the masking did not cover (004-b3, 002-b4)', () => {
+  // The engine reports both on every result specifically so the CLI and the MCP
+  // server inherit them. A wrapper that drops them leaves the two surfaces where
+  // nobody is looking at a panel — pipelines and agents — believing the output
+  // is clean.
+
+  it('reports comment prose left unmasked', async () => {
+    write('a.ts', '// Ping Kowalska about Contoso, see INC-4471\nexport class Gateway {}\n')
+    const { err } = await run(['scrub', 'a.ts'])
+    expect(err).toMatch(/comment/i)
+    expect(err).toMatch(/NOT masked/)
+  })
+
+  it('says how many comments and how much prose', async () => {
+    write('a.ts', '// header note\nexport class Gateway {}\nconst x = 1 // trailing note\n')
+    const { err } = await run(['scrub', 'a.ts'])
+    expect(err).toMatch(/2 comments/)
+    expect(err).toMatch(/1 inside the body/)
+  })
+
+  it('says nothing about comments when there are none', async () => {
+    write('a.ts', 'export class Gateway {}\n')
+    const { err } = await run(['scrub', 'a.ts'])
+    expect(err).not.toMatch(/comment/i)
+  })
+
+  it('keeps the comment note out of stdout', async () => {
+    // FR-002: stdout carries the artifact and nothing else, or the CLI cannot
+    // sit in a pipe.
+    write('a.ts', '// Ping Kowalska about Contoso\nexport class Gateway {}\n')
+    const { out } = await run(['scrub', 'a.ts'])
+    expect(out).not.toMatch(/NOT masked/)
+    expect(out).toContain('// Ping Kowalska about Contoso')
+  })
+
+  it('suppresses the comment note under --quiet', async () => {
+    // It fires on nearly every real file. Surviving --quiet would defeat the
+    // flag and teach people to stop passing it.
+    write('a.ts', '// Ping Kowalska about Contoso\nexport class Gateway {}\n')
+    const { err } = await run(['scrub', 'a.ts', '--quiet'])
+    expect(err).not.toMatch(/NOT masked/)
+  })
+
+  it('warns when no language marker matched', async () => {
+    // Marker detection falls back to TypeScript. Prose alone matches nothing.
+    write('a.txt', 'the quick brown fox jumped over the lazy dog again and again\n')
+    const { err } = await run(['scrub', 'a.txt'])
+    expect(err).toMatch(/no language marker matched/)
+  })
+
+  it('keeps the language warning even under --quiet', async () => {
+    // Unlike the comment note: this one says the masking itself may be wrong,
+    // and output that looks anonymised and is not must not be swallowed.
+    write('a.txt', 'the quick brown fox jumped over the lazy dog again and again\n')
+    const { err } = await run(['scrub', 'a.txt', '--quiet'])
+    expect(err).toMatch(/no language marker matched/)
+  })
+
+  it('does not warn when the language was recognised', async () => {
+    write('a.ts', TS)
+    const { err } = await run(['scrub', 'a.ts'])
+    expect(err).not.toMatch(/no language marker matched/)
+  })
+
+  it('does not warn when the language was given explicitly', async () => {
+    write('a.txt', 'the quick brown fox jumped over the lazy dog again and again\n')
+    const { err } = await run(['scrub', 'a.txt', '--language', 'python'])
+    expect(err).not.toMatch(/no language marker matched/)
+  })
+})
+
+describe('the map is not overwritten silently (005-c1 FR-005)', () => {
+  // The requirement reads "MUST NOT be overwritten without an explicit flag",
+  // and its stated reason is that overwriting "loses the only means of restoring
+  // earlier output". Both callers already make that impossible: `scrub` and the
+  // MCP server load the map, hand it to `anonymize` as `existingMap`, and save
+  // the union — so the file only ever grows. Demanding `--force` for that would
+  // put the flag on every second command, which is how a safety prompt becomes
+  // muscle memory and stops being read.
+  //
+  // So the guard sits on `saveMap`, which is exported as `@veilio-inc/cli/store`
+  // and is what the MCP package imports. These test it there, plus the CLI
+  // behaviour that keeps it from firing in the normal path.
+
+  it('appends across runs without needing a flag', async () => {
+    write('a.ts', TS)
+    write('b.ts', GO)
+    expect((await run(['scrub', 'a.ts'])).code).toBe(EXIT_OK)
+    const { code, err } = await run(['scrub', 'b.ts'])
+    expect(code).toBe(EXIT_OK)
+    expect(err).not.toMatch(/refusing to overwrite/)
+  })
+
+  it('keeps every earlier placeholder after a second run', async () => {
+    // The reason the flag is not demanded. If this ever stops holding, the
+    // guard below starts firing on ordinary use and the design has to change.
+    write('a.ts', TS)
+    write('b.ts', GO)
+    await run(['scrub', 'a.ts'])
+    const first = JSON.parse(readFileSync(join(cwd, '.veilio', 'map.json'), 'utf8')).map
+    await run(['scrub', 'b.ts'])
+    const second = JSON.parse(readFileSync(join(cwd, '.veilio', 'map.json'), 'utf8')).map
+    for (const [placeholder, real] of Object.entries(first)) {
+      expect(second[placeholder]).toBe(real)
+    }
+  })
+
+  it('refuses a write that would drop an existing placeholder', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' })
+    expect(() => saveMap(path, { __FN__1: 'chargeCard' })).toThrow(MapOverwriteError)
+  })
+
+  it('names what would be lost, and how to proceed anyway', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    try {
+      saveMap(path, {})
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(MapOverwriteError)
+      expect((e as Error).message).toContain('__CLS__1')
+      expect((e as Error).message).toContain('--force')
+    }
+  })
+
+  it('refuses a write that would repoint a placeholder at a different name', () => {
+    // Not only deletions. Re-using `__CLS__1` for something else makes every
+    // text already masked with it restore to the wrong identifier, silently.
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(() => saveMap(path, { __CLS__1: 'SomethingElse' })).toThrow(MapOverwriteError)
+  })
+
+  it('leaves the file untouched when it refuses', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    try {
+      saveMap(path, {})
+    } catch {
+      // expected
+    }
+    expect(JSON.parse(readFileSync(path, 'utf8')).map.__CLS__1).toBe('PaymentGateway')
+  })
+
+  it('allows a superset without a flag', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(() => saveMap(path, { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' })).not.toThrow()
+  })
+
+  it('allows the first write to a path that does not exist yet', () => {
+    expect(() => saveMap(join(cwd, 'fresh.json'), { __CLS__1: 'PaymentGateway' })).not.toThrow()
+  })
+
+  it('overwrites when force is given', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    saveMap(path, { __CLS__1: 'SomethingElse' }, { force: true })
+    expect(JSON.parse(readFileSync(path, 'utf8')).map.__CLS__1).toBe('SomethingElse')
+  })
+
+  it('still locks the file down to 0600 after a forced overwrite', () => {
+    const path = join(cwd, 'map.json')
+    writeFileSync(path, JSON.stringify({ version: 1, map: { __CLS__1: 'Old' } }), { mode: 0o644 })
+    saveMap(path, { __CLS__1: 'New' }, { force: true })
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  it('exposes --force through the CLI', async () => {
+    const { code } = await run(['scrub', '--force'], TS)
+    expect(code).toBe(EXIT_OK)
   })
 })

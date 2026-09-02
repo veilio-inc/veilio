@@ -176,11 +176,34 @@ function runAnonymize(
 
   const body =
     args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
+  // The model reading this is about to reason over the masked text, and these
+  // two lines are the only place it can learn what the masking did NOT cover.
+  // The engine puts both on every result precisely so this server does not have
+  // to decide for itself; dropping them here would leave an agent believing the
+  // output is clean when a name is sitting in a comment inside it.
+  const caveats: string[] = []
+  if (result.languageFallback) {
+    caveats.push(
+      `WARNING: no language marker matched. Masked as ${LANGUAGE_LABELS[result.language]}, ` +
+        `which may be wrong for this file — pass "language" explicitly to be sure.`
+    )
+  }
+  if (result.comments.total > 0) {
+    const { total, inline, characters } = result.comments
+    caveats.push(
+      `Comment prose is NOT masked: ${total} comment${total === 1 ? '' : 's'} ` +
+        `(${inline === 0 ? 'above the code' : `${inline} inside the body`}), ` +
+        `${characters} characters, left exactly as written. Names, customers and ticket ` +
+        `numbers in them are still real. Treat them as unmasked when quoting or forwarding.`
+    )
+  }
+
   const notes = [
     `Source: ${label}`,
     `Language: ${LANGUAGE_LABELS[result.language]}`,
     `Placeholders in map: ${Object.keys(result.map).length}`,
     secretSummary(result.secrets),
+    ...caveats,
   ].join('\n')
 
   return {

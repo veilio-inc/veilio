@@ -68,7 +68,40 @@ export function loadMap(path: string): SymbolMap {
   return map
 }
 
-export function saveMap(path: string, map: SymbolMap): void {
+export class MapOverwriteError extends Error {}
+
+/**
+ * Write the map, refusing a write that would lose entries already on disk.
+ *
+ * Not a guard on every write. `scrub` loads the existing map, hands it to
+ * `anonymize` as `existingMap` and saves the union, so the normal path only ever
+ * grows the file — demanding a flag for that would mean typing `--force` on
+ * every second command, which is how a safety prompt becomes muscle memory and
+ * stops being read.
+ *
+ * What it refuses is the write that actually destroys something: one whose map
+ * no longer explains a placeholder the file already had. That map is the only
+ * means of restoring output produced with it, and once the entry is gone the
+ * text that used it can never be read back. Reachable by pointing `--map` at
+ * another session's store, or by a future caller that forgets to load first.
+ */
+export function saveMap(path: string, map: SymbolMap, options: { force?: boolean } = {}): void {
+  if (!options.force && existsSync(path)) {
+    const dropped = Object.entries(loadMap(path)).filter(
+      ([placeholder, real]) => map[placeholder] !== real
+    )
+    if (dropped.length > 0) {
+      const shown = dropped
+        .slice(0, 3)
+        .map(([p]) => p)
+        .join(', ')
+      throw new MapOverwriteError(
+        `refusing to overwrite ${path}: ${dropped.length} existing placeholder${dropped.length === 1 ? '' : 's'} ` +
+          `(${shown}${dropped.length > 3 ? ', …' : ''}) would be lost, and text already anonymized with them ` +
+          `could never be restored. Pass --force to overwrite anyway.`
+      )
+    }
+  }
   const dir = dirname(path)
   mkdirSync(dir, { recursive: true })
   // A store directory inside a repo must never be committed — it holds the real

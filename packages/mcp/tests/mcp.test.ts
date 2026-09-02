@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { FrameReader, handleFrame, handleMessage, SUPPORTED_PROTOCOL_VERSIONS } from '../src/server.js'
+import {
+  FrameReader,
+  handleFrame,
+  handleMessage,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from '../src/server.js'
 import { TOOLS, callTool, type ToolContext } from '../src/tools.js'
 import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 
@@ -138,7 +143,9 @@ describe('framing', () => {
   it('handles several frames arriving in one chunk', () => {
     const sent: unknown[] = []
     const reader = new FrameReader(ctx, (r) => sent.push(r))
-    reader.push('{"jsonrpc":"2.0","id":1,"method":"ping"}\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n')
+    reader.push(
+      '{"jsonrpc":"2.0","id":1,"method":"ping"}\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n'
+    )
     expect(sent).toHaveLength(2)
   })
 
@@ -484,5 +491,59 @@ describe('tools/call dispatch', () => {
       ctx
     )
     expect((res?.result as any).isError).toBe(true)
+  })
+})
+
+describe('what the masking did not cover reaches the agent (004-b3, 002-b4)', () => {
+  // Sharper here than in the CLI. A human skims stderr; a model reads only what
+  // the tool returned, and will otherwise treat the masked text as clean and
+  // quote a customer name straight out of a comment.
+
+  it('tells the caller comment prose is unmasked', () => {
+    write('a.ts', '// Ping Kowalska about Contoso, see INC-4471\n' + TS)
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    expect(text).toMatch(/Comment prose is NOT masked/)
+    expect(text).toMatch(/1 comment/)
+  })
+
+  it('says the names in them are still real', () => {
+    // The instruction matters more than the count: without it a model has no
+    // reason to treat the comment differently from the placeholders around it.
+    write('a.ts', '// Ping Kowalska about Contoso\n' + TS)
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    expect(text).toMatch(/still real/)
+  })
+
+  it('says nothing about comments when the file has none', () => {
+    write('a.ts', TS)
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    expect(text).not.toMatch(/Comment prose/)
+  })
+
+  it('carries the same note through anonymize_text', () => {
+    const { text } = call('anonymize_text', { text: '// Ping Kowalska\n' + TS })
+    expect(text).toMatch(/Comment prose is NOT masked/)
+  })
+
+  it('warns when no language marker matched', () => {
+    write('a.txt', 'the quick brown fox jumped over the lazy dog again and again\n')
+    const { text } = call('anonymize_file', { path: 'a.txt' })
+    expect(text).toMatch(/WARNING: no language marker matched/)
+  })
+
+  it('does not warn when the language was recognised', () => {
+    write('a.ts', TS)
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    expect(text).not.toMatch(/no language marker matched/)
+  })
+
+  it('keeps the masked code itself unchanged by the notes', () => {
+    // The notes are a header; the payload below the fence has to stay exactly
+    // what the engine produced or a round trip through restore_text breaks.
+    write('a.ts', '// Ping Kowalska\n' + TS)
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    const body = text.split('--- masked code ---\n')[1]
+    expect(body).toContain('// Ping Kowalska')
+    expect(body).not.toContain('PaymentGateway')
   })
 })

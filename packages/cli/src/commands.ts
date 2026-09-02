@@ -68,14 +68,41 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
     secrets: args.secrets,
   })
 
-  saveMap(mapPath, result.map)
+  saveMap(mapPath, result.map, { force: args.force })
   io.stdout(args.preamble ? withAiPreamble(result.anonymized, result.map) : result.anonymized)
+
+  // Survives --quiet. Everything else here describes work that went right; this
+  // says the masking itself may be wrong. No marker matched, so the file was
+  // tokenised with TypeScript rules — in a Ruby file that means `#` comments
+  // were read as code and their prose masked, and in the other direction a
+  // language whose comment syntax we did not apply had its prose left in the
+  // clear. Output that looks anonymised and is not is the one thing a pipeline
+  // must not swallow.
+  if (result.languageFallback) {
+    io.stderr(
+      `${BIN_NAME}: no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +
+        `Pass --language to be sure.\n`
+    )
+  }
 
   if (!args.quiet) {
     const added = Object.keys(result.map).length - Object.keys(existingMap).length
     io.stderr(
       `${BIN_NAME}: ${LANGUAGE_LABELS[result.language]} — ${added} new placeholder${added === 1 ? '' : 's'}, ${Object.keys(result.map).length} in map\n`
     )
+    // Under --quiet, unlike the language warning above. Nearly every real file
+    // has a comment beside code, so this fires on almost every run; surviving
+    // --quiet would defeat the flag and teach people to stop passing it. The
+    // engine reports it on every result either way, so nothing is hidden from a
+    // caller that wants it.
+    if (result.comments.total > 0) {
+      const { total, inline, characters } = result.comments
+      const where = inline === 0 ? 'above the code' : `${inline} inside the body`
+      io.stderr(
+        `${BIN_NAME}: ${total} comment${total === 1 ? '' : 's'} (${where}) left as written — ` +
+          `${characters} characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\n`
+      )
+    }
     if (result.secrets.length > 0) {
       io.stderr(`${BIN_NAME}: credentials detected — ${summaryLine(result.secrets)}\n`)
       for (const f of result.secrets) io.stderr(`${formatFinding(f)}\n`)
@@ -227,6 +254,7 @@ OPTIONS
       --json              Machine-readable output (scan, map)
       --strict            scan: also fail on advisory findings
       --keep-docs         restore: keep JSDoc blocks the model wrote
+  -f, --force             Allow a map write that would drop existing entries
   -q, --quiet             Suppress the all-clear summary (findings always show)
   -h, --help              Show this help
   -v, --version           Show the version

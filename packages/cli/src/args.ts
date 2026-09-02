@@ -27,6 +27,8 @@ export interface ParsedArgs {
   strict: boolean
   /** Keep JSDoc blocks when restoring. */
   keepDocs: boolean
+  /** Allow a map write that would drop entries already on disk. */
+  force: boolean
 }
 
 export class UsageError extends Error {}
@@ -55,6 +57,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     clear: false,
     strict: false,
     keepDocs: false,
+    force: false,
   }
 
   if (argv.length === 0) return parsed
@@ -123,6 +126,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         break
       case '--keep-docs':
         parsed.keepDocs = true
+        break
+      case '-f':
+      case '--force':
+        parsed.force = true
         break
       default:
         if (arg.startsWith('-') && arg !== '-') {
