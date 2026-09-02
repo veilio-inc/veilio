@@ -117,17 +117,26 @@ export default {
       },
     ],
     ['@semantic-release/npm', { pkgRoot: 'packages/engine' }],
-    [
-      '@semantic-release/git',
-      {
-        assets: [
-          'packages/engine/package.json',
-          'packages/engine/package-lock.json',
-          'packages/engine/CHANGELOG.md',
-        ],
-        message: 'chore(release): engine ${nextRelease.version} [skip ci]',
-      },
-    ],
+    // No `@semantic-release/git`. It committed the version bump and the
+    // changelog and pushed them straight to `main`, which is a protected branch
+    // — so the release could only ever run by punching a hole in the rule that
+    // says changes arrive through a reviewed pull request. That is the wrong
+    // trade: the branch protection is there to stop unreviewed code landing, and
+    // a bypass for the Actions app hands that ability to every workflow in the
+    // repository, not just this one.
+    //
+    // Removing it costs less than it looks. `@semantic-release/npm` still writes
+    // the version into `packages/engine/package.json` inside the runner, and
+    // `@semantic-release/changelog` still writes `CHANGELOG.md`, both before the
+    // tarball is packed — so what reaches npm carries the right version and the
+    // right release notes. The git tag and the GitHub Release still happen.
+    //
+    // What does change: the copies committed in this repository go stale.
+    // `packages/engine/package.json` stays at whatever was last merged, and the
+    // in-repo CHANGELOG stops being updated. The authoritative places to read a
+    // version are the `engine-v*` tags and the registry, and the authoritative
+    // history is the GitHub Releases page — none of which need write access to
+    // a protected branch to stay correct.
     ['@semantic-release/github', { successComment: false, failComment: false }],
   ],
 }
