@@ -259,12 +259,22 @@ describe('overlap resolution', () => {
     expect(scan.findings.length).toBe(1)
   })
 
-  it('keeps findings sorted by position', () => {
+  it('orders findings by what the reader should act on first', () => {
+    // This used to assert source order. It now asserts actionability order,
+    // deliberately: a panel that lists an email above a live AWS key because the
+    // email appeared on an earlier line teaches people to skim, and the one
+    // finding that mattered arrives in the same grey list as ninety that did not.
     const scan = scanSecrets(
-      'a = "AKIAIOSFODNN7EXAMPLE"\nb = "x@y.com"\nc = "sk_live_51H8xQ2ABCDEFGHIJKLMNOP"'
+      'a = "x@y.com"\nb = "AKIAIOSFODNN7EXAMPLE"\nc = "10.0.3.14"'
     )
-    const lines = scan.findings.map((f) => f.line)
-    expect(lines).toEqual([...lines].sort((x, y) => x - y))
+    expect(scan.findings[0].type).toBe('aws-access-key')
+    expect(scan.findings[0].severity).toBe('critical')
+    expect(scan.findings.at(-1)!.severity).toBe('low')
+  })
+
+  it('breaks ties within a severity by position, so the order is stable', () => {
+    const scan = scanSecrets('a = "x@y.com"\nb = "z@w.com"')
+    expect(scan.findings.map((f) => f.line)).toEqual([1, 2])
   })
 })
 
@@ -287,11 +297,14 @@ describe('entropy helper', () => {
 })
 
 describe('summary helpers', () => {
-  it('counts findings by severity', () => {
+  it('counts findings by severity, including the low grade', () => {
     const findings = detectSecrets('a = "AKIAIOSFODNN7EXAMPLE"\nb = "x@y.com"\nc = "10.0.3.14"')
     const summary = summarizeSecrets(findings)
     expect(summary.critical).toBe(1)
-    expect(summary.medium).toBe(2)
+    // Emails and private IPs were `medium`; they are now `low`, which is what
+    // lets the panel de-emphasise them instead of listing them like credentials.
+    expect(summary.low).toBe(2)
+    expect(summary.medium).toBe(0)
   })
 
   it('flags blocking findings', () => {

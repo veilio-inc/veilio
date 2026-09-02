@@ -4,7 +4,12 @@ import type { SecretFinding, SecretSeverity } from '@veilio-inc/engine'
 // the copy action rather than below the output — it has to be read, not
 // dismissed after the fact.
 
-const SEVERITY_ORDER: SecretSeverity[] = ['critical', 'high', 'medium']
+const SEVERITY_ORDER: SecretSeverity[] = ['critical', 'high', 'medium', 'low']
+
+/** More than this many findings of one LOW type collapse to a summary row.
+ *  Twelve example addresses listed individually is what teaches a reader that
+ *  this panel is noise; a single line saying "12 email addresses" does not. */
+const COLLAPSE_AFTER = 3
 
 const SEVERITY_STYLE: Record<
   SecretSeverity,
@@ -28,6 +33,24 @@ const SEVERITY_STYLE: Record<
     accent: 'var(--text-secondary)',
     label: 'Advisory',
   },
+  // Deliberately the quietest thing on the page: no tint, no accent colour.
+  // These are usually benign, and giving them the visual weight of a credential
+  // is what trained people to skim past the one that mattered.
+  low: {
+    border: 'var(--border)',
+    background: 'transparent',
+    accent: 'var(--text-dim)',
+    label: 'Noted',
+  },
+}
+
+/** What a group of this grade actually contains. Calling an email address a
+ *  "credential" is the same overstatement as colouring it red. */
+const GROUP_NOUN: Record<SecretSeverity, [singular: string, plural: string]> = {
+  critical: ['credential', 'credentials'],
+  high: ['credential', 'credentials'],
+  medium: ['possible credential', 'possible credentials'],
+  low: ['other match', 'other matches'],
 }
 
 function FindingRow({ finding }: { finding: SecretFinding }) {
@@ -62,8 +85,41 @@ function FindingRow({ finding }: { finding: SecretFinding }) {
   )
 }
 
+/**
+ * Collapse runs of the same low-value type into one row.
+ *
+ * Returns the rows to render plus the summaries that stand in for what was
+ * hidden. Only LOW is ever collapsed: a repeated credential is not noise, it is
+ * a worse leak.
+ */
+function collapseLow(
+  items: SecretFinding[],
+  severity: SecretSeverity
+): { rows: SecretFinding[]; summaries: { label: string; count: number }[] } {
+  if (severity !== 'low') return { rows: items, summaries: [] }
+
+  const byType = new Map<string, SecretFinding[]>()
+  for (const f of items) byType.set(f.type, [...(byType.get(f.type) ?? []), f])
+
+  const rows: SecretFinding[] = []
+  const summaries: { label: string; count: number }[] = []
+  for (const group of byType.values()) {
+    if (group.length > COLLAPSE_AFTER) {
+      summaries.push({ label: group[0].label, count: group.length })
+    } else {
+      rows.push(...group)
+    }
+  }
+  return { rows, summaries }
+}
+
 export default function SecretPanel({ findings }: { findings: SecretFinding[] }) {
   if (findings.length === 0) return null
+
+  // FR-004. `role="alert"` interrupts a screen reader; spending that on a list
+  // of example email addresses is the audible version of crying wolf, and it
+  // spends the interruption that the real warning needs.
+  const isAlert = findings.some((f) => f.severity !== 'low')
 
   const grouped = SEVERITY_ORDER.map((severity) => ({
     severity,
@@ -74,12 +130,14 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
 
   return (
     <section
-      role="alert"
-      aria-label="Credentials detected"
+      {...(isAlert ? { role: 'alert' } : {})}
+      aria-label={isAlert ? 'Credentials detected' : 'Scan notes'}
       style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}
     >
       {grouped.map(({ severity, items }) => {
         const style = SEVERITY_STYLE[severity]
+        const { rows, summaries } = collapseLow(items, severity)
+        const [singular, plural] = GROUP_NOUN[severity]
         return (
           <div
             key={severity}
@@ -115,10 +173,10 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
                 {style.label}
               </span>
               <strong style={{ fontSize: 13 }}>
-                {items.length} {items.length === 1 ? 'credential' : 'credentials'} detected
+                {items.length} {items.length === 1 ? singular : plural} detected
               </strong>
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                {severity === 'medium'
+                {severity === 'low' || severity === 'medium'
                   ? '— left in place; review before sharing.'
                   : '— redacted, and not recoverable on restore.'}
               </span>
@@ -133,8 +191,16 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
                 padding: 0,
               }}
             >
-              {items.map((finding, i) => (
+              {rows.map((finding, i) => (
                 <FindingRow key={`${finding.type}-${finding.line}-${i}`} finding={finding} />
+              ))}
+              {summaries.map((s) => (
+                <li
+                  key={s.label}
+                  style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-secondary)' }}
+                >
+                  {s.count} {s.label.toLowerCase()} matches, not listed
+                </li>
               ))}
             </ul>
           </div>
