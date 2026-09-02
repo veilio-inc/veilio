@@ -48,6 +48,9 @@ export type SecretType =
   | 'high-entropy-string'
   | 'email'
   | 'private-ip'
+  | 'iban'
+  | 'payment-card'
+  | 'pesel'
 
 export interface SecretFinding {
   type: SecretType
@@ -80,6 +83,136 @@ interface Pattern {
    *  strings and assignments, where blanking the whole match would destroy
    *  structure the model needs (the scheme, host, and variable name). */
   group?: number
+  /**
+   * Structural confirmation, run on the matched value before it is reported.
+   *
+   * Regulated identifiers are digit runs, and a digit run is the single most
+   * common shape in source code — versions, timestamps, ports, hashes. A regex
+   * alone would report all of them. The checksum is what makes the difference
+   * between detection and noise, so it is part of the rule rather than a filter
+   * somebody remembers to apply.
+   */
+  validate?: (value: string) => boolean
+}
+
+// ─── Structural validators ───────────────────────────────────────────────────
+//
+// Every one of these is arithmetic over the value itself. Nothing here infers,
+// models, or consults a list of real-world numbers — which is what lets the
+// engine keep its zero-dependency promise while still catching the material the
+// tool is most often reached for.
+
+/** Digits only, separators removed. */
+function digitsOf(value: string): string {
+  return value.replace(/[^0-9]/g, '')
+}
+
+/** Luhn (mod-10). Payment cards, and a good many national IDs. */
+export function luhnValid(value: string): boolean {
+  const digits = digitsOf(value)
+  if (digits.length < 12) return false
+  let sum = 0
+  let double = false
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48
+    if (double) {
+      d *= 2
+      if (d > 9) d -= 9
+    }
+    sum += d
+    double = !double
+  }
+  return sum % 10 === 0
+}
+
+/**
+ * IBAN mod-97 (ISO 13616). Move the first four characters to the end, map
+ * letters to two-digit numbers, and the whole thing mod 97 must be 1.
+ *
+ * Computed in chunks because the expanded number can exceed 2^53 — doing it in
+ * one `Number()` silently loses precision and starts accepting invalid IBANs,
+ * which is worse than not checking at all.
+ */
+export function ibanValid(value: string): boolean {
+  const compact = value.replace(/[\s-]/g, '').toUpperCase()
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(compact)) return false
+  const rearranged = compact.slice(4) + compact.slice(0, 4)
+  let remainder = 0
+  for (const ch of rearranged) {
+    const mapped = /[0-9]/.test(ch) ? ch : String(ch.charCodeAt(0) - 55)
+    for (const digit of mapped) {
+      remainder = (remainder * 10 + (digit.charCodeAt(0) - 48)) % 97
+    }
+  }
+  return remainder === 1
+}
+
+/**
+ * PESEL — the Polish national identification number.
+ *
+ * Eleven digits: a date, a serial, and a weighted check digit. The date is
+ * checked as well as the checksum, because eleven digits is a common enough
+ * shape in source that the check digit alone leaves too many coincidences.
+ */
+export function peselValid(value: string): boolean {
+  const digits = digitsOf(value)
+  if (digits.length !== 11) return false
+  const weights = [9, 7, 3, 1, 9, 7, 3, 1, 9, 7]
+  let sum = 0
+  for (let i = 0; i < 10; i++) sum += (digits.charCodeAt(i) - 48) * weights[i]
+  if (sum % 10 !== digits.charCodeAt(10) - 48) return false
+
+  // Century is encoded in the month field, which is what makes an arbitrary
+  // eleven-digit run overwhelmingly likely to fail here even when the checksum
+  // happens to pass.
+  const monthField = Number(digits.slice(2, 4))
+  const century = Math.floor(monthField / 20)
+  const month = monthField % 20
+  if (century > 4 || month < 1 || month > 12) return false
+  const day = Number(digits.slice(4, 6))
+  if (day < 1 || day > 31) return false
+  return true
+}
+
+/**
+ * Card numbers that appear in every payments fixture and documentation page.
+ *
+ * Luhn-valid by construction, so the checksum cannot separate them from a real
+ * card. Reporting them on every file is the crying-wolf failure the advisory
+ * panel work exists to remove — the finding that mattered ends up in the same
+ * grey list as ninety that did not.
+ */
+const KNOWN_TEST_PANS: ReadonlySet<string> = new Set([
+  '4111111111111111',
+  '4012888888881881',
+  '4222222222222',
+  '4242424242424242',
+  '4000056655665556',
+  '5555555555554444',
+  '5105105105105100',
+  '2223003122003222',
+  '378282246310005',
+  '371449635398431',
+  '6011111111111117',
+  '6011000990139424',
+  '3056930009020004',
+  '3566002020360505',
+])
+
+/** Issuer prefixes we recognise. A Luhn-valid digit run that begins with none
+ *  of these is far more likely to be an identifier than a card. */
+function looksLikePan(value: string): boolean {
+  const digits = digitsOf(value)
+  if (digits.length < 13 || digits.length > 19) return false
+  if (KNOWN_TEST_PANS.has(digits)) return false
+  const iin =
+    /^4/.test(digits) ||
+    /^5[1-5]/.test(digits) ||
+    /^2[2-7]/.test(digits) ||
+    /^3[47]/.test(digits) ||
+    /^6(?:011|5)/.test(digits) ||
+    /^3(?:0[0-5]|[68])/.test(digits)
+  return iin && luhnValid(digits)
 }
 
 // Patterns are written to be linear-time: no nested quantifiers over the same
@@ -314,6 +447,42 @@ const PATTERNS: Pattern[] = [
     label: 'Email address',
     re: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
   },
+  // ─── Regulated identifiers ────────────────────────────────────────────────
+  //
+  // Not credentials: material a regulation cares about. The engine masks
+  // identifiers bound by a language's grammar, so `const iban = "GB29..."` had
+  // its NAME masked and its VALUE passed through untouched — and this is the
+  // material the tool is most often reached for.
+  //
+  // Structural only. Every one is confirmed by arithmetic over the value, never
+  // by inference, because an ML dependency would cost the zero-dependency
+  // guarantee that is the whole argument for pasting the output into a model.
+  {
+    type: 'iban',
+    severity: 'high',
+    label: 'Bank account number (IBAN)',
+    // Country, check digits, then the account portion, tolerating the spacing
+    // IBANs are conventionally printed with. Bounded repetition: linear.
+    re: /\b[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}\b/g,
+    validate: ibanValid,
+  },
+  {
+    type: 'payment-card',
+    severity: 'medium',
+    label: 'Payment card number',
+    // Deliberately loose, because the validator is the real rule: an issuer
+    // prefix, a plausible length, and Luhn. Encoding that in a regex makes it
+    // unreadable and no more correct.
+    re: /\b[0-9](?:[ -]?[0-9]){11,18}\b/g,
+    validate: looksLikePan,
+  },
+  {
+    type: 'pesel',
+    severity: 'medium',
+    label: 'National identification number (PESEL)',
+    re: /\b[0-9]{11}\b/g,
+    validate: peselValid,
+  },
 ]
 
 /**
@@ -502,6 +671,12 @@ function collectMatches(code: string): RawMatch[] {
         start = m.index + offset
         value = captured
       }
+      // Structural confirmation first. A rule carrying a validator is declaring
+      // its regex to be only a candidate generator — a digit run is the most
+      // common shape in source code, and without the checksum this reports every
+      // timestamp, version and port in the file. An unconfirmed candidate is not
+      // a finding at all: it never reaches the panel, the policy, or the map.
+      if (pattern.validate !== undefined && !pattern.validate(value)) continue
       let verdict = classifyValue(value, assignmentShaped)
       if (verdict === 'placeholder') continue
       // Assignment-shaped findings also get an entropy check: `password: "the
@@ -651,6 +826,9 @@ const TYPE_TOKENS: Record<SecretType, string> = {
   'high-entropy-string': 'SECRET',
   email: 'EMAIL',
   'private-ip': 'PRIVATE_IP',
+  iban: 'IBAN',
+  'payment-card': 'CARD_NUMBER',
+  pesel: 'PESEL',
 }
 
 /** Detect credentials in `code` without modifying it. */
