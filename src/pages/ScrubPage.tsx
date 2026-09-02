@@ -1,9 +1,16 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
-import type { RestoreReport, SecretFinding, SymbolMap, StrippedItem } from '@veilio-inc/engine'
+import { anonymize, restore, measureCommentExposure, ManualMaskError } from '@veilio-inc/engine'
+import type {
+  CommentExposure,
+  RestoreReport,
+  SecretFinding,
+  SymbolMap,
+  StrippedItem,
+} from '@veilio-inc/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import SecretPanel from '../components/SecretPanel.js'
+import CommentNotice from '../components/CommentNotice.js'
 import StrippedPanel from '../components/StrippedPanel.js'
 import RestoreReportPanel from '../components/RestoreReportPanel.js'
 import ManualMarksPanel from '../components/ManualMarksPanel.js'
@@ -16,6 +23,11 @@ import { importErrorMessage } from '../lib/importedMap.js'
 import { exportErrorMessage, MIN_PASSPHRASE_LENGTH } from '../lib/passphrase.js'
 
 type Mode = 'send' | 'restore'
+
+/** Nothing measured yet, and nothing to warn about. Same shape the engine
+ *  returns for input with no comments in it, so the notice has one empty case
+ *  rather than an empty case and a null case. */
+const NO_COMMENTS = { total: 0, inline: 0, characters: 0, severity: 'low' } as const
 
 function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
   if (!msg) return null
@@ -34,6 +46,7 @@ export default function ScrubPage() {
   const [showSave, setShowSave] = useState(false)
   const [showOverlay, setShowOverlay] = useState(false)
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
+  const [commentExposure, setCommentExposure] = useState<CommentExposure>(NO_COMMENTS)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
@@ -49,6 +62,7 @@ export default function ScrubPage() {
     setCurrentMap(result.map)
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
+    setCommentExposure(result.comments)
     // Describes the previous restore; stale the moment we anonymize again.
     setRestoreReport(null)
     setSelection('')
@@ -68,6 +82,7 @@ export default function ScrubPage() {
     setSelection('')
     // Findings describe the anonymize pass; they'd be stale next to a restore.
     setSecretFindings([])
+    setCommentExposure(NO_COMMENTS)
     setInput('')
     setMode('restore')
   }, [input, currentMap, keepDocs])
@@ -81,6 +96,11 @@ export default function ScrubPage() {
       const next = maskSelection({ output, map: currentMap }, term)
       setCurrentMap(next.map)
       setOutput(next.output)
+      // The notice asked for this gesture, so it has to move when the gesture is
+      // made — a warning that reads the same after you act on it teaches that
+      // acting is pointless. Unmasking puts the prose back and it moves the
+      // other way.
+      setCommentExposure(measureCommentExposure(next.output))
       setSelection('')
       showToast(`Masked “${previewTerm(term)}”`)
     } catch (e) {
@@ -101,6 +121,7 @@ export default function ScrubPage() {
       const next = unmaskTerm({ output, map: currentMap }, placeholder)
       setCurrentMap(next.map)
       setOutput(next.output)
+      setCommentExposure(measureCommentExposure(next.output))
       showToast(`Unmasked “${previewTerm(term)}”`)
     },
     [output, currentMap]
@@ -112,6 +133,7 @@ export default function ScrubPage() {
     setInput('')
     setStrippedItems([])
     setSecretFindings([])
+    setCommentExposure(NO_COMMENTS)
     setRestoreReport(null)
     setSelection('')
     showToast('Map cleared')
@@ -314,6 +336,10 @@ export default function ScrubPage() {
             therefore above the copy action — a warning placed after the thing
             it warns about gets read too late. */}
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
+
+        {/* Comment prose is not masked, and the anonymized panel gives no sign
+            of it. Same placement and the same reason: above the copy action. */}
+        {mode === 'send' && <CommentNotice exposure={commentExposure} />}
 
         {/* Main panels */}
         <div

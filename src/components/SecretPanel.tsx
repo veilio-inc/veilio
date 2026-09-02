@@ -1,4 +1,5 @@
 import type { SecretFinding, SecretSeverity } from '@veilio-inc/engine'
+import { SEVERITY_STYLE, severityBadgeStyle } from '../lib/severityStyle.js'
 
 // Credentials are the leak that actually costs money, so this panel sits above
 // the copy action rather than below the output — it has to be read, not
@@ -10,39 +11,6 @@ const SEVERITY_ORDER: SecretSeverity[] = ['critical', 'high', 'medium', 'low']
  *  Twelve example addresses listed individually is what teaches a reader that
  *  this panel is noise; a single line saying "12 email addresses" does not. */
 const COLLAPSE_AFTER = 3
-
-const SEVERITY_STYLE: Record<
-  SecretSeverity,
-  { border: string; background: string; accent: string; label: string }
-> = {
-  critical: {
-    border: 'rgba(220, 76, 70, 0.55)',
-    background: 'rgba(220, 76, 70, 0.09)',
-    accent: 'var(--danger, #DC4C46)',
-    label: 'Critical',
-  },
-  high: {
-    border: 'rgba(217, 137, 104, 0.5)',
-    background: 'rgba(217, 137, 104, 0.09)',
-    accent: 'var(--accent, #D98968)',
-    label: 'High',
-  },
-  medium: {
-    border: 'var(--border)',
-    background: 'var(--bg-elevated)',
-    accent: 'var(--text-secondary)',
-    label: 'Advisory',
-  },
-  // Deliberately the quietest thing on the page: no tint, no accent colour.
-  // These are usually benign, and giving them the visual weight of a credential
-  // is what trained people to skim past the one that mattered.
-  low: {
-    border: 'var(--border)',
-    background: 'transparent',
-    accent: 'var(--text-dim)',
-    label: 'Noted',
-  },
-}
 
 /** What a group of this grade actually contains. Calling an email address a
  *  "credential" is the same overstatement as colouring it red. */
@@ -157,21 +125,7 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
                 flexWrap: 'wrap',
               }}
             >
-              <span
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 10,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  fontWeight: 700,
-                  color: style.accent,
-                  border: `1px solid ${style.border}`,
-                  borderRadius: 20,
-                  padding: '1px 8px',
-                }}
-              >
-                {style.label}
-              </span>
+              <span style={severityBadgeStyle(severity)}>{style.label}</span>
               <strong style={{ fontSize: 13 }}>
                 {items.length} {items.length === 1 ? singular : plural} detected
               </strong>

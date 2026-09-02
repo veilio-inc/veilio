@@ -74,4 +74,15 @@ describe('ScrubPage', () => {
     const btn = screen.getByRole('button', { name: /Anonymize/ })
     expect(btn.hasAttribute('disabled')).toBe(true)
   })
+
+  it('shows no comment notice before anything has been anonymized', () => {
+    // 004-b3 / FR-003 at page level. The notice must be driven by what was
+    // actually measured, not mounted empty and filled in later — an empty
+    // bordered box on first load is the same furniture the FR forbids.
+    // That it appears with the right count is an e2e assertion: jsdom cannot
+    // put text into CodeMirror, and placement relative to the copy action is
+    // the part that matters anyway.
+    renderPage()
+    expect(screen.queryByLabelText('Comment prose')).toBeNull()
+  })
 })
