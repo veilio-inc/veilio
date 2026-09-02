@@ -1,9 +1,16 @@
 import { useState, useCallback } from 'react'
 import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
-import type { RestoreReport, SecretFinding, SymbolMap, StrippedItem } from '@veilio-inc/engine'
+import type {
+  CommentExposure,
+  RestoreReport,
+  SecretFinding,
+  SymbolMap,
+  StrippedItem,
+} from '@veilio-inc/engine'
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import SecretPanel from '../components/SecretPanel.js'
+import CommentNotice from '../components/CommentNotice.js'
 import StrippedPanel from '../components/StrippedPanel.js'
 import RestoreReportPanel from '../components/RestoreReportPanel.js'
 import ManualMarksPanel from '../components/ManualMarksPanel.js'
@@ -16,6 +23,11 @@ import { importErrorMessage } from '../lib/importedMap.js'
 import { exportErrorMessage, MIN_PASSPHRASE_LENGTH } from '../lib/passphrase.js'
 
 type Mode = 'send' | 'restore'
+
+/** Nothing measured yet, and nothing to warn about. Same shape the engine
+ *  returns for input with no comments in it, so the notice has one empty case
+ *  rather than an empty case and a null case. */
+const NO_COMMENTS = { total: 0, inline: 0, characters: 0, severity: 'low' } as const
 
 function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
   if (!msg) return null
@@ -34,6 +46,7 @@ export default function ScrubPage() {
   const [showSave, setShowSave] = useState(false)
   const [showOverlay, setShowOverlay] = useState(false)
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
+  const [commentExposure, setCommentExposure] = useState<CommentExposure>(NO_COMMENTS)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
@@ -45,10 +58,24 @@ export default function ScrubPage() {
 
   const handleAnonymize = useCallback(() => {
     if (!input.trim()) return
-    const result = anonymize(input, { existingMap: currentMap })
+    let result
+    try {
+      result = anonymize(input, { existingMap: currentMap })
+    } catch (e) {
+      // The engine refuses some marks outright, and the marks in play here come
+      // from the map rather than from a gesture just made — so a refusal lands
+      // on the primary action with nothing on screen to explain it. Without
+      // this the button silently does nothing and the page looks broken.
+      showToast(
+        e instanceof ManualMaskError ? e.message : 'Could not anonymize that input.',
+        'error'
+      )
+      return
+    }
     setCurrentMap(result.map)
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
+    setCommentExposure(result.comments)
     // Describes the previous restore; stale the moment we anonymize again.
     setRestoreReport(null)
     setSelection('')
@@ -68,6 +95,7 @@ export default function ScrubPage() {
     setSelection('')
     // Findings describe the anonymize pass; they'd be stale next to a restore.
     setSecretFindings([])
+    setCommentExposure(NO_COMMENTS)
     setInput('')
     setMode('restore')
   }, [input, currentMap, keepDocs])
@@ -78,9 +106,15 @@ export default function ScrubPage() {
     const term = selection.trim()
     if (!term) return
     try {
-      const next = maskSelection({ output, map: currentMap }, term)
+      const next = maskSelection({ output, map: currentMap, comments: commentExposure }, term)
       setCurrentMap(next.map)
       setOutput(next.output)
+      // The notice asked for this gesture, so it has to move when the gesture is
+      // made — a warning that reads the same after you act on it teaches that
+      // acting is pointless. `maskSelection` re-anonymizes, so it already has
+      // the figure; measuring the output a second time would be a second
+      // language detection and a second answer that could disagree with it.
+      setCommentExposure(next.comments)
       setSelection('')
       showToast(`Masked “${previewTerm(term)}”`)
     } catch (e) {
@@ -92,18 +126,19 @@ export default function ScrubPage() {
         'error'
       )
     }
-  }, [selection, output, currentMap])
+  }, [selection, output, currentMap, commentExposure])
 
   const handleUnmask = useCallback(
     (placeholder: string) => {
       const term = currentMap[placeholder]
       if (term === undefined) return
-      const next = unmaskTerm({ output, map: currentMap }, placeholder)
+      const next = unmaskTerm({ output, map: currentMap, comments: commentExposure }, placeholder)
       setCurrentMap(next.map)
       setOutput(next.output)
+      setCommentExposure(next.comments)
       showToast(`Unmasked “${previewTerm(term)}”`)
     },
-    [output, currentMap]
+    [output, currentMap, commentExposure]
   )
 
   const handleClearMap = () => {
@@ -112,6 +147,7 @@ export default function ScrubPage() {
     setInput('')
     setStrippedItems([])
     setSecretFindings([])
+    setCommentExposure(NO_COMMENTS)
     setRestoreReport(null)
     setSelection('')
     showToast('Map cleared')
@@ -314,6 +350,10 @@ export default function ScrubPage() {
             therefore above the copy action — a warning placed after the thing
             it warns about gets read too late. */}
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
+
+        {/* Comment prose is not masked, and the anonymized panel gives no sign
+            of it. Same placement and the same reason: above the copy action. */}
+        {mode === 'send' && <CommentNotice exposure={commentExposure} />}
 
         {/* Main panels */}
         <div

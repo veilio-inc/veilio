@@ -1,9 +1,17 @@
-import { anonymize, STRIPPABLE_TYPES } from '@veilio-inc/engine'
-import type { StrippedItemType, SymbolMap } from '@veilio-inc/engine'
+import { anonymize, measureCommentExposure, STRIPPABLE_TYPES } from '@veilio-inc/engine'
+import type { CommentExposure, StrippedItemType, SymbolMap } from '@veilio-inc/engine'
 
 export interface MarkState {
   output: string
   map: SymbolMap
+  /** How much comment prose the output still carries unmasked.
+   *
+   *  Carried alongside rather than recomputed by the caller: marking a name in
+   *  a comment is the gesture the notice asks for, so the figure has to move
+   *  with it — and `anonymize` already returns the answer for exactly this
+   *  text. Measuring it again would run a second language detection whose
+   *  result could disagree with the one that produced the output. */
+  comments: CommentExposure
 }
 
 /** Mask a span the engine left alone.
@@ -21,7 +29,7 @@ export function maskSelection(state: MarkState, term: string): MarkState {
   if (!trimmed) return state
 
   const result = anonymize(state.output, { existingMap: state.map, manual: [trimmed] })
-  return { output: result.anonymized, map: result.map }
+  return { output: result.anonymized, map: result.map, comments: result.comments }
 }
 
 /** Undo a manual mark: put the text back and drop the entry.
@@ -41,7 +49,11 @@ export function unmaskTerm(state: MarkState, placeholder: string): MarkState {
 
   const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const pattern = new RegExp(`${escaped}(?!\\d)`, 'g')
-  return { output: state.output.replace(pattern, term), map }
+  // Unmasking puts prose back into the text, so the exposure moves the other
+  // way. This path deliberately does not re-anonymize, so it is the one place
+  // that has to measure for itself.
+  const output = state.output.replace(pattern, term)
+  return { output, map, comments: measureCommentExposure(output) }
 }
 
 /** Shorten a term for a toast without hiding what was acted on. */

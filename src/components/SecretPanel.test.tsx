@@ -112,7 +112,12 @@ describe('every grade the engine can emit is renderable', () => {
       finding('email', 'low', 4, 'Email address'),
     ]
     const { container } = render(<SecretPanel findings={all} />)
-    for (const label of ['AWS access key', 'GitHub token', 'Password assignment', 'Email address']) {
+    for (const label of [
+      'AWS access key',
+      'GitHub token',
+      'Password assignment',
+      'Email address',
+    ]) {
       expect(container.textContent, `${label} not rendered`).toContain(label)
     }
   })
