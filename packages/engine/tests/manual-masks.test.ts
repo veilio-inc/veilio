@@ -180,4 +180,94 @@ describe('manual masks', () => {
     expect(anonymized).toContain('__MANUAL__1')
     expect(anonymized).not.toContain('a.c')
   })
+
+  // ─── 004-b3 · US2: marking prose is the way the leak gets closed ───────────
+  //
+  // Story 1 tells the user their comments leave unmasked. That creates an
+  // obligation, and these are the tests that it can be cheaply discharged —
+  // without them the warning is just bad news with nothing to do about it.
+
+  it('masks a term read in a comment everywhere it appears, code included', () => {
+    // The gesture is one selection. What makes it worth making is that it
+    // reaches the whole file: a customer named in a note is usually also a
+    // variable, a table or a string somewhere below it.
+    const code = [
+      '// Workaround for the Contoso Health outage on the 14th.',
+      'const contosoHealthRetries = 3',
+      'log("Contoso Health degraded")',
+    ].join('\n')
+    const { anonymized, map } = anonymize(code, { manual: ['Contoso Health'] })
+
+    expect(anonymized).not.toContain('Contoso Health')
+    expect(anonymized.match(/__MANUAL__1/g)).toHaveLength(2)
+    expect(map['__MANUAL__1']).toBe('Contoso Health')
+  })
+
+  it('survives export and re-import of the map', () => {
+    // A .veilio file is JSON on the way out and untrusted JSON on the way back.
+    // Marks live in the map precisely so nothing has to be kept beside it, which
+    // only holds if the map survives the trip through text.
+    const first = anonymize('// escalated by Kowalska, acct 88412037', {
+      manual: ['Kowalska', '88412037'],
+    })
+    const reimported = JSON.parse(JSON.stringify(first.map))
+
+    const second = anonymize('// Kowalska again, still acct 88412037', {
+      existingMap: reimported,
+    })
+    expect(second.anonymized).not.toContain('Kowalska')
+    expect(second.anonymized).not.toContain('88412037')
+    expect(restore(second.anonymized, second.map, { strip: 'none' })).toMatchObject({
+      restored: '// Kowalska again, still acct 88412037',
+    })
+  })
+
+  it('refuses to mask a language keyword', () => {
+    // Spec edge case. Manual marks match literal text anywhere, which is the
+    // feature — and is why this one is catastrophic rather than merely wrong.
+    // `if` is an ordinary English word inside a comment; marking it there
+    // rewrites every `if` in the code too and the file stops compiling.
+    expect(() =>
+      anonymize('if (ready) { ship() } // check if the account is ready', { manual: ['if'] })
+    ).toThrow(ManualMaskError)
+  })
+
+  it('leaves the source untouched when it refuses a keyword', () => {
+    const code = 'if (ready) { ship() } // check if ready'
+    try {
+      anonymize(code, { manual: ['if'] })
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManualMaskError)
+      expect((e as ManualMaskError).term).toBe('if')
+      expect((e as ManualMaskError).message).toMatch(/keyword/i)
+    }
+    // The refusal is the whole protection: a partially applied mask would be
+    // worse than none, since the file would be broken and the map would say so.
+    // Without the mark the keyword is left alone, the way every keyword is.
+    const { anonymized, map } = anonymize(code)
+    expect(anonymized).toContain('if (')
+    expect(anonymized).toContain('// check if ready')
+    expect(manualTermsIn(map)).toEqual([])
+  })
+
+  it('judges keywords by the language actually in play', () => {
+    // `def` is a keyword in Python and an ordinary word elsewhere — a column
+    // name, an abbreviation in a note. A single hard-coded keyword list would
+    // refuse the mark that a TypeScript user legitimately needs.
+    expect(() => anonymize('def settle(cart):\n    pass', { manual: ['def'] })).toThrow(
+      ManualMaskError
+    )
+    expect(anonymize('const x = 1 // def see the notes', { manual: ['def'] }).map).toMatchObject({
+      __MANUAL__1: 'def',
+    })
+  })
+
+  it('still masks a term that merely contains a keyword', () => {
+    // The check is on the marked term, not on what it looks like it contains.
+    // `notify` is not `if`, and refusing it would make the feature unusable on
+    // the ordinary English that comments are written in.
+    const { anonymized } = anonymize('// notify Kowalska', { manual: ['notify'] })
+    expect(anonymized).toContain('__MANUAL__1')
+  })
 })

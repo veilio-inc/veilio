@@ -2,13 +2,55 @@
 // types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
 import type { Language, LanguageOption } from './languages.js'
-import type { SecretFinding, SecretPolicy } from './secrets.js'
+import type { SecretFinding, SecretPolicy, SecretSeverity } from './secrets.js'
 
 // ─── Engine types ────────────────────────────────────────────────────────────
 
 export type SymbolMap = Record<string, string> // { "__P1__": "UserAuthService" }
 
 export type IdentifierRole = 'class' | 'function' | 'package' | 'variable' | 'string'
+
+/** How much comment prose leaves as written.
+ *
+ *  The engine masks identifiers, never meaning — so a customer, an incident
+ *  number or a colleague named in a comment is copied out exactly as typed, and
+ *  nothing in the anonymized text says so. Reporting it here rather than in a UI
+ *  is deliberate: the CLI and MCP server paste the same text into the same
+ *  models, and a warning only the web app knows about is not a warning.
+ *
+ *  This is a measurement, not a judgement. Deciding whether any of these words
+ *  is sensitive would mean knowing what they mean, which is the one thing the
+ *  engine refuses to do. */
+export interface CommentExposure {
+  /** Comment blocks whose text leaves verbatim.
+   *
+   *  Consecutive line comments separated only by whitespace count as one block,
+   *  so a five-line `//` header counts the way a reader counts it — once — and
+   *  agrees with the block-comment header, which is one span already. Blocks
+   *  with no letters or digits in them (a `// ─────` rule) carry no prose and
+   *  are not counted at all. */
+  total: number
+  /** Of those, how many sit after the file's first line of code.
+   *
+   *  Position is the only structural thing that separates a banner from a note.
+   *  Licence headers and file preambles sit above the code, are present in most
+   *  files and are almost never sensitive; warning about them at the same volume
+   *  as a comment written next to a function is how a signal becomes wallpaper. */
+  inline: number
+  /** Characters of comment text leaving unmasked, delimiters included — they
+   *  leave too. Whitespace around each span is not counted, and neither are
+   *  placeholders already standing in for a marked term: those leave masked,
+   *  and counting them would report the same exposure before and after the
+   *  mark that reduced it. */
+  characters: number
+  /** Grade, on the same scale as `SecretFinding.severity` so a reader is not
+   *  asked to learn a second one.
+   *
+   *  Capped at 'medium' on purpose. The engine has no evidence that any of this
+   *  prose is sensitive, and dressing an unread comment as a credential is
+   *  exactly the crying wolf that made the old panel skippable. */
+  severity: Extract<SecretSeverity, 'low' | 'medium'>
+}
 
 export interface AnonymizeResult {
   anonymized: string
@@ -20,6 +62,9 @@ export interface AnonymizeResult {
    *  `redacted` flag is true were replaced irreversibly and are absent from
    *  `map`; nothing here ever contains a full secret value. */
   secrets: SecretFinding[]
+  /** Comment prose that was left as written. The largest thing this engine
+   *  does not mask, stated rather than left to be discovered. */
+  comments: CommentExposure
 }
 
 export type StrippedItemType =

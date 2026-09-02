@@ -1,6 +1,7 @@
 import type {
   AnonymizeOptions,
   AnonymizeResult,
+  CommentExposure,
   CustomRuleReplace,
   CustomRuleWhitelist,
   IdentifierRole,
@@ -19,6 +20,7 @@ import {
   resolveLanguage,
   type CommentSyntax,
   type Language,
+  type LanguageOption,
 } from './languages.js'
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
@@ -289,6 +291,95 @@ function blankComments(code: string, language: Language = DEFAULT_LANGUAGE): str
     .join('')
 }
 
+// ─── Comment exposure ────────────────────────────────────────────────────────
+//
+// The engine's largest silent leak, made loud. Everything above masks
+// identifiers; comment prose is deliberately left alone because masking it
+// produces ciphertext that reads as obfuscation. That trade is right, and it is
+// also invisible — the anonymized text looks handled, and the sentence naming a
+// customer went out with it.
+//
+// So: count it and say so. What is NOT here is as important as what is. There is
+// no attempt to decide whether a comment is sensitive, because deciding that
+// means knowing what its words mean, and the day this engine needs a model to
+// tell it that is the day the supply-chain argument for pasting its output into
+// one stops working. Grading is structural — how many, how much, and whether
+// they sit above the code or inside it.
+
+/** A block carries prose if there is anything in it a reader would read. Purely
+ *  decorative comments — a rule of dashes, a row of box characters — are not a
+ *  leak, and counting them is how the count stops being believed. */
+const COMMENT_PROSE = /[\p{L}\p{N}]/u
+
+interface OpenBlock {
+  characters: number
+  prose: boolean
+  afterCode: boolean
+}
+
+/** Summarize already-tokenized segments. Shares the scanner with masking rather
+ *  than adding a second one, so the count can never describe different spans
+ *  from the ones actually left verbatim. */
+function summarizeComments(segments: readonly Segment[]): CommentExposure {
+  let total = 0
+  let inline = 0
+  let characters = 0
+  let codeSeen = false
+  let open: OpenBlock | null = null
+
+  const close = (): void => {
+    if (open === null) return
+    // Whitespace and decoration do not count as a leak, so a block that turned
+    // out to hold neither letters nor digits is dropped entirely — not counted
+    // and not charged for its characters.
+    if (open.prose) {
+      total++
+      characters += open.characters
+      if (open.afterCode) inline++
+    }
+    open = null
+  }
+
+  for (const segment of segments) {
+    if (segment.isComment) {
+      // Placeholders sitting in a comment are the marks the user already made.
+      // They leave, but they leave masked, so charging for them would report
+      // the same exposure before and after the gesture that fixed it — and a
+      // comment reduced to nothing but placeholders drops out entirely, which
+      // is the honest answer: there is no prose left in it to leak.
+      const unmasked = segment.text.replace(PLACEHOLDER_SCAN, '')
+      open ??= { characters: 0, prose: false, afterCode: codeSeen }
+      open.characters += unmasked.trim().length
+      open.prose ||= COMMENT_PROSE.test(unmasked)
+      continue
+    }
+    // The gap between two consecutive line comments is a bare newline. Treating
+    // it as code would report a five-line header as five separate comments.
+    if (segment.text.trim() === '') continue
+    close()
+    codeSeen = true
+  }
+  close()
+
+  return { total, inline, characters, severity: inline > 0 ? 'medium' : 'low' }
+}
+
+/**
+ * How much comment prose this source would send unmasked.
+ *
+ * `anonymize` returns the same measurement for the text it produced, which is
+ * the number to prefer. This entry point exists for the moments after that,
+ * when a manual mark has just moved a name out of a comment — or an unmark has
+ * put one back — and the figure on screen would otherwise describe the previous
+ * version of the text.
+ */
+export function measureCommentExposure(
+  code: string,
+  language: LanguageOption = 'auto'
+): CommentExposure {
+  return summarizeComments(tokenizeForMasking(code, resolveLanguage(code, language)))
+}
+
 // ─── Role classification ─────────────────────────────────────────────────────
 //
 // Lexical, per-occurrence role detection. An identifier seen in several roles
@@ -336,7 +427,8 @@ function applyManualMasks(
   terms: readonly string[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
-  namedCounters: Record<string, number>
+  namedCounters: Record<string, number>,
+  language: Language
 ): string {
   const wanted = [...new Set(terms)].filter((t) => t.trim().length > 0)
   if (wanted.length === 0) return code
@@ -357,6 +449,18 @@ function applyManualMasks(
       throw new ManualMaskError(
         term,
         'That is already a placeholder. Marking it would map one placeholder to another, and the original name would not survive restore.'
+      )
+    }
+    // Manual marks match literal text anywhere, which is the whole feature —
+    // and is why a keyword is catastrophic rather than merely wrong. Marking a
+    // word read in a comment (`if`, `class`, `return` are ordinary English)
+    // rewrites every keyword of that name in the code as well, and the file
+    // stops parsing. Refused rather than fixed up, because there is no reading
+    // of "mask this" that survives replacing the language's own grammar.
+    if (isKeyword(term, language)) {
+      throw new ManualMaskError(
+        term,
+        `“${term}” is a keyword in this language. Masking it would replace it everywhere in the code, not just where you read it, and the result would not compile.`
       )
     }
     if (reverseExisting[term]) continue
@@ -628,7 +732,8 @@ export function anonymize(
     [...manualTermsIn(existingMap), ...(opts.manual ?? [])],
     map,
     reverseExisting,
-    namedCounters
+    namedCounters,
+    language
   )
 
   const identifiers = extractIdentifiers(source, language)
@@ -718,9 +823,10 @@ export function anonymize(
           return pattern === null ? out : out.replace(pattern, (m) => reverseExisting[m] ?? m)
         }
 
-  const anonymized = tokenizeForMasking(source, language)
-    .map((s) => (s.isComment ? s.text : substitute(s.text)))
-    .join('')
+  // One tokenize pass feeds both the substitution and the exposure count, so
+  // the spans reported are by construction the spans left verbatim.
+  const segments = tokenizeForMasking(source, language)
+  const anonymized = segments.map((s) => (s.isComment ? s.text : substitute(s.text))).join('')
 
   return {
     anonymized,
@@ -728,6 +834,10 @@ export function anonymize(
     identifierCount: Object.keys(map).length,
     language,
     secrets: scan.findings,
+    // Measured on `source` — post-redaction and post-manual-mask — because that
+    // is the text whose comments are copied into `anonymized`. Measuring the
+    // raw input would keep charging for a name the user has already marked.
+    comments: summarizeComments(segments),
   }
 }
 
