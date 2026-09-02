@@ -40,6 +40,26 @@ jobs:
       - name: Test
         run: npm test
 
+      # The three packages under packages/ each own a vitest config and are run
+      # by their own scripts, not by the root vitest above — which excludes
+      # packages/** precisely so a package is tested against the config it was
+      # written against.
+      #
+      # Built first, and in dependency order, because two of them are consumed
+      # as build output rather than as source: the app imports the engine's
+      # dist, and packages/mcp imports `@veilio-inc/cli/store`, which resolves
+      # through the CLI's exports map into packages/cli/dist. `npm ci` builds
+      # only the engine (see the root postinstall), so without this step the MCP
+      # typecheck fails on a module that genuinely exists.
+      - name: Build packages
+        run: npm run build:packages
+
+      - name: Typecheck packages
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Test packages
+        run: npm run test --workspaces --if-present
+
       - name: Build
         run: npm run build
         env:

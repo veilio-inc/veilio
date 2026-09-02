@@ -1,0 +1,125 @@
+name: Publish CLI + MCP server
+
+# Changesets owns @veilio-inc/cli and @veilio-inc/mcp. @veilio-inc/engine is
+# owned by semantic-release (.releaserc.js, publish-engine.yml) and is named in
+# .changeset/config.json `ignore`, so the two release tools cannot both claim a
+# package. See .changeset/README.md for why the split exists.
+#
+# Two-step, and the second step is the one that publishes:
+#
+#   1. A push to main carrying changeset files opens (or updates) a "Version
+#      Packages" pull request — version bumps and CHANGELOG entries, nothing
+#      published.
+#   2. Merging that PR runs this workflow again, finds no changesets left, and
+#      runs `npm run release`.
+#
+# NOTHING PUBLISHES YET. Both manifests are still `private: true`, and
+# `changeset publish` skips a private package without comment. Flipping that
+# field is what arms this workflow, and it arms it for the NEXT Version Packages
+# merge rather than on the commit that flips it — so read docs/PUBLISHING.md
+# before flipping, not after.
+#
+# `paths` is deliberately absent. The engine's workflow can scope itself to
+# packages/engine/** because its trigger is a code change; this one triggers on
+# a merged version PR, which touches package.json and CHANGELOG.md files that no
+# useful path filter distinguishes from any other edit to them.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  # Never two release runs against main at once: the second would compute its
+  # versions from a tree the first has already moved.
+  group: publish-tools
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Same manual gate as the engine: an automated version bump still has to be
+    # a human decision to ship.
+    environment: release
+    permissions:
+      contents: write # tags, and the version commit on the release PR branch
+      pull-requests: write # opens and updates the Version Packages PR
+      id-token: write # OIDC trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # 24, not the engine workflow's 22. Both tools declare `engines: >=24` and
+      # use Node APIs that floor there, so publishing from 22 would be testing a
+      # runtime neither package claims to support.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # OIDC trusted publishing needs a recent npm CLI. Pinned to a major for
+      # the same reason publish-engine.yml pins it: a release pipeline should not
+      # adopt breaking CLI changes on the day they ship.
+      - name: Update npm
+        run: npm install -g npm@12
+
+      - run: npm ci
+
+      # Each package's own `prepublishOnly` re-runs clean + typecheck + test +
+      # build immediately before its tarball is made, so this is not the only
+      # thing standing between a broken tree and the registry. It is the thing
+      # that makes a broken tree fail HERE, in a step named after what broke,
+      # rather than inside `changeset publish` after the first package is
+      # already up.
+      - name: Build, typecheck and test the packages
+        run: |
+          npm run build:packages
+          npm run typecheck --workspaces --if-present
+          npm run test --workspaces --if-present
+
+      # Fail, not warn, if either tarball would ship something outside the
+      # allowlist — the same check publish-engine.yml runs, for the same reason:
+      # the file list does not depend on the version, so it can be verified
+      # before anything is versioned.
+      - name: Verify tarballs contain only allowlisted files
+        run: |
+          for pkg in cli mcp; do
+            ( cd "packages/$pkg" && npm pack --dry-run --json | node -e '
+              const allowed = /^dist\//
+              const named = /^(README\.md|LICENSE|CHANGELOG\.md|package\.json)$/
+              const raw = JSON.parse(require("fs").readFileSync(0, "utf8"))
+              const [pkg] = Array.isArray(raw) ? raw : Object.values(raw)
+              if (!pkg || !Array.isArray(pkg.files)) {
+                console.error("Unrecognised `npm pack --json` output; refusing to publish unchecked.")
+                process.exit(1)
+              }
+              const bad = pkg.files.map(f => f.path).filter(p => !allowed.test(p) && !named.test(p))
+              if (bad.length) {
+                console.error(`Unexpected files in ${pkg.name}:`, bad)
+                process.exit(1)
+              }
+              // An empty dist is the failure this repo has already had once: the
+              // manifest ships `dist`, the directory is gitignored, and nothing
+              // built it. The tarball uploads fine and the binary is missing.
+              if (!pkg.files.some(f => allowed.test(f.path))) {
+                console.error(`${pkg.name} would ship no dist/ at all.`)
+                process.exit(1)
+              }
+              console.log(`${pkg.name} OK — ${pkg.files.length} allowlisted files.`)
+            ' )
+          done
+
+      - name: Version PR, or publish a merged one
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: npm run version-packages
+          publish: npm run release
+          title: 'chore: version the CLI and MCP server'
+          commit: 'chore: version the CLI and MCP server'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
