@@ -66,25 +66,52 @@ describe('CommentNotice', () => {
     expect(body.textContent).toMatch(/delete the comment/i)
   })
 
-  it('says where the comments are when only some sit beside code', () => {
+  it('says where the comments are when only some sit inside the body', () => {
     const source = ['// Copyright 2026 Veilio', 'const a = one() // note about Contoso'].join('\n')
     render(<CommentNotice exposure={exposureOf(source)} />)
-    expect(screen.getByText(/2 comments, 1 of them beside code/)).toBeTruthy()
+    expect(screen.getByText(/2 comments, 1 inside the body/)).toBeTruthy()
   })
 
-  it('says a licence header is above the code, and grades it quietly', () => {
+  it('says a licence header is above the code', () => {
     // Edge case from the spec: a header is in nearly every file and is almost
     // never sensitive. Same weight as an incident note is how this panel becomes
-    // the next thing users learn to ignore.
+    // the next thing users learn to ignore — so the difference is carried by the
+    // wording and by how loud the panel looks, not by a word.
     const source = ['// Copyright 2026 Veilio', '// See LICENSE.', 'const a = one()'].join('\n')
     render(<CommentNotice exposure={exposureOf(source)} />)
     expect(screen.getByText(/1 comment above the code/)).toBeTruthy()
-    expect(screen.getByText('Noted')).toBeTruthy()
   })
 
-  it('grades a comment beside code as advisory', () => {
+  it('wears no grade badge', () => {
+    // Measured over this repository's own sources, every commented file grades
+    // `medium`. A badge that reads "Advisory" on every paste is furniture, which
+    // is exactly what 001-b1 removed from the panel beside this one; putting it
+    // back here under a different heading would undo that spec.
     render(<CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />)
-    expect(screen.getByText('Advisory')).toBeTruthy()
+    expect(screen.queryByText('Advisory')).toBeNull()
+    expect(screen.queryByText('Noted')).toBeNull()
+  })
+
+  it('looks quieter for a header than for a note in the body', () => {
+    // The grade did not disappear, it stopped using words. A header-only file
+    // gets no tint at all; comments in the body get the elevated surface.
+    const header = render(
+      <CommentNotice exposure={exposureOf('// Copyright 2026 Veilio\nconst a = one()')} />
+    ).container.querySelector('section')
+    cleanup()
+    const body = render(
+      <CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />
+    ).container.querySelector('section')
+
+    expect(header?.getAttribute('style')).not.toBe(body?.getAttribute('style'))
+  })
+
+  it('announces changes without interrupting', () => {
+    // Marking a name in a comment is the gesture this panel asks for, and a
+    // screen-reader user needs to know the figure moved. `polite` waits for a
+    // pause; `alert` would cut in on almost every paste.
+    render(<CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />)
+    expect(screen.getByLabelText('Comment prose').getAttribute('aria-live')).toBe('polite')
   })
 
   it('never interrupts a screen reader', () => {

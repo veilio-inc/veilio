@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { anonymize, restore, measureCommentExposure, ManualMaskError } from '@veilio-inc/engine'
+import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
 import type {
   CommentExposure,
   RestoreReport,
@@ -58,7 +58,20 @@ export default function ScrubPage() {
 
   const handleAnonymize = useCallback(() => {
     if (!input.trim()) return
-    const result = anonymize(input, { existingMap: currentMap })
+    let result
+    try {
+      result = anonymize(input, { existingMap: currentMap })
+    } catch (e) {
+      // The engine refuses some marks outright, and the marks in play here come
+      // from the map rather than from a gesture just made — so a refusal lands
+      // on the primary action with nothing on screen to explain it. Without
+      // this the button silently does nothing and the page looks broken.
+      showToast(
+        e instanceof ManualMaskError ? e.message : 'Could not anonymize that input.',
+        'error'
+      )
+      return
+    }
     setCurrentMap(result.map)
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
@@ -93,14 +106,15 @@ export default function ScrubPage() {
     const term = selection.trim()
     if (!term) return
     try {
-      const next = maskSelection({ output, map: currentMap }, term)
+      const next = maskSelection({ output, map: currentMap, comments: commentExposure }, term)
       setCurrentMap(next.map)
       setOutput(next.output)
       // The notice asked for this gesture, so it has to move when the gesture is
       // made — a warning that reads the same after you act on it teaches that
-      // acting is pointless. Unmasking puts the prose back and it moves the
-      // other way.
-      setCommentExposure(measureCommentExposure(next.output))
+      // acting is pointless. `maskSelection` re-anonymizes, so it already has
+      // the figure; measuring the output a second time would be a second
+      // language detection and a second answer that could disagree with it.
+      setCommentExposure(next.comments)
       setSelection('')
       showToast(`Masked “${previewTerm(term)}”`)
     } catch (e) {
@@ -112,19 +126,19 @@ export default function ScrubPage() {
         'error'
       )
     }
-  }, [selection, output, currentMap])
+  }, [selection, output, currentMap, commentExposure])
 
   const handleUnmask = useCallback(
     (placeholder: string) => {
       const term = currentMap[placeholder]
       if (term === undefined) return
-      const next = unmaskTerm({ output, map: currentMap }, placeholder)
+      const next = unmaskTerm({ output, map: currentMap, comments: commentExposure }, placeholder)
       setCurrentMap(next.map)
       setOutput(next.output)
-      setCommentExposure(measureCommentExposure(next.output))
+      setCommentExposure(next.comments)
       showToast(`Unmasked “${previewTerm(term)}”`)
     },
-    [output, currentMap]
+    [output, currentMap, commentExposure]
   )
 
   const handleClearMap = () => {

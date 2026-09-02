@@ -4,9 +4,13 @@ import { maskSelection, unmaskTerm, previewTerm, stripOption } from './manualMar
 
 const SOURCE = '// escalated by Kowalska, acct 88412037\nfunction settle(rate) { return rate }'
 
+/** Nothing measured. These cases are about the placeholder substitution, and
+ *  `unmaskTerm` recomputes the exposure from the output it produces anyway. */
+const NO_COMMENTS = { total: 0, inline: 0, characters: 0, severity: 'low' } as const
+
 function anonymized() {
-  const { anonymized, map } = anonymize(SOURCE)
-  return { output: anonymized, map }
+  const { anonymized, map, comments } = anonymize(SOURCE)
+  return { output: anonymized, map, comments }
 }
 
 describe('maskSelection', () => {
@@ -85,6 +89,7 @@ describe('unmaskTerm', () => {
     const state = {
       output: 'a = __MANUAL__1; b = __MANUAL__10;',
       map: { __MANUAL__1: 'first', __MANUAL__10: 'tenth' },
+      comments: NO_COMMENTS,
     }
     const next = unmaskTerm(state, '__MANUAL__1')
 
@@ -96,6 +101,7 @@ describe('unmaskTerm', () => {
     const state = {
       output: '__MANUAL__1 and __MANUAL__1 again',
       map: { __MANUAL__1: 'Kowalska' },
+      comments: NO_COMMENTS,
     }
 
     expect(unmaskTerm(state, '__MANUAL__1').output).toBe('Kowalska and Kowalska again')

@@ -73,13 +73,26 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 
 ## API
 
-- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, secrets }`
+- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, secrets, comments }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
   - `options.style` — `'roles'` (default) | `'plain'` for legacy `__P<n>__`
   - `options.existingMap` — continue numbering from a previous session
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
+  - `comments` — `{ total, inline, characters, severity }`: how much comment
+    prose left **unmasked**. Comments are prose and are deliberately not masked,
+    which makes this the largest thing the engine does not do for you — reported
+    rather than left to be discovered. `inline` counts blocks sitting after the
+    file's first line of code; a licence header above it grades `low`, anything
+    in the body grades `medium`, and it never goes higher: the engine cannot
+    read the prose, so it never claims a comment *is* sensitive. Consecutive
+    line comments count as one block; blocks with no letters or digits in them,
+    and placeholders standing in for terms already marked, are not counted.
+  - **Throws `ManualMaskError`** when a term in `options.manual` scans as a
+    credential, is already a placeholder, or is a keyword in the resolved
+    language. Marks replayed from `existingMap` never throw — a mark made in one
+    language must not make a file in another language impossible to anonymize.
 - `restore(text, map)` → `{ restored, strippedItems, strippedCount, report }`
   - `report` — `{ resolved, missing, unresolved }`: which placeholders came back,
     which never appeared, and which placeholder-shaped tokens the map cannot
@@ -110,9 +123,25 @@ given it. Marks are stored in the map under `__MANUAL__n`, which means
 import and sync without a second store. Pass `manualTermsIn(previousMap)` back
 in, or just reuse the map as `existingMap`, and prior marks re-apply.
 
-A term that scans as a credential is refused with a `ManualMaskError`: a manual
-mask is reversible and is written to the map, so masking a live key would
-persist the secret. Credentials take the one-way redaction path instead.
+Three kinds of term are refused with a `ManualMaskError`:
+
+- **A credential.** A manual mask is reversible and is written to the map, so
+  masking a live key would persist the secret. Credentials take the one-way
+  redaction path instead.
+- **An existing placeholder.** Mapping one placeholder to another survives
+  `anonymize` and then loses the real name on `restore`, which is a single pass.
+- **A keyword in the resolved language.** Marks match literal text anywhere,
+  which is the feature — and is why this case is catastrophic rather than merely
+  wrong: marking `if` because you read it in a comment rewrites every `if` in the
+  code and the file stops compiling.
+
+A mark **replayed from `existingMap`** is never refused for being a keyword. A
+map outlives the file it was made against — `def` is an ordinary word in a
+TypeScript comment and is Python's grammar — so a stale mark is skipped, not
+thrown on. It stays in the map and applies again where it is valid.
+- `measureCommentExposure(code, language?)` → `CommentExposure` — the same
+  measurement `anonymize` returns, for text it did not produce (after a manual
+  mark is undone, say)
 - `detectSecrets(code)` → `SecretFinding[]` — scan without modifying
 - `scanSecrets(code, policy?)` → `{ findings, code }`
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`

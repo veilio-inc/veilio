@@ -311,6 +311,22 @@ function blankComments(code: string, language: Language = DEFAULT_LANGUAGE): str
  *  leak, and counting them is how the count stops being believed. */
 const COMMENT_PROSE = /[\p{L}\p{N}]/u
 
+/** Tokens this engine minted, and only those. `PLACEHOLDER_SCAN` also matches
+ *  `__GNUC__` and `__init__`, which are somebody's code and do leave unmasked —
+ *  excluding them would under-report, and under-reporting is the direction that
+ *  reassures wrongly. Every placeholder we mint carries a counter; redaction
+ *  tokens carry the prefix instead. */
+const MASKED_TOKEN = new RegExp(
+  `(?<![a-zA-Z0-9_$])(?:__[A-Z][A-Z0-9_]*__\\d+|${REDACTION_PREFIX}[A-Z0-9_]*__)(?![a-zA-Z0-9_$])`,
+  'g'
+)
+
+/** Two newlines with only whitespace between them — an empty line. */
+const BLANK_LINE = /\n[ \t]*\n/
+
+/** A leading `#!` line, plus whatever whitespace follows it, and nothing else. */
+const SHEBANG_ONLY = /^\s*#![^\n]*\s*$/
+
 interface OpenBlock {
   characters: number
   prose: boolean
@@ -347,15 +363,31 @@ function summarizeComments(segments: readonly Segment[]): CommentExposure {
       // the same exposure before and after the gesture that fixed it — and a
       // comment reduced to nothing but placeholders drops out entirely, which
       // is the honest answer: there is no prose left in it to leak.
-      const unmasked = segment.text.replace(PLACEHOLDER_SCAN, '')
+      const unmasked = segment.text.replace(MASKED_TOKEN, '')
       open ??= { characters: 0, prose: false, afterCode: codeSeen }
-      open.characters += unmasked.trim().length
+      // Per line, not per segment. A block comment is one segment carrying its
+      // own newlines and ` * ` gutter, where the same content written as `//`
+      // lines is several segments whose indentation was never included — count
+      // the segment whole and the block reads ~30% larger for saying the same
+      // thing, which makes the number about syntax rather than about exposure.
+      open.characters += unmasked.split('\n').reduce((n, line) => n + line.trim().length, 0)
       open.prose ||= COMMENT_PROSE.test(unmasked)
       continue
     }
-    // The gap between two consecutive line comments is a bare newline. Treating
-    // it as code would report a five-line header as five separate comments.
-    if (segment.text.trim() === '') continue
+    if (segment.text.trim() === '') {
+      // The gap between two consecutive line comments is a bare newline, and
+      // treating it as code would report a five-line header as five separate
+      // comments. A BLANK LINE is different: it is how a writer separates two
+      // notes about two things, and merging across it under-reports — three
+      // notes announced as one, in the direction that reassures.
+      if (!BLANK_LINE.test(segment.text)) continue
+      close()
+      continue
+    }
+    // A shebang is not a comment in most of these languages, so it would read as
+    // the file's first code and demote the licence header beneath it to "inside
+    // the body". CLI entry points are exactly the files that carry one.
+    if (!codeSeen && SHEBANG_ONLY.test(segment.text)) continue
     close()
     codeSeen = true
   }
@@ -424,15 +456,23 @@ export class ManualMaskError extends Error {
  *  here; there is nothing left for the user to usefully mark. */
 function applyManualMasks(
   code: string,
-  terms: readonly string[],
+  requested: readonly string[],
+  fromMap: readonly string[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
   namedCounters: Record<string, number>,
   language: Language
 ): string {
-  const wanted = [...new Set(terms)].filter((t) => t.trim().length > 0)
+  // Replayed means "came from the map and was not asked for again". Deduping the
+  // two lists into one and testing membership in the map would exempt a term the
+  // user is marking right now just because a prior session had marked it — the
+  // way round the refusal, reachable by marking the same word twice.
+  const requestedNow = new Set(requested)
+  const replayed = new Set(fromMap.filter((t) => !requestedNow.has(t)))
+  const wanted = [...new Set([...fromMap, ...requested])].filter((t) => t.trim().length > 0)
   if (wanted.length === 0) return code
 
+  const applicable: string[] = []
   for (const term of wanted) {
     if (hasBlockingSecrets(detectSecrets(term))) {
       throw new ManualMaskError(
@@ -457,12 +497,22 @@ function applyManualMasks(
     // rewrites every keyword of that name in the code as well, and the file
     // stops parsing. Refused rather than fixed up, because there is no reading
     // of "mask this" that survives replacing the language's own grammar.
+    //
+    // Only for a term being marked NOW. Whether a word is a keyword depends on
+    // the language, and a map outlives the file it was made against: `def` is
+    // markable in a TypeScript comment and is Python's grammar, and a map
+    // carrying that mark is a normal artifact — saved, exported, synced. Throwing
+    // on replay would turn it into a file that cannot be anonymized at all, which
+    // is a worse outcome than the mark that no longer applies. A stale mark
+    // degrades; it does not detonate.
     if (isKeyword(term, language)) {
+      if (replayed.has(term)) continue
       throw new ManualMaskError(
         term,
         `“${term}” is a keyword in this language. Masking it would replace it everywhere in the code, not just where you read it, and the result would not compile.`
       )
     }
+    applicable.push(term)
     if (reverseExisting[term]) continue
     const n = (namedCounters[MANUAL_BASE] ?? 0) + 1
     namedCounters[MANUAL_BASE] = n
@@ -471,11 +521,13 @@ function applyManualMasks(
     reverseExisting[term] = placeholder
   }
 
+  if (applicable.length === 0) return code
+
   // Placeholder-shaped spans are matched FIRST and passed through untouched, so
   // a term can never match inside one. Without this, marking `FN` rewrites the
   // middle of `__FN__1` and produces `____MANUAL__1__1` — the UI re-anonymizes
   // its own output, so the text being masked is full of placeholders by then.
-  const ordered = wanted.slice().sort((a, b) => b.length - a.length)
+  const ordered = applicable.slice().sort((a, b) => b.length - a.length)
   const pattern = new RegExp(
     `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
     'g'
@@ -729,7 +781,8 @@ export function anonymize(
   // re-applied so a mark made in an earlier pass survives the round trip.
   const source = applyManualMasks(
     redacted,
-    [...manualTermsIn(existingMap), ...(opts.manual ?? [])],
+    opts.manual ?? [],
+    manualTermsIn(existingMap),
     map,
     reverseExisting,
     namedCounters,

@@ -190,9 +190,37 @@ describe('comment exposure — one block, not one per line', () => {
     expect(anonymize(source).comments.total).toBe(1)
   })
 
-  it('keeps a header with a blank line in it as one comment', () => {
-    const source = `// Copyright 2026 Veilio\n\n// See LICENSE.\nconst orderTotal = 1`
+  it('splits comments separated by a blank line', () => {
+    // A blank line is how a writer separates two notes about two things.
+    // Merging across it announces three separate leaks as one, which is
+    // under-reporting in the direction that reassures — the worst direction for
+    // a feature whose entire value is a count somebody believes.
+    const source = [
+      '// note about the Contoso account',
+      '',
+      '// note about Maria',
+      '',
+      '// note about INC-4471',
+      'const orderTotal = 1',
+    ].join('\n')
+    expect(anonymize(source).comments.total).toBe(3)
+  })
+
+  it('does not split a header on a bare comment marker', () => {
+    // `//` on its own is a blank line INSIDE a comment block, not between two.
+    // Licence headers are written this way constantly.
+    const source = `// Copyright 2026 Veilio\n//\n// See LICENSE.\nconst orderTotal = 1`
     expect(anonymize(source).comments.total).toBe(1)
+  })
+
+  it('does not let a shebang demote the licence header beneath it', () => {
+    // `#!` is not a comment opener in TypeScript, so it reads as the file's
+    // first code and pushes the header into "inside the body" — on exactly the
+    // files that carry a shebang, which are CLI entry points.
+    const withShebang = '#!/usr/bin/env node\n// Copyright 2026 Veilio\nconst orderTotal = 1'
+    const without = '// Copyright 2026 Veilio\nconst orderTotal = 1'
+    expect(anonymize(withShebang).comments).toEqual(anonymize(without).comments)
+    expect(anonymize(withShebang).comments.severity).toBe('low')
   })
 
   it('agrees with itself across comment styles', () => {
@@ -205,6 +233,29 @@ describe('comment exposure — one block, not one per line', () => {
     ).comments
     expect(asLines.total).toBe(asBlock.total)
     expect(asLines.severity).toBe(asBlock.severity)
+  })
+
+  it('charges the same for identical prose in either comment style', () => {
+    // Counting a block segment whole includes its newlines and ` * ` gutter,
+    // which the equivalent `//` lines never had — the same sentence then reads
+    // ~30% larger as a block, and the number is about syntax, not exposure.
+    const asLines = anonymize('const a = 1\n// Settles an invoice.\n// Contoso Health only.')
+    const asBlock = anonymize(
+      'const a = 1\n/*\n * Settles an invoice.\n * Contoso Health only.\n */'
+    )
+    expect(asLines.comments.characters).toBeGreaterThan(0)
+    expect(Math.abs(asLines.comments.characters - asBlock.comments.characters)).toBeLessThanOrEqual(
+      '/**/'.length
+    )
+  })
+
+  it('counts an uppercase macro in a comment as the prose it is', () => {
+    // `__GNUC__` is somebody's code and it leaves unmasked. Only tokens this
+    // engine minted are exempt, and every one of those carries a counter or the
+    // redaction prefix.
+    const withMacro = anonymize('int a = 1; /* only on __GNUC__ builds */', { language: 'c' })
+    const withWord = anonymize('int a = 1; /* only on ORDINARY builds */', { language: 'c' })
+    expect(withMacro.comments.characters).toBe(withWord.comments.characters)
   })
 
   it('splits blocks that have code between them', () => {

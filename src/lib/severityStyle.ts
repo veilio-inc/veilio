@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import type { SecretSeverity } from '@veilio-inc/engine'
 
 /** The one grading scale the page speaks.
@@ -48,7 +49,7 @@ export const SEVERITY_STYLE: Record<SecretSeverity, SeverityStyle> = {
 
 /** The badge every graded panel wears, so the four steps look the same
  *  wherever they appear. */
-export function severityBadgeStyle(severity: SecretSeverity): React.CSSProperties {
+export function severityBadgeStyle(severity: SecretSeverity): CSSProperties {
   const style = SEVERITY_STYLE[severity]
   return {
     fontFamily: 'var(--font-mono)',

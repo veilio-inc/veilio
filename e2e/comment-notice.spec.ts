@@ -47,7 +47,7 @@ test.describe('comment exposure notice', () => {
   test('SC-001 — a file with comments says so, with a count', async ({ page }) => {
     await anonymize(page, SOURCE)
     await expect(notice(page)).toBeVisible()
-    await expect(notice(page)).toContainText('2 comments, 1 of them beside code')
+    await expect(notice(page)).toContainText('2 comments, 1 inside the body')
     await expect(notice(page)).toContainText('comment text is never masked')
   })
 
@@ -82,8 +82,7 @@ test.describe('comment exposure notice', () => {
     // acting on it is pointless — so this asserts the text CHANGES, not merely
     // that the panel is still on screen.
     await anonymize(page, MARKABLE)
-    await expect(notice(page)).toContainText('2 comments, 1 of them beside code')
-    await expect(notice(page)).toContainText('Advisory')
+    await expect(notice(page)).toContainText('2 comments, 1 inside the body')
 
     await selectWord(page, editors.output, 'Contoso')
     await page.getByRole('button', { name: 'Mask selection' }).click()
@@ -93,7 +92,6 @@ test.describe('comment exposure notice', () => {
     // grade drops to the quiet one.
     await expect(editor(page, editors.output)).not.toContainText('Contoso')
     await expect(notice(page)).toContainText('1 comment above the code')
-    await expect(notice(page)).toContainText('Noted')
   })
 
   test('is not shown in restore mode', async ({ page }) => {

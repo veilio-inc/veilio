@@ -270,4 +270,51 @@ describe('manual masks', () => {
     const { anonymized } = anonymize('// notify Kowalska', { manual: ['notify'] })
     expect(anonymized).toContain('__MANUAL__1')
   })
+
+  it('does not detonate when a stored mark is a keyword in the next file', () => {
+    // A map outlives the file it was made against. `def` is an ordinary word in
+    // a TypeScript comment and is Python's grammar, so a perfectly valid map —
+    // saved, exported, synced — arrives at a Python file carrying a mark that
+    // must not be applied there. Refusing on replay would make that file
+    // impossible to anonymize at all, which is worse than the mark not applying.
+    const marked = anonymize('const x = 1 // def see the notes', { manual: ['def'] })
+    expect(marked.map).toMatchObject({ __MANUAL__1: 'def' })
+
+    const next = anonymize('def settle(cart):\n    return cart', { existingMap: marked.map })
+    expect(next.anonymized).toContain('def ')
+    expect(next.anonymized).not.toContain('__MANUAL__1')
+  })
+
+  it('keeps the stale mark in the map rather than dropping it', () => {
+    // Not applied here is not the same as gone. The next file may be TypeScript
+    // again, and the user marked that term on purpose.
+    const marked = anonymize('const x = 1 // def see the notes', { manual: ['def'] })
+    const inPython = anonymize('def settle(cart):\n    return cart', { existingMap: marked.map })
+    expect(manualTermsIn(inPython.map)).toEqual(['def'])
+
+    const backInTs = anonymize('// def see the notes', { existingMap: inPython.map })
+    expect(backInTs.anonymized).toContain('__MANUAL__1')
+  })
+
+  it('still refuses a keyword the user is marking right now', () => {
+    // The replay exemption must not become a way to smuggle the mark in. Asking
+    // for it in the language where it is grammar is refused, map or no map.
+    const marked = anonymize('const x = 1 // def see the notes', { manual: ['def'] })
+    expect(() =>
+      anonymize('def settle(cart):\n    return cart', {
+        existingMap: marked.map,
+        manual: ['def'],
+      })
+    ).toThrow(ManualMaskError)
+  })
+
+  it('applies the marks that are still valid alongside one that is not', () => {
+    // A single unusable mark must not take the others down with it.
+    const marked = anonymize('// def, and Kowalska signed off', {
+      manual: ['def', 'Kowalska'],
+    })
+    const next = anonymize('def settle():\n    return "Kowalska"', { existingMap: marked.map })
+    expect(next.anonymized).toContain('def ')
+    expect(next.anonymized).not.toContain('Kowalska')
+  })
 })
