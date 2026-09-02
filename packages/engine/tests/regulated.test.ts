@@ -29,7 +29,12 @@ const VALID_PAN = '4539578763621486'
 
 describe('checksums', () => {
   it('accepts real IBANs across countries, spaced or not', () => {
-    for (const iban of [VALID_IBAN, VALID_IBAN_SPACED, 'DE89370400440532013000', 'PL61109010140000071219812874']) {
+    for (const iban of [
+      VALID_IBAN,
+      VALID_IBAN_SPACED,
+      'DE89370400440532013000',
+      'PL61109010140000071219812874',
+    ]) {
       expect(ibanValid(iban), iban).toBe(true)
     }
   })
@@ -79,7 +84,9 @@ describe('detection', () => {
   it('finds a regulated identifier the user never marked', () => {
     expect(detectSecrets(`const iban = "${VALID_IBAN}"`).map((f) => f.type)).toContain('iban')
     expect(detectSecrets(`const pesel = "${VALID_PESEL}"`).map((f) => f.type)).toContain('pesel')
-    expect(detectSecrets(`const card = "${VALID_PAN}"`).map((f) => f.type)).toContain('payment-card')
+    expect(detectSecrets(`const card = "${VALID_PAN}"`).map((f) => f.type)).toContain(
+      'payment-card'
+    )
   })
 
   it('finds an IBAN written with the spacing people actually use', () => {
@@ -95,7 +102,12 @@ describe('detection', () => {
     // Luhn-valid by construction, so the checksum cannot separate them from a
     // real card. Reporting them on every file is the crying-wolf failure the
     // advisory panel exists to remove.
-    for (const test of ['4111111111111111', '4242424242424242', '5555555555554444', '378282246310005']) {
+    for (const test of [
+      '4111111111111111',
+      '4242424242424242',
+      '5555555555554444',
+      '378282246310005',
+    ]) {
       expect(detectSecrets(`const card = "${test}"`), test).toEqual([])
     }
   })
@@ -175,7 +187,10 @@ describe('no false positives on ordinary source', () => {
       const found = detectSecrets(line).filter(
         (f) => f.type === 'iban' || f.type === 'payment-card' || f.type === 'pesel'
       )
-      expect(found.map((f) => f.type), line).toEqual([])
+      expect(
+        found.map((f) => f.type),
+        line
+      ).toEqual([])
     }
   })
 })

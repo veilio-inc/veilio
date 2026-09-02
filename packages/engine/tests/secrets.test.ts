@@ -264,9 +264,7 @@ describe('overlap resolution', () => {
     // deliberately: a panel that lists an email above a live AWS key because the
     // email appeared on an earlier line teaches people to skim, and the one
     // finding that mattered arrives in the same grey list as ninety that did not.
-    const scan = scanSecrets(
-      'a = "x@y.com"\nb = "AKIAIOSFODNN7EXAMPLE"\nc = "10.0.3.14"'
-    )
+    const scan = scanSecrets('a = "x@y.com"\nb = "AKIAIOSFODNN7EXAMPLE"\nc = "10.0.3.14"')
     expect(scan.findings[0].type).toBe('aws-access-key')
     expect(scan.findings[0].severity).toBe('critical')
     expect(scan.findings.at(-1)!.severity).toBe('low')
