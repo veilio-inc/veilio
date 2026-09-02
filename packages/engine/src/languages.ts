@@ -1779,3 +1779,38 @@ export function resolveLanguage(code: string, option: LanguageOption | undefined
   if (option === undefined || option === 'auto') return detectLanguage(code)
   return option
 }
+
+/**
+ * Below this many non-whitespace characters there is not enough input to say
+ * anything about its language, so "unsupported" would be a guess dressed up as a
+ * finding. An empty editor must not accuse the user of pasting Haskell.
+ */
+const MIN_CHARS_TO_JUDGE = 24
+
+/**
+ * Resolve the language AND say whether we actually recognised it.
+ *
+ * `resolveLanguage` answers only "which rules do I tokenise with", and every
+ * caller then discarded the more important half: that nothing matched and
+ * TypeScript was assumed. A file in an unsupported language is tokenised with
+ * TypeScript's grammar, so identifiers it does not recognise are simply not
+ * masked — and the output looks exactly as confident as a real one. For a
+ * privacy tool that is the worst available failure mode.
+ *
+ * `fallback` is deliberately narrower than `guessLanguage().fallback`:
+ *
+ *  - An explicit language is never a fallback. The caller told us; detection is
+ *    not consulted at all, which is the existing contract.
+ *  - Trivial input is never a fallback. Empty and near-empty buffers score zero
+ *    for every language, and warning about them would train the user to dismiss
+ *    the warning that matters — the same way an over-alarmed secret panel does.
+ */
+export function describeLanguage(
+  code: string,
+  option: LanguageOption | undefined
+): { language: Language; fallback: boolean } {
+  if (option !== undefined && option !== 'auto') return { language: option, fallback: false }
+  const guess = guessLanguage(code)
+  const substantial = code.replace(/\s+/g, '').length >= MIN_CHARS_TO_JUDGE
+  return { language: guess.language, fallback: guess.fallback && substantial }
+}

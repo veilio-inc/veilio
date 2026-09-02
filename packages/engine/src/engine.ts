@@ -17,7 +17,7 @@ import {
   commentSyntaxFor,
   fnKeywordsFor,
   isKeyword,
-  resolveLanguage,
+  describeLanguage,
   type CommentSyntax,
   type Language,
   type LanguageOption,
@@ -409,7 +409,12 @@ export function measureCommentExposure(
   code: string,
   language: LanguageOption = 'auto'
 ): CommentExposure {
-  return summarizeComments(tokenizeForMasking(code, resolveLanguage(code, language)))
+  // `describeLanguage`, not `resolveLanguage`: one path decides the language in
+  // this file. The fallback flag is dropped here because the caller already has
+  // it from the `anonymize` that produced this text — and it qualifies this
+  // number too. A Ruby file read as TypeScript has its `#` comments scanned as
+  // code, so the count would be honestly derived and wrong about the file.
+  return summarizeComments(tokenizeForMasking(code, describeLanguage(code, language).language))
 }
 
 // ─── Role classification ─────────────────────────────────────────────────────
@@ -727,7 +732,7 @@ export function anonymize(
       : options
   const existingMap = opts.existingMap ?? {}
   const rules = opts.rules ?? []
-  const language = resolveLanguage(code, opts.language)
+  const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
   // becomes a reversible map value, which is worse than leaving it alone.
@@ -886,6 +891,7 @@ export function anonymize(
     map,
     identifierCount: Object.keys(map).length,
     language,
+    languageFallback,
     secrets: scan.findings,
     // Measured on `source` — post-redaction and post-manual-mask — because that
     // is the text whose comments are copied into `anonymized`. Measuring the
