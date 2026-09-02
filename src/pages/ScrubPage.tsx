@@ -4,6 +4,7 @@ import type { RestoreReport, SecretFinding, SymbolMap, StrippedItem } from '@vei
 import Navbar from '../components/Navbar.js'
 import CodePanel from '../components/CodePanel.js'
 import SecretPanel from '../components/SecretPanel.js'
+import LanguageFallbackNotice from '../components/LanguageFallbackNotice.js'
 import StrippedPanel from '../components/StrippedPanel.js'
 import RestoreReportPanel from '../components/RestoreReportPanel.js'
 import ManualMarksPanel from '../components/ManualMarksPanel.js'
@@ -34,6 +35,7 @@ export default function ScrubPage() {
   const [showSave, setShowSave] = useState(false)
   const [showOverlay, setShowOverlay] = useState(false)
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
+  const [languageFallback, setLanguageFallback] = useState(false)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
@@ -49,6 +51,7 @@ export default function ScrubPage() {
     setCurrentMap(result.map)
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
+    setLanguageFallback(result.languageFallback)
     // Describes the previous restore; stale the moment we anonymize again.
     setRestoreReport(null)
     setSelection('')
@@ -68,6 +71,7 @@ export default function ScrubPage() {
     setSelection('')
     // Findings describe the anonymize pass; they'd be stale next to a restore.
     setSecretFindings([])
+    setLanguageFallback(false)
     setInput('')
     setMode('restore')
   }, [input, currentMap, keepDocs])
@@ -314,6 +318,7 @@ export default function ScrubPage() {
             therefore above the copy action — a warning placed after the thing
             it warns about gets read too late. */}
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
+        {mode === 'send' && <LanguageFallbackNotice show={languageFallback} />}
 
         {/* Main panels */}
         <div

@@ -16,6 +16,16 @@ export interface AnonymizeResult {
   identifierCount: number
   /** Language the masking ran under — detected, or forced via options. */
   language: Language
+  /**
+   * True when no language marker matched and `language` is the TypeScript
+   * default. The file was tokenised with rules that do not describe it, so
+   * masking is partial — output that looks anonymised and is not.
+   *
+   * Part of the engine's result rather than UI state, so the web app, the CLI
+   * and the MCP server all see the same fact instead of each deciding for
+   * themselves whether to mention it.
+   */
+  languageFallback: boolean
   /** Every credential detected, whatever the active policy. Findings whose
    *  `redacted` flag is true were replaced irreversibly and are absent from
    *  `map`; nothing here ever contains a full secret value. */

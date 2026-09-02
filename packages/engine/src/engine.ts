@@ -16,7 +16,7 @@ import {
   commentSyntaxFor,
   fnKeywordsFor,
   isKeyword,
-  resolveLanguage,
+  describeLanguage,
   type CommentSyntax,
   type Language,
 } from './languages.js'
@@ -571,7 +571,7 @@ export function anonymize(
       : options
   const existingMap = opts.existingMap ?? {}
   const rules = opts.rules ?? []
-  const language = resolveLanguage(code, opts.language)
+  const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
   // becomes a reversible map value, which is worse than leaving it alone.
@@ -727,6 +727,7 @@ export function anonymize(
     map,
     identifierCount: Object.keys(map).length,
     language,
+    languageFallback,
     secrets: scan.findings,
   }
 }
