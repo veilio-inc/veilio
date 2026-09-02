@@ -39,16 +39,35 @@ const TYPES = [
  *  type of every matching rule, and `false` only outranks the others from there.
  *  It cannot hold back a breaking change in any case — rule scanning stops as
  *  soon as it reaches `major`. */
+/** Scopes that mean "this is engine code".
+ *
+ *  `engine` is the convention and new work should use it. `secrets` is here
+ *  because two commits used it before the rule was written down — 001-b1's
+ *  re-grading and 003-b2's regulated-identifier detection, both of which are
+ *  `packages/engine/src/secrets.ts` and both of which ship to npm. Every commit
+ *  ever written under either scope touches `packages/engine/`; no `ui`, `crypto`
+ *  or `docker` commit ever has.
+ *
+ *  Leaving `secrets` out was not cosmetic. The gate below governs the changelog
+ *  as well as the version, so 1.3.0 would have shipped new IBAN, payment-card
+ *  and PESEL detection and a re-graded severity scale under release notes that
+ *  mentioned neither — a consumer reading them would have had no idea the scan
+ *  had changed. And on its own, a `feat(secrets)` would not have released at
+ *  all. */
+const ENGINE_SCOPES = ['engine', 'secrets']
+
 const releaseRules = [
   { release: false },
-  { breaking: true, scope: 'engine', release: 'major' },
+  ...ENGINE_SCOPES.flatMap((scope) => [
+    { breaking: true, scope, release: 'major' },
+    { type: 'revert', scope, release: 'patch' },
+    { type: 'feat', scope, release: 'minor' },
+    { type: 'fix', scope, release: 'patch' },
+    { type: 'perf', scope, release: 'patch' },
+    { type: 'refactor', scope, release: 'patch' },
+    { type: 'build', scope, release: 'patch' },
+  ]),
   { revert: true, header: '*\\(engine\\)*', release: 'patch' },
-  { type: 'revert', scope: 'engine', release: 'patch' },
-  { type: 'feat', scope: 'engine', release: 'minor' },
-  { type: 'fix', scope: 'engine', release: 'patch' },
-  { type: 'perf', scope: 'engine', release: 'patch' },
-  { type: 'refactor', scope: 'engine', release: 'patch' },
-  { type: 'build', scope: 'engine', release: 'patch' },
   { subject: '*\\[skip release\\]*', release: false },
   { body: '*\\[skip release\\]*', release: false },
 ]
@@ -72,7 +91,7 @@ const { writer } = await conventionalCommits({ types: TYPES })
 
 const engineOnlyWriter = {
   transform(commit, context) {
-    if (commit.scope !== 'engine') return false
+    if (!ENGINE_SCOPES.includes(commit.scope)) return false
     return writer.transform(commit, context)
   },
 }
