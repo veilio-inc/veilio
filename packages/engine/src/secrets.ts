@@ -11,7 +11,7 @@
 // the secret back. A developer who sees __REDACTED_AWS_KEY_1__ in their restored
 // code has been told, unmistakably, that a live key was in the payload.
 
-export type SecretSeverity = 'critical' | 'high' | 'medium'
+export type SecretSeverity = 'critical' | 'high' | 'medium' | 'low'
 
 export type SecretType =
   | 'aws-access-key'
@@ -112,19 +112,19 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'github-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'GitHub token',
     re: /\bgh[pousr]_[A-Za-z0-9]{36,255}\b/g,
   },
   {
     type: 'slack-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'Slack token',
     re: /\bxox[baprse]-[A-Za-z0-9-]{10,250}\b/g,
   },
   {
     type: 'anthropic-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'Anthropic API key',
     re: /\bsk-ant-[A-Za-z0-9_-]{20,250}\b/g,
   },
@@ -132,37 +132,37 @@ const PATTERNS: Pattern[] = [
     // `sk-ant-` is excluded so an Anthropic key is reported as one rather than
     // racing the OpenAI pattern for the identical span.
     type: 'openai-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'OpenAI API key',
     re: /\bsk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,250}\b/g,
   },
   {
     type: 'google-api-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'Google API key',
     re: /\bAIza[0-9A-Za-z_-]{35}\b/g,
   },
   {
     type: 'npm-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'npm access token',
     re: /\bnpm_[A-Za-z0-9]{36}\b/g,
   },
   {
     type: 'gitlab-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'GitLab token',
     re: /\bglpat-[A-Za-z0-9_-]{20,50}\b/g,
   },
   {
     type: 'slack-webhook',
-    severity: 'critical',
+    severity: 'medium',
     label: 'Slack webhook URL',
     re: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_-]{6,20}\/B[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_-]{20,30}/g,
   },
   {
     type: 'discord-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'Discord bot token',
     re: /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}\b/g,
   },
@@ -182,44 +182,44 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'pypi-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'PyPI upload token',
     re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\b/g,
   },
   {
     type: 'sendgrid-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'SendGrid API key',
     re: /\bSG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{39,50}\b/g,
   },
   {
     type: 'twilio-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'Twilio account SID',
     re: /\bAC[a-f0-9]{32}\b/g,
   },
   {
     type: 'mailgun-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'Mailgun API key',
     re: /\bkey-[a-f0-9]{32}\b/g,
   },
   {
     type: 'datadog-key',
-    severity: 'critical',
+    severity: 'medium',
     label: 'Datadog API key',
     re: /(?:datadog|dd)[_-]?api[_-]?key["'\s:=]{1,10}([a-f0-9]{32})\b/gi,
     group: 1,
   },
   {
     type: 'hugging-face-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'Hugging Face token',
     re: /\bhf_[A-Za-z0-9]{34,40}\b/g,
   },
   {
     type: 'supabase-key',
-    severity: 'critical',
+    severity: 'high',
     label: 'Supabase service key',
     re: /\bsbp_[a-f0-9]{40}\b/g,
   },
@@ -231,47 +231,47 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'shopify-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'Shopify access token',
     re: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g,
   },
   {
     type: 'cloudflare-token',
-    severity: 'critical',
+    severity: 'high',
     label: 'Cloudflare API token',
     re: /(?:cloudflare|cf)[_-]?api[_-]?(?:token|key)["'\s:=]{1,10}([A-Za-z0-9_-]{37,45})\b/gi,
     group: 1,
   },
   {
     type: 'basic-auth',
-    severity: 'high',
+    severity: 'medium',
     label: 'HTTP Basic credentials',
     re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
     group: 1,
   },
   {
     type: 'jwt',
-    severity: 'high',
+    severity: 'medium',
     label: 'JSON Web Token',
     re: /\beyJ[A-Za-z0-9_-]{8,2000}\.eyJ[A-Za-z0-9_-]{8,4000}\.[A-Za-z0-9_-]{0,2000}/g,
   },
   {
     type: 'bearer-token',
-    severity: 'high',
+    severity: 'medium',
     label: 'Bearer / Authorization token',
     re: /(?:Authorization["'\s:=]{1,10})?\bBearer\s+([A-Za-z0-9._~+/-]{16,500}=*)/g,
     group: 1,
   },
   {
     type: 'connection-string',
-    severity: 'high',
+    severity: 'critical',
     label: 'Connection string password',
     re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{1,128}:([^\s:@/]{1,256})@/gi,
     group: 1,
   },
   {
     type: 'password-assignment',
-    severity: 'high',
+    severity: 'medium',
     label: 'Hardcoded credential',
     // No LEADING \b: underscores and letters are both word characters, so a
     // leading boundary never exists after a prefix. Assignments to
@@ -297,24 +297,44 @@ const PATTERNS: Pattern[] = [
     // prose is far more often a hash, a UUID or a base64 blob than a live
     // credential — and a detector that cries wolf gets switched off.
     type: 'high-entropy-string',
-    severity: 'high',
+    severity: 'medium',
     label: 'High-entropy credential',
     re: /\b(?:[a-z0-9_]*(?:key|token|secret|credential|auth|pass)[a-z0-9_]*)\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
     group: 1,
   },
   {
     type: 'private-ip',
-    severity: 'medium',
+    severity: 'low',
     label: 'Private IP address',
     re: /\b(?:10\.(?:\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g,
   },
   {
     type: 'email',
-    severity: 'medium',
+    severity: 'low',
     label: 'Email address',
     re: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
   },
 ]
+
+/**
+ * The grade each rule carries, derived from the table above rather than
+ * restated. A second hand-written copy is one that drifts.
+ *
+ * Exported because a caller that renders findings has to rank and style them,
+ * and the alternative is every caller hardcoding its own idea of which types
+ * are alarming — which is how the grades stopped meaning anything the first time.
+ */
+export const SECRET_SEVERITIES: Readonly<Record<SecretType, SecretSeverity>> = Object.freeze(
+  PATTERNS.reduce(
+    (acc, p) => {
+      acc[p.type] = p.severity
+      return acc
+    },
+    // The ambiguous verdict has no pattern of its own: it is what a pattern
+    // becomes when the value could be prose.
+    { 'possible-credential': 'medium' } as Record<SecretType, SecretSeverity>
+  )
+)
 
 /** Placeholder values that look like credentials but carry no secret. Redacting
  *  these is pure noise, and noisy warnings are the fastest way to teach a user
@@ -505,22 +525,44 @@ function collectMatches(code: string): RawMatch[] {
   return found
 }
 
-const SEVERITY_RANK: Record<SecretSeverity, number> = { critical: 3, high: 2, medium: 1 }
+const SEVERITY_RANK: Record<SecretSeverity, number> = { critical: 4, high: 3, medium: 2, low: 1 }
 
-/** Drop matches contained in, or overlapping, a higher-priority match. A Stripe
+/**
+ * How specifically a rule identified what it matched.
+ *
+ * Overlap resolution is about SPECIFICITY, not alarm. It used to rank by
+ * severity, which worked only while the two happened to coincide — the moment
+ * `connection-string` was graded critical to reflect what a leaked database URL
+ * actually costs, the container started swallowing the GitHub token inside it
+ * and the report got less useful for being more alarmed.
+ *
+ * A named provider format beats a generic container, which beats a low-value
+ * match, which beats the catch-all. Nothing here reads `severity`.
+ */
+const GENERIC_MATCHERS: ReadonlySet<SecretType> = new Set<SecretType>([
+  'connection-string',
+  'basic-auth',
+  'bearer-token',
+  'jwt',
+  'password-assignment',
+  'high-entropy-string',
+])
+
+function detectionPriority(type: SecretType): number {
+  if (type === 'possible-credential') return 0
+  if (type === 'email' || type === 'private-ip') return 1
+  if (GENERIC_MATCHERS.has(type)) return 2
+  return 3
+}
+
+/** Drop matches contained in, or overlapping, a more specific match. A Stripe
  *  key inside a connection string should be reported once, as the Stripe key. */
 function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   const sorted = [...matches].sort((a, b) => {
-    const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]
-    if (bySeverity !== 0) return bySeverity
+    const byPriority = detectionPriority(b.type) - detectionPriority(a.type)
+    if (byPriority !== 0) return byPriority
     const byLength = b.end - b.start - (a.end - a.start)
     if (byLength !== 0) return byLength
-    // `possible-credential` is the least-confident classification there is, so
-    // it yields to any pattern that identified the same span concretely —
-    // `secret: "10.0.3.14"` should be reported as the private IP it is.
-    const byConfidence =
-      Number(a.type === 'possible-credential') - Number(b.type === 'possible-credential')
-    if (byConfidence !== 0) return byConfidence
     return a.start - b.start
   })
   const kept: RawMatch[] = []
@@ -538,13 +580,38 @@ export interface SecretScan {
   code: string
 }
 
-/** Severities redacted under the `redact` policy. `medium` is report-only:
- *  false positives on emails are common and the risk is materially lower, while
- *  a wrongly-blanked email would corrupt code for no safety gain. */
-const REDACTED_SEVERITIES: ReadonlySet<SecretSeverity> = new Set<SecretSeverity>([
-  'critical',
-  'high',
+/**
+ * Finding types that are reported but never redacted or blocked.
+ *
+ * Keyed on TYPE, not on severity, and that distinction is the point. Severity
+ * used to decide this, which quietly welded two unrelated questions together:
+ * "how alarming should this look?" and "should we destroy this value?". A
+ * presentation change then became a security change — dropping a token's grade
+ * to calm the panel would also stop redacting it, in a diff that looks
+ * cosmetic.
+ *
+ * Stated as a DENY-list so the default is safe: a detection rule added tomorrow
+ * redacts because it exists, not because somebody remembered to opt it in. The
+ * failure mode of an allow-list here is a live credential silently passing
+ * through.
+ *
+ * The three exemptions, and why:
+ *  - `email` and `private-ip`: common, low-risk, and blanking one corrupts code
+ *    for no safety gain.
+ *  - `possible-credential`: the ambiguous verdict. Redaction is irreversible —
+ *    the value never enters the SymbolMap — so blanking `client_secret:
+ *    "disabled"` corrupts code that restore() can never repair.
+ */
+const REPORT_ONLY_TYPES: ReadonlySet<SecretType> = new Set<SecretType>([
+  'email',
+  'private-ip',
+  'possible-credential',
 ])
+
+/** Does this finding warrant destroying the value and stopping the paste? */
+function isActionable(type: SecretType): boolean {
+  return !REPORT_ONLY_TYPES.has(type)
+}
 
 const TYPE_TOKENS: Record<SecretType, string> = {
   'aws-access-key': 'AWS_KEY',
@@ -613,7 +680,7 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
   const replacements: { start: number; end: number; token: string }[] = []
 
   for (const m of matches) {
-    const willRedact = policy === 'redact' && REDACTED_SEVERITIES.has(m.severity)
+    const willRedact = policy === 'redact' && isActionable(m.type)
     const { line, column } = positionOf(starts, m.start)
     findings.push({
       type: m.type,
@@ -639,19 +706,33 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
     redacted = redacted.slice(0, r.start) + r.token + redacted.slice(r.end)
   }
 
+  // FR-001: ordered by what the reader should act on first, not by the order
+  // the rule table happens to be written in. `replacements` is deliberately not
+  // reordered — it is applied back-to-front by offset and must stay in source
+  // order.
+  findings.sort((a, b) => {
+    const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]
+    if (bySeverity !== 0) return bySeverity
+    if (a.line !== b.line) return a.line - b.line
+    return a.column - b.column
+  })
+
   return { findings, code: redacted }
 }
 
 /** True when the scan found anything that should stop a user from pasting. */
 export function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean {
-  return findings.some((f) => f.severity === 'critical' || f.severity === 'high')
+  // Also by type, for the same reason redaction is. Blocking is what stops a
+  // paste; tying it to a display grade means re-grading can silently unblock a
+  // live credential.
+  return findings.some((f) => isActionable(f.type))
 }
 
 /** Count findings by severity, for badges and audit records. */
 export function summarizeSecrets(
   findings: readonly SecretFinding[]
 ): Record<SecretSeverity, number> {
-  const summary: Record<SecretSeverity, number> = { critical: 0, high: 0, medium: 0 }
+  const summary: Record<SecretSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 }
   for (const f of findings) summary[f.severity]++
   return summary
 }
