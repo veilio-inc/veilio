@@ -8,8 +8,29 @@ generated markdown file alongside the code it describes.
 
 `@veilio-inc/engine` is released by **semantic-release**, from the conventional
 commit messages, on an `engine-v*` tag — see `.releaserc.js` and
-`.github/workflows/publish-engine.yml`. It is named in `ignore` above so Changesets
-never proposes a version for it.
+`.github/workflows/publish-engine.yml`.
+
+It used to be named in `ignore`, and that was wrong in a way nothing could see
+until the CLI became publishable. Changesets rejects a config that skips a
+package while a non-skipped package depends on it:
+
+> The package "@veilio-inc/cli" depends on the skipped package
+> "@veilio-inc/engine", but "@veilio-inc/cli" is not being skipped.
+
+While both tools were `private: true` Changesets excluded them from the workspace
+entirely, so the dependency edge did not exist and the config validated. Removing
+`private` from the CLI is what made it real — the first release would have failed
+on a config error, which is a poor moment to discover one.
+
+So `ignore` is empty, and what keeps Changesets from releasing the engine is
+arithmetic rather than configuration: `changeset version` bumps only packages
+with a changeset (plus their dependents), and `changeset publish` uploads a
+package only when its manifest version is not already on the registry. The engine
+has neither a changeset nor a version npm is missing.
+
+That second half is a property of the manifest tracking npm, which is checked in
+`ci.yml` and again in `publish-tools.yml` — the second time in the workflow that
+actually holds the credential, and there it refuses even when npm is unreachable.
 
 Two tools in one repository is a deliberate split, not an accident of history. The
 engine's version is derived from commit messages and has been since before the CLI
