@@ -19,14 +19,32 @@ name: Publish CLI + MCP server
 # merge rather than on the commit that flips it — so read docs/PUBLISHING.md
 # before flipping, not after.
 #
-# `paths` is deliberately absent. The engine's workflow can scope itself to
-# packages/engine/** because its trigger is a code change; this one triggers on
-# a merged version PR, which touches package.json and CHANGELOG.md files that no
-# useful path filter distinguishes from any other edit to them.
+# `paths` matters more here than it looks. changesets/action runs the `publish`
+# command whenever NO changesets are pending — which is the state main is in
+# almost always. Without a filter this workflow fires on every push to main,
+# including a README edit or an engine commit, and each one parks against the
+# `release` environment waiting for approval. An approval prompt that appears on
+# every commit is one people learn to click through, which is worse than not
+# having it.
+#
+# The filter cannot miss either of the two pushes that must run, because both
+# touch .changeset/**: adding a changeset creates a file there, and merging the
+# version PR deletes one (a deletion counts as a changed path). The version PR
+# also rewrites packages/{cli,mcp}/package.json and CHANGELOG.md, so the second
+# and third entries are the belt to that braces.
+#
+# packages/engine/** is deliberately NOT here. An engine release must not run
+# the tools' publisher; that separation is the whole reason the two release
+# tools can share a repository.
 
 on:
   push:
     branches: [main]
+    paths:
+      - '.changeset/**'
+      - 'packages/cli/**'
+      - 'packages/mcp/**'
+      - '.github/workflows/publish-tools.yml'
   workflow_dispatch:
 
 permissions: read-all
