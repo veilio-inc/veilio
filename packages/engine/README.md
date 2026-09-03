@@ -13,6 +13,24 @@ const { anonymized, map } = anonymize('class PaymentService { charge(orderId) {}
 const { restored } = restore(aiReply, map)
 ```
 
+## If you would rather not write code
+
+Two ready-made surfaces wrap this package, in the same repository. Both run the
+engine in your own process, and neither opens a network connection.
+
+|                                       |                                                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`@veilio-inc/cli`](../cli/README.md) | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential — for pipes, pre-commit hooks and CI.                 |
+| [`@veilio-inc/mcp`](../mcp/README.md) | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent only ever sees `__CLS__1.__FN__2()`. |
+
+They share one symbol map, so you can mask inside an agent and restore from a
+terminal, or the reverse.
+
+> Neither is on npm yet. They live here, they are tested here, and the install
+> instructions land in the same commit that publishes them — a README that tells
+> you to install something the registry does not have is worse than one that says
+> nothing.
+
 ## Ten languages, not one
 
 The engine masks every identifier it does not recognise, so the keyword set is
@@ -21,8 +39,8 @@ leaves output no model can read as source code. Keyword sets and comment syntax
 are per-language, and the language is detected from the source:
 
 ```ts
-anonymize(goSource).language                  // → 'go'
-anonymize(source, { language: 'rust' })       // or force it
+anonymize(goSource).language // → 'go'
+anonymize(source, { language: 'rust' }) // or force it
 ```
 
 Supported: TypeScript/JavaScript, Python, Go, Java/Kotlin, C#, Rust, Ruby, PHP,
@@ -36,7 +54,7 @@ Python docstrings, SQL `--`, and Ruby `=begin` blocks, not just `//`.
 
 Identifier masking protects a domain model. It does nothing about the leak that
 actually costs money — a live key in the payload. Worse, a credential that
-happens to be identifier-shaped would otherwise be masked *reversibly*, i.e.
+happens to be identifier-shaped would otherwise be masked _reversibly_, i.e.
 stored in the symbol map.
 
 So credentials are found before masking and replaced **irreversibly**:
@@ -86,7 +104,7 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     rather than left to be discovered. `inline` counts blocks sitting after the
     file's first line of code; a licence header above it grades `low`, anything
     in the body grades `medium`, and it never goes higher: the engine cannot
-    read the prose, so it never claims a comment *is* sensitive. Consecutive
+    read the prose, so it never claims a comment _is_ sensitive. Consecutive
     line comments count as one block; blocks with no letters or digits in them,
     and placeholders standing in for terms already marked, are not counted.
   - **Throws `ManualMaskError`** when a term in `options.manual` scans as a
@@ -139,6 +157,7 @@ A mark **replayed from `existingMap`** is never refused for being a keyword. A
 map outlives the file it was made against — `def` is an ordinary word in a
 TypeScript comment and is Python's grammar — so a stale mark is skipped, not
 thrown on. It stays in the map and applies again where it is valid.
+
 - `measureCommentExposure(code, language?)` → `CommentExposure` — the same
   measurement `anonymize` returns, for text it did not produce (after a manual
   mark is undone, say)
