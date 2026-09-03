@@ -7,9 +7,53 @@ import {
   handleFrame,
   handleMessage,
   SUPPORTED_PROTOCOL_VERSIONS,
+  type JsonRpcResponse,
 } from '../src/server.js'
 import { TOOLS, callTool, type ToolContext } from '../src/tools.js'
 import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+
+/**
+ * The MCP result shapes these tests actually read.
+ *
+ * `JsonRpcResponse.result` is `unknown` in the server, and correctly so: at the
+ * envelope layer a result IS opaque, and its shape belongs to the method rather
+ * than to JSON-RPC. That leaves the narrowing to the caller, which these tests
+ * were doing with `as any` — thirteen of them, each one throwing away the check
+ * at exactly the point the assertion below it depends on. `result.serverInfo.nmae`
+ * would have compiled and failed at runtime as `undefined` not containing 'MCP'.
+ *
+ * Declared here rather than exported from src because they are the wire shapes
+ * the protocol specifies, not this implementation's types — a test that imported
+ * them from the code under test could not notice the code drifting away from the
+ * spec.
+ */
+interface InitializeResult {
+  protocolVersion: string
+  capabilities: { tools?: unknown }
+  serverInfo: { name: string; version: string }
+  instructions?: string
+}
+
+interface ToolsListResult {
+  tools: { name: string; description: string; inputSchema: { type: string } }[]
+}
+
+/** Note this is NOT `ToolResult` from src/tools.ts. That is the handler's return
+ *  ({ text, isError }); this is what goes on the wire after the server wraps it
+ *  in MCP's content array. Conflating them is how a test passes against a shape
+ *  no client ever receives. */
+interface ToolCallResult {
+  content: { type: string; text: string }[]
+  isError: boolean
+}
+
+/** Narrow one response's result, failing the test — not the type checker — when
+ *  the server answered with an error or did not answer at all. */
+function resultOf<T>(res: JsonRpcResponse | null): T {
+  expect(res, 'expected a response, got null').not.toBeNull()
+  expect(res!.error, `expected a result, got error ${JSON.stringify(res!.error)}`).toBeUndefined()
+  return res!.result as T
+}
 
 let cwd: string
 let ctx: ToolContext
@@ -45,7 +89,7 @@ function writeMap(map: Record<string, string>): void {
 describe('protocol', () => {
   it('answers initialize with capabilities and server info', () => {
     const res = handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, ctx)
-    const result = res?.result as Record<string, any>
+    const result = resultOf<InitializeResult>(res)
     expect(result.capabilities.tools).toBeDefined()
     expect(result.serverInfo.name).toContain('MCP')
     expect(result.instructions).toContain('anonymize_file')
@@ -57,7 +101,7 @@ describe('protocol', () => {
         { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: version } },
         ctx
       )
-      expect((res?.result as any).protocolVersion).toBe(version)
+      expect(resultOf<InitializeResult>(res).protocolVersion).toBe(version)
     }
   })
 
@@ -66,7 +110,7 @@ describe('protocol', () => {
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '1999-01-01' } },
       ctx
     )
-    expect((res?.result as any).protocolVersion).toBe(SUPPORTED_PROTOCOL_VERSIONS[0])
+    expect(resultOf<InitializeResult>(res).protocolVersion).toBe(SUPPORTED_PROTOCOL_VERSIONS[0])
   })
 
   it('never answers a notification', () => {
@@ -105,7 +149,7 @@ describe('protocol', () => {
 describe('tools/list', () => {
   it('advertises every tool with a schema', () => {
     const res = handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx)
-    const tools = (res?.result as any).tools
+    const { tools } = resultOf<ToolsListResult>(res)
     expect(tools).toHaveLength(TOOLS.length)
     for (const tool of tools) {
       expect(tool.name).toBeTruthy()
@@ -116,9 +160,10 @@ describe('tools/list', () => {
 
   it('steers the model toward the path-based tool', () => {
     const res = handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx)
-    const byName = new Map((res?.result as any).tools.map((t: any) => [t.name, t]))
-    expect((byName.get('anonymize_file') as any).description).toContain('PREFER THIS')
-    expect((byName.get('anonymize_text') as any).description).toContain('defeats the purpose')
+    const { tools } = resultOf<ToolsListResult>(res)
+    const byName = new Map(tools.map((t) => [t.name, t]))
+    expect(byName.get('anonymize_file')?.description).toContain('PREFER THIS')
+    expect(byName.get('anonymize_text')?.description).toContain('defeats the purpose')
   })
 })
 
@@ -132,7 +177,7 @@ describe('framing', () => {
   })
 
   it('reassembles a frame split across chunks', () => {
-    const sent: any[] = []
+    const sent: JsonRpcResponse[] = []
     const reader = new FrameReader(ctx, (r) => sent.push(r))
     reader.push('{"jsonrpc":"2.0","id":')
     expect(sent).toHaveLength(0)
@@ -456,7 +501,7 @@ describe('tools/call dispatch', () => {
       },
       ctx
     )
-    const result = res?.result as any
+    const result = resultOf<ToolCallResult>(res)
     expect(result.content[0].type).toBe('text')
     expect(result.isError).toBe(false)
   })
@@ -469,7 +514,7 @@ describe('tools/call dispatch', () => {
       ctx
     )
     expect(res?.error).toBeUndefined()
-    expect((res?.result as any).isError).toBe(true)
+    expect(resultOf<ToolCallResult>(res).isError).toBe(true)
   })
 
   it('tolerates missing or malformed arguments', () => {
@@ -477,7 +522,7 @@ describe('tools/call dispatch', () => {
       { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'symbol_map_summary' } },
       ctx
     )
-    expect((res?.result as any).isError).toBe(false)
+    expect(resultOf<ToolCallResult>(res).isError).toBe(false)
   })
 
   it('tolerates a non-object arguments value', () => {
@@ -490,7 +535,7 @@ describe('tools/call dispatch', () => {
       },
       ctx
     )
-    expect((res?.result as any).isError).toBe(true)
+    expect(resultOf<ToolCallResult>(res).isError).toBe(true)
   })
 })
 
