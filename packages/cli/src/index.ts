@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs, UsageError } from './args.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
+import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 export const VERSION = '0.1.0'
 
@@ -56,8 +58,35 @@ function readStdin(): Promise<string> {
   })
 }
 
-// Only self-invoke when run as a binary, so importing this module in tests is free.
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Was this file run as a program, or imported?
+ *
+ * The obvious form of this check — comparing `import.meta.url` to
+ * `file://${process.argv[1]}` — is wrong in the one way that matters, and it
+ * shipped: npm installs a binary as a SYMLINK in `node_modules/.bin`, so
+ * `argv[1]` is the link while `import.meta.url` is the file it resolves to. The
+ * two never match, the branch below never runs, and `veilio --version` prints
+ * nothing and exits 0. Installed fine, did nothing, said nothing.
+ *
+ * `realpathSync` resolves the link. `pathToFileURL` handles the rest of what
+ * string interpolation got wrong: a path containing a space or any non-ASCII
+ * character needs percent-encoding, and a Windows path needs `file:///C:/...`
+ * rather than `file://C:\...`.
+ *
+ * Wrapped because `argv[1]` may name something unstattable — `node --eval`, or a
+ * file deleted mid-run. Not a program then, which is the safe reading.
+ */
+function invokedAsProgram(): boolean {
+  const argv1 = process.argv[1]
+  if (argv1 === undefined) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(argv1)).href
+  } catch {
+    return false
+  }
+}
+
+if (invokedAsProgram()) {
   const io: Io = {
     cwd: process.cwd(),
     stdin: readStdin,

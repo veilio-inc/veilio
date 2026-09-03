@@ -1,10 +1,10 @@
 {
   "name": "@veilio-inc/cli",
   "version": "0.1.0",
-  "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM \u2014 from the terminal, a pipe, or a pre-commit hook.",
+  "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM — from the terminal, a pipe, or a pre-commit hook.",
   "type": "module",
   "bin": {
-    "veilio": "./dist/index.js"
+    "veilio": "dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run typecheck && npm run test && npm run build",
+    "prepublishOnly": "npm run clean && npm run typecheck && npm run build && npm run test",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
