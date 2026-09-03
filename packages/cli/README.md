@@ -8,19 +8,16 @@ pbpaste | veilio restore                 # bring the answer back
 git diff --cached | veilio scan          # refuse to commit a live key
 ```
 
-> **Not on npm yet.** `@veilio-inc/cli` is still unpublished, so every install
-> route below — `npx`, `npm i -g`, and the GitHub Action, which runs `npx` under
-> the hood — will fail until it ships. Run it from a clone in the meantime:
->
-> ```bash
-> git clone https://github.com/veilio-inc/veilio && cd veilio
-> npm install && npm run build:packages
-> node packages/cli/dist/index.js --help
-> ```
->
-> Install instructions replace this note in the same commit that publishes the
-> package; a README that tells you to install something the registry does not
-> have is worse than one that says nothing.
+## Install
+
+```bash
+npm install -g @veilio-inc/cli     # or run it without installing:
+npx @veilio-inc/cli scrub src/billing.ts
+```
+
+Requires Node 24 or newer. No account, no API key, and no network call on any of
+the commands below — `packages/cli/tests/purity.test.ts` traps the network
+globals and fails if one is ever introduced.
 
 ## Commands
 
