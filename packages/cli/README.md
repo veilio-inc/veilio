@@ -8,14 +8,28 @@ pbpaste | veilio restore                 # bring the answer back
 git diff --cached | veilio scan          # refuse to commit a live key
 ```
 
+> **Not on npm yet.** `@veilio-inc/cli` is still unpublished, so every install
+> route below — `npx`, `npm i -g`, and the GitHub Action, which runs `npx` under
+> the hood — will fail until it ships. Run it from a clone in the meantime:
+>
+> ```bash
+> git clone https://github.com/veilio-inc/veilio && cd veilio
+> npm install && npm run build:packages
+> node packages/cli/dist/index.js --help
+> ```
+>
+> Install instructions replace this note in the same commit that publishes the
+> package; a README that tells you to install something the registry does not
+> have is worse than one that says nothing.
+
 ## Commands
 
-| Command | Purpose |
-|---|---|
-| `scrub [files...]` | Mask identifiers, redact credentials. Reads stdin when given no file. |
-| `restore [files...]` | Swap placeholders back, strip AI-generated noise. |
-| `scan [files...]` | Detect credentials only. Never rewrites. Exits 1 on findings. |
-| `map` | Show the symbol map (`--clear` to wipe it). |
+| Command              | Purpose                                                               |
+| -------------------- | --------------------------------------------------------------------- |
+| `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
+| `restore [files...]` | Swap placeholders back, strip AI-generated noise.                     |
+| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
+| `map`                | Show the symbol map (`--clear` to wipe it).                           |
 
 ## Options
 
@@ -36,11 +50,11 @@ Transformed code goes to **stdout**; summaries, warnings and errors go to **stde
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | Clean |
-| 1 | Findings that should stop the pipeline |
-| 2 | Usage or IO error |
+| Code | Meaning                                |
+| ---- | -------------------------------------- |
+| 0    | Clean                                  |
+| 1    | Findings that should stop the pipeline |
+| 2    | Usage or IO error                      |
 
 As a pre-commit hook:
 
@@ -65,9 +79,17 @@ Redacted credentials are **not** in the map. `restore` cannot bring them back, b
 ```yaml
 - uses: veilio-inc/veilio/packages/cli@v0.1.0
   with:
-    strict: false          # also fail on emails / private IPs
-    sarif: veilio.sarif    # optional: upload to code scanning
+    strict: false # also fail on emails / private IPs
+    sarif: veilio.sarif # optional: upload to code scanning
 ```
+
+**This example does not work yet, and needs two things that do not exist.** The
+`@v0.1.0` ref is a git tag on this repository — the only tags here are
+`engine-v*`, cut by semantic-release for the engine — and the Action's own script
+runs `npx --yes @veilio-inc/cli@<version>`, which needs the package on npm.
+Publishing supplies the second; the first is a tag someone has to cut, and note
+that `v*.*.*` is also what triggers the Community Edition release workflow, so
+the two are not independent.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR
