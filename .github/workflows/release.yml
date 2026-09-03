@@ -10,6 +10,10 @@ name: Release
 # "denied" because nothing had ever been pushed. Building the image on every
 # push to main fixes that without waiting on a release process the app side
 # does not have yet.
+# NOT a `paths:` filter, deliberately. A `paths:` under `push` is evaluated for
+# tag pushes too, and this workflow serves both main and `v*.*.*`. Rather than
+# depend on how GitHub diffs a newly created tag, the filtering is an explicit
+# job below whose condition names tags as an unconditional build.
 on:
   push:
     branches: [main]
@@ -21,7 +25,65 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Does this push actually change the image?
+  #
+  # The image is nginx-less static hosting: one Go binary and the Vite bundle.
+  # Its content is a function of src/, public/, index.html, the build config, the
+  # dependency manifests, packages/engine (the app imports its dist) and docker/.
+  # It is NOT a function of packages/cli, packages/mcp, docs, or the specs — and
+  # since those moved in, a CLI-only commit was rebuilding and re-pushing an
+  # image whose bytes were identical, taking a fresh digest and a fresh SLSA
+  # attestation with it. Provenance is worth less when most of it records
+  # rebuilds that changed nothing.
+  #
+  # Every uncertain answer resolves to "build". A tag builds unconditionally, a
+  # manual dispatch builds, and a push whose diff cannot be computed — a force
+  # push, a first push, a squashed range — builds. Skipping is only ever the
+  # result of positively knowing nothing relevant changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" != "push" ]; then
+            echo "Not a push (${GITHUB_EVENT_NAME}) — building."
+            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          case "${GITHUB_REF}" in
+            refs/tags/*) echo "Tag push — building."
+                         echo "build=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit (${BEFORE:-none}) — building rather than guessing."
+            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "${BEFORE}" "${AFTER}")
+          echo "Changed files:"; echo "${CHANGED}" | sed 's/^/  /'
+
+          if echo "${CHANGED}" | grep -qE '^(src/|public/|docker/|packages/engine/|index\.html$|vite\.config\.ts$|tsconfig\.json$|package\.json$|package-lock\.json$|\.github/workflows/release\.yml$)'; then
+            echo "An image input changed — building."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing the image is built from changed — skipping."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
