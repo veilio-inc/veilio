@@ -394,4 +394,63 @@ describe('the engine range the tools declare', () => {
     expect(satisfiesCaret('2.0.0', '^1.3.0')).toBe(false) // engine ahead by a major
     expect(satisfiesCaret('1.3.0', '*')).toBe(false) // not a caret range at all
   })
+
+  /**
+   * The other direction, which the check above deliberately permits.
+   *
+   * `satisfiesCaret('1.4.0', '^1.3.0')` is TRUE — a caret range accepts a newer
+   * minor, so nothing above complains when the engine moves to 1.4.0 and the
+   * two manifests keep asking for ^1.3.0. Nothing breaks in this repository
+   * either: the workspace still links, both suites still run against the engine
+   * in the tree.
+   *
+   * It breaks for somebody else. The tools are developed and tested against
+   * 1.4.0 while promising to work with 1.3.0, so a user whose tree already
+   * resolves 1.3.0 gets a CLI calling an API that is not there. The lie is in
+   * the floor, and this repository is the one place it cannot be observed.
+   *
+   * Pinned at MINOR granularity on purpose. New APIs arrive in minors, so that
+   * is exactly when the floor has to rise; patches are compatible by definition
+   * and forcing a manifest edit — and therefore a CLI release — for every engine
+   * patch would be churn with nothing behind it.
+   *
+   * This is the manual step the two-tool split costs, made loud. Changesets does
+   * not know semantic-release moved the engine, so widening these ranges is a
+   * human edit, and a human edit nobody is reminded to make is one that stops
+   * happening. It fires at the moment the engine's own version field is being
+   * edited by hand, which is the moment somebody is already in the file.
+   */
+  it('rises with the engine, instead of quietly promising an older one', () => {
+    const engine = caretParts(`^${engineVersion.version}`)
+    expect(engine, `engine version ${engineVersion.version} is not X.Y.Z`).not.toBeNull()
+
+    const stale = dependants
+      .filter((p) => {
+        const floor = caretParts(p.manifest.dependencies![ENGINE])
+        return !floor || floor[0] !== engine![0] || floor[1] !== engine![1]
+      })
+      .map((p) => `${p.manifest.name} declares ${p.manifest.dependencies![ENGINE]}`)
+
+    expect(
+      stale,
+      `packages/engine is ${engineVersion.version}. A tool tested against it while ` +
+        `declaring an older floor promises a user an engine it no longer runs on. ` +
+        `Widen the range in the same commit that moves the engine's version.`
+    ).toEqual([])
+  })
+
+  it('accepts a patch moving under it, and refuses a minor', () => {
+    // The granularity, stated directly, because the assertion above passes on an
+    // empty list and would go on passing if the comparison were dropped.
+    const floorTracks = (engineVersion_: string, range: string): boolean => {
+      const e = caretParts(`^${engineVersion_}`)
+      const f = caretParts(range)
+      return Boolean(e && f && f[0] === e[0] && f[1] === e[1])
+    }
+    expect(floorTracks('1.3.0', '^1.3.0')).toBe(true)
+    expect(floorTracks('1.3.7', '^1.3.0')).toBe(true) // patch: compatible, no edit
+    expect(floorTracks('1.4.0', '^1.3.0')).toBe(false) // minor: new APIs, floor must rise
+    expect(floorTracks('2.0.0', '^1.3.0')).toBe(false) // major: certainly
+    expect(floorTracks('1.3.0', '*')).toBe(false) // not a caret range at all
+  })
 })

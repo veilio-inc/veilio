@@ -54,6 +54,39 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
+      # The blind spot in tests/package-graph.test.ts, covered here because it
+      # needs the registry and that suite must never touch the network.
+      #
+      # That test asserts the CLI and MCP ranges track packages/engine/package.json.
+      # But since @semantic-release/git was removed, npm is the authority on the
+      # engine's version and that manifest is a hand-maintained copy of it. Forget
+      # to sync it after a release and the local check compares two stale numbers
+      # and agrees with itself, which is the one failure it cannot see from inside
+      # the tree.
+      #
+      # Fails on real drift: that state means the engine shipped and nothing
+      # downstream followed. Skips loudly when npm cannot be reached — a registry
+      # outage should not block every merge, and unlike the billing preflights
+      # this guards a stale version range rather than money quietly not collected.
+      - name: Engine version matches what is published
+        run: |
+          set -uo pipefail
+          LOCAL=$(node -p "require('./packages/engine/package.json').version")
+          if ! PUBLISHED=$(npm view @veilio-inc/engine version 2>/dev/null) || [ -z "${PUBLISHED}" ]; then
+            echo "::warning::Could not read @veilio-inc/engine from npm; skipping the sync check. Local manifest says ${LOCAL}."
+            exit 0
+          fi
+          echo "npm: ${PUBLISHED}   packages/engine/package.json: ${LOCAL}"
+          if [ "${PUBLISHED}" != "${LOCAL}" ]; then
+            echo "::error::packages/engine/package.json says ${LOCAL} but npm has ${PUBLISHED}."
+            echo "semantic-release writes the version into the tarball at publish time and no"
+            echo "longer commits it back, so this field only moves when a person moves it. While"
+            echo "it is stale, the range check in tests/package-graph.test.ts compares two old"
+            echo "numbers and passes. Set the version to ${PUBLISHED} and widen the"
+            echo "@veilio-inc/engine range in packages/cli and packages/mcp in the same commit."
+            exit 1
+          fi
+
       - name: Typecheck packages
         run: npm run typecheck --workspaces --if-present
 
