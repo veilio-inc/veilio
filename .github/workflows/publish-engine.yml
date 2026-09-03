@@ -100,7 +100,45 @@ jobs:
             console.log(`Tarball OK — ${pkg.files.length} allowlisted files.`)
           '
 
+      # Refuse to cut a version when the engine has not changed.
+      #
+      # 1.4.0 was published with a dist byte-identical to 1.3.0, and a changelog
+      # crediting "single-pass substitution, restore options, wider secret
+      # coverage" — all of which had already shipped. The trigger was a commit
+      # replayed from the CLI's history when it moved into this repository:
+      # scoped `feat(engine)` because it changed the engine where it used to
+      # live, but touching only packages/cli here. semantic-release reads
+      # messages, not diffs, so it did exactly what it was told.
+      #
+      # The `paths:` filter above does not help. It decides whether this workflow
+      # RUNS, and it ran legitimately — the engine's README and manifest were in
+      # the merge. What it cannot do is constrain which commits the analyser then
+      # considers.
+      #
+      # So the diff gets a vote. `src` and `tsconfig.json` are what determine the
+      # published artifact; the manifest is deliberately excluded, because the
+      # version sync that FOLLOWS a release edits it and would otherwise look
+      # like a reason for the next one.
+      - name: Has the engine actually changed?
+        id: changed
+        run: |
+          set -uo pipefail
+          LAST=$(git tag -l 'engine-v*' --sort=-v:refname | head -1)
+          if [ -z "${LAST}" ]; then
+            echo "No engine-v tag yet — first release, proceeding."
+            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          DIFF=$(git diff --name-only "${LAST}" HEAD -- packages/engine/src packages/engine/tsconfig.json)
+          if [ -z "${DIFF}" ]; then
+            echo "::warning::No change under packages/engine/src since ${LAST}. Skipping the release — a version whose dist is identical to the last one is a promise with nothing behind it."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changed since ${LAST}:"; echo "${DIFF}" | sed 's/^/  /'
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Release
+        if: steps.changed.outputs.changed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
