@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "alg": "AES-256-GCM-PBKDF2",
+  "kdf": {
+    "name": "PBKDF2-SHA256",
+    "iterations": 600000
+  },
+  "salt": "6KGx04L4LGMRqrsCNZNXIg==",
+  "iv": "eeDvW1WSWGI77T9S",
+  "data": "9D+PlrY7BNV9lcUVUeOrQTtHUeiFzrpE5bKi7WsUpx3yqXQDsBsQGElthK7DsG215VRMlzkcuHG7ZvY9/oLqo2C26qZWtAlDodQ55ftjOivp5KWcRocwguwCSkvT"
+}
