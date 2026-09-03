@@ -236,9 +236,30 @@ describe('what the READMEs tell a reader to install', () => {
     } catch {
       return []
     }
-    return [...text.matchAll(/npm (?:install|i) (?:-g )?(@[a-z0-9-]+\/[a-z0-9-]+)/g)].map(
-      (m) => m[1]
-    )
+    // Two shapes, because a README promises a package in more than one way and
+    // matching only the first left the worst case invisible.
+    //
+    // `npm install @scope/name` is the obvious one. The other is a fenced block
+    // that runs the package through npx — and packages/mcp/README.md is exactly
+    // that: an agent config where `"command": "npx"` and `"@veilio-inc/mcp"`
+    // sit on DIFFERENT LINES of a JSON object. It says `npm install` nowhere, so
+    // a line-oriented match read it as advertising nothing, and the one README
+    // whose entire install section was a 404 was the one this could not see.
+    //
+    // So a fenced block mentioning npx implicates every scoped package named
+    // inside it. Scoped to code fences on purpose: prose saying "the CLI is
+    // published as @veilio-inc/cli" is a statement, not an instruction, and
+    // flagging it would push people to stop naming their own packages.
+    const targets: string[] = []
+    for (const m of text.matchAll(/npm (?:install|i) (?:-g )?(@[a-z0-9-]+\/[a-z0-9-]+)/g)) {
+      targets.push(m[1])
+    }
+    for (const fence of text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+      const body = fence[1]
+      if (!/\bnpx\b/.test(body)) continue
+      for (const m of body.matchAll(/(@[a-z0-9-]+\/[a-z0-9-]+)/g)) targets.push(m[1])
+    }
+    return targets
   }
 
   it('never advertises a package that does not publish', () => {
@@ -255,7 +276,9 @@ describe('what the READMEs tell a reader to install', () => {
       for (const target of installTargets(p.dir)) {
         const workspace = BY_NAME.get(target)
         if (workspace && !isPublishable(workspace)) {
-          offenders.push(`${p.manifest.name}/README.md → npm install ${target} (private)`)
+          offenders.push(
+            `${p.manifest.name}/README.md tells the reader to obtain ${target}, which is private`
+          )
         }
       }
     }
