@@ -4,12 +4,16 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "description": "Veilio Community Edition — self-hostable, frontend-only AI code anonymizer",
+  "description": "Veilio Community Edition \u2014 self-hostable, frontend-only AI code anonymizer",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "private": true,
+  "//workspaces": "packages/engine is published by semantic-release on an engine-v tag; packages/cli and packages/mcp are published by Changesets. Two release tools, one per package set, and .changeset/config.json names the engine in `ignore` so they cannot both claim it.",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "postinstall": "npm --prefix packages/engine install && npm --prefix packages/engine run build",
+    "postinstall": "npm run build --workspace=packages/engine",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -17,12 +21,17 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "lint": "eslint src e2e packages/engine/src packages/engine/tests --ext .ts,.tsx",
-    "lint:fix": "eslint src e2e packages/engine/src packages/engine/tests --ext .ts,.tsx --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/engine/{src,tests}/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/engine/{src,tests}/**/*.ts\"",
+    "lint": "eslint src e2e packages/*/src packages/*/tests --ext .ts,.tsx",
+    "lint:fix": "eslint src e2e packages/*/src packages/*/tests --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/*/{src,tests}/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/*/{src,tests}/**/*.ts\"",
     "verify": "npm run lint && npm run format:check",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "build:packages": "npm run build --workspace=packages/engine && npm run build --workspace=packages/cli && npm run build --workspace=packages/mcp",
+    "test:packages": "npm run build:packages && npm run test --workspaces --if-present",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build:packages && changeset publish"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -33,12 +42,14 @@
     "@codemirror/lang-rust": "^6.0.2",
     "@uiw/codemirror-themes": "^4.25.11",
     "@uiw/react-codemirror": "^4.25.11",
-    "@veilio-inc/engine": "file:./packages/engine",
+    "@veilio-inc/engine": "*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "0.6.0",
+    "@changesets/cli": "2.31.0",
     "@playwright/test": "^1.62.1",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/git": "11.0.1",

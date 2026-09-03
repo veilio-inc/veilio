@@ -1,0 +1,248 @@
+# Veilio Community License
+
+_Version 1.0 · Effective 2026-08-08_
+
+**Copyright © 2026 Veilio**
+
+> **Plain-language summary (non-binding; the numbered terms below control).**
+> Use Veilio for anything you like — personally, or inside your company, including
+> to make money. Read it, fork it, change it, self-host it, ship products with it.
+> The one thing you may not do without written permission is sell Veilio itself:
+> reselling it, white-labeling it, or running it as a hosted service for other
+> people. Contributions are welcome. For a commercial or redistribution license,
+> email `hello@veilio.dev`.
+
+---
+
+## 1. Project Model
+
+This project follows a **source-available and community-driven development model** with a separate commercial Cloud Edition. The source is public and contributions are welcome, but this is deliberately **not an OSI-approved open-source license**: the commercial restrictions in Section 5 go beyond what that definition permits.
+
+The **Community Core** is publicly available and intended to be freely used, inspected, modified, forked, and improved by the community. Contributions from the community are welcome and are an important part of the project's development.
+
+The **Cloud Edition** is a separate commercial offering operated by Veilio. It provides hosted and managed functionality and may include additional proprietary features, infrastructure, services, and support.
+
+The Software may be used for personal purposes as well as for internal commercial purposes. Organizations may deploy and use the Software within their own businesses without requiring a commercial license.
+
+However, the Software may not be commercially redistributed, resold, white-labeled, or offered as a third-party hosted service without prior written permission from Veilio.
+
+The purpose of this model is to keep the core technology open and community-driven while allowing the project owner to maintain and commercially operate the official Cloud Edition.
+
+---
+
+## 2. Definitions
+
+For the purposes of this License:
+
+**"Software"** means the source code, binaries, documentation, configuration, and other materials distributed as part of this project.
+
+**"Community Core"** means the publicly available portion of the Software developed and distributed under this License.
+
+**"Modified Version"** means any work based on, derived from, or incorporating substantial portions of the Software.
+
+**"Cloud Edition"** means the hosted, managed, or subscription-based version of the Software operated and commercially provided by Veilio, including any proprietary services, infrastructure, features, or components associated with it.
+
+**"Commercial Distribution"** means selling, licensing, renting, leasing, sublicensing, or otherwise providing the Software or a Modified Version to third parties in exchange for payment or other commercial consideration.
+
+**"Hosted Service"** means making the Software or a Modified Version available to third parties over a network, including as a SaaS, PaaS, managed service, hosted application, or similar commercial offering.
+
+**"Competing Product"** means a commercially offered product or service whose primary purpose and core functionality substantially overlap with the Software or Cloud Edition.
+
+---
+
+## 3. Permissions
+
+Subject to the restrictions in this License, you are granted a worldwide, royalty-free, non-exclusive license to:
+
+* use the Software for personal purposes;
+* use the Software for internal commercial purposes;
+* inspect and study the source code;
+* modify the Software;
+* create forks and derivative works;
+* submit contributions, patches, bug fixes, and improvements to the project;
+* use modified versions for personal purposes or internal commercial operations;
+* share the Software and Modified Versions for non-commercial purposes.
+
+These permissions are intended to enable community development, experimentation, self-hosting, internal business use, and collaboration.
+
+---
+
+## 4. Internal Commercial Use
+
+Commercial use of the Software is permitted when the Software is used as an internal tool or component of your own business activities.
+
+For example, an organization may deploy the Software on its own infrastructure and use it to:
+
+* operate internal business processes;
+* support its employees;
+* develop its own products;
+* provide its own services;
+* manage its own operations; or
+* otherwise conduct its own commercial activities.
+
+The fact that an organization generates revenue through its business does not, by itself, constitute a violation of this License.
+
+The restriction applies to **commercializing the Software itself**, rather than using the Software as part of your own business.
+
+---
+
+## 5. Commercial Restrictions
+
+Without prior written permission from Veilio, you may not:
+
+### 5.1 Sell or Resell the Software
+
+Sell, license, rent, lease, sublicense, or otherwise commercially distribute the Software or a Modified Version as a standalone product.
+
+### 5.2 Offer the Software as a Hosted Service
+
+Operate the Software or a Modified Version as a commercial SaaS, PaaS, hosted application, managed service, or similar service for third parties.
+
+### 5.3 Create a Competing Commercial Product
+
+Use the Software or a Modified Version as the basis for a commercially offered product or service that substantially competes with the Cloud Edition.
+
+### 5.4 White-Label or Rebrand the Software
+
+Repackage, white-label, rebrand, or otherwise present the Software or a Modified Version as your own commercial software product.
+
+### 5.5 Commercially Redistribute Modified Versions
+
+Commercially distribute a Modified Version where the primary value or functionality being sold is provided by the Software.
+
+Requests for written permission may be sent to `hello@veilio.dev`.
+
+---
+
+## 6. Cloud Edition
+
+The Cloud Edition is the official commercial hosted offering of the project.
+
+The Cloud Edition may be provided through paid subscriptions and may include:
+
+* managed hosting;
+* automatic updates;
+* backups;
+* infrastructure and scalability;
+* monitoring;
+* enterprise functionality;
+* technical support;
+* proprietary features;
+* other hosted or managed services.
+
+The Community Core and Cloud Edition may share common code, concepts, or functionality. However, access to the Community Core does not grant any right to commercially operate a competing hosted version of the Cloud Edition.
+
+The Cloud Edition may be governed by separate Terms of Service, subscription agreements, privacy policies, and commercial licenses.
+
+---
+
+## 7. Forks and Modified Versions
+
+You are permitted to create forks and Modified Versions of the Software for:
+
+* personal use;
+* internal business use;
+* research;
+* education;
+* development;
+* experimentation; and
+* other purposes permitted by this License.
+
+Forks and Modified Versions must retain applicable copyright notices and a copy of this License.
+
+Creating a fork does not grant permission to commercially distribute that fork, offer it as a commercial Hosted Service, or use it to create a Competing Product.
+
+---
+
+## 8. Contributions
+
+Contributions to the Community Core are welcome.
+
+By submitting a contribution, you represent that you have the necessary rights to submit that contribution and agree that it may be incorporated into the project and distributed under this License.
+
+Unless otherwise agreed in writing, contributions will be made available under the same licensing terms as the Software.
+
+Contributors retain ownership of their original contributions to the extent permitted by applicable law.
+
+---
+
+## 9. Redistribution
+
+You may redistribute the Software and Modified Versions for non-commercial purposes, provided that:
+
+* applicable copyright notices are retained;
+* the original project is appropriately credited;
+* a copy of this License is included;
+* recipients are informed of the applicable licensing terms; and
+* the redistribution does not imply endorsement by Veilio.
+
+Commercial redistribution requires prior written permission from Veilio.
+
+---
+
+## 10. Attribution
+
+Redistributions of the Software or Modified Versions must retain:
+
+* applicable copyright notices;
+* notices identifying the original project; and
+* a copy of this License.
+
+You may add your own copyright notices for your modifications, provided that they do not imply ownership of the original Software.
+
+---
+
+## 11. Trademarks
+
+This License does not grant permission to use the project's name, logo, trademarks, service marks, domain names, or branding except as reasonably necessary to identify the original Software.
+
+You may not use the project's trademarks to imply endorsement, sponsorship, affiliation, or official status without prior written permission.
+
+Creating a fork does not grant the right to use the project's trademarks for that fork.
+
+---
+
+## 12. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE AUTHORS AND COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+---
+
+## 13. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, CONTRIBUTORS, OR PROJECT OWNERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR THE USE OR INABILITY TO USE THE SOFTWARE.
+
+---
+
+## 14. Termination
+
+Your rights under this License terminate automatically if you materially violate its terms.
+
+Upon termination, you must cease the activities that are prohibited by this License.
+
+Permissions granted to recipients who are not in violation of this License remain unaffected.
+
+---
+
+## 15. Reservation of Rights
+
+All rights not expressly granted by this License are reserved by Veilio.
+
+In particular, this License does not grant rights to commercially sell, redistribute, host, white-label, or operate a competing commercial service based on the Software beyond the permissions expressly stated above.
+
+---
+
+## 16. License Versions
+
+The project owner may publish future versions of this License.
+
+Each version will be identified by a version number. Unless explicitly stated otherwise, versions of the Software already distributed under a particular version of this License remain subject to that version.
+
+---
+
+**Project:** Veilio
+**Copyright:** © 2026 Veilio
+**License:** Veilio Community License, Version 1.0
+**Contact:** `hello@veilio.dev`

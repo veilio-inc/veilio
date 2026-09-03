@@ -1,0 +1,151 @@
+name: 'Veilio Secret Scan'
+description: 'Fail the build when a commit, diff, or file tree contains live credentials.'
+author: 'Veilio'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  paths:
+    description: >-
+      Space-separated files or globs to scan. Defaults to scanning the pull
+      request diff (or the pushed commits) rather than the whole tree, so a
+      pre-existing finding elsewhere does not block unrelated work.
+    required: false
+    default: ''
+  strict:
+    description: 'Also fail on advisory findings (emails, private IPs).'
+    required: false
+    default: 'false'
+  sarif:
+    description: 'Write a SARIF report to this path for GitHub code scanning.'
+    required: false
+    default: ''
+  version:
+    description: 'Version of the Veilio CLI to run.'
+    required: false
+    default: 'latest'
+
+outputs:
+  findings:
+    description: 'Number of findings detected.'
+    value: ${{ steps.scan.outputs.findings }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve scan targets
+      id: targets
+      shell: bash
+      # Inputs arrive through the environment, never through `${{ }}` inside the
+      # script. GitHub substitutes those expressions into the source text before
+      # bash ever parses it, so a caller who routes untrusted data into `paths` —
+      # a PR title, a branch name, an issue body — is writing shell, not passing
+      # an argument, and no amount of quoting in the script can help. The SARIF
+      # step below already did it this way.
+      env:
+        PATHS: ${{ inputs.paths }}
+      run: |
+        set -euo pipefail
+        if [ -n "$PATHS" ]; then
+          echo "mode=paths" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Diff-scoped by default. A repo adopting this mid-life almost always
+        # has some historical finding somewhere; blocking every PR on that is
+        # how a security check gets disabled in week one.
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+        else
+          base="${{ github.event.before }}"
+          head="${{ github.sha }}"
+        fi
+        # A new branch reports an all-zero base; fall back to the single commit.
+        if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          git diff "${head}^" "$head" > /tmp/veilio-diff.txt 2>/dev/null || git show "$head" > /tmp/veilio-diff.txt
+        else
+          git diff "$base" "$head" > /tmp/veilio-diff.txt
+        fi
+        echo "mode=diff" >> "$GITHUB_OUTPUT"
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        STRICT: ${{ inputs.strict }}
+        VERSION: ${{ inputs.version }}
+        MODE: ${{ steps.targets.outputs.mode }}
+      run: |
+        set -uo pipefail
+        args=""
+        if [ "$STRICT" = "true" ]; then args="--strict"; fi
+
+        # $PATHS is deliberately unquoted: it is documented as space-separated
+        # files or globs, and word-splitting plus globbing is the behaviour
+        # callers ask for. Bash does not re-run command substitution on the
+        # result of an expansion, so this splits and globs without executing.
+        # No `--` separator: the CLI's parser rejects it as an unknown flag, and
+        # it also rejects any bare argument starting with `-`, so there is
+        # nothing for a separator to protect against.
+        if [ "$MODE" = "paths" ]; then
+          npx --yes "@veilio-inc/cli@$VERSION" scan $PATHS $args --json > /tmp/veilio.json 2> /tmp/veilio.log
+        else
+          npx --yes "@veilio-inc/cli@$VERSION" scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
+        fi
+        status=$?
+
+        count=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('/tmp/veilio.json','utf8')).length)}catch{console.log(0)}")
+        echo "findings=$count" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "## Veilio secret scan"
+          echo
+          if [ "$status" -eq 0 ]; then
+            echo "No blocking credentials detected."
+          else
+            echo "**$count finding(s).** Rotate anything real — treat a committed key as compromised."
+            echo
+            echo '```'
+            cat /tmp/veilio.log
+            echo '```'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        cat /tmp/veilio.log >&2
+        exit $status
+
+    - name: Write SARIF
+      if: ${{ always() && inputs.sarif != '' }}
+      shell: bash
+      run: |
+        node -e '
+          const fs = require("fs");
+          let findings = [];
+          try { findings = JSON.parse(fs.readFileSync("/tmp/veilio.json", "utf8")); } catch {}
+          const levelFor = (s) => (s === "critical" ? "error" : s === "high" ? "error" : "warning");
+          const sarif = {
+            $schema: "https://json.schemastore.org/sarif-2.1.0.json",
+            version: "2.1.0",
+            runs: [{
+              tool: { driver: { name: "Veilio", informationUri: "https://veilio.dev", rules: [] } },
+              results: findings.map((f) => ({
+                ruleId: f.type,
+                level: levelFor(f.severity),
+                // Previews only — a SARIF report is an artifact that gets stored
+                // and shared, so it must never carry the credential itself.
+                message: { text: `${f.label} (${f.preview})` },
+                locations: [{
+                  physicalLocation: {
+                    artifactLocation: { uri: f.file },
+                    region: { startLine: f.line, startColumn: f.column },
+                  },
+                }],
+              })),
+            }],
+          };
+          fs.writeFileSync(process.env.SARIF_PATH, JSON.stringify(sarif, null, 2));
+        '
+      env:
+        SARIF_PATH: ${{ inputs.sarif }}

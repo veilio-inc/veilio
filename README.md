@@ -6,16 +6,34 @@
 
 <p align="center"><em>Send the problem. Keep the names.</em></p>
 
-Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back. The engine runs entirely in your browser — source code never leaves your machine.
+Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back. Source code never leaves your machine: the web app runs the engine in your browser, and the terminal and agent surfaces run it in your own process.
 
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
 ## Features
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
+- The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
 - Maps saved to browser localStorage for convenience
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
 - Zero backend. Zero database. Zero secrets to manage.
+
+## What is in this repository
+
+| Package                                        | What it is                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`packages/engine`](packages/engine/README.md) | The anonymizer itself — pure, zero runtime dependencies, published to npm as `@veilio-inc/engine`. Everything else wraps it.                                                                                                                                                   |
+| [`packages/cli`](packages/cli/README.md)       | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential. Pipes, pre-commit hooks, CI.                                                                                                                                                       |
+| [`packages/mcp`](packages/mcp/README.md)       | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent only ever sees `__CLS__1.__FN__2()` — a tool that took code as an argument would be pointless, since the real identifiers would already be in the model's context. |
+| `src/`                                         | The web app in this README — React, Vite, no backend.                                                                                                                                                                                                                          |
+
+The CLI and the MCP server share one symbol map, so you can mask inside an agent
+and restore from a terminal, or the reverse. Neither makes a network call on any
+local path, and each ships a test that trips if one is ever introduced.
+
+> **Both are not on npm yet.** They live here and are tested here; the install
+> instructions land in the same commit that publishes them. Until then, run them
+> from a clone — `npm run build:packages`, then `node packages/cli/dist/index.js --help`.
 
 ## Run it
 
@@ -30,11 +48,19 @@ Open `http://localhost:8080`.
 Images are built for `linux/amd64` and `linux/arm64` and pushed on every merge to
 `main`:
 
-| Tag | Points at |
-|---|---|
-| `latest` | the current `main` build |
-| `sha-<short>` | one exact commit — use this to pin |
-| `1.2.3`, `1.2` | a tagged release, once one is cut |
+| Tag            | Points at                          |
+| -------------- | ---------------------------------- |
+| `latest`       | the current `main` build           |
+| `sha-<short>`  | one exact commit — use this to pin |
+| `1.2.3`, `1.2` | a tagged release, once one is cut  |
+
+> **Tags beginning `sha256-` are not images.** The package listing also shows
+> tags like `sha256-f4788394…`, which are the provenance attestations and SBOMs
+> described below. GHCR stores those under a tag derived from the digest they
+> refer to, so they sit alongside the real tags with nothing marking them as
+> metadata. They carry no platform, so pulling one fails with
+> `no matching manifest for linux/arm64/v8` — or for whatever platform you are
+> on, since none can ever match. Pull `latest`, a `sha-<short>`, or a version.
 
 #### Verify what you pulled
 
@@ -106,14 +132,28 @@ npm run dev
 
 > The anonymizer engine (`@veilio-inc/engine`) is bundled in this repo at `packages/engine` and is built automatically on `npm install` via the `postinstall` script — no extra setup or npm link needed.
 
+This is an npm workspace, so the app, the engine, the CLI and the MCP server are
+installed together by that one `npm install`. The app only needs the engine, so
+`postinstall` builds only that; the two tools are built on demand:
+
+```bash
+npm run build:packages   # engine, then cli, then mcp — in dependency order
+npm run test:packages    # builds first, then runs each package's own suite
+npm test                 # the web app, plus the workspace-graph checks
+```
+
+Build order is not a style choice: `packages/mcp` imports `@veilio-inc/cli/store`,
+which resolves through the CLI's `exports` map into `packages/cli/dist` — a
+directory that exists only after a build.
+
 ## Configuration
 
 CE has one optional setting. Vite inlines it when the bundle is compiled, so it
 is a **build argument, not a runtime variable** — passing it to `docker run -e`
 does nothing.
 
-| Var | Default | Purpose |
-|---|---|---|
+| Var                     | Default              | Purpose                                                                                        |
+| ----------------------- | -------------------- | ---------------------------------------------------------------------------------------------- |
 | `VITE_VEILIO_CLOUD_URL` | `https://veilio.dev` | Target of the "Team / Cloud" CTA on the Pricing page. Self-hosters typically leave this alone. |
 
 ## Roadmap

@@ -1,6 +1,6 @@
 {
   "name": "@veilio-inc/engine",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Two-way code anonymizer: replace real identifiers with __P1__ tokens before sending source code to an LLM, restore them afterward. Pure, local, no network, no telemetry, zero runtime dependencies.",
   "type": "module",
   "main": "./dist/index.js",
@@ -52,12 +52,13 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
     "vitest": "^4.1.10"
-  }
+  },
+  "//version": "The published version, kept in step by hand. semantic-release computes the next version from the engine-v tags and @semantic-release/npm writes it into the tarball at publish time; since @semantic-release/git was removed the bump is never committed back, so this field drifts unless somebody moves it. It has to be right now that packages/cli and packages/mcp resolve the engine as a workspace: if this is below their declared range, npm silently installs a REGISTRY copy beside the source and both tools get tested against a different engine than the one in the tree."
 }

@@ -20,6 +20,14 @@ export default defineConfig({
       '**/dist/**',
       '**/.{idea,git,cache,output,temp}/**',
       'e2e/**',
+      // Each workspace under packages/ owns a vitest config, and `npm run
+      // test:packages` runs them. Without this the root run collects them too,
+      // under the app's config — which is not the config they are written
+      // against, and quietly doubles the CI time. It also breaks outright:
+      // packages/mcp imports `@veilio-inc/cli/store`, which resolves through the
+      // CLI's exports map into packages/cli/dist, a directory that exists only
+      // after a build.
+      'packages/**',
     ],
   },
 })

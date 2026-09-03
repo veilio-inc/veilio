@@ -1,0 +1,9 @@
+{
+  "//": "Typecheck only. tsconfig.json is the BUILD config — it emits src to dist, so adding tests to its include would ship them in the published tarball. rootDir is widened to the package root because tests sit outside src; meaningless under noEmit, but inherited, and tsc rejects the include without it.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "tests"]
+}

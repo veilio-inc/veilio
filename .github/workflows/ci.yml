@@ -40,6 +40,71 @@ jobs:
       - name: Test
         run: npm test
 
+      # The three packages under packages/ each own a vitest config and are run
+      # by their own scripts, not by the root vitest above — which excludes
+      # packages/** precisely so a package is tested against the config it was
+      # written against.
+      #
+      # Built first, and in dependency order, because two of them are consumed
+      # as build output rather than as source: the app imports the engine's
+      # dist, and packages/mcp imports `@veilio-inc/cli/store`, which resolves
+      # through the CLI's exports map into packages/cli/dist. `npm ci` builds
+      # only the engine (see the root postinstall), so without this step the MCP
+      # typecheck fails on a module that genuinely exists.
+      - name: Build packages
+        run: npm run build:packages
+
+      # The blind spot in tests/package-graph.test.ts, covered here because it
+      # needs the registry and that suite must never touch the network.
+      #
+      # That test asserts the CLI and MCP ranges track packages/engine/package.json.
+      # But since @semantic-release/git was removed, npm is the authority on the
+      # engine's version and that manifest is a hand-maintained copy of it. Forget
+      # to sync it after a release and the local check compares two stale numbers
+      # and agrees with itself, which is the one failure it cannot see from inside
+      # the tree.
+      #
+      # Fails on main, warns on a pull request. The drift appears the moment
+      # semantic-release publishes, which is a push to main — and at that instant
+      # every open PR would start failing on something its author did not cause
+      # and mostly cannot fix. A red build that is somebody else's fault is one
+      # people learn to ignore, and it would take the checks that ARE their fault
+      # down with it. On main it is nobody else's fault, so there it fails.
+      #
+      # Skips loudly when npm cannot be reached either way. A registry outage
+      # should not block every merge, and unlike the billing preflights this
+      # guards a stale version range rather than money quietly not collected.
+      - name: Engine version matches what is published
+        run: |
+          set -uo pipefail
+          LOCAL=$(node -p "require('./packages/engine/package.json').version")
+          if ! PUBLISHED=$(npm view @veilio-inc/engine version 2>/dev/null) || [ -z "${PUBLISHED}" ]; then
+            echo "::warning::Could not read @veilio-inc/engine from npm; skipping the sync check. Local manifest says ${LOCAL}."
+            exit 0
+          fi
+          echo "npm: ${PUBLISHED}   packages/engine/package.json: ${LOCAL}"
+          if [ "${PUBLISHED}" = "${LOCAL}" ]; then exit 0; fi
+
+          echo "packages/engine/package.json says ${LOCAL} but npm has ${PUBLISHED}."
+          echo "semantic-release writes the version into the tarball at publish time and no"
+          echo "longer commits it back, so this field only moves when a person moves it. While"
+          echo "it is stale, the range check in tests/package-graph.test.ts compares two old"
+          echo "numbers and passes. Set the version to ${PUBLISHED} and widen the"
+          echo "@veilio-inc/engine range in packages/cli and packages/mcp in the same commit."
+
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "::warning::Engine version is out of sync (npm ${PUBLISHED}, repo ${LOCAL}). This predates your branch — not failing your PR."
+            exit 0
+          fi
+          echo "::error::Engine version is out of sync: npm has ${PUBLISHED}, this repo says ${LOCAL}."
+          exit 1
+
+      - name: Typecheck packages
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Test packages
+        run: npm run test --workspaces --if-present
+
       - name: Build
         run: npm run build
         env:

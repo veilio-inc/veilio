@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { extractIdentifiers, anonymize, restore } from '../src/engine.js'
-import type { SymbolMap } from '../src/types.js'
+import type { CustomRule, SymbolMap } from '../src/types.js'
 
 // ─── extractIdentifiers ───────────────────────────────────────────────────────
 
@@ -221,15 +221,35 @@ describe('restore', () => {
 // ─── anonymize with custom rules (sub-project #4a) ───────────────────────────
 
 describe('anonymize with custom rules', () => {
+  /**
+   * A rule the way a caller really has to supply one.
+   *
+   * The return type is annotated rather than inferred, and that is the whole
+   * point of this helper now. It used to return a structural shape that merely
+   * resembled `CustomRule`, missing `scope` and `team_id` — which typechecked
+   * only because these tests were never typechecked at all. `tsconfig.json`
+   * includes just `src`, and vitest runs the file through esbuild, which strips
+   * types without checking them.
+   *
+   * `scope` and `team_id` mean nothing to the engine — nothing under src/ ever
+   * reads either one; they are how Veilio Cloud records which tier owns a rule
+   * and which team it belongs to. Fixed values here for that reason. That a
+   * pure, zero-dependency engine requires two fields it never consults is worth
+   * questioning, but the answer is not a test's to give: the type is published,
+   * and Cloud both builds `CustomRule` values from database rows and branches on
+   * `scope`, so loosening it here would weaken a guarantee another repository
+   * relies on.
+   */
   const helper = (
     n: number,
     type: 'replace' | 'whitelist',
     pattern: string,
     placeholder?: string
-  ) => {
+  ): CustomRule => {
     const base = {
       id: `r${n}`,
-      type,
+      scope: 'personal' as const,
+      team_id: null,
       name: `Rule ${n}`,
       pattern,
       enabled: true,

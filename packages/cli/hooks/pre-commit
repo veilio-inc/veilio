@@ -1,0 +1,39 @@
+#!/bin/sh
+# Veilio pre-commit hook — blocks a commit that would leak a credential.
+#
+# Install:
+#   cp packages/cli/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# Or, if you use the pre-commit framework, prefer .pre-commit-hooks.yaml instead.
+#
+# Scans the STAGED diff, not the working tree: what you are about to commit is
+# the thing that matters, and a finding in an unstaged scratch file shouldn't
+# block you.
+
+set -eu
+
+if ! command -v veilio >/dev/null 2>&1; then
+  echo "veilio: not installed — skipping credential scan." >&2
+  echo "  npm install -g @veilio/cli" >&2
+  exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+if git diff --cached | veilio scan --quiet; then
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+
+Commit blocked: credentials detected in the staged changes.
+
+  - Remove the value and use an environment variable or a secret manager.
+  - Treat the credential as compromised and rotate it. Anything that reached
+    your clipboard, an editor buffer, or a model's context should be assumed
+    exposed even if it never lands in a commit.
+  - To override for a change you are certain about: git commit --no-verify
+
+MSG
+exit 1
