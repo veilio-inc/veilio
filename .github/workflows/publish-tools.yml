@@ -93,6 +93,35 @@ jobs:
       # that makes a broken tree fail HERE, in a step named after what broke,
       # rather than inside `changeset publish` after the first package is
       # already up.
+      # The engine is released by semantic-release, not by Changesets — but it
+      # is no longer in .changeset/config.json `ignore`, because Changesets
+      # rejects a config that skips a package while a non-skipped one depends on
+      # it, and @veilio-inc/cli does. So Changesets can see the engine, and what
+      # keeps it from publishing one is arithmetic rather than configuration:
+      # `changeset publish` uploads a package only when its manifest version is
+      # not already on the registry.
+      #
+      # That is true today and stays true only while the manifest tracks npm.
+      # Let it lead — a hand-edit to 1.4.0 before semantic-release has cut
+      # 1.4.0 — and this workflow would publish an engine from the working tree,
+      # with no engine-v tag, no CHANGELOG entry, and no release behind it.
+      # ci.yml already asserts this on main; asserted again here because that is
+      # a different workflow and this is the one holding the credential.
+      - name: Engine manifest matches the registry, or nothing publishes
+        run: |
+          set -uo pipefail
+          LOCAL=$(node -p "require('./packages/engine/package.json').version")
+          if ! PUBLISHED=$(npm view @veilio-inc/engine version 2>/dev/null) || [ -z "${PUBLISHED}" ]; then
+            echo "::error::Cannot reach npm to confirm the engine version. Refusing to publish rather than assume."
+            exit 1
+          fi
+          if [ "${PUBLISHED}" != "${LOCAL}" ]; then
+            echo "::error::packages/engine/package.json is ${LOCAL} but npm has ${PUBLISHED}."
+            echo "Publishing now risks changeset publish uploading an engine semantic-release never cut."
+            exit 1
+          fi
+          echo "engine ${LOCAL} matches the registry; changeset publish will skip it."
+
       - name: Build, typecheck and test the packages
         run: |
           npm run build:packages
@@ -141,3 +170,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+          # Bootstrap only, and empty is the normal state.
+          #
+          # OIDC trusted publishing cannot CREATE a package. The first attempt at
+          # @veilio-inc/cli proved it: everything succeeded — build, tests, and a
+          # provenance statement signed and logged to Sigstore — and then
+          #
+          #   npm error 404 Not Found - PUT .../@veilio-inc%2fcli
+          #   The requested resource could not be found or you do not have
+          #   permission to access it
+          #
+          # which reads like a missing package and means a missing permission.
+          # The OIDC identity is this repository, and it has no right to claim a
+          # name nobody holds.
+          #
+          # So the first publish of each package needs a granular token with
+          # publish rights on @veilio-inc, stored as the NPM_TOKEN secret. When
+          # the secret is absent this expands to empty and npm falls back to
+          # OIDC, which is what every release after the first one should use.
+          #
+          # DELETE THE SECRET once trusted publishers are registered for both
+          # packages. A long-lived credential that outlives its purpose is just a
+          # credential, and this one can publish under our whole scope.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
