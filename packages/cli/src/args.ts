@@ -5,7 +5,17 @@
 import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engine'
 import type { SecretPolicy } from '@veilio-inc/engine'
 
-export type Command = 'scrub' | 'restore' | 'scan' | 'map' | 'help' | 'version'
+export type Command =
+  | 'scrub'
+  | 'restore'
+  | 'scan'
+  | 'map'
+  | 'login'
+  | 'logout'
+  | 'whoami'
+  | 'maps'
+  | 'help'
+  | 'version'
 
 export interface ParsedArgs {
   command: Command
@@ -29,11 +39,48 @@ export interface ParsedArgs {
   keepDocs: boolean
   /** Allow a map write that would drop entries already on disk. */
   force: boolean
+  /**
+   * `maps` subcommand: list, pull or push. Null when `maps` was given alone.
+   *
+   * A subcommand rather than three top-level commands, because `map` (singular,
+   * the local store) already exists and `veilio push` next to `veilio map`
+   * reads like they are the same thing. `maps <verb>` keeps the cloud surface
+   * visibly separate from the offline one.
+   */
+  mapsAction: 'list' | 'pull' | 'push' | null
+
+  /**
+   * Base URL of the Veilio instance to sign in to. Null means the public Cloud.
+   *
+   * Only meaningful to `login`: once signed in, the instance is read back from
+   * the stored credential, so a later command cannot be pointed at a different
+   * host while still holding the first one's token.
+   */
+  instance: string | null
 }
 
 export class UsageError extends Error {}
 
-const COMMANDS = new Set<Command>(['scrub', 'restore', 'scan', 'map', 'help', 'version'])
+const COMMANDS = new Set<Command>([
+  'scrub',
+  'restore',
+  'scan',
+  'map',
+  'login',
+  'logout',
+  'whoami',
+  'maps',
+  'help',
+  'version',
+])
+
+/**
+ * The commands that reach the network. Named here so the split is one list
+ * rather than a condition repeated at each call site — and so that adding a
+ * command without deciding which side of the line it falls on is a compile
+ * error rather than an accident.
+ */
+export const CLOUD_COMMANDS = new Set<Command>(['login', 'logout', 'whoami', 'maps'])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
 const LANGUAGE_VALUES = new Set<string>([...LANGUAGES, 'auto'])
 
@@ -58,6 +105,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     strict: false,
     keepDocs: false,
     force: false,
+    instance: null,
+    mapsAction: null,
   }
 
   if (argv.length === 0) return parsed
@@ -70,6 +119,19 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     }
     parsed.command = first as Command
     i = 1
+
+    // `maps` takes a verb. Read here rather than as a positional later, so that
+    // `veilio maps pull abc` does not treat `pull` as a file to anonymize.
+    if (parsed.command === 'maps') {
+      const verb = argv[1]
+      if (verb !== undefined && !verb.startsWith('-')) {
+        if (verb !== 'list' && verb !== 'pull' && verb !== 'push') {
+          throw new UsageError(`unknown maps action "${verb}" — expected list, pull or push`)
+        }
+        parsed.mapsAction = verb
+        i = 2
+      }
+    }
   }
 
   for (; i < argv.length; i++) {
@@ -131,6 +193,25 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '--force':
         parsed.force = true
         break
+      case '--instance': {
+        const value = requireValue(arg, argv[++i])
+        // Parsed here rather than at use, so a typo is a usage error before any
+        // password is typed rather than a confusing failure after.
+        let url: URL
+        try {
+          url = new URL(value)
+        } catch {
+          throw new UsageError(`--instance must be a URL (got "${value}")`)
+        }
+        if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
+          throw new UsageError(
+            `--instance must be https (got "${value}") — a password and a session token over ` +
+              'plain http are readable by anything on the path. localhost is allowed for development.'
+          )
+        }
+        parsed.instance = value
+        break
+      }
       default:
         if (arg.startsWith('-') && arg !== '-') {
           throw new UsageError(`unknown flag "${arg}"`)

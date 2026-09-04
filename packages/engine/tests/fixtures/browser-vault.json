@@ -1,0 +1,20 @@
+{
+  "passphrase": "a browser wrote this one",
+  "salt": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "kdf": {
+    "name": "PBKDF2-SHA256",
+    "iterations": 600000
+  },
+  "envelope": {
+    "v": 1,
+    "alg": "AES-256-GCM-PBKDF2",
+    "iv": "vJ0u4jcSyHkzSbs6",
+    "data": "6vsxR6RxNzVnKz+2Ew8dTsFrjZ3Ik5c9H7lZsHlcN2G4WWNErB6SmKEflu9jH3KInoZsprEeZ8EOmOOxcGeTp9g0ILUvrGh6T71AXWDOd8YUH/uAhPWeRg=="
+  },
+  "verifier": "{\"iv\":\"+ZcJNnxtEk4kFgFD\",\"data\":\"KbbtAjO5g9o/ZA7HGqPpvqLTJIkhGF9BjihutZhLlBHaejFW+IxQeQ==\"}",
+  "map": {
+    "__CLS__1": "PaymentGateway",
+    "__FN__2": "chargeCard",
+    "__VAR__3": "apiKey"
+  }
+}

@@ -29,6 +29,19 @@ export interface Io {
   stdin: () => Promise<string>
   stdout: (text: string) => void
   stderr: (text: string) => void
+  /**
+   * Home directory the credential lives under. Optional, and every field below
+   * is optional for the same reason: the local commands in this file must
+   * remain constructible without any of it. A required field here would mean a
+   * caller who only wants `scrub` has to supply a way to read a password.
+   *
+   * Undefined means "the real one" — `credential.ts` defaults to `homedir()`.
+   */
+  home?: string
+  /** Read a line from the terminal. Only the cloud commands use it. */
+  prompt?: (label: string) => Promise<string>
+  /** Read a line without echoing it. Only the cloud commands use it. */
+  password?: (label: string) => Promise<string>
 }
 
 /** Exit codes are the contract for CI and pre-commit hooks:
@@ -245,6 +258,18 @@ COMMANDS
                        finds something — use it in a pre-commit hook or CI.
   map                  Show the current symbol map (--clear to wipe it).
 
+  Everything above works offline, with no account. The three below connect a
+  Veilio Cloud subscription and are the only commands that touch the network.
+
+  login                Sign in to Veilio Cloud (--instance for self-hosted).
+  logout               Revoke the session and forget the credential.
+  whoami               Show the signed-in account. Answers from disk; makes no
+                       request, so it works with the instance down.
+  maps list            List the maps this account holds in Cloud.
+  maps pull <id>       Fetch one into the local store. A personal map is
+                       decrypted here — the passphrase never leaves the machine.
+  maps push [name]     Encrypt the local map and upload it.
+
 OPTIONS
   -l, --language <lang>   auto (default), typescript, python, go, java, csharp,
                           rust, ruby, php, c, sql
@@ -256,6 +281,8 @@ OPTIONS
       --keep-docs         restore: keep JSDoc blocks the model wrote
   -f, --force             Allow a map write that would drop existing entries
   -q, --quiet             Suppress the all-clear summary (findings always show)
+      --instance <url>    login: the Veilio instance to sign in to. Defaults to
+                          the public Cloud; https required (localhost excepted)
   -h, --help              Show this help
   -v, --version           Show the version
 

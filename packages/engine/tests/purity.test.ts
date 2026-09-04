@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import {
   anonymize,
   restore,
@@ -17,22 +17,21 @@ import {
 // no environment reads, and zero runtime dependencies. These checks fail CI if a
 // future change (or a malicious PR) tries to add an exfiltration path.
 
-// Every engine source, not just engine.ts. The credential detector in
-// secrets.ts sees more sensitive material than anything else in the package —
-// exempting it from the invariant would be exactly backwards.
-const SOURCES = [
-  'engine.ts',
-  'languages.ts',
-  'product.ts',
-  'secrets.ts',
-  'types.ts',
-  'index.ts',
-] as const
-
-const sources = SOURCES.map((name) => ({
-  name,
-  text: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'),
-}))
+// Every engine source, read from the directory rather than listed.
+//
+// It WAS a list, and the list went stale twice without anybody noticing:
+// `envelope.ts` arrived with the file crypto and `vault.ts` with the cloud-map
+// crypto, and neither was on it — so the two files handling passphrases and keys
+// were the only ones in the package exempt from the invariant that no engine
+// source touches the network, the filesystem or the process. Exactly backwards,
+// and the same failure the CLI's own scan had.
+//
+// A file is covered by existing now.
+const SRC = new URL('../src/', import.meta.url)
+const sources = readdirSync(SRC)
+  .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+  .sort()
+  .map((name) => ({ name, text: readFileSync(new URL(name, SRC), 'utf8') }))
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 /** Remove comments, keep everything else — including string literals.

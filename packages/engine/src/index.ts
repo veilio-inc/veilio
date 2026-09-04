@@ -1,5 +1,6 @@
 export * from './engine.js'
 export * from './envelope.js'
+export * from './vault.js'
 export * from './languages.js'
 export * from './product.js'
 export * from './secrets.js'
