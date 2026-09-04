@@ -7,6 +7,7 @@
 
 import { FrameReader, type JsonRpcResponse } from './server.js'
 import type { ToolContext } from './tools.js'
+import { primeNamespace } from './namespace.js'
 
 export { FrameReader, handleFrame, handleMessage, SERVER_VERSION } from './server.js'
 export { TOOLS, callTool } from './tools.js'
@@ -24,12 +25,18 @@ function parseCliContext(argv: readonly string[]): ToolContext {
   return { cwd, mapPath }
 }
 
-function start(): void {
+async function start(): Promise<void> {
   const ctx = parseCliContext(process.argv.slice(2))
   const send = (response: JsonRpcResponse): void => {
     process.stdout.write(`${JSON.stringify(response)}\n`)
   }
   const reader = new FrameReader(ctx, send)
+
+  // Resolved once, before a single byte of stdin is read, so every tool call
+  // for the rest of this process sees the answer already settled rather than
+  // racing the first one in (contracts/shared-namespace.md R-007). Never
+  // throws — see namespace.ts — so this can only delay startup, not fail it.
+  await primeNamespace()
 
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk: string) => reader.push(chunk))
@@ -38,5 +45,5 @@ function start(): void {
 }
 
 if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
-  start()
+  void start()
 }

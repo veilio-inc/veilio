@@ -33,6 +33,7 @@ import {
   type SecretFinding,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+import { getNamespace, mergeNamespace } from './namespace.js'
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */
@@ -80,6 +81,14 @@ function safeResolve(path: string, cwd: string): string {
     throw new ToolError(`path "${path}" is outside the project root`)
   }
   return abs
+}
+
+/** Whether `placeholder` appears in `text` as a whole token, not as a prefix of
+ *  a longer one — `__CLS__1` must not match inside `__CLS__10`. Used to decide
+ *  which team-namespace entries a masking result actually leaned on. */
+function appearsAsToken(text: string, placeholder: string): boolean {
+  const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).test(text)
 }
 
 function readTarget(
@@ -169,10 +178,32 @@ function runAnonymize(
   ctx: ToolContext
 ): ToolResult {
   const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
-  const existingMap = loadMap(mapPath)
+  const localMap = loadMap(mapPath)
+  // Overlaid, not merged by key — the two placeholder spaces are numbered
+  // independently and a shared key is coincidence, not identity. See
+  // mergeNamespace's own comment for why a naive `{ ...local, ...namespace }`
+  // corrupts the store (spec 005 US4).
+  const { source: namespaceSource, namespace } = getNamespace()
+  const existingMap = mergeNamespace(localMap, namespace)
   const language = (str(args, 'language') ?? 'auto') as 'auto'
   const result = anonymize(source, { existingMap, language, secrets: 'redact' })
-  saveMap(mapPath, result.map)
+  // Persist local-original, whatever this call genuinely minted, and only the
+  // team-overlay entries this call actually USED — never the rest of the team
+  // namespace. Persisting all of it would bake entries this project never
+  // references into the store, unboundedly, and they'd outlive the entitlement
+  // that fetched them: lose Cloud access later and the store keeps quietly
+  // resolving through team placeholders while truthfully reporting `local`.
+  // Persisting none of it, the other extreme, breaks `restore_text` for a
+  // team placeholder that IS sitting in the output this call just returned.
+  const toPersist = Object.fromEntries(
+    Object.entries(result.map).filter(
+      ([placeholder]) =>
+        !(placeholder in namespace) ||
+        placeholder in localMap ||
+        appearsAsToken(result.anonymized, placeholder)
+    )
+  )
+  saveMap(mapPath, toPersist)
 
   const body =
     args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
@@ -201,7 +232,10 @@ function runAnonymize(
   const notes = [
     `Source: ${label}`,
     `Language: ${LANGUAGE_LABELS[result.language]}`,
-    `Placeholders in map: ${Object.keys(result.map).length}`,
+    `Placeholders in map: ${Object.keys(toPersist).length}`,
+    // Never absent (FR-016, Constitution V): a result that cannot say where its
+    // names came from is the silent fallback this line exists to rule out.
+    `Namespace: ${namespaceSource}`,
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')
