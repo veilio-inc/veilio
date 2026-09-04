@@ -57,7 +57,7 @@
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },
   "//version": "The published version, kept in step by hand. semantic-release computes the next version from the engine-v tags and @semantic-release/npm writes it into the tarball at publish time; since @semantic-release/git was removed the bump is never committed back, so this field drifts unless somebody moves it. It has to be right now that packages/cli and packages/mcp resolve the engine as a workspace: if this is below their declared range, npm silently installs a REGISTRY copy beside the source and both tools get tested against a different engine than the one in the tree."
