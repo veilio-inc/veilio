@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
 import type {
   CommentExposure,
@@ -65,6 +65,13 @@ export default function ScrubPage() {
   // real amount of wall-clock time, and with nothing shown for it a slow one
   // reads as broken rather than working.
   const [cryptoBusy, setCryptoBusy] = useState<'export' | 'import' | null>(null)
+  // spec 007-e11, User Story 2: a ref, not state — the controller itself never
+  // needs to trigger a render, only cryptoBusy above does that.
+  const cryptoAbort = useRef<AbortController | null>(null)
+
+  function handleCancelCrypto() {
+    cryptoAbort.current?.abort()
+  }
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
 
@@ -215,8 +222,10 @@ export default function ScrubPage() {
     )
     if (!passphrase) return
     setCryptoBusy('export')
+    const controller = new AbortController()
+    cryptoAbort.current = controller
     try {
-      const json = await exportMap(currentMap, passphrase)
+      const json = await exportMap(currentMap, passphrase, controller.signal)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -226,8 +235,9 @@ export default function ScrubPage() {
       URL.revokeObjectURL(url)
       showToast('Map exported')
     } catch (err) {
-      showToast(exportErrorMessage(err), 'error')
+      showToast(controller.signal.aborted ? 'Export cancelled' : exportErrorMessage(err), 'error')
     } finally {
+      cryptoAbort.current = null
       setCryptoBusy(null)
     }
   }
@@ -242,14 +252,17 @@ export default function ScrubPage() {
       const passphrase = prompt('Enter the passphrase:')
       if (!passphrase) return
       setCryptoBusy('import')
+      const controller = new AbortController()
+      cryptoAbort.current = controller
       try {
         const text = await file.text()
-        const map = await importMap(text, passphrase)
+        const map = await importMap(text, passphrase, controller.signal)
         setCurrentMap(map)
         showToast(`Loaded ${Object.keys(map).length} identifiers`)
       } catch (err) {
-        showToast(importErrorMessage(err), 'error')
+        showToast(controller.signal.aborted ? 'Import cancelled' : importErrorMessage(err), 'error')
       } finally {
+        cryptoAbort.current = null
         setCryptoBusy(null)
       }
     }
@@ -371,6 +384,18 @@ export default function ScrubPage() {
             >
               {cryptoBusy === 'import' ? 'Decrypting…' : 'Import .veilio'}
             </button>
+            {cryptoBusy !== null && (
+              // spec 007-e11 US2: an import can be deriving at up to the
+              // 4,000,000-iteration ceiling in kdf.ts — a busy state alone
+              // still traps the user for however long that takes.
+              <button
+                className="btn-ghost"
+                style={{ padding: '5px 12px', fontSize: 12, color: 'var(--danger, #e5484d)' }}
+                onClick={handleCancelCrypto}
+              >
+                Cancel
+              </button>
+            )}
             {mapCount > 0 && (
               <button className="btn-danger" style={{ fontSize: 12 }} onClick={handleClearMap}>
                 Clear map

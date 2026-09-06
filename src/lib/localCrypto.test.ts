@@ -261,3 +261,51 @@ describe('derivation runs in a worker (ROADMAP E11)', () => {
     expect(created?.terminated).toBe(true)
   })
 })
+
+// spec 007-e11, User Story 2: a long-running derive (a hostile or merely large
+// imported file, up to the 4,000,000-iteration ceiling in kdf.ts) must be
+// abandonable rather than trapping the user in a wait with no way out.
+describe('a derive can be cancelled (spec 007-e11 US2)', () => {
+  it('rejects immediately for a signal that is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const started = performance.now()
+    await expect(exportMap({ __FN__1: 'x' }, PASSPHRASE, controller.signal)).rejects.toThrow()
+    // No worker should even spin up for an already-aborted signal.
+    expect(performance.now() - started).toBeLessThan(50)
+  })
+
+  it('rejects with an AbortError, not an opaque generic error', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    await expect(exportMap({ __FN__1: 'x' }, PASSPHRASE, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+  })
+
+  it('cancels a derive already in flight and terminates the worker', async () => {
+    let created: FakeKdfWorker | undefined
+    function TrackedWorker(url?: string | URL, options?: WorkerOptions) {
+      created = new FakeKdfWorker(url, options)
+      return created
+    }
+    ;(globalThis as unknown as { Worker: unknown }).Worker = TrackedWorker
+
+    const controller = new AbortController()
+    const promise = exportMap({ __FN__1: 'x' }, PASSPHRASE, controller.signal)
+    // FakeKdfWorker resolves via a queued microtask; aborting synchronously,
+    // before that microtask runs, is what proves cancellation wins the race
+    // rather than merely happening to run after the derive already finished.
+    controller.abort()
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    expect(created?.terminateCallCount).toBe(1)
+  })
+
+  it('does not cancel a derive that already completed', async () => {
+    const controller = new AbortController()
+    const map = await exportMap({ __FN__1: 'x' }, PASSPHRASE, controller.signal)
+    controller.abort()
+    expect(await importMap(map, PASSPHRASE)).toEqual({ __FN__1: 'x' })
+  })
+})

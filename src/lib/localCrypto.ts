@@ -14,12 +14,26 @@ import type { KdfWorkerRequest, KdfWorkerResponse } from './kdfWorker.js'
 // CryptoKey back rather than raw key material — deriving bits and reimporting
 // on the main thread would move secret material across the boundary for no
 // benefit.
+// A long import derives at whatever the file recorded (up to the 4,000,000
+// ceiling in kdf.ts), and a hostile or merely large file must not trap the
+// user in a wait they cannot back out of — spec 007-e11, User Story 2.
+// Terminating the worker is enough: nothing sensitive survives it, since the
+// passphrase and salt live only in the message just posted and the derived
+// key never left the worker to reach here.
 function deriveKey(
   passphrase: string,
   salt: Uint8Array<ArrayBuffer>,
-  kdf: KdfParams
+  kdf: KdfParams,
+  signal?: AbortSignal
 ): Promise<CryptoKey> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(
+        signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
+      )
+      return
+    }
+
     // `new URL(..., import.meta.url)` is what makes Vite emit this as a
     // same-origin module chunk instead of inlining a `blob:` worker — the
     // latter would need a CSP change (E3's `default-src 'self'`) that this
@@ -29,7 +43,18 @@ function deriveKey(
     // through the same TS-to-source module resolution as a normal import, and
     // needs the real extension on disk.
     const worker = new Worker(new URL('./kdfWorker.ts', import.meta.url), { type: 'module' })
-    const cleanup = () => worker.terminate()
+    const cleanup = () => {
+      worker.terminate()
+      signal?.removeEventListener('abort', onAbort)
+    }
+
+    const onAbort = () => {
+      cleanup()
+      reject(
+        signal?.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
+      )
+    }
+    signal?.addEventListener('abort', onAbort)
 
     worker.onmessage = (e: MessageEvent<KdfWorkerResponse>) => {
       cleanup()
@@ -78,14 +103,18 @@ export interface VeilioFile {
   data: string
 }
 
-export async function exportMap(map: SymbolMap, passphrase: string): Promise<string> {
+export async function exportMap(
+  map: SymbolMap,
+  passphrase: string,
+  signal?: AbortSignal
+): Promise<string> {
   // Enforced here rather than at the call site so no future caller can write a
   // file that skips the floor (ROADMAP E8).
   assertUsablePassphrase(passphrase)
   const enc = new TextEncoder()
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF)
+  const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF, signal)
   const ciphertext = await crypto.subtle.encrypt(
     { name: ALG, iv },
     key,
@@ -102,7 +131,11 @@ export async function exportMap(map: SymbolMap, passphrase: string): Promise<str
   return JSON.stringify(file, null, 2)
 }
 
-export async function importMap(fileContent: string, passphrase: string): Promise<SymbolMap> {
+export async function importMap(
+  fileContent: string,
+  passphrase: string,
+  signal?: AbortSignal
+): Promise<SymbolMap> {
   const file = JSON.parse(fileContent) as VeilioFile
   if (file.v !== 1 || file.alg !== 'AES-256-GCM-PBKDF2')
     throw new Error('Invalid .veilio file format')
@@ -110,7 +143,7 @@ export async function importMap(fileContent: string, passphrase: string): Promis
   const salt = fromBase64(file.salt)
   const iv = fromBase64(file.iv)
   const data = fromBase64(file.data)
-  const key = await deriveKey(passphrase, salt, kdf)
+  const key = await deriveKey(passphrase, salt, kdf, signal)
   const dec = new TextDecoder()
   const plaintext = await crypto.subtle.decrypt({ name: ALG, iv }, key, data)
   // Decryption succeeding proves the author knew the passphrase, which in a

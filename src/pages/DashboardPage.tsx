@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Navbar from '../components/Navbar.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 import { exportMap } from '../lib/localCrypto.js'
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   // but it still takes real time — id of the map currently being encrypted,
   // so only that row's button shows busy.
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const exportAbort = useRef<AbortController | null>(null)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -27,8 +28,10 @@ export default function DashboardPage() {
     const passphrase = prompt('Enter a passphrase to encrypt the export:')
     if (!passphrase) return
     setExportingId(id)
+    const controller = new AbortController()
+    exportAbort.current = controller
     try {
-      const json = await exportMap(map, passphrase)
+      const json = await exportMap(map, passphrase, controller.signal)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -38,10 +41,15 @@ export default function DashboardPage() {
       URL.revokeObjectURL(url)
       showToast('Map exported')
     } catch {
-      showToast('Export failed', 'error')
+      showToast(controller.signal.aborted ? 'Export cancelled' : 'Export failed', 'error')
     } finally {
+      exportAbort.current = null
       setExportingId(null)
     }
+  }
+
+  function handleCancelExport() {
+    exportAbort.current?.abort()
   }
 
   function handleExportJson(id: string, name: string) {
@@ -161,10 +169,20 @@ export default function DashboardPage() {
                   >
                     {exportingId === m.id ? 'Encrypting…' : '.veilio'}
                   </button>
+                  {exportingId === m.id && (
+                    <button
+                      className="btn-ghost"
+                      style={{ padding: '4px 10px', fontSize: 12, color: 'var(--danger, #e5484d)' }}
+                      onClick={handleCancelExport}
+                    >
+                      Cancel
+                    </button>
+                  )}
                   <button
                     className="btn-ghost"
                     style={{ padding: '4px 10px', fontSize: 12 }}
                     onClick={() => handleExportJson(m.id, m.name)}
+                    disabled={exportingId !== null}
                   >
                     .json
                   </button>
