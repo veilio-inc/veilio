@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "Security vulnerability"
+    url: https://github.com/veilio-inc/veilio/security/policy
+    about: >-
+      Do not open a public issue for a vulnerability. Use the private
+      reporting process in SECURITY.md instead.
+
+# Discussions is not enabled on this repo (no tab to link to), so a usage
+# question is a blank issue with the "question" label rather than a
+# contact-link redirect to a feature that isn't on. Revisit if that changes.

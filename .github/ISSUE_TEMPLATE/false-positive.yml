@@ -1,0 +1,62 @@
+name: "False positive"
+description: >-
+  A reserved word, keyword, or non-identifying value got masked. This breaks
+  the code the model gets back.
+labels: ["bug", "area: engine"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste your real sensitive material here.** Issues are public.
+        Reduce the case to the smallest snippet that reproduces the mistake.
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      options:
+        - TypeScript / JavaScript
+        - Python
+        - Go
+        - Java
+        - C#
+        - Rust
+        - Ruby
+        - PHP
+        - C
+        - SQL
+        - Other / not listed
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input snippet (reduced)
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrongly-masked
+    attributes:
+      label: What got masked that shouldn't have
+      description: Name the specific token(s) — a keyword, a structural value (amount, date, port number, status code), or something else that carries no identity.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Paste the engine's output for the snippet above.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+    validations:
+      required: true

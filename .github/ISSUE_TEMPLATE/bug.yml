@@ -1,0 +1,41 @@
+name: "Bug"
+description: Something other than a masking miss or a credential detector — a crash, a UI issue, a build problem.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a missed identifier, a false positive, or a credential detector,
+        use one of those templates instead — they capture what's actually
+        needed to fix an engine issue. Use this one for everything else.
+
+        **Do not paste real sensitive material.** Reduce the case first.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The app, the Docker image, the static bundle, or `@veilio-inc/engine` — whichever you used, and its version/tag.
+    validations:
+      required: true

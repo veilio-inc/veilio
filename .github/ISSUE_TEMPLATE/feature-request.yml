@@ -1,0 +1,31 @@
+name: "Feature / language request"
+description: A new language, a new capability, or a change to how the engine behaves.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CONTRIBUTING asks that anything beyond a bugfix or small improvement be
+        discussed here **before** a pull request, so the approach is agreed on
+        first. This template is that discussion, not a queue for a PR already
+        written.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's missing, and for whom
+      description: If this is a language, name the sector it unblocks (CONTRIBUTING lists financial services, insurance, healthcare, legal, government, critical infrastructure). If it's a capability, describe the material that currently reaches the model unmasked.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed shape
+      description: How you'd expect it to work. It's fine to leave this open if you're reporting the gap rather than proposing the fix.
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints this has to respect
+      description: The engine has zero runtime dependencies and does not guess (no ML/NER, no confidence scores) — say how your proposal fits inside that, or flag if it doesn't and why it might be worth an exception.

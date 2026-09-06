@@ -1,0 +1,69 @@
+name: "Missed identifier (false negative)"
+description: >-
+  Something that should have been masked reached the model. This is the
+  highest-value report — a failing test case from your own material is worth
+  more than a feature request.
+labels: ["bug", "area: engine"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste your real sensitive material here.** Issues are public.
+        Reduce the case first: swap the real name for a different one, the
+        real account number for a different one, and keep the *shape* — same
+        length, same syntax context — so the report stays reproducible without
+        being the material it's about.
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      description: Behaviour differs per language — this is required to act on the report.
+      options:
+        - TypeScript / JavaScript
+        - Python
+        - Go
+        - Java
+        - C#
+        - Rust
+        - Ruby
+        - PHP
+        - C
+        - SQL
+        - Other / not listed
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input snippet (reduced, not your real material)
+      description: The smallest snippet that reproduces the miss.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have been masked
+      description: Which identifier(s), and why they're identity rather than structure (see CONTRIBUTING's `wire(acct_88412037, "Kowalska", 45_000, EUR)` example — the amount and currency should survive; the account and name should not).
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Paste the engine's output for the snippet above.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+      description: "`@veilio-inc/engine` version, or the app/image/static-bundle version you used."
+    validations:
+      required: true
