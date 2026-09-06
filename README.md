@@ -64,7 +64,13 @@ Images are built for `linux/amd64` and `linux/arm64` and pushed on every merge t
 
 #### Verify what you pulled
 
-Every image is published with signed [SLSA](https://slsa.dev) build provenance,
+Every published image is scanned for HIGH/CRITICAL vulnerabilities before it is
+pushed — the scan gates the publish rather than annotating it afterward, and
+covers the Go binary's module graph as well as the (nonexistent, on `scratch`)
+OS packages. Accepted findings, if any, are recorded with a reason in
+[`.trivyignore`](./.trivyignore).
+
+Every image is also published with signed [SLSA](https://slsa.dev) build provenance,
 so you can check it was built by this repository's workflow from this source —
 rather than by someone who obtained a registry token:
 

@@ -1,0 +1,9 @@
+# Accepted findings for the published image (.github/workflows/release.yml,
+# ROADMAP A3). Every entry needs a reason on the line above it — this file is
+# the audit trail for what the scan gate lets through, not a place to quietly
+# raise the threshold.
+#
+# Empty today: nothing has been reviewed and accepted yet. Add an entry only
+# after a maintainer has looked at the specific CVE and decided it doesn't
+# apply here (unreachable code path, fixed differently, etc.) — matching how
+# E10 already handles the two unreachable react-router advisories.

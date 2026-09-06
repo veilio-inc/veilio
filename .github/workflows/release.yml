@@ -134,6 +134,48 @@ jobs:
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      # Scan gate (ROADMAP A3): built and checked *before* anything reaches
+      # GHCR, so a finding blocks the publish rather than annotating it after
+      # the fact. `scratch` has no OS packages, so an OS-package scanner alone
+      # would report this image clean by construction — Trivy's filesystem scan
+      # also reads the Go binary's embedded module/toolchain info (`gobinary`
+      # analyzer), which is the actual attack surface here per docker/serve.go's
+      # comment: stdlib only, so a finding here is most likely the Go toolchain
+      # version itself.
+      #
+      # Single-platform (amd64) and not pushed: multi-platform buildx output is
+      # a manifest list, which `docker load`/local scanning cannot read, and the
+      # runtime image is architecture-independent (nginx-less static Go binary
+      # plus static files), so scanning one arch scans the same content as the
+      # other. The real multi-arch push below reuses this layer via the shared
+      # GHA cache rather than rebuilding it.
+      - name: Build image for vulnerability scan (amd64, not pushed)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: veilio-scan-target:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_VEILIO_CLOUD_URL=https://veilio.dev
+
+      # Findings a maintainer has reviewed and accepted live in .trivyignore
+      # with a reason on each line — the auditable allow-list this gate needs
+      # to avoid the alternative failure mode, where a threshold gets quietly
+      # raised until the gate stops meaning anything.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: veilio-scan-target:local
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
