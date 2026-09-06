@@ -241,6 +241,23 @@ interface WebCryptoHost {
   getRandomValues<T extends Uint8Array>(array: T): T
 }
 
+/**
+ * The same accessor, exported for `vault.ts`.
+ *
+ * The vault envelope is a sibling format keyed off a server-held salt rather
+ * than one carried in the file, so it needs this surface without duplicating the
+ * declaration — a second copy of the WebCrypto contract is a second thing to get
+ * subtly wrong.
+ */
+export function webCryptoSubtle(): WebCryptoSubtle {
+  return subtle()
+}
+
+/** Cryptographically random bytes, for `vault.ts`'s salts and IVs. */
+export function randomBytes(n: number): Uint8Array {
+  return cryptoRandomBytes(n)
+}
+
 function subtle(): WebCryptoSubtle {
   const c = (globalThis as { crypto?: WebCryptoHost }).crypto
   if (!c?.subtle) {
@@ -252,7 +269,7 @@ function subtle(): WebCryptoSubtle {
   return c.subtle
 }
 
-function randomBytes(n: number): Uint8Array {
+function cryptoRandomBytes(n: number): Uint8Array {
   return (globalThis as { crypto: WebCryptoHost }).crypto.getRandomValues(new Uint8Array(n))
 }
 

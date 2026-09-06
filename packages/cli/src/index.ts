@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 import { parseArgs, UsageError } from './args.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
+import {
+  runLogin,
+  runLogout,
+  runWhoami,
+  runMapsList,
+  runMapsPull,
+  runMapsPush,
+} from './cloud-commands.js'
+import { resolveMapPath } from './store.js'
+import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
@@ -35,11 +45,81 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
         return await runScan(args, io)
       case 'map':
         return await runMap(args, io)
+      case 'login':
+        return await runLogin(args.instance, io)
+      case 'logout':
+        return await runLogout(io)
+      case 'whoami':
+        return runWhoami(io)
+      case 'maps': {
+        const mapPath = resolveMapPath(args.mapPath, io.cwd)
+        switch (args.mapsAction) {
+          case 'list':
+            return await runMapsList(io)
+          case 'pull':
+            return await runMapsPull(args.files[0] ?? null, mapPath, io, { force: args.force })
+          case 'push':
+            return await runMapsPush(args.files[0] ?? null, mapPath, io)
+          default:
+            io.stderr('veilio: maps needs an action — list, pull or push.\n')
+            return EXIT_ERROR
+        }
+      }
     }
   } catch (err) {
     io.stderr(`veilio: ${err instanceof Error ? err.message : String(err)}\n`)
     return EXIT_ERROR
   }
+}
+
+/** Read one line from the terminal. */
+function readLine(label: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  return new Promise((resolvePromise) => {
+    rl.question(label, (answer) => {
+      rl.close()
+      resolvePromise(answer)
+    })
+  })
+}
+
+/**
+ * Read a line without echoing it.
+ *
+ * The prompt goes to stderr, not stdout, for the same reason every other message
+ * in this CLI does: stdout is the pipe, and a password prompt appearing in
+ * `veilio scrub x.ts | pbcopy` would be a bug. The echo is suppressed by putting
+ * the TTY in raw mode; without a TTY there is nothing to suppress and the line
+ * is read normally, which is what a scripted `echo pw | veilio login` needs.
+ */
+function readSecret(label: string): Promise<string> {
+  if (!process.stdin.isTTY) return readLine(label)
+  process.stderr.write(label)
+  return new Promise((resolvePromise, rejectPromise) => {
+    const stdin = process.stdin
+    stdin.setRawMode(true)
+    stdin.resume()
+    stdin.setEncoding('utf8')
+    let value = ''
+    const done = (err?: Error): void => {
+      stdin.setRawMode(false)
+      stdin.pause()
+      stdin.removeListener('data', onData)
+      process.stderr.write('\n')
+      if (err) rejectPromise(err)
+      else resolvePromise(value)
+    }
+    const onData = (chunk: string): void => {
+      for (const ch of chunk) {
+        if (ch === '\n' || ch === '\r' || ch === '\u0004') return done()
+        // Ctrl-C must still abort, or raw mode traps the terminal.
+        if (ch === '\u0003') return done(new Error('cancelled'))
+        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1)
+        else value += ch
+      }
+    }
+    stdin.on('data', onData)
+  })
 }
 
 function readStdin(): Promise<string> {
@@ -92,6 +172,8 @@ if (invokedAsProgram()) {
     stdin: readStdin,
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
+    prompt: readLine,
+    password: readSecret,
   }
   main(process.argv.slice(2), io).then(
     (code) => {

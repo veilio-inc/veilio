@@ -148,34 +148,21 @@ describe('CLI purity — every command, with the network trapped', () => {
 })
 
 describe('CLI purity — nothing that opens a socket is even imported', () => {
-  const SOURCES = ['index.ts', 'args.ts', 'commands.ts', 'store.ts'] as const
-  const sources = SOURCES.map((name) => ({
-    name,
-    text: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'),
-  }))
-
-  it('imports no network or subprocess module', () => {
-    // A source scan is the right tool here and a runtime trap is not: an import
-    // that is never exercised by these tests would still ship, and a socket
-    // opened through `node:net` never touches a global the trap can see.
-    const banned = [
-      'node:http',
-      'node:https',
-      'node:net',
-      'node:tls',
-      'node:dns',
-      'node:dgram',
-      'node:child_process',
-      'node:worker_threads',
-      "from 'http'",
-      "from 'https'",
-      "from 'net'",
-    ]
-    for (const { name, text } of sources) {
-      for (const token of banned) {
-        expect(text.includes(token), `${name} must not reference ${token}`).toBe(false)
-      }
-    }
+  /**
+   * The banned-module scan used to live here against a hand-written list of four
+   * files, and the list went stale the moment `cloud.ts`, `credential.ts` and
+   * `cloud-commands.ts` arrived. Worse, a NEW module doing
+   * `import { request } from 'node:https'` and called from a local command
+   * passed everything: node:https touches no global, so the runtime traps above
+   * sit it out, and the module was on nobody's list.
+   *
+   * It now lives in `offline.test.ts`, driven from the import graph, so a module
+   * is covered by being imported rather than by being remembered. This is the
+   * pointer, kept so the next person looking for the check here finds it.
+   */
+  it('is enforced by the import-graph walk in offline.test.ts', () => {
+    const offline = readFileSync(new URL('./offline.test.ts', import.meta.url), 'utf8')
+    expect(offline).toContain('nothing reachable from the local commands can open a socket')
   })
 
   it('declares no runtime dependency outside the Veilio scope', () => {

@@ -15,9 +15,11 @@ npm install -g @veilio-inc/cli     # or run it without installing:
 npx @veilio-inc/cli scrub src/billing.ts
 ```
 
-Requires Node 24 or newer. No account, no API key, and no network call on any of
-the commands below — `packages/cli/tests/purity.test.ts` traps the network
-globals and fails if one is ever introduced.
+Requires Node 24 or newer. No account, no API key, and no network call on
+`scrub`, `restore`, `scan` or `map` — `packages/cli/tests/purity.test.ts` and
+`offline.test.ts` walk the import graph and trap the network globals to keep it
+that way. Signing in is entirely optional and adds nothing to those commands'
+behavior; it only unlocks the four commands below that name Cloud explicitly.
 
 ## Commands
 
@@ -27,6 +29,32 @@ globals and fails if one is ever introduced.
 | `restore [files...]` | Swap placeholders back, strip AI-generated noise.                     |
 | `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
 | `map`                | Show the symbol map (`--clear` to wipe it).                           |
+
+## Cloud sync (Individual plan and above)
+
+```bash
+veilio login                    # prompts for email/password; --instance for self-hosted
+veilio whoami                   # who you're signed in as, no request made
+veilio maps list                # ids, scope and symbol counts for everything in Cloud
+veilio maps pull <id>           # decrypt locally, write second — never a partial write
+veilio maps push <name>         # upload the local map under a new Cloud name
+veilio logout                   # revokes server-side, then removes the local credential
+```
+
+The session token lives in a single file under your home directory
+(`~/.veilio/credential.json` on Linux/macOS, `%USERPROFILE%\.veilio\credential.json`
+on Windows), created at mode `0600` and never written until the server has
+accepted the sign-in. `0600` is the floor, not the final answer — the OS
+keychain is a stronger option and a planned follow-up. A personal map is
+zero-knowledge: pulling or pushing one prompts for the vault passphrase and
+derives the key here, on your machine — the passphrase and the key never
+leave it. A team map arrives already open, because the server can read those
+(stated in the privacy policy) and there is nothing local left to decrypt.
+
+Every one of these six is a client of `GET /api/maps`, `GET /api/maps/:id` and
+`POST /api/maps` — the exact same routes the browser uses, behind the exact
+same entitlement check. There is no CLI-shaped API and nothing here can reach
+a plan feature the web app couldn't.
 
 ## Options
 

@@ -14,6 +14,7 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
 → Source: src/gateway.ts
   Language: TypeScript / JavaScript
   Placeholders in map: 7
+  Namespace: local
   Credentials detected — 1 critical:
     critical line 2:24  Stripe secret key — sk_l…MNOP (31 chars) (redacted, not recoverable)
 
@@ -51,6 +52,22 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
 ```
 
 `--root <dir>` scopes every path the server will read; `--map <path>` overrides the symbol-map location. Paths outside the root are refused — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
+
+## Team namespace (Team plan and above)
+
+Sign in once with the `veilio` CLI — `veilio login` — and every anonymize
+result from this server states which namespace produced its placeholders:
+
+- **`team`** — resolved against the team's shared dictionary, fetched from
+  Cloud once at startup and reused for the life of the process, so every
+  teammate's agent produces the same placeholder for the same identifier.
+- **`local`** — resolved locally: never signed in, offline, or the plan
+  doesn't include shared dictionaries. This is the normal, fully-functional
+  state for anyone not on a paid team — the server never blocks on it, and
+  the fallback is always stated, never silent.
+
+There is no separate sign-in for the MCP server; it reads the same credential
+file `veilio login` already wrote.
 
 ## Design properties
 

@@ -45,7 +45,9 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./store": "./dist/store.js"
+    "./store": "./dist/store.js",
+    "./credential": "./dist/credential.js",
+    "./cloud": "./dist/cloud.js"
   },
   "repository": {
     "type": "git",

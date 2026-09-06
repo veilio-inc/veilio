@@ -40,11 +40,48 @@ export interface StoredMap {
   /** Schema marker so a future format change can be detected rather than
    *  silently misread as a map. */
   version: 1
+  /**
+   * Where this map came from in Cloud, if it came from Cloud.
+   *
+   * Present only for a map that was pulled or pushed. Its whole purpose is to
+   * make divergence DETECTABLE: without it, `pull` cannot tell "this is the map
+   * I pulled and have not touched" from "this is a different map with the same
+   * name", and the only safe behaviour left would be to overwrite or to refuse
+   * always. Neither is the answer — the contract says a conflict is reported.
+   */
+  remote?: {
+    id: string
+    /** Cloud's `updated_at` at the moment we pulled. */
+    updatedAt: string
+    pulledAt?: string
+    pushedAt?: string
+  }
 }
 
 function isSymbolMap(value: unknown): value is SymbolMap {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   return Object.values(value).every((v) => typeof v === 'string')
+}
+
+/**
+ * The Cloud provenance recorded alongside the local map, if any.
+ *
+ * Separate from `loadMap` because every existing caller wants the map and
+ * nothing else, and because a store written before this existed simply has no
+ * `remote` — which reads correctly as "this map did not come from Cloud".
+ */
+export function loadRemote(path: string): StoredMap['remote'] | undefined {
+  if (!existsSync(path)) return undefined
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { remote?: StoredMap['remote'] }
+    const remote = parsed.remote
+    if (!remote || typeof remote.id !== 'string' || typeof remote.updatedAt !== 'string') {
+      return undefined
+    }
+    return remote
+  } catch {
+    return undefined
+  }
 }
 
 /** Read the stored map, or an empty map when there is none. Throws only when a
@@ -85,7 +122,11 @@ export class MapOverwriteError extends Error {}
  * text that used it can never be read back. Reachable by pointing `--map` at
  * another session's store, or by a future caller that forgets to load first.
  */
-export function saveMap(path: string, map: SymbolMap, options: { force?: boolean } = {}): void {
+export function saveMap(
+  path: string,
+  map: SymbolMap,
+  options: { force?: boolean; remote?: StoredMap['remote'] } = {}
+): void {
   if (!options.force && existsSync(path)) {
     const dropped = Object.entries(loadMap(path)).filter(
       ([placeholder, real]) => map[placeholder] !== real
@@ -110,7 +151,10 @@ export function saveMap(path: string, map: SymbolMap, options: { force?: boolean
   if (dir.endsWith(STORE_DIR) && !existsSync(ignore)) {
     writeFileSync(ignore, '*\n', { mode: 0o600 })
   }
-  const payload: StoredMap = { version: 1, map }
+  // Carried forward when the caller does not supply one, so an ordinary `scrub`
+  // does not quietly erase the provenance a `pull` recorded.
+  const remote = options.remote ?? loadRemote(path)
+  const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
   writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
   // writeFileSync only applies `mode` when creating the file; enforce it on
   // rewrite too so a pre-existing world-readable map gets locked down.
