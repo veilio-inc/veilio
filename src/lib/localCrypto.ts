@@ -2,33 +2,48 @@ import type { SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
 import { parseSymbolMap } from './importedMap.js'
 import { assertUsablePassphrase } from './passphrase.js'
+import { ALG } from './kdfWork.js'
+import type { KdfWorkerRequest, KdfWorkerResponse } from './kdfWorker.js'
 
-const ALG = 'AES-GCM'
-
-async function deriveKey(
+// PBKDF2 runs in a Worker rather than inline (ROADMAP E11): export always
+// pays 600k iterations, import pays whatever the file recorded (bounded at
+// 4,000,000 by kdf.ts), and either one on the main thread stalls the tab for
+// the whole derivation with no way to tell a slow derive from a hang.
+//
+// `deriveKey` is structured-cloneable, so the worker posts the derived
+// CryptoKey back rather than raw key material — deriving bits and reimporting
+// on the main thread would move secret material across the boundary for no
+// benefit.
+function deriveKey(
   passphrase: string,
   salt: Uint8Array<ArrayBuffer>,
   kdf: KdfParams
 ): Promise<CryptoKey> {
-  const enc = new TextEncoder()
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(passphrase),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  )
-  return crypto.subtle.deriveKey(
-    // Pass the TypedArray view directly, not salt.buffer: a raw ArrayBuffer
-    // fails WebCrypto's cross-realm instanceof check under jsdom
-    // ("salt is not instance of ArrayBuffer…"). ArrayBufferView checks are
-    // realm-agnostic, so the view works everywhere.
-    { name: 'PBKDF2', salt, iterations: kdf.iterations, hash: 'SHA-256' },
-    keyMaterial,
-    { name: ALG, length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  )
+  return new Promise((resolve, reject) => {
+    // `new URL(..., import.meta.url)` is what makes Vite emit this as a
+    // same-origin module chunk instead of inlining a `blob:` worker — the
+    // latter would need a CSP change (E3's `default-src 'self'`) that this
+    // feature has no reason to ask for.
+    // `.ts`, not the `.js` specifier used elsewhere in this file: Vite's
+    // worker-URL analysis resolves this as a build-time asset reference, not
+    // through the same TS-to-source module resolution as a normal import, and
+    // needs the real extension on disk.
+    const worker = new Worker(new URL('./kdfWorker.ts', import.meta.url), { type: 'module' })
+    const cleanup = () => worker.terminate()
+
+    worker.onmessage = (e: MessageEvent<KdfWorkerResponse>) => {
+      cleanup()
+      if (e.data.ok) resolve(e.data.key)
+      else reject(new Error(e.data.error))
+    }
+    worker.onerror = (e) => {
+      cleanup()
+      reject(e.error instanceof Error ? e.error : new Error(e.message || 'KDF worker failed'))
+    }
+
+    const request: KdfWorkerRequest = { passphrase, salt, iterations: kdf.iterations }
+    worker.postMessage(request)
+  })
 }
 
 function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {

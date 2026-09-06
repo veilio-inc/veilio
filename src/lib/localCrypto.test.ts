@@ -5,11 +5,19 @@
 // jsdom realm boundary fail `instanceof` checks against Node's own globals, so
 // a node-environment run silently skips the very code paths that break in
 // practice. The rest of the suite (the engine) stays on the default env.
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import type { SymbolMap } from '@veilio-inc/engine'
 import { exportMap, importMap } from './localCrypto.js'
 import { InvalidMapError } from './importedMap.js'
 import { WeakPassphraseError, MIN_PASSPHRASE_LENGTH } from './passphrase.js'
+import { FakeKdfWorker } from './testSupport/fakeKdfWorker.js'
+
+// jsdom does not implement Worker at all, and derivation now runs in one
+// (ROADMAP E11) — every test in this file exercises exportMap/importMap
+// through this stand-in rather than a direct in-process call. It runs the
+// same handleKdfRequest the real worker entry does, so this is testing the
+// message contract, not skipping it.
+;(globalThis as unknown as { Worker: unknown }).Worker = FakeKdfWorker
 
 // Every export runs a real 600k-iteration PBKDF2 derive, so keep the round-trip
 // count low and give these a longer timeout.
@@ -205,4 +213,51 @@ describe('importMap validates what it decrypts', () => {
     const map = { __CLS__1: 'InvoiceLedger', __FN__2: 'settleInvoice', __P3__: 'legacyStyle' }
     expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
   }, 30_000)
+})
+
+// ROADMAP E11: derivation moved into a Worker. These specifically cover the
+// plumbing around it — the tests above already cover FakeKdfWorker's success
+// path implicitly, since every round-trip above goes through it.
+describe('derivation runs in a worker (ROADMAP E11)', () => {
+  const RealWorker = globalThis.Worker
+
+  afterEach(() => {
+    ;(globalThis as unknown as { Worker: unknown }).Worker = RealWorker ?? FakeKdfWorker
+  })
+
+  it('terminates the worker after a successful derive', async () => {
+    // A constructor function that returns an object is what `new` actually
+    // invokes in that case (rather than `this`), which is what lets this
+    // track the created instance without aliasing `this`.
+    let created: FakeKdfWorker | undefined
+    function TrackedWorker(url?: string | URL, options?: WorkerOptions) {
+      created = new FakeKdfWorker(url, options)
+      return created
+    }
+    ;(globalThis as unknown as { Worker: unknown }).Worker = TrackedWorker
+
+    await exportMap({ __FN__1: 'x' }, PASSPHRASE)
+
+    expect(created?.terminateCallCount).toBe(1)
+  })
+
+  it('propagates a worker onerror as a rejected promise, not a hang', async () => {
+    const { FailingKdfWorker } = await import('./testSupport/fakeKdfWorker.js')
+    ;(globalThis as unknown as { Worker: unknown }).Worker = FailingKdfWorker
+
+    await expect(exportMap({ __FN__1: 'x' }, PASSPHRASE)).rejects.toThrow()
+  })
+
+  it('terminates the worker even when it errors', async () => {
+    const { FailingKdfWorker } = await import('./testSupport/fakeKdfWorker.js')
+    let created: InstanceType<typeof FailingKdfWorker> | undefined
+    function TrackedFailingWorker(url?: string | URL, options?: WorkerOptions) {
+      created = new FailingKdfWorker(url, options)
+      return created
+    }
+    ;(globalThis as unknown as { Worker: unknown }).Worker = TrackedFailingWorker
+
+    await expect(exportMap({ __FN__1: 'x' }, PASSPHRASE)).rejects.toThrow()
+    expect(created?.terminated).toBe(true)
+  })
 })

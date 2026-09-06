@@ -50,6 +50,11 @@ export default function ScrubPage() {
   const [languageFallback, setLanguageFallback] = useState(false)
   const [commentExposure, setCommentExposure] = useState<CommentExposure>(NO_COMMENTS)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
+  // A derive now runs in a Worker (ROADMAP E11), so the main thread never
+  // freezes for it — but a passphrase-protected export/import still takes a
+  // real amount of wall-clock time, and with nothing shown for it a slow one
+  // reads as broken rather than working.
+  const [cryptoBusy, setCryptoBusy] = useState<'export' | 'import' | null>(null)
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
 
@@ -166,6 +171,7 @@ export default function ScrubPage() {
       `Enter a passphrase to encrypt the export (at least ${MIN_PASSPHRASE_LENGTH} characters):`
     )
     if (!passphrase) return
+    setCryptoBusy('export')
     try {
       const json = await exportMap(currentMap, passphrase)
       const blob = new Blob([json], { type: 'application/json' })
@@ -178,6 +184,8 @@ export default function ScrubPage() {
       showToast('Map exported')
     } catch (err) {
       showToast(exportErrorMessage(err), 'error')
+    } finally {
+      setCryptoBusy(null)
     }
   }
 
@@ -190,6 +198,7 @@ export default function ScrubPage() {
       if (!file) return
       const passphrase = prompt('Enter the passphrase:')
       if (!passphrase) return
+      setCryptoBusy('import')
       try {
         const text = await file.text()
         const map = await importMap(text, passphrase)
@@ -197,6 +206,8 @@ export default function ScrubPage() {
         showToast(`Loaded ${Object.keys(map).length} identifiers`)
       } catch (err) {
         showToast(importErrorMessage(err), 'error')
+      } finally {
+        setCryptoBusy(null)
       }
     }
     fileInput.click()
@@ -301,8 +312,10 @@ export default function ScrubPage() {
                   className="btn-ghost"
                   style={{ padding: '5px 12px', fontSize: 12 }}
                   onClick={handleExport}
+                  disabled={cryptoBusy !== null}
+                  aria-busy={cryptoBusy === 'export'}
                 >
-                  Export .veilio
+                  {cryptoBusy === 'export' ? 'Encrypting…' : 'Export .veilio'}
                 </button>
               </>
             )}
@@ -310,8 +323,10 @@ export default function ScrubPage() {
               className="btn-ghost"
               style={{ padding: '5px 12px', fontSize: 12 }}
               onClick={handleImport}
+              disabled={cryptoBusy !== null}
+              aria-busy={cryptoBusy === 'import'}
             >
-              Import .veilio
+              {cryptoBusy === 'import' ? 'Decrypting…' : 'Import .veilio'}
             </button>
             {mapCount > 0 && (
               <button className="btn-danger" style={{ fontSize: 12 }} onClick={handleClearMap}>

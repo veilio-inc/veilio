@@ -11,6 +11,10 @@ function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
 export default function DashboardPage() {
   const { maps, deleteMap } = useLocalMaps()
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
+  // Derivation runs in a Worker (ROADMAP E11) so this doesn't freeze the tab,
+  // but it still takes real time — id of the map currently being encrypted,
+  // so only that row's button shows busy.
+  const [exportingId, setExportingId] = useState<string | null>(null)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -22,6 +26,7 @@ export default function DashboardPage() {
     if (!map) return
     const passphrase = prompt('Enter a passphrase to encrypt the export:')
     if (!passphrase) return
+    setExportingId(id)
     try {
       const json = await exportMap(map, passphrase)
       const blob = new Blob([json], { type: 'application/json' })
@@ -34,6 +39,8 @@ export default function DashboardPage() {
       showToast('Map exported')
     } catch {
       showToast('Export failed', 'error')
+    } finally {
+      setExportingId(null)
     }
   }
 
@@ -149,8 +156,10 @@ export default function DashboardPage() {
                     className="btn-ghost"
                     style={{ padding: '4px 10px', fontSize: 12 }}
                     onClick={() => handleExportVeilio(m.id, m.name)}
+                    disabled={exportingId !== null}
+                    aria-busy={exportingId === m.id}
                   >
-                    .veilio
+                    {exportingId === m.id ? 'Encrypting…' : '.veilio'}
                   </button>
                   <button
                     className="btn-ghost"
