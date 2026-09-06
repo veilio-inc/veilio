@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
 import type {
   CommentExposure,
+  Language,
   RestoreReport,
   SecretFinding,
   SymbolMap,
@@ -48,6 +49,15 @@ export default function ScrubPage() {
   const [showOverlay, setShowOverlay] = useState(false)
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([])
   const [languageFallback, setLanguageFallback] = useState(false)
+  // ROADMAP B4, User Story 2: what a language override re-processes. Captured
+  // only on a fallback result, since that is the only time an override means
+  // anything; `mapBefore` is the map as it stood before the fallback attempt,
+  // so overriding re-derives from the same starting point rather than
+  // building on top of identifiers the wrong grammar already extracted.
+  const [lastFallbackAttempt, setLastFallbackAttempt] = useState<{
+    input: string
+    mapBefore: SymbolMap
+  } | null>(null)
   const [commentExposure, setCommentExposure] = useState<CommentExposure>(NO_COMMENTS)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
   // A derive now runs in a Worker (ROADMAP E11), so the main thread never
@@ -83,6 +93,9 @@ export default function ScrubPage() {
     setOutput(result.anonymized)
     setSecretFindings(result.secrets)
     setLanguageFallback(result.languageFallback)
+    // ROADMAP B4, User Story 2: only kept on a fallback result — an override
+    // means nothing once the file has been processed under a real language.
+    setLastFallbackAttempt(result.languageFallback ? { input, mapBefore: currentMap } : null)
     setCommentExposure(result.comments)
     // Describes the previous restore; stale the moment we anonymize again.
     setRestoreReport(null)
@@ -90,6 +103,36 @@ export default function ScrubPage() {
     setInput('')
     setMode('send')
   }, [input, currentMap])
+
+  // ROADMAP B4, User Story 2: the user has read the fallback warning and knows
+  // what the file actually is. Re-derives from `mapBefore` rather than the map
+  // the fallback attempt produced, so identifiers TypeScript's grammar
+  // wrongly extracted don't linger in the map alongside the correct ones.
+  const handleLanguageOverride = useCallback(
+    (language: Language) => {
+      if (!lastFallbackAttempt) return
+      let result
+      try {
+        result = anonymize(lastFallbackAttempt.input, {
+          existingMap: lastFallbackAttempt.mapBefore,
+          language,
+        })
+      } catch (e) {
+        showToast(
+          e instanceof ManualMaskError ? e.message : 'Could not anonymize that input.',
+          'error'
+        )
+        return
+      }
+      setCurrentMap(result.map)
+      setOutput(result.anonymized)
+      setSecretFindings(result.secrets)
+      setLanguageFallback(result.languageFallback)
+      setLastFallbackAttempt(null)
+      setCommentExposure(result.comments)
+    },
+    [lastFallbackAttempt]
+  )
 
   // Restoring strips AI narration by default. JSDoc is the one category worth a
   // control: deleting it is correct when the model volunteered it and destroys
@@ -369,7 +412,12 @@ export default function ScrubPage() {
             therefore above the copy action — a warning placed after the thing
             it warns about gets read too late. */}
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
-        {mode === 'send' && <LanguageFallbackNotice show={languageFallback} />}
+        {mode === 'send' && (
+          <LanguageFallbackNotice
+            show={languageFallback}
+            onSelectLanguage={handleLanguageOverride}
+          />
+        )}
 
         {/* Comment prose is not masked, and the anonymized panel gives no sign
             of it. Same placement and the same reason: above the copy action. */}

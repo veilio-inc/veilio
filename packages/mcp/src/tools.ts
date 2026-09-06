@@ -29,6 +29,7 @@ import {
   LANGUAGES,
   LANGUAGE_LABELS,
   PRODUCT_NAME,
+  type LanguageOption,
   type RestoreReport,
   type SecretFinding,
 } from '@veilio-inc/engine'
@@ -185,7 +186,13 @@ function runAnonymize(
   // corrupts the store (spec 005 US4).
   const { source: namespaceSource, namespace } = getNamespace()
   const existingMap = mergeNamespace(localMap, namespace)
-  const language = (str(args, 'language') ?? 'auto') as 'auto'
+  // Not narrowed further than LanguageOption: this string comes from the
+  // calling model's JSON arguments, which `inputSchema.enum` only *describes*
+  // to the model — nothing here enforces it before the value reaches
+  // `anonymize`. That enforcement is `anonymize` throwing
+  // UnsupportedLanguageError for a garbage explicit language, caught by
+  // callTool like any other tool error.
+  const language = (str(args, 'language') ?? 'auto') as LanguageOption
   const result = anonymize(source, { existingMap, language, secrets: 'redact' })
   // Persist local-original, whatever this call genuinely minted, and only the
   // team-overlay entries this call actually USED — never the rest of the team

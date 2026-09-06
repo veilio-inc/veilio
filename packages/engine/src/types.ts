@@ -65,7 +65,10 @@ export interface AnonymizeResult {
    *
    * Part of the engine's result rather than UI state, so the web app, the CLI
    * and the MCP server all see the same fact instead of each deciding for
-   * themselves whether to mention it.
+   * themselves whether to mention it (ROADMAP B4). Deliberately a warning, not
+   * a refusal — masking proceeds either way, since a partial mask the caller
+   * knows is partial is still useful; the caller decides what to do with the
+   * fact.
    */
   languageFallback: boolean
   /** Every credential detected, whatever the active policy. Findings whose
@@ -186,7 +189,11 @@ export interface AnonymizeOptions {
    *  they survive export, import and sync without a separate store. */
   manual?: string[]
   /** Language whose keywords and comment syntax to honour. 'auto' (default)
-   *  detects from the source and falls back to TypeScript when unsure. */
+   *  detects from the source and falls back to TypeScript when unsure. An
+   *  explicit choice the engine has no rules for throws
+   *  `UnsupportedLanguageError` rather than silently degrading — but
+   *  auto-detection that cannot recognise the file at all does not throw; see
+   *  `languageFallback` on the result. */
   language?: LanguageOption
   /** How to treat detected credentials. 'redact' (default) replaces critical
    *  and high findings irreversibly; 'warn' reports without changing the code;

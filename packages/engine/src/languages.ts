@@ -25,6 +25,20 @@ export type Language =
 /** Languages the engine can be pointed at, plus `auto` for detection. */
 export type LanguageOption = Language | 'auto'
 
+/**
+ * Thrown when a language cannot be honoured — either an explicit `language`
+ * option that names something the engine has no keyword set for, or (from
+ * `anonymize`, not here) auto-detection that could not recognise the file at
+ * all. Either way the alternative is a confident-looking partial mask, which
+ * for a privacy tool is the worse failure (ROADMAP B4).
+ */
+export class UnsupportedLanguageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UnsupportedLanguageError'
+  }
+}
+
 export const LANGUAGES: readonly Language[] = [
   'typescript',
   'python',
@@ -1774,9 +1788,31 @@ export function detectLanguage(code: string): Language {
   return guessLanguage(code).language
 }
 
+/**
+ * Validate an explicit (non-`auto`, non-`undefined`) language option against
+ * the languages the engine actually has rules for.
+ *
+ * The `LanguageOption` type already rules this out at compile time for a
+ * caller written in TypeScript — but the CLI takes `--language` off argv and
+ * the MCP server takes it from a tool call's JSON arguments, both of which
+ * reach `anonymize` as a plain, unchecked string. Trusting it would let
+ * `language: "cobol"` resolve to a keyword set that does not exist, producing
+ * either a crash deep in the tokenizer or — worse — output that silently
+ * skips every masking rule. Failing here, at the one place both surfaces
+ * funnel through, is what makes "fails loudly" true for all of them at once.
+ */
+function assertKnownLanguage(option: Language): void {
+  if (!LANGUAGES.includes(option)) {
+    throw new UnsupportedLanguageError(
+      `Unsupported language: ${JSON.stringify(option)}. Supported: ${LANGUAGES.join(', ')}, or "auto" to detect.`
+    )
+  }
+}
+
 /** Resolve a caller's `language` option to a concrete language. */
 export function resolveLanguage(code: string, option: LanguageOption | undefined): Language {
   if (option === undefined || option === 'auto') return detectLanguage(code)
+  assertKnownLanguage(option)
   return option
 }
 
@@ -1809,7 +1845,10 @@ export function describeLanguage(
   code: string,
   option: LanguageOption | undefined
 ): { language: Language; fallback: boolean } {
-  if (option !== undefined && option !== 'auto') return { language: option, fallback: false }
+  if (option !== undefined && option !== 'auto') {
+    assertKnownLanguage(option)
+    return { language: option, fallback: false }
+  }
   const guess = guessLanguage(code)
   const substantial = code.replace(/\s+/g, '').length >= MIN_CHARS_TO_JUDGE
   return { language: guess.language, fallback: guess.fallback && substantial }

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize } from '../src/engine.js'
-import { describeLanguage, guessLanguage } from '../src/languages.js'
+import {
+  describeLanguage,
+  guessLanguage,
+  resolveLanguage,
+  UnsupportedLanguageError,
+  type Language,
+} from '../src/languages.js'
 
 /**
  * An unsupported file is tokenised with TypeScript's grammar, so identifiers it
@@ -115,5 +121,37 @@ describe('what this signal cannot tell you', () => {
   it('fires only when nothing matched at all', () => {
     expect(guessLanguage(ELIXIR).score).toBeGreaterThan(0)
     expect(guessLanguage(UNSUPPORTED).score).toBe(0)
+  })
+})
+
+// issue #10: "If the user picks a language the engine does not have a keyword
+// set for, that should fail loudly rather than silently degrade." A caller
+// typed in TypeScript cannot construct this — LanguageOption rules it out at
+// compile time — but the CLI takes --language off argv and the MCP server
+// takes it from a tool call's JSON, both of which reach the engine as a plain
+// unchecked string. This is the runtime backstop for both.
+describe('an explicit language the engine has no rules for', () => {
+  const GARBAGE = 'cobol' as Language
+
+  it('describeLanguage throws rather than treating it as detected', () => {
+    expect(() => describeLanguage(TYPESCRIPT, GARBAGE)).toThrow(UnsupportedLanguageError)
+  })
+
+  it('resolveLanguage throws the same way', () => {
+    expect(() => resolveLanguage(TYPESCRIPT, GARBAGE)).toThrow(UnsupportedLanguageError)
+  })
+
+  it('anonymize throws before masking anything', () => {
+    expect(() => anonymize(TYPESCRIPT, { language: GARBAGE })).toThrow(UnsupportedLanguageError)
+  })
+
+  it('names the value and the supported list, not just "unsupported"', () => {
+    expect(() => describeLanguage(TYPESCRIPT, GARBAGE)).toThrow(/cobol/)
+  })
+
+  it('still accepts every real language, including "auto"', () => {
+    for (const lang of ['auto', 'typescript', 'python', 'sql'] as const) {
+      expect(() => describeLanguage(TYPESCRIPT, lang)).not.toThrow()
+    }
   })
 })
