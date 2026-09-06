@@ -149,7 +149,10 @@ request (replacing the name and email with your own):
 
 > I have read and agree to the Veilio CLA (CLA.md). Signed-off-by: Your Name <you@example.com>
 
-We may also use an automated CLA check on pull requests. You only need to agree once.
+There is no automated CLA check today — a maintainer verifies the sign-off line
+by hand before merging, per the checklist in the pull request template. You only
+need to agree once; a maintainer will let you know if a later PR is missing the
+line because it's your first.
 
 ## Developer Certificate of Origin (DCO)
 

@@ -1,0 +1,18 @@
+# Default: any change not matched below still needs a review from one of these.
+*                           @DlgSHi @dawidzarzycki
+
+# The anonymizer engine — the purity invariant (zero runtime deps, no network,
+# no telemetry) lives here, and a change here can also ship a version.
+/packages/engine/          @DlgSHi @dawidzarzycki
+
+# Workflows hold publish credentials (packages: write, id-token: write) and
+# the pinned-by-SHA action list.
+/.github/workflows/        @DlgSHi @dawidzarzycki
+
+# Legal notices and licensing — CONTRIBUTING's per-document version rule
+# applies here, and these files define what the CE license and the CLA grant.
+/public/legal/              @DlgSHi @dawidzarzycki
+/LICENSE                    @DlgSHi @dawidzarzycki
+/CLA.md                     @DlgSHi @dawidzarzycki
+/SECURITY.md                @DlgSHi @dawidzarzycki
+/TRADEMARKS.md               @DlgSHi @dawidzarzycki
