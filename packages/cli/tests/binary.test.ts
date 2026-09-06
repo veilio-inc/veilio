@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -55,6 +55,35 @@ describe('the binary, executed as a binary', () => {
     const out = run(process.execPath, [link, 'scrub'], 'class PaymentService { charge(id) {} }')
     expect(out).toContain('__CLS__1')
     expect(out).not.toContain('PaymentService')
+  })
+
+  it('reads BOTH the email and password prompts when stdin is piped in one shot', () => {
+    // `login` reads two lines in sequence (email, then password) via two
+    // calls to the same prompt helper. A scripted, non-interactive caller —
+    // exactly what `readSecret`'s own doc comment says is supported ("what a
+    // scripted `echo pw | veilio login` needs") — typically delivers both
+    // lines in a SINGLE write before closing stdin, which is exactly what
+    // `input` below does.
+    //
+    // The regression: each prompt used to open its own `readline.Interface`
+    // and close it after one line. When both lines arrive in one chunk, the
+    // first interface reads its buffered password line under the hood too,
+    // then discards it on close — the second interface attaches to an
+    // already-ended stream and its `question()` never gets a 'line' to
+    // answer. Nothing else keeps the event loop alive, so the process just
+    // exits 0 having never attempted the network request at all: a silent,
+    // false "success" that did nothing. Point at an unreachable instance so
+    // a FIXED CLI fails fast with a real connection error (proving it read
+    // the password and tried) instead of either exiting 0 immediately (the
+    // bug) or hanging (a worse regression of the same bug).
+    const result = spawnSync(
+      process.execPath,
+      [DIST, 'login', '--instance', 'http://localhost:1'],
+      { input: 'someone@example.com\nhunter2\n', encoding: 'utf8', timeout: 10_000 }
+    )
+    expect(result.status, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).not.toBe(0)
+    expect(result.stderr).not.toMatch(/no password given/)
+    expect(result.stdout).not.toMatch(/Signed in/)
   })
 
   it('survives a path with a space in it', () => {

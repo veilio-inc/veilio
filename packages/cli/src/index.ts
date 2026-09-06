@@ -72,8 +72,61 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
   }
 }
 
+// A piped/scripted session (no TTY) commonly delivers every line in ONE data
+// chunk — `echo "email\npassword" | veilio login`, or any single-`input`
+// spawn. `readline.Interface` parses every complete line out of a chunk
+// synchronously as that chunk arrives, emitting one 'line' event per line
+// BEFORE returning control to the event loop — so if the first line's
+// `question()` callback resolves a promise and only THEN (on a later
+// microtask) calls `question()` again for the next line, that second line's
+// 'line' event already fired with no listener attached to catch it and is
+// simply dropped. `question()` recreating the interface per call has the
+// same failure one layer up: a fresh interface attaches to an
+// already-ended stream with nothing left to read, and its `question()`
+// never answers — with nothing else keeping the event loop alive, the
+// process just exits 0 having attempted nothing.
+//
+// The fix: one interface for the whole process's non-TTY prompts, with a
+// PERMANENT 'line' listener attached from the moment stdin starts flowing,
+// so a line that arrives before anything is waiting for it is queued
+// instead of dropped.
+let pipedInterface: ReturnType<typeof createInterface> | undefined
+const pipedQueuedLines: string[] = []
+const pipedWaiters: Array<(line: string) => void> = []
+
+function ensurePipedInterface(): void {
+  if (pipedInterface) return
+  pipedInterface = createInterface({ input: process.stdin, output: process.stderr })
+  pipedInterface.on('line', (line) => {
+    const waiter = pipedWaiters.shift()
+    if (waiter) waiter(line)
+    else pipedQueuedLines.push(line)
+  })
+  // EOF with a prompt still pending (fewer lines piped than the command
+  // asked for) resolves it to '' rather than hanging forever — matches the
+  // existing "no email/password given" handling in the callers.
+  pipedInterface.on('close', () => {
+    let waiter: ((line: string) => void) | undefined
+    while ((waiter = pipedWaiters.shift())) waiter('')
+  })
+}
+
+function readPipedLine(label: string): Promise<string> {
+  process.stderr.write(label)
+  ensurePipedInterface()
+  const queued = pipedQueuedLines.shift()
+  if (queued !== undefined) return Promise.resolve(queued)
+  return new Promise((resolvePromise) => pipedWaiters.push(resolvePromise))
+}
+
 /** Read one line from the terminal. */
 function readLine(label: string): Promise<string> {
+  if (!process.stdin.isTTY) return readPipedLine(label)
+  // A TTY closes and recreates the interface per prompt — safe there
+  // because a human necessarily delivers each line in its own chunk (typed,
+  // then Enter), so the drop above never has a second buffered line to lose
+  // — and closing hands raw stdin control back cleanly to `readSecret`'s
+  // manual raw-mode path for the password prompt that follows.
   const rl = createInterface({ input: process.stdin, output: process.stderr })
   return new Promise((resolvePromise) => {
     rl.question(label, (answer) => {
