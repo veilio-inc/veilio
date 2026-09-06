@@ -2,12 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import {
-  deriveVaultKey,
-  encryptMapForVault,
-  toBase64,
-  type SymbolMap,
-} from '@veilio-inc/engine'
+import { deriveVaultKey, encryptMapForVault, toBase64, type SymbolMap } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential } from '../src/credential.js'
