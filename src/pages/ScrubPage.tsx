@@ -18,6 +18,7 @@ import ManualMarksPanel from '../components/ManualMarksPanel.js'
 import SaveMapModal from '../components/SaveMapModal.js'
 import MapOverlay from '../components/MapOverlay.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
+import { useDeriveController } from '../hooks/useDeriveController.js'
 import { maskSelection, unmaskTerm, previewTerm, stripOption } from '../lib/manualMarks.js'
 import { exportMap, importMap } from '../lib/localCrypto.js'
 import { importErrorMessage } from '../lib/importedMap.js'
@@ -50,6 +51,7 @@ export default function ScrubPage() {
   const [languageFallback, setLanguageFallback] = useState(false)
   const [commentExposure, setCommentExposure] = useState<CommentExposure>(NO_COMMENTS)
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
+  const derive = useDeriveController()
 
   const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
 
@@ -166,8 +168,9 @@ export default function ScrubPage() {
       `Enter a passphrase to encrypt the export (at least ${MIN_PASSPHRASE_LENGTH} characters):`
     )
     if (!passphrase) return
+    const controller = derive.start()
     try {
-      const json = await exportMap(currentMap, passphrase)
+      const json = await exportMap(currentMap, passphrase, controller.signal)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -178,6 +181,8 @@ export default function ScrubPage() {
       showToast('Map exported')
     } catch (err) {
       showToast(exportErrorMessage(err), 'error')
+    } finally {
+      derive.end(controller)
     }
   }
 
@@ -190,13 +195,16 @@ export default function ScrubPage() {
       if (!file) return
       const passphrase = prompt('Enter the passphrase:')
       if (!passphrase) return
+      const controller = derive.start()
       try {
         const text = await file.text()
-        const map = await importMap(text, passphrase)
+        const map = await importMap(text, passphrase, controller.signal)
         setCurrentMap(map)
         showToast(`Loaded ${Object.keys(map).length} identifiers`)
       } catch (err) {
         showToast(importErrorMessage(err), 'error')
+      } finally {
+        derive.end(controller)
       }
     }
     fileInput.click()
@@ -301,6 +309,7 @@ export default function ScrubPage() {
                   className="btn-ghost"
                   style={{ padding: '5px 12px', fontSize: 12 }}
                   onClick={handleExport}
+                  disabled={derive.status !== 'idle'}
                 >
                   Export .veilio
                 </button>
@@ -310,6 +319,7 @@ export default function ScrubPage() {
               className="btn-ghost"
               style={{ padding: '5px 12px', fontSize: 12 }}
               onClick={handleImport}
+              disabled={derive.status !== 'idle'}
             >
               Import .veilio
             </button>
@@ -317,6 +327,24 @@ export default function ScrubPage() {
               <button className="btn-danger" style={{ fontSize: 12 }} onClick={handleClearMap}>
                 Clear map
               </button>
+            )}
+            {derive.status !== 'idle' && (
+              <div
+                role="status"
+                data-testid="derive-busy"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
+              >
+                <span className="derive-spinner" aria-hidden="true" />
+                <span>{derive.status === 'cancelling' ? 'Cancelling…' : 'Deriving key…'}</span>
+                <button
+                  className="btn-ghost"
+                  style={{ padding: '3px 10px', fontSize: 12 }}
+                  onClick={derive.cancel}
+                  disabled={derive.status === 'cancelling'}
+                >
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         </div>

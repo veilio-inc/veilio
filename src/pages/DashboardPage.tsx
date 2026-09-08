@@ -11,6 +11,9 @@ function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
 export default function DashboardPage() {
   const { maps, deleteMap } = useLocalMaps()
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
+  // Keyed by map id, not a single boolean: each row exports independently,
+  // and only the row actually deriving should show busy (ROADMAP E11).
+  const [derivingId, setDerivingId] = useState<string | null>(null)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -22,6 +25,7 @@ export default function DashboardPage() {
     if (!map) return
     const passphrase = prompt('Enter a passphrase to encrypt the export:')
     if (!passphrase) return
+    setDerivingId(id)
     try {
       const json = await exportMap(map, passphrase)
       const blob = new Blob([json], { type: 'application/json' })
@@ -34,6 +38,8 @@ export default function DashboardPage() {
       showToast('Map exported')
     } catch {
       showToast('Export failed', 'error')
+    } finally {
+      setDerivingId(null)
     }
   }
 
@@ -144,11 +150,20 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                  {derivingId === m.id && (
+                    <span
+                      className="derive-spinner"
+                      role="status"
+                      aria-label="Deriving key…"
+                      data-testid="derive-busy"
+                    />
+                  )}
                   <button
                     className="btn-ghost"
                     style={{ padding: '4px 10px', fontSize: 12 }}
                     onClick={() => handleExportVeilio(m.id, m.name)}
+                    disabled={derivingId !== null}
                   >
                     .veilio
                   </button>

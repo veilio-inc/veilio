@@ -2,33 +2,27 @@ import type { SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
 import { parseSymbolMap } from './importedMap.js'
 import { assertUsablePassphrase } from './passphrase.js'
+import { getKdfTransport } from './kdfTransport.js'
 
 const ALG = 'AES-GCM'
 
+// Derives via `getKdfTransport()` (a Worker when one is available, ROADMAP
+// E11) rather than calling `crypto.subtle.deriveKey` here directly, so the
+// 600k-plus-iteration PBKDF2 call never blocks the thread this function was
+// called from. The transport returns raw bits; importing them here (not in
+// the worker) keeps the resulting CryptoKey non-extractable exactly as
+// before — see specs/007-e11-derive-off/research.md R-002.
 async function deriveKey(
   passphrase: string,
   salt: Uint8Array<ArrayBuffer>,
-  kdf: KdfParams
+  kdf: KdfParams,
+  signal?: AbortSignal
 ): Promise<CryptoKey> {
-  const enc = new TextEncoder()
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(passphrase),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  )
-  return crypto.subtle.deriveKey(
-    // Pass the TypedArray view directly, not salt.buffer: a raw ArrayBuffer
-    // fails WebCrypto's cross-realm instanceof check under jsdom
-    // ("salt is not instance of ArrayBuffer…"). ArrayBufferView checks are
-    // realm-agnostic, so the view works everywhere.
-    { name: 'PBKDF2', salt, iterations: kdf.iterations, hash: 'SHA-256' },
-    keyMaterial,
-    { name: ALG, length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  )
+  const bits = await getKdfTransport().derive(passphrase, salt, kdf, signal)
+  return crypto.subtle.importKey('raw', bits, { name: ALG, length: 256 }, false, [
+    'encrypt',
+    'decrypt',
+  ])
 }
 
 function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
@@ -63,14 +57,18 @@ export interface VeilioFile {
   data: string
 }
 
-export async function exportMap(map: SymbolMap, passphrase: string): Promise<string> {
+export async function exportMap(
+  map: SymbolMap,
+  passphrase: string,
+  signal?: AbortSignal
+): Promise<string> {
   // Enforced here rather than at the call site so no future caller can write a
   // file that skips the floor (ROADMAP E8).
   assertUsablePassphrase(passphrase)
   const enc = new TextEncoder()
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF)
+  const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF, signal)
   const ciphertext = await crypto.subtle.encrypt(
     { name: ALG, iv },
     key,
@@ -87,7 +85,11 @@ export async function exportMap(map: SymbolMap, passphrase: string): Promise<str
   return JSON.stringify(file, null, 2)
 }
 
-export async function importMap(fileContent: string, passphrase: string): Promise<SymbolMap> {
+export async function importMap(
+  fileContent: string,
+  passphrase: string,
+  signal?: AbortSignal
+): Promise<SymbolMap> {
   const file = JSON.parse(fileContent) as VeilioFile
   if (file.v !== 1 || file.alg !== 'AES-256-GCM-PBKDF2')
     throw new Error('Invalid .veilio file format')
@@ -95,7 +97,7 @@ export async function importMap(fileContent: string, passphrase: string): Promis
   const salt = fromBase64(file.salt)
   const iv = fromBase64(file.iv)
   const data = fromBase64(file.data)
-  const key = await deriveKey(passphrase, salt, kdf)
+  const key = await deriveKey(passphrase, salt, kdf, signal)
   const dec = new TextDecoder()
   const plaintext = await crypto.subtle.decrypt({ name: ALG, iv }, key, data)
   // Decryption succeeding proves the author knew the passphrase, which in a

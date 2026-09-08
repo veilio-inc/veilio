@@ -1002,6 +1002,25 @@ input::placeholder {
   }
 }
 
+/* ── Key-derivation spinner (ROADMAP E11) ─────────────────────────────────
+   Runs while a .veilio export/import derives its key. Purely decorative,
+   but its animation actually running for the whole call is the visible
+   proof the derive isn't blocking the main thread anymore. */
+.derive-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--bg-elevated);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: derive-spin 0.7s linear infinite;
+}
+@keyframes derive-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ── Round icon button (modal close etc.) ─────────────────────────────────── */
 .icon-btn {
   width: 32px;

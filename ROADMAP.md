@@ -221,7 +221,7 @@ ones we have not fixed yet.
 | E7 | Treat an imported map as untrusted input | **done** |
 | E8 | Passphrase strength, and a tighter KDF ceiling | **done** |
 | E9 | Provenance for the container image | **done** |
-| E11 | Derive off the main thread | ready |
+| E11 | Derive off the main thread | **done** |
 
 **E1 — done.** `@remix-run/router` shipped in the bundle at a version inside the
 range for [GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42),
@@ -436,12 +436,33 @@ the resulting OCI index unpacked, and the SLSA v1 predicate read to confirm
 `mode=max` records the 16-step build definition where `mode=min` records none of
 it. The attested image was then run and put through the full e2e suite.
 
-**E11.** Key derivation runs on the main thread, so even a legitimate 600,000
-iterations freezes the tab for the duration, and an accepted-but-large value from
-an imported file freezes it for longer. Moving the derive to a worker is a
-responsiveness fix rather than a security one — E8 bounded the damage, which is
-the part that belonged with the security work — so it is tracked on its own
-rather than folded into a hardening item where it would overstate what it buys.
+**E11 — done.** Key derivation ran on the main thread, so even a legitimate
+600,000 iterations froze the tab for the duration, and an accepted-but-large
+value from an imported file froze it for longer. Moving the derive to a worker
+is a responsiveness fix rather than a security one — E8 bounded the damage,
+which is the part that belonged with the security work — so it was tracked on
+its own rather than folded into a hardening item where it would overstate what
+it buys.
+
+A transport seam (`src/lib/kdfTransport.ts`) separates "how do we ask for a
+derived key" from "is a Worker actually available", so a context with no
+Worker falls back to the original direct call rather than hanging — and that
+fallback is exercised for real by the existing unit suite, not mocked, since
+jsdom simply has no `Worker` global. Cancellation terminates the worker
+outright: `deriveBits` has no interruption point a message could reach once
+started. Output is unchanged — a fixed-input vector proves the derived bits
+are byte-identical to before this change, and `kdf.ts`'s parameter bounds were
+not touched.
+
+One finding worth recording: the real `MAX_ITERATIONS` ceiling (4,000,000)
+derives in well under 100ms on ordinary hardware, native WebCrypto or not —
+far faster than the freeze this item set out to fix would suggest. Proving the
+tab stays responsive during a derive that fast needed CPU throttling in the
+e2e suite (specs/007-e11-derive-off/research.md R-007); at native speed the
+window is too narrow to observe at all, though the responsiveness guarantee
+holds regardless of how fast the underlying crypto happens to be — it comes
+from moving the work off-thread, not from the operation being slow enough to
+catch in the act.
 
 **Not doing:** a bug bounty. Handling reports properly requires a response
 capacity CE does not have; [SECURITY.md](./SECURITY.md) describes what we can

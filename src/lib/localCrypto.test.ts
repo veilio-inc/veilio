@@ -5,7 +5,7 @@
 // jsdom realm boundary fail `instanceof` checks against Node's own globals, so
 // a node-environment run silently skips the very code paths that break in
 // practice. The rest of the suite (the engine) stays on the default env.
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import type { SymbolMap } from '@veilio-inc/engine'
 import { exportMap, importMap } from './localCrypto.js'
 import { InvalidMapError } from './importedMap.js'
@@ -205,4 +205,41 @@ describe('importMap validates what it decrypts', () => {
     const map = { __CLS__1: 'InvoiceLedger', __FN__2: 'settleInvoice', __P3__: 'legacyStyle' }
     expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
   }, 30_000)
+})
+
+// ROADMAP E11 (specs/007-e11-derive-off): derivation moved behind a
+// transport seam, but every existing failure mode above already proves
+// that swap changed nothing observable. These add what's new: the
+// passphrase must not leak through the seam, and a context with no Worker
+// (jsdom, exercised for real by every test in this file) must not hang.
+describe('deriveKey via the transport seam (ROADMAP E11)', () => {
+  it(
+    'never logs the passphrase, in a full export/import round trip',
+    { timeout: 15_000 },
+    async () => {
+      const passphrase = 'never-logged-anywhere'
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const file = await exportMap({ __P1__: 'X' }, passphrase)
+        await importMap(file, passphrase)
+      } finally {
+        for (const spy of [logSpy, errorSpy, warnSpy]) {
+          for (const call of spy.mock.calls) {
+            expect(call.join(' ')).not.toContain(passphrase)
+          }
+        }
+        logSpy.mockRestore()
+        errorSpy.mockRestore()
+        warnSpy.mockRestore()
+      }
+    }
+  )
+
+  it('does not hang when Worker is unavailable — jsdom has none', { timeout: 15_000 }, async () => {
+    expect(typeof Worker).toBe('undefined')
+    const map = { __P1__: 'FallbackPath' }
+    expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
+  })
 })
