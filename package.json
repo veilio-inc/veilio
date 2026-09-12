@@ -45,7 +45,7 @@
     "@veilio-inc/engine": "*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2"
+    "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
     "@changesets/changelog-github": "0.6.0",
