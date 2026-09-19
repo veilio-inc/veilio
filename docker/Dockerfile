@@ -52,7 +52,7 @@ RUN find dist -type f \
 # The server is ~140 lines of standard library (docker/serve.go). Trading nginx
 # for it is what lets the final stage be `scratch`: with alpine-slim the distro
 # was 20.6 MB of a 21.7 MB image, so the site was under 5% of what users pulled.
-FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS server
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS server
 WORKDIR /src
 COPY docker/serve.go .
 # CGO off gives a genuinely static binary — mandatory, since scratch has no libc
