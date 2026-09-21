@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar.js'
 const CLOUD_URL = import.meta.env.VITE_VEILIO_CLOUD_URL ?? 'https://veilio.dev'
 const ENTERPRISE_CONTACT = 'mailto:hello@veilio.dev'
 
-type PlanId = 'free' | 'individual' | 'pro' | 'team' | 'enterprise'
+type PlanId = 'free' | 'individual' | 'team' | 'enterprise'
 type CtaType = 'tool' | 'cloud' | 'mailto'
 
 interface PlanCard {
@@ -46,13 +46,24 @@ const PLANS: PlanCard[] = [
     ctaType: 'tool',
   },
   {
+    // One solo tier since ROADMAP E12: Individual and Pro differed by a single
+    // feature flag while Pro cost three times as much, so they were merged and
+    // Individual absorbed the feature set. This page describes the SAME cloud
+    // product as the Cloud edition's own pricing page, so the tiers have to
+    // agree — two editions quoting different plans is worse than either being
+    // wrong alone.
     name: 'Individual',
-    price: '$3',
-    period: 'per month',
-    tagline: 'Cloud sync for one developer.',
+    price: '€9',
+    period: 'per month, excl. VAT',
+    tagline: 'Cloud sync and your own masking rules, for one developer.',
     features: [
-      'Cloud map storage (up to 500 maps)',
+      // 200, not the 500/2,000 this page used to claim. The cloud ceiling is
+      // PAID_MAP_CEILING = 200 and has been for some time; the numbers here
+      // were stale in the direction that oversells.
+      'Cloud map storage (up to 200 maps)',
       'Cross-device history sync',
+      'Custom rules',
+      'Browser extension',
       'Export / import .veilio files',
       'Email support',
     ],
@@ -62,26 +73,9 @@ const PLANS: PlanCard[] = [
     ctaType: 'cloud',
   },
   {
-    name: 'Pro',
-    price: '$9',
-    period: 'per user, per month',
-    tagline: 'More maps, custom rules, and the browser extension — for one developer.',
-    features: [
-      'Everything in Individual',
-      'Up to 2,000 cloud maps',
-      'Custom rules',
-      'Browser extension',
-      'Priority email support',
-    ],
-    cta: 'Get Pro on Cloud →',
-    highlight: false,
-    planId: 'pro',
-    ctaType: 'cloud',
-  },
-  {
     name: 'Team',
-    price: '$19',
-    period: 'per seat, per month',
+    price: '€19',
+    period: 'per seat, per month, excl. VAT',
     tagline: 'Shared dictionaries, SSO, and audit — for a team.',
     features: [
       'Everything in Pro',
