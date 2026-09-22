@@ -6,16 +6,7 @@ import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engin
 import type { SecretPolicy } from '@veilio-inc/engine'
 
 export type Command =
-  | 'scrub'
-  | 'restore'
-  | 'scan'
-  | 'map'
-  | 'login'
-  | 'logout'
-  | 'whoami'
-  | 'maps'
-  | 'help'
-  | 'version'
+  'scrub' | 'restore' | 'scan' | 'map' | 'login' | 'logout' | 'whoami' | 'maps' | 'help' | 'version'
 
 export interface ParsedArgs {
   command: Command

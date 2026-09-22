@@ -49,22 +49,55 @@ function stripComments(text: string): string {
     const c = text[i]
     const next = text[i + 1]
 
+    // Braces rather than comma-sequence expressions. The sequences read the
+    // same to the parser but `no-unused-expressions` - an error in the
+    // typescript-eslint recommended set - flags every one of them, and it is
+    // right to: a sequence used as a statement is exactly where an intended
+    // assignment quietly becomes a discarded comparison.
     if (state === 'code') {
-      if (c === '/' && next === '/') ((state = 'line'), (i += 2))
-      else if (c === '/' && next === '*') ((state = 'block'), (i += 2))
-      else if (c === "'" || c === '"' || c === '`') ((state = c), (out += c), i++)
-      else ((out += c), i++)
+      if (c === '/' && next === '/') {
+        state = 'line'
+        i += 2
+      } else if (c === '/' && next === '*') {
+        state = 'block'
+        i += 2
+      } else if (c === "'" || c === '"' || c === '`') {
+        state = c
+        out += c
+        i++
+      } else {
+        out += c
+        i++
+      }
     } else if (state === 'line') {
-      if (c === '\n') ((state = 'code'), (out += c), i++)
-      else i++
+      if (c === '\n') {
+        state = 'code'
+        out += c
+        i++
+      } else {
+        i++
+      }
     } else if (state === 'block') {
-      if (c === '*' && next === '/') ((state = 'code'), (i += 2))
-      else ((out += c === '\n' ? '\n' : ''), i++)
+      if (c === '*' && next === '/') {
+        state = 'code'
+        i += 2
+      } else {
+        out += c === '\n' ? '\n' : ''
+        i++
+      }
     } else {
       // Inside a string: honour escapes so a trailing backslash cannot end it.
-      if (c === '\\') ((out += c + (next ?? '')), (i += 2))
-      else if (c === state) ((state = 'code'), (out += c), i++)
-      else ((out += c), i++)
+      if (c === '\\') {
+        out += c + (next ?? '')
+        i += 2
+      } else if (c === state) {
+        state = 'code'
+        out += c
+        i++
+      } else {
+        out += c
+        i++
+      }
     }
   }
   return out

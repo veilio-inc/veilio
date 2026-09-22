@@ -11,16 +11,7 @@
 // see no change.
 
 export type Language =
-  | 'typescript'
-  | 'python'
-  | 'go'
-  | 'java'
-  | 'csharp'
-  | 'rust'
-  | 'ruby'
-  | 'php'
-  | 'c'
-  | 'sql'
+  'typescript' | 'python' | 'go' | 'java' | 'csharp' | 'rust' | 'ruby' | 'php' | 'c' | 'sql'
 
 /** Languages the engine can be pointed at, plus `auto` for detection. */
 export type LanguageOption = Language | 'auto'

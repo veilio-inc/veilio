@@ -47,6 +47,18 @@ updates:
         dependency-type: production
       development:
         dependency-type: development
+    ignore:
+      # TypeScript 7 does not install here, and the blocker is not ours to fix.
+      # @typescript-eslint/eslint-plugin peers on typescript ">=4.8.4 <6.1.0",
+      # and 8.70.1 - the latest published release - still does. `npm ci` ends in
+      # ERESOLVE before a single test runs.
+      #
+      # This is a ceiling on the whole group: one unresolvable member takes every
+      # other update in the PR down with it, so holding TypeScript is what lets
+      # the rest keep flowing. Lift it when typescript-eslint publishes a release
+      # whose typescript peer admits 7, and take both in the same change.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   # The engine has zero runtime dependencies and that is enforced in CI, so this
   # only ever moves its devDependencies. Kept separate because its lockfile is
