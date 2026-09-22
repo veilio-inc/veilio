@@ -13,8 +13,8 @@ export default function LanguageFallbackNotice({ show }: { show: boolean }) {
     <div
       role="status"
       style={{
-        border: '1px solid rgba(217, 137, 104, 0.5)',
-        background: 'rgba(217, 137, 104, 0.09)',
+        border: '1px solid rgba(var(--accent-rgb), 0.5)',
+        background: 'rgba(var(--accent-rgb), 0.09)',
         borderRadius: 8,
         padding: '10px 14px',
         marginBottom: 10,

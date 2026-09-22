@@ -11,7 +11,7 @@ export default function Footer() {
   return (
     <footer style={{ marginTop: 48 }}>
       <div className="footer-hairline" />
-      <div style={{ background: 'rgba(33,27,24,0.5)', padding: '28px 24px 22px' }}>
+      <div style={{ background: 'rgba(var(--bg-surface-rgb), 0.5)', padding: '28px 24px 22px' }}>
         <div
           style={{
             maxWidth: 1280,
@@ -37,13 +37,16 @@ export default function Footer() {
                 aria-hidden
                 width={18}
                 height={18}
-                style={{ display: 'block', filter: 'drop-shadow(0 0 8px rgba(204,120,92,0.35))' }}
+                style={{
+                  display: 'block',
+                  filter: 'drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.35))',
+                }}
               />
               <span
                 style={{
                   fontFamily: 'var(--font-display)',
                   fontStyle: 'italic',
-                  color: 'var(--accent-bright)',
+                  color: 'var(--accent-text)',
                   fontSize: 17,
                 }}
               >

@@ -206,7 +206,7 @@ export default function PricingPage() {
             href={`${CLOUD_URL}/pricing`}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: 'var(--accent)' }}
+            style={{ color: 'var(--accent-text)' }}
           >
             Veilio Cloud
           </a>
@@ -242,9 +242,9 @@ export default function PricingPage() {
                     left: '50%',
                     transform: 'translateX(-50%)',
                     background: plan.highlight
-                      ? 'linear-gradient(180deg, #D98968, var(--accent-hover))'
+                      ? 'linear-gradient(180deg, var(--accent-fill-top), var(--accent-fill-bottom))'
                       : 'var(--bg-elevated)',
-                    color: plan.highlight ? '#fff' : 'var(--text-secondary)',
+                    color: plan.highlight ? 'var(--text-on-accent)' : 'var(--text-secondary)',
                     border: plan.highlight ? 'none' : '1px solid var(--border)',
                     fontSize: 11,
                     fontWeight: 700,

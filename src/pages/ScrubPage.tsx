@@ -231,7 +231,8 @@ export default function ScrubPage() {
           alignItems: 'center',
           justifyContent: 'center',
           gap: 10,
-          background: 'linear-gradient(180deg, rgba(204,120,92,0.07), rgba(204,120,92,0.02))',
+          background:
+            'linear-gradient(180deg, rgba(var(--accent-rgb), 0.07), rgba(var(--accent-rgb), 0.02))',
           borderBottom: '1px solid var(--border)',
           padding: '9px 24px',
           marginTop: 12,
@@ -247,9 +248,9 @@ export default function ScrubPage() {
             fontSize: 10,
             fontFamily: 'var(--font-mono)',
             letterSpacing: '0.06em',
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             background: 'var(--accent-dim)',
-            border: '1px solid rgba(204,120,92,0.35)',
+            border: '1px solid rgba(var(--accent-rgb), 0.35)',
             borderRadius: 20,
             padding: '1px 8px',
           }}
@@ -466,7 +467,7 @@ export default function ScrubPage() {
               selection.trim().length > 0 && (
                 <button
                   className="btn-ghost"
-                  style={{ padding: '3px 10px', fontSize: 12, color: 'var(--accent)' }}
+                  style={{ padding: '3px 10px', fontSize: 12, color: 'var(--accent-text)' }}
                   onClick={handleMaskSelection}
                   title="Mask this text everywhere it appears"
                 >
@@ -542,9 +543,9 @@ function LandingHero() {
             fontSize: 11,
             letterSpacing: '0.14em',
             textTransform: 'uppercase',
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             background: 'var(--accent-dim)',
-            border: '1px solid rgba(204,120,92,0.30)',
+            border: '1px solid rgba(var(--accent-rgb), 0.30)',
             borderRadius: 20,
             padding: '4px 12px',
             marginBottom: 20,
@@ -619,9 +620,9 @@ function RedactionDemo() {
   const Line = ({ children, indent = 0 }: { children: React.ReactNode; indent?: number }) => (
     <div style={{ paddingLeft: indent * 18, whiteSpace: 'pre', minHeight: 22 }}>{children}</div>
   )
-  const kw = { color: '#C99B6E' }
-  const fn = { color: '#7FB3D5' }
-  const str = { color: '#8FB98F' }
+  const kw = { color: 'var(--demo-keyword)' }
+  const fn = { color: 'var(--demo-function)' }
+  const str = { color: 'var(--demo-string)' }
   return (
     <div
       className="rise surface"
@@ -641,15 +642,17 @@ function RedactionDemo() {
           gap: 7,
           padding: '10px 14px',
           borderBottom: '1px solid var(--border)',
-          background: 'rgba(20,18,16,0.5)',
+          background: 'var(--demo-scrim)',
         }}
       >
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#E05C5C' }} />
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#D9A441' }} />
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--danger)' }} />
+        <span
+          style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--warning)' }}
+        />
         <span
           style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--success)' }}
         />
-        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-dim)' }}>
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--demo-comment)' }}>
           auth.service.ts
         </span>
       </div>
@@ -658,8 +661,8 @@ function RedactionDemo() {
           padding: '16px 18px',
           fontSize: 13,
           lineHeight: 1.85,
-          background: 'var(--code-bg)',
-          color: 'var(--code-text)',
+          background: 'var(--demo-bg)',
+          color: 'var(--demo-text)',
         }}
       >
         <Line>
@@ -679,22 +682,24 @@ function RedactionDemo() {
         <Line>&#125;</Line>
         <div style={{ height: 10 }} />
         <Line>
-          <span style={{ color: 'var(--text-dim)' }}>
+          <span style={{ color: 'var(--demo-comment)' }}>
             {'// → veiled before it reaches the model'}
           </span>
         </Line>
         <Line>
-          <span style={kw}>const</span> <span style={{ color: 'var(--accent)' }}>__VAR__2</span> ={' '}
+          <span style={kw}>const</span>{' '}
+          <span style={{ color: 'var(--demo-placeholder)' }}>__VAR__2</span> ={' '}
           <span style={str}>&quot;__REDACTED_CREDENTIAL_1__&quot;</span>
         </Line>
         <Line>
-          <span style={kw}>function</span> <span style={{ color: 'var(--accent)' }}>__FN__1</span>(
-          <span style={{ color: 'var(--accent)' }}>__VAR__1</span>) &#123;
+          <span style={kw}>function</span>{' '}
+          <span style={{ color: 'var(--demo-placeholder)' }}>__FN__1</span>(
+          <span style={{ color: 'var(--demo-placeholder)' }}>__VAR__1</span>) &#123;
         </Line>
         <Line indent={1}>
           <span style={kw}>return</span> <span style={fn}>db</span>.
-          <span style={{ color: 'var(--accent)' }}>__FN__2</span>(
-          <span style={{ color: 'var(--accent)' }}>__VAR__1</span>)
+          <span style={{ color: 'var(--demo-placeholder)' }}>__FN__2</span>(
+          <span style={{ color: 'var(--demo-placeholder)' }}>__VAR__1</span>)
         </Line>
         <Line>&#125;</Line>
       </div>
@@ -737,15 +742,15 @@ function ActionButton({
         padding: '10px 16px',
         background: secondary
           ? 'var(--bg-elevated)'
-          : 'linear-gradient(180deg, #D98968 0%, var(--accent) 55%, var(--accent-hover) 100%)',
-        color: secondary ? 'var(--text-secondary)' : '#fff',
+          : 'linear-gradient(180deg, var(--accent-fill-top) 0%, var(--accent-fill) 55%, var(--accent-fill-bottom) 100%)',
+        color: secondary ? 'var(--text-secondary)' : 'var(--text-on-accent)',
         fontWeight: 600,
         fontSize: 13,
         borderRadius: 6,
         border: secondary ? '1px solid var(--border)' : 'none',
         boxShadow: secondary
           ? 'none'
-          : '0 1px 0 rgba(250,249,247,0.18) inset, 0 8px 22px -8px var(--accent-glow)',
+          : '0 1px 0 rgba(var(--text-primary-rgb), 0.18) inset, 0 8px 22px -8px var(--accent-glow)',
         whiteSpace: 'nowrap',
         transition: 'transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease',
       }}

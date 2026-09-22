@@ -10,14 +10,16 @@ const TYPE_LABELS: Record<StrippedItemType, string> = {
   'inline-annotation': 'Inline annotation',
 }
 
+// A categorical scale: the hues mean nothing beyond being distinguishable
+// from each other, so each token is named for its category, not its colour.
 const TYPE_COLORS: Record<StrippedItemType, string> = {
-  jsdoc: '#a78bfa',
-  todo: '#f97316',
-  'step-marker': '#60a5fa',
-  narration: '#34d399',
-  separator: '#888888',
-  'section-header': '#fbbf24',
-  'inline-annotation': '#f472b6',
+  jsdoc: 'var(--cat-jsdoc)',
+  todo: 'var(--cat-todo)',
+  'step-marker': 'var(--cat-step-marker)',
+  narration: 'var(--cat-narration)',
+  separator: 'var(--cat-separator)',
+  'section-header': 'var(--cat-section-header)',
+  'inline-annotation': 'var(--cat-inline-annotation)',
 }
 
 interface Props {

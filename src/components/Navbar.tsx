@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import ThemeToggle from './ThemeToggle.js'
 
 export default function Navbar() {
   const location = useLocation()
@@ -15,9 +16,9 @@ export default function Navbar() {
             fontFamily: 'var(--font-display)',
             fontSize: 26,
             fontStyle: 'italic',
-            color: 'var(--accent-bright)',
+            color: 'var(--accent-text)',
             letterSpacing: '-0.01em',
-            textShadow: '0 0 24px rgba(204,120,92,0.35)',
+            textShadow: '0 0 24px rgba(var(--accent-rgb), 0.35)',
           }}
         >
           {/* The mark, not a stand-in for one: this is the same /icon.svg the
@@ -31,7 +32,7 @@ export default function Navbar() {
             height={22}
             style={{
               display: 'block',
-              filter: 'drop-shadow(0 0 10px rgba(204,120,92,0.35))',
+              filter: 'drop-shadow(0 0 10px rgba(var(--accent-rgb), 0.35))',
             }}
           />
           Veilio
@@ -62,6 +63,7 @@ export default function Navbar() {
           >
             CE
           </span>
+          <ThemeToggle />
         </div>
       </nav>
     </div>

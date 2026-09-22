@@ -11,6 +11,12 @@ export default defineConfig({
     port: 5173,
   },
   test: {
+    // Node 22.4+ (we run Node 26) ships an experimental Web Storage global whose
+    // dead accessor SHADOWS the localStorage jsdom would otherwise provide, so
+    // `window.localStorage` reads as undefined under `@vitest-environment
+    // jsdom`. This restores a working in-memory Storage. Safe under the node
+    // environment too: it installs only when the global is missing or broken.
+    setupFiles: ['./src/test-setup.ts'],
     // Playwright specs live in e2e/ and match vitest's default spec glob. Left
     // in, vitest would load them and fail on the @playwright/test import.
     // Setting `exclude` replaces vitest's defaults rather than adding to them,
@@ -20,6 +26,10 @@ export default defineConfig({
       '**/dist/**',
       '**/.{idea,git,cache,output,temp}/**',
       'e2e/**',
+      // Scratch captures for social posts. Gitignored, Playwright-flavoured,
+      // and with siblings that may not exist — collecting them makes a clean
+      // local run look broken for a directory that is not part of the project.
+      'social/**',
       // Each workspace under packages/ owns a vitest config, and `npm run
       // test:packages` runs them. Without this the root run collects them too,
       // under the app's config — which is not the config they are written

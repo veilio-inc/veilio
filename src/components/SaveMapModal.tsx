@@ -37,7 +37,7 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
           style={{
             display: 'block',
             marginBottom: 12,
-            filter: 'drop-shadow(0 0 12px rgba(204,120,92,0.35))',
+            filter: 'drop-shadow(0 0 12px rgba(var(--accent-rgb), 0.35))',
           }}
         />
         <h2

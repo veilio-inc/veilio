@@ -98,7 +98,7 @@ export default function DashboardPage() {
                 borderRadius: 4,
                 marginBottom: 18,
                 background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
-                boxShadow: '0 0 18px rgba(204,120,92,0.4)',
+                boxShadow: '0 0 18px rgba(var(--accent-rgb), 0.4)',
               }}
             />
             <p

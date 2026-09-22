@@ -61,7 +61,7 @@ export default function LegalPage() {
               color: 'var(--text-dim)',
             }}
           >
-            Legal / <span style={{ color: 'var(--accent)' }}>{DOCS[slug].title}</span>
+            Legal / <span style={{ color: 'var(--accent-text)' }}>{DOCS[slug].title}</span>
           </span>
           <nav style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {Object.entries(DOCS).map(([s, doc]) => (
@@ -300,7 +300,7 @@ function renderInline(text: string): ReactNode[] {
             key={key++}
             href={href}
             {...(isExternal(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            style={{ color: 'var(--accent)' }}
+            style={{ color: 'var(--accent-text)' }}
           >
             {m[2]}
           </a>

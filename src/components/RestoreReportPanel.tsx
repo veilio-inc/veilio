@@ -119,7 +119,7 @@ export default function RestoreReportPanel({ report }: Props) {
         <span
           className="badge"
           style={{
-            background: clean ? 'rgba(91, 169, 139, 0.15)' : 'var(--danger-dim)',
+            background: clean ? 'rgba(var(--success-rgb), 0.15)' : 'var(--danger-dim)',
             color: clean ? 'var(--success)' : 'var(--danger)',
           }}
         >

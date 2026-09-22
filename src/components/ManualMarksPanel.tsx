@@ -67,7 +67,7 @@ export default function ManualMarksPanel({ map, onUnmask }: Props) {
               style={{
                 fontFamily: 'var(--font-mono)',
                 fontSize: 11,
-                color: 'var(--accent)',
+                color: 'var(--accent-text)',
                 flexShrink: 0,
               }}
             >

@@ -190,12 +190,14 @@ B1–B4 would multiply the same shortcomings across three clients instead of one
 
 ---
 
-## F — A light theme
+## F — A light theme — **done**
 
-CE ships one palette. There is no `prefers-color-scheme` query and no
-`data-theme` attribute anywhere in `src/`, so somebody whose system is set to
-light gets the dark app and has nothing to change. For a tool people open beside
-their editor all day, that is a real cost rather than a nicety.
+_Shipped. What follows is the record of what it cost and what it found, kept
+because the findings outlive the feature._
+
+CE shipped one palette. There was no `prefers-color-scheme` query and no
+`data-theme` attribute anywhere in `src/`, so somebody whose system was set to
+light got the dark app and had nothing to change.
 
 **It is not a variable swap, and the prerequisite is most of the work.** Measured
 against `src/`: **59 hardcoded hex values across 4 `.tsx` files**. Those pixels do
@@ -241,7 +243,36 @@ here: the audit's first run is a bug report about the theme you already have.
 **Done when** the app renders correctly in both themes with no component
 painting its own colour, a system-light user lands on light without configuring
 anything, the choice survives a reload, and both themes measure zero contrast
-failures with nothing skipped.
+failures with nothing skipped. — **All four met.**
+
+### What the measurement actually found
+
+The prediction above was right, and understated. The audit's first run reported
+eight failing routes, and the work of fixing them was mostly _fixing the audit_:
+three of its answers were confident and wrong.
+
+|                            |                                                                                                                                                                                                                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Corner ticks as the ground | `div.surface.ticks` draws 9×1px marks as solid-colour gradients. Colour cannot tell them from a fill — only `background-size` can. Every paragraph on the legal pages was reported unreadable against a hairline no glyph sits on.                                         |
+| A sliding pill             | The segmented control paints the active label's ground with a positioned SIBLING, which an ancestor walk cannot see. White-on-terracotta measured 1.15:1 against a track it never touches.                                                                                 |
+| **Opaque alpha**           | The compositing helper returned `a: 1` unconditionally — correct only over an opaque backdrop. A 12% accent pill on a 7% accent wash composited to a FULLY OPAQUE accent, and the pill's own label was reported at 1.34:1 against a colour that appears nowhere on screen. |
+
+Real failures, once the audit was honest:
+
+- `--text-dim` at 2.79–3.01 in the **dark theme that had already shipped** —
+  the footer, the feature bullets, the editor placeholders;
+- `--accent-bright` used as link text, 2.67:1 — split into `--accent-text`,
+  because on paper "brighter" has to mean darker and one token cannot serve a
+  highlight fill and a link at once;
+- white on the brand terracotta at 2.72:1 — the primary call to action was the
+  least readable text on the page, in both themes. `--accent-fill-*` is the same
+  hue taken dark enough for its own label;
+- the demo block's ground was `--code-bg`, which flips, so in light a dark
+  syntax palette landed on paper. Its ground, body text, comment and
+  placeholder colours are all pinned now.
+
+`e2e/theme-contrast.spec.ts` keeps it: four routes × two themes, every visible
+run of text, nothing skipped.
 
 **Not in scope:** restyling. This is the same app in a second palette.
 
