@@ -72,3 +72,18 @@ updates:
     groups:
       engine-dev:
         patterns: ['*']
+    ignore:
+      # The same TypeScript ceiling as the root entry above, and it has to be
+      # repeated: a dependabot `ignore` is scoped to the entry it sits in, not
+      # to the repository. The root entry alone was added first, and Dependabot
+      # raised typescript ^7.0.2 here within minutes (#54), failing exactly the
+      # way the root group had.
+      #
+      # packages/engine is a workspace, so its manifest feeds the root tree -
+      # @typescript-eslint/eslint-plugin peers on typescript ">=4.8.4 <6.1.0"
+      # and `npm ci` ends in ERESOLVE before a single test runs, even though
+      # nothing in this directory imports eslint.
+      #
+      # Lift both together, in the same change that raises typescript-eslint.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
