@@ -48,7 +48,5 @@ Because CE stores only strictly-necessary, first-party data and sets no cookies,
 
 No third party can set storage or observe your visit, because CE makes no third-party requests at all — see **Third-party requests** above.
 
-> For the hosted **Veilio Cloud** service, the equivalent statement is **§13 of its [Privacy Policy](https://veilio.dev/legal/privacy)**.
-
 ## Changes & contact
 We post updates here and bump the version. Privacy questions: `privacy@veilio.dev` (or `support@veilio.dev`).

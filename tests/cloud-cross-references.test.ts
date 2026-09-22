@@ -11,8 +11,9 @@ import { join } from 'node:path'
  * into Privacy and Terms §5. Both said less than the section that replaced
  * them: CE sets no cookies at all, so a Cookie Policy was a page explaining an
  * absence, and half the AUP restated licence terms. That is also the shape
- * counsel gave the Cloud set — acceptable use is Cloud Terms §9, cookies are
- * Cloud Privacy §13 — so the two editions now describe themselves the same way.
+ * counsel gave the Cloud set — acceptable use lives in the Cloud Terms and
+ * cookies in the Cloud Privacy Policy — so the two editions now describe
+ * themselves the same way.
  *
  * ── The cross-references ────────────────────────────────────────────────────
  *
@@ -31,8 +32,8 @@ const LEGAL_DIR = 'public/legal'
 
 /** Cloud slugs that no longer name a document of their own. */
 const RETIRED_IN_CLOUD = {
-  aup: 'acceptable use is Cloud Terms §9',
-  cookies: 'cookie and storage information is Cloud Privacy §13',
+  aup: 'acceptable use lives in the Cloud Terms of Service',
+  cookies: 'cookie and storage information lives in the Cloud Privacy Policy',
 } as const
 
 /** CE slugs that no longer name a file, and the section that absorbed each. */
@@ -49,7 +50,11 @@ function legalDocs(): { name: string; text: string }[] {
 
 describe('the CE legal set', () => {
   it('is exactly Terms and Privacy', () => {
-    expect(legalDocs().map((d) => d.name).sort()).toEqual(['privacy.md', 'terms.md'])
+    expect(
+      legalDocs()
+        .map((d) => d.name)
+        .sort()
+    ).toEqual(['privacy.md', 'terms.md'])
   })
 
   it('no longer ships the documents that were folded in', () => {
@@ -98,16 +103,34 @@ describe('the CE legal set', () => {
     expect(offenders).toEqual([])
   })
 
-  it('still tells a reader where Cloud says the same thing', () => {
-    // The opposite failure, and the reason the rules above are not "delete
-    // every link to Cloud": a CE notice that mentions Cloud without saying
-    // where Cloud's position is leaves the reader worse off than a stale link.
+  it('points at Cloud by DOCUMENT, never by section number', () => {
+    // This rule replaced its own opposite, which is why it is worth stating.
+    //
+    // Folding the notices in, each new section ended with a pointer like
+    // "acceptable use is §9 of the Cloud Terms of Service" — and that is the
+    // bug this suite exists for, one level finer. It pins a SECTION NUMBER in
+    // a counsel-drafted document in a repository this one cannot see. When
+    // counsel renumbers, CE lies again, and nothing here can tell: the check
+    // can only confirm the string "§9" is present, not that Cloud's §9 is
+    // still about acceptable use. A test that passes either way is worse than
+    // no test, because it is read as assurance.
+    //
+    // The scope blockquote at the top of each document already links Cloud's
+    // equivalent, more prominently than a line buried in one section — so the
+    // pointer was redundant as well as fragile. A document link survives
+    // renumbering; a section reference does not.
+    const docs = legalDocs()
+    const numbered = docs
+      .filter(({ text }) => /Cloud[^.]{0,80}§\s?\d+|§\s?\d+[^.]{0,80}Cloud/i.test(text))
+      .map(({ name }) => name)
+    expect(numbered).toEqual([])
+
+    // Still reachable, though: a CE notice that mentions Cloud without saying
+    // where Cloud's own position lives leaves the reader worse off than the
+    // stale pointer did.
     const terms = readFileSync(join(LEGAL_DIR, 'terms.md'), 'utf8')
     const privacy = readFileSync(join(LEGAL_DIR, 'privacy.md'), 'utf8')
-
     expect(terms).toMatch(/veilio\.dev\/legal\/terms/)
-    expect(terms).toMatch(/§9/)
     expect(privacy).toMatch(/veilio\.dev\/legal\/privacy/)
-    expect(privacy).toMatch(/§13/)
   })
 })

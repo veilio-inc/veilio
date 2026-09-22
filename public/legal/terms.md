@@ -34,8 +34,6 @@ CE is a **local tool that runs entirely in your browser** — there is no Veilio
 
 **5.3 Reporting.** Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/veilio-inc/veilio/blob/main/SECURITY.md).
 
-> For the hosted **Veilio Cloud** service, acceptable use is **§9 of the Cloud [Terms of Service](https://veilio.dev/legal/terms)**, which additionally governs accounts, messaging, rate limits and shared infrastructure.
-
 ## 6. Warranty disclaimer & limitation of liability
 CE is provided **"AS IS", without warranty of any kind**, to the maximum extent permitted by applicable law. There is **no warranty that anonymization is complete, accurate, or error-free.** To the maximum extent permitted by applicable law, the authors and copyright holders are **not liable** for any claim, damage, loss, or other liability — including any sensitive data exposed despite anonymization — arising from or in connection with CE or its use.
 
