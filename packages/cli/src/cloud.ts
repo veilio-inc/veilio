@@ -49,12 +49,7 @@ export const REQUEST_TIMEOUT_MS = 15_000
  *   - `server` — the instance answered with a failure of its own.
  */
 export type CloudErrorKind =
-  | 'unauthenticated'
-  | 'unentitled'
-  | 'suspended'
-  | 'forbidden'
-  | 'unreachable'
-  | 'server'
+  'unauthenticated' | 'unentitled' | 'suspended' | 'forbidden' | 'unreachable' | 'server'
 
 export class CloudError extends Error {
   constructor(
