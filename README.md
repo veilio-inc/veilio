@@ -31,9 +31,15 @@ The CLI and the MCP server share one symbol map, so you can mask inside an agent
 and restore from a terminal, or the reverse. Neither makes a network call on any
 local path, and each ships a test that trips if one is ever introduced.
 
-> **Both are not on npm yet.** They live here and are tested here; the install
-> instructions land in the same commit that publishes them. Until then, run them
-> from a clone — `npm run build:packages`, then `node packages/cli/dist/index.js --help`.
+Both are on npm:
+
+```bash
+npm install -g @veilio-inc/cli
+npx @veilio-inc/mcp   # or add to your agent's MCP config
+```
+
+See [`packages/cli/README.md`](packages/cli/README.md) and
+[`packages/mcp/README.md`](packages/mcp/README.md) for commands and config.
 
 ## Run it
 
@@ -172,6 +178,7 @@ The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The C
 - **Contributing:** see [CONTRIBUTING.md](./CONTRIBUTING.md). Contributions are accepted under a [CLA](./CLA.md) so they can be used across both the Community and Cloud editions.
 - **Trademarks:** the code is source-available, but the **"Veilio" name and logo are not** licensed for reuse — see [TRADEMARKS.md](./TRADEMARKS.md).
 - **Security:** report vulnerabilities privately per [SECURITY.md](./SECURITY.md).
+- **Legal notices:** CE ships its own [Terms of Use](public/legal/terms.md), [Privacy Notice](public/legal/privacy.md), [Acceptable Use Policy](public/legal/aup.md) and [Cookie & Local Storage Notice](public/legal/cookies.md), served at `/legal/*`. They are **CE's own documents and deliberately not Cloud's**: Cloud's counsel-reviewed set governs a hosted subscription service with accounts, billing, a processor relationship and EU Data Act switching duties, none of which exists here. In CE there is no backend to be a controller of — the person who deploys it is. Each CE notice points at the equivalent Cloud position for a reader who arrived at the wrong edition, and `tests/cloud-cross-references.test.ts` keeps those pointers honest when Cloud's documents move.
 
 ## Credits
 

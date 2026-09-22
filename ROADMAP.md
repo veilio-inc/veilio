@@ -31,12 +31,14 @@ Listed because a roadmap whose first section is aspirational is not worth much.
 
 The first ninety seconds: find the repo, run the thing.
 
-| | Item | State |
-| --- | --- | --- |
-| A1 | Shrink the runtime image | **done — 77.4 MB → 10.4 MB** |
-| A2 | Cut a version tag so the Releases tarball exists | ready |
-| A3 | Vulnerability scan as a release gate | ready |
-| A4 | Self-host the web fonts | **done** |
+|     | Item                                             | State                          |
+| --- | ------------------------------------------------ | ------------------------------ |
+| A1  | Shrink the runtime image                         | **done — 77.4 MB → 10.4 MB**   |
+| A2  | Cut a version tag so the Releases tarball exists | ready                          |
+| A3  | Vulnerability scan as a release gate             | ready                          |
+| A4  | Self-host the web fonts                          | **done**                       |
+| A5  | A light theme                                    | **needs design — see F below** |
+| A6  | Keep CE's legal notices true as Cloud's move     | **done**                       |
 
 **A1 — done, in two steps.**
 
@@ -116,13 +118,13 @@ Both now state that CE makes no third-party requests, at document version 1.2.
 
 The engine is the product. Everything here is a way it currently falls short.
 
-| | Item | State |
-| --- | --- | --- |
-| B1 | Make the advisory panel worth reading | ready |
-| B2 | Regulated identifiers | **partly addressed — manual marking** |
-| B3 | Comments are an open channel | **partly addressed — manual marking** |
-| B4 | Language honesty, then coverage | ready |
-| B5 | Report what the round trip failed to restore | **done** |
+|     | Item                                         | State                                 |
+| --- | -------------------------------------------- | ------------------------------------- |
+| B1  | Make the advisory panel worth reading        | ready                                 |
+| B2  | Regulated identifiers                        | **partly addressed — manual marking** |
+| B3  | Comments are an open channel                 | **partly addressed — manual marking** |
+| B4  | Language honesty, then coverage              | ready                                 |
+| B5  | Report what the round trip failed to restore | **done**                              |
 
 **B1.** The overwhelming majority of advisory findings are not actionable. A panel
 that cries wolf trains people to dismiss it, which is worse than no panel: the one
@@ -136,7 +138,7 @@ least well.
 **B3.** Identifiers are replaced; the prose around them is not. A comment naming a
 customer, an incident or a person leaves untouched. This is the largest remaining
 silent leak and the hardest to bound — a comment is natural language, and the
-engine's guarantees rest on it *not* guessing.
+engine's guarantees rest on it _not_ guessing.
 
 **B4.** An unsupported language currently produces a weak result rather than a
 refusal. Silence is the wrong failure mode for a privacy tool: say plainly that a
@@ -173,12 +175,12 @@ size.
 The web app costs four copy/pastes per turn, and people increasingly work inside
 editors and agents rather than a browser tab.
 
-| | Item | State |
-| --- | --- | --- |
-| C1 | A CLI consuming the published engine | needs design |
-| C2 | An MCP server taking file paths, not blobs | needs design |
+|     | Item                                       | State        |
+| --- | ------------------------------------------ | ------------ |
+| C1  | A CLI consuming the published engine       | needs design |
+| C2  | An MCP server taking file paths, not blobs | needs design |
 
-Both consume the published engine. An MCP tool that takes a *file path* rather
+Both consume the published engine. An MCP tool that takes a _file path_ rather
 than a blob means masked code reaches the agent while the real identifiers never
 enter its context.
 
@@ -188,13 +190,70 @@ B1–B4 would multiply the same shortcomings across three clients instead of one
 
 ---
 
+## F — A light theme
+
+CE ships one palette. There is no `prefers-color-scheme` query and no
+`data-theme` attribute anywhere in `src/`, so somebody whose system is set to
+light gets the dark app and has nothing to change. For a tool people open beside
+their editor all day, that is a real cost rather than a nicety.
+
+**It is not a variable swap, and the prerequisite is most of the work.** Measured
+against `src/`: **59 hardcoded hex values across 4 `.tsx` files**. Those pixels do
+not move when a token does, so a naive light mode produces dark text on dark
+chips — worst in the components that carry warnings, which is the opposite of
+where you want a legibility bug.
+
+Three things are second decisions rather than flips:
+
+- **shadows.** The current values encode a dark-background assumption in their
+  numbers, not just their colours. `rgba(0,0,0,0.6)` is a smudge on paper, and a
+  neutral-grey shadow on a warm ground reads as dirt.
+- **the syntax palette.** Highlighting on a light ground is its own set of hues,
+  not a lightness flip of a dark one.
+- **the marketing/demo code sample**, if CE keeps one: an image OF code
+  conventionally stays dark, which means its ground and text must be pinned
+  rather than themed, or the dark palette lands on paper.
+
+**Work, in dependency order**
+
+1. Move the 59 literals onto tokens. Worth doing whether or not the theme ships —
+   today a colour change means finding every component that re-decided it.
+2. Add the tokens a light ground needs: separate shadow values, a light code
+   background with its own syntax palette, a border that reads at low contrast.
+3. Define the light palette under BOTH `prefers-color-scheme` and an explicit
+   `[data-theme]`, with precedence **explicit choice > system > dark**. "System"
+   must REMOVE the attribute rather than stamp a resolved value, or the page
+   freezes in whatever the OS said at load.
+4. A control that persists the choice, applied before first paint rather than in
+   an effect — an effect paints one dark frame first.
+
+**Verify by measuring, not by looking.** A screenshot catches the obvious half
+and misses 3.8:1 grey-on-cream every time. Compute the WCAG contrast ratio of
+every visible run of text against the ground it is composited over, in both
+themes, and read gradients by their colour stops rather than skipping them —
+skipping is how the busiest surface on a page goes unchecked.
+
+**Prior art:** Veilio Cloud did exactly this and the measurement found six real
+failures, three of them pre-existing in the dark theme that had already shipped
+— including white-on-terracotta on the primary button at 2.72:1. Expect the same
+here: the audit's first run is a bug report about the theme you already have.
+
+**Done when** the app renders correctly in both themes with no component
+painting its own colour, a system-light user lands on light without configuring
+anything, the choice survives a reload, and both themes measure zero contrast
+failures with nothing skipped.
+
+**Not in scope:** restyling. This is the same app in a second palette.
+
+---
+
 ## D — Contribution on-ramp
 
 The governance files exist — [CONTRIBUTING](./CONTRIBUTING.md), [CLA](./CLA.md),
 [SECURITY](./SECURITY.md), [TRADEMARKS](./TRADEMARKS.md). The last mile does not.
 
-- **Issue templates.** CONTRIBUTING says the most valuable contribution is *"a
-  failing test case from your own material"*, and there is currently no form that
+- **Issue templates.** CONTRIBUTING says the most valuable contribution is _"a
+  failing test case from your own material"_, and there is currently no form that
   asks for one. A template with input snippet, language, expected and actual turns
   a vague report into something mergeable. Highest-leverage item in this section.
 - **PR template** carrying the CLA sign-off line, plus CODEOWNERS and a CLA bot —
@@ -209,19 +268,19 @@ enforced rather than asserted. This section came out of a full audit of the
 repository on 2026-08-14; every item below is a finding from it, including the
 ones we have not fixed yet.
 
-| | Item | State |
-| --- | --- | --- |
-| E1 | Patch the shipping router advisory | **done** |
-| E10 | Decide on React Router 7 | needs design |
-| E2 | Least-privilege CI token | **done** |
-| E3 | Content-Security-Policy and security headers | **done** |
-| E4 | Pin actions and base images by digest | **done** |
-| E5 | Make the purity gate executable, not textual | **done** |
-| E6 | Validate link schemes in rendered documents | **done** |
-| E7 | Treat an imported map as untrusted input | **done** |
-| E8 | Passphrase strength, and a tighter KDF ceiling | **done** |
-| E9 | Provenance for the container image | **done** |
-| E11 | Derive off the main thread | **done** |
+|     | Item                                           | State        |
+| --- | ---------------------------------------------- | ------------ |
+| E1  | Patch the shipping router advisory             | **done**     |
+| E10 | Decide on React Router 7                       | needs design |
+| E2  | Least-privilege CI token                       | **done**     |
+| E3  | Content-Security-Policy and security headers   | **done**     |
+| E4  | Pin actions and base images by digest          | **done**     |
+| E5  | Make the purity gate executable, not textual   | **done**     |
+| E6  | Validate link schemes in rendered documents    | **done**     |
+| E7  | Treat an imported map as untrusted input       | **done**     |
+| E8  | Passphrase strength, and a tighter KDF ceiling | **done**     |
+| E9  | Provenance for the container image             | **done**     |
+| E11 | Derive off the main thread                     | **done**     |
 
 **E1 — done.** `@remix-run/router` shipped in the bundle at a version inside the
 range for [GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42),
@@ -235,10 +294,10 @@ oversight.** Two advisories remain against `react-router`, and their affected
 range is `6.0.0 - 7.17.0` — there is no 6.x that clears them. Neither is
 reachable here:
 
-- *Arbitrary constructor injection via `deserializeErrors()` in SSR hydration.*
+- _Arbitrary constructor injection via `deserializeErrors()` in SSR hydration._
   CE has no SSR. It mounts with `createRoot` and ships as a static bundle, so the
   hydration path the advisory describes does not exist in this app.
-- *Open redirect via backslash in `<Link>` and `useNavigate`.* Every navigation
+- _Open redirect via backslash in `<Link>` and `useNavigate`._ Every navigation
   target in the app is a hard-coded literal — `/`, `/pricing`, `/dashboard`, a
   module constant in the footer, and `/legal/<slug>` where the slug is checked
   against an allow-list before use. Nothing user-controlled reaches a navigation
@@ -309,13 +368,13 @@ against a deliberate one it did not: `globalThis['fet'+'ch']` and
 
 The gate now has two halves. The textual scan stays, with the missing tokens
 added and comments stripped before scanning — this engine documents what it
-looks for in *users'* code, so prose legitimately mentions `import(...)`, and a
+looks for in _users'_ code, so prose legitimately mentions `import(...)`, and a
 token in a comment executes nothing. String literals are deliberately kept, so
 `globalThis["fetch"]` is still caught.
 
 The second half executes. Every network and storage global is replaced with a
 recording accessor, and the engine is run through a full anonymize/restore
-cycle — including deliberately hostile input. Because *any* route to a global is
+cycle — including deliberately hostile input. Because _any_ route to a global is
 ultimately a property read on the global object, computed names and indirect
 `Function` construction are caught along with the literal spelling.
 
@@ -344,7 +403,7 @@ reads and nothing navigable is produced.
 
 The check normalises the way a URL parser does before deciding, which is the
 part that makes or breaks it: browsers strip leading whitespace and remove tabs,
-newlines and carriage returns from *anywhere* in a URL before resolving the
+newlines and carriage returns from _anywhere_ in a URL before resolving the
 scheme, so `java&#9;script:alert(1)` executes and a naive `startsWith` test waves
 it through. It returns the normalised href rather than the original, so the
 string tested is the string rendered. Protocol-relative `//evil.example` is

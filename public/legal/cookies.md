@@ -2,7 +2,7 @@
 
 _Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
 
-> **Scope.** This notice covers the **Veilio Community Edition (CE)**. **Veilio Cloud** (the hosted service, which uses a session token and an anti-abuse widget) has its own [Cookie Policy](https://veilio.dev/legal/cookies). This notice does not cover Cloud.
+> **Scope.** This notice covers the **Veilio Community Edition (CE)**. **Veilio Cloud** (the hosted service, which uses a session token and an anti-abuse widget) states its cookie and storage position in **§13 of its [Privacy Policy](https://veilio.dev/legal/privacy)**; Cloud's separate Cookie Policy was retired when its counsel-reviewed document set was published, and `/legal/cookies` now redirects there. This notice does not cover Cloud.
 
 **The Community Edition sets no cookies and uses no advertising, analytics, or tracking technology.** It uses exactly one item of browser storage, and it is strictly necessary:
 
