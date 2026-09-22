@@ -11,7 +11,7 @@ const ALG = 'AES-GCM'
 // 600k-plus-iteration PBKDF2 call never blocks the thread this function was
 // called from. The transport returns raw bits; importing them here (not in
 // the worker) keeps the resulting CryptoKey non-extractable exactly as
-// before — see specs/007-e11-derive-off/research.md R-002.
+// before - see specs/007-e11-derive-off/research.md R-002.
 async function deriveKey(
   passphrase: string,
   salt: Uint8Array<ArrayBuffer>,
@@ -29,7 +29,7 @@ function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
   // Cross-realm safe: instanceof ArrayBuffer fails when the buffer crossed
   // realms (e.g. jsdom in tests), sending a real ArrayBuffer down the
   // typed-array branch and yielding an empty string. ArrayBuffer.isView returns
-  // true for any typed-array view, false for raw ArrayBuffers — flip the check.
+  // true for any typed-array view, false for raw ArrayBuffers - flip the check.
   const bytes = (ArrayBuffer.isView(buf) ? buf : new Uint8Array(buf)) as Uint8Array
   // Converted in chunks, not as String.fromCharCode(...bytes): spreading a
   // whole export's worth of bytes passes them as individual arguments and

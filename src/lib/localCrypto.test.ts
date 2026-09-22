@@ -20,7 +20,7 @@ import { WeakPassphraseError, MIN_PASSPHRASE_LENGTH } from './passphrase.js'
 const PASSPHRASE = 'quiet-harbour-morning'
 
 // A real .veilio file captured from before parameters were recorded: encrypted
-// at the legacy 100k iterations, with no kdf field. FROZEN ON PURPOSE — do not
+// at the legacy 100k iterations, with no kdf field. FROZEN ON PURPOSE - do not
 // regenerate it. Rebuilding this fixture with the current code would make it
 // re-encrypt at the current cost and quietly stop testing anything, which is
 // precisely how a cost increase would ship having silently orphaned every
@@ -79,7 +79,7 @@ describe('exportMap / importMap', () => {
     await expect(importMap(JSON.stringify(file), PASSPHRASE)).rejects.toThrow(/iteration count/i)
   })
 
-  // A real export — a whole project's symbol map — is far larger than the
+  // A real export - a whole project's symbol map - is far larger than the
   // handful of entries above, and the base64 step used to be written in a way
   // that blew the call stack once the ciphertext passed a few tens of KB.
   it('round-trips a map large enough to overflow a spread call', { timeout: 30_000 }, async () => {
@@ -129,7 +129,7 @@ describe('importMap rejects a malformed envelope', () => {
 })
 
 // assertUsablePassphrase has its own suite; these assert it is reached on the
-// export path and — just as importantly — not on the import path.
+// export path and - just as importantly - not on the import path.
 describe('exportMap enforces the passphrase floor (ROADMAP E8)', () => {
   const MAP = { __FN__1: 'settleInvoice' }
 
@@ -152,7 +152,7 @@ describe('exportMap enforces the passphrase floor (ROADMAP E8)', () => {
   it('never applies the floor on import', async () => {
     // Files written by an older build may be protected by a passphrase this
     // check would now reject. Enforcing the floor on import would lock people
-    // out of maps they already hold — data loss dressed up as hardening, the
+    // out of maps they already hold - data loss dressed up as hardening, the
     // same reasoning that keeps LEGACY_FILE_KDF frozen.
     //
     // A 2-character passphrase therefore has to reach decryption and fail on
@@ -164,7 +164,7 @@ describe('exportMap enforces the passphrase floor (ROADMAP E8)', () => {
 })
 
 // parseSymbolMap has its own suite; these assert it is actually *reached* on the
-// import path. Wiring is the part that silently regresses — the validator can be
+// import path. Wiring is the part that silently regresses - the validator can be
 // perfect and unused.
 describe('importMap validates what it decrypts', () => {
   // Each case needs a genuine encrypted file, and every derive costs a 600k
@@ -175,7 +175,7 @@ describe('importMap validates what it decrypts', () => {
 
   beforeAll(async () => {
     // JSON.parse gives "__proto__" as an own enumerable property, which
-    // JSON.stringify then writes back out — an object literal would not.
+    // JSON.stringify then writes back out - an object literal would not.
     const pollution = JSON.parse('{"__proto__": {"polluted": true}}')
     hostileFile = await exportMap(pollution as SymbolMap, PASSPHRASE)
     arrayFile = await exportMap(['__FN__1', 'settle'] as unknown as SymbolMap, PASSPHRASE)
@@ -237,7 +237,7 @@ describe('deriveKey via the transport seam (ROADMAP E11)', () => {
     }
   )
 
-  it('does not hang when Worker is unavailable — jsdom has none', { timeout: 15_000 }, async () => {
+  it('does not hang when Worker is unavailable - jsdom has none', { timeout: 15_000 }, async () => {
     expect(typeof Worker).toBe('undefined')
     const map = { __P1__: 'FallbackPath' }
     expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)

@@ -4,7 +4,7 @@
    that request is what lets the image send a strict CSP (ROADMAP E3).
 
    The files live in public/ and are referenced by absolute path, so Vite copies
-   them verbatim while these rules stay in the fingerprinted stylesheet — the
+   them verbatim while these rules stay in the fingerprinted stylesheet - the
    fonts cache immutably, the CSS that points at them does not.
 
    Licences: public/fonts/OFL-*.txt (SIL OFL 1.1). */
@@ -245,14 +245,14 @@
   --code-text: #e8e4e0;
   --radius: 8px;
   --radius-lg: 16px;
-  --accent-light: #d98968; /* lighter terracotta — hover fills, focus rings */
+  --accent-light: #d98968; /* lighter terracotta - hover fills, focus rings */
   /* The accent tuned for TEXT rather than for a fill. `--accent` is the brand
      colour and sits behind white labels; as small text on the page ground it
      measured 2.67:1. Links take a variant shifted the other way from the
      ground: lighter on dark, darker on light. */
   --accent-text: #e89a78;
   /* The FILL, again not the accent. White on the brand terracotta measured
-     2.72:1 in dark and 3.92:1 in light — the primary call to action was the
+     2.72:1 in dark and 3.92:1 in light - the primary call to action was the
      least readable text on the page. Same hue, dark enough that the label
      clears 4.5:1 at every stop. */
   --accent-fill-top: #ad5c3a;
@@ -269,7 +269,7 @@
 
   /* ── Channel triplets ───────────────────────────────────────────────────────
      Component-level alpha needs the base colour to stay in the palette. With
-     these, a glow is `rgba(var(--accent-rgb), 0.35)` — the hue follows the
+     these, a glow is `rgba(var(--accent-rgb), 0.35)` - the hue follows the
      theme and only the compositing decision stays at the call site. Without
      them, every alpha step is a second place the hue is decided. */
   --accent-rgb: 204, 120, 92;
@@ -285,7 +285,7 @@
 
   /* ── Editor: syntax palette ─────────────────────────────────────────────────
      A light theme needs a genuine second decision here rather than a lightness
-     flip — highlighting on a light ground is its own palette. Naming these by
+     flip - highlighting on a light ground is its own palette. Naming these by
      ROLE is what makes that decision possible without touching CodePanel. */
   --syntax-comment: #8c837e;
   --syntax-keyword: #cc785c;
@@ -306,8 +306,8 @@
 
   /* ── The demo code block ────────────────────────────────────────────────────
      A self-contained dark island: a still image OF code, which by convention
-     stays dark on a light page. Every colour in it is pinned — including its
-     GROUND, its body text and its scrim — because an island is only as dark as
+     stays dark on a light page. Every colour in it is pinned - including its
+     GROUND, its body text and its scrim - because an island is only as dark as
      whatever shows through it. */
   --demo-bg: #120f0d;
   --demo-text: #e8e4e0;
@@ -346,7 +346,7 @@
 /* ═══ LIGHT THEME ═══════════════════════════════════════════════════════════
  *
  * CE is dark-first, so `:root` above is the dark palette and this overrides it.
- * Only TOKENS are redefined — no component rule appears here, and none may: a
+ * Only TOKENS are redefined - no component rule appears here, and none may: a
  * colour whose only definition sits inside a theme block is invisible in the
  * other theme, which is the classic unreadable-page bug.
  *
@@ -357,7 +357,7 @@
  * `[data-theme]` is stamped on <html> by `lib/theme.ts` only when the user has
  * chosen. Left unstamped, `prefers-color-scheme` decides. The media query is
  * guarded with `:not([data-theme])` so an explicit DARK choice beats a system
- * set to light — without that guard the toggle appears broken in exactly one
+ * set to light - without that guard the toggle appears broken in exactly one
  * direction, which is the hardest kind of bug to be told about.
  *
  * ── What is NOT inverted ────────────────────────────────────────────────────
@@ -371,14 +371,14 @@
  *    lightened. The dark palette's muted pastels vanish on paper.
  *  - THE DEMO BLOCK. `--demo-*` deliberately does not appear below. That block
  *    is an image OF code, and it sits on its own pinned ground rather than on
- *    the page's — including its body text and its scrim, because an island is
+ *    the page's - including its body text and its scrim, because an island is
  *    only as dark as whatever shows through it.
  *
  * `--text-on-accent` also stays white in both: it labels a filled terracotta
  * control, and that control does not get lighter.
  *
- * The palette is written TWICE — once for a system preference, once for an
- * explicit choice — because plain CSS cannot share one declaration block
+ * The palette is written TWICE - once for a system preference, once for an
+ * explicit choice - because plain CSS cannot share one declaration block
  * between a media query and a selector. That duplication is a maintenance
  * hazard, so `lib/theme.test.ts` asserts the two blocks are identical rather
  * than trusting anyone to keep them in step by hand. */
@@ -547,7 +547,7 @@ body {
   background-size: 24px 24px;
   background-attachment: fixed;
 }
-/* Aurora layer — two soft orbs drifting on long, opposing loops. */
+/* Aurora layer - two soft orbs drifting on long, opposing loops. */
 body::after {
   content: '';
   position: fixed;
@@ -690,7 +690,7 @@ input::placeholder {
     box-shadow 0.15s ease,
     filter 0.15s ease;
 }
-/* Shine sweep — a light band crosses the button on hover. */
+/* Shine sweep - a light band crosses the button on hover. */
 .btn-primary::after {
   content: '';
   position: absolute;
@@ -931,7 +931,7 @@ input::placeholder {
 }
 
 /* ── Technical corner ticks ───────────────────────────────────────────────────
-   Blueprint crosshair marks at each corner — the "engineering drawing" detail
+   Blueprint crosshair marks at each corner - the "engineering drawing" detail
    applied to feature cards. Pure background-images, no extra DOM. */
 .ticks {
   background-image:
@@ -980,7 +980,7 @@ input::placeholder {
 
 /* ── Redaction motif ──────────────────────────────────────────────────────────
    Veilio veils identifiers. A redaction bar sweeps across text and "unveils" the
-   placeholder beneath — the core brand gesture, used in the hero demo. */
+   placeholder beneath - the core brand gesture, used in the hero demo. */
 .redact {
   position: relative;
   border-radius: 3px;
@@ -1050,7 +1050,7 @@ input::placeholder {
   }
 }
 
-/* ── Pricing card polish (text/markup unchanged — visual only) ─────────────── */
+/* ── Pricing card polish (text/markup unchanged - visual only) ─────────────── */
 .price-card {
   transition:
     transform 0.2s ease,
@@ -1090,7 +1090,7 @@ input::placeholder {
 }
 
 /* ── Segmented mode control ───────────────────────────────────────────────────
-   Two-state switch with a sliding active pill — the indicator glides between
+   Two-state switch with a sliding active pill - the indicator glides between
    "Send to AI" and "Restore from AI". */
 .seg {
   position: relative;

@@ -9,7 +9,7 @@ interface Props {
 /** The spans the author marked by hand.
  *
  *  Shows the real term, not a preview. It is the user's own text, on their own
- *  machine, and the whole point of the list is to check what was marked — a
+ *  machine, and the whole point of the list is to check what was marked - a
  *  redacted list would be unreviewable. This is the opposite of the rule for
  *  SecretFinding, which is truncated precisely because it may be a live key.
  *

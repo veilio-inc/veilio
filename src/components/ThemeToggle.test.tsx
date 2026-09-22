@@ -9,7 +9,7 @@ beforeEach(() => {
   document.documentElement.removeAttribute('data-theme')
 })
 // This project does not set vitest `globals`, so React Testing Library's
-// automatic cleanup never registers — without this the previous test's toggle
+// automatic cleanup never registers - without this the previous test's toggle
 // is still mounted and every query matches twice.
 afterEach(cleanup)
 
@@ -33,7 +33,7 @@ describe('ThemeToggle', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
 
     fireEvent.click(button())
-    // Back to following the OS — the attribute is gone, not set to a resolved
+    // Back to following the OS - the attribute is gone, not set to a resolved
     // value. This is the step a two-position switch cannot express, and the
     // reason this is a three-state cycle.
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false)

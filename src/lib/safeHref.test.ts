@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { safeHref, isExternal } from './safeHref.js'
 
-describe('safeHref — allowed', () => {
+describe('safeHref - allowed', () => {
   it('passes http and https', () => {
     expect(safeHref('https://veilio.dev')).toBe('https://veilio.dev')
     expect(safeHref('http://example.com/x?y=1#z')).toBe('http://example.com/x?y=1#z')
@@ -25,7 +25,7 @@ describe('safeHref — allowed', () => {
   })
 })
 
-describe('safeHref — refused', () => {
+describe('safeHref - refused', () => {
   it('refuses javascript:', () => {
     // The whole point. React 18 warns and renders it anyway.
     expect(safeHref('javascript:alert(1)')).toBeNull()
@@ -63,7 +63,7 @@ describe('safeHref — refused', () => {
   })
 
   it('refuses protocol-relative URLs that look local', () => {
-    // `//evil.example` navigates off-site while reading as a relative path —
+    // `//evil.example` navigates off-site while reading as a relative path -
     // the same confusion as the advisory against this app's router.
     expect(safeHref('//evil.example/phish')).toBeNull()
     expect(safeHref('//evil.example')).toBeNull()
@@ -81,7 +81,7 @@ describe('safeHref — refused', () => {
   })
 })
 
-describe('safeHref — normalisation', () => {
+describe('safeHref - normalisation', () => {
   it('returns the normalised form, not the original', () => {
     // Returning the original would mean testing one string and rendering
     // another, which is how a check like this gets quietly bypassed.

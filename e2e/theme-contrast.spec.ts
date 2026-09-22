@@ -5,8 +5,8 @@ import { test, expect, type Page } from '@playwright/test'
  *
  * ROADMAP E9's warning is specific and it is the reason this exists: the
  * components that paint their own colours are the ones a user reads when
- * something has gone wrong — the vault modal, the key-change prompt, the secret
- * panel — and "a warning that is unreadable in one theme is worse than no
+ * something has gone wrong - the vault modal, the key-change prompt, the secret
+ * panel - and "a warning that is unreadable in one theme is worse than no
  * theme".
  *
  * A screenshot does not catch that. A human comparing two screenshots catches
@@ -33,7 +33,7 @@ import { test, expect, type Page } from '@playwright/test'
 
 const THEMES = ['dark', 'light'] as const
 
-// CE has no accounts, so every route is a public route — which makes this a
+// CE has no accounts, so every route is a public route - which makes this a
 // near-complete sweep rather than a sample.
 const ROUTES = ['/', '/pricing', '/legal/terms', '/legal/privacy']
 
@@ -42,7 +42,7 @@ interface Audit {
     where: string
     text: string
     color: string
-    /** The worst candidate ground — without it, a failure cannot be located. */
+    /** The worst candidate ground - without it, a failure cannot be located. */
     ground: string
     ratio: number
     needed: number
@@ -56,7 +56,7 @@ interface Audit {
  *
  * Separate from the audit, and not optional. Stamping and measuring inside one
  * `evaluate` silently returned the PREVIOUS theme's computed values while
- * developing this — the first run reported the light palette's numbers under
+ * developing this - the first run reported the light palette's numbers under
  * the heading "dark", which is the most convincing kind of wrong answer,
  * because every value in it is real. Asserting on `--accent` afterwards is what
  * makes the stamp observable rather than assumed.
@@ -69,7 +69,7 @@ async function stampTheme(page: Page, theme: string): Promise<void> {
 
   // Long enough for every colour transition to finish. Components animate
   // `all 0.15s`, and `getComputedStyle` during a transition returns the
-  // INTERPOLATED colour — a blend of the two themes that belongs to neither.
+  // INTERPOLATED colour - a blend of the two themes that belongs to neither.
   // Measured mid-flight, the navigation reported #964d2e: not a token, not a
   // bug, just a frame. Two animation frames were not enough; this is.
   await page.waitForTimeout(500)
@@ -94,8 +94,8 @@ async function audit(page: Page): Promise<Audit> {
      *
      * The alpha matters and getting it wrong is silent: an earlier version
      * returned `a: 1` unconditionally, which is correct only when the BACKDROP
-     * is opaque. Compositing two translucent tints — a 12% accent pill sitting
-     * on a 7% accent wash — then produced a FULLY OPAQUE accent as the ground,
+     * is opaque. Compositing two translucent tints - a 12% accent pill sitting
+     * on a 7% accent wash - then produced a FULLY OPAQUE accent as the ground,
      * and reported the pill's own label unreadable at 1.34:1 against a colour
      * that appears nowhere on screen. Every number in that report was real
      * except the one that mattered.
@@ -126,7 +126,7 @@ async function audit(page: Page): Promise<Audit> {
      * Every ground this text might actually sit on.
      *
      * A gradient has no single background colour, and the first version of this
-     * gave up on one — which declared more than half of the pricing page
+     * gave up on one - which declared more than half of the pricing page
      * unmeasurable, because that page is built from gradient-filled cards. An
      * audit blind to the busiest surface is an audit that passes for the wrong
      * reason.
@@ -138,7 +138,7 @@ async function audit(page: Page): Promise<Audit> {
      * as a candidate; the caller takes the worst.
      *
      * `null` is still returned for a background we genuinely cannot reason
-     * about — a `url()` image — because guessing there is worse than admitting
+     * about - a `url()` image - because guessing there is worse than admitting
      * it.
      */
     /**
@@ -152,7 +152,7 @@ async function audit(page: Page): Promise<Audit> {
      *
      * This REPLACES the ancestor ground rather than joining it as a candidate:
      * an opaque layer under the glyphs is the ground, not one possibility among
-     * several. Only earlier siblings count — later ones paint on top, and text
+     * several. Only earlier siblings count - later ones paint on top, and text
      * hidden beneath something is a different bug than this one looks for.
      */
     const overlappingSibling = (el: Element): C | null => {
@@ -197,8 +197,8 @@ async function audit(page: Page): Promise<Audit> {
           // A layer sized to a few pixels is a RULE or a TICK, not a ground.
           //
           // Colour cannot reveal this: the corner ticks on the legal pages are
-          // `linear-gradient(to right, <dim>, <dim>)` — a perfectly ordinary
-          // solid-colour gradient — and only `background-size: 9px 1px` says it
+          // `linear-gradient(to right, <dim>, <dim>)` - a perfectly ordinary
+          // solid-colour gradient - and only `background-size: 9px 1px` says it
           // is a 9×1 mark in a corner. Without this, every paragraph on the page
           // was reported unreadable against a hairline no glyph sits on, which
           // is the most confident kind of wrong answer: the number is real and
@@ -231,7 +231,7 @@ async function audit(page: Page): Promise<Audit> {
           // A PATTERN or an overlay: the gradient punches transparency, so what
           // is behind shows through and is the actual ground.
           //
-          // The distinction is structural, not a fudge — a fill ramps between
+          // The distinction is structural, not a fudge - a fill ramps between
           // opaque colours; a pattern has holes. It matters because a decorative
           // hairline drawn as a repeating gradient would otherwise BE the
           // ground: a tick-mark rule in the legal pages painted 1px lines in
@@ -275,7 +275,7 @@ async function audit(page: Page): Promise<Audit> {
 
       const fg = parse(cs.color)
       if (!fg) continue
-      // Fully transparent text is painted by something else — a gradient
+      // Fully transparent text is painted by something else - a gradient
       // clipped to the glyphs (`background-clip: text`), which is how the hero
       // wordmarks are drawn. Its colour is not in `color`, and this technique
       // cannot reach it, so it is admitted as unmeasurable rather than reported
@@ -342,7 +342,7 @@ for (const theme of THEMES) {
 
       expect(result.failures, `unreadable text in the ${theme} theme on ${route}`).toEqual([])
 
-      // Not a failure, a ceiling — and a low one, now that gradients are read
+      // Not a failure, a ceiling - and a low one, now that gradients are read
       // by their stops rather than skipped. What is left is genuinely
       // unreasonable-about: a `url()` background, or a gradient whose stops do
       // not resolve to rgb. If this climbs, the audit is going blind and the

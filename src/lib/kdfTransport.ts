@@ -36,7 +36,7 @@ async function deriveBitsHere(
 }
 
 /**
- * Derives on the calling thread — today's behavior, kept as the fallback for
+ * Derives on the calling thread - today's behavior, kept as the fallback for
  * a context with no `Worker` (research.md R-003) and as the correctness
  * reference the worker path is checked against (R-004).
  */
@@ -48,7 +48,7 @@ export class InlineKdfTransport implements KdfTransport {
     signal?: AbortSignal
   ): Promise<ArrayBuffer> {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-    // Nothing to interrupt once this call starts — no browser exposes a way
+    // Nothing to interrupt once this call starts - no browser exposes a way
     // to preempt an in-flight deriveBits. Best-effort only (research.md R-005).
     return deriveBitsHere(passphrase, salt, kdf)
   }
@@ -110,7 +110,7 @@ export class WorkerKdfTransport implements KdfTransport {
     }
     worker.onerror = () => {
       // An uncaught exception in the worker script itself (not a rejected
-      // derive) — every still-pending request would otherwise hang forever,
+      // derive) - every still-pending request would otherwise hang forever,
       // which is the one outcome contracts/worker-protocol.md rules out.
       for (const request of this.pending.values()) {
         request.reject(new Error('Key-derivation worker failed'))

@@ -12,8 +12,8 @@ export type DeriveStatus = 'idle' | 'deriving' | 'cancelling'
 
 export interface DeriveController {
   status: DeriveStatus
-  /** Call before starting a derive. Aborts any derive already in flight —
-   *  cancel-and-replace, not a queue (research.md R-006) — and returns the
+  /** Call before starting a derive. Aborts any derive already in flight -
+   *  cancel-and-replace, not a queue (research.md R-006) - and returns the
    *  signal the new one should pass through. */
   start(): AbortController
   /** Call in a `finally` once the derive settles, passing the same

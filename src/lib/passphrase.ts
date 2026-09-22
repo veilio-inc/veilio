@@ -8,7 +8,7 @@
 //
 // This is a floor, not a strength meter, and it is worth being blunt about the
 // difference. It rejects choices that are bad by construction. It cannot tell
-// that `correcthorse1` is a poor choice, and it does not pretend to — a green
+// that `correcthorse1` is a poor choice, and it does not pretend to - a green
 // tick on a mediocre passphrase is worse than no tick at all, because it
 // converts the user's own judgement into misplaced confidence.
 
@@ -57,7 +57,7 @@ const BLOCKED = new Set([
   // Counting up through the digits wraps at 9→0, so these are not "straight
   // runs" by the check below even though they are exactly as guessable. There
   // are only ten digits, which means no digit run long enough to clear the
-  // length floor can ever be caught structurally — it has to be listed.
+  // length floor can ever be caught structurally - it has to be listed.
   '123456789012',
   '012345678901',
   '123456789123',
@@ -73,7 +73,7 @@ function isSequential(value: string): boolean {
   // No short-input guard: this only runs after the length floor, so `value` is
   // always at least MIN_PASSPHRASE_LENGTH code points. A guard here would be
   // unreachable, and unreachable defensive code is a claim the tests cannot
-  // check. Shorter input would still be handled correctly anyway — codePointAt
+  // check. Shorter input would still be handled correctly anyway - codePointAt
   // past the end gives undefined, the subtraction gives NaN, and NaN matches
   // neither step.
   const step = value.codePointAt(1)! - value.codePointAt(0)!
@@ -89,7 +89,7 @@ function isSequential(value: string): boolean {
  *
  * Deliberately not applied on import: a file written before this existed, or by
  * a colleague on an older build, must still open. Refusing to decrypt something
- * the user already holds is data loss dressed up as hardening — the same
+ * the user already holds is data loss dressed up as hardening - the same
  * reasoning that keeps LEGACY_FILE_KDF frozen.
  */
 export function assertUsablePassphrase(passphrase: string): void {
@@ -100,7 +100,7 @@ export function assertUsablePassphrase(passphrase: string): void {
 
   if (length < MIN_PASSPHRASE_LENGTH) {
     throw new WeakPassphraseError(
-      `Use at least ${MIN_PASSPHRASE_LENGTH} characters — this file can be attacked offline once you share it.`
+      `Use at least ${MIN_PASSPHRASE_LENGTH} characters - this file can be attacked offline once you share it.`
     )
   }
   if (passphrase.trim().length === 0) {

@@ -67,7 +67,7 @@ export default function ScrubPage() {
       result = anonymize(input, { existingMap: currentMap })
     } catch (e) {
       // The engine refuses some marks outright, and the marks in play here come
-      // from the map rather than from a gesture just made — so a refusal lands
+      // from the map rather than from a gesture just made - so a refusal lands
       // on the primary action with nothing on screen to explain it. Without
       // this the button silently does nothing and the page looks broken.
       showToast(
@@ -116,7 +116,7 @@ export default function ScrubPage() {
       setCurrentMap(next.map)
       setOutput(next.output)
       // The notice asked for this gesture, so it has to move when the gesture is
-      // made — a warning that reads the same after you act on it teaches that
+      // made - a warning that reads the same after you act on it teaches that
       // acting is pointless. `maskSelection` re-anonymizes, so it already has
       // the figure; measuring the output a second time would be a second
       // language detection and a second answer that could disagree with it.
@@ -124,8 +124,8 @@ export default function ScrubPage() {
       setSelection('')
       showToast(`Masked “${previewTerm(term)}”`)
     } catch (e) {
-      // The engine refuses for more than one reason — a credential, or an
-      // existing placeholder — and it words each refusal itself. Repeating one
+      // The engine refuses for more than one reason - a credential, or an
+      // existing placeholder - and it words each refusal itself. Repeating one
       // of them here meant the other refusal showed the wrong explanation.
       showToast(
         e instanceof ManualMaskError ? e.message : 'Could not mask that selection.',
@@ -380,7 +380,7 @@ export default function ScrubPage() {
         )}
 
         {/* Credentials found in the last anonymize pass. Above the panels, and
-            therefore above the copy action — a warning placed after the thing
+            therefore above the copy action - a warning placed after the thing
             it warns about gets read too late. */}
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
         {mode === 'send' && <LanguageFallbackNotice show={languageFallback} />}
@@ -419,7 +419,7 @@ export default function ScrubPage() {
                     cursor: 'pointer',
                     whiteSpace: 'nowrap',
                   }}
-                  title="Restoring removes AI narration, TODOs and step markers. JSDoc is removed too unless you keep it — useful when you asked the model to document its work."
+                  title="Restoring removes AI narration, TODOs and step markers. JSDoc is removed too unless you keep it - useful when you asked the model to document its work."
                 >
                   <input
                     type="checkbox"
@@ -595,7 +595,7 @@ function LandingHero() {
             marginTop: 18,
           }}
         >
-          Veilio veils real identifiers behind placeholders before they ever leave your browser —
+          Veilio veils real identifiers behind placeholders before they ever leave your browser -
           then restores them when the answer comes back.
         </p>
 

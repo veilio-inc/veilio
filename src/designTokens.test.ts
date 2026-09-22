@@ -6,9 +6,9 @@ import { join } from 'node:path'
  * Colour lives in the token layer, and nowhere else.
  *
  * ROADMAP F step 1, and the prerequisite for everything after it. The number
- * the plan records — 59 hardcoded hex values across 4 `.tsx` files, plus 21
+ * the plan records - 59 hardcoded hex values across 4 `.tsx` files, plus 21
  * `rgba()` calls and another 42 literals below the token block in `global.css`
- * — is not a tidiness metric. Those pixels do not move when a token does, so a
+ * - is not a tidiness metric. Those pixels do not move when a token does, so a
  * light palette laid over them produces dark text on dark chips, worst in the
  * components that carry warnings.
  *
@@ -19,7 +19,7 @@ import { join } from 'node:path'
  *    silently inherits instead of erroring. With a fallback it is worse:
  *    `var(--warning, #D9A441)` renders correctly forever while the token it
  *    names does not exist. Which is why this checks the REFERENCE and not the
- *    pixels — Veilio Cloud had four of these and one was live in its checkout
+ *    pixels - Veilio Cloud had four of these and one was live in its checkout
  *    flow.
  *
  * 2. NO COLOUR LITERAL IN A `.tsx`. A literal in a component is a colour
@@ -45,7 +45,7 @@ function walk(dir: string, ext: string): string[] {
 }
 
 /**
- * Token names DECLARED — in the palette, or on an element.
+ * Token names DECLARED - in the palette, or on an element.
  *
  * The second kind is real and is not a palette entry: a per-element index set
  * inline and read back in a `calc()` is a custom property used as a parameter,
@@ -85,14 +85,14 @@ describe('design tokens', () => {
     const HEX = /#[0-9a-fA-F]{3,8}\b/g
     // `rgba(var(--accent-rgb), 0.35)` is allowed and the nesting is the point:
     // the COLOUR comes from the palette and only the alpha is local. Alpha is a
-    // compositing decision that belongs at the call site — a glow is 35% of the
-    // accent whatever the accent is — and keeping it there is what lets one
+    // compositing decision that belongs at the call site - a glow is 35% of the
+    // accent whatever the accent is - and keeping it there is what lets one
     // token change carry every glow with it.
     const BARE_FUNC = /\brgba?\(\s*(?!var\()/g
 
     const offenders: string[] = []
     for (const file of walk(SRC_DIR, '.tsx')) {
-      // `&#123;` / `&#125;` are HTML entities for braces, not colours — the
+      // `&#123;` / `&#125;` are HTML entities for braces, not colours - the
       // demo code block is full of them.
       const text = readFileSync(file, 'utf8')
         .replace(/&#\d+;/g, '')

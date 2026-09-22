@@ -23,7 +23,7 @@ export default function Navbar() {
         >
           {/* The mark, not a stand-in for one: this is the same /icon.svg the
               browser puts in the tab, so the nav and the tab can never drift.
-              22px rather than the old 16 — the window detail needs the room. */}
+              22px rather than the old 16 - the window detail needs the room. */}
           <img
             src="/icon.svg"
             alt=""

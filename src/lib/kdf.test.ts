@@ -48,7 +48,7 @@ describe('the iteration ceiling (ROADMAP E8)', () => {
     parseKdfParams({ name: 'PBKDF2-SHA256', iterations }, LEGACY_FILE_KDF)
 
   // Hardcoded on purpose: the constant is not exported, and a silent change to
-  // it — in either direction — should fail here rather than pass unnoticed.
+  // it - in either direction - should fail here rather than pass unnoticed.
   it('accepts exactly the ceiling and refuses one past it', () => {
     expect(at(4_000_000)).toEqual({ name: 'PBKDF2-SHA256', iterations: 4_000_000 })
     expect(() => at(4_000_001)).toThrow(/iteration count/i)

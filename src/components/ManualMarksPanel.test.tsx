@@ -14,7 +14,7 @@ describe('ManualMarksPanel', () => {
   })
 
   it('renders nothing when the map holds only automatic placeholders', () => {
-    // D6 — a map full of __FN__/__VAR__ entries is the common case and must not
+    // D6 - a map full of __FN__/__VAR__ entries is the common case and must not
     // produce an empty panel with a "0" badge.
     const { container } = render(
       <ManualMarksPanel map={{ __FN__1: 'settle', __VAR__1: 'rate' }} onUnmask={vi.fn()} />
@@ -23,7 +23,7 @@ describe('ManualMarksPanel', () => {
   })
 
   it('shows each mark with its placeholder and its real term', () => {
-    // D2 — the term is shown in full on purpose: it is the user's own text on
+    // D2 - the term is shown in full on purpose: it is the user's own text on
     // their own machine, and a redacted list would be unreviewable.
     render(<ManualMarksPanel map={{ __MANUAL__1: 'Kowalska' }} onUnmask={vi.fn()} />)
 
@@ -46,7 +46,7 @@ describe('ManualMarksPanel', () => {
   })
 
   it('orders marks numerically, not by string comparison', () => {
-    // D3 — the regression this guards: sorting placeholder keys as strings puts
+    // D3 - the regression this guards: sorting placeholder keys as strings puts
     // __MANUAL__10 before __MANUAL__2.
     render(
       <ManualMarksPanel
@@ -79,7 +79,7 @@ describe('ManualMarksPanel', () => {
   })
 
   it('gives every unmask control a distinguishable accessible name', async () => {
-    // D7 — four buttons all reading "Unmask" is unusable on a screen reader.
+    // D7 - four buttons all reading "Unmask" is unusable on a screen reader.
     render(
       <ManualMarksPanel
         map={{ __MANUAL__1: 'Kowalska', __MANUAL__2: '88412037' }}

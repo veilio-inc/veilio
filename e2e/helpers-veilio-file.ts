@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto'
 
 /**
  * Builds a real, decryptable `.veilio` file (src/lib/localCrypto.ts's
- * `VeilioFile` envelope) at an arbitrary iteration count, entirely in Node —
+ * `VeilioFile` envelope) at an arbitrary iteration count, entirely in Node -
  * so e2e/derive-worker.spec.ts can hand the browser a file declaring
  * `MAX_ITERATIONS` (src/lib/kdf.ts) without the app needing to expose any
  * test-only hook, and without touching CURRENT_FILE_KDF (specs/007-e11-derive-off

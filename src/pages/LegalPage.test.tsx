@@ -66,7 +66,7 @@ describe('LegalPage link rendering (ROADMAP E6)', () => {
 
     await screen.findByText(/Please/)
     expect(screen.queryByRole('link', { name: 'click here' })).toBeNull()
-    // The words survive — refusing the link must not delete the prose.
+    // The words survive - refusing the link must not delete the prose.
     expect(document.body.textContent).toContain('click here')
     expect(document.body.innerHTML).not.toContain('javascript:')
   })
@@ -146,7 +146,7 @@ describe('retired documents', () => {
    * Rendered, not inspected.
    *
    * A test that asserts `SUPERSEDED_BY.aup === 'terms'` passes with the
-   * redirect deleted — the map would still be right and nothing would consult
+   * redirect deleted - the map would still be right and nothing would consult
    * it. What matters is where a reader following an old link actually lands,
    * so this mounts the real route and checks the document that comes back.
    */

@@ -48,7 +48,7 @@ describe('theme choice', () => {
 
   it('ignores a stored value that is not a theme', () => {
     // Anyone can write to localStorage. `data-theme="<script>"` is not a real
-    // injection — it is an attribute value — but a junk theme that silently
+    // injection - it is an attribute value - but a junk theme that silently
     // matches no CSS block leaves the page painting half a palette.
     window.localStorage.setItem(THEME_STORAGE_KEY, 'chartreuse')
     expect(readThemeChoice()).toBe('system')
@@ -82,7 +82,7 @@ describe('resolvedTheme', () => {
     vi.unstubAllGlobals()
   })
 
-  it('falls back to dark — the documented floor — when the system cannot be asked', () => {
+  it('falls back to dark - the documented floor - when the system cannot be asked', () => {
     vi.stubGlobal('matchMedia', () => {
       throw new Error('unsupported')
     })
@@ -92,9 +92,9 @@ describe('resolvedTheme', () => {
 })
 
 /**
- * The light palette is written out twice — once under
+ * The light palette is written out twice - once under
  * `@media (prefers-color-scheme: light)` for a system preference, once under
- * `[data-theme='light']` for an explicit one — because plain CSS cannot share a
+ * `[data-theme='light']` for an explicit one - because plain CSS cannot share a
  * declaration block between a media query and a selector.
  *
  * Duplication that nothing checks is duplication that drifts, and the drift

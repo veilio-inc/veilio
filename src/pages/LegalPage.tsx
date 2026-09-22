@@ -10,7 +10,7 @@ import { safeHref, isExternal } from '../lib/safeHref.js'
 // breadcrumb never disagrees with the document it is introducing. CE is software
 // you run yourself, not a service we operate, so these are "Terms of Use" and
 // "Notice" rather than the "Terms of Service" / "Policy" wording that belongs to
-// Veilio Cloud. `pill` is the short nav label — derived by hand rather than by
+// Veilio Cloud. `pill` is the short nav label - derived by hand rather than by
 // trimming the title, which broke as soon as a title stopped ending in "Policy".
 export const DOCS: Record<string, { title: string; pill: string }> = {
   terms: { title: 'Terms of Use', pill: 'Terms' },
@@ -27,7 +27,7 @@ export const DOCS: Record<string, { title: string; pill: string }> = {
  * is also the shape counsel gave the Cloud documents.
  *
  * A legal URL is something people bookmark and cite in an email. Retiring the
- * document is right; dropping the READER on the home page is not — an unknown
+ * document is right; dropping the READER on the home page is not - an unknown
  * slug falls through to `Navigate to="/"`, so somebody following a link to the
  * Acceptable Use Policy would silently arrive at the marketing page with no way
  * to tell what happened. Kept indefinitely: the cost is two lines, and the cost
@@ -165,7 +165,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Blockquote — group consecutive `>` lines.
+    // Blockquote - group consecutive `>` lines.
     if (/^>\s?/.test(line)) {
       const buf: string[] = []
       while (i < lines.length && /^>\s?/.test(lines[i])) {
@@ -191,7 +191,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // List — group consecutive `- ` / `* ` items.
+    // List - group consecutive `- ` / `* ` items.
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = []
       while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
@@ -210,7 +210,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Table — group consecutive `|` lines (header, `|---|` separator, body).
+    // Table - group consecutive `|` lines (header, `|---|` separator, body).
     if (/^\s*\|/.test(line)) {
       const rows: string[] = []
       while (i < lines.length && /^\s*\|/.test(lines[i])) {
@@ -221,7 +221,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Paragraph — group consecutive plain lines.
+    // Paragraph - group consecutive plain lines.
     const buf: string[] = []
     while (
       i < lines.length &&
@@ -308,7 +308,7 @@ function renderInline(text: string): ReactNode[] {
   while ((m = INLINE.exec(text))) {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     if (m[1]) {
-      // Link — rewrite a relative ./Doc.md reference to its in-app route.
+      // Link - rewrite a relative ./Doc.md reference to its in-app route.
       let raw = m[3]
       const rel = /^\.\/(\w+)\.md$/i.exec(raw)
       if (rel) raw = `/legal/${rel[1].toLowerCase()}`

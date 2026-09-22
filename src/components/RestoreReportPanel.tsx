@@ -78,12 +78,12 @@ function Section({
  *  A model is asked to echo placeholders verbatim and is under no obligation to
  *  comply. When it renames one, `restore()` has nothing to substitute and hands
  *  back confident-looking code with the model's invention where a real name
- *  belonged — indistinguishable, in the output alone, from a clean run. This
+ *  belonged - indistinguishable, in the output alone, from a clean run. This
  *  panel is the only place that difference is visible.
  *
  *  Severity is deliberately split. `unresolved` is always wrong: the text now
- *  carries a token that means nothing. `missing` is usually innocent — a model
- *  answering about one function omits the rest of the file — so it is presented
+ *  carries a token that means nothing. `missing` is usually innocent - a model
+ *  answering about one function omits the rest of the file - so it is presented
  *  as information rather than as a failure. Ranking both as warnings would make
  *  the panel noise, and a panel people dismiss is worse than no panel. */
 export default function RestoreReportPanel({ report }: Props) {
@@ -138,7 +138,7 @@ export default function RestoreReportPanel({ report }: Props) {
           <Section
             color="var(--danger)"
             title={`${unresolved.length} token${unresolved.length === 1 ? '' : 's'} the map cannot explain`}
-            explanation="The model invented or altered these. They correspond to nothing and are still in your output — replace them by hand."
+            explanation="The model invented or altered these. They correspond to nothing and are still in your output - replace them by hand."
             tokens={unresolved}
           />
         )}
@@ -147,7 +147,7 @@ export default function RestoreReportPanel({ report }: Props) {
           <Section
             color="var(--text-dim)"
             title={`${missing.length} placeholder${missing.length === 1 ? '' : 's'} did not come back`}
-            explanation="Expected if the reply only covered part of your code. If it covered all of it, the model renamed them — check those spots, because the real names are not recoverable from this response."
+            explanation="Expected if the reply only covered part of your code. If it covered all of it, the model renamed them - check those spots, because the real names are not recoverable from this response."
             tokens={missing}
           />
         )}

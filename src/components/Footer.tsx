@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 
 // Two documents, not four. The Cookie Notice and the Acceptable Use Policy were
-// folded into Privacy and Terms §5 — the shape counsel gave the Cloud set. Their
+// folded into Privacy and Terms §5 - the shape counsel gave the Cloud set. Their
 // URLs still resolve (LegalPage redirects them), but a footer that lists four
 // links to two documents is the kind of drift a reader notices before we do.
 const LEGAL: [string, string][] = [
@@ -32,7 +32,7 @@ export default function Footer() {
                   rather than the abstract gradient square this used to hold.
                   18px, not the 12 the old square sat at: the mark is an editor
                   window with a redacted line on it, and below ~16 that detail
-                  collapses into a dash — which is the very shape it replaced. */}
+                  collapses into a dash - which is the very shape it replaced. */}
               <img
                 src="/icon.svg"
                 alt=""
@@ -64,7 +64,7 @@ export default function Footer() {
                 maxWidth: 320,
               }}
             >
-              Your identifiers never leave this browser. Self-hostable and source-available — free
+              Your identifiers never leave this browser. Self-hostable and source-available - free
               to use, even commercially. Not for resale.
             </p>
           </div>

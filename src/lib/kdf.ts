@@ -21,7 +21,7 @@ export interface KdfParams {
 export const CURRENT_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 600_000 }
 
 // What files created BEFORE this recording existed must be read with. This is a
-// historical fact, not policy — it must never be edited to track CURRENT_FILE_KDF
+// historical fact, not policy - it must never be edited to track CURRENT_FILE_KDF
 // above, or previously exported files stop decrypting. It has already diverged
 // from the current value (files were raised from 100k to 600k) and is exactly
 // what keeps .veilio files written before that raise importable.
@@ -33,7 +33,7 @@ export const LEGACY_FILE_KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 1
 //
 // The ceiling is set from what a file could legitimately need, not from what a
 // browser can survive. Nothing this project has ever written exceeds
-// CURRENT_FILE_KDF, and the ceiling leaves roughly 6x of headroom above it — far
+// CURRENT_FILE_KDF, and the ceiling leaves roughly 6x of headroom above it - far
 // more than any plausible raise before PBKDF2 is replaced outright, and the
 // constant is editable in the same release as that raise. The old ceiling of
 // 10,000,000 was ~17x current cost for no reachable purpose, which on a low-end

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
  * CE quotes exactly one price, and it is its own.
  *
  * This page used to mirror Cloud's tiers by hand, under a comment insisting
- * that "the tiers have to agree — two editions quoting different plans is worse
+ * that "the tiers have to agree - two editions quoting different plans is worse
  * than either being wrong alone". They did not agree. When this was written the
  * page carried THREE inconsistent price sets simultaneously:
  *
@@ -13,14 +13,14 @@ import { readFileSync } from 'node:fs'
  *   the FAQ     Individual $3,  Pro $9,  Team €19
  *   reality     Individual €3,  Team €16   (live Stripe tiers, read by Cloud)
  *
- * — plus `Pro`, a tier ROADMAP E12 deleted; map ceilings an earlier comment had
+ * - plus `Pro`, a tier ROADMAP E12 deleted; map ceilings an earlier comment had
  * itself flagged as stale "in the direction that oversells"; and a 99.9% SLA
  * that Cloud removed under a test forbidding its return.
  *
  * The mirroring did not fail through carelessness. It fails because no
  * mechanism could make it succeed: Cloud reads its prices live from Stripe, and
- * CE cannot read anything. CE publishes — and the server's CSP plus
- * `e2e/security.spec.ts` enforce — that it "contacts no third-party origin at
+ * CE cannot read anything. CE publishes - and the server's CSP plus
+ * `e2e/security.spec.ts` enforce - that it "contacts no third-party origin at
  * any point" and "works unchanged in air-gapped deployments". Syncing with
  * veilio.dev would break the property the product exists to have.
  *
@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs'
 
 const PRICING_PAGE = 'src/pages/PricingPage.tsx'
 
-/** The file with comments blanked — prose about this rule quotes what it forbids. */
+/** The file with comments blanked - prose about this rule quotes what it forbids. */
 function code(): string {
   return readFileSync(PRICING_PAGE, 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
@@ -52,7 +52,7 @@ describe('CE does not mirror Cloud pricing', () => {
   })
 
   it('names no numeric product limit it cannot verify', () => {
-    // "up to 200 maps", "2,000 maps" — ceilings live in Cloud's own
+    // "up to 200 maps", "2,000 maps" - ceilings live in Cloud's own
     // configuration, and every previous number here was wrong by the time
     // somebody checked.
     expect(code()).not.toMatch(/\b[\d,]+\s+maps\b/i)

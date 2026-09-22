@@ -24,7 +24,7 @@ type LangKey = keyof typeof LANGS
 
 // Every colour here is a custom-property reference from the syntax and editor
 // scales rather than a literal. CodeMirror emits these as ordinary CSS
-// declarations, so they resolve at paint time like anything else — which is
+// declarations, so they resolve at paint time like anything else - which is
 // what lets a second palette reach the editor without this file knowing a theme
 // exists. Tags are grouped by ROLE, and the role is the token name.
 const scrubTheme = createTheme({
@@ -43,23 +43,23 @@ const scrubTheme = createTheme({
     { tag: t.comment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
     { tag: t.lineComment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
     { tag: t.blockComment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
-    { tag: t.keyword, color: 'var(--syntax-keyword)' }, // terracotta — keywords
+    { tag: t.keyword, color: 'var(--syntax-keyword)' }, // terracotta - keywords
     { tag: t.controlKeyword, color: 'var(--syntax-keyword)' },
     { tag: t.definitionKeyword, color: 'var(--syntax-keyword)' },
     { tag: t.moduleKeyword, color: 'var(--syntax-keyword)' },
     { tag: t.operatorKeyword, color: 'var(--syntax-keyword)' },
-    { tag: t.string, color: 'var(--syntax-string)' }, // muted green — strings
+    { tag: t.string, color: 'var(--syntax-string)' }, // muted green - strings
     { tag: t.special(t.string), color: 'var(--syntax-string)' },
     { tag: t.regexp, color: 'var(--syntax-string)' },
-    { tag: t.number, color: 'var(--syntax-number)' }, // muted blue — numbers
+    { tag: t.number, color: 'var(--syntax-number)' }, // muted blue - numbers
     { tag: t.bool, color: 'var(--syntax-number)' },
     { tag: t.null, color: 'var(--syntax-number)' },
-    { tag: t.function(t.variableName), color: 'var(--syntax-function)' }, // warm yellow — function names
+    { tag: t.function(t.variableName), color: 'var(--syntax-function)' }, // warm yellow - function names
     { tag: t.function(t.propertyName), color: 'var(--syntax-function)' },
-    { tag: t.className, color: 'var(--syntax-class)' }, // soft purple — classes/types
+    { tag: t.className, color: 'var(--syntax-class)' }, // soft purple - classes/types
     { tag: t.typeName, color: 'var(--syntax-class)' },
     { tag: t.typeOperator, color: 'var(--syntax-class)' },
-    { tag: t.propertyName, color: 'var(--syntax-property)' }, // warm tan — properties
+    { tag: t.propertyName, color: 'var(--syntax-property)' }, // warm tan - properties
     { tag: t.variableName, color: 'var(--syntax-variable)' },
     { tag: t.definition(t.variableName), color: 'var(--syntax-variable)' },
     { tag: t.operator, color: 'var(--syntax-punctuation)' },

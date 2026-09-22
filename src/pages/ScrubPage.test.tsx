@@ -8,7 +8,7 @@ import ScrubPage from './ScrubPage.js'
 // CodeMirror measures itself on every render and jsdom has no layout engine, so
 // it throws from getClientRects. The editor still mounts and is queryable; these
 // stubs only stop it flooding stderr. Anything that genuinely depends on layout
-// — chiefly making a real text selection — is not testable here, which is why
+// - chiefly making a real text selection - is not testable here, which is why
 // the mark/unmark transforms live in lib/manualMarks and are tested directly.
 beforeAll(() => {
   Range.prototype.getClientRects = () => Object.assign([], { item: () => null })
@@ -32,13 +32,13 @@ function renderPage() {
 
 describe('ScrubPage', () => {
   it('offers no mask action when nothing is selected', () => {
-    // C1 — the button is selection-gated, not always present.
+    // C1 - the button is selection-gated, not always present.
     renderPage()
     expect(screen.queryByRole('button', { name: 'Mask selection' })).toBeNull()
   })
 
   it('offers no mask action in restore mode', async () => {
-    // C2 — restore output holds real names; masking there is meaningless.
+    // C2 - restore output holds real names; masking there is meaningless.
     renderPage()
     await userEvent.click(screen.getByRole('button', { name: /Restore/ }))
 
@@ -52,7 +52,7 @@ describe('ScrubPage', () => {
   })
 
   it('shows no round-trip panel before a restore has run', () => {
-    // E1 at page level — the panel must not appear on first load.
+    // E1 at page level - the panel must not appear on first load.
     renderPage()
     expect(screen.queryByText('Round trip')).toBeNull()
   })
@@ -77,7 +77,7 @@ describe('ScrubPage', () => {
 
   it('shows no comment notice before anything has been anonymized', () => {
     // 004-b3 / FR-003 at page level. The notice must be driven by what was
-    // actually measured, not mounted empty and filled in later — an empty
+    // actually measured, not mounted empty and filled in later - an empty
     // bordered box on first load is the same furniture the FR forbids.
     // That it appears with the right count is an e2e assertion: jsdom cannot
     // put text into CodeMirror, and placement relative to the copy action is

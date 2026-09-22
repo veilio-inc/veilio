@@ -3,7 +3,7 @@
 // Node 22.4+ (we run Node 26) ships a built-in experimental Web Storage global.
 // Without `--localstorage-file` it exposes `globalThis.localStorage` as an
 // accessor that returns `undefined`, and that dead accessor shadows the
-// `localStorage` jsdom would otherwise provide — so tests that touch
+// `localStorage` jsdom would otherwise provide - so tests that touch
 // localStorage/sessionStorage see `undefined`. Install a real in-memory Web
 // Storage implementation on the global to restore browser-like behavior.
 

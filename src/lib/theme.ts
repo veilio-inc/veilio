@@ -1,7 +1,7 @@
 /**
  * Which palette the app paints in.
  *
- * Three states, not two. "System" is a real choice and the DEFAULT one — it is
+ * Three states, not two. "System" is a real choice and the DEFAULT one - it is
  * what an unconfigured visitor gets, and it is the only setting that keeps
  * following the operating system after the fact.
  *
@@ -9,7 +9,7 @@
  *
  * The mechanism is one attribute. `system` REMOVES `data-theme` from <html>
  * rather than stamping a resolved value, which is what lets `global.css`'s
- * `@media (prefers-color-scheme: light)` keep answering as the OS changes — a
+ * `@media (prefers-color-scheme: light)` keep answering as the OS changes - a
  * resolved stamp would freeze the page in whatever the OS said at load and go
  * stale the moment somebody switched at dusk.
  *
@@ -85,7 +85,7 @@ export function resolvedTheme(choice: ThemeChoice = readThemeChoice()): 'light' 
   try {
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
   } catch {
-    // No matchMedia (jsdom without a stub, very old browsers) — dark is the
+    // No matchMedia (jsdom without a stub, very old browsers) - dark is the
     // documented floor of the precedence chain.
     return 'dark'
   }

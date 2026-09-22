@@ -18,14 +18,14 @@ test.beforeEach(async ({ page }) => {
 })
 
 test.describe('manual masking', () => {
-  test('C1 — no mask action until something is selected', async ({ page }) => {
+  test('C1 - no mask action until something is selected', async ({ page }) => {
     await anonymize(page)
     await expect(page.getByRole('button', { name: 'Mask selection' })).toBeHidden()
   })
 
-  test('C3 — masking a selected name replaces it in the output', async ({ page }) => {
+  test('C3 - masking a selected name replaces it in the output', async ({ page }) => {
     // The headline case. The engine left a surname sitting in a comment, which
-    // is ROADMAP B3 — the extractor cannot see into prose.
+    // is ROADMAP B3 - the extractor cannot see into prose.
     await anonymize(page)
     await expect(editor(page, editors.output)).toContainText('Kowalska')
 
@@ -36,7 +36,7 @@ test.describe('manual masking', () => {
     await expect(editor(page, editors.output)).toContainText('__MANUAL__1')
   })
 
-  test('C3 — a bare account number can be masked', async ({ page }) => {
+  test('C3 - a bare account number can be masked', async ({ page }) => {
     // ROADMAP B2: not identifier-shaped, so extraction never sees it.
     await anonymize(page)
     await selectWord(page, editors.output, '88412037')
@@ -45,7 +45,7 @@ test.describe('manual masking', () => {
     await expect(editor(page, editors.output)).not.toContainText('88412037')
   })
 
-  test('C5 — the mask action disappears once the selection is consumed', async ({ page }) => {
+  test('C5 - the mask action disappears once the selection is consumed', async ({ page }) => {
     await anonymize(page)
     await selectWord(page, editors.output, 'Kowalska')
     await page.getByRole('button', { name: 'Mask selection' }).click()
@@ -64,7 +64,7 @@ test.describe('manual masking', () => {
     await expect(editor(page, editors.output)).toContainText('__VAR__1')
   })
 
-  test('D1 — the marks panel appears only once something is marked', async ({ page }) => {
+  test('D1 - the marks panel appears only once something is marked', async ({ page }) => {
     await anonymize(page)
     await expect(page.getByText('Marked by hand')).toBeHidden()
 
@@ -74,7 +74,7 @@ test.describe('manual masking', () => {
     await expect(page.getByText('Marked by hand')).toBeVisible()
   })
 
-  test('D2 — the panel shows the placeholder and the real term', async ({ page }) => {
+  test('D2 - the panel shows the placeholder and the real term', async ({ page }) => {
     await anonymize(page)
     await selectWord(page, editors.output, 'Kowalska')
     await page.getByRole('button', { name: 'Mask selection' }).click()
@@ -83,7 +83,7 @@ test.describe('manual masking', () => {
     await expect(page.getByRole('button', { name: 'Unmask Kowalska' })).toBeVisible()
   })
 
-  test('D4 — unmasking puts the term back and drops the row', async ({ page }) => {
+  test('D4 - unmasking puts the term back and drops the row', async ({ page }) => {
     await anonymize(page)
     await selectWord(page, editors.output, 'Kowalska')
     await page.getByRole('button', { name: 'Mask selection' }).click()
@@ -122,7 +122,7 @@ test.describe('manual masking', () => {
 })
 
 test.describe('round-trip report', () => {
-  test('E2 — a clean round trip reports success', async ({ page }) => {
+  test('E2 - a clean round trip reports success', async ({ page }) => {
     await anonymize(page)
     const masked = (await editor(page, editors.output).textContent()) ?? ''
     await restoreReply(page, masked)
@@ -131,7 +131,7 @@ test.describe('round-trip report', () => {
     await expect(page.getByText(/came back exactly as it was sent/)).toBeVisible()
   })
 
-  test('E3 — an invented placeholder is reported as unexplained', async ({ page }) => {
+  test('E3 - an invented placeholder is reported as unexplained', async ({ page }) => {
     await anonymize(page)
     await restoreReply(page, 'const x = __VAR__99')
 
@@ -139,7 +139,7 @@ test.describe('round-trip report', () => {
     await expect(page.getByText(/invented or altered/)).toBeVisible()
   })
 
-  test('E4 — a renamed placeholder is reported as missing, not as an error', async ({ page }) => {
+  test('E4 - a renamed placeholder is reported as missing, not as an error', async ({ page }) => {
     // The silent failure this panel exists for: the model invented a readable
     // name, so the restored text looks exactly like a clean run.
     await anonymize(page)
@@ -149,7 +149,7 @@ test.describe('round-trip report', () => {
     await expect(page.getByText(/Expected if the reply only covered part/)).toBeVisible()
   })
 
-  test('E1 — no report panel before a restore has run', async ({ page }) => {
+  test('E1 - no report panel before a restore has run', async ({ page }) => {
     await anonymize(page)
     await expect(page.getByText('Round trip')).toBeHidden()
   })

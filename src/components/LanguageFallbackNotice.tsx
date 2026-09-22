@@ -2,7 +2,7 @@
 //
 // An unsupported file is tokenised with TypeScript's rules, so identifiers that
 // grammar does not recognise are simply not masked. The output looks exactly as
-// anonymised as a real one — which for a privacy tool is the worst available
+// anonymised as a real one - which for a privacy tool is the worst available
 // failure mode, and the reason this sits beside the output rather than at the
 // top of the page. A warning placed away from the copy action is read after the
 // paste it was meant to prevent.
@@ -23,7 +23,7 @@ export default function LanguageFallbackNotice({ show }: { show: boolean }) {
       }}
     >
       <strong>This language is not one we recognise.</strong> It was processed with the default
-      rules, so <strong>masking is partial</strong> — some identifiers are likely still real. Check
+      rules, so <strong>masking is partial</strong> - some identifiers are likely still real. Check
       the output before sharing it.
     </div>
   )

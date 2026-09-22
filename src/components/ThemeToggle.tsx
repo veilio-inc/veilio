@@ -46,7 +46,7 @@ const GLYPH: Record<ThemeChoice, React.ReactNode> = {
  * A cycle rather than a switch because there are three states and one of them
  * matters: "system" is the default and the only setting that keeps following
  * the OS afterwards. A two-position switch has nowhere to put it, so choosing
- * once would silently opt the user out of ever tracking their OS again —
+ * once would silently opt the user out of ever tracking their OS again -
  * a decision they never made.
  *
  * The button announces the CURRENT state and the label names it in full, so
@@ -66,7 +66,7 @@ export default function ThemeToggle() {
     <button
       className="btn-ghost"
       onClick={cycle}
-      title={`Theme: ${LABEL[choice]} — click to change`}
+      title={`Theme: ${LABEL[choice]} - click to change`}
       aria-label={`Theme: ${LABEL[choice]}. Change theme`}
       style={{
         display: 'inline-flex',
