@@ -1,10 +1,12 @@
 import { Link } from 'react-router-dom'
 
+// Two documents, not four. The Cookie Notice and the Acceptable Use Policy were
+// folded into Privacy and Terms §5 — the shape counsel gave the Cloud set. Their
+// URLs still resolve (LegalPage redirects them), but a footer that lists four
+// links to two documents is the kind of drift a reader notices before we do.
 const LEGAL: [string, string][] = [
   ['/legal/terms', 'Terms'],
   ['/legal/privacy', 'Privacy'],
-  ['/legal/cookies', 'Cookies'],
-  ['/legal/aup', 'Acceptable Use'],
 ]
 
 export default function Footer() {

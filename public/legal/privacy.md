@@ -1,6 +1,6 @@
 # Veilio Community Edition — Privacy Notice
 
-_Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-09-22 · Document version 1.3 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** This notice covers the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository. **Veilio Cloud** (the hosted service) is a separate service with its own [Privacy Policy](https://veilio.dev/legal/privacy). This notice does not cover Cloud.
 
@@ -36,7 +36,19 @@ CE sends **zero telemetry**. There is no opt-out to configure because there is n
 CE is not directed to children. We set a **minimum age of 16** for use of Veilio, consistent with the threshold used by Veilio Cloud.
 
 ## Cookies & local storage
-CE sets no cookies and uses no advertising, analytics, or tracking technology. It stores only the strictly-necessary browser `localStorage` described above, and makes no third-party requests at all. See the [Cookie & Local Storage Notice](./cookies.md).
+**CE sets no cookies and uses no advertising, analytics, or tracking technology.** It uses exactly one item of browser storage, and it is strictly necessary:
+
+| Item | Type | Purpose | Consent |
+|---|---|---|---|
+| Symbol maps | `localStorage` | Keeps your anonymization maps on your device between sessions | Strictly necessary — no consent required |
+
+Passphrases and the keys derived from them are held in memory for the duration of an operation and are never written to any browser storage.
+
+Because CE stores only strictly-necessary, first-party data and sets no cookies, **a consent banner is not required** for that storage. You can clear it at any time through your browser; doing so removes any locally stored maps.
+
+No third party can set storage or observe your visit, because CE makes no third-party requests at all — see **Third-party requests** above.
+
+> For the hosted **Veilio Cloud** service, the equivalent statement is **§13 of its [Privacy Policy](https://veilio.dev/legal/privacy)**.
 
 ## Changes & contact
 We post updates here and bump the version. Privacy questions: `privacy@veilio.dev` (or `support@veilio.dev`).

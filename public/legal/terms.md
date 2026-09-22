@@ -1,6 +1,6 @@
 # Veilio Community Edition — Terms of Use
 
-_Last updated: 2026-08-12 · Document version 1.1 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-09-22 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** These terms govern the **Veilio Community Edition (CE)** — the self-hosted, source-available app in this repository, free to use for any purpose including commercial. **Veilio Cloud** (the hosted service at veilio.dev, with accounts, sync, teams, and billing) has its own separate [Terms of Service](https://veilio.dev/legal/terms), which do not apply to CE — and these CE terms do not apply to Cloud.
 
@@ -19,7 +19,22 @@ You run your own instance. You are responsible for the code and data you process
 The Veilio Community License lets you use, study, modify, and fork the **code** for any purpose, including inside your own business, and share it non-commercially; it does not let you sell it, host it as a commercial service for others, or base a competing product on it. It does **not** grant any right to the **"Veilio" name or logo** (§11 of the license says so expressly). You may not use the Veilio name or logo in a way that implies endorsement by, or affiliation with, the Veilio project, and you must not present a modified version as the official Veilio. See the [Trademark Policy](https://github.com/veilio-inc/veilio/blob/main/TRADEMARKS.md).
 
 ## 5. Acceptable use
-Don't use CE to break the law or to misrepresent its anonymization as a guarantee of safety or compliance. The full [Acceptable Use Policy](./aup.md) applies.
+CE is a **local tool that runs entirely in your browser** — there is no Veilio-operated service to abuse, and we host nothing on your behalf. This section therefore governs how you may **use and redistribute CE**. Using or redistributing it, you agree **not** to:
+
+- **Break the law** — use CE to process, store, or transmit content that is illegal where you operate (including CSAM, terrorist content, or stolen data).
+- **Infringe rights** — use CE with code or data you have no right to use, or to violate third-party intellectual property, trade secrets, or privacy.
+- **Misrepresent the tool** — present CE's best-effort anonymization as a guarantee of safety, compliance, or complete removal of sensitive data, or imply that the Veilio project has reviewed or endorsed your output.
+- **Resell or repackage it** — sell, resell, sublicense, rebrand, or republish CE or its engine as a standalone product or service that competes with Veilio. (Using CE in your own projects, including commercial ones, is fine.) For a competing-use or redistribution license, contact `hello@veilio.dev`.
+- **Misuse the brand** — redistribute a modified build as the official "Veilio", or otherwise use the Veilio name or logo in violation of the [Trademark Policy](https://github.com/veilio-inc/veilio/blob/main/TRADEMARKS.md).
+- **Weaponize anonymization** — deliberately use identifier obfuscation to bypass another party's security, data-loss-prevention, or detection controls for malicious ends.
+
+**5.1 No monitoring.** Because CE runs only on your own machine, the Veilio project does not — and cannot — monitor, access, or review your use of it.
+
+**5.2 Enforcement.** CE is source-available software (Veilio Community License 1.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and intellectual-property terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
+
+**5.3 Reporting.** Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/veilio-inc/veilio/blob/main/SECURITY.md).
+
+> For the hosted **Veilio Cloud** service, acceptable use is **§9 of the Cloud [Terms of Service](https://veilio.dev/legal/terms)**, which additionally governs accounts, messaging, rate limits and shared infrastructure.
 
 ## 6. Warranty disclaimer & limitation of liability
 CE is provided **"AS IS", without warranty of any kind**, to the maximum extent permitted by applicable law. There is **no warranty that anonymization is complete, accurate, or error-free.** To the maximum extent permitted by applicable law, the authors and copyright holders are **not liable** for any claim, damage, loss, or other liability — including any sensitive data exposed despite anonymization — arising from or in connection with CE or its use.
