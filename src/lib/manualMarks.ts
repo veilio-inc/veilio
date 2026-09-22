@@ -8,7 +8,7 @@ export interface MarkState {
    *
    *  Carried alongside rather than recomputed by the caller: marking a name in
    *  a comment is the gesture the notice asks for, so the figure has to move
-   *  with it — and `anonymize` already returns the answer for exactly this
+   *  with it - and `anonymize` already returns the answer for exactly this
    *  text. Measuring it again would run a second language detection whose
    *  result could disagree with the one that produced the output. */
   comments: CommentExposure
@@ -22,7 +22,7 @@ export interface MarkState {
  *  rather than re-masked, so only the newly marked term changes.
  *
  *  Throws `ManualMaskError` from the engine when the term scans as a credential.
- *  Callers are expected to surface that rather than swallow it — the whole point
+ *  Callers are expected to surface that rather than swallow it - the whole point
  *  is that masking a live key would write it to a map that gets exported. */
 export function maskSelection(state: MarkState, term: string): MarkState {
   const trimmed = term.trim()
@@ -64,7 +64,7 @@ export function previewTerm(term: string, max = 30): string {
 /** Which AI artifacts to remove on restore.
  *
  *  `'all'` is the engine default and includes JSDoc, which is right when a model
- *  volunteered documentation as noise and wrong when it was asked to write it —
+ *  volunteered documentation as noise and wrong when it was asked to write it -
  *  deleting requested work. Keeping docs means every other category still goes.
  */
 export function stripOption(keepDocs: boolean): StrippedItemType[] | 'all' {

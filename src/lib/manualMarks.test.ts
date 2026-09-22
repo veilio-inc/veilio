@@ -24,7 +24,7 @@ describe('maskSelection', () => {
   })
 
   it('trims whitespace picked up by a loose selection', () => {
-    // C6 — dragging across a word usually catches the space after it, and an
+    // C6 - dragging across a word usually catches the space after it, and an
     // untrimmed term would mask the space and never match again.
     const next = maskSelection(anonymized(), '  Kowalska \n')
 
@@ -65,7 +65,7 @@ describe('maskSelection', () => {
   })
 
   it('throws rather than masking a credential', () => {
-    // C4 — a manual mask is reversible and lands in the exported map.
+    // C4 - a manual mask is reversible and lands in the exported map.
     expect(() => maskSelection(anonymized(), 'sk_live_4eC39HqLyjWDarjtT1zdp7dc')).toThrow(
       ManualMaskError
     )
@@ -84,7 +84,7 @@ describe('unmaskTerm', () => {
   })
 
   it('does not corrupt __MANUAL__10 when unmasking __MANUAL__1', () => {
-    // D5 — the regression the trailing-digit guard exists for. A plain replace
+    // D5 - the regression the trailing-digit guard exists for. A plain replace
     // rewrites the prefix of the longer token and leaves a stray '0' behind.
     const state = {
       output: 'a = __MANUAL__1; b = __MANUAL__10;',

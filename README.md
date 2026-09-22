@@ -31,9 +31,15 @@ The CLI and the MCP server share one symbol map, so you can mask inside an agent
 and restore from a terminal, or the reverse. Neither makes a network call on any
 local path, and each ships a test that trips if one is ever introduced.
 
-> **Both are not on npm yet.** They live here and are tested here; the install
-> instructions land in the same commit that publishes them. Until then, run them
-> from a clone — `npm run build:packages`, then `node packages/cli/dist/index.js --help`.
+Both are on npm:
+
+```bash
+npm install -g @veilio-inc/cli
+npx @veilio-inc/mcp   # or add to your agent's MCP config
+```
+
+See [`packages/cli/README.md`](packages/cli/README.md) and
+[`packages/mcp/README.md`](packages/mcp/README.md) for commands and config.
 
 ## Run it
 
@@ -172,6 +178,7 @@ The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The C
 - **Contributing:** see [CONTRIBUTING.md](./CONTRIBUTING.md). Contributions are accepted under a [CLA](./CLA.md) so they can be used across both the Community and Cloud editions.
 - **Trademarks:** the code is source-available, but the **"Veilio" name and logo are not** licensed for reuse — see [TRADEMARKS.md](./TRADEMARKS.md).
 - **Security:** report vulnerabilities privately per [SECURITY.md](./SECURITY.md).
+- **Legal notices:** CE ships its own [Terms of Use](public/legal/terms.md) and [Privacy Notice](public/legal/privacy.md), served at `/legal/*`. Two documents, following the shape counsel gave the Cloud set: acceptable use is **Terms §5** and cookies/storage is a **Privacy** section, rather than standalone notices. (`/legal/aup` and `/legal/cookies` still resolve — they redirect to what absorbed them.) They are **CE's own documents and deliberately not Cloud's**: Cloud's counsel-reviewed set governs a hosted subscription service with accounts, billing, a processor relationship and EU Data Act switching duties, none of which exists here. In CE there is no backend to be a controller of — the person who deploys it is. Each CE notice links Cloud's equivalent **document** in its scope note, for a reader who arrived at the wrong edition — by document, never by section number, because a section reference into a counsel-drafted document this repository cannot see goes stale silently. `tests/cloud-cross-references.test.ts` enforces that.
 
 ## Credits
 

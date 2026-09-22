@@ -8,7 +8,7 @@ import { anonymize, editor, editors } from './helpers.js'
 //     property of the build, so it holds wherever the app is served from.
 //  2. The server enforces that with a Content-Security-Policy (ROADMAP E3).
 //     This is a property of the *server*, so it only holds for the real
-//     artefact — `vite preview` sends no such headers. Those checks therefore
+//     artefact - `vite preview` sends no such headers. Those checks therefore
 //     run only against a deployed instance, via VEILIO_E2E_URL:
 //
 //       docker run -d -p 8099:80 <image>
@@ -61,7 +61,7 @@ test.describe('no third-party origins', () => {
 })
 
 test.describe('security headers', () => {
-  test.skip(!DEPLOYED, 'needs the real server — set VEILIO_E2E_URL')
+  test.skip(!DEPLOYED, 'needs the real server - set VEILIO_E2E_URL')
 
   test('the response carries a Content-Security-Policy that confines the app', async ({
     request,

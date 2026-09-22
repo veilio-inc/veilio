@@ -6,7 +6,7 @@ import {
   MIN_PASSPHRASE_LENGTH,
 } from './passphrase.js'
 
-describe('assertUsablePassphrase — accepts', () => {
+describe('assertUsablePassphrase - accepts', () => {
   it('accepts an ordinary passphrase at the minimum length', () => {
     expect(() => assertUsablePassphrase('a'.repeat(MIN_PASSPHRASE_LENGTH - 1) + 'b')).not.toThrow()
   })
@@ -33,7 +33,7 @@ describe('assertUsablePassphrase — accepts', () => {
   })
 })
 
-describe('assertUsablePassphrase — refuses', () => {
+describe('assertUsablePassphrase - refuses', () => {
   it('refuses anything shorter than the minimum', () => {
     for (const weak of ['', 'pw', 'hunter2', 'elevenchar']) {
       expect(() => assertUsablePassphrase(weak), weak).toThrow(WeakPassphraseError)
@@ -71,7 +71,7 @@ describe('assertUsablePassphrase — refuses', () => {
 
   it('refuses digit padding, which no run check can catch', () => {
     // There are ten digits, so a counting run long enough to clear the floor
-    // must wrap — 9→0 breaks the step and the structural check passes it.
+    // must wrap - 9→0 breaks the step and the structural check passes it.
     // Asserted here so nobody deletes the list entries as redundant.
     for (const weak of ['123456789012', '012345678901', '112233445566']) {
       expect(() => assertUsablePassphrase(weak), weak).toThrow(WeakPassphraseError)
@@ -129,11 +129,11 @@ describe('exportErrorMessage', () => {
   })
 })
 
-describe('assertUsablePassphrase — is a floor, not a meter', () => {
+describe('assertUsablePassphrase - is a floor, not a meter', () => {
   it('does not pretend a mediocre passphrase is good', () => {
     // Documenting the honest limit: this clears every rule above and is still a
     // poor choice. The check returns nothing, so nothing here can be read as
-    // approval — which is why there is no strength score in the API.
+    // approval - which is why there is no strength score in the API.
     expect(assertUsablePassphrase('Summer2026!!')).toBeUndefined()
   })
 

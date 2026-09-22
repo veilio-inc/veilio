@@ -10,13 +10,32 @@ import { safeHref, isExternal } from '../lib/safeHref.js'
 // breadcrumb never disagrees with the document it is introducing. CE is software
 // you run yourself, not a service we operate, so these are "Terms of Use" and
 // "Notice" rather than the "Terms of Service" / "Policy" wording that belongs to
-// Veilio Cloud. `pill` is the short nav label — derived by hand rather than by
+// Veilio Cloud. `pill` is the short nav label - derived by hand rather than by
 // trimming the title, which broke as soon as a title stopped ending in "Policy".
-const DOCS: Record<string, { title: string; pill: string }> = {
+export const DOCS: Record<string, { title: string; pill: string }> = {
   terms: { title: 'Terms of Use', pill: 'Terms' },
   privacy: { title: 'Privacy Notice', pill: 'Privacy' },
-  aup: { title: 'Acceptable Use Policy', pill: 'Acceptable Use' },
-  cookies: { title: 'Cookie & Local Storage Notice', pill: 'Cookies' },
+}
+
+/**
+ * Documents that were retired, and what absorbed them.
+ *
+ * Both were standalone notices and both said less than the section that
+ * replaced them: CE sets no cookies at all, so a Cookie Policy was a page
+ * explaining an absence, and half the Acceptable Use Policy restated licence
+ * terms. They are Privacy → "Cookies & local storage" and Terms §5 now, which
+ * is also the shape counsel gave the Cloud documents.
+ *
+ * A legal URL is something people bookmark and cite in an email. Retiring the
+ * document is right; dropping the READER on the home page is not - an unknown
+ * slug falls through to `Navigate to="/"`, so somebody following a link to the
+ * Acceptable Use Policy would silently arrive at the marketing page with no way
+ * to tell what happened. Kept indefinitely: the cost is two lines, and the cost
+ * of removing them is a dead link in somebody's records.
+ */
+export const SUPERSEDED_BY: Record<string, string> = {
+  aup: 'terms',
+  cookies: 'privacy',
 }
 
 export default function LegalPage() {
@@ -36,6 +55,11 @@ export default function LegalPage() {
       .catch(() => setError(true))
   }, [slug, valid])
 
+  // A retired document goes to what absorbed it, not to the home page.
+  // `replace` so the back button returns where the reader came from rather than
+  // bouncing them through the redirect again.
+  if (!valid && SUPERSEDED_BY[slug])
+    return <Navigate to={`/legal/${SUPERSEDED_BY[slug]}`} replace />
   if (!valid) return <Navigate to="/" replace />
 
   return (
@@ -61,7 +85,7 @@ export default function LegalPage() {
               color: 'var(--text-dim)',
             }}
           >
-            Legal / <span style={{ color: 'var(--accent)' }}>{DOCS[slug].title}</span>
+            Legal / <span style={{ color: 'var(--accent-text)' }}>{DOCS[slug].title}</span>
           </span>
           <nav style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {Object.entries(DOCS).map(([s, doc]) => (
@@ -141,7 +165,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Blockquote — group consecutive `>` lines.
+    // Blockquote - group consecutive `>` lines.
     if (/^>\s?/.test(line)) {
       const buf: string[] = []
       while (i < lines.length && /^>\s?/.test(lines[i])) {
@@ -167,7 +191,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // List — group consecutive `- ` / `* ` items.
+    // List - group consecutive `- ` / `* ` items.
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = []
       while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
@@ -186,7 +210,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Table — group consecutive `|` lines (header, `|---|` separator, body).
+    // Table - group consecutive `|` lines (header, `|---|` separator, body).
     if (/^\s*\|/.test(line)) {
       const rows: string[] = []
       while (i < lines.length && /^\s*\|/.test(lines[i])) {
@@ -197,7 +221,7 @@ function renderMarkdown(md: string): ReactNode[] {
       continue
     }
 
-    // Paragraph — group consecutive plain lines.
+    // Paragraph - group consecutive plain lines.
     const buf: string[] = []
     while (
       i < lines.length &&
@@ -284,7 +308,7 @@ function renderInline(text: string): ReactNode[] {
   while ((m = INLINE.exec(text))) {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     if (m[1]) {
-      // Link — rewrite a relative ./Doc.md reference to its in-app route.
+      // Link - rewrite a relative ./Doc.md reference to its in-app route.
       let raw = m[3]
       const rel = /^\.\/(\w+)\.md$/i.exec(raw)
       if (rel) raw = `/legal/${rel[1].toLowerCase()}`
@@ -300,7 +324,7 @@ function renderInline(text: string): ReactNode[] {
             key={key++}
             href={href}
             {...(isExternal(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            style={{ color: 'var(--accent)' }}
+            style={{ color: 'var(--accent-text)' }}
           >
             {m[2]}
           </a>

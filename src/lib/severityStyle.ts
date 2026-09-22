@@ -6,7 +6,7 @@ import type { SecretSeverity } from '@veilio-inc/engine'
  *  Lives here rather than inside the credential panel because it is no longer
  *  only about credentials: 004-b3 grades comment exposure on the same four
  *  steps. A second table, however carefully copied, is how "Advisory" ends up
- *  meaning two different things on the same screen — and the scale stops being
+ *  meaning two different things on the same screen - and the scale stops being
  *  a scale the moment a reader has to learn which panel they are looking at
  *  before they can read the badge.
  *

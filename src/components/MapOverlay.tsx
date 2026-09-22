@@ -53,7 +53,7 @@ export default function MapOverlay({ map, onClose }: Props) {
             <tbody>
               {entries.map(([placeholder, realName]) => (
                 <tr key={placeholder}>
-                  <td style={{ color: 'var(--accent-bright)' }}>{placeholder}</td>
+                  <td style={{ color: 'var(--accent-text)' }}>{placeholder}</td>
                   <td aria-hidden style={{ color: 'var(--text-dim)', textAlign: 'center' }}>
                     →
                   </td>

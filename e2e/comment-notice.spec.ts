@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { anonymize, editor, editors, selectWord, typeInto } from './helpers.js'
 
 // 004-b3, User Story 1. The engine leaves comment prose unmasked on purpose, so
-// the whole feature is a sentence on a screen — and where that sentence sits is
+// the whole feature is a sentence on a screen - and where that sentence sits is
 // the feature. A warning rendered below the output is read after the copy, and
 // a warning read after the copy is a post-mortem.
 //
@@ -10,11 +10,11 @@ import { anonymize, editor, editors, selectWord, typeInto } from './helpers.js'
 // warns about" is not a question it can be asked. Everything here needs a real
 // browser for exactly that reason.
 
-/** A comment above the code and a comment beside it — the two positions the
+/** A comment above the code and a comment beside it - the two positions the
  *  grading distinguishes, in the shape they actually turn up in. */
 const SOURCE = `// Copyright 2026 Veilio
 function retryPolicy(attempts) {
-  // Workaround for the Contoso Health outage on the 14th — see INC-4471.
+  // Workaround for the Contoso Health outage on the 14th - see INC-4471.
   return ledgerService.retry(attempts)
 }`
 
@@ -44,21 +44,21 @@ test.describe('comment exposure notice', () => {
     await expect(notice(page)).toBeHidden()
   })
 
-  test('SC-001 — a file with comments says so, with a count', async ({ page }) => {
+  test('SC-001 - a file with comments says so, with a count', async ({ page }) => {
     await anonymize(page, SOURCE)
     await expect(notice(page)).toBeVisible()
     await expect(notice(page)).toContainText('2 comments, 1 inside the body')
     await expect(notice(page)).toContainText('comment text is never masked')
   })
 
-  test('SC-002 — a file without comments says nothing', async ({ page }) => {
+  test('SC-002 - a file without comments says nothing', async ({ page }) => {
     await anonymize(page, NO_COMMENTS)
     await expect(editor(page, editors.output)).toContainText('__FN__1')
     await expect(notice(page)).toBeHidden()
   })
 
   test('names the action that closes the leak', async ({ page }) => {
-    // Acceptance scenario 3. Not merely "there is a risk" — the control has a
+    // Acceptance scenario 3. Not merely "there is a risk" - the control has a
     // label, and the notice uses it.
     await anonymize(page, SOURCE)
     await expect(notice(page)).toContainText('Mask selection')
@@ -79,7 +79,7 @@ test.describe('comment exposure notice', () => {
   test('US1 and US2 meet: marking prose in a comment moves the notice', async ({ page }) => {
     // The obligation Story 1 creates has to be dischargeable, and visibly so. A
     // warning that reads identically after the user acts on it teaches that
-    // acting on it is pointless — so this asserts the text CHANGES, not merely
+    // acting on it is pointless - so this asserts the text CHANGES, not merely
     // that the panel is still on screen.
     await anonymize(page, MARKABLE)
     await expect(notice(page)).toContainText('2 comments, 1 inside the body')
@@ -88,7 +88,7 @@ test.describe('comment exposure notice', () => {
     await page.getByRole('button', { name: 'Mask selection' }).click()
 
     // That comment now holds a placeholder and nothing else, so there is no
-    // prose left in it to leak — and with nothing left beside the code, the
+    // prose left in it to leak - and with nothing left beside the code, the
     // grade drops to the quiet one.
     await expect(editor(page, editors.output)).not.toContainText('Contoso')
     await expect(notice(page)).toContainText('1 comment above the code')

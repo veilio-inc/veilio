@@ -22,53 +22,58 @@ const LANGS = {
 
 type LangKey = keyof typeof LANGS
 
+// Every colour here is a custom-property reference from the syntax and editor
+// scales rather than a literal. CodeMirror emits these as ordinary CSS
+// declarations, so they resolve at paint time like anything else - which is
+// what lets a second palette reach the editor without this file knowing a theme
+// exists. Tags are grouped by ROLE, and the role is the token name.
 const scrubTheme = createTheme({
   theme: 'dark',
   settings: {
-    background: 'var(--code-bg, #141210)',
-    foreground: '#FAF9F7',
-    caret: '#CC785C',
-    selection: 'rgba(204,120,92,0.25)',
-    selectionMatch: 'rgba(204,120,92,0.15)',
-    gutterBackground: 'var(--code-bg, #141210)',
-    gutterForeground: '#6B6360',
-    lineHighlight: 'rgba(255,255,255,0.04)',
+    background: 'var(--code-bg)',
+    foreground: 'var(--syntax-variable)',
+    caret: 'var(--syntax-keyword)',
+    selection: 'var(--editor-selection)',
+    selectionMatch: 'var(--editor-selection-match)',
+    gutterBackground: 'var(--code-bg)',
+    gutterForeground: 'var(--syntax-comment)',
+    lineHighlight: 'var(--editor-line-highlight)',
   },
   styles: [
-    { tag: t.comment, color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.lineComment, color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.blockComment, color: '#6B6360', fontStyle: 'italic' },
-    { tag: t.keyword, color: '#CC785C' }, // terracotta — keywords
-    { tag: t.controlKeyword, color: '#CC785C' },
-    { tag: t.definitionKeyword, color: '#CC785C' },
-    { tag: t.moduleKeyword, color: '#CC785C' },
-    { tag: t.operatorKeyword, color: '#CC785C' },
-    { tag: t.string, color: '#8DB38B' }, // muted green — strings
-    { tag: t.special(t.string), color: '#8DB38B' },
-    { tag: t.regexp, color: '#8DB38B' },
-    { tag: t.number, color: '#A8C0D6' }, // muted blue — numbers
-    { tag: t.bool, color: '#A8C0D6' },
-    { tag: t.null, color: '#A8C0D6' },
-    { tag: t.function(t.variableName), color: '#E0C97F' }, // warm yellow — function names
-    { tag: t.function(t.propertyName), color: '#E0C97F' },
-    { tag: t.className, color: '#C49AC0' }, // soft purple — classes/types
-    { tag: t.typeName, color: '#C49AC0' },
-    { tag: t.typeOperator, color: '#C49AC0' },
-    { tag: t.propertyName, color: '#C4A882' }, // warm tan — properties
-    { tag: t.variableName, color: '#FAF9F7' },
-    { tag: t.definition(t.variableName), color: '#FAF9F7' },
-    { tag: t.operator, color: '#A89F99' },
-    { tag: t.punctuation, color: '#A89F99' },
-    { tag: t.angleBracket, color: '#A89F99' },
-    { tag: t.bracket, color: '#A89F99' },
-    { tag: t.squareBracket, color: '#A89F99' },
-    { tag: t.brace, color: '#A89F99' },
-    { tag: t.meta, color: '#6B6360' },
+    { tag: t.comment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+    { tag: t.lineComment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+    { tag: t.blockComment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+    { tag: t.keyword, color: 'var(--syntax-keyword)' }, // terracotta - keywords
+    { tag: t.controlKeyword, color: 'var(--syntax-keyword)' },
+    { tag: t.definitionKeyword, color: 'var(--syntax-keyword)' },
+    { tag: t.moduleKeyword, color: 'var(--syntax-keyword)' },
+    { tag: t.operatorKeyword, color: 'var(--syntax-keyword)' },
+    { tag: t.string, color: 'var(--syntax-string)' }, // muted green - strings
+    { tag: t.special(t.string), color: 'var(--syntax-string)' },
+    { tag: t.regexp, color: 'var(--syntax-string)' },
+    { tag: t.number, color: 'var(--syntax-number)' }, // muted blue - numbers
+    { tag: t.bool, color: 'var(--syntax-number)' },
+    { tag: t.null, color: 'var(--syntax-number)' },
+    { tag: t.function(t.variableName), color: 'var(--syntax-function)' }, // warm yellow - function names
+    { tag: t.function(t.propertyName), color: 'var(--syntax-function)' },
+    { tag: t.className, color: 'var(--syntax-class)' }, // soft purple - classes/types
+    { tag: t.typeName, color: 'var(--syntax-class)' },
+    { tag: t.typeOperator, color: 'var(--syntax-class)' },
+    { tag: t.propertyName, color: 'var(--syntax-property)' }, // warm tan - properties
+    { tag: t.variableName, color: 'var(--syntax-variable)' },
+    { tag: t.definition(t.variableName), color: 'var(--syntax-variable)' },
+    { tag: t.operator, color: 'var(--syntax-punctuation)' },
+    { tag: t.punctuation, color: 'var(--syntax-punctuation)' },
+    { tag: t.angleBracket, color: 'var(--syntax-punctuation)' },
+    { tag: t.bracket, color: 'var(--syntax-punctuation)' },
+    { tag: t.squareBracket, color: 'var(--syntax-punctuation)' },
+    { tag: t.brace, color: 'var(--syntax-punctuation)' },
+    { tag: t.meta, color: 'var(--syntax-comment)' },
     { tag: t.emphasis, fontStyle: 'italic' },
     { tag: t.strong, fontWeight: 'bold' },
-    { tag: t.tagName, color: '#CC785C' },
-    { tag: t.attributeName, color: '#C4A882' },
-    { tag: t.attributeValue, color: '#8DB38B' },
+    { tag: t.tagName, color: 'var(--syntax-keyword)' },
+    { tag: t.attributeName, color: 'var(--syntax-property)' },
+    { tag: t.attributeValue, color: 'var(--syntax-string)' },
   ],
 })
 
@@ -78,10 +83,10 @@ const baseExtensions = [
     '&': { fontSize: '13px', height: '100%' },
     '.cm-scroller': { fontFamily: 'var(--font-mono, monospace)', lineHeight: '1.6' },
     '.cm-content': { padding: '16px' },
-    '.cm-gutters': { borderRight: '1px solid rgba(255,255,255,0.06)', paddingRight: 4 },
-    '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.03)' },
-    '.cm-cursor': { borderLeftColor: '#CC785C', borderLeftWidth: '2px' },
-    '.cm-placeholder': { color: '#6B6360', fontStyle: 'italic' },
+    '.cm-gutters': { borderRight: '1px solid var(--editor-gutter-border)', paddingRight: 4 },
+    '.cm-activeLine': { backgroundColor: 'var(--editor-active-line)' },
+    '.cm-cursor': { borderLeftColor: 'var(--syntax-keyword)', borderLeftWidth: '2px' },
+    '.cm-placeholder': { color: 'var(--syntax-comment)', fontStyle: 'italic' },
   }),
 ]
 
@@ -208,7 +213,7 @@ export default function CodePanel({
                 fontSize: 12,
                 minWidth: 64,
                 ...(copied
-                  ? { color: 'var(--success)', borderColor: 'rgba(91,169,139,0.45)' }
+                  ? { color: 'var(--success)', borderColor: 'rgba(var(--success-rgb), 0.45)' }
                   : {}),
               }}
               onClick={copyToClipboard}

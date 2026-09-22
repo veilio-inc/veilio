@@ -1,21 +1,21 @@
 /** Schemes a link in a rendered document may use.
  *
- *  Everything else — `javascript:`, `data:`, `vbscript:`, `blob:` — is refused
+ *  Everything else - `javascript:`, `data:`, `vbscript:`, `blob:` - is refused
  *  and the link is rendered as plain text instead.
  *
  *  Why this exists (ROADMAP E6): the legal documents are markdown fetched at
  *  runtime and rendered through a hand-written renderer, and an href taken
  *  straight from a document is executable, and React's own handling of that has
- *  never been something to rely on — 18 warned about `javascript:` URLs and
+ *  never been something to rely on - 18 warned about `javascript:` URLs and
  *  rendered them anyway. The documents are ours today, so nothing here
- *  is exploitable — but this is a source-available repository that accepts pull
+ *  is exploitable - but this is a source-available repository that accepts pull
  *  requests, and a legal notice is an unremarkable file to skim.
  */
 const ALLOWED_SCHEME = /^(?:https?|mailto):/i
 
 /** A site-relative path: one leading slash, and not two.
  *
- *  `//evil.example` is protocol-relative, not relative — it navigates off-site
+ *  `//evil.example` is protocol-relative, not relative - it navigates off-site
  *  while looking local. That exact confusion is what the advisory against this
  *  app's router was about, so it is refused here too. */
 const SITE_RELATIVE = /^\/(?!\/)/
@@ -25,7 +25,7 @@ const SITE_RELATIVE = /^\/(?!\/)/
 const OUTER_JUNK = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g
 
 /** Tab, newline and carriage return, which the URL parser removes from
- *  *anywhere* in the string — not just the ends.
+ *  *anywhere* in the string - not just the ends.
  *
  *  This is the part that makes a naive check useless: `java&#9;script:alert(1)`
  *  executes, because the parser strips the tab before it looks for the `:`.

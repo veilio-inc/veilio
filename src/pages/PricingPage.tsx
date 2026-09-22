@@ -10,8 +10,10 @@ type CtaType = 'tool' | 'cloud' | 'mailto'
 
 interface PlanCard {
   name: string
-  price: string
-  period: string
+  /** Free only. A paid tier's price lives on Cloud, which is the one place it
+   *  can be right - see the note above PLANS. */
+  price?: string
+  period?: string
   tagline: string
   features: string[]
   cta: string
@@ -21,16 +23,42 @@ interface PlanCard {
   ctaType: CtaType
 }
 
-// Mirrors Veilio Cloud's four tiers. In the Community Edition, Free is what
-// you're self-hosting; the paid tiers live on Veilio Cloud, so their CTAs link
-// out rather than running checkout (there's no billing in the CE).
+/**
+ * CE knows exactly one price, and it is its own.
+ *
+ * This page used to mirror Cloud's four tiers by hand, with a comment saying
+ * "the tiers have to agree - two editions quoting different plans is worse than
+ * either being wrong alone". They did not agree. At the point this was
+ * rewritten the page carried THREE inconsistent price sets at once: cards
+ * saying Individual €9 / Team €19, an FAQ saying Individual $3 / Pro $9 / Team
+ * €19, and Cloud actually charging €3 and €16 from live Stripe tiers. It also
+ * advertised `Pro`, a tier ROADMAP E12 deleted, map ceilings a previous comment
+ * had already flagged as overselling, and a "99.9% SLA" that Cloud removed
+ * under a test forbidding its return.
+ *
+ * Hand-mirroring did not fail through carelessness; it fails because there is
+ * no mechanism by which it could succeed. Cloud reads its prices live from
+ * Stripe. CE cannot: it publishes, and enforces, that it "contacts no
+ * third-party origin at any point" and "works unchanged in air-gapped
+ * deployments" - a CSP the server sends and `e2e/security.spec.ts` both hold
+ * that line. Fetching veilio.dev to stay in sync would break the claim this
+ * product is FOR.
+ *
+ * So CE states what it knows - the free tier, which is the thing you are
+ * running - describes the paid tiers by what they DO, and sends anyone who
+ * wants a number to the one place that has one. A link is user-initiated
+ * navigation: nothing is contacted on page load, so the air-gap claim holds and
+ * the page still renders offline.
+ *
+ * `pricing-is-not-mirrored.test.ts` fails if a currency amount comes back.
+ */
 const PLANS: PlanCard[] = [
   {
     name: 'Free',
     price: '$0',
     period: 'forever',
     tagline:
-      'Everything you need to protect your code. Self-hosted, free for any use — even commercial.',
+      'Everything you need to protect your code. Self-hosted, free for any use - even commercial.',
     features: [
       'Full anonymize / restore tool',
       'Stripped metadata panel',
@@ -46,48 +74,19 @@ const PLANS: PlanCard[] = [
     ctaType: 'tool',
   },
   {
-    // One solo tier since ROADMAP E12: Individual and Pro differed by a single
-    // feature flag while Pro cost three times as much, so they were merged and
-    // Individual absorbed the feature set. This page describes the SAME cloud
-    // product as the Cloud edition's own pricing page, so the tiers have to
-    // agree — two editions quoting different plans is worse than either being
-    // wrong alone.
     name: 'Individual',
-    price: '€9',
-    period: 'per month, excl. VAT',
-    tagline: 'Cloud sync and your own masking rules, for one developer.',
-    features: [
-      // 200, not the 500/2,000 this page used to claim. The cloud ceiling is
-      // PAID_MAP_CEILING = 200 and has been for some time; the numbers here
-      // were stale in the direction that oversells.
-      'Cloud map storage (up to 200 maps)',
-      'Cross-device history sync',
-      'Custom rules',
-      'Browser extension',
-      'Export / import .veilio files',
-      'Email support',
-    ],
-    cta: 'Get Individual on Cloud →',
+    tagline: 'Hosted map sync and your own masking rules, for one developer.',
+    features: [],
+    cta: 'See Individual on Cloud →',
     highlight: false,
     planId: 'individual',
     ctaType: 'cloud',
   },
   {
     name: 'Team',
-    price: '€19',
-    period: 'per seat, per month, excl. VAT',
-    tagline: 'Shared dictionaries, SSO, and audit — for a team.',
-    features: [
-      'Everything in Pro',
-      'Team shared maps',
-      'Team member invites',
-      'SSO (Google / Microsoft)',
-      'Audit log',
-      'Shared dictionaries',
-      'Policy console',
-      'Priority support',
-    ],
-    cta: 'Get Team on Cloud →',
+    tagline: 'Shared dictionaries, SSO, and audit - for a team.',
+    features: [],
+    cta: 'See Team on Cloud →',
     highlight: true,
     badge: 'Most popular',
     planId: 'team',
@@ -95,17 +94,8 @@ const PLANS: PlanCard[] = [
   },
   {
     name: 'Enterprise',
-    price: 'Custom',
-    period: 'talk to us',
-    tagline: 'Compliance, SAML, on-prem. SLA-backed.',
-    features: [
-      'Everything in Team',
-      'SAML SSO',
-      'SIEM export',
-      'On-prem deployment',
-      'Dedicated success manager',
-      '99.9% SLA',
-    ],
+    tagline: 'Compliance, SAML, on-prem.',
+    features: [],
     cta: 'Contact us',
     highlight: false,
     planId: 'enterprise',
@@ -116,19 +106,15 @@ const PLANS: PlanCard[] = [
 const FAQS = [
   {
     q: 'What is the Community Edition?',
-    a: 'CE is the source-available, self-hostable version of Veilio, free to use for any purpose — including inside your own business — under the Veilio Community License 1.0. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine. The license only prohibits selling Veilio itself, hosting it as a commercial service for others, or basing a competing product on it.',
+    a: 'CE is the source-available, self-hostable version of Veilio, free to use for any purpose - including inside your own business - under the Veilio Community License 1.0. It includes the full anonymize/restore engine, .veilio file export/import, and localStorage map persistence. No backend, no accounts, no data leaves your machine. The license only prohibits selling Veilio itself, hosting it as a commercial service for others, or basing a competing product on it.',
   },
   {
     q: 'Can I use the Community Edition at work or commercially?',
-    a: 'Yes. CE is free to use for any purpose, including inside a business and on commercial projects, under the Veilio Community License 1.0 — deploying it on your own infrastructure and running your business on it needs no commercial license. The one thing you may not do is sell, resell, rebrand, or host Veilio (or its engine) as a commercial service or a product that competes with Veilio Cloud. For that kind of redistribution, contact hello@veilio.dev.',
+    a: 'Yes. CE is free to use for any purpose, including inside a business and on commercial projects, under the Veilio Community License 1.0 - deploying it on your own infrastructure and running your business on it needs no commercial license. The one thing you may not do is sell, resell, rebrand, or host Veilio (or its engine) as a commercial service or a product that competes with Veilio Cloud. For that kind of redistribution, contact hello@veilio.dev.',
   },
   {
     q: 'How do I save maps permanently in CE?',
-    a: 'Maps are stored in your browser\'s localStorage by default. For durable backups — or to move a map to another device — use "Export .veilio" to save a passphrase-encrypted file to disk, then "Import .veilio" to load it back.',
-  },
-  {
-    q: 'What does the Cloud edition add?',
-    a: 'Cloud is the paid, hosted edition — there is no free Cloud tier (the free option is self-hosting this Community Edition). Individual ($3/mo) adds hosted cloud sync with up to 500 maps. Pro ($9/user/mo) raises that to 2,000 maps and adds custom rules and the browser extension. Team ($19/seat/mo) adds shared maps, SSO, and audit. Enterprise (custom) adds SAML, SIEM export, and on-prem. The anonymizer engine is identical across all editions — only persistence and team features differ.',
+    a: 'Maps are stored in your browser\'s localStorage by default. For durable backups - or to move a map to another device - use "Export .veilio" to save a passphrase-encrypted file to disk, then "Import .veilio" to load it back.',
   },
   {
     q: 'Is my source code ever sent anywhere in CE?',
@@ -181,7 +167,7 @@ export default function PricingPage() {
               margin: '0 auto',
             }}
           >
-            Free to use — even commercially — and self-hostable. The paid plans add cloud sync,
+            Free to use - even commercially - and self-hostable. The paid plans add cloud sync,
             collaboration, and compliance on Veilio Cloud.
           </p>
         </div>
@@ -200,13 +186,13 @@ export default function PricingPage() {
           }}
         >
           You're running the{' '}
-          <strong style={{ color: 'var(--text-primary)' }}>Community Edition</strong> — the Free
+          <strong style={{ color: 'var(--text-primary)' }}>Community Edition</strong> - the Free
           tier, self-hosted. The paid tiers run on{' '}
           <a
             href={`${CLOUD_URL}/pricing`}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: 'var(--accent)' }}
+            style={{ color: 'var(--accent-text)' }}
           >
             Veilio Cloud
           </a>
@@ -242,9 +228,9 @@ export default function PricingPage() {
                     left: '50%',
                     transform: 'translateX(-50%)',
                     background: plan.highlight
-                      ? 'linear-gradient(180deg, #D98968, var(--accent-hover))'
+                      ? 'linear-gradient(180deg, var(--accent-fill-top), var(--accent-fill-bottom))'
                       : 'var(--bg-elevated)',
-                    color: plan.highlight ? '#fff' : 'var(--text-secondary)',
+                    color: plan.highlight ? 'var(--text-on-accent)' : 'var(--text-secondary)',
                     border: plan.highlight ? 'none' : '1px solid var(--border)',
                     fontSize: 11,
                     fontWeight: 700,
@@ -270,15 +256,27 @@ export default function PricingPage() {
                   </span>
                   {plan.planId === 'free' && <span className="badge badge-accent">CE</span>}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span
-                    style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}
-                  >
-                    {plan.price}
-                  </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                    {plan.period}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minHeight: 52 }}>
+                  {plan.price ? (
+                    <>
+                      <span
+                        style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}
+                      >
+                        {plan.price}
+                      </span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                        {plan.period}
+                      </span>
+                    </>
+                  ) : (
+                    // Deliberately not a number, and not "from €x" either -
+                    // either would be a second source of truth with no way to
+                    // stay true. `minHeight` keeps the cards aligned so the
+                    // absence reads as a design choice rather than a gap.
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5 }}>
+                      Priced on Veilio Cloud
+                    </span>
+                  )}
                 </div>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>
                   {plan.tagline}
@@ -295,6 +293,20 @@ export default function PricingPage() {
                   marginBottom: 24,
                 }}
               >
+                {plan.features.length === 0 && (
+                  <li style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.6 }}>
+                    What this tier includes is listed on{' '}
+                    <a
+                      href={`${CLOUD_URL}/pricing`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--accent-text)' }}
+                    >
+                      veilio.dev/pricing
+                    </a>
+                    , where it is kept current.
+                  </li>
+                )}
                 {plan.features.map((f) => (
                   <li
                     key={f}
@@ -373,6 +385,30 @@ export default function PricingPage() {
               </div>
             ))}
           </div>
+
+          {/* Every question above is about CE, which this page can answer
+              because it IS CE. Anything about Cloud - what each tier includes,
+              what it costs, how billing works - is answered where it can be
+              kept true. CE used to answer those here and was wrong about all of
+              them at once; see the note above PLANS. */}
+          <p
+            style={{
+              marginTop: 20,
+              textAlign: 'center',
+              fontSize: 13.5,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            Questions about <strong>Veilio Cloud</strong> - plans, pricing, billing, limits?{' '}
+            <a
+              href={`${CLOUD_URL}/pricing`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--accent-text)' }}
+            >
+              veilio.dev/pricing
+            </a>
+          </p>
         </div>
       </div>
     </div>

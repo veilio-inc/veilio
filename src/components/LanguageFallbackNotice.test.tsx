@@ -21,7 +21,7 @@ describe('LanguageFallbackNotice', () => {
 
   it('is announced to assistive technology without hijacking focus', () => {
     // `status` rather than `alert`: it is important, and it is not an emergency
-    // interrupt — the secret panel owns that register.
+    // interrupt - the secret panel owns that register.
     const { container } = render(<LanguageFallbackNotice show />)
     expect(container.querySelector('[role="status"]')).not.toBeNull()
   })

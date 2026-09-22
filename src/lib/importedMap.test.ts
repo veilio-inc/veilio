@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { anonymize, restore } from '@veilio-inc/engine'
 import { parseSymbolMap, importErrorMessage, InvalidMapError } from './importedMap.js'
 
-describe('parseSymbolMap — accepts what the engine produces', () => {
+describe('parseSymbolMap - accepts what the engine produces', () => {
   it('accepts a real map from anonymize', () => {
     const { map } = anonymize('class Ledger { settleInvoice(rate) { return rate } }')
 
@@ -43,7 +43,7 @@ describe('parseSymbolMap — accepts what the engine produces', () => {
   })
 })
 
-describe('parseSymbolMap — refuses malformed input', () => {
+describe('parseSymbolMap - refuses malformed input', () => {
   it('refuses non-objects', () => {
     for (const bad of [null, undefined, 42, 'a string', true]) {
       expect(() => parseSymbolMap(bad), String(bad)).toThrow(InvalidMapError)
@@ -72,7 +72,7 @@ describe('parseSymbolMap — refuses malformed input', () => {
   })
 })
 
-describe('parseSymbolMap — refuses hostile input', () => {
+describe('parseSymbolMap - refuses hostile input', () => {
   it('refuses a prototype-pollution key', () => {
     // Delegated to isPlaceholder: `__proto__` has no uppercase first character,
     // so the shape check refuses it. Asserted here because that is load-bearing
@@ -123,7 +123,7 @@ describe('parseSymbolMap — refuses hostile input', () => {
 
   it('returns a fresh object rather than the input', () => {
     // Validating one object and using another is how a check gets bypassed by
-    // anything exotic about the original — a getter, a stray prototype.
+    // anything exotic about the original - a getter, a stray prototype.
     const input = { __FN__1: 'settleInvoice' }
     const out = parseSymbolMap(input)
 

@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
  * A workspace resolves `@veilio-inc/shared` to a symlink on this machine. A
  * registry resolves it to a 404, because that package is private and never goes
  * anywhere. So a manifest can be simultaneously correct in development and
- * broken for every person who has ever run `npm install` — and nothing in the
+ * broken for every person who has ever run `npm install` - and nothing in the
  * repo notices, because the repo is the one place the lie holds.
  *
  * That is not hypothetical. `@veilio-inc/cli` and `@veilio-inc/mcp` both
@@ -21,7 +21,7 @@ import { join, resolve } from 'node:path'
  * closed Cloud repository, where it lived beside a private `@veilio-inc/shared`
  * that both of them wrongly depended on. Every package in THIS repository is
  * meant for the registry, so the rule it enforces currently has nothing to
- * refuse — which is the argument for keeping it, not for deleting it. The
+ * refuse - which is the argument for keeping it, not for deleting it. The
  * repository it was written for is exactly the repository where nobody thought
  * the rule was needed.
  */
@@ -87,7 +87,7 @@ function importedPackages(dir: string): Set<string> {
   return found
 }
 
-/** Derived from the directory listing, never enumerated — a package added
+/** Derived from the directory listing, never enumerated - a package added
  *  tomorrow is checked because it exists, not because somebody listed it. */
 function workspacePackages(): WorkspacePackage[] {
   const packagesDir = join(REPO_ROOT, 'packages')
@@ -187,7 +187,7 @@ describe('the workspace package graph', () => {
 
   it('applies that rule to a case the repo does not currently contain', () => {
     // `cli` and `mcp` are still `private: true` pending their first release, so
-    // the assertion above is satisfied by an empty set — it proves nothing on
+    // the assertion above is satisfied by an empty set - it proves nothing on
     // its own, and would go on proving nothing on the day somebody flips one.
     // This exercises the rule directly, so the guard is real before it is
     // needed rather than after. `@veilio-inc/internal` is a package this
@@ -240,7 +240,7 @@ describe('what the READMEs tell a reader to install', () => {
     // matching only the first left the worst case invisible.
     //
     // `npm install @scope/name` is the obvious one. The other is a fenced block
-    // that runs the package through npx — and packages/mcp/README.md is exactly
+    // that runs the package through npx - and packages/mcp/README.md is exactly
     // that: an agent config where `"command": "npx"` and `"@veilio-inc/mcp"`
     // sit on DIFFERENT LINES of a JSON object. It says `npm install` nowhere, so
     // a line-oriented match read it as advertising nothing, and the one README
@@ -297,7 +297,7 @@ describe('the licence each package ships under', () => {
 
   it('ships the licence text whenever the manifest points at a file', () => {
     // `SEE LICENSE IN LICENSE` with no LICENSE in the tarball is a package whose
-    // terms nobody can read — npm shows the string and the file is not there.
+    // terms nobody can read - npm shows the string and the file is not there.
     for (const p of PACKAGES) {
       if (p.manifest.license !== 'SEE LICENSE IN LICENSE') continue
       expect(p.manifest.files ?? [], `${p.manifest.name} must ship LICENSE`).toContain('LICENSE')
@@ -314,7 +314,7 @@ describe('the licence each package ships under', () => {
 
   it('never ships a grant from a package that declares UNLICENSED', () => {
     // `packages/shared` did exactly this: `license: UNLICENSED`, `private: true`,
-    // and an MIT LICENSE in `files` — left over from when it was going to be the
+    // and an MIT LICENSE in `files` - left over from when it was going to be the
     // published engine. A stray `npm pack` would have shipped a permissive grant
     // for the Cloud product taxonomy, over a manifest that denies one.
     const contradictions = PACKAGES.filter(
@@ -327,7 +327,7 @@ describe('the licence each package ships under', () => {
     // The CLI and the MCP server are free adoption tools that wrap
     // @veilio-inc/engine, and packages/cli/action.yml tells the world to run the
     // CLI with `npx`. They carry the Community License, the same terms the
-    // engine ships under — asserted per package rather than inherited from the
+    // engine ships under - asserted per package rather than inherited from the
     // repository root, because that inheritance is exactly what stopped being
     // true when they lived in the closed repository, and a licence that is
     // correct only because of where the directory happens to sit is not a
@@ -351,7 +351,7 @@ describe('the engine range the tools declare', () => {
    * The failure is silent in the direction that matters. npm links a workspace
    * package only when its version satisfies the declared range. Let
    * `packages/engine/package.json` fall behind what the CLI asks for and npm
-   * stops linking it — it installs a REGISTRY copy instead, without a word, and
+   * stops linking it - it installs a REGISTRY copy instead, without a word, and
    * every CLI and MCP test from then on runs against a published engine while
    * the engine source sitting in the same tree goes untested by them. Both
    * suites stay green. The tree is the one place the mismatch is invisible.
@@ -421,7 +421,7 @@ describe('the engine range the tools declare', () => {
   /**
    * The other direction, which the check above deliberately permits.
    *
-   * `satisfiesCaret('1.4.0', '^1.3.0')` is TRUE — a caret range accepts a newer
+   * `satisfiesCaret('1.4.0', '^1.3.0')` is TRUE - a caret range accepts a newer
    * minor, so nothing above complains when the engine moves to 1.4.0 and the
    * two manifests keep asking for ^1.3.0. Nothing breaks in this repository
    * either: the workspace still links, both suites still run against the engine
@@ -434,7 +434,7 @@ describe('the engine range the tools declare', () => {
    *
    * Pinned at MINOR granularity on purpose. New APIs arrive in minors, so that
    * is exactly when the floor has to rise; patches are compatible by definition
-   * and forcing a manifest edit — and therefore a CLI release — for every engine
+   * and forcing a manifest edit - and therefore a CLI release - for every engine
    * patch would be churn with nothing behind it.
    *
    * This is the manual step the two-tool split costs, made loud. Changesets does

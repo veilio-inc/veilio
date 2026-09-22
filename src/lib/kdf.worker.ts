@@ -58,7 +58,7 @@ async function deriveAndRespond(
     const response: DeriveResponse = { requestId, ok: true, bits }
     ctx.postMessage(response, [bits])
   } catch (err) {
-    // Never the passphrase, never the salt — a message naming which KDF field
+    // Never the passphrase, never the salt - a message naming which KDF field
     // was invalid, nothing more (contracts/worker-protocol.md's invariants).
     const response: DeriveResponse = {
       requestId,

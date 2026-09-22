@@ -52,7 +52,7 @@ describe('the finding that matters is not buried', () => {
 
   it('lists a small number of low matches rather than summarising them', () => {
     // Collapsing two emails into "2 matches, not listed" hides information for
-    // no gain — the point is the long tail, not the existence of a low finding.
+    // no gain - the point is the long tail, not the existence of a low finding.
     render(<SecretPanel findings={emails(2)} />)
     expect(screen.queryByText(/not listed/i)).toBeNull()
     expect(screen.queryAllByText('abcd…wxyz').length).toBe(2)
@@ -103,7 +103,7 @@ describe('what the panel calls things', () => {
 describe('every grade the engine can emit is renderable', () => {
   it('renders a finding of each severity, dropping none', () => {
     // The panel grouped by a hardcoded list of severities. When `low` was added
-    // to the engine, a low finding rendered nowhere at all — detected, reported,
+    // to the engine, a low finding rendered nowhere at all - detected, reported,
     // and silently invisible.
     const all: SecretFinding[] = [
       finding('aws-access-key', 'critical', 1, 'AWS access key'),

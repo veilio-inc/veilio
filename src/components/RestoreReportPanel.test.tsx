@@ -15,7 +15,7 @@ const report = (over: Partial<RestoreReport> = {}): RestoreReport => ({
 
 describe('RestoreReportPanel', () => {
   it('renders nothing when there was nothing to restore and nothing is wrong', () => {
-    // E1 — restoring plain text with an empty map is not a result worth a panel.
+    // E1 - restoring plain text with an empty map is not a result worth a panel.
     const { container } = render(<RestoreReportPanel report={report()} />)
     expect(container.innerHTML).toBe('')
   })
@@ -29,7 +29,7 @@ describe('RestoreReportPanel', () => {
   })
 
   it('surfaces unresolved tokens as a problem', () => {
-    // E3 — always wrong: the text carries a token that means nothing.
+    // E3 - always wrong: the text carries a token that means nothing.
     render(
       <RestoreReportPanel report={report({ resolved: ['__FN__1'], unresolved: ['__VAR__9'] })} />
     )
@@ -40,7 +40,7 @@ describe('RestoreReportPanel', () => {
   })
 
   it('frames missing placeholders as information, not failure', () => {
-    // E4 — a model answering about one function legitimately omits the rest.
+    // E4 - a model answering about one function legitimately omits the rest.
     render(<RestoreReportPanel report={report({ resolved: ['__FN__1'], missing: ['__VAR__3'] })} />)
 
     expect(screen.getByText(/1 placeholder did not come back/)).toBeTruthy()
@@ -48,7 +48,7 @@ describe('RestoreReportPanel', () => {
   })
 
   it('counts resolved over total, excluding unresolved from the denominator', () => {
-    // E5 — unresolved tokens were never ours to restore, so they must not
+    // E5 - unresolved tokens were never ours to restore, so they must not
     // inflate the total and make a clean run look incomplete.
     render(
       <RestoreReportPanel

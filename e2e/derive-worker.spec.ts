@@ -5,12 +5,12 @@ import { buildVeilioFile } from './helpers-veilio-file.js'
 // ROADMAP E11 (specs/007-e11-derive-off): jsdom cannot show a frozen main
 // thread, so these assertions only mean something in a real browser.
 //
-// MAX_ITERATIONS (src/lib/kdf.ts, not exported — a private ceiling on
+// MAX_ITERATIONS (src/lib/kdf.ts, not exported - a private ceiling on
 // untrusted input) is 4_000_000 at the time of writing. Importing a file
 // declaring it is this suite's "hostile file" case (US2) and gives the
 // longest derive the app allows without touching kdf.ts. Measured directly
 // against this repo's Chromium build, even that ceiling still completes in
-// well under 100ms — modern native WebCrypto is fast — so on its own it
+// well under 100ms - modern native WebCrypto is fast - so on its own it
 // leaves no reliably observable window. CPU throttling via CDP (the same
 // technique quickstart.md's manual check describes doing by hand in
 // devtools) creates one without touching the app or its parameters.
@@ -51,7 +51,7 @@ test('the page keeps repainting during a real derive, and the artifact still rou
   await throttleCpu(page)
 
   // A requestAnimationFrame loop only advances if the main thread is free to
-  // run it — this is the actual, direct proof a synchronous main-thread
+  // run it - this is the actual, direct proof a synchronous main-thread
   // derive would fail, not an inference from wall-clock time.
   await page.evaluate(() => {
     const w = window as unknown as { __rafCount: number }
@@ -74,7 +74,7 @@ test('the page keeps repainting during a real derive, and the artifact still rou
     return w.__rafCount - before
   })
   // Any measurable progress proves the main thread was free to run rAF
-  // callbacks throughout the window — a blocked thread would report 0.
+  // callbacks throughout the window - a blocked thread would report 0.
   expect(rafDuringDerive).toBeGreaterThan(0)
 
   await expect(page.getByTestId('derive-busy')).toBeHidden({ timeout: 30_000 })

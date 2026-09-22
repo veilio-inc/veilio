@@ -2,7 +2,7 @@ import type { SecretFinding, SecretSeverity } from '@veilio-inc/engine'
 import { SEVERITY_STYLE, severityBadgeStyle } from '../lib/severityStyle.js'
 
 // Credentials are the leak that actually costs money, so this panel sits above
-// the copy action rather than below the output — it has to be read, not
+// the copy action rather than below the output - it has to be read, not
 // dismissed after the fact.
 
 const SEVERITY_ORDER: SecretSeverity[] = ['critical', 'high', 'medium', 'low']
@@ -131,8 +131,8 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
               </strong>
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {severity === 'low' || severity === 'medium'
-                  ? '— left in place; review before sharing.'
-                  : '— redacted, and not recoverable on restore.'}
+                  ? '- left in place; review before sharing.'
+                  : '- redacted, and not recoverable on restore.'}
               </span>
             </div>
             <ul
@@ -164,7 +164,7 @@ export default function SecretPanel({ findings }: { findings: SecretFinding[] })
       {redactedCount > 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>
           Redacted values were replaced with <code>__REDACTED_*__</code> and never written to your
-          symbol map — restoring will not bring them back. Rotate anything that was real.
+          symbol map - restoring will not bring them back. Rotate anything that was real.
         </p>
       )}
     </section>

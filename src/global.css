@@ -4,7 +4,7 @@
    that request is what lets the image send a strict CSP (ROADMAP E3).
 
    The files live in public/ and are referenced by absolute path, so Vite copies
-   them verbatim while these rules stay in the fingerprinted stylesheet — the
+   them verbatim while these rules stay in the fingerprinted stylesheet - the
    fonts cache immutably, the CSS that points at them does not.
 
    Licences: public/fonts/OFL-*.txt (SIL OFL 1.1). */
@@ -237,7 +237,7 @@
   --accent-dim: rgba(204, 120, 92, 0.14);
   --text-primary: #faf7f4;
   --text-secondary: #a89f99;
-  --text-dim: #6b605a;
+  --text-dim: #a0938a; /* lifted to clear 4.5:1 on --bg-elevated, the lightest surface it lands on */
   --danger: #e05c5c;
   --danger-dim: rgba(224, 92, 92, 0.13);
   --success: #5ba98b;
@@ -245,6 +245,89 @@
   --code-text: #e8e4e0;
   --radius: 8px;
   --radius-lg: 16px;
+  --accent-light: #d98968; /* lighter terracotta - hover fills, focus rings */
+  /* The accent tuned for TEXT rather than for a fill. `--accent` is the brand
+     colour and sits behind white labels; as small text on the page ground it
+     measured 2.67:1. Links take a variant shifted the other way from the
+     ground: lighter on dark, darker on light. */
+  --accent-text: #e89a78;
+  /* The FILL, again not the accent. White on the brand terracotta measured
+     2.72:1 in dark and 3.92:1 in light - the primary call to action was the
+     least readable text on the page. Same hue, dark enough that the label
+     clears 4.5:1 at every stop. */
+  --accent-fill-top: #ad5c3a;
+  --accent-fill: #9c5133;
+  --accent-fill-bottom: #8c4526;
+  --accent-violet: #b06a9e; /* the far end of the hero gradient */
+  --warning: #d9a441;
+  --warning-dim: rgba(217, 164, 65, 0.13);
+  --danger-border: rgba(224, 92, 92, 0.35);
+  --accent-border: rgba(217, 137, 104, 0.5);
+  --accent-bg: rgba(217, 137, 104, 0.09);
+  --text-on-accent: #ffffff; /* label on a filled terracotta control */
+  --sheen: rgba(255, 255, 255, 0.35); /* the shimmer that sweeps a button */
+
+  /* ── Channel triplets ───────────────────────────────────────────────────────
+     Component-level alpha needs the base colour to stay in the palette. With
+     these, a glow is `rgba(var(--accent-rgb), 0.35)` - the hue follows the
+     theme and only the compositing decision stays at the call site. Without
+     them, every alpha step is a second place the hue is decided. */
+  --accent-rgb: 204, 120, 92;
+  --danger-rgb: 224, 92, 92;
+  --success-rgb: 91, 169, 139;
+  --text-primary-rgb: 250, 247, 244;
+  --bg-surface-rgb: 33, 27, 24;
+  --bg-elevated-rgb: 46, 39, 35;
+  --bg-deep-rgb: 28, 23, 20;
+  --border-rgb: 66, 58, 54;
+  --code-bg-rgb: 18, 15, 13;
+  --shadow-rgb: 0, 0, 0;
+
+  /* ── Editor: syntax palette ─────────────────────────────────────────────────
+     A light theme needs a genuine second decision here rather than a lightness
+     flip - highlighting on a light ground is its own palette. Naming these by
+     ROLE is what makes that decision possible without touching CodePanel. */
+  --syntax-comment: #8c837e;
+  --syntax-keyword: #cc785c;
+  --syntax-string: #8db38b;
+  --syntax-number: #a8c0d6;
+  --syntax-function: #e0c97f;
+  --syntax-class: #c49ac0;
+  --syntax-property: #c4a882;
+  --syntax-variable: #faf9f7;
+  --syntax-punctuation: #a89f99;
+
+  /* ── Editor: chrome ─────────────────────────────────────────────────────── */
+  --editor-selection: rgba(204, 120, 92, 0.25);
+  --editor-selection-match: rgba(204, 120, 92, 0.15);
+  --editor-line-highlight: rgba(255, 255, 255, 0.04);
+  --editor-active-line: rgba(255, 255, 255, 0.03);
+  --editor-gutter-border: rgba(255, 255, 255, 0.06);
+
+  /* ── The demo code block ────────────────────────────────────────────────────
+     A self-contained dark island: a still image OF code, which by convention
+     stays dark on a light page. Every colour in it is pinned - including its
+     GROUND, its body text and its scrim - because an island is only as dark as
+     whatever shows through it. */
+  --demo-bg: #120f0d;
+  --demo-text: #e8e4e0;
+  --demo-comment: #9a8d83;
+  --demo-placeholder: #d98968;
+  --demo-keyword: #c99b6e;
+  --demo-function: #7fb3d5;
+  --demo-string: #8fb98f;
+  --demo-scrim: #1f1a17;
+
+  /* ── Stripped-comment categories ────────────────────────────────────────────
+     A categorical scale: the hues mean nothing beyond "distinguishable from
+     each other", which is why each is named for its category. */
+  --cat-jsdoc: #a78bfa;
+  --cat-todo: #f97316;
+  --cat-step-marker: #60a5fa;
+  --cat-narration: #34d399;
+  --cat-separator: #888888;
+  --cat-section-header: #fbbf24;
+  --cat-inline-annotation: #f472b6;
 
   /* ── Elevation & glow ───────────────────────────────────────────────────── */
   --accent-glow: rgba(204, 120, 92, 0.32);
@@ -258,6 +341,179 @@
   --font-display: 'Crimson Pro', Georgia, serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* ═══ LIGHT THEME ═══════════════════════════════════════════════════════════
+ *
+ * CE is dark-first, so `:root` above is the dark palette and this overrides it.
+ * Only TOKENS are redefined - no component rule appears here, and none may: a
+ * colour whose only definition sits inside a theme block is invisible in the
+ * other theme, which is the classic unreadable-page bug.
+ *
+ * ── Precedence, deliberately ────────────────────────────────────────────────
+ *
+ *   an explicit choice  >  the operating system  >  dark
+ *
+ * `[data-theme]` is stamped on <html> by `lib/theme.ts` only when the user has
+ * chosen. Left unstamped, `prefers-color-scheme` decides. The media query is
+ * guarded with `:not([data-theme])` so an explicit DARK choice beats a system
+ * set to light - without that guard the toggle appears broken in exactly one
+ * direction, which is the hardest kind of bug to be told about.
+ *
+ * ── What is NOT inverted ────────────────────────────────────────────────────
+ *
+ * A lightness flip of a dark palette is not a light palette. Three groups are
+ * second decisions:
+ *
+ *  - SHADOWS. `rgba(0,0,0,0.6)` is a smudge on paper. These are weaker and
+ *    warm-tinted, because a neutral-grey shadow on a warm ground reads as dirt.
+ *  - SYNTAX. Nine hues re-picked for contrast against near-white, not
+ *    lightened. The dark palette's muted pastels vanish on paper.
+ *  - THE DEMO BLOCK. `--demo-*` deliberately does not appear below. That block
+ *    is an image OF code, and it sits on its own pinned ground rather than on
+ *    the page's - including its body text and its scrim, because an island is
+ *    only as dark as whatever shows through it.
+ *
+ * `--text-on-accent` also stays white in both: it labels a filled terracotta
+ * control, and that control does not get lighter.
+ *
+ * The palette is written TWICE - once for a system preference, once for an
+ * explicit choice - because plain CSS cannot share one declaration block
+ * between a media query and a selector. That duplication is a maintenance
+ * hazard, so `lib/theme.test.ts` asserts the two blocks are identical rather
+ * than trusting anyone to keep them in step by hand. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-base: #faf7f3;
+    --bg-surface: #f3eee7;
+    --bg-elevated: #ffffff;
+    --border: #dbd2c6;
+    --border-focus: #a8552f;
+    --accent: #a8552f;
+    --accent-bright: #c06b42;
+    --accent-hover: #8c4526;
+    --accent-light: #bd6b47;
+    --accent-text: #8c4526;
+    --accent-violet: #7c3f6c;
+    --accent-dim: rgba(168, 85, 47, 0.12);
+    --accent-bg: rgba(168, 85, 47, 0.08);
+    --accent-border: rgba(168, 85, 47, 0.45);
+    --accent-glow: rgba(168, 85, 47, 0.22);
+    --text-primary: #171412;
+    --text-secondary: #5c514b;
+    --text-dim: #6d6159;
+    --danger: #b3241f;
+    --danger-dim: rgba(179, 36, 31, 0.1);
+    --danger-border: rgba(179, 36, 31, 0.45);
+    --warning: #85600f;
+    --warning-dim: rgba(133, 96, 15, 0.12);
+    --success: #2c6a50;
+    --code-bg: #fbf8f4;
+    --code-text: #241e1a;
+    --text-on-accent: #ffffff;
+    --sheen: rgba(255, 255, 255, 0.65);
+    --accent-rgb: 168, 85, 47;
+    --danger-rgb: 179, 36, 31;
+    --success-rgb: 44, 106, 80;
+    --text-primary-rgb: 23, 20, 18;
+    --bg-surface-rgb: 243, 238, 231;
+    --bg-elevated-rgb: 255, 255, 255;
+    --bg-deep-rgb: 236, 229, 219;
+    --border-rgb: 219, 210, 198;
+    --code-bg-rgb: 251, 248, 244;
+    --shadow-rgb: 78, 60, 46;
+    --shadow-sm: 0 1px 2px rgba(78, 60, 46, 0.1);
+    --shadow-md: 0 10px 30px rgba(78, 60, 46, 0.1), 0 2px 6px rgba(78, 60, 46, 0.07);
+    --shadow-lg: 0 40px 90px rgba(78, 60, 46, 0.14), 0 10px 28px rgba(78, 60, 46, 0.09);
+    --edge-light: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --syntax-comment: #6f645c;
+    --syntax-keyword: #a5432a;
+    --syntax-string: #2c6a45;
+    --syntax-number: #285a80;
+    --syntax-function: #7d5a0e;
+    --syntax-class: #6b3f76;
+    --syntax-property: #6e5429;
+    --syntax-variable: #171412;
+    --syntax-punctuation: #5c514b;
+    --editor-selection: rgba(168, 85, 47, 0.2);
+    --editor-selection-match: rgba(168, 85, 47, 0.12);
+    --editor-line-highlight: rgba(23, 20, 18, 0.045);
+    --editor-active-line: rgba(23, 20, 18, 0.03);
+    --editor-gutter-border: rgba(23, 20, 18, 0.09);
+    --cat-jsdoc: #6535c4;
+    --cat-todo: #ad4c07;
+    --cat-step-marker: #1c5798;
+    --cat-narration: #15704a;
+    --cat-separator: #6a625c;
+    --cat-section-header: #7d5a0e;
+    --cat-inline-annotation: #a92562;
+  }
+}
+
+:root[data-theme='light'] {
+  --bg-base: #faf7f3;
+  --bg-surface: #f3eee7;
+  --bg-elevated: #ffffff;
+  --border: #dbd2c6;
+  --border-focus: #a8552f;
+  --accent: #a8552f;
+  --accent-bright: #c06b42;
+  --accent-hover: #8c4526;
+  --accent-light: #bd6b47;
+  --accent-text: #8c4526;
+  --accent-violet: #7c3f6c;
+  --accent-dim: rgba(168, 85, 47, 0.12);
+  --accent-bg: rgba(168, 85, 47, 0.08);
+  --accent-border: rgba(168, 85, 47, 0.45);
+  --accent-glow: rgba(168, 85, 47, 0.22);
+  --text-primary: #171412;
+  --text-secondary: #5c514b;
+  --text-dim: #6d6159;
+  --danger: #b3241f;
+  --danger-dim: rgba(179, 36, 31, 0.1);
+  --danger-border: rgba(179, 36, 31, 0.45);
+  --warning: #85600f;
+  --warning-dim: rgba(133, 96, 15, 0.12);
+  --success: #2c6a50;
+  --code-bg: #fbf8f4;
+  --code-text: #241e1a;
+  --text-on-accent: #ffffff;
+  --sheen: rgba(255, 255, 255, 0.65);
+  --accent-rgb: 168, 85, 47;
+  --danger-rgb: 179, 36, 31;
+  --success-rgb: 44, 106, 80;
+  --text-primary-rgb: 23, 20, 18;
+  --bg-surface-rgb: 243, 238, 231;
+  --bg-elevated-rgb: 255, 255, 255;
+  --bg-deep-rgb: 236, 229, 219;
+  --border-rgb: 219, 210, 198;
+  --code-bg-rgb: 251, 248, 244;
+  --shadow-rgb: 78, 60, 46;
+  --shadow-sm: 0 1px 2px rgba(78, 60, 46, 0.1);
+  --shadow-md: 0 10px 30px rgba(78, 60, 46, 0.1), 0 2px 6px rgba(78, 60, 46, 0.07);
+  --shadow-lg: 0 40px 90px rgba(78, 60, 46, 0.14), 0 10px 28px rgba(78, 60, 46, 0.09);
+  --edge-light: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --syntax-comment: #6f645c;
+  --syntax-keyword: #a5432a;
+  --syntax-string: #2c6a45;
+  --syntax-number: #285a80;
+  --syntax-function: #7d5a0e;
+  --syntax-class: #6b3f76;
+  --syntax-property: #6e5429;
+  --syntax-variable: #171412;
+  --syntax-punctuation: #5c514b;
+  --editor-selection: rgba(168, 85, 47, 0.2);
+  --editor-selection-match: rgba(168, 85, 47, 0.12);
+  --editor-line-highlight: rgba(23, 20, 18, 0.045);
+  --editor-active-line: rgba(23, 20, 18, 0.03);
+  --editor-gutter-border: rgba(23, 20, 18, 0.09);
+  --cat-jsdoc: #6535c4;
+  --cat-todo: #ad4c07;
+  --cat-step-marker: #1c5798;
+  --cat-narration: #15704a;
+  --cat-separator: #6a625c;
+  --cat-section-header: #7d5a0e;
+  --cat-inline-annotation: #a92562;
 }
 
 html {
@@ -285,13 +541,13 @@ body {
   background-color: var(--bg-base);
   background-image: radial-gradient(
     circle at center,
-    rgba(250, 247, 244, 0.022) 1px,
+    rgba(var(--text-primary-rgb), 0.022) 1px,
     transparent 1.4px
   );
   background-size: 24px 24px;
   background-attachment: fixed;
 }
-/* Aurora layer — two soft orbs drifting on long, opposing loops. */
+/* Aurora layer - two soft orbs drifting on long, opposing loops. */
 body::after {
   content: '';
   position: fixed;
@@ -299,9 +555,9 @@ body::after {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(38% 30% at 30% 8%, rgba(204, 120, 92, 0.16) 0%, transparent 70%),
-    radial-gradient(30% 26% at 78% 4%, rgba(91, 169, 139, 0.08) 0%, transparent 70%),
-    radial-gradient(26% 22% at 60% 90%, rgba(204, 120, 92, 0.05) 0%, transparent 70%);
+    radial-gradient(38% 30% at 30% 8%, rgba(var(--accent-rgb), 0.16) 0%, transparent 70%),
+    radial-gradient(30% 26% at 78% 4%, rgba(var(--success-rgb), 0.08) 0%, transparent 70%),
+    radial-gradient(26% 22% at 60% 90%, rgba(var(--accent-rgb), 0.05) 0%, transparent 70%);
   animation: aurora-drift 26s ease-in-out infinite alternate;
 }
 @keyframes aurora-drift {
@@ -329,16 +585,16 @@ body::before {
 }
 
 ::selection {
-  background: rgba(204, 120, 92, 0.35);
-  color: #fff;
+  background: rgba(var(--accent-rgb), 0.35);
+  color: var(--text-on-accent);
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 a:hover {
-  color: var(--accent-bright);
+  color: var(--accent-text);
 }
 
 h1,
@@ -416,20 +672,25 @@ input::placeholder {
 .btn-primary {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, #d98968 0%, var(--accent) 55%, var(--accent-hover) 100%);
-  color: #fff;
+  background: linear-gradient(
+    180deg,
+    var(--accent-fill-top) 0%,
+    var(--accent-fill) 55%,
+    var(--accent-fill-bottom) 100%
+  );
+  color: var(--text-on-accent);
   font-weight: 600;
   padding: 8px 18px;
   letter-spacing: 0.01em;
   box-shadow:
-    0 1px 0 rgba(250, 247, 244, 0.18) inset,
+    0 1px 0 rgba(var(--text-primary-rgb), 0.18) inset,
     0 6px 18px -6px var(--accent-glow);
   transition:
     transform 0.12s ease,
     box-shadow 0.15s ease,
     filter 0.15s ease;
 }
-/* Shine sweep — a light band crosses the button on hover. */
+/* Shine sweep - a light band crosses the button on hover. */
 .btn-primary::after {
   content: '';
   position: absolute;
@@ -437,7 +698,7 @@ input::placeholder {
   bottom: 0;
   left: -60%;
   width: 40%;
-  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  background: linear-gradient(105deg, transparent, var(--sheen), transparent);
   transform: skewX(-20deg);
   transition: left 0.45s ease;
   pointer-events: none;
@@ -446,7 +707,7 @@ input::placeholder {
   filter: brightness(1.05);
   transform: translateY(-1px);
   box-shadow:
-    0 1px 0 rgba(250, 247, 244, 0.22) inset,
+    0 1px 0 rgba(var(--text-primary-rgb), 0.22) inset,
     0 10px 26px -8px var(--accent-glow);
 }
 .btn-primary:hover:not(:disabled)::after {
@@ -480,12 +741,12 @@ input::placeholder {
 .btn-danger {
   background: var(--danger-dim);
   color: var(--danger);
-  border: 1px solid rgba(224, 92, 92, 0.35);
+  border: 1px solid rgba(var(--danger-rgb), 0.35);
   padding: 6px 14px;
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 /* ── Badges ───────────────────────────────────────────────────────────────── */
@@ -501,8 +762,8 @@ input::placeholder {
 }
 .badge-accent {
   background: var(--accent-dim);
-  color: var(--accent-bright);
-  border: 1px solid rgba(204, 120, 92, 0.35);
+  color: var(--accent-text);
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
 }
 .badge-dim {
   background: var(--bg-elevated);
@@ -516,7 +777,7 @@ input::placeholder {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  background: rgba(46, 39, 35, 0.85);
+  background: rgba(var(--bg-elevated-rgb), 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
@@ -553,7 +814,7 @@ input::placeholder {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(18, 15, 13, 0.7);
+  background: rgba(var(--code-bg-rgb), 0.7);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
@@ -573,7 +834,7 @@ input::placeholder {
 }
 
 .modal {
-  background: linear-gradient(180deg, rgba(46, 39, 35, 0.6) 0%, var(--bg-surface) 100%);
+  background: linear-gradient(180deg, rgba(var(--bg-elevated-rgb), 0.6) 0%, var(--bg-surface) 100%);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 28px;
@@ -649,7 +910,11 @@ input::placeholder {
    Used by the hero demo, pricing cards, and panel framing. */
 .surface {
   position: relative;
-  background: linear-gradient(180deg, rgba(46, 39, 35, 0.55) 0%, rgba(33, 27, 24, 0.7) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--bg-elevated-rgb), 0.55) 0%,
+    rgba(var(--bg-surface-rgb), 0.7) 100%
+  );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border);
@@ -657,16 +922,16 @@ input::placeholder {
   box-shadow: var(--shadow-md), var(--edge-light);
 }
 .surface-accent {
-  border-color: rgba(204, 120, 92, 0.45);
+  border-color: rgba(var(--accent-rgb), 0.45);
   box-shadow:
     var(--shadow-lg),
     var(--edge-light),
-    0 0 0 1px rgba(204, 120, 92, 0.1),
+    0 0 0 1px rgba(var(--accent-rgb), 0.1),
     0 24px 60px -28px var(--accent-glow);
 }
 
 /* ── Technical corner ticks ───────────────────────────────────────────────────
-   Blueprint crosshair marks at each corner — the "engineering drawing" detail
+   Blueprint crosshair marks at each corner - the "engineering drawing" detail
    applied to feature cards. Pure background-images, no extra DOM. */
 .ticks {
   background-image:
@@ -701,7 +966,12 @@ input::placeholder {
 
 /* ── Gradient display text ────────────────────────────────────────────────── */
 .text-gradient {
-  background: linear-gradient(100deg, var(--accent-bright) 0%, var(--accent) 45%, #b06a9e 110%);
+  background: linear-gradient(
+    100deg,
+    var(--accent-bright) 0%,
+    var(--accent) 45%,
+    var(--accent-violet) 110%
+  );
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -710,7 +980,7 @@ input::placeholder {
 
 /* ── Redaction motif ──────────────────────────────────────────────────────────
    Veilio veils identifiers. A redaction bar sweeps across text and "unveils" the
-   placeholder beneath — the core brand gesture, used in the hero demo. */
+   placeholder beneath - the core brand gesture, used in the hero demo. */
 .redact {
   position: relative;
   border-radius: 3px;
@@ -780,7 +1050,7 @@ input::placeholder {
   }
 }
 
-/* ── Pricing card polish (text/markup unchanged — visual only) ─────────────── */
+/* ── Pricing card polish (text/markup unchanged - visual only) ─────────────── */
 .price-card {
   transition:
     transform 0.2s ease,
@@ -789,7 +1059,7 @@ input::placeholder {
 }
 .price-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(204, 120, 92, 0.4);
+  border-color: rgba(var(--accent-rgb), 0.4);
   box-shadow:
     var(--shadow-lg),
     var(--edge-light),
@@ -813,14 +1083,14 @@ input::placeholder {
   transition: right 0.25s ease;
 }
 .footer-link:hover {
-  color: var(--accent-bright);
+  color: var(--accent-text);
 }
 .footer-link:hover::after {
   right: 0;
 }
 
 /* ── Segmented mode control ───────────────────────────────────────────────────
-   Two-state switch with a sliding active pill — the indicator glides between
+   Two-state switch with a sliding active pill - the indicator glides between
    "Send to AI" and "Restore from AI". */
 .seg {
   position: relative;
@@ -839,9 +1109,9 @@ input::placeholder {
   left: 4px;
   width: calc(50% - 4px);
   border-radius: 999px;
-  background: linear-gradient(180deg, #d98968, var(--accent-hover));
+  background: linear-gradient(180deg, var(--accent-fill-top), var(--accent-fill-bottom));
   box-shadow:
-    0 1px 0 rgba(250, 247, 244, 0.18) inset,
+    0 1px 0 rgba(var(--text-primary-rgb), 0.18) inset,
     0 6px 16px -8px var(--accent-glow);
   transition: transform 0.28s cubic-bezier(0.3, 0.8, 0.3, 1);
 }
@@ -859,7 +1129,7 @@ input::placeholder {
   transition: color 0.2s ease;
 }
 .seg-btn.active {
-  color: #fff;
+  color: var(--text-on-accent);
   font-weight: 600;
 }
 
@@ -878,7 +1148,7 @@ input::placeholder {
     box-shadow 0.2s ease;
 }
 .code-panel:focus-within {
-  border-color: rgba(204, 120, 92, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
   box-shadow:
     var(--shadow-md),
     var(--edge-light),
@@ -908,12 +1178,16 @@ input::placeholder {
   height: 5px;
   border-radius: 1px;
   background: var(--success);
-  box-shadow: 0 0 6px rgba(91, 169, 139, 0.6);
+  box-shadow: 0 0 6px rgba(var(--success-rgb), 0.6);
 }
 
 /* ── Dashboard map cards ──────────────────────────────────────────────────── */
 .map-card {
-  background: linear-gradient(180deg, rgba(46, 39, 35, 0.45) 0%, var(--bg-surface) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--bg-elevated-rgb), 0.45) 0%,
+    var(--bg-surface) 100%
+  );
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px 18px;
@@ -929,7 +1203,7 @@ input::placeholder {
 }
 .map-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(204, 120, 92, 0.35);
+  border-color: rgba(var(--accent-rgb), 0.35);
   box-shadow: var(--shadow-md), var(--edge-light);
 }
 .empty-state {
@@ -937,7 +1211,7 @@ input::placeholder {
   padding: 56px 24px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-lg);
-  background: rgba(33, 27, 24, 0.4);
+  background: rgba(var(--bg-surface-rgb), 0.4);
 }
 
 /* ── FAQ ──────────────────────────────────────────────────────────────────── */
@@ -952,7 +1226,7 @@ input::placeholder {
   border-color: var(--text-dim);
 }
 .faq-item.open {
-  border-color: rgba(204, 120, 92, 0.35);
+  border-color: rgba(var(--accent-rgb), 0.35);
 }
 .faq-plus {
   display: inline-block;
@@ -965,7 +1239,7 @@ input::placeholder {
 }
 .faq-item.open .faq-plus {
   transform: rotate(45deg);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .faq-answer {
   animation: faq-open 0.25s ease;
@@ -993,7 +1267,7 @@ input::placeholder {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(250, 247, 244, 0.06), transparent);
+  background: linear-gradient(90deg, transparent, rgba(var(--text-primary-rgb), 0.06), transparent);
   animation: shimmer 1.4s ease infinite;
 }
 @keyframes shimmer {
@@ -1070,7 +1344,7 @@ input::placeholder {
   transition: background 0.12s ease;
 }
 .map-table tbody tr:nth-child(even) {
-  background: rgba(250, 247, 244, 0.02);
+  background: rgba(var(--text-primary-rgb), 0.02);
 }
 .map-table tbody tr:hover {
   background: var(--accent-dim);
@@ -1079,7 +1353,7 @@ input::placeholder {
   padding: 7px 10px;
   font-family: var(--font-mono);
   font-size: 12px;
-  border-bottom: 1px solid rgba(66, 58, 54, 0.5);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.5);
 }
 
 /* ── Legal doc switcher pills ─────────────────────────────────────────────── */
@@ -1101,15 +1375,15 @@ input::placeholder {
   border-color: var(--text-dim);
 }
 .doc-pill.active {
-  color: var(--accent-bright);
+  color: var(--accent-text);
   background: var(--accent-dim);
-  border-color: rgba(204, 120, 92, 0.35);
+  border-color: rgba(var(--accent-rgb), 0.35);
 }
 
 /* ── Footer hairline ──────────────────────────────────────────────────────── */
 .footer-hairline {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(204, 120, 92, 0.35), transparent);
+  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.35), transparent);
 }
 
 /* ── Floating glass navbar ────────────────────────────────────────────────── */
@@ -1128,14 +1402,14 @@ input::placeholder {
   justify-content: space-between;
   padding: 0 10px 0 18px;
   border-radius: 999px;
-  background: rgba(28, 23, 20, 0.65);
+  background: rgba(var(--bg-deep-rgb), 0.65);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
-  border: 1px solid rgba(66, 58, 54, 0.9);
+  border: 1px solid rgba(var(--border-rgb), 0.9);
   box-shadow:
-    0 1px 0 rgba(250, 247, 244, 0.05) inset,
-    0 12px 32px -12px rgba(0, 0, 0, 0.7),
-    0 1px 12px -4px rgba(204, 120, 92, 0.12);
+    0 1px 0 rgba(var(--text-primary-rgb), 0.05) inset,
+    0 12px 32px -12px rgba(var(--shadow-rgb), 0.7),
+    0 1px 12px -4px rgba(var(--accent-rgb), 0.12);
 }
 .nav-link {
   position: relative;
@@ -1153,7 +1427,7 @@ input::placeholder {
   color: var(--text-primary);
 }
 .nav-link.active {
-  color: var(--accent-bright);
+  color: var(--accent-text);
   background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px rgba(204, 120, 92, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.3);
 }

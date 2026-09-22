@@ -37,7 +37,7 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
           style={{
             display: 'block',
             marginBottom: 12,
-            filter: 'drop-shadow(0 0 12px rgba(204,120,92,0.35))',
+            filter: 'drop-shadow(0 0 12px rgba(var(--accent-rgb), 0.35))',
           }}
         />
         <h2
@@ -52,7 +52,7 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
           <span className="badge badge-accent">{Object.keys(map).length} identifiers</span>{' '}
-          <span style={{ marginLeft: 6 }}>Saved locally — never leaves this browser.</span>
+          <span style={{ marginLeft: 6 }}>Saved locally - never leaves this browser.</span>
         </p>
 
         <form onSubmit={handleSave}>

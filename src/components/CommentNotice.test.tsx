@@ -9,7 +9,7 @@ afterEach(cleanup)
 
 /**
  * 004-b3, User Story 1. The engine leaves comment prose alone on purpose, and
- * the anonymized panel gives no sign of it — the output looks handled. This
+ * the anonymized panel gives no sign of it - the output looks handled. This
  * panel is the whole of the fix: it does not close the leak, it makes the leak
  * a decision somebody actually took.
  *
@@ -58,7 +58,7 @@ describe('CommentNotice', () => {
 
   it('names both ways to close the leak', () => {
     // Acceptance scenario 3. Mark the span, or drop the comment. Naming the
-    // control by the label it actually wears — "Mask selection" — is the
+    // control by the label it actually wears - "Mask selection" - is the
     // difference between an instruction and a gesture at one.
     render(<CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />)
     const body = screen.getByText(/Names, customers and ticket numbers/)
@@ -75,7 +75,7 @@ describe('CommentNotice', () => {
   it('says a licence header is above the code', () => {
     // Edge case from the spec: a header is in nearly every file and is almost
     // never sensitive. Same weight as an incident note is how this panel becomes
-    // the next thing users learn to ignore — so the difference is carried by the
+    // the next thing users learn to ignore - so the difference is carried by the
     // wording and by how loud the panel looks, not by a word.
     const source = ['// Copyright 2026 Veilio', '// See LICENSE.', 'const a = one()'].join('\n')
     render(<CommentNotice exposure={exposureOf(source)} />)
@@ -117,7 +117,7 @@ describe('CommentNotice', () => {
   it('never interrupts a screen reader', () => {
     // FR-007, and the reason this is not a SecretPanel group. Nearly every real
     // file has a comment beside code, so `role="alert"` here would fire on
-    // almost every paste — spending, on wallpaper, the interruption the actual
+    // almost every paste - spending, on wallpaper, the interruption the actual
     // credential warning needs.
     const { container } = render(
       <CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />

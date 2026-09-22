@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// jsdom has no `Worker` global at all — not a stub, absent entirely. That is
+// jsdom has no `Worker` global at all - not a stub, absent entirely. That is
 // exactly the fallback case ROADMAP E11 asks for ("a context where the
 // worker cannot start... falls back to the current path"), so this suite
 // runs `InlineKdfTransport` for real rather than mocking a Worker to force
@@ -20,7 +20,7 @@ const KDF: KdfParams = { name: 'PBKDF2-SHA256', iterations: 1000 }
 const SALT = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
 const PASSPHRASE = 'fixed-vector-passphrase'
 
-// Computed once against Node's WebCrypto (`crypto.subtle`) directly — the
+// Computed once against Node's WebCrypto (`crypto.subtle`) directly - the
 // same primitive `crypto.subtle.deriveKey` used before this feature existed.
 // specs/007-e11-derive-off/research.md R-004: this is the anti-regression
 // check that the transport swap did not silently change what gets derived.
@@ -122,7 +122,7 @@ describe('WorkerKdfTransport protocol', () => {
     await expect(promise).rejects.toThrow(/failed/i)
   })
 
-  it('terminates the worker and rejects on abort — the only way to stop an in-flight derive', async () => {
+  it('terminates the worker and rejects on abort - the only way to stop an in-flight derive', async () => {
     const { worker } = makeFakeWorker()
     const transport = new WorkerKdfTransport(() => worker)
     const controller = new AbortController()

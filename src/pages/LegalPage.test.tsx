@@ -66,7 +66,7 @@ describe('LegalPage link rendering (ROADMAP E6)', () => {
 
     await screen.findByText(/Please/)
     expect(screen.queryByRole('link', { name: 'click here' })).toBeNull()
-    // The words survive — refusing the link must not delete the prose.
+    // The words survive - refusing the link must not delete the prose.
     expect(document.body.textContent).toContain('click here')
     expect(document.body.innerHTML).not.toContain('javascript:')
   })
@@ -138,5 +138,46 @@ describe('LegalPage document routing', () => {
 
     expect(await screen.findByText('home')).toBeTruthy()
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('retired documents', () => {
+  /**
+   * Rendered, not inspected.
+   *
+   * A test that asserts `SUPERSEDED_BY.aup === 'terms'` passes with the
+   * redirect deleted - the map would still be right and nothing would consult
+   * it. What matters is where a reader following an old link actually lands,
+   * so this mounts the real route and checks the document that comes back.
+   */
+  function renderAt(slug: string, markdown = '# Terms of Use\n\nbody') {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(markdown) }))
+    )
+    return render(
+      <MemoryRouter initialEntries={[`/legal/${slug}`]}>
+        <Routes>
+          <Route path="/legal/:slug" element={<LegalPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+  }
+
+  it('sends the retired Acceptable Use Policy to the Terms that absorbed it', async () => {
+    renderAt('aup', '# Terms of Use\n\nAcceptable use lives here now.')
+    await waitFor(() => expect(screen.getByText(/Acceptable use lives here now/)).toBeTruthy())
+  })
+
+  it('sends the retired Cookie Notice to the Privacy Notice that absorbed it', async () => {
+    renderAt('cookies', '# Privacy Notice\n\nCookies and local storage live here now.')
+    await waitFor(() =>
+      expect(screen.getByText(/Cookies and local storage live here now/)).toBeTruthy()
+    )
+  })
+
+  it('still drops an unknown slug on the home page, not into a redirect loop', async () => {
+    const { container } = renderAt('not-a-document')
+    await waitFor(() => expect(container.querySelector('.page')).toBeNull())
   })
 })
