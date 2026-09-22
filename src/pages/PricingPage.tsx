@@ -10,8 +10,10 @@ type CtaType = 'tool' | 'cloud' | 'mailto'
 
 interface PlanCard {
   name: string
-  price: string
-  period: string
+  /** Free only. A paid tier's price lives on Cloud, which is the one place it
+   *  can be right — see the note above PLANS. */
+  price?: string
+  period?: string
   tagline: string
   features: string[]
   cta: string
@@ -21,9 +23,35 @@ interface PlanCard {
   ctaType: CtaType
 }
 
-// Mirrors Veilio Cloud's four tiers. In the Community Edition, Free is what
-// you're self-hosting; the paid tiers live on Veilio Cloud, so their CTAs link
-// out rather than running checkout (there's no billing in the CE).
+/**
+ * CE knows exactly one price, and it is its own.
+ *
+ * This page used to mirror Cloud's four tiers by hand, with a comment saying
+ * "the tiers have to agree — two editions quoting different plans is worse than
+ * either being wrong alone". They did not agree. At the point this was
+ * rewritten the page carried THREE inconsistent price sets at once: cards
+ * saying Individual €9 / Team €19, an FAQ saying Individual $3 / Pro $9 / Team
+ * €19, and Cloud actually charging €3 and €16 from live Stripe tiers. It also
+ * advertised `Pro`, a tier ROADMAP E12 deleted, map ceilings a previous comment
+ * had already flagged as overselling, and a "99.9% SLA" that Cloud removed
+ * under a test forbidding its return.
+ *
+ * Hand-mirroring did not fail through carelessness; it fails because there is
+ * no mechanism by which it could succeed. Cloud reads its prices live from
+ * Stripe. CE cannot: it publishes, and enforces, that it "contacts no
+ * third-party origin at any point" and "works unchanged in air-gapped
+ * deployments" — a CSP the server sends and `e2e/security.spec.ts` both hold
+ * that line. Fetching veilio.dev to stay in sync would break the claim this
+ * product is FOR.
+ *
+ * So CE states what it knows — the free tier, which is the thing you are
+ * running — describes the paid tiers by what they DO, and sends anyone who
+ * wants a number to the one place that has one. A link is user-initiated
+ * navigation: nothing is contacted on page load, so the air-gap claim holds and
+ * the page still renders offline.
+ *
+ * `pricing-is-not-mirrored.test.ts` fails if a currency amount comes back.
+ */
 const PLANS: PlanCard[] = [
   {
     name: 'Free',
@@ -46,39 +74,26 @@ const PLANS: PlanCard[] = [
     ctaType: 'tool',
   },
   {
-    // One solo tier since ROADMAP E12: Individual and Pro differed by a single
-    // feature flag while Pro cost three times as much, so they were merged and
-    // Individual absorbed the feature set. This page describes the SAME cloud
-    // product as the Cloud edition's own pricing page, so the tiers have to
-    // agree — two editions quoting different plans is worse than either being
-    // wrong alone.
     name: 'Individual',
-    price: '€9',
-    period: 'per month, excl. VAT',
-    tagline: 'Cloud sync and your own masking rules, for one developer.',
+    tagline: 'Hosted map sync and your own masking rules, for one developer.',
     features: [
-      // 200, not the 500/2,000 this page used to claim. The cloud ceiling is
-      // PAID_MAP_CEILING = 200 and has been for some time; the numbers here
-      // were stale in the direction that oversells.
-      'Cloud map storage (up to 200 maps)',
+      'Hosted cloud map storage',
       'Cross-device history sync',
       'Custom rules',
       'Browser extension',
       'Export / import .veilio files',
       'Email support',
     ],
-    cta: 'Get Individual on Cloud →',
+    cta: 'See Individual on Cloud →',
     highlight: false,
     planId: 'individual',
     ctaType: 'cloud',
   },
   {
     name: 'Team',
-    price: '€19',
-    period: 'per seat, per month, excl. VAT',
     tagline: 'Shared dictionaries, SSO, and audit — for a team.',
     features: [
-      'Everything in Pro',
+      'Everything in Individual',
       'Team shared maps',
       'Team member invites',
       'SSO (Google / Microsoft)',
@@ -87,7 +102,7 @@ const PLANS: PlanCard[] = [
       'Policy console',
       'Priority support',
     ],
-    cta: 'Get Team on Cloud →',
+    cta: 'See Team on Cloud →',
     highlight: true,
     badge: 'Most popular',
     planId: 'team',
@@ -95,16 +110,13 @@ const PLANS: PlanCard[] = [
   },
   {
     name: 'Enterprise',
-    price: 'Custom',
-    period: 'talk to us',
-    tagline: 'Compliance, SAML, on-prem. SLA-backed.',
+    tagline: 'Compliance, SAML, on-prem.',
     features: [
       'Everything in Team',
       'SAML SSO',
       'SIEM export',
       'On-prem deployment',
       'Dedicated success manager',
-      '99.9% SLA',
     ],
     cta: 'Contact us',
     highlight: false,
@@ -128,7 +140,7 @@ const FAQS = [
   },
   {
     q: 'What does the Cloud edition add?',
-    a: 'Cloud is the paid, hosted edition — there is no free Cloud tier (the free option is self-hosting this Community Edition). Individual ($3/mo) adds hosted cloud sync with up to 500 maps. Pro ($9/user/mo) raises that to 2,000 maps and adds custom rules and the browser extension. Team ($19/seat/mo) adds shared maps, SSO, and audit. Enterprise (custom) adds SAML, SIEM export, and on-prem. The anonymizer engine is identical across all editions — only persistence and team features differ.',
+    a: 'Cloud is the paid, hosted edition — there is no free Cloud tier, because the free option is self-hosting this Community Edition. Individual adds hosted map sync, custom rules and the browser extension; Team adds shared maps, SSO and an audit log; Enterprise adds SAML, SIEM export and on-prem. The anonymizer engine is identical across every edition — only persistence and team features differ. Current prices and limits are on veilio.dev/pricing, which is the only place they can be kept accurate: this page is shipped software and cannot see what Cloud charges today.',
   },
   {
     q: 'Is my source code ever sent anywhere in CE?',
@@ -270,15 +282,27 @@ export default function PricingPage() {
                   </span>
                   {plan.planId === 'free' && <span className="badge badge-accent">CE</span>}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span
-                    style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}
-                  >
-                    {plan.price}
-                  </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                    {plan.period}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minHeight: 52 }}>
+                  {plan.price ? (
+                    <>
+                      <span
+                        style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 400 }}
+                      >
+                        {plan.price}
+                      </span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                        {plan.period}
+                      </span>
+                    </>
+                  ) : (
+                    // Deliberately not a number, and not "from €x" either —
+                    // either would be a second source of truth with no way to
+                    // stay true. `minHeight` keeps the cards aligned so the
+                    // absence reads as a design choice rather than a gap.
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5 }}>
+                      Priced on Veilio Cloud
+                    </span>
+                  )}
                 </div>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>
                   {plan.tagline}
