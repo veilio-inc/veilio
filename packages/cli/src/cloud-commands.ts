@@ -147,7 +147,13 @@ export async function runLogout(io: Io): Promise<number> {
     if (err instanceof CloudError && err.kind === 'unauthenticated') {
       // Already revoked, or expired. The server-side state is what logout
       // wanted, so finishing the job locally is correct rather than an error.
+      //
+      // "Locally" has to include the team keys. They outlive the session that
+      // fetched them — a revoked token stops working, an unlocked team key goes
+      // on opening the team's maps — so leaving them here would be the one
+      // branch where signing out quietly kept the more dangerous half.
       try {
+        removeTeamUnlock(io.home)
         removeCredential(io.home)
       } catch (removeErr) {
         io.stderr(
