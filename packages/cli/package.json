@@ -1,6 +1,6 @@
 {
   "name": "@veilio-inc/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM — from the terminal, a pipe, or a pre-commit hook.",
   "type": "module",
   "bin": {
