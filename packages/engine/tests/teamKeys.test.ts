@@ -108,7 +108,10 @@ describe('the whole read path', () => {
     const wrap = await wrapTeamKeyFor(teamKeyRaw, alice, bobPublic, { teamId: 't1', version: 1 })
     const envelope = await encryptTeamMap(teamKeyRaw, { __CLS__1: 'Invoice' })
 
-    const bobPrivate = await unwrapPrivateKey(bobVault as unknown as CryptoKeyLike, bobStoredPrivate)
+    const bobPrivate = await unwrapPrivateKey(
+      bobVault as unknown as CryptoKeyLike,
+      bobStoredPrivate
+    )
     const teamKey = await unwrapTeamKey(wrap, bobPrivate, {
       teamId: 't1',
       version: 1,
@@ -214,7 +217,9 @@ describe('decryptTeamMap', () => {
     // the two silently would misreport what a passphrase loss costs.
     const teamKeyRaw = randomTeamKey()
     const env = await encryptTeamMap(teamKeyRaw, { __CLS__1: 'Invoice' })
-    const key = await subtle.importKey('raw', buf(teamKeyRaw), { name: WRAP_ALG }, false, ['decrypt'])
+    const key = await subtle.importKey('raw', buf(teamKeyRaw), { name: WRAP_ALG }, false, [
+      'decrypt',
+    ])
 
     await expect(
       decryptTeamMap(key as unknown as CryptoKeyLike, {
@@ -227,7 +232,9 @@ describe('decryptTeamMap', () => {
   it('refuses altered ciphertext rather than returning nonsense identifiers', async () => {
     const teamKeyRaw = randomTeamKey()
     const env = await encryptTeamMap(teamKeyRaw, { __CLS__1: 'Invoice' })
-    const key = await subtle.importKey('raw', buf(teamKeyRaw), { name: WRAP_ALG }, false, ['decrypt'])
+    const key = await subtle.importKey('raw', buf(teamKeyRaw), { name: WRAP_ALG }, false, [
+      'decrypt',
+    ])
     const tampered = { ...env, data: toBase64(new Uint8Array(40)) }
 
     await expect(decryptTeamMap(key as unknown as CryptoKeyLike, tampered)).rejects.toThrow(

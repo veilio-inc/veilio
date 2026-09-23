@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeCredential } from '@veilio-inc/cli/credential'
-import { toBase64, deriveWrappingKey, importPublicKey, type CryptoKeyLike } from '@veilio-inc/engine'
+import {
+  toBase64,
+  deriveWrappingKey,
+  importPublicKey,
+  type CryptoKeyLike,
+} from '@veilio-inc/engine'
 import { primeNamespace, resetNamespaceCache } from '../src/namespace.js'
 
 /**
@@ -152,7 +157,12 @@ async function scenario(
     '/api/auth/keys': keysInitialized
       ? { initialized: true, publicKey: myPublic, privateKeyEncrypted: stored, alg: 'X25519' }
       : { initialized: false },
-    '/api/teams/team-1/key': granted ? { wraps: [{ version: 1, wrapped_key: wrap, wrapped_by: 'x', created_at: '2026-01-01' }], granted: true } : { wraps: [], granted: false },
+    '/api/teams/team-1/key': granted
+      ? {
+          wraps: [{ version: 1, wrapped_key: wrap, wrapped_by: 'x', created_at: '2026-01-01' }],
+          granted: true,
+        }
+      : { wraps: [], granted: false },
   }
   for (const m of maps) {
     bodies[`/api/maps/${m.id}`] = {
