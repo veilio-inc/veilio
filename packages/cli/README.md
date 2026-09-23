@@ -32,6 +32,11 @@ behavior; it only unlocks the four commands below that name Cloud explicitly.
 
 ## Cloud sync (Individual plan and above)
 
+> **None of this is in `0.1.0`, which is what npm currently has.** These
+> commands are merged here and ship with the next release; until then they run
+> from a clone — `npm run build:packages`, then
+> `node packages/cli/dist/index.js --help`.
+
 ```bash
 veilio login                    # prompts for email/password; --instance for self-hosted
 veilio whoami                   # who you're signed in as, no request made
