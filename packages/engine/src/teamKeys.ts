@@ -16,7 +16,7 @@
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
 
-import { fromBase64, webCryptoSubtle } from './envelope.js'
+import { fromBase64, toBase64, webCryptoSubtle } from './envelope.js'
 import type { CryptoKeyLike } from './vault.js'
 
 const WRAP_ALG = 'AES-GCM'
@@ -237,6 +237,39 @@ export async function unwrapTeamKey(
     )
   }
 
+  return webCryptoSubtle().importKey('raw', raw, { name: WRAP_ALG, length: 256 }, true, [
+    'encrypt',
+    'decrypt',
+  ])
+}
+
+/**
+ * The raw team key, base64, so a client can hold it between processes.
+ *
+ * This exists for one caller: an MCP server starts inside a coding agent with
+ * nobody present to type a passphrase, so the key it needs has to have been put
+ * somewhere by an earlier, interactive run. Exporting the TEAM key rather than
+ * the vault key is the narrower choice of the two — it opens team maps and
+ * nothing else, where the vault key would also open every personal map and
+ * unwrap the private key that can open any wrap addressed to this account.
+ *
+ * Whatever holds the result holds the team's maps. That is a real cost and the
+ * caller is responsible for it: `packages/cli/src/team-unlock.ts` writes it
+ * 0600 beside the session token, with an expiry, and says so.
+ */
+export async function exportTeamKey(key: CryptoKeyLike): Promise<string> {
+  return toBase64(await webCryptoSubtle().exportKey('raw', key))
+}
+
+/** The reverse, for a client reading one back off disk. */
+export async function importTeamKey(rawBase64: string): Promise<CryptoKeyLike> {
+  const raw = fromBase64(rawBase64)
+  if (raw.byteLength !== 32) {
+    throw new TeamKeyError(
+      `A team key must be 32 bytes (got ${raw.byteLength}). Refusing it rather than ` +
+        `importing something that would fail later as maps nobody can open.`
+    )
+  }
   return webCryptoSubtle().importKey('raw', raw, { name: WRAP_ALG, length: 256 }, true, [
     'encrypt',
     'decrypt',

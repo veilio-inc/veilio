@@ -17,17 +17,10 @@
 // happens once per process.
 
 import { readCredential, type Credential } from '@veilio-inc/cli/credential'
+import { listMaps, getMap, type CloudMapSummary, type CloudMapList } from '@veilio-inc/cli/cloud'
+import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import {
-  listMaps,
-  getMap,
-  getUserKeys,
-  getTeamKeyWraps,
-  type CloudMapSummary,
-  type CloudMapList,
-} from '@veilio-inc/cli/cloud'
-import {
-  unwrapPrivateKey,
-  unwrapTeamKey,
+  importTeamKey,
   decryptTeamMapWithAny,
   mergeTeamNamespace,
   type CryptoKeyLike,
@@ -64,15 +57,9 @@ let priming: Promise<ResolvedNamespace> | null = null
  */
 async function buildTeamNamespace(
   credential: Credential,
-  vaultKey: CryptoKeyLike,
+  keys: readonly { version: number; key: CryptoKeyLike }[],
   list: CloudMapList
 ): Promise<Record<string, string> | null> {
-  const teamId = list.team?.id
-  if (!teamId) return null
-
-  const keys = await readUserKeys(credential, vaultKey, teamId)
-  if (keys.length === 0) return null
-
   // A member's OWN team maps arrive under personalMaps — the listing splits by
   // ownership, not by scope — so both lists have to be considered or this
   // member's own placeholders drop out of the shared namespace.
@@ -85,35 +72,38 @@ async function buildTeamNamespace(
   return Object.keys(namespace).length > 0 ? namespace : null
 }
 
-/** This member's team keys, newest version first. */
-async function readUserKeys(
+/**
+ * The team keys this machine has unlocked, if any.
+ *
+ * Read from disk rather than derived, because an MCP server starts inside a
+ * coding agent with nobody present to type a vault passphrase. `veilio team
+ * unlock` is the interactive run that puts them there; see the CLI's
+ * `team-unlock.ts` for what is stored and what it costs.
+ *
+ * Absent, expired, or belonging to another account all read the same way —
+ * nothing unlocked — because all three mean the same thing here.
+ */
+async function heldTeamKeys(
   credential: Credential,
-  vaultKey: CryptoKeyLike,
+  home: string | undefined,
   teamId: string
 ): Promise<{ version: number; key: CryptoKeyLike }[]> {
-  const mine = await getUserKeys(credential)
-  // No keypair means this account has never opened the web app, so no teammate
-  // could ever have wrapped a key to it. Nothing to wait for and nothing wrong.
-  if (!mine.initialized) return []
-
-  const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
-  const { wraps } = await getTeamKeyWraps(credential, teamId)
+  const unlock = readTeamUnlock(
+    { instance: credential.instance, account: credential.account },
+    home
+  )
+  if (!unlock) return []
+  // Unlocked for a different team than the one this account is currently in.
+  // Possible after leaving one team and joining another without re-unlocking.
+  if (unlock.teamId !== teamId) return []
 
   const keys: { version: number; key: CryptoKeyLike }[] = []
-  for (const wrap of wraps) {
+  for (const stored of unlock.keys) {
     try {
-      keys.push({
-        version: wrap.version,
-        key: await unwrapTeamKey(wrap.wrapped_key, privateKey, {
-          teamId,
-          version: wrap.version,
-          myPublicKey: mine.publicKey,
-        }),
-      })
+      keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
     } catch {
-      // A wrap from a granter whose key has since changed, or one this account
-      // cannot open. Skipped rather than fatal: another version may still open
-      // most of the team's maps, and holding none of them is already handled.
+      // A damaged entry. Skipped rather than fatal, for the same reason an
+      // unopenable map is: the others may still carry the team's namespace.
       continue
     }
   }
@@ -147,10 +137,7 @@ async function openTeamMap(
   }
 }
 
-async function fetchNamespace(
-  home: string | undefined,
-  vaultKey: CryptoKeyLike | null
-): Promise<ResolvedNamespace> {
+async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespace> {
   const credential = readCredential(home)
   // Not signed in. No request — a signed-out terminal has nothing to ask Cloud.
   if (!credential) return LOCAL
@@ -163,11 +150,15 @@ async function fetchNamespace(
     // keeps working for a member who has not unlocked one.
     if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace }
 
-    // Past here everything must be decrypted locally, so without a vault key
-    // there is nothing further to try.
-    if (!vaultKey) return LOCAL
+    // Past here everything must be decrypted locally, so without keys on disk
+    // there is nothing further to try. That is the state until somebody has run
+    // `veilio team unlock` in a terminal.
+    const teamId = list.team?.id
+    if (!teamId) return LOCAL
+    const keys = await heldTeamKeys(credential, home, teamId)
+    if (keys.length === 0) return LOCAL
 
-    const namespace = await buildTeamNamespace(credential, vaultKey, list)
+    const namespace = await buildTeamNamespace(credential, keys, list)
     if (!namespace) return LOCAL
     return { source: 'team', namespace }
   } catch {
@@ -185,12 +176,9 @@ async function fetchNamespace(
  * their own request. `home` is injectable for tests; production leaves it
  * undefined and `readCredential` falls back to the real home directory.
  */
-export function primeNamespace(
-  home?: string,
-  vaultKey: CryptoKeyLike | null = null
-): Promise<ResolvedNamespace> {
+export function primeNamespace(home?: string): Promise<ResolvedNamespace> {
   if (!priming) {
-    priming = fetchNamespace(home, vaultKey).then((resolved) => {
+    priming = fetchNamespace(home).then((resolved) => {
       current = resolved
       return resolved
     })

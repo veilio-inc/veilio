@@ -242,6 +242,11 @@ interface WebCryptoSubtle {
     baseKey: WebCryptoKey,
     length: number
   ): Promise<ArrayBuffer>
+  /** Only ever called on a key already marked extractable, and only for the
+   *  team key — so a client that has been granted one can hold it across
+   *  processes instead of re-deriving it from a passphrase that nobody is
+   *  present to type. */
+  exportKey(format: 'raw', key: WebCryptoKey): Promise<ArrayBuffer>
   encrypt(
     algorithm: { name: string; iv: Uint8Array },
     key: WebCryptoKey,

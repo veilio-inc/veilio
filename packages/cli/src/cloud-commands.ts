@@ -12,6 +12,8 @@ import {
   createMap,
   getMap,
   getVault,
+  getUserKeys,
+  getTeamKeyWraps,
   listMaps,
   request,
   type CloudMap,
@@ -22,12 +24,22 @@ import {
   checkVaultVerifier,
   decryptMapFromVault,
   deriveVaultKey,
+  unwrapPrivateKey,
+  unwrapTeamKey,
+  exportTeamKey,
   encryptMapForVault,
   fromBase64,
   parseVaultEnvelope,
   type SymbolMap,
 } from '@veilio-inc/engine'
 import { loadMap, loadRemote, saveMap } from './store.js'
+import {
+  removeTeamUnlock,
+  writeTeamUnlock,
+  teamUnlockPath,
+  expiryFrom,
+  type StoredTeamKey,
+} from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
@@ -152,6 +164,20 @@ export async function runLogout(io: Io): Promise<number> {
       `veilio: could not revoke the session (${detail}).\n` +
         'You are still signed in — the credential has been kept so you can try again. ' +
         'To end the session now, sign out from the web app.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  // Before the credential, because this is key material rather than a token
+  // the server has already revoked. Signing out while the team's keys stay
+  // readable on disk is exactly the gap between what a person believes they
+  // gave up and what is still there.
+  try {
+    removeTeamUnlock(io.home)
+  } catch (err) {
+    io.stderr(
+      `veilio: the session was revoked, but the unlocked team keys could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). Delete ${teamUnlockPath(io.home)} by hand.\n`
     )
     return EXIT_ERROR
   }
@@ -464,4 +490,150 @@ function notSignedIn(io: Io): number {
 /** Same distinctions as a failed sign-in, minus the ones only login can hit. */
 function reportCloudFailure(err: unknown, io: Io): number {
   return reportLoginFailure(err, io)
+}
+
+// ─── team: unlock, lock ──────────────────────────────────────────────────────
+
+/**
+ * Unlock this team's keys for processes that cannot ask for a passphrase.
+ *
+ * The MCP server starts inside a coding agent with no terminal attached, so the
+ * keys it needs have to be put on disk by a run like this one, where a person
+ * is present to type the passphrase. See `team-unlock.ts` for what is stored
+ * and why it is the team key rather than the vault key.
+ */
+export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) {
+    io.stderr('veilio: not signed in. Run `veilio login` first.\n')
+    return EXIT_ERROR
+  }
+
+  try {
+    const list = await listMaps(credential)
+    const teamId = list.team?.id
+    if (!teamId) {
+      io.stderr(
+        'veilio: this account is not in a team, so there are no team keys to unlock. ' +
+          'Shared placeholders are a Team-plan feature.\n'
+      )
+      return EXIT_ERROR
+    }
+
+    const mine = await getUserKeys(credential)
+    if (!mine.initialized) {
+      io.stderr(
+        'veilio: this account has no keypair yet. Open the web app once — that is where a ' +
+          'keypair is created and where a teammate grants you the team key.\n'
+      )
+      return EXIT_ERROR
+    }
+
+    const { wraps } = await getTeamKeyWraps(credential, teamId)
+    if (wraps.length === 0) {
+      io.stderr(
+        'veilio: no teammate has granted you the team key yet. Ask someone already in the ' +
+          'team to open the web app, which is what performs the grant.\n'
+      )
+      return EXIT_ERROR
+    }
+
+    const vault = await getVault(credential)
+    if (!vault.initialized) {
+      io.stderr(
+        'veilio: this account has no vault, so there is no key to unwrap anything with. ' +
+          'Create one in the web app first.\n'
+      )
+      return EXIT_ERROR
+    }
+
+    const passphrase = io.password ? await io.password('Vault passphrase: ') : ''
+    if (passphrase === '') {
+      io.stderr('veilio: no passphrase given\n')
+      return EXIT_ERROR
+    }
+
+    const vaultKey = await deriveVaultKey(
+      passphrase,
+      fromBase64(vault.salt),
+      vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
+    )
+    // Named as a wrong passphrase here rather than surfacing later as an
+    // authentication-tag failure that reads like corruption.
+    if (!(await checkVaultVerifier(vaultKey, vault.verifier))) {
+      io.stderr('veilio: that vault passphrase is not right. Nothing was written.\n')
+      return EXIT_ERROR
+    }
+
+    const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
+
+    const keys: StoredTeamKey[] = []
+    for (const wrap of wraps) {
+      try {
+        const teamKey = await unwrapTeamKey(wrap.wrapped_key, privateKey, {
+          teamId,
+          version: wrap.version,
+          myPublicKey: mine.publicKey,
+        })
+        keys.push({ version: wrap.version, key: await exportTeamKey(teamKey) })
+      } catch {
+        // A wrap this account cannot open — from a granter whose key has since
+        // changed, most likely. Skipped rather than fatal: another version may
+        // still open most of the team's maps, and none opening is reported below.
+        continue
+      }
+    }
+
+    if (keys.length === 0) {
+      io.stderr(
+        'veilio: none of the team key wraps held for this account could be opened. ' +
+          'Ask a teammate to grant access again from the web app.\n'
+      )
+      return EXIT_ERROR
+    }
+
+    const now = new Date()
+    const expiresAt = expiryFrom(now, days)
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: credential.instance,
+        account: credential.account,
+        teamId,
+        expiresAt,
+        keys,
+      },
+      io.home
+    )
+
+    const versions = keys.map((k) => `v${k.version}`).join(', ')
+    io.stdout(
+      `Unlocked ${keys.length === 1 ? 'the team key' : 'team keys'} (${versions}) until ` +
+        `${expiresAt}.\n` +
+        `Stored in ${teamUnlockPath(io.home)}, readable only by you. ` +
+        `Run \`veilio team lock\` to remove them.\n`
+    )
+    return EXIT_OK
+  } catch (err) {
+    return reportCloudFailure(err, io)
+  }
+}
+
+/** Remove the unlocked team keys. */
+export function runTeamLock(io: Io): number {
+  try {
+    if (!removeTeamUnlock(io.home)) {
+      io.stdout('No team keys were unlocked.\n')
+      return EXIT_OK
+    }
+  } catch (err) {
+    io.stderr(
+      `veilio: the unlocked team keys could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). ` +
+        `Delete ${teamUnlockPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  io.stdout('Team keys locked.\n')
+  return EXIT_OK
 }
