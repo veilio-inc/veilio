@@ -55,6 +55,11 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
 
 ## Team namespace (Team plan and above)
 
+> **Not in `0.1.0`, which is what npm currently has** — and neither is the
+> `veilio login` it depends on. Both are merged here and ship with the next
+> release; until then, run both packages from a clone
+> (`npm run build:packages`).
+
 Sign in once with the `veilio` CLI — `veilio login` — and every anonymize
 result from this server states which namespace produced its placeholders:
 

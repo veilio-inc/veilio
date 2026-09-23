@@ -38,6 +38,13 @@ npm install -g @veilio-inc/cli
 npx @veilio-inc/mcp   # or add to your agent's MCP config
 ```
 
+> **What npm has is `0.1.0`, the launch build** — `scrub`, `restore`, `scan` and
+> `map`, all local. The Cloud commands in the two package READMEs (`login`,
+> `logout`, `whoami`, `maps list|pull|push`) and the MCP team namespace are
+> merged here and not released, so against an npm install they answer
+> `unknown command`. Until the next release they run from a clone:
+> `npm run build:packages`, then `node packages/cli/dist/index.js --help`.
+
 See [`packages/cli/README.md`](packages/cli/README.md) and
 [`packages/mcp/README.md`](packages/mcp/README.md) for commands and config.
 
