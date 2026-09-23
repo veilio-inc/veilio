@@ -23,6 +23,7 @@ import {
   type LanguageOption,
 } from './languages.js'
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
+import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
@@ -95,6 +96,12 @@ const ROLE_LEGEND_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['__PKG__', 'package or module names'],
   ['__STR__', 'words that appeared inside string literals'],
   ['__MANUAL__', 'values the author marked as sensitive'],
+  // Regulated identifiers, masked reversibly. Named per format rather than
+  // lumped together: a model working on the code can use "this is a bank
+  // account number" in a way it cannot use "this is redacted something".
+  ['__IBAN__', 'bank account numbers'],
+  ['__PAN__', 'payment card numbers'],
+  ['__PESEL__', 'national identification numbers'],
 ]
 
 /** Human/AI-readable summary of what the placeholder bases in `map` mean.
@@ -540,6 +547,79 @@ function applyManualMasks(
   return code.replace(pattern, (match) => reverseExisting[match] ?? match)
 }
 
+/** Placeholder base per regulated format.
+ *
+ *  Their own roles rather than a shared one, because the output's job is to be
+ *  worked on by a model: "this is a bank account number" is information it can
+ *  use, where "this is a redacted something" is not.
+ *
+ *  Deliberately NOT members of `IdentifierRole`. That union is for roles derived
+ *  from a language's grammar and `ROLE_PRIORITY` is keyed by it — extending it
+ *  would force entries ranking a card number against a function name, a
+ *  comparison with no meaning. These ride beside `__MANUAL__`, which is in the
+ *  same position for the same reason: masked reversibly, but not an identifier
+ *  the grammar produced. */
+export const REGULATED_BASES: Partial<Record<SecretType, string>> = {
+  iban: '__IBAN__',
+  'payment-card': '__PAN__',
+  pesel: '__PESEL__',
+}
+
+/**
+ * Mask detected regulated identifiers reversibly, into the same map.
+ *
+ *  Deliberately a near-twin of `applyManualMasks`, and called straight after it
+ *  — the two are the same operation with different triggers, so they share the
+ *  machinery rather than each growing their own:
+ *
+ *   - `reverseExisting` keys on the VALUE, so repeated occurrences of one IBAN
+ *     share a placeholder and a value already in `existingMap` reuses its own.
+ *     One mechanism answers both.
+ *   - `PLACEHOLDER_SCAN` is matched FIRST in the alternation, so a value can
+ *     never match inside a placeholder inserted earlier in the same pass.
+ *   - Longest-first, so a value contained in another is not half-replaced.
+ *
+ *  ORDER IS LOAD-BEARING: this runs AFTER manual marks, so a value the author
+ *  marked by hand is already in `reverseExisting` and keeps its `__MANUAL__n`
+ *  placeholder. That single fact is the whole implementation of "a manual mark
+ *  wins" — there is no precedence function. Swap the two calls and the rule
+ *  silently inverts, which is why it has a test of its own.
+ *
+ *  Unlike manual marks there is no keyword check and no refusal path: these
+ *  values are checksum-confirmed account, card and national-ID numbers, so they
+ *  cannot collide with a language's grammar. */
+function applyRegulatedMasks(
+  code: string,
+  spans: readonly RegulatedSpan[],
+  map: SymbolMap,
+  reverseExisting: Record<string, string>,
+  namedCounters: Record<string, number>
+): string {
+  if (spans.length === 0) return code
+
+  const applicable: string[] = []
+  for (const span of spans) {
+    const base = REGULATED_BASES[span.type]
+    if (base === undefined) continue
+    applicable.push(span.value)
+    if (reverseExisting[span.value]) continue
+    const n = (namedCounters[base] ?? 0) + 1
+    namedCounters[base] = n
+    const placeholder = `${base}${n}`
+    map[placeholder] = span.value
+    reverseExisting[span.value] = placeholder
+  }
+
+  if (applicable.length === 0) return code
+
+  const ordered = [...new Set(applicable)].sort((a, b) => b.length - a.length)
+  const pattern = new RegExp(
+    `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
+    'g'
+  )
+  return code.replace(pattern, (match) => reverseExisting[match] ?? match)
+}
+
 /** Terms already masked by hand in a prior pass, recovered from the map.
  *
  *  Re-derived rather than stored alongside it: the map is the only artifact
@@ -784,7 +864,7 @@ export function anonymize(
   // rather than the terms — and a mark therefore wins over whatever role the
   // classifier would have given the same token. Terms already in the map are
   // re-applied so a mark made in an earlier pass survives the round trip.
-  const source = applyManualMasks(
+  const marked = applyManualMasks(
     redacted,
     opts.manual ?? [],
     manualTermsIn(existingMap),
@@ -793,6 +873,20 @@ export function anonymize(
     namedCounters,
     language
   )
+
+  // AFTER manual marks, on purpose — a value the author marked by hand is
+  // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
+  // the entire implementation of "a manual mark wins over automatic detection";
+  // swapping these two calls inverts the rule silently. Before extraction, for
+  // the same reason manual marks are: the extractor then sees placeholders
+  // rather than the values.
+  // AFTER manual marks, on purpose — a value the author marked by hand is
+  // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
+  // the entire implementation of "a manual mark wins over automatic detection";
+  // swapping these two calls inverts the rule silently, which is why it has a
+  // test of its own. Before extraction, for the same reason manual marks are:
+  // the extractor then sees placeholders rather than the values.
+  const source = applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters)
 
   const identifiers = extractIdentifiers(source, language)
   const roleOf = classifyIdentifiers(source, language)

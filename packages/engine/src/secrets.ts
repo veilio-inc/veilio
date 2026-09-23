@@ -67,9 +67,31 @@ export interface SecretFinding {
    *  in the UI and may end up in logs; a finding carrying the whole value would
    *  re-create the leak it exists to warn about. */
   preview: string
-  /** Whether this finding was redacted under the active policy. */
+  /** Whether this finding was redacted under the active policy.
+   *
+   *  Means exactly one thing and keeps meaning it: THE VALUE WAS DESTROYED.
+   *  A reversibly masked identifier reports `false` here — it was replaced, but
+   *  it is recoverable, so calling it redacted would be a lie to every consumer
+   *  rendering this field. Read `disposition` for the finer answer. */
   redacted: boolean
+  /** What was actually done with the value. See `Disposition`. */
+  disposition: Disposition
 }
+
+/**
+ * What happens to a detected value. Exactly one of three, total over every type.
+ *
+ *  - `destroy`  the value is replaced and recorded NOWHERE. Unrecoverable by
+ *               construction, not by convention: nothing writes it to the map.
+ *  - `mask`     the value is replaced by a placeholder recorded in the map, so
+ *               `restore()` brings it back.
+ *  - `report`   the value is left exactly as written and only reported.
+ *
+ * One field rather than two booleans on purpose: two booleans can be set to a
+ * fourth, meaningless combination, and "destroyed AND recoverable" is the one
+ * state this whole design exists to make unrepresentable.
+ */
+export type Disposition = 'destroy' | 'mask' | 'report'
 
 /** How `anonymize` treats detected credentials. */
 export type SecretPolicy = 'redact' | 'warn' | 'off'
@@ -79,6 +101,25 @@ interface Pattern {
   severity: SecretSeverity
   label: string
   re: RegExp
+  /**
+   * What is done with a value this rule matches. REQUIRED, and that is the
+   * entire mechanism rather than a style choice.
+   *
+   * The disposition lives on the rule so the two cannot be edited apart. A
+   * contributor adding a detection rule tomorrow is not *reminded* to classify
+   * it — the code does not compile until they do, so the unsafe outcome is
+   * unreachable rather than merely discouraged.
+   *
+   * This replaces a deny-list whose stated virtue was that an unlisted rule
+   * redacted by default. That was correct-by-omission: you got safety by not
+   * acting. This is correct-by-construction: you cannot not-act. Nothing was
+   * traded away — the old default is strictly weaker than a compile error.
+   *
+   * DO NOT make this optional "for convenience". An optional field with a
+   * fallback re-creates the default this design removed, and whichever value
+   * the fallback picks is wrong for half the table.
+   */
+  disposition: Disposition
   /** When set, only this capture group is redacted — used for connection
    *  strings and assignments, where blanking the whole match would destroy
    *  structure the model needs (the scheme, host, and variable name). */
@@ -220,18 +261,21 @@ function looksLikePan(value: string): boolean {
 const PATTERNS: Pattern[] = [
   {
     type: 'private-key',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'Private key block',
     re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/g,
   },
   {
     type: 'aws-access-key',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'AWS access key ID',
     re: /\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b/g,
   },
   {
     type: 'aws-secret-key',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'AWS secret access key',
     re: /(?:aws_secret_access_key|aws_secret_key|awsSecretKey)["'\s:=]{1,10}([A-Za-z0-9/+=]{40})/gi,
@@ -239,24 +283,28 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'stripe-key',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'Stripe secret key',
     re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,247}\b/g,
   },
   {
     type: 'github-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'GitHub token',
     re: /\bgh[pousr]_[A-Za-z0-9]{36,255}\b/g,
   },
   {
     type: 'slack-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Slack token',
     re: /\bxox[baprse]-[A-Za-z0-9-]{10,250}\b/g,
   },
   {
     type: 'anthropic-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Anthropic API key',
     re: /\bsk-ant-[A-Za-z0-9_-]{20,250}\b/g,
@@ -265,42 +313,49 @@ const PATTERNS: Pattern[] = [
     // `sk-ant-` is excluded so an Anthropic key is reported as one rather than
     // racing the OpenAI pattern for the identical span.
     type: 'openai-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'OpenAI API key',
     re: /\bsk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,250}\b/g,
   },
   {
     type: 'google-api-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Google API key',
     re: /\bAIza[0-9A-Za-z_-]{35}\b/g,
   },
   {
     type: 'npm-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'npm access token',
     re: /\bnpm_[A-Za-z0-9]{36}\b/g,
   },
   {
     type: 'gitlab-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'GitLab token',
     re: /\bglpat-[A-Za-z0-9_-]{20,50}\b/g,
   },
   {
     type: 'slack-webhook',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'Slack webhook URL',
     re: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_-]{6,20}\/B[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_-]{20,30}/g,
   },
   {
     type: 'discord-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Discord bot token',
     re: /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}\b/g,
   },
   {
     type: 'gcp-service-account',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'GCP service-account key',
     re: /"type"\s*:\s*"service_account"[\s\S]{0,400}?"private_key_id"\s*:\s*"([a-f0-9]{40})"/g,
@@ -308,6 +363,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'azure-key',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'Azure storage key',
     re: /\bAccountKey\s*=\s*([A-Za-z0-9+/]{86}==)/g,
@@ -315,30 +371,35 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'pypi-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'PyPI upload token',
     re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\b/g,
   },
   {
     type: 'sendgrid-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'SendGrid API key',
     re: /\bSG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{39,50}\b/g,
   },
   {
     type: 'twilio-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Twilio account SID',
     re: /\bAC[a-f0-9]{32}\b/g,
   },
   {
     type: 'mailgun-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Mailgun API key',
     re: /\bkey-[a-f0-9]{32}\b/g,
   },
   {
     type: 'datadog-key',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'Datadog API key',
     re: /(?:datadog|dd)[_-]?api[_-]?key["'\s:=]{1,10}([a-f0-9]{32})\b/gi,
@@ -346,30 +407,35 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'hugging-face-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Hugging Face token',
     re: /\bhf_[A-Za-z0-9]{34,40}\b/g,
   },
   {
     type: 'supabase-key',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Supabase service key',
     re: /\bsbp_[a-f0-9]{40}\b/g,
   },
   {
     type: 'square-token',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'Square access token',
     re: /\b(?:sq0atp|sq0csp|EAAA)[A-Za-z0-9_-]{22,60}\b/g,
   },
   {
     type: 'shopify-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Shopify access token',
     re: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g,
   },
   {
     type: 'cloudflare-token',
+    disposition: 'destroy',
     severity: 'high',
     label: 'Cloudflare API token',
     re: /(?:cloudflare|cf)[_-]?api[_-]?(?:token|key)["'\s:=]{1,10}([A-Za-z0-9_-]{37,45})\b/gi,
@@ -377,6 +443,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'basic-auth',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'HTTP Basic credentials',
     re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
@@ -384,12 +451,14 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'jwt',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'JSON Web Token',
     re: /\beyJ[A-Za-z0-9_-]{8,2000}\.eyJ[A-Za-z0-9_-]{8,4000}\.[A-Za-z0-9_-]{0,2000}/g,
   },
   {
     type: 'bearer-token',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'Bearer / Authorization token',
     re: /(?:Authorization["'\s:=]{1,10})?\bBearer\s+([A-Za-z0-9._~+/-]{16,500}=*)/g,
@@ -397,6 +466,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'connection-string',
+    disposition: 'destroy',
     severity: 'critical',
     label: 'Connection string password',
     re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{1,128}:([^\s:@/]{1,256})@/gi,
@@ -404,6 +474,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'password-assignment',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'Hardcoded credential',
     // No LEADING \b: underscores and letters are both word characters, so a
@@ -430,6 +501,7 @@ const PATTERNS: Pattern[] = [
     // prose is far more often a hash, a UUID or a base64 blob than a live
     // credential — and a detector that cries wolf gets switched off.
     type: 'high-entropy-string',
+    disposition: 'destroy',
     severity: 'medium',
     label: 'High-entropy credential',
     re: /\b(?:[a-z0-9_]*(?:key|token|secret|credential|auth|pass)[a-z0-9_]*)\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
@@ -437,12 +509,14 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'private-ip',
+    disposition: 'report',
     severity: 'low',
     label: 'Private IP address',
     re: /\b(?:10\.(?:\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g,
   },
   {
     type: 'email',
+    disposition: 'report',
     severity: 'low',
     label: 'Email address',
     re: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
@@ -459,6 +533,7 @@ const PATTERNS: Pattern[] = [
   // guarantee that is the whole argument for pasting the output into a model.
   {
     type: 'iban',
+    disposition: 'mask',
     severity: 'high',
     label: 'Bank account number (IBAN)',
     // Country, check digits, then the account portion, tolerating the spacing
@@ -468,6 +543,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'payment-card',
+    disposition: 'mask',
     severity: 'medium',
     label: 'Payment card number',
     // Deliberately loose, because the validator is the real rule: an issuer
@@ -478,6 +554,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     type: 'pesel',
+    disposition: 'mask',
     severity: 'medium',
     label: 'National identification number (PESEL)',
     re: /\b[0-9]{11}\b/g,
@@ -502,6 +579,37 @@ export const SECRET_SEVERITIES: Readonly<Record<SecretType, SecretSeverity>> = O
     // The ambiguous verdict has no pattern of its own: it is what a pattern
     // becomes when the value could be prose.
     { 'possible-credential': 'medium' } as Record<SecretType, SecretSeverity>
+  )
+)
+
+/**
+ * What is done with each type's value, derived from the rule table.
+ *
+ * Derived rather than restated, for the same reason `SECRET_SEVERITIES` above
+ * is: a second hand-written copy is one that drifts. This feature exists
+ * because two DOCUMENTS holding the same decision drifted apart for eleven
+ * weeks with nothing forcing them into the same room; repeating that shape one
+ * layer down would be a poor lesson to take from it.
+ */
+export const SECRET_DISPOSITIONS: Readonly<Record<SecretType, Disposition>> = Object.freeze(
+  PATTERNS.reduce(
+    (acc, p) => {
+      acc[p.type] = p.disposition
+      return acc
+    },
+    // `possible-credential` has no pattern of its own — same as its severity
+    // above — so it is seeded here.
+    //
+    // It stays `report`, and it MUST NOT drift to `mask` on the reasoning that
+    // masking is now reversible. This is the AMBIGUOUS verdict: a value that
+    // might be a live credential and might be prose. Masking it would write a
+    // possible live credential into the map, which is the precise thing this
+    // module's opening argument forbids — and the ambiguity is exactly why we
+    // cannot know which one we just persisted. Blanking it is also wrong, for
+    // the reason the old deny-list gave: redaction is irreversible, so
+    // destroying `client_secret: "disabled"` corrupts code restore() can never
+    // repair. Reporting it is the only honest answer to "we are not sure".
+    { 'possible-credential': 'report' } as Record<SecretType, Disposition>
   )
 )
 
@@ -748,45 +856,86 @@ function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   return kept.sort((a, b) => a.start - b.start)
 }
 
+/** A `mask`-disposition value, handed to the masking pass to replace. */
+export interface RegulatedSpan {
+  type: SecretType
+  /** The original value, verbatim. Goes into the SymbolMap, deliberately. */
+  value: string
+}
+
 export interface SecretScan {
   findings: SecretFinding[]
-  /** Input with redactable findings replaced. Identical to the input under the
-   *  `warn` and `off` policies. */
+  /** Input with DESTROYED findings replaced. Identical to the input under the
+   *  `warn` and `off` policies.
+   *
+   *  `mask` values are NOT replaced here — see `regulated`. */
   code: string
+  /**
+   * Values this scan detected but deliberately did not touch, for the masking
+   * pass to replace reversibly.
+   *
+   * They are handed over rather than replaced here because reversible masking
+   * needs a map, a placeholder counter and a value→placeholder table, all of
+   * which the masking pass already owns and maintains for manual marks. Doing
+   * it here would mean re-implementing them inside the one module whose stated
+   * purpose is that values never reach the map — and that comment would then be
+   * false, which is the failure shape this codebase keeps finding.
+   *
+   * Empty under the `warn` and `off` policies: a user who asked not to have
+   * their code modified does not get map entries written behind that request.
+   */
+  regulated: RegulatedSpan[]
 }
 
 /**
- * Finding types that are reported but never redacted or blocked.
+ * Does a value of this type get destroyed?
  *
- * Keyed on TYPE, not on severity, and that distinction is the point. Severity
+ * Keyed on TYPE, never on severity, and that distinction is the point. Severity
  * used to decide this, which quietly welded two unrelated questions together:
  * "how alarming should this look?" and "should we destroy this value?". A
  * presentation change then became a security change — dropping a token's grade
  * to calm the panel would also stop redacting it, in a diff that looks
  * cosmetic.
- *
- * Stated as a DENY-list so the default is safe: a detection rule added tomorrow
- * redacts because it exists, not because somebody remembered to opt it in. The
- * failure mode of an allow-list here is a live credential silently passing
- * through.
- *
- * The three exemptions, and why:
- *  - `email` and `private-ip`: common, low-risk, and blanking one corrupts code
- *    for no safety gain.
- *  - `possible-credential`: the ambiguous verdict. Redaction is irreversible —
- *    the value never enters the SymbolMap — so blanking `client_secret:
- *    "disabled"` corrupts code that restore() can never repair.
  */
-const REPORT_ONLY_TYPES: ReadonlySet<SecretType> = new Set<SecretType>([
-  'email',
-  'private-ip',
-  'possible-credential',
-])
-
-/** Does this finding warrant destroying the value and stopping the paste? */
-function isActionable(type: SecretType): boolean {
-  return !REPORT_ONLY_TYPES.has(type)
+export function destroysValue(type: SecretType): boolean {
+  return SECRET_DISPOSITIONS[type] === 'destroy'
 }
+
+/**
+ * Does a value of this type stop the paste?
+ *
+ * Deliberately a SEPARATE function from `destroysValue`, even though the two
+ * currently return the same answer for every type. They answer different
+ * questions and are allowed to diverge: destruction is about what we keep,
+ * blocking is about what we let the user do.
+ *
+ * One shared predicate is what made them inseparable before, so that a change
+ * to either silently changed both. Regulated identifiers are the first case
+ * where they differ in intent — a customer's own IBAN is masked but must not
+ * stop the paste, because blocking exists to stop a LIVE CREDENTIAL reaching a
+ * model and refusing the billing code this tool was built for is not that.
+ *
+ * Like its sibling, it must never consult `SecretSeverity`.
+ */
+export function blocksPaste(type: SecretType): boolean {
+  return SECRET_DISPOSITIONS[type] === 'destroy'
+}
+
+// The deny-list that used to live here (REPORT_ONLY_TYPES, isActionable) is
+// gone. Its virtue was that an UNLISTED rule redacted by default — safety by
+// omission: a contributor got the right outcome by not acting.
+//
+// The required `disposition` field replaces it with safety by construction: a
+// contributor cannot not-act, because an unclassified rule does not compile.
+// That is strictly stronger, so nothing was traded away. The three types the
+// old list named are now `report` on the rule itself, with the reasoning at
+// each assignment:
+//   - `email`, `private-ip`  common, low-risk, and blanking one corrupts code
+//                            for no safety gain.
+//   - `possible-credential`  the ambiguous verdict — see SECRET_DISPOSITIONS.
+//
+// Nothing was left behind as a shim. A retained `isActionable` would be exactly
+// the second source of truth this design exists to remove.
 
 const TYPE_TOKENS: Record<SecretType, string> = {
   'aws-access-key': 'AWS_KEY',
@@ -846,19 +995,26 @@ export function detectSecrets(code: string): SecretFinding[] {
  * is one-way by construction, not by convention.
  */
 export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): SecretScan {
-  if (policy === 'off') return { findings: [], code }
+  if (policy === 'off') return { findings: [], code, regulated: [] }
 
   const matches = dropOverlaps(collectMatches(code))
-  if (matches.length === 0) return { findings: [], code }
+  if (matches.length === 0) return { findings: [], code, regulated: [] }
 
   const starts = lineIndex(code)
   const findings: SecretFinding[] = []
   const counters: Record<string, number> = {}
   // Replace back-to-front so earlier offsets stay valid.
   const replacements: { start: number; end: number; token: string }[] = []
+  const regulated: RegulatedSpan[] = []
 
   for (const m of matches) {
-    const willRedact = policy === 'redact' && isActionable(m.type)
+    const active = policy === 'redact'
+    const willRedact = active && destroysValue(m.type)
+    // Under `warn` the disposition is what the rule says, but nothing is acted
+    // on — so the finding reports `report`, which is what actually happened to
+    // the value. Reporting `mask` for a value still sitting untouched in the
+    // code would be the same kind of lie `redacted` used to risk telling.
+    const disposition: Disposition = active ? SECRET_DISPOSITIONS[m.type] : 'report'
     const { line, column } = positionOf(starts, m.start)
     findings.push({
       type: m.type,
@@ -869,7 +1025,12 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
       length: m.value.length,
       preview: previewSecret(m.value),
       redacted: willRedact,
+      disposition,
     })
+    if (disposition === 'mask') {
+      // Handed over, not replaced. The masking pass owns the map.
+      regulated.push({ type: m.type, value: m.value })
+    }
     if (willRedact) {
       const base = TYPE_TOKENS[m.type]
       const n = (counters[base] ?? 0) + 1
@@ -895,15 +1056,19 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
     return a.column - b.column
   })
 
-  return { findings, code: redacted }
+  return { findings, code: redacted, regulated }
 }
 
 /** True when the scan found anything that should stop a user from pasting. */
 export function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean {
-  // Also by type, for the same reason redaction is. Blocking is what stops a
-  // paste; tying it to a display grade means re-grading can silently unblock a
-  // live credential.
-  return findings.some((f) => isActionable(f.type))
+  // By type, never by display grade: re-grading a token to calm the panel must
+  // not silently unblock a live credential.
+  //
+  // `blocksPaste`, not `destroysValue` — they agree today and are allowed not
+  // to. A regulated identifier is masked but does NOT block: blocking exists to
+  // stop a live credential reaching a model, and refusing the billing code this
+  // tool was built for is not that.
+  return findings.some((f) => blocksPaste(f.type))
 }
 
 /** Count findings by severity, for badges and audit records. */
