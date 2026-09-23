@@ -146,3 +146,112 @@ describe('the tools publish workflow can actually publish', () => {
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the engine release can actually write its notes', () => {
+  /**
+   * `generateNotes` broke and nothing noticed for weeks.
+   *
+   * `conventional-changelog-conventionalcommits` was bumped 9 → 10. Version 10
+   * moved to `@conventional-changelog/template` and requires
+   * `conventional-changelog-writer@9` or newer. But the writer is not ours to
+   * choose: `semantic-release@25` depends on
+   * `@semantic-release/release-notes-generator@14.1.1` — the LATEST release —
+   * and that pins `conventional-changelog-writer@^8`. There is no newer
+   * generator to upgrade to, so the preset is what has to give.
+   *
+   * The result was a release that dies at `generateNotes` with
+   * `Missing helper: "conventional-changelog-conventionalcommits requires
+   * conventional-changelog-writer@9 or newer"`.
+   *
+   * WHY IT WENT UNSEEN, which is the part worth keeping. The publish workflow
+   * runs on every push to main and had been reporting success for weeks — but
+   * `.releaserc.js` only releases on `engine`-scoped commits, so every one of
+   * those runs stopped at "There are no relevant changes, so no new version is
+   * released" and never reached the notes generator at all. A green workflow
+   * that skipped the broken step looks exactly like a green workflow that
+   * passed it. The first commit that actually warranted a release (#58) is the
+   * one that found the break.
+   *
+   * So this test RENDERS NOTES rather than asserting a version number. A
+   * version assertion goes stale on the next bump and proves nothing about
+   * whether the two packages can talk to each other; rendering is the thing the
+   * release actually does, and it fails the same way the release would — on a
+   * pull request, where somebody is looking.
+   */
+  it('renders release notes through the preset the release config loads', async () => {
+    const preset = (await import('conventional-changelog-conventionalcommits')).default
+    const { writeChangelogString } = await import('conventional-changelog-writer')
+
+    const { writer } = await preset({
+      types: [
+        { type: 'feat', section: 'Features' },
+        { type: 'fix', section: 'Fixes' },
+      ],
+    })
+
+    const notes = await writeChangelogString(
+      [
+        {
+          type: 'feat',
+          scope: 'engine',
+          subject: 'a released change',
+          header: 'feat(engine): a released change',
+          body: null,
+          footer: null,
+          notes: [],
+          references: [],
+          merge: null,
+          revert: null,
+          hash: '0123456789abcdef',
+        },
+      ],
+      {
+        version: '9.9.9',
+        host: 'https://github.com',
+        owner: 'veilio-inc',
+        repository: 'veilio',
+        repoUrl: 'https://github.com/veilio-inc/veilio',
+        commit: 'commit',
+        issue: 'issues',
+      },
+      writer
+    )
+
+    // Rendered, and rendered with content — an empty string would pass a bare
+    // "did not throw" check while telling a reader nothing about the release.
+    expect(notes).toContain('9.9.9')
+    expect(notes).toContain('Features')
+    expect(notes).toContain('a released change')
+  })
+
+  it('keeps the preset on a major the installed writer can render', () => {
+    // The behavioural test above is the real guard. This one names the
+    // constraint so a failure explains itself rather than leaving somebody to
+    // rediscover why a handlebars helper is missing.
+    const presetMajor = majorOf(
+      JSON.parse(
+        readFileSync('node_modules/conventional-changelog-conventionalcommits/package.json', 'utf8')
+      ).version
+    )
+    const writerMajor = majorOf(
+      JSON.parse(readFileSync('node_modules/conventional-changelog-writer/package.json', 'utf8'))
+        .version
+    )
+
+    // preset 10+ needs writer 9+. Below that they must move together.
+    if (presetMajor >= 10) {
+      expect(
+        writerMajor,
+        'conventional-changelog-conventionalcommits 10+ requires conventional-changelog-writer 9+, ' +
+          'which semantic-release 25 does not install. Hold the preset at 9.x until ' +
+          '@semantic-release/release-notes-generator ships a writer 9 dependency.'
+      ).toBeGreaterThanOrEqual(9)
+    }
+  })
+})
+
+function majorOf(version: string): number {
+  return Number(version.split('.')[0])
+}
