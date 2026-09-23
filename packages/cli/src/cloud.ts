@@ -218,6 +218,10 @@ export interface CloudMapSummary {
   name: string
   scope: 'personal' | 'team'
   identifier_count: number | null
+  /** Ordering key for the team namespace merge — first-write-wins is decided on
+   *  this, not on `updated_at`, so a map edited later cannot steal a placeholder
+   *  an older map already claimed. */
+  created_at: string
   updated_at: string
   /** `client-envelope` means WE decrypt it; anything else the server already did. */
   storage: string
@@ -226,11 +230,36 @@ export interface CloudMapSummary {
 export interface CloudMapList {
   personalMaps: CloudMapSummary[]
   teamMaps: CloudMapSummary[]
-  /** Placeholder -> identifier, merged across the team's maps. Null when the
-   *  account has no active team or the plan lacks shared dictionaries — the
-   *  server's entitlement answer, not a client-side guess (spec 005 US4). */
-  teamNamespace: Record<string, string> | null
+  /** Placeholder -> identifier, merged across the team's maps.
+   *
+   *  **No current Cloud release sends this.** It was dropped when the merge
+   *  moved to the clients: producing it server-side meant decrypting every team
+   *  map, which was the only reason the server held a key that could read them.
+   *  Kept in the type because an older self-hosted Cloud may still send it, and
+   *  reading it costs nothing; `undefined` is the expected answer and the
+   *  client-side merge is the path that runs (spec 010). */
+  teamNamespace?: Record<string, string> | null
+  /** The active team, when the account has one. Needed to ask for that team's
+   *  key wraps. */
+  team: { id: string } | null
   plan: string
+}
+
+/** The account's own keypair, as the server holds it.
+ *
+ *  `privateKeyEncrypted` is wrapped under the vault key, which is derived from
+ *  a passphrase the server never receives — so this is a blob the server cannot
+ *  open, exactly like a personal map envelope. */
+export type UserKeys =
+  | { initialized: false }
+  | { initialized: true; publicKey: string; privateKeyEncrypted: string; alg: string }
+
+/** One member's copy of a team key, wrapped to their public key. */
+export interface TeamKeyWrap {
+  version: number
+  wrapped_key: string
+  wrapped_by: string
+  created_at: string
 }
 
 /** A single map. `map_data` is an opaque envelope string for a personal map. */
@@ -254,6 +283,35 @@ export function listMaps(credential: Credential): Promise<CloudMapList> {
 
 export function getMap(credential: Credential, id: string): Promise<CloudMap> {
   return request<CloudMap>(`/api/maps/${encodeURIComponent(id)}`, { credential })
+}
+
+/**
+ * The account's keypair. The private half comes back wrapped.
+ *
+ * Unwrapping it needs the vault key, which is derived here from a passphrase.
+ * A member who has never opened the web app has no keypair at all, and
+ * `initialized: false` is the ordinary answer rather than an error.
+ */
+export function getUserKeys(credential: Credential): Promise<UserKeys> {
+  return request<UserKeys>('/api/auth/keys', { credential })
+}
+
+/**
+ * This account's wraps of a team key, newest version first once sorted.
+ *
+ * The server returns only the caller's own wraps — it cannot return anyone
+ * else's, and holds nothing that would let it open these. `granted: false` is
+ * the normal state for a member waiting on a teammate to grant them the key,
+ * not a failure.
+ */
+export function getTeamKeyWraps(
+  credential: Credential,
+  teamId: string
+): Promise<{ wraps: TeamKeyWrap[]; granted: boolean }> {
+  return request<{ wraps: TeamKeyWrap[]; granted: boolean }>(
+    `/api/teams/${encodeURIComponent(teamId)}/key`,
+    { credential }
+  )
 }
 
 export function createMap(

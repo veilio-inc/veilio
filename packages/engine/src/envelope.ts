@@ -211,20 +211,37 @@ interface WebCryptoKey {
   readonly type: string
 }
 interface WebCryptoSubtle {
+  // `raw` and `pkcs8` because `teamKeys.ts` imports an X25519 public key from
+  // raw bytes and a private key from PKCS#8, alongside this module's raw
+  // passphrase material. The algorithm widens to an object for the same reason:
+  // PBKDF2 is named by a bare string, X25519 and AES-GCM by `{ name }`.
   importKey(
-    format: 'raw',
-    keyData: Uint8Array,
-    algorithm: string,
+    format: 'raw' | 'pkcs8',
+    keyData: Uint8Array | ArrayBuffer,
+    algorithm: string | { name: string; length?: number },
     extractable: boolean,
     usages: string[]
   ): Promise<WebCryptoKey>
+  // Two shapes, kept as a union rather than split into overloads because they
+  // are two parameter sets for one operation and a reader should see both at
+  // once: PBKDF2 for a passphrase, HKDF for the ECDH shared secret that
+  // `teamKeys.ts` turns into a wrapping key.
   deriveKey(
-    algorithm: { name: string; salt: Uint8Array; iterations: number; hash: string },
+    algorithm:
+      | { name: string; salt: Uint8Array; iterations: number; hash: string }
+      | { name: 'HKDF'; hash: string; salt: Uint8Array; info: Uint8Array },
     baseKey: WebCryptoKey,
     derived: { name: string; length: number },
     extractable: boolean,
     usages: string[]
   ): Promise<WebCryptoKey>
+  /** ECDH. Produces a shared secret, which is bits rather than a key — HKDF
+   *  above is what turns it into one. */
+  deriveBits(
+    algorithm: { name: string; public: WebCryptoKey },
+    baseKey: WebCryptoKey,
+    length: number
+  ): Promise<ArrayBuffer>
   encrypt(
     algorithm: { name: string; iv: Uint8Array },
     key: WebCryptoKey,

@@ -16,8 +16,24 @@
 // threading a Promise through 78 existing call sites for one network call that
 // happens once per process.
 
-import { readCredential } from '@veilio-inc/cli/credential'
-import { listMaps } from '@veilio-inc/cli/cloud'
+import { readCredential, type Credential } from '@veilio-inc/cli/credential'
+import {
+  listMaps,
+  getMap,
+  getUserKeys,
+  getTeamKeyWraps,
+  type CloudMapSummary,
+  type CloudMapList,
+} from '@veilio-inc/cli/cloud'
+import {
+  unwrapPrivateKey,
+  unwrapTeamKey,
+  decryptTeamMapWithAny,
+  mergeTeamNamespace,
+  type CryptoKeyLike,
+  type TeamMapEntry,
+  type TeamMapEnvelope,
+} from '@veilio-inc/engine'
 
 export type NamespaceSource = 'team' | 'local'
 
@@ -32,17 +48,128 @@ const LOCAL: ResolvedNamespace = { source: 'local', namespace: {} }
 let current: ResolvedNamespace = LOCAL
 let priming: Promise<ResolvedNamespace> | null = null
 
-async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespace> {
+/**
+ * Build the team namespace from maps this member can actually open.
+ *
+ * Cloud used to merge these server-side and send the result. It stopped,
+ * because merging meant decrypting every team map, and that was the only reason
+ * it held a key that could read them. So the merge happens here now, over maps
+ * only this member can decrypt, and the server holds nothing that would let it
+ * do the same (spec 010).
+ *
+ * Entitlement is still not decided here, and still does not need to be. Cloud
+ * serves team maps only for teams in `access.teams`, and refuses a non-member's
+ * request for a team key outright. A user outside a paid team gets neither, so
+ * there is nothing to merge — the gate is the data, not a flag this code reads.
+ */
+async function buildTeamNamespace(
+  credential: Credential,
+  vaultKey: CryptoKeyLike,
+  list: CloudMapList
+): Promise<Record<string, string> | null> {
+  const teamId = list.team?.id
+  if (!teamId) return null
+
+  const keys = await readUserKeys(credential, vaultKey, teamId)
+  if (keys.length === 0) return null
+
+  // A member's OWN team maps arrive under personalMaps — the listing splits by
+  // ownership, not by scope — so both lists have to be considered or this
+  // member's own placeholders drop out of the shared namespace.
+  const teamScoped = [...list.personalMaps, ...list.teamMaps].filter((m) => m.scope === 'team')
+
+  const entries = await Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
+  const namespace = mergeTeamNamespace(entries)
+  // Every map unreadable is not a team namespace, it is a failed one. Saying
+  // `local` is honest; an empty `team` would claim agreement that is not there.
+  return Object.keys(namespace).length > 0 ? namespace : null
+}
+
+/** This member's team keys, newest version first. */
+async function readUserKeys(
+  credential: Credential,
+  vaultKey: CryptoKeyLike,
+  teamId: string
+): Promise<{ version: number; key: CryptoKeyLike }[]> {
+  const mine = await getUserKeys(credential)
+  // No keypair means this account has never opened the web app, so no teammate
+  // could ever have wrapped a key to it. Nothing to wait for and nothing wrong.
+  if (!mine.initialized) return []
+
+  const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
+  const { wraps } = await getTeamKeyWraps(credential, teamId)
+
+  const keys: { version: number; key: CryptoKeyLike }[] = []
+  for (const wrap of wraps) {
+    try {
+      keys.push({
+        version: wrap.version,
+        key: await unwrapTeamKey(wrap.wrapped_key, privateKey, {
+          teamId,
+          version: wrap.version,
+          myPublicKey: mine.publicKey,
+        }),
+      })
+    } catch {
+      // A wrap from a granter whose key has since changed, or one this account
+      // cannot open. Skipped rather than fatal: another version may still open
+      // most of the team's maps, and holding none of them is already handled.
+      continue
+    }
+  }
+  return keys
+}
+
+/** One team map, opened if any held key fits. */
+async function openTeamMap(
+  credential: Credential,
+  summary: CloudMapSummary,
+  keys: readonly { version: number; key: CryptoKeyLike }[]
+): Promise<TeamMapEntry> {
+  const miss: TeamMapEntry = { createdAt: summary.created_at, map: null }
+  try {
+    const full = await getMap(credential, summary.id)
+    // A server-decrypted map arrives as an object. Nothing to open, and nothing
+    // that should be here — but reading it is safe and losing it would drop a
+    // teammate's placeholders for no reason.
+    if (typeof full.map_data !== 'string') {
+      return { createdAt: summary.created_at, map: full.map_data }
+    }
+    const envelope = JSON.parse(full.map_data) as TeamMapEnvelope
+    return {
+      createdAt: summary.created_at,
+      map: await decryptTeamMapWithAny(keys, envelope),
+    }
+  } catch {
+    // One unreadable map must never cost the team its namespace. `null` is how
+    // mergeTeamNamespace is told to skip it.
+    return miss
+  }
+}
+
+async function fetchNamespace(
+  home: string | undefined,
+  vaultKey: CryptoKeyLike | null
+): Promise<ResolvedNamespace> {
   const credential = readCredential(home)
   // Not signed in. No request — a signed-out terminal has nothing to ask Cloud.
   if (!credential) return LOCAL
 
   try {
-    const { teamNamespace } = await listMaps(credential)
-    // No active team, or the plan lacks shared dictionaries — the server's
-    // entitlement answer (getEffectiveAccess), not a decision made here.
-    if (!teamNamespace) return LOCAL
-    return { source: 'team', namespace: teamNamespace }
+    const list = await listMaps(credential)
+
+    // An older self-hosted Cloud may still merge server-side, and that answer
+    // needs no key at all. Checked before the vault key so such a deployment
+    // keeps working for a member who has not unlocked one.
+    if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace }
+
+    // Past here everything must be decrypted locally, so without a vault key
+    // there is nothing further to try.
+    if (!vaultKey) return LOCAL
+
+    const namespace = await buildTeamNamespace(credential, vaultKey, list)
+    if (!namespace) return LOCAL
+    return { source: 'team', namespace }
   } catch {
     // Unreachable, revoked session, timed out — every network or auth failure
     // degrades the same way. A coding agent must keep working when Cloud is
@@ -58,9 +185,12 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
  * their own request. `home` is injectable for tests; production leaves it
  * undefined and `readCredential` falls back to the real home directory.
  */
-export function primeNamespace(home?: string): Promise<ResolvedNamespace> {
+export function primeNamespace(
+  home?: string,
+  vaultKey: CryptoKeyLike | null = null
+): Promise<ResolvedNamespace> {
   if (!priming) {
-    priming = fetchNamespace(home).then((resolved) => {
+    priming = fetchNamespace(home, vaultKey).then((resolved) => {
       current = resolved
       return resolved
     })
