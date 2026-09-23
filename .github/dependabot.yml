@@ -59,6 +59,26 @@ updates:
       # whose typescript peer admits 7, and take both in the same change.
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
+      # conventional-changelog-conventionalcommits 10 moved to
+      # @conventional-changelog/template and requires
+      # conventional-changelog-writer 9+. That writer is not ours to choose:
+      # semantic-release 25 depends on @semantic-release/release-notes-generator
+      # 14.1.1 - the LATEST release - which pins the writer at ^8. So there is
+      # no version of the generator to upgrade to, and the preset is what has to
+      # be held.
+      #
+      # Taking the 9 -> 10 bump broke the release at `generateNotes`, and it
+      # went unseen for weeks: .releaserc.js only releases on engine-scoped
+      # commits, so every run in between stopped at "no relevant changes" and
+      # never reached the notes generator. A green workflow that skipped the
+      # broken step is indistinguishable from one that passed it.
+      #
+      # Lift this when release-notes-generator ships a writer 9 dependency, and
+      # take both in the same change. tests/release-config.test.ts renders notes
+      # through whatever is installed, so the next attempt fails on the pull
+      # request instead of at release time.
+      - dependency-name: conventional-changelog-conventionalcommits
+        update-types: ['version-update:semver-major']
 
   # The engine has zero runtime dependencies and that is enforced in CI, so this
   # only ever moves its devDependencies. Kept separate because its lockfile is
