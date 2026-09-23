@@ -122,17 +122,34 @@ describe('detection', () => {
 })
 
 describe('policy', () => {
-  it('redacts under redact, and the value does not survive', () => {
+  it('hands the value to the masking pass under redact, rather than destroying it', () => {
+    // REVERSED DELIBERATELY (spec 009). This test used to assert
+    // `redacted === true` and `__REDACTED_IBAN_1__` in the output, which is
+    // what spec 003 US2 decided: regulated identifiers destroyed like
+    // credentials.
+    //
+    // Destroying an IBAN returns code that no longer runs, and unlike a
+    // credential there is nothing to rotate — a person cannot reissue their
+    // bank account number. So it is now masked REVERSIBLY, and `scanSecrets`
+    // hands it forward instead of substituting it: the masking pass owns the
+    // map, and reversible masking needs one.
+    //
+    // `scan.code` therefore still contains the value at this layer. The
+    // round-trip is asserted end-to-end in regulated-roundtrip.test.ts.
     const scan = scanSecrets(`const iban = "${VALID_IBAN}"`, 'redact')
-    expect(scan.findings[0].redacted).toBe(true)
-    expect(scan.code).not.toContain(VALID_IBAN)
-    expect(scan.code).toContain('__REDACTED_IBAN_1__')
+    expect(scan.findings[0].disposition).toBe('mask')
+    expect(scan.findings[0].redacted, 'masked is not destroyed').toBe(false)
+    expect(scan.regulated).toEqual([{ type: 'iban', value: VALID_IBAN }])
   })
 
-  it('reports and leaves in place under warn', () => {
+  it('reports and leaves in place under warn, handing nothing forward', () => {
     const scan = scanSecrets(`const iban = "${VALID_IBAN}"`, 'warn')
     expect(scan.findings.length).toBe(1)
     expect(scan.findings[0].redacted).toBe(false)
+    // A user who asked not to have their code modified does not get a map
+    // entry written behind that request.
+    expect(scan.findings[0].disposition).toBe('report')
+    expect(scan.regulated).toEqual([])
     expect(scan.code).toContain(VALID_IBAN)
   })
 

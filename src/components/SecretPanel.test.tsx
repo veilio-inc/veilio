@@ -27,6 +27,13 @@ function finding(
     length: 20,
     preview: 'abcd…wxyz',
     redacted: severity !== 'low' && severity !== 'medium',
+    // Kept consistent with `redacted` rather than hardcoded, because the engine
+    // asserts the invariant `redacted === (disposition === 'destroy')` and a
+    // fixture that violated it would be testing a finding the engine cannot
+    // produce. This helper grades by severity, which the engine deliberately
+    // does NOT — it is a panel fixture, not a model of the classifier.
+    disposition:
+      severity !== 'low' && severity !== 'medium' ? ('destroy' as const) : ('report' as const),
   }
 }
 

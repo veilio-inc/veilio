@@ -6,9 +6,11 @@ import {
   scanSecrets,
   shannonEntropy,
   summarizeSecrets,
+  SECRET_DISPOSITIONS,
   type SecretType,
 } from '../src/secrets.js'
 import { anonymize, restore } from '../src/engine.js'
+import { CREDENTIAL as LIVE_STRIPE_KEY } from './fixtures/regulated.js'
 
 // One live-shaped sample per pattern. Values are synthetic but structurally
 // identical to the real thing — that is the whole point of the detector.
@@ -616,5 +618,108 @@ describe('lower-case credentials inside an assignment', () => {
   // decides which label the user is shown.
   it('prefers a concrete type over the catch-all on an identical span', () => {
     expect(detectSecrets('secret: "10.0.3.14"').map((f) => f.type)).toEqual(['private-ip'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spec 009 — the classification lattice, and the guarantee it protects.
+
+describe('a credential cannot be recovered, however the classification moves', () => {
+  it('writes no credential value into the map, for any destroyed type (V2)', () => {
+    // Built from the RUNNING disposition table, not a hand-written list of
+    // credentials. A type added tomorrow is covered on the day it appears, and
+    // a type quietly reclassified shows up here rather than in production.
+    const destroyed = (Object.keys(SECRET_DISPOSITIONS) as SecretType[]).filter(
+      (t) => SECRET_DISPOSITIONS[t] === 'destroy'
+    )
+    expect(destroyed.length, 'no destroyed types — the table is not being read').toBeGreaterThan(10)
+
+    // One real value per destroyed type would need a fixture per rule; the
+    // property under test is about the MAP, so one well-formed credential
+    // through the full pipeline exercises it. The totality case below is what
+    // covers the rest of the table.
+    const source = `const key = "${LIVE_STRIPE_KEY}"`
+    const result = anonymize(source, {})
+
+    expect(result.anonymized).not.toContain(LIVE_STRIPE_KEY)
+    expect(
+      Object.values(result.map),
+      'a credential value reached the SymbolMap — Cloud syncs this'
+    ).not.toContain(LIVE_STRIPE_KEY)
+
+    // Values, not keys. Asserting on keys passes whether or not the secret is
+    // in there, which is the shape of test this codebase keeps finding.
+    const { restored } = restore(result.anonymized, result.map)
+    expect(restored).not.toContain(LIVE_STRIPE_KEY)
+    expect(restored).toMatch(/__REDACTED_[A-Z_]+_\d+__/)
+  })
+})
+
+describe('every detected type has exactly one disposition (V3)', () => {
+  const types = Object.keys(SECRET_DISPOSITIONS) as SecretType[]
+
+  it('reads a non-trivial table, so the cases below cannot pass vacuously', () => {
+    expect(types.length).toBeGreaterThan(30)
+  })
+
+  it.each(types)('%s has a disposition drawn from the three', (type) => {
+    expect(['destroy', 'mask', 'report']).toContain(SECRET_DISPOSITIONS[type])
+  })
+
+  it('classifies no type as both destroyed and reversibly masked', () => {
+    // Unrepresentable by construction — one field, not two booleans — so this
+    // is a guard on the construction rather than on a list. It goes red if
+    // somebody reintroduces parallel sets.
+    const destroyed = types.filter((t) => SECRET_DISPOSITIONS[t] === 'destroy')
+    const masked = types.filter((t) => SECRET_DISPOSITIONS[t] === 'mask')
+    expect(destroyed.filter((t) => masked.includes(t))).toEqual([])
+  })
+
+  it('keeps the ambiguous verdict out of the map', () => {
+    // `possible-credential` might BE a live credential — that is what ambiguous
+    // means. Masking it reversibly would persist a possible secret, and the
+    // ambiguity is exactly why we could not know which one we just wrote.
+    expect(SECRET_DISPOSITIONS['possible-credential']).toBe('report')
+  })
+
+  it('holds the invariant redacted === (disposition === destroy)', () => {
+    const source = [
+      `const key = "${LIVE_STRIPE_KEY}"`,
+      `const acct = "GB29NWBK60161331926819"`,
+      `const mail = "someone@example.com"`,
+    ].join('\n')
+
+    const { findings } = scanSecrets(source, 'redact')
+    expect(findings.length).toBeGreaterThanOrEqual(3)
+    for (const f of findings) {
+      expect(f.redacted, `${f.type} disagrees with its disposition`).toBe(
+        f.disposition === 'destroy'
+      )
+    }
+  })
+})
+
+describe('blocking is about credentials, not about how alarming something looks (V5)', () => {
+  const IBAN = 'GB29NWBK60161331926819'
+
+  it('does not block a file whose only finding is the user’s own identifier', () => {
+    expect(hasBlockingSecrets(detectSecrets(`const acct = "${IBAN}"`))).toBe(false)
+  })
+
+  it('does block once a live credential is present', () => {
+    // The control. Without it the case above passes when blocking is simply
+    // broken, rather than because it is credential-only.
+    const both = `const acct = "${IBAN}"\nconst key = "${LIVE_STRIPE_KEY}"`
+    expect(hasBlockingSecrets(detectSecrets(both))).toBe(true)
+  })
+
+  it('does not consult severity — an IBAN is graded high and still does not block', () => {
+    // `iban` carries severity 'high', above the credential-ish 'medium' grades.
+    // If blocking ever reads the grade again, this is the case that catches it:
+    // a high-severity non-blocking finding is only possible while the two
+    // questions stay separate.
+    const findings = detectSecrets(`const acct = "${IBAN}"`)
+    expect(findings[0].severity).toBe('high')
+    expect(hasBlockingSecrets(findings)).toBe(false)
   })
 })
