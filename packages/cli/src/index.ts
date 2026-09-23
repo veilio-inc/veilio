@@ -8,6 +8,8 @@ import {
   runMapsList,
   runMapsPull,
   runMapsPush,
+  runTeamUnlock,
+  runTeamLock,
 } from './cloud-commands.js'
 import { resolveMapPath } from './store.js'
 import { createInterface } from 'node:readline'
@@ -62,6 +64,17 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return await runMapsPush(args.files[0] ?? null, mapPath, io)
           default:
             io.stderr('veilio: maps needs an action — list, pull or push.\n')
+            return EXIT_ERROR
+        }
+      }
+      case 'team': {
+        switch (args.teamAction) {
+          case 'unlock':
+            return await runTeamUnlock(io)
+          case 'lock':
+            return runTeamLock(io)
+          default:
+            io.stderr('veilio: team needs an action — unlock or lock.\n')
             return EXIT_ERROR
         }
       }

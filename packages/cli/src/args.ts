@@ -6,7 +6,17 @@ import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engin
 import type { SecretPolicy } from '@veilio-inc/engine'
 
 export type Command =
-  'scrub' | 'restore' | 'scan' | 'map' | 'login' | 'logout' | 'whoami' | 'maps' | 'help' | 'version'
+  | 'scrub'
+  | 'restore'
+  | 'scan'
+  | 'map'
+  | 'login'
+  | 'logout'
+  | 'whoami'
+  | 'maps'
+  | 'team'
+  | 'help'
+  | 'version'
 
 export interface ParsedArgs {
   command: Command
@@ -41,6 +51,15 @@ export interface ParsedArgs {
   mapsAction: 'list' | 'pull' | 'push' | null
 
   /**
+   * `team unlock` / `team lock`.
+   *
+   * A subcommand for the same reason `maps` is one: `veilio unlock` alone would
+   * not say what it unlocks, and what it unlocks is specifically the team's
+   * keys rather than the account or the local store.
+   */
+  teamAction: 'unlock' | 'lock' | null
+
+  /**
    * Base URL of the Veilio instance to sign in to. Null means the public Cloud.
    *
    * Only meaningful to `login`: once signed in, the instance is read back from
@@ -61,6 +80,7 @@ const COMMANDS = new Set<Command>([
   'logout',
   'whoami',
   'maps',
+  'team',
   'help',
   'version',
 ])
@@ -71,7 +91,7 @@ const COMMANDS = new Set<Command>([
  * command without deciding which side of the line it falls on is a compile
  * error rather than an accident.
  */
-export const CLOUD_COMMANDS = new Set<Command>(['login', 'logout', 'whoami', 'maps'])
+export const CLOUD_COMMANDS = new Set<Command>(['login', 'logout', 'whoami', 'maps', 'team'])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
 const LANGUAGE_VALUES = new Set<string>([...LANGUAGES, 'auto'])
 
@@ -98,6 +118,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     force: false,
     instance: null,
     mapsAction: null,
+    teamAction: null,
   }
 
   if (argv.length === 0) return parsed
@@ -120,6 +141,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
           throw new UsageError(`unknown maps action "${verb}" — expected list, pull or push`)
         }
         parsed.mapsAction = verb
+        i = 2
+      }
+    }
+
+    if (parsed.command === 'team') {
+      const verb = argv[1]
+      if (verb !== undefined && !verb.startsWith('-')) {
+        if (verb !== 'unlock' && verb !== 'lock') {
+          throw new UsageError(`unknown team action "${verb}" — expected unlock or lock`)
+        }
+        parsed.teamAction = verb
         i = 2
       }
     }
