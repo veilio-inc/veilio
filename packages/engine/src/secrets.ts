@@ -729,6 +729,10 @@ interface RawMatch {
   start: number
   end: number
   value: string
+  /** Set by dropOverlaps when a `mask` match won over an AMBIGUOUS credential
+   *  verdict for the same span. The value is destroyed instead of masked: see
+   *  the comment there. */
+  forceDestroy?: boolean
 }
 
 /** Byte offset → 1-based line/column, computed once per scan. */
@@ -838,10 +842,27 @@ function detectionPriority(type: SecretType): number {
   return 3
 }
 
+/** How much is at stake if this match LOSES an overlap: a destroyed value
+ *  outranks a masked one, which outranks one that is only reported. */
+function dispositionRank(type: SecretType): number {
+  const d = SECRET_DISPOSITIONS[type]
+  return d === 'destroy' ? 2 : d === 'mask' ? 1 : 0
+}
+
 /** Drop matches contained in, or overlapping, a more specific match. A Stripe
- *  key inside a connection string should be reported once, as the Stripe key. */
+ *  key inside a connection string should be reported once, as the Stripe key.
+ *
+ *  DISPOSITION FIRST, then specificity. The IBAN / card / PESEL detectors are
+ *  more specific than the generic credential matchers, and used to win on that
+ *  alone - harmless while they were destroyed too. Once they became reversible
+ *  (spec 009), `password = "<a Luhn-valid number>"` lost its password match to
+ *  the card match and the password was written into the SymbolMap, and stopped
+ *  blocking the paste. A value any rule reads as a credential is never masked:
+ *  within the same disposition the old specificity order still decides. */
 function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   const sorted = [...matches].sort((a, b) => {
+    const byDisposition = dispositionRank(b.type) - dispositionRank(a.type)
+    if (byDisposition !== 0) return byDisposition
     const byPriority = detectionPriority(b.type) - detectionPriority(a.type)
     if (byPriority !== 0) return byPriority
     const byLength = b.end - b.start - (a.end - a.start)
@@ -850,8 +871,19 @@ function dropOverlaps(matches: RawMatch[]): RawMatch[] {
   })
   const kept: RawMatch[] = []
   for (const m of sorted) {
-    const overlaps = kept.some((k) => m.start < k.end && k.start < m.end)
-    if (!overlaps) kept.push(m)
+    const winner = kept.find((k) => m.start < k.end && k.start < m.end)
+    if (!winner) {
+      kept.push(m)
+      continue
+    }
+    // An AMBIGUOUS credential verdict ("might be a live secret, might be a
+    // word") loses to a mask match on rank - it is only reported. Letting the
+    // mask stand would write a possible live credential into the map, and
+    // letting the report stand would send it to the model verbatim. The value
+    // is destroyed instead: the one outcome that does neither.
+    if (m.type === 'possible-credential' && SECRET_DISPOSITIONS[winner.type] === 'mask') {
+      winner.forceDestroy = true
+    }
   }
   return kept.sort((a, b) => a.start - b.start)
 }
@@ -1009,12 +1041,16 @@ export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): Secr
 
   for (const m of matches) {
     const active = policy === 'redact'
-    const willRedact = active && destroysValue(m.type)
+    const willRedact = active && (m.forceDestroy === true || destroysValue(m.type))
     // Under `warn` the disposition is what the rule says, but nothing is acted
     // on — so the finding reports `report`, which is what actually happened to
     // the value. Reporting `mask` for a value still sitting untouched in the
     // code would be the same kind of lie `redacted` used to risk telling.
-    const disposition: Disposition = active ? SECRET_DISPOSITIONS[m.type] : 'report'
+    const disposition: Disposition = !active
+      ? 'report'
+      : m.forceDestroy === true
+        ? 'destroy'
+        : SECRET_DISPOSITIONS[m.type]
     const { line, column } = positionOf(starts, m.start)
     findings.push({
       type: m.type,

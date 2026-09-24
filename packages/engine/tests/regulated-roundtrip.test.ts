@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, restore, buildLegend, isPlaceholder } from '../src/index.js'
+import {
+  anonymize,
+  restore,
+  buildLegend,
+  isPlaceholder,
+  detectSecrets,
+  hasBlockingSecrets,
+} from '../src/index.js'
 import {
   VALID_IBAN,
   VALID_IBAN_2,
@@ -181,5 +188,78 @@ describe('the credential in the same file is not swept along', () => {
     const { restored } = restore(result.anonymized, result.map)
     expect(restored).toContain(VALID_IBAN)
     expect(restored, 'the credential came back').not.toContain(CREDENTIAL)
+  })
+})
+
+describe('a value any rule reads as a credential is never masked reversibly', () => {
+  /**
+   * The overlap rule ranked the IBAN / card / PESEL detectors above the
+   * generic credential matchers (password-assignment, connection-string,
+   * bearer-token...). Harmless while regulated values were destroyed too. Once
+   * they became reversible (spec 009), a credential that happened to pass a
+   * checksum lost the overlap and was written into the SymbolMap instead of
+   * destroyed - and stopped blocking the paste. Found by security review.
+   *
+   * Rule now: when a credential match and a regulated match overlap, the value
+   * is destroyed. Including when the credential verdict is only AMBIGUOUS -
+   * "might be a live credential" is exactly what must never reach the map.
+   */
+  const cases: Array<[string, string, string]> = [
+    ['a card-shaped password', `password = "${VALID_PAN}"`, VALID_PAN],
+    ['a card-shaped value under a secret-looking name', `const secret = "${VALID_PAN}"`, VALID_PAN],
+    [
+      'a card-shaped run inside a connection-string password',
+      `const url = "postgres://admin:Zx9-${VALID_PAN}-Qw@db.internal:5432/app"`,
+      VALID_PAN,
+    ],
+    [
+      'a card-shaped segment inside a bearer token',
+      `const h = "Authorization: Bearer abcDEF.${VALID_PAN}.xyzQWE123"`,
+      VALID_PAN,
+    ],
+  ]
+
+  it.each(cases)('destroys %s, keeps it out of the map, and blocks', (_name, src, value) => {
+    const r = anonymize(src, {})
+    expect(Object.values(r.map), 'the credential reached the SymbolMap').not.toContain(value)
+    expect(r.anonymized).not.toContain(value)
+    expect(hasBlockingSecrets(r.secrets)).toBe(true)
+    expect(restore(r.anonymized, r.map).restored, 'restore brought it back').not.toContain(value)
+  })
+
+  it('destroys a PESEL-shaped API key - an AMBIGUOUS verdict, so it does not block', () => {
+    // 44051401359 has entropy 2.48, just under the 2.6 floor, so after
+    // `api_key =` it is read as MAYBE a credential. It is destroyed rather than
+    // masked (the point of this block), and - like every ambiguous verdict - it
+    // is reported rather than blocking. The confident cases above do block.
+    const r = anonymize(`const api_key = "${VALID_PESEL}"`, {})
+    expect(Object.values(r.map)).not.toContain(VALID_PESEL)
+    expect(r.anonymized).not.toContain(VALID_PESEL)
+    expect(r.secrets.find((f) => f.type === 'pesel')?.disposition).toBe('destroy')
+    expect(hasBlockingSecrets(r.secrets)).toBe(false)
+  })
+
+  it('destroys a checksum-valid number whose credential verdict is only ambiguous', () => {
+    // 4444444444444448 passes Luhn with a Visa prefix, but its entropy (0.34)
+    // is under the floor, so after `password =` it is read as MAYBE a
+    // credential. Masking it would persist a possible live secret; reporting it
+    // would send it to the model verbatim. Destroying it is the only answer
+    // that does neither.
+    const LOW_ENTROPY_PAN = '4444444444444448'
+    expect(
+      detectSecrets(`const n = "${LOW_ENTROPY_PAN}"`).some((f) => f.type === 'payment-card')
+    ).toBe(true)
+    const r = anonymize(`password = "${LOW_ENTROPY_PAN}"`, {})
+    expect(Object.values(r.map)).not.toContain(LOW_ENTROPY_PAN)
+    expect(r.anonymized).not.toContain(LOW_ENTROPY_PAN)
+    expect(r.secrets.every((f) => f.redacted === (f.disposition === 'destroy'))).toBe(true)
+  })
+
+  it('CONTROL: still masks a regulated value with no credential around it', () => {
+    // Without this, every case above passes just as well if regulated
+    // identifiers had simply gone back to being destroyed everywhere.
+    const r = anonymize(`const acct = "${VALID_IBAN}"`, {})
+    expect(r.map['__IBAN__1']).toBe(VALID_IBAN)
+    expect(hasBlockingSecrets(r.secrets)).toBe(false)
   })
 })
