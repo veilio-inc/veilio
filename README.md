@@ -181,7 +181,7 @@ The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The C
 
 ## License, contributing & trademarks
 
-- **License:** [Veilio Community License 1.0](./LICENSE) — **free to use for any purpose, including personal, educational, and internal commercial use.** Self-host it, modify it, fork it, run your business on it. You may **not** sell, resell, sublicense, white-label, or operate Veilio (or its engine, or a derivative) **as a commercial hosted service or a product that competes with Veilio Cloud.** It is **source-available and community-developed, but not an OSI-approved "open source" license.** For a commercial or redistribution license, email `hello@veilio.dev`.
+- **License:** [Veilio Community License 1.1](./LICENSE) — **free to use for any purpose, including personal, educational, and internal commercial use.** Self-host it, modify it, fork it, run your business on it. You may **not** sell, resell, sublicense, white-label, or operate Veilio (or its engine, or a derivative) **as a commercial hosted service or a product that competes with Veilio Cloud.** It is **source-available and community-developed, but not an OSI-approved "open source" license.** For a commercial or redistribution license, email `hello@veilio.dev`.
 - **Contributing:** see [CONTRIBUTING.md](./CONTRIBUTING.md). Contributions are accepted under a [CLA](./CLA.md) so they can be used across both the Community and Cloud editions.
 - **Trademarks:** the code is source-available, but the **"Veilio" name and logo are not** licensed for reuse — see [TRADEMARKS.md](./TRADEMARKS.md).
 - **Security:** report vulnerabilities privately per [SECURITY.md](./SECURITY.md).
@@ -189,4 +189,4 @@ The anonymizer engine (`@veilio-inc/engine`) is the same in both editions. The C
 
 ## Credits
 
-Built on prior work in the private Veilio codebase. Source-available under the Veilio Community License 1.0 — free to use, including inside your own business; not for competing resale or hosting.
+Built on prior work in the private Veilio codebase. Source-available under the Veilio Community License 1.1 — free to use, including inside your own business; not for competing resale or hosting.
