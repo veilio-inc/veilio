@@ -8,6 +8,8 @@ pbpaste | veilio restore                 # bring the answer back
 git diff --cached | veilio scan          # refuse to commit a live key
 ```
 
+Full guide - terminal, Cloud sign-in, and connecting AI assistants (Claude Code, Claude Desktop, Xcode, Cursor, VS Code): [docs/USING-THE-CLI-AND-MCP.md](../../docs/USING-THE-CLI-AND-MCP.md).
+
 ## Install
 
 ```bash

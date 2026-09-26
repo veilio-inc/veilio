@@ -37,6 +37,8 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
 | `scan_secrets` | Detect credentials without modifying anything, and without putting the values in context. |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names. |
 
+Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troubleshooting: [docs/USING-THE-CLI-AND-MCP.md](../../docs/USING-THE-CLI-AND-MCP.md).
+
 ## Install
 
 ```jsonc
