@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { SymbolMap } from '@veilio-inc/engine'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
+import LocalKeyModal from './LocalKeyModal.js'
+import { LocalKeyLockedError } from '../lib/localMapStore.js'
 
 interface Props {
   map: SymbolMap
@@ -12,15 +14,44 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
   const { saveMap } = useLocalMaps()
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  // Local maps are encrypted with the local passphrase (spec 018).
+  const [needKey, setNeedKey] = useState(false)
+
+  async function persist() {
+    setSaving(true)
+    setError('')
+    try {
+      await saveMap(name.trim(), map)
+      onSaved?.(name.trim())
+      onClose()
+    } catch (err) {
+      if (err instanceof LocalKeyLockedError) {
+        setNeedKey(true)
+        return
+      }
+      setError(err instanceof Error ? err.message : 'Could not save the map')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
-    setSaving(true)
-    saveMap(name.trim(), map)
-    onSaved?.(name.trim())
-    onClose()
-    setSaving(false)
+    void persist()
+  }
+
+  if (needKey) {
+    return (
+      <LocalKeyModal
+        onUnlocked={() => {
+          setNeedKey(false)
+          void persist()
+        }}
+        onClose={() => setNeedKey(false)}
+      />
+    )
   }
 
   return (
@@ -52,7 +83,9 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
           <span className="badge badge-accent">{Object.keys(map).length} identifiers</span>{' '}
-          <span style={{ marginLeft: 6 }}>Saved locally - never leaves this browser.</span>
+          <span style={{ marginLeft: 6 }}>
+            Saved in this browser, encrypted with your local passphrase - never leaves it.
+          </span>
         </p>
 
         <form onSubmit={handleSave}>
@@ -68,6 +101,12 @@ export default function SaveMapModal({ map, onClose, onSaved }: Props) {
               maxLength={100}
             />
           </div>
+
+          {error && (
+            <p className="form-error" role="alert" style={{ marginBottom: 12 }}>
+              {error}
+            </p>
+          )}
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" className="btn-ghost" onClick={onClose} style={{ flex: 1 }}>

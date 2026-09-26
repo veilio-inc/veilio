@@ -1,54 +1,34 @@
 import { useState, useCallback } from 'react'
 import type { SymbolMap } from '@veilio-inc/engine'
+import {
+  listLocalMaps,
+  saveLocalMap,
+  openLocalMap,
+  deleteLocalMap,
+  type LocalMapMeta,
+} from '../lib/localMapStore.js'
 
-const STORAGE_KEY = 'veilio_local_maps'
-
-interface LocalMapEntry {
-  id: string
-  name: string
-  map: SymbolMap
-  savedAt: string
-  identifierCount: number
-}
-
-function load(): LocalMapEntry[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as LocalMapEntry[]
-  } catch {
-    return []
-  }
-}
-
-function save(entries: LocalMapEntry[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
-}
-
+/**
+ * Local maps for the UI. Contents are encrypted at rest (spec 018): saving and
+ * opening need the local key and throw `LocalKeyLockedError` without it, which
+ * the caller answers with `LocalKeyModal`. The list is metadata only.
+ */
 export function useLocalMaps() {
-  const [maps, setMaps] = useState<LocalMapEntry[]>(load)
+  const [maps, setMaps] = useState<LocalMapMeta[]>(listLocalMaps)
+  const refresh = useCallback(() => setMaps(listLocalMaps()), [])
 
-  const saveMap = useCallback((name: string, map: SymbolMap): LocalMapEntry => {
-    const entry: LocalMapEntry = {
-      id: `local_${Date.now()}`,
-      name,
-      map,
-      savedAt: new Date().toISOString(),
-      identifierCount: Object.keys(map).length,
-    }
-    const next = [entry, ...load()]
-    save(next)
-    setMaps(next)
-    return entry
+  const saveMap = useCallback(async (name: string, map: SymbolMap): Promise<LocalMapMeta> => {
+    const meta = await saveLocalMap(name, map)
+    setMaps(listLocalMaps())
+    return meta
   }, [])
 
   const deleteMap = useCallback((id: string): void => {
-    const next = load().filter((m) => m.id !== id)
-    save(next)
-    setMaps(next)
+    deleteLocalMap(id)
+    setMaps(listLocalMaps())
   }, [])
 
-  const getMap = useCallback((id: string): SymbolMap | null => {
-    return load().find((m) => m.id === id)?.map ?? null
-  }, [])
+  const getMap = useCallback((id: string): Promise<SymbolMap> => openLocalMap(id), [])
 
-  return { maps, saveMap, deleteMap, getMap }
+  return { maps, saveMap, deleteMap, getMap, refresh }
 }

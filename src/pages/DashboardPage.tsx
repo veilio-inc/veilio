@@ -2,6 +2,9 @@ import { useState } from 'react'
 import Navbar from '../components/Navbar.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 import { exportMap } from '../lib/localCrypto.js'
+import LocalKeyModal from '../components/LocalKeyModal.js'
+import { LocalKeyLockedError } from '../lib/localMapStore.js'
+import type { SymbolMap } from '@veilio-inc/engine'
 
 function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
   if (!msg) return null
@@ -9,7 +12,23 @@ function Toast({ msg, type }: { msg: string; type: 'success' | 'error' | '' }) {
 }
 
 export default function DashboardPage() {
-  const { maps, deleteMap } = useLocalMaps()
+  const { maps, deleteMap, getMap, refresh } = useLocalMaps()
+  // An export waiting on the local passphrase (spec 018: contents are encrypted).
+  const [pending, setPending] = useState<(() => void) | null>(null)
+
+  /** Open a map's contents, asking for the local passphrase if needed; `then`
+   *  runs once they are open. */
+  async function withMap(id: string, then: (map: SymbolMap) => void | Promise<void>) {
+    try {
+      await then(await getMap(id))
+    } catch (err) {
+      if (err instanceof LocalKeyLockedError) {
+        setPending(() => () => void withMap(id, then))
+        return
+      }
+      showToast(err instanceof Error ? err.message : 'Could not open the map', 'error')
+    }
+  }
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
   // Keyed by map id, not a single boolean: each row exports independently,
   // and only the row actually deriving should show busy (ROADMAP E11).
@@ -20,9 +39,11 @@ export default function DashboardPage() {
     setTimeout(() => setToast({ msg: '', type: '' }), 3500)
   }
 
-  async function handleExportVeilio(id: string, name: string) {
-    const map = maps.find((m) => m.id === id)?.map
-    if (!map) return
+  function handleExportVeilio(id: string, name: string) {
+    void withMap(id, (map) => exportVeilio(id, name, map))
+  }
+
+  async function exportVeilio(id: string, name: string, map: SymbolMap) {
     const passphrase = prompt('Enter a passphrase to encrypt the export:')
     if (!passphrase) return
     setDerivingId(id)
@@ -44,8 +65,10 @@ export default function DashboardPage() {
   }
 
   function handleExportJson(id: string, name: string) {
-    const map = maps.find((m) => m.id === id)?.map
-    if (!map) return
+    void withMap(id, (map) => exportJson(name, map))
+  }
+
+  function exportJson(name: string, map: SymbolMap) {
     const blob = new Blob([JSON.stringify(map, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -187,6 +210,21 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {pending && (
+        <LocalKeyModal
+          onUnlocked={() => {
+            const run = pending
+            setPending(null)
+            run()
+          }}
+          onForgotten={() => {
+            setPending(null)
+            refresh()
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
 
       <Toast msg={toast.msg} type={toast.type} />
     </div>

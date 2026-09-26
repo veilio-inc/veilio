@@ -21,6 +21,12 @@ import { useLocalMaps } from '../hooks/useLocalMaps.js'
 import { useDeriveController } from '../hooks/useDeriveController.js'
 import { maskSelection, unmaskTerm, previewTerm, stripOption } from '../lib/manualMarks.js'
 import { exportMap, importMap } from '../lib/localCrypto.js'
+import LocalKeyModal from '../components/LocalKeyModal.js'
+import {
+  LocalKeyLockedError,
+  hasLegacyPlaintext,
+  deleteLegacyPlaintext,
+} from '../lib/localMapStore.js'
 import { importErrorMessage } from '../lib/importedMap.js'
 import { exportErrorMessage, MIN_PASSPHRASE_LENGTH } from '../lib/passphrase.js'
 
@@ -53,7 +59,11 @@ export default function ScrubPage() {
   const [toast, setToast] = useState({ msg: '', type: '' as 'success' | 'error' | '' })
   const derive = useDeriveController()
 
-  const { maps: localMaps, getMap: getLocalMap } = useLocalMaps()
+  const { maps: localMaps, getMap: getLocalMap, refresh: refreshLocalMaps } = useLocalMaps()
+  // Spec 018: a local map waiting on the local passphrase, and whether maps
+  // saved before encryption are still sitting in plain text.
+  const [localKeyFor, setLocalKeyFor] = useState<string | 'migrate' | null>(null)
+  const [legacyPlaintext, setLegacyPlaintext] = useState(hasLegacyPlaintext)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -210,11 +220,17 @@ export default function ScrubPage() {
     fileInput.click()
   }
 
-  function handleLoadLocalMap(id: string) {
-    const map = getLocalMap(id)
-    if (map) {
+  async function handleLoadLocalMap(id: string) {
+    try {
+      const map = await getLocalMap(id)
       setCurrentMap(map)
       showToast(`Loaded ${Object.keys(map).length} identifiers`)
+    } catch (err) {
+      if (err instanceof LocalKeyLockedError) {
+        setLocalKeyFor(id)
+        return
+      }
+      showToast(err instanceof Error ? err.message : 'Failed to load map', 'error')
     }
   }
 
@@ -223,6 +239,39 @@ export default function ScrubPage() {
   return (
     <div className="page">
       <Navbar />
+
+      {legacyPlaintext && (
+        <div
+          role="alert"
+          style={{
+            margin: '12px 24px 0',
+            padding: '12px 16px',
+            border: '1px solid var(--danger)',
+            borderRadius: 8,
+            background: 'var(--danger-dim)',
+            fontSize: 13,
+          }}
+        >
+          <p style={{ margin: 0 }}>
+            Maps saved in this browser before encryption are still stored in plain text. Set a
+            passphrase to encrypt them, or delete them.
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn-primary" onClick={() => setLocalKeyFor('migrate')}>
+              Encrypt them
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => {
+                deleteLegacyPlaintext()
+                setLegacyPlaintext(false)
+              }}
+            >
+              Delete them
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         role="note"
@@ -499,6 +548,24 @@ export default function ScrubPage() {
           </div>
         )}
       </div>
+
+      {localKeyFor && (
+        <LocalKeyModal
+          onUnlocked={() => {
+            const target = localKeyFor
+            setLocalKeyFor(null)
+            // Setting or entering the passphrase migrates any plaintext maps.
+            setLegacyPlaintext(hasLegacyPlaintext())
+            refreshLocalMaps()
+            if (target !== 'migrate') void handleLoadLocalMap(target)
+          }}
+          onForgotten={() => {
+            setLegacyPlaintext(hasLegacyPlaintext())
+            refreshLocalMaps()
+          }}
+          onClose={() => setLocalKeyFor(null)}
+        />
+      )}
 
       {showSave && (
         <SaveMapModal
