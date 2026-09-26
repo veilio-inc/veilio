@@ -129,7 +129,6 @@ describe('a personal map is opened on this machine (T030, FR-012)', () => {
           scope: 'personal',
           identifier_count: 2,
           updated_at: '2026-09-01T00:00:00.000Z',
-          storage: 'client-envelope',
           map_data: sealed,
         })
       }
@@ -203,7 +202,6 @@ describe('a wrong passphrase writes nothing and says which thing was wrong (T031
         scope: 'personal',
         identifier_count: 2,
         updated_at: '2026-09-01T00:00:00.000Z',
-        storage: 'client-envelope',
         map_data: sealed,
       })
     })
@@ -266,7 +264,6 @@ describe('a map whose vault was never created (T032)', () => {
         scope: 'personal',
         identifier_count: 2,
         updated_at: '2026-09-01T00:00:00.000Z',
-        storage: 'client-envelope',
         map_data: sealed,
       })
     })
@@ -309,7 +306,6 @@ describe('a local copy that has diverged from Cloud (T035)', () => {
         identifier_count: 1,
         // Newer than what we recorded at pull time.
         updated_at: '2026-09-03T00:00:00.000Z',
-        storage: 'client-envelope',
         map_data: sealed,
       })
     })
