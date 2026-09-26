@@ -312,18 +312,6 @@ export async function runMapsList(io: Io): Promise<number> {
 }
 
 /**
- * Pull a map into the local store: decrypt FIRST, write second.
- *
- * The ordering is the control (Constitution IV). Writing before decrypting means
- * a wrong passphrase leaves a half-built store behind — and the store is the one
- * thing that can restore text already anonymized, so a partial write there is
- * not an inconvenience, it is unrecoverable text.
- *
- * A personal map is opened HERE. The server holds the salt and a verifier and
- * nothing else; the passphrase never leaves this machine, and there is no code
- * path in this package that could send it.
- */
-/**
  * Open a team map with the team keys `veilio team unlock` stored.
  *
  * The same keys the MCP server reads, for the same reason: this machine may
@@ -368,6 +356,18 @@ async function openTeamEnvelope(
   }
 }
 
+/**
+ * Pull a map into the local store: decrypt FIRST, write second.
+ *
+ * The ordering is the control (Constitution IV). Writing before decrypting means
+ * a wrong passphrase leaves a half-built store behind — and the store is the one
+ * thing that can restore text already anonymized, so a partial write there is
+ * not an inconvenience, it is unrecoverable text.
+ *
+ * A personal map is opened HERE. The server holds the salt and a verifier and
+ * nothing else; the passphrase never leaves this machine, and there is no code
+ * path in this package that could send it.
+ */
 export async function runMapsPull(
   id: string | null,
   mapPath: string,
