@@ -3,7 +3,7 @@
 _Version 1.0 · Last updated: 2026-06-23_
 
 > **Why this exists.** The Veilio **code** is source-available under the Veilio
-> Community License 1.0 — anyone may use, modify, and fork it for any purpose,
+> Community License 1.1 — anyone may use, modify, and fork it for any purpose,
 > including inside their own business, except to resell it, host it as a service for
 > others, or republish it as a competing product. That license covers the code only.
 > It says so itself (§11), and it does **not** grant any rights to the

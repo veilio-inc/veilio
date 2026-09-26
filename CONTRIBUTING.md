@@ -190,7 +190,7 @@ would fail CI on formatting fails locally instead.
 ## License of contributions
 
 Unless stated otherwise, your contributions to this repository are provided under
-its **[Veilio Community License 1.0](./LICENSE)** — free to use, modify, fork, and
+its **[Veilio Community License 1.1](./LICENSE)** — free to use, modify, fork, and
 run inside your own business, including commercially; not for reselling or hosting
 as a competing service. Per the [CLA](./CLA.md), you also grant the rights needed
 to use your contribution in Veilio Cloud and in commercially-licensed
