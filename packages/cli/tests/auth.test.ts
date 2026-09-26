@@ -26,11 +26,14 @@ import { credentialPath, readCredential, writeCredential } from '../src/credenti
 let home: string
 let cwd: string
 let fetchMock: ReturnType<typeof vi.fn>
+/** What the user types when asked for an authentication code. */
+let secondFactorAnswer = '123456'
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'veilio-home-'))
   cwd = mkdtempSync(join(tmpdir(), 'veilio-work-'))
   fetchMock = vi.fn()
+  secondFactorAnswer = '123456'
   vi.stubGlobal('fetch', fetchMock)
 })
 
@@ -57,7 +60,7 @@ async function run(argv: string[], stdin = ''): Promise<Run> {
     stdin: async () => stdin,
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
-    prompt: async () => 'user@example.test',
+    prompt: async (q: string) => (/code/i.test(q) ? secondFactorAnswer : 'user@example.test'),
     password: async () => 'CorrectHorseBattery123',
   }
   const code = await main(argv, io)
@@ -177,6 +180,72 @@ describe('a sign-in that fails writes no credential (T018)', () => {
     // somebody to re-type one that was never wrong is the wrong remedy.
     expect(res.err).not.toMatch(/password/i)
     expect(res.err).toMatch(/reach|connect|ECONNREFUSED/i)
+  })
+})
+
+// ─── An account with a second factor ────────────────────────────────────────
+//
+// Found on staging (2026-09-26): the login response for a 2FA account carries a
+// five-minute CHALLENGE token. It was stored as the session, the entitled probe
+// then got 401, and the user was told their password was wrong.
+
+describe('an account with two-factor authentication', () => {
+  function server(verify: (auth: string | null, body: { code?: string }) => Response) {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      const auth = new Headers(init?.headers).get('Authorization')
+      if (path === '/api/auth/login') {
+        return jsonResponse(200, { secondFactorRequired: true, token: 'challenge-token', expiresIn: 300 })
+      }
+      if (path === '/api/auth/2fa/verify') return verify(auth, JSON.parse(String(init?.body ?? '{}')))
+      // The entitled probe: only the real session opens it.
+      return auth === 'Bearer session-token' ? jsonResponse(200, { maps: [] }) : jsonResponse(401, { error: 'Unauthorized' })
+    })
+  }
+
+  it('asks for the code, completes the sign-in with the challenge, and stores the SESSION', async () => {
+    server((auth, body) =>
+      auth === 'Bearer challenge-token' && body.code === '123456'
+        ? jsonResponse(200, { token: 'session-token', user: { email: 'user@example.test' } })
+        : jsonResponse(401, { error: 'Invalid code' })
+    )
+    const res = await run(['login', '--instance', INSTANCE])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(readCredential(home)?.token).toBe('session-token')
+    expect(requestedPaths().map((u) => new URL(u).pathname)).toEqual([
+      '/api/auth/login',
+      '/api/auth/2fa/verify',
+      '/api/maps',
+    ])
+  })
+
+  it('a refused code writes nothing and says the CODE was not accepted, not the password', async () => {
+    server(() => jsonResponse(401, { error: 'Invalid code' }))
+    const res = await run(['login', '--instance', INSTANCE])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(existsSync(credentialPath(home))).toBe(false)
+    expect(res.err).toMatch(/authentication code was not accepted/i)
+    expect(res.err).not.toMatch(/password/i)
+  })
+
+  it('an empty code stops before asking the server, and writes nothing', async () => {
+    secondFactorAnswer = '   '
+    server(() => jsonResponse(200, { token: 'session-token' }))
+    const res = await run(['login', '--instance', INSTANCE])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/no authentication code/i)
+    expect(existsSync(credentialPath(home))).toBe(false)
+    expect(requestedPaths().some((u) => u.endsWith('/api/auth/2fa/verify'))).toBe(false)
+  })
+
+  it('never stores the challenge token, even when the account is not entitled', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/api/auth/login')
+        ? jsonResponse(200, { secondFactorRequired: true, token: 'challenge-token' })
+        : jsonResponse(401, { error: 'Unauthorized' })
+    )
+    await run(['login', '--instance', INSTANCE])
+    expect(readCredential(home)).toBeNull()
   })
 })
 

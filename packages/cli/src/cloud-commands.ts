@@ -55,6 +55,9 @@ const ENTITLED_PROBE = '/api/maps'
 interface LoginResponse {
   token: string
   user?: { email?: string }
+  /** The account has a second factor: `token` is then a five-minute CHALLENGE,
+   *  good only for POST /api/auth/2fa/verify - never a session. */
+  secondFactorRequired?: boolean
 }
 
 /**
@@ -104,6 +107,36 @@ export async function runLogin(instance: string | null, io: Io): Promise<number>
     })
   } catch (err) {
     return reportLoginFailure(err, io)
+  }
+
+  // A second factor. The token that came back is a challenge, not a session:
+  // storing it made every later command fail, and the failure read as a wrong
+  // password (found on staging, 2026-09-26). Ask for the code and complete the
+  // sign-in the way the web app does.
+  if (session.secondFactorRequired === true) {
+    const code = (
+      await requirePrompt(io, 'Authentication code (or a recovery code): ')
+    ).trim()
+    if (code === '') {
+      io.stderr('veilio: no authentication code given\n')
+      return EXIT_ERROR
+    }
+    try {
+      session = await request<LoginResponse>('/api/auth/2fa/verify', {
+        credential: { token: session.token, account, instance: base },
+        method: 'POST',
+        body: { code },
+      })
+    } catch (err) {
+      if (err instanceof CloudError && err.kind === 'unauthenticated') {
+        io.stderr(
+          'veilio: that authentication code was not accepted, or it expired. ' +
+            'Run `veilio login` again with a fresh code.\n'
+        )
+        return EXIT_ERROR
+      }
+      return reportLoginFailure(err, io)
+    }
   }
 
   if (typeof session.token !== 'string' || session.token === '') {
