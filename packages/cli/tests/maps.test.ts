@@ -6,7 +6,8 @@ import { deriveVaultKey, encryptMapForVault, toBase64, type SymbolMap } from '@v
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential } from '../src/credential.js'
-import { STORE_DIR, STORE_FILE } from '../src/store.js'
+import { writeTeamUnlock } from '../src/team-unlock.js'
+import { STORE_DIR, STORE_FILE, loadMap } from '../src/store.js'
 
 /**
  * Maps, both directions, and the promise that makes them worth using.
@@ -351,5 +352,88 @@ describe('a local copy that has diverged from Cloud (T035)', () => {
     )
     const res = await run(['maps', 'pull', 'map-1'])
     expect(res.code, res.err).toBe(EXIT_OK)
+  })
+})
+
+// Found against staging, 2026-09-26: `maps pull` on a TEAM map failed with
+// "Unrecognized vault envelope". It still assumed the server sent team maps
+// already open, and fed the team envelope to the vault key - while the key that
+// opens it sat on disk from `veilio team unlock`, where the MCP server finds it.
+describe('maps pull - a team map', () => {
+  const RAW_TEAM_KEY = new Uint8Array(32).fill(7)
+
+  async function teamSealed(map: SymbolMap, raw = RAW_TEAM_KEY): Promise<string> {
+    const subtle = (globalThis.crypto as Crypto).subtle
+    const key = await subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt'])
+    const iv = new Uint8Array(12).fill(5)
+    const data = await subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      new TextEncoder().encode(JSON.stringify(map))
+    )
+    return JSON.stringify({
+      v: 1,
+      alg: 'AES-256-GCM-TEAM',
+      iv: toBase64(iv),
+      data: toBase64(new Uint8Array(data)),
+    })
+  }
+
+  function unlockTeam(raw = RAW_TEAM_KEY): void {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: 'a@b.test',
+        teamId: 'team-1',
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        keys: [{ version: 1, key: toBase64(raw) }],
+      },
+      home
+    )
+  }
+
+  async function serveTeamMap(): Promise<void> {
+    const sealed = await teamSealed(MAP)
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/maps/')) {
+        return json(200, {
+          id: 'team-map-1',
+          name: 'payments',
+          scope: 'team',
+          identifier_count: 2,
+          updated_at: '2026-09-26T00:00:00.000Z',
+          map_data: sealed,
+        })
+      }
+      return json(200, { personalMaps: [], teamMaps: [], plan: 'team' })
+    })
+  }
+
+  it('opens it with the unlocked team key - no vault passphrase involved', async () => {
+    unlockTeam()
+    await serveTeamMap()
+    const res = await run(['maps', 'pull', 'team-map-1'], '')
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(loadMap(mapPath())).toEqual(MAP)
+    // The vault endpoint is never asked: the team key is what seals this map.
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/api/auth/vault'))).toBe(false)
+  })
+
+  it('says to run `veilio team unlock` when no team key is unlocked, and writes nothing', async () => {
+    await serveTeamMap()
+    const res = await run(['maps', 'pull', 'team-map-1'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/veilio team unlock/)
+    expect(existsSync(mapPath())).toBe(false)
+  })
+
+  it('writes nothing when the unlocked key is not the one the map was sealed under', async () => {
+    unlockTeam(new Uint8Array(32).fill(8))
+    await serveTeamMap()
+    const res = await run(['maps', 'pull', 'team-map-1'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/could not be opened/)
+    expect(existsSync(mapPath())).toBe(false)
   })
 })

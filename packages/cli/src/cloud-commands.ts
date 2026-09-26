@@ -30,10 +30,15 @@ import {
   encryptMapForVault,
   fromBase64,
   parseVaultEnvelope,
+  importTeamKey,
+  decryptTeamMapWithAny,
+  type CryptoKeyLike,
   type SymbolMap,
+  type TeamMapEnvelope,
 } from '@veilio-inc/engine'
 import { loadMap, loadRemote, saveMap } from './store.js'
 import {
+  readTeamUnlock,
   removeTeamUnlock,
   writeTeamUnlock,
   teamUnlockPath,
@@ -318,6 +323,51 @@ export async function runMapsList(io: Io): Promise<number> {
  * nothing else; the passphrase never leaves this machine, and there is no code
  * path in this package that could send it.
  */
+/**
+ * Open a team map with the team keys `veilio team unlock` stored.
+ *
+ * The same keys the MCP server reads, for the same reason: this machine may
+ * have nobody present to type a vault passphrase, and the team key - not the
+ * vault key - is what a team map is sealed under. Reports and returns null
+ * when it cannot, so the caller writes nothing.
+ */
+async function openTeamEnvelope(
+  credential: Credential,
+  mapData: string,
+  io: Io
+): Promise<SymbolMap | null> {
+  const unlock = readTeamUnlock(
+    { instance: credential.instance, account: credential.account },
+    io.home
+  )
+  if (!unlock || unlock.keys.length === 0) {
+    io.stderr(
+      'veilio: that is a team map, and no team key is unlocked on this machine. ' +
+        'Run `veilio team unlock` first. Nothing was written.\n'
+    )
+    return null
+  }
+  const keys: { version: number; key: CryptoKeyLike }[] = []
+  for (const stored of unlock.keys) {
+    try {
+      keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
+    } catch {
+      // A damaged entry; the others may still open the map.
+      continue
+    }
+  }
+  try {
+    return await decryptTeamMapWithAny(keys, JSON.parse(mapData) as TeamMapEnvelope)
+  } catch (err) {
+    io.stderr(
+      `veilio: that team map could not be opened with the unlocked team keys — ` +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        'If the team key was rotated since, run `veilio team unlock` again. Nothing was written.\n'
+    )
+    return null
+  }
+}
+
 export async function runMapsPull(
   id: string | null,
   mapPath: string,
@@ -338,11 +388,26 @@ export async function runMapsPull(
     return reportCloudFailure(err, io)
   }
 
-  // A team map arrives already open — the server can read those, and says so in
-  // the privacy policy. Only a client envelope is ours to decrypt.
-  let map: SymbolMap
+  // Every map is an envelope the server cannot open: a personal map under the
+  // vault key, a team map under the team key. Which one is written on the
+  // envelope itself.
   if (typeof remote.map_data !== 'string') {
-    map = remote.map_data
+    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
+    return EXIT_ERROR
+  }
+  let envelope: { alg?: unknown }
+  try {
+    envelope = JSON.parse(remote.map_data) as { alg?: unknown }
+  } catch {
+    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
+    return EXIT_ERROR
+  }
+
+  let map: SymbolMap
+  if (envelope.alg === 'AES-256-GCM-TEAM') {
+    const opened = await openTeamEnvelope(credential, remote.map_data, io)
+    if (!opened) return EXIT_ERROR
+    map = opened
   } else {
     let vault: VaultInfo
     try {
