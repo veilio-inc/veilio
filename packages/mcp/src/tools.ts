@@ -34,6 +34,8 @@ import {
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import { getNamespace, mergeNamespace } from './namespace.js'
+import { getRules, type ResolvedRules } from './rules.js'
+import { describeAge } from '@veilio-inc/cli/rules'
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */
@@ -163,6 +165,13 @@ function restoreReportLines(report: RestoreReport): string {
   return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : ''
 }
 
+function rulesLine(r: ResolvedRules): string {
+  if (r.source === 'none') return 'Custom rules: none'
+  const n = `${r.rules.length} custom rule${r.rules.length === 1 ? '' : 's'}`
+  if (r.source === 'cloud') return `Custom rules: ${n} from Cloud`
+  return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
+}
+
 const LANGUAGE_ENUM = ['auto', ...LANGUAGES]
 
 const LANGUAGE_PROP = {
@@ -186,7 +195,8 @@ function runAnonymize(
   const { source: namespaceSource, namespace } = getNamespace()
   const existingMap = mergeNamespace(localMap, namespace)
   const language = (str(args, 'language') ?? 'auto') as 'auto'
-  const result = anonymize(source, { existingMap, language, secrets: 'redact' })
+  const rules = getRules()
+  const result = anonymize(source, { existingMap, language, secrets: 'redact', rules: rules.rules })
   // Persist local-original, whatever this call genuinely minted, and only the
   // team-overlay entries this call actually USED — never the rest of the team
   // namespace. Persisting all of it would bake entries this project never
@@ -236,6 +246,9 @@ function runAnonymize(
     // Never absent (FR-016, Constitution V): a result that cannot say where its
     // names came from is the silent fallback this line exists to rule out.
     `Namespace: ${namespaceSource}`,
+    // Stated every time, like the namespace: an agent whose masking ignored the
+    // team's rules must be able to tell.
+    rulesLine(rules),
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')

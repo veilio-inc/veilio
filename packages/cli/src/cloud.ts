@@ -24,6 +24,7 @@
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
 import type { Credential } from './credential.js'
+import type { CustomRule } from '@veilio-inc/engine'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
@@ -277,6 +278,13 @@ export type VaultInfo =
 
 export function listMaps(credential: Credential): Promise<CloudMapList> {
   return request<CloudMapList>('/api/maps', { credential })
+}
+
+/** The account's custom rules: its own, and those of the teams it is in. */
+export function listRules(
+  credential: Credential
+): Promise<{ rules: CustomRule[]; teamRules: CustomRule[] }> {
+  return request<{ rules: CustomRule[]; teamRules: CustomRule[] }>('/api/rules', { credential })
 }
 
 export function getMap(credential: Credential, id: string): Promise<CloudMap> {

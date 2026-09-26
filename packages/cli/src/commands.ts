@@ -23,6 +23,8 @@ import {
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
+import { readCredential } from './credential.js'
+import { describeAge, readRules } from './rules.js'
 
 export interface Io {
   cwd: string
@@ -74,11 +76,16 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
   const source = await readInput(args, io)
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
   const existingMap = loadMap(mapPath)
+  // The account's custom rules, as last pulled. Read from disk, never fetched:
+  // scrub stays offline. Signed out means no rules, whatever the cache holds.
+  const credential = readCredential(io.home)
+  const cached = credential ? readRules(credential, io.home) : null
 
   const result = anonymize(source, {
     existingMap,
     language: args.language,
     secrets: args.secrets,
+    rules: cached?.rules,
   })
 
   saveMap(mapPath, result.map, { force: args.force })
@@ -103,6 +110,15 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
     io.stderr(
       `${BIN_NAME}: ${LANGUAGE_LABELS[result.language]} — ${added} new placeholder${added === 1 ? '' : 's'}, ${Object.keys(result.map).length} in map\n`
     )
+    // Said every time, with the age: a whitelist rule the team has since
+    // removed would still leave that name readable until the next pull.
+    if (cached && cached.rules.length > 0) {
+      const n = cached.rules.length
+      io.stderr(
+        `${BIN_NAME}: applied ${n} custom rule${n === 1 ? '' : 's'} pulled ${describeAge(cached.pulledAt)} ` +
+          `(\`${BIN_NAME} rules pull\` to refresh)\n`
+      )
+    }
     // Under --quiet, unlike the language warning above. Nearly every real file
     // has a comment beside code, so this fires on almost every run; surviving
     // --quiet would defeat the flag and teach people to stop passing it. The
@@ -274,6 +290,8 @@ COMMANDS
                        and keep them on this machine (7 days), so team maps -
                        and the MCP server's shared namespace - work unattended.
   team lock            Remove the unlocked team keys from this machine.
+  rules pull           Fetch this account's custom rules (personal and team).
+                       \`scrub\` then applies them offline, as the web app does.
 
 OPTIONS
   -l, --language <lang>   auto (default), typescript, python, go, java, csharp,

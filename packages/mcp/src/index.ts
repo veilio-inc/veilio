@@ -8,6 +8,7 @@
 import { FrameReader, type JsonRpcResponse } from './server.js'
 import type { ToolContext } from './tools.js'
 import { primeNamespace } from './namespace.js'
+import { primeRules } from './rules.js'
 
 export { FrameReader, handleFrame, handleMessage, SERVER_VERSION } from './server.js'
 export { TOOLS, callTool } from './tools.js'
@@ -36,7 +37,7 @@ async function start(): Promise<void> {
   // for the rest of this process sees the answer already settled rather than
   // racing the first one in (contracts/shared-namespace.md R-007). Never
   // throws — see namespace.ts — so this can only delay startup, not fail it.
-  await primeNamespace()
+  await Promise.all([primeNamespace(), primeRules()])
 
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk: string) => reader.push(chunk))

@@ -15,6 +15,7 @@ import {
   getUserKeys,
   getTeamKeyWraps,
   listMaps,
+  listRules,
   request,
   type CloudMap,
   type CloudMapList,
@@ -46,6 +47,7 @@ import {
   type StoredTeamKey,
 } from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
+import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 
@@ -192,6 +194,7 @@ export async function runLogout(io: Io): Promise<number> {
       // branch where signing out quietly kept the more dangerous half.
       try {
         removeTeamUnlock(io.home)
+        removeRules(io.home)
         removeCredential(io.home)
       } catch (removeErr) {
         io.stderr(
@@ -222,6 +225,17 @@ export async function runLogout(io: Io): Promise<number> {
     io.stderr(
       `veilio: the session was revoked, but the unlocked team keys could not be removed ` +
         `(${err instanceof Error ? err.message : String(err)}). Delete ${teamUnlockPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  // The rules are the account's too, and a whitelist among them keeps names
+  // readable: they go with the session rather than outliving it.
+  try {
+    removeRules(io.home)
+  } catch (err) {
+    io.stderr(
+      `veilio: the session was revoked, but the cached custom rules could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). Delete ${rulesPath(io.home)} by hand.\n`
     )
     return EXIT_ERROR
   }
@@ -594,6 +608,55 @@ function notSignedIn(io: Io): number {
 /** Same distinctions as a failed sign-in, minus the ones only login can hit. */
 function reportCloudFailure(err: unknown, io: Io): number {
   return reportLoginFailure(err, io)
+}
+
+// ─── rules: pull ──────────────────────────────────────────────────────────────
+
+/**
+ * Fetch the account's custom rules so `veilio scrub` can apply them offline.
+ *
+ * Merged here, in the web app's order, so every later scrub applies exactly
+ * what the browser would. A plan without custom rules REMOVES any cache left
+ * from before: rules the account can no longer use must not go on shaping
+ * its output. Any other failure keeps the cache and says so.
+ */
+export async function runRulesPull(io: Io): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) return notSignedIn(io)
+
+  let fetched: Awaited<ReturnType<typeof listRules>>
+  try {
+    fetched = await listRules(credential)
+  } catch (err) {
+    if (err instanceof CloudError && err.kind === 'unentitled') {
+      const removed = removeRules(io.home)
+      io.stderr(
+        `veilio: this account's plan does not include custom rules${removed ? ' - the cached rules were removed' : ''}.\n`
+      )
+      return EXIT_ERROR
+    }
+    return reportCloudFailure(err, io)
+  }
+
+  const personal = fetched.rules ?? []
+  const team = fetched.teamRules ?? []
+  const rules = mergeRules(personal, team)
+  writeRules(
+    {
+      instance: credential.instance,
+      account: credential.account,
+      pulledAt: new Date().toISOString(),
+      rules,
+    },
+    io.home
+  )
+  const skipped = personal.length + team.length - rules.length
+  io.stdout(
+    `Pulled ${rules.length} custom rule${rules.length === 1 ? '' : 's'} ` +
+      `(${personal.length} personal, ${team.length} team${skipped > 0 ? `, ${skipped} disabled and skipped` : ''}). ` +
+      '`veilio scrub` applies them.\n'
+  )
+  return EXIT_OK
 }
 
 // ─── team: unlock, lock ──────────────────────────────────────────────────────

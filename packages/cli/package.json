@@ -48,7 +48,8 @@
     "./store": "./dist/store.js",
     "./credential": "./dist/credential.js",
     "./cloud": "./dist/cloud.js",
-    "./team-unlock": "./dist/team-unlock.js"
+    "./team-unlock": "./dist/team-unlock.js",
+    "./rules": "./dist/rules.js"
   },
   "repository": {
     "type": "git",

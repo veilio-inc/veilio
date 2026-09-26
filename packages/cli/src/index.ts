@@ -11,6 +11,7 @@ import {
   runMapsPush,
   runTeamUnlock,
   runTeamLock,
+  runRulesPull,
 } from './cloud-commands.js'
 import { resolveMapPath } from './store.js'
 import { createInterface } from 'node:readline'
@@ -85,6 +86,10 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return EXIT_ERROR
         }
       }
+      case 'rules':
+        if (args.rulesAction === 'pull') return await runRulesPull(io)
+        io.stderr('veilio: rules needs an action — pull.\n')
+        return EXIT_ERROR
     }
   } catch (err) {
     io.stderr(`veilio: ${err instanceof Error ? err.message : String(err)}\n`)
