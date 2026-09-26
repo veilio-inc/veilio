@@ -172,6 +172,39 @@ function rulesLine(r: ResolvedRules): string {
   return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
 }
 
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+const FLOOR_MARKER = '\u0000floor:'
+
+/**
+ * Anonymize with every NEW number above `floors[base]` (spec 017).
+ *
+ * The engine numbers above the highest number in the map it is given, so a
+ * marker entry at the floor moves the counter there. Markers hold a NUL no
+ * identifier contains, match nothing in the text, and are stripped from the
+ * returned map. Only added above the map's own highest, where they cannot
+ * overwrite a real entry. Same technique as the Cloud web app.
+ */
+function anonymizeAbove(
+  source: string,
+  options: Parameters<typeof anonymize>[1] & { existingMap: Record<string, string> },
+  floors: Record<string, number>
+): ReturnType<typeof anonymize> {
+  const inMap: Record<string, number> = {}
+  for (const p of Object.keys(options.existingMap)) {
+    const m = NUMBERED.exec(p)
+    if (m && Number(m[2]) > (inMap[m[1]] ?? 0)) inMap[m[1]] = Number(m[2])
+  }
+  const seeded = { ...options.existingMap }
+  for (const [base, floor] of Object.entries(floors)) {
+    if (floor > (inMap[base] ?? 0)) seeded[`${base}${floor}`] = `${FLOOR_MARKER}${base}`
+  }
+  const result = anonymize(source, { ...options, existingMap: seeded })
+  const map = Object.fromEntries(
+    Object.entries(result.map).filter(([, identifier]) => !identifier.startsWith(FLOOR_MARKER))
+  )
+  return { ...result, map }
+}
+
 const LANGUAGE_ENUM = ['auto', ...LANGUAGES]
 
 const LANGUAGE_PROP = {
@@ -192,11 +225,15 @@ function runAnonymize(
   // independently and a shared key is coincidence, not identity. See
   // mergeNamespace's own comment for why a naive `{ ...local, ...namespace }`
   // corrupts the store (spec 005 US4).
-  const { source: namespaceSource, namespace } = getNamespace()
+  const { source: namespaceSource, namespace, highest } = getNamespace()
   const existingMap = mergeNamespace(localMap, namespace)
   const language = (str(args, 'language') ?? 'auto') as 'auto'
   const rules = getRules()
-  const result = anonymize(source, { existingMap, language, secrets: 'redact', rules: rules.rules })
+  const result = anonymizeAbove(
+    source,
+    { existingMap, language, secrets: 'redact', rules: rules.rules },
+    highest
+  )
   // Persist local-original, whatever this call genuinely minted, and only the
   // team-overlay entries this call actually USED — never the rest of the team
   // namespace. Persisting all of it would bake entries this project never

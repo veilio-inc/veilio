@@ -40,9 +40,29 @@ export interface ResolvedNamespace {
    * server never emits one, and `restore_text` refuses to guess them.
    */
   conflicts: string[]
+  /**
+   * Highest number per placeholder base in ANY readable team map, conflicts
+   * included. New names are numbered above it, so this server never hands a
+   * new identifier a number the team already uses for something else.
+   */
+  highest: Record<string, number>
 }
 
-const LOCAL: ResolvedNamespace = { source: 'local', namespace: {}, conflicts: [] }
+const LOCAL: ResolvedNamespace = { source: 'local', namespace: {}, conflicts: [], highest: {} }
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+/** Highest number per base across every readable map. */
+export function highestAcross(entries: readonly TeamMapEntry[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const entry of entries) {
+    for (const placeholder of Object.keys(entry.map ?? {})) {
+      const m = NUMBERED.exec(placeholder)
+      if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+    }
+  }
+  return out
+}
 
 /** Placeholders that readable maps give more than one identifier. */
 export function findConflicts(entries: readonly TeamMapEntry[]): string[] {
@@ -78,7 +98,11 @@ async function buildTeamNamespace(
   credential: Credential,
   keys: readonly { version: number; key: CryptoKeyLike }[],
   list: CloudMapList
-): Promise<{ namespace: Record<string, string>; conflicts: string[] } | null> {
+): Promise<{
+  namespace: Record<string, string>
+  conflicts: string[]
+  highest: Record<string, number>
+} | null> {
   // A member's OWN team maps arrive under personalMaps — the listing splits by
   // ownership, not by scope — so both lists have to be considered or this
   // member's own placeholders drop out of the shared namespace.
@@ -93,7 +117,7 @@ async function buildTeamNamespace(
   const namespace = Object.fromEntries(
     Object.entries(merged).filter(([p]) => !conflicts.includes(p))
   )
-  return { namespace, conflicts }
+  return { namespace, conflicts, highest: highestAcross(entries) }
 }
 
 /**
@@ -172,7 +196,9 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
     // An older self-hosted Cloud may still merge server-side, and that answer
     // needs no key at all. Checked before the vault key so such a deployment
     // keeps working for a member who has not unlocked one.
-    if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace, conflicts: [] }
+    if (list.teamNamespace) {
+      return { source: 'team', namespace: list.teamNamespace, conflicts: [], highest: {} }
+    }
 
     // Past here everything must be decrypted locally, so without keys on disk
     // there is nothing further to try. That is the state until somebody has run

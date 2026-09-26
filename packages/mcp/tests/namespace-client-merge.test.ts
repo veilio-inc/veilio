@@ -7,7 +7,7 @@ import { writeTeamUnlock, expiryFrom } from '@veilio-inc/cli/team-unlock'
 import { toBase64 } from '@veilio-inc/engine'
 import { primeNamespace, resetNamespaceCache, findConflicts } from '../src/namespace.js'
 import { callTool } from '../src/tools.js'
-import { saveMap, resolveMapPath } from '@veilio-inc/cli/store'
+import { saveMap, loadMap, resolveMapPath } from '@veilio-inc/cli/store'
 
 /**
  * The team namespace, merged here rather than by Cloud (spec 010).
@@ -366,6 +366,7 @@ describe('an older Cloud that still merges server-side', () => {
       source: 'team',
       namespace: { __CLS__1: 'PaymentGateway' },
       conflicts: [],
+      highest: {},
     })
   })
 })
@@ -408,6 +409,28 @@ describe('placeholders the team disagrees about', () => {
     homes.push(cwd)
     saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
     expect(callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text).not.toContain('left as is')
+  })
+
+  it("a new name never takes a conflicting number, and the agent's own output restores (review)", async () => {
+    // __FN__6 is the conflict and the highest __FN__; without the floor the
+    // engine would give it to the new name, and restore_text would refuse it.
+    const { home } = await scenario({ maps: MAPS })
+    expect((await primeNamespace(home)).highest).toEqual({ __FN__: 6, __CLS__: 1 })
+    const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
+    homes.push(cwd)
+    const ctx = { cwd, mapPath: null }
+    const out = callTool('anonymize_text', { text: 'function chargeCard() {}' }, ctx).text
+    expect(out).toContain('function __FN__7()')
+    expect(out).not.toContain('__FN__6')
+    expect(out).not.toContain('\u0000')
+    const back = callTool('restore_text', { text: '__FN__7()' }, ctx).text
+    expect(back).toContain('chargeCard()')
+    expect(back).not.toContain('left as is')
+    // The floor marker never reaches the saved store.
+    const stored = loadMap(resolveMapPath(null, cwd))
+    expect(Object.values(stored).some((v) => v.includes('\u0000'))).toBe(false)
+    // At the map's own highest (__CLS__1) no marker is added over the real entry.
+    expect(callTool('anonymize_text', { text: 'class Ledger {}' }, ctx).text).toContain('class __CLS__1')
   })
 
   it('findConflicts ignores unreadable maps and agreeing ones', () => {
