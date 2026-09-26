@@ -21,6 +21,8 @@ import { assertUsablePassphrase } from './passphrase.js'
  */
 
 const MAPS_KEY = 'veilio_local_maps_v2'
+/** Where builds before spec 018 kept maps as plain JSON. Never read. */
+const LEGACY_PLAINTEXT_KEY = 'veilio_local_maps'
 const LOCAL_KEY_RECORD = 'veilio_local_key'
 const ALG = 'AES-GCM'
 /** Bound to the entry's id, so two entries' ciphertexts cannot be swapped
@@ -65,6 +67,21 @@ export const localKeyConfig = { kdf: CURRENT_FILE_KDF as KdfParams }
 let localKey: CryptoKey | null = null
 
 // ─── storage ─────────────────────────────────────────────────────────────────
+
+/**
+ * Deletes the plaintext maps earlier builds left in localStorage. They are not
+ * migrated (founder decision, 2026-09-26), but left alone they would keep the
+ * real identifier names readable on this machine for as long as the profile
+ * lives. Called once at startup, before the first render, so it runs whether or
+ * not this visit ever opens a local map.
+ */
+export function dropLegacyPlaintextMaps(): void {
+  try {
+    localStorage.removeItem(LEGACY_PLAINTEXT_KEY)
+  } catch {
+    // Storage blocked (private mode, a policy): there is nothing to remove.
+  }
+}
 
 function readJson<T>(key: string, fallback: T): T {
   try {
