@@ -223,8 +223,6 @@ export interface CloudMapSummary {
    *  an older map already claimed. */
   created_at: string
   updated_at: string
-  /** `client-envelope` means WE decrypt it; anything else the server already did. */
-  storage: string
 }
 
 export interface CloudMapList {
