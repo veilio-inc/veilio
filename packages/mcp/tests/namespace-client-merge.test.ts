@@ -385,7 +385,7 @@ describe('what it asks Cloud for', () => {
     const { home } = await scenario({
       maps: [{ id: 'm1', createdAt: '2026-01-01', map: { __CLS__1: 'Invoice' } }],
     })
-    const serve = fetchMock.getMockImplementation()!
+    const serve = fetchMock.getMockImplementation() as (url: string) => Promise<Response>
     fetchMock.mockImplementation(async (url: string) =>
       new URL(url).pathname === '/api/maps/team-envelopes'
         ? jsonResponse({ error: 'Too many requests' }, 429)
