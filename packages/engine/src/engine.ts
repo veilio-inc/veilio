@@ -903,13 +903,16 @@ export function anonymize(
   const whitelisted = new Set<string>()
 
   for (const name of identifiers) {
-    if (reverseExisting[name]) continue // already mapped
-
-    // 1. Whitelist: skip
+    // 1. Whitelist: skip - checked BEFORE "already mapped". A name a team map
+    //    or an earlier session already holds would otherwise stay masked for
+    //    ever, whatever the rule says (found on staging, 2026-09-26). The map
+    //    keeps its entry, so restore is unaffected; the text just keeps the name.
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {
       whitelisted.add(name)
       continue
     }
+
+    if (reverseExisting[name]) continue // already mapped
 
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))
