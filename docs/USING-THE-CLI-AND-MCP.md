@@ -13,6 +13,22 @@ your saved maps, your team's shared placeholders and your custom rules.
 
 Node.js 24 or newer is required.
 
+### Do I need an account?
+
+**No - not for anonymizing and restoring.** Without signing in, the CLI and the
+MCP server work fully on their own:
+
+- the symbol map is saved in the project, in `.veilio/map.json`, so `restore`
+  works in the next session too, and the CLI and the MCP server share it (mask in
+  your assistant, restore in the terminal, or the other way round);
+- to take a map to another machine or a colleague, use the web app's encrypted
+  `.veilio` export and import.
+
+**A Veilio Cloud subscription** adds what needs a server: your maps synced across
+devices and between the web app, CLI and MCP (end-to-end encrypted), your team's
+shared placeholder numbering, custom rules, and team key management. Only these
+need `veilio login`; everything in section 2 works without it.
+
 ---
 
 ## 1. Install
