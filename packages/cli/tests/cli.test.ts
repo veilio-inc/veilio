@@ -61,9 +61,19 @@ describe('argument handling', () => {
     expect((await run(['scrub', '--help'])).out).toContain('USAGE')
   })
 
-  it('prints a version', async () => {
+  it('prints the version it was published as', async () => {
+    // The shape alone let a stale literal through: 0.2.0 reported 0.1.0.
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
     const r = await run(['--version'])
-    expect(r.out.trim()).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(r.out.trim()).toBe(pkg.version)
+  })
+
+  it('lists the team commands in its help', async () => {
+    const { out } = await run(['--help'])
+    expect(out).toContain('team unlock')
+    expect(out).toContain('team lock')
   })
 
   it('rejects an unknown command', async () => {

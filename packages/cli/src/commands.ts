@@ -258,8 +258,8 @@ COMMANDS
                        finds something — use it in a pre-commit hook or CI.
   map                  Show the current symbol map (--clear to wipe it).
 
-  Everything above works offline, with no account. The three below connect a
-  Veilio Cloud subscription and are the only commands that touch the network.
+  Everything above works offline, with no account. The commands below connect a
+  Veilio Cloud subscription and are the only ones that touch the network.
 
   login                Sign in to Veilio Cloud (--instance for self-hosted).
   logout               Revoke the session and forget the credential.
@@ -268,7 +268,12 @@ COMMANDS
   maps list            List the maps this account holds in Cloud.
   maps pull <id>       Fetch one into the local store. A personal map is
                        decrypted here — the passphrase never leaves the machine.
-  maps push [name]     Encrypt the local map and upload it.
+                       A team map opens with the key from \`team unlock\`.
+  maps push [name]     Encrypt the local map and upload it as a new map.
+  team unlock          Open this account's team keys with the vault passphrase
+                       and keep them on this machine (7 days), so team maps -
+                       and the MCP server's shared namespace - work unattended.
+  team lock            Remove the unlocked team keys from this machine.
 
 OPTIONS
   -l, --language <lang>   auto (default), typescript, python, go, java, csharp,

@@ -5,10 +5,15 @@
 // component that reads your files to undercut that would be an odd trade for
 // ~150 lines of message plumbing.
 
+import { createRequire } from 'node:module'
 import { PRODUCT_NAME } from '@veilio-inc/engine'
 import { callTool, TOOLS, type ToolContext } from './tools.js'
 
-export const SERVER_VERSION = '0.1.0'
+// Read from the package, not typed here - told to every MCP client, and a
+// literal drifted from what npm published (found 2026-09-26).
+export const SERVER_VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version
 
 /** Protocol revisions this server implements. If the client asks for one of
  *  these we echo it back; otherwise we answer with our newest and let the

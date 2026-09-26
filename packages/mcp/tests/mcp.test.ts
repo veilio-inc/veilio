@@ -92,6 +92,12 @@ describe('protocol', () => {
     const result = resultOf<InitializeResult>(res)
     expect(result.capabilities.tools).toBeDefined()
     expect(result.serverInfo.name).toContain('MCP')
+    // What every MCP client is told this server is - the published version,
+    // not a literal that drifted from it (0.2.0 reported 0.1.0).
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
+    expect(result.serverInfo.version).toBe(pkg.version)
     expect(result.instructions).toContain('anonymize_file')
   })
 
