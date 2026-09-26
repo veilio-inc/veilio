@@ -339,12 +339,24 @@ export const TOOLS: ToolDefinition[] = [
       if (Object.keys(map).length === 0) {
         throw new ToolError(`no symbol map yet — run anonymize_file (or "${BIN_NAME} scrub") first`)
       }
+      // A placeholder the team's maps disagree about is never guessed (spec
+      // 017): a wrong restore reads exactly like a right one. It stays in the
+      // text and is named, whatever the local store says it means.
+      const { conflicts } = getNamespace()
+      for (const placeholder of conflicts) delete map[placeholder]
+      const ambiguous = conflicts.filter((p) => appearsAsToken(text, p))
       const result = restore(text, map)
+      const ambiguity =
+        ambiguous.length === 0
+          ? ''
+          : `\n\nWARNING: left as is: ${ambiguous.join(', ')}. The team's saved maps give ` +
+            `${ambiguous.length === 1 ? 'this placeholder' : 'these placeholders'} different ` +
+            `identifiers, so restoring would be a guess.`
       return {
         text:
           `Restored ${result.report.resolved.length} of ${Object.keys(map).length} placeholders; ` +
           `stripped ${result.strippedCount} AI artifact(s).` +
-          `${restoreReportLines(result.report)}\n\n--- restored ---\n${result.restored}`,
+          `${restoreReportLines(result.report)}${ambiguity}\n\n--- restored ---\n${result.restored}`,
       }
     },
   },

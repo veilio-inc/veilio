@@ -34,9 +34,28 @@ export interface ResolvedNamespace {
   source: NamespaceSource
   /** Placeholder -> identifier. Empty for 'local' — there is nothing to merge. */
   namespace: Record<string, string>
+  /**
+   * Placeholders the team's saved maps give DIFFERENT identifiers (maps saved
+   * before Cloud reserved numbers - spec 017). Left out of `namespace`, so this
+   * server never emits one, and `restore_text` refuses to guess them.
+   */
+  conflicts: string[]
 }
 
-const LOCAL: ResolvedNamespace = { source: 'local', namespace: {} }
+const LOCAL: ResolvedNamespace = { source: 'local', namespace: {}, conflicts: [] }
+
+/** Placeholders that readable maps give more than one identifier. */
+export function findConflicts(entries: readonly TeamMapEntry[]): string[] {
+  const meanings = new Map<string, Set<string>>()
+  for (const entry of entries) {
+    for (const [placeholder, identifier] of Object.entries(entry.map ?? {})) {
+      const seen = meanings.get(placeholder) ?? new Set<string>()
+      seen.add(identifier)
+      meanings.set(placeholder, seen)
+    }
+  }
+  return [...meanings].filter(([, seen]) => seen.size > 1).map(([p]) => p)
+}
 
 let current: ResolvedNamespace = LOCAL
 let priming: Promise<ResolvedNamespace> | null = null
@@ -59,17 +78,22 @@ async function buildTeamNamespace(
   credential: Credential,
   keys: readonly { version: number; key: CryptoKeyLike }[],
   list: CloudMapList
-): Promise<Record<string, string> | null> {
+): Promise<{ namespace: Record<string, string>; conflicts: string[] } | null> {
   // A member's OWN team maps arrive under personalMaps — the listing splits by
   // ownership, not by scope — so both lists have to be considered or this
   // member's own placeholders drop out of the shared namespace.
   const teamScoped = [...list.personalMaps, ...list.teamMaps].filter((m) => m.scope === 'team')
 
   const entries = await Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
-  const namespace = mergeTeamNamespace(entries)
+  const merged = mergeTeamNamespace(entries)
   // Every map unreadable is not a team namespace, it is a failed one. Saying
   // `local` is honest; an empty `team` would claim agreement that is not there.
-  return Object.keys(namespace).length > 0 ? namespace : null
+  if (Object.keys(merged).length === 0) return null
+  const conflicts = findConflicts(entries)
+  const namespace = Object.fromEntries(
+    Object.entries(merged).filter(([p]) => !conflicts.includes(p))
+  )
+  return { namespace, conflicts }
 }
 
 /**
@@ -148,7 +172,7 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
     // An older self-hosted Cloud may still merge server-side, and that answer
     // needs no key at all. Checked before the vault key so such a deployment
     // keeps working for a member who has not unlocked one.
-    if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace }
+    if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace, conflicts: [] }
 
     // Past here everything must be decrypted locally, so without keys on disk
     // there is nothing further to try. That is the state until somebody has run
@@ -158,9 +182,9 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
     const keys = await heldTeamKeys(credential, home, teamId)
     if (keys.length === 0) return LOCAL
 
-    const namespace = await buildTeamNamespace(credential, keys, list)
-    if (!namespace) return LOCAL
-    return { source: 'team', namespace }
+    const built = await buildTeamNamespace(credential, keys, list)
+    if (!built) return LOCAL
+    return { source: 'team', ...built }
   } catch {
     // Unreachable, revoked session, timed out — every network or auth failure
     // degrades the same way. A coding agent must keep working when Cloud is

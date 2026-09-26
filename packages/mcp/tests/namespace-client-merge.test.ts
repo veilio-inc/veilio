@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os'
 import { writeCredential } from '@veilio-inc/cli/credential'
 import { writeTeamUnlock, expiryFrom } from '@veilio-inc/cli/team-unlock'
 import { toBase64 } from '@veilio-inc/engine'
-import { primeNamespace, resetNamespaceCache } from '../src/namespace.js'
+import { primeNamespace, resetNamespaceCache, findConflicts } from '../src/namespace.js'
+import { callTool } from '../src/tools.js'
+import { saveMap, resolveMapPath } from '@veilio-inc/cli/store'
 
 /**
  * The team namespace, merged here rather than by Cloud (spec 010).
@@ -212,14 +214,16 @@ describe('the client-side merge', () => {
   })
 
   it('applies first-write-wins by created_at, not by listing order', async () => {
+    // Same identifier under two numbers: the older number is the one reused.
+    // (Two identifiers under ONE number is a conflict instead - spec 017, below.)
     const { home } = await scenario({
       maps: [
-        { id: 'newer', createdAt: '2026-02-01', map: { __CLS__1: 'Newer' } },
-        { id: 'older', createdAt: '2026-01-01', map: { __CLS__1: 'Older' } },
+        { id: 'newer', createdAt: '2026-02-01', map: { __CLS__2: 'Invoice' } },
+        { id: 'older', createdAt: '2026-01-01', map: { __CLS__1: 'Invoice' } },
       ],
     })
 
-    expect((await primeNamespace(home)).namespace.__CLS__1).toBe('Older')
+    expect((await primeNamespace(home)).namespace).toEqual({ __CLS__1: 'Invoice' })
   })
 
   it('skips a map it cannot open rather than losing the whole namespace', async () => {
@@ -361,6 +365,52 @@ describe('an older Cloud that still merges server-side', () => {
     expect(await primeNamespace(home)).toEqual({
       source: 'team',
       namespace: { __CLS__1: 'PaymentGateway' },
+      conflicts: [],
     })
+  })
+})
+
+// ─── Spec 017: maps that disagree about a placeholder ────────────────────────
+//
+// Saved before Cloud reserved numbers: two members' maps both hold __FN__6, for
+// different functions. The server must never emit it, and never guess it back.
+
+describe('placeholders the team disagrees about', () => {
+  const MAPS = [
+    { id: 'm1', createdAt: '2026-09-26T10:00:00Z', map: { __FN__6: 'settleLedger', __CLS__1: 'Ledger' } },
+    { id: 'm2', createdAt: '2026-09-26T10:00:05Z', map: { __FN__6: 'voidLedger', __CLS__1: 'Ledger' } },
+  ]
+
+  it('are reported, and left out of the namespace used to anonymize', async () => {
+    const { home } = await scenario({ maps: MAPS })
+    const resolved = await primeNamespace(home)
+    expect(resolved.source).toBe('team')
+    expect(resolved.conflicts).toEqual(['__FN__6'])
+    expect(resolved.namespace).toEqual({ __CLS__1: 'Ledger' })
+  })
+
+  it('restore_text leaves them and says why, whatever the local store holds', async () => {
+    const { home } = await scenario({ maps: MAPS })
+    await primeNamespace(home)
+    const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
+    homes.push(cwd)
+    saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'Ledger' })
+    const res = callTool('restore_text', { text: 'new __CLS__1().__FN__6()' }, { cwd, mapPath: null })
+    expect(res.text).toContain('new Ledger().__FN__6()')
+    expect(res.text).not.toContain('settleLedger')
+    expect(res.text).toContain('WARNING: left as is: __FN__6')
+  })
+
+  it('no warning when the text does not hold one', async () => {
+    const { home } = await scenario({ maps: MAPS })
+    await primeNamespace(home)
+    const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
+    homes.push(cwd)
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
+    expect(callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text).not.toContain('left as is')
+  })
+
+  it('findConflicts ignores unreadable maps and agreeing ones', () => {
+    expect(findConflicts([{ createdAt: 'a', map: null }, { createdAt: 'b', map: { __X__1: 'a' } }, { createdAt: 'c', map: { __X__1: 'a' } }])).toEqual([])
   })
 })
