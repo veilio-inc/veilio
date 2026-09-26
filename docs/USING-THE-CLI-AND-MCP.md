@@ -155,28 +155,23 @@ Restart Claude Desktop; the tools appear under the tools icon.
 
 ### Xcode (26.3 and later, Claude Agent)
 
-Xcode's Claude Agent keeps its own configuration, separate from your `~/.claude`,
-in `~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/`. Xcode does
-not inherit your shell, so use absolute paths and pass `PATH` explicitly:
+Xcode's Claude Agent uses its own Claude Code configuration directory,
+`~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig`, separate from
+your `~/.claude`. Let Claude Code write the entry there, and use absolute paths -
+Xcode does not inherit your shell's `PATH`:
 
-```json
-{
-  "mcpServers": {
-    "veilio": {
-      "type": "stdio",
-      "command": "/opt/homebrew/bin/node",
-      "args": ["/opt/homebrew/lib/node_modules/@veilio-inc/mcp/dist/index.js", "--root", "/Users/you/code/YourApp"],
-      "env": { "PATH": "/opt/homebrew/bin:/usr/bin:/bin" }
-    }
-  }
-}
+```bash
+CLAUDE_CONFIG_DIR="$HOME/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig" \
+  claude mcp add --scope user veilio \
+  --env PATH=/opt/homebrew/bin:/usr/bin:/bin \
+  -- "$(which node)" "$(npm root -g)/@veilio-inc/mcp/dist/index.js" --root "$HOME/code/YourApp"
 ```
 
-The paths above are for a Homebrew install with `npm install -g`; check yours
-with `which node` and `npm root -g`. After restarting the agent, type `/context`
-in the Agent panel to confirm the veilio tools loaded. Apple's configuration
-format is new and may change between Xcode releases; if the file above is not
-picked up, check Xcode's Intelligence settings for the current location.
+Restart the agent in Xcode and type `/context` in the Agent panel to confirm
+the veilio tools loaded. The `PATH` above suits a Homebrew install; adjust it to
+wherever `which node` points. Apple's agent configuration is new and may move
+between Xcode releases - if the tools do not appear, check Xcode's Intelligence
+settings for the current location.
 
 ### Cursor
 
