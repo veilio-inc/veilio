@@ -413,3 +413,27 @@ describe('anonymize with custom rules', () => {
     expect(second.map['__APIKEY__2']).toBe('apiPublicKey')
   })
 })
+
+// Found on staging (spec 017 walk, 2026-09-26): a teammate's __FN__11 was not
+// in this member's map, __FN__1 was, and restore returned `chargeCustomer1`.
+describe('restore never matches a placeholder inside a longer number', () => {
+  it('leaves an unknown __FN__11 alone and reports it, even when __FN__1 is known', () => {
+    const r = restore('export function __FN__11(__VAR__3: string) {}', {
+      __FN__1: 'chargeCustomer',
+      __VAR__3: 'customerId',
+    })
+    expect(r.restored).toBe('export function __FN__11(customerId: string) {}')
+    expect(r.report.unresolved).toEqual(['__FN__11'])
+  })
+
+  it('still restores both when both are known', () => {
+    const r = restore('__FN__1(__FN__11)', { __FN__1: 'a', __FN__11: 'b' })
+    expect(r.restored).toBe('a(b)')
+  })
+
+  it('still restores a placeholder the model extended with letters', () => {
+    // `__FN__1Async` is a name the model derived; restoring the known part is
+    // the long-standing behaviour and is not a guess about a different number.
+    expect(restore('__FN__1Async()', { __FN__1: 'charge' }).restored).toBe('chargeAsync()')
+  })
+})
