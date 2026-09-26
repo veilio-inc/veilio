@@ -94,6 +94,8 @@ async function scenario(
     otherAccount?: boolean
     /** Write an unlock holding a key that opens nothing. */
     wrongKey?: boolean
+    /** An instance that predates GET /api/maps/team-envelopes (answers 404). */
+    noBulk?: boolean
   } = {}
 ) {
   const {
@@ -103,6 +105,7 @@ async function scenario(
     otherTeam = false,
     otherAccount = false,
     wrongKey = false,
+    noBulk = false,
   } = opts
   const teamKeyRaw = crypto.getRandomValues(new Uint8Array(32))
 
@@ -122,6 +125,18 @@ async function scenario(
     bodies[`/api/maps/${m.id}`] = {
       ...summary(m.id, m.createdAt, m.scope ?? 'team'),
       map_data: await encryptTeamMap(teamKeyRaw, m.map),
+    }
+  }
+  if (!noBulk) {
+    bodies['/api/maps/team-envelopes'] = {
+      maps: maps
+        .filter((m) => m.scope !== 'personal')
+        .map((m) => ({
+          id: m.id,
+          created_at: m.createdAt,
+          map_data: (bodies[`/api/maps/${m.id}`] as { map_data: string }).map_data,
+        })),
+      unreadable: [],
     }
   }
 
@@ -236,10 +251,10 @@ describe('the client-side merge', () => {
     // Written under a key this member was never granted — the ordinary shape of
     // a mid-rotation team, or a map from before they joined.
     const foreign = crypto.getRandomValues(new Uint8Array(32))
-    bodies['/api/maps/bad'] = {
-      ...summary('bad', '2026-01-02'),
-      map_data: await encryptTeamMap(foreign, { __FN__1: 'charge' }),
-    }
+    const foreignEnvelope = await encryptTeamMap(foreign, { __FN__1: 'charge' })
+    bodies['/api/maps/bad'] = { ...summary('bad', '2026-01-02'), map_data: foreignEnvelope }
+    const bulk = bodies['/api/maps/team-envelopes'] as { maps: { id: string; map_data: string }[] }
+    bulk.maps.find((m) => m.id === 'bad')!.map_data = foreignEnvelope
 
     const resolved = await primeNamespace(home)
 
@@ -328,10 +343,10 @@ describe('what it asks Cloud for', () => {
     await primeNamespace(home)
 
     const paths = fetchMock.mock.calls.map((c) => new URL(c[0] as string).pathname)
-    expect(paths).toEqual(['/api/maps', '/api/maps/m1'])
+    expect(paths).toEqual(['/api/maps', '/api/maps/team-envelopes'])
   })
 
-  it('fetches each team map exactly once', async () => {
+  it('reads every team map in ONE request, not one per map (spec 017)', async () => {
     const { home } = await scenario({
       maps: [
         { id: 'm1', createdAt: '2026-01-01', map: { __CLS__1: 'Invoice' } },
@@ -339,13 +354,47 @@ describe('what it asks Cloud for', () => {
       ],
     })
 
-    await primeNamespace(home)
+    const resolved = await primeNamespace(home)
 
+    expect(resolved.namespace).toEqual({ __CLS__1: 'Invoice', __FN__1: 'charge' })
+    const paths = fetchMock.mock.calls.map((c) => new URL(c[0] as string).pathname)
+    expect(paths.filter((p) => p.startsWith('/api/maps/'))).toEqual(['/api/maps/team-envelopes'])
+  })
+
+  it('an instance without the bulk endpoint is read one map at a time, each once', async () => {
+    const { home } = await scenario({
+      noBulk: true,
+      maps: [
+        { id: 'm1', createdAt: '2026-01-01', map: { __CLS__1: 'Invoice' } },
+        { id: 'm2', createdAt: '2026-01-02', map: { __FN__1: 'charge' } },
+      ],
+    })
+
+    const resolved = await primeNamespace(home)
+
+    expect(resolved.namespace).toEqual({ __CLS__1: 'Invoice', __FN__1: 'charge' })
     const paths = fetchMock.mock.calls.map((c) => new URL(c[0] as string).pathname)
     expect(paths.filter((p) => p.startsWith('/api/maps/'))).toEqual([
+      '/api/maps/team-envelopes',
       '/api/maps/m1',
       '/api/maps/m2',
     ])
+  })
+
+  it('a failed bulk read is local, never a namespace missing maps (spec 017)', async () => {
+    const { home } = await scenario({
+      maps: [{ id: 'm1', createdAt: '2026-01-01', map: { __CLS__1: 'Invoice' } }],
+    })
+    const serve = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string) =>
+      new URL(url).pathname === '/api/maps/team-envelopes'
+        ? jsonResponse({ error: 'Too many requests' }, 429)
+        : serve(url)
+    )
+    const resolved = await primeNamespace(home)
+    expect(resolved.source).toBe('local')
+    const paths = fetchMock.mock.calls.map((c) => new URL(c[0] as string).pathname)
+    expect(paths).not.toContain('/api/maps/m1')
   })
 })
 

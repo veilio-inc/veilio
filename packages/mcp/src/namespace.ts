@@ -17,7 +17,14 @@
 // happens once per process.
 
 import { readCredential, type Credential } from '@veilio-inc/cli/credential'
-import { listMaps, getMap, type CloudMapSummary, type CloudMapList } from '@veilio-inc/cli/cloud'
+import {
+  CloudError,
+  listMaps,
+  getMap,
+  getTeamEnvelopes,
+  type CloudMapSummary,
+  type CloudMapList,
+} from '@veilio-inc/cli/cloud'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import {
   importTeamKey,
@@ -108,7 +115,7 @@ async function buildTeamNamespace(
   // member's own placeholders drop out of the shared namespace.
   const teamScoped = [...list.personalMaps, ...list.teamMaps].filter((m) => m.scope === 'team')
 
-  const entries = await Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
+  const entries = await readTeamEntries(credential, keys, teamScoped)
   const merged = mergeTeamNamespace(entries)
   // Every map unreadable is not a team namespace, it is a failed one. Saying
   // `local` is honest; an empty `team` would claim agreement that is not there.
@@ -156,6 +163,40 @@ async function heldTeamKeys(
     }
   }
   return keys
+}
+
+/**
+ * Every team map, opened with the held keys. One request where Cloud offers it;
+ * one per map only for an instance that predates it (404). A failure of the
+ * single request is NOT turned into skipped maps: it throws, and the caller
+ * reports `local` - a namespace missing a teammate's newest map restored their
+ * placeholders wrong (found on staging, 2026-09-26).
+ */
+async function readTeamEntries(
+  credential: Credential,
+  keys: readonly { version: number; key: CryptoKeyLike }[],
+  teamScoped: readonly CloudMapSummary[]
+): Promise<TeamMapEntry[]> {
+  let bulk: Awaited<ReturnType<typeof getTeamEnvelopes>>
+  try {
+    bulk = await getTeamEnvelopes(credential)
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404) {
+      return Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
+    }
+    throw err
+  }
+  return Promise.all(
+    bulk.maps.map(async (row): Promise<TeamMapEntry> => {
+      try {
+        const envelope = JSON.parse(row.map_data) as TeamMapEnvelope
+        return { createdAt: row.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
+      } catch {
+        // A version this member was never granted: skipped, not fatal.
+        return { createdAt: row.created_at, map: null }
+      }
+    })
+  )
 }
 
 /** One team map, opened if any held key fits. */

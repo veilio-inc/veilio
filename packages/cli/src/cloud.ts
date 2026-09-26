@@ -287,6 +287,18 @@ export function listRules(
   return request<{ rules: CustomRule[]; teamRules: CustomRule[] }>('/api/rules', { credential })
 }
 
+/**
+ * Every team map this account can reach, with envelopes, in one request. Cloud
+ * added it so building the namespace is not one request per map against the
+ * maps rate limit. An older self-hosted instance answers 404 (a `server`
+ * CloudError with status 404); callers fall back to one getMap per map.
+ */
+export function getTeamEnvelopes(
+  credential: Credential
+): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
+  return request('/api/maps/team-envelopes', { credential })
+}
+
 export function getMap(credential: Credential, id: string): Promise<CloudMap> {
   return request<CloudMap>(`/api/maps/${encodeURIComponent(id)}`, { credential })
 }
