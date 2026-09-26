@@ -27,7 +27,7 @@
   ],
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
-    "@veilio-inc/engine": "^1.6.0",
+    "@veilio-inc/engine": "^1.6.2",
     "@veilio-inc/cli": "^0.2.0"
   },
   "scripts": {
