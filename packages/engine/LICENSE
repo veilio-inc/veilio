@@ -1,6 +1,6 @@
 # Veilio Community License
 
-_Version 1.0 · Effective 2026-08-08_
+_Version 1.1 · Effective 2026-09-25_
 
 **Copyright © 2026 Veilio**
 
@@ -10,7 +10,8 @@ _Version 1.0 · Effective 2026-08-08_
 > The one thing you may not do without written permission is sell Veilio itself:
 > reselling it, white-labeling it, or running it as a hosted service for other
 > people. Contributions are welcome. For a commercial or redistribution license,
-> email `hello@veilio.dev`.
+> email `hello@veilio.dev`. Veilio is not licensed for use in or from Russia or
+> Belarus, or by sanctioned persons (Section 5A).
 
 ---
 
@@ -48,11 +49,17 @@ For the purposes of this License:
 
 **"Competing Product"** means a commercially offered product or service whose primary purpose and core functionality substantially overlap with the Software or Cloud Edition.
 
+**"Applicable Sanctions"** means any economic, financial, trade or other restrictive measures applicable to Veilio or the relevant transaction under the laws of the European Union or the Republic of Poland, including applicable asset-freezing and prohibition-on-making-available measures, and any other sanctions or trade restrictions that are legally binding on Veilio.
+
+**"Restricted Person"** means any natural or legal person, entity or body that: (a) is designated or otherwise subject to restrictive measures under Applicable Sanctions, (b) is directly or indirectly owned or controlled by such a person, entity or body, (c) acts on behalf of or at the direction of such a person, entity or body; or (d) is otherwise a person to whom Veilio is prohibited under Applicable Sanctions from providing the Software, funds or economic resources.
+
+**"Restricted Territory"** means the Russian Federation and the Republic of Belarus.
+
 ---
 
 ## 3. Permissions
 
-Subject to the restrictions in this License, you are granted a worldwide, royalty-free, non-exclusive license to:
+Subject to the restrictions in this License, including Section 5A, you are granted a worldwide, royalty-free, non-exclusive license to:
 
 * use the Software for personal purposes;
 * use the Software for internal commercial purposes;
@@ -111,6 +118,24 @@ Repackage, white-label, rebrand, or otherwise present the Software or a Modified
 Commercially distribute a Modified Version where the primary value or functionality being sold is provided by the Software.
 
 Requests for written permission may be sent to `hello@veilio.dev`.
+
+---
+
+## 5A. Restricted Territories and Sanctions
+
+**5A.1.** No license or other right to the Software is granted to:
+
+* persons or entities incorporated, registered, established or headquartered in a Restricted Territory;
+* natural persons whose principal place of business or ordinary residence is in a Restricted Territory; or
+* Restricted Persons.
+
+**5A.2.** You must not access or use the Software from a Restricted Territory, make the Software available to any person located in a Restricted Territory, or use the Software directly or indirectly for the benefit of a Restricted Person or a person or entity incorporated, registered, established or headquartered in a Restricted Territory.
+
+**5A.3.** By using the Software, you represent and warrant, both when you first use it and throughout your use of it, that you are not a Restricted Person and do not fall within any of the territorial restrictions set out in this Section.
+
+**5A.4.** You must not use an intermediary, affiliate, nominee, proxy, VPN or other arrangement for the purpose of circumventing the restrictions set out in this Section or Applicable Sanctions.
+
+**5A.5.** Any breach of this Section is a material violation of this License and terminates your rights under it (Section 14). Veilio does not grant written permission for exceptions to this Section.
 
 ---
 
@@ -218,7 +243,7 @@ TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHORS
 
 ## 14. Termination
 
-Your rights under this License terminate automatically if you materially violate its terms.
+Your rights under this License terminate automatically if you materially violate its terms. Any breach of Section 5A is a material violation.
 
 Upon termination, you must cease the activities that are prohibited by this License.
 
@@ -244,5 +269,5 @@ Each version will be identified by a version number. Unless explicitly stated ot
 
 **Project:** Veilio
 **Copyright:** © 2026 Veilio
-**License:** Veilio Community License, Version 1.0
+**License:** Veilio Community License, Version 1.1
 **Contact:** `hello@veilio.dev`

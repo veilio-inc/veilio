@@ -1,10 +1,10 @@
 # Veilio Community Edition - Terms of Use
 
-_Last updated: 2026-09-22 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
+_Last updated: 2026-09-25 · Document version 1.3 · Applies to: the self-hosted Community Edition only._
 
 > **Scope.** These terms govern the **Veilio Community Edition (CE)** - the self-hosted, source-available app in this repository, free to use for any purpose including commercial. **Veilio Cloud** (the hosted service at veilio.dev, with accounts, sync, teams, and billing) has its own separate [Terms of Service](https://veilio.dev/legal/terms), which do not apply to CE - and these CE terms do not apply to Cloud.
 
-Veilio CE is **source-available, community-developed** software licensed under the **Veilio Community License 1.0** (see the `LICENSE` file): **free to use for any purpose, including personal, educational, and internal commercial use** - an organization may deploy CE on its own infrastructure and run its business on it without a commercial license. What it does **not** permit, without prior written permission, is selling, reselling, sublicensing, white-labeling, or commercially redistributing CE - or its engine, or any derivative - as a standalone product, or operating it as a **commercial hosted service** for third parties, or basing a product on it that competes with Veilio Cloud. For a commercial or redistribution license, contact `hello@veilio.dev`. These Terms supplement - and do not replace or limit - the Veilio Community License. If anything here conflicts with that license about the software grant itself, the **Veilio Community License controls**.
+Veilio CE is **source-available, community-developed** software licensed under the **Veilio Community License 1.1** (see the `LICENSE` file): **free to use for any purpose, including personal, educational, and internal commercial use** - an organization may deploy CE on its own infrastructure and run its business on it without a commercial license. What it does **not** permit, without prior written permission, is selling, reselling, sublicensing, white-labeling, or commercially redistributing CE - or its engine, or any derivative - as a standalone product, or operating it as a **commercial hosted service** for third parties, or basing a product on it that competes with Veilio Cloud. For a commercial or redistribution license, contact `hello@veilio.dev`. These Terms supplement - and do not replace or limit - the Veilio Community License. If anything here conflicts with that license about the software grant itself, the **Veilio Community License controls**.
 
 ## 1. What CE is
 CE is a **best-effort** code-anonymization tool that runs **entirely in your browser**. It replaces source-code identifiers with role-typed placeholder tokens (e.g. `__CLS__1`, `__FN__2`, `__VAR__3`) and restores them. **It does not guarantee that all sensitive data, secrets, or personal data are removed.** You are responsible for reviewing anonymized output before sharing it with any third party, including AI tools.
@@ -30,14 +30,31 @@ CE is a **local tool that runs entirely in your browser** - there is no Veilio-o
 
 **5.1 No monitoring.** Because CE runs only on your own machine, the Veilio project does not - and cannot - monitor, access, or review your use of it.
 
-**5.2 Enforcement.** CE is source-available software (Veilio Community License 1.0), so there is no account for us to suspend. We may, however, enforce the license, trademark, and intellectual-property terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
+**5.2 Enforcement.** CE is source-available software (Veilio Community License 1.1), so there is no account for us to suspend. We may, however, enforce the license, trademark, and intellectual-property terms above, and we will cooperate with lawful requests from law enforcement or regulators where required.
 
 **5.3 Reporting.** Report abuse of the Veilio name or genuine safety concerns to `abuse@veilio.dev`. Security vulnerabilities: see [SECURITY.md](https://github.com/veilio-inc/veilio/blob/main/SECURITY.md).
 
 ## 6. Warranty disclaimer & limitation of liability
 CE is provided **"AS IS", without warranty of any kind**, to the maximum extent permitted by applicable law. There is **no warranty that anonymization is complete, accurate, or error-free.** To the maximum extent permitted by applicable law, the authors and copyright holders are **not liable** for any claim, damage, loss, or other liability - including any sensitive data exposed despite anonymization - arising from or in connection with CE or its use.
 
-## 7. Changes
+## 7. Restricted territories and sanctions
+**7.1.** In this section, "Applicable Sanctions", "Restricted Person" and "Restricted Territory" have the meanings given in Section 2 of the Veilio Community License. The Restricted Territories are the Russian Federation and the Republic of Belarus. This section summarises Section 5A of that license, which controls.
+
+**7.2.** No license or other right to CE is granted to:
+
+- persons or entities incorporated, registered, established or headquartered in a Restricted Territory;
+- natural persons whose principal place of business or ordinary residence is in a Restricted Territory; or
+- Restricted Persons.
+
+**7.3.** You must not access or use CE from a Restricted Territory, make CE available to any person located in a Restricted Territory, or use CE directly or indirectly for the benefit of a Restricted Person or a person or entity incorporated, registered, established or headquartered in a Restricted Territory.
+
+**7.4.** By using CE, you represent and warrant, both when you first use it and throughout your use of it, that you are not a Restricted Person and do not fall within any of the territorial restrictions set out in this Section.
+
+**7.5.** You must not use an intermediary, affiliate, nominee, proxy, VPN or other arrangement for the purpose of circumventing the restrictions set out in this Section or Applicable Sanctions.
+
+**7.6.** Any breach of this Section is a material violation of the Veilio Community License and terminates your rights under it. Veilio does not grant written permission for exceptions to this Section.
+
+## 8. Changes
 We may update these Terms; the version and date above reflect the current text. Material changes will be reflected by a version bump in this file.
 
 _Questions: `support@veilio.dev`._

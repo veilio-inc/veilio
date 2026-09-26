@@ -27,7 +27,7 @@ describe('licence parity', () => {
     // the test above.
     const text = readFileSync(ENGINE_LICENSE, 'utf8')
     expect(text).toMatch(/Veilio Community License/)
-    expect(text).toMatch(/Version 1\.0/)
+    expect(text).toMatch(/Version 1\.1/)
   })
 
   it('declares the licence the way npm resolves a non-SPDX one', () => {

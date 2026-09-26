@@ -18,7 +18,7 @@ in this document touches the engine.
 ## 0 — What is already settled, and what is not
 
 **Settled: these publish from here.** They moved out of the closed Cloud
-repository for exactly this. Both carry the Veilio Community License 1.0 — the
+repository for exactly this. Both carry the Veilio Community License 1.1 — the
 same terms `packages/engine` ships under, and the only terms compatible with the
 `npx @veilio-inc/cli` usage that `packages/cli/action.yml` advertises. Their
 `repository`, `homepage` and `bugs` fields already point here.

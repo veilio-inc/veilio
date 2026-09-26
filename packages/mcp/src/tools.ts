@@ -34,6 +34,8 @@ import {
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import { getNamespace, mergeNamespace } from './namespace.js'
+import { getRules, type ResolvedRules } from './rules.js'
+import { describeAge } from '@veilio-inc/cli/rules'
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */
@@ -163,6 +165,46 @@ function restoreReportLines(report: RestoreReport): string {
   return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : ''
 }
 
+function rulesLine(r: ResolvedRules): string {
+  if (r.source === 'none') return 'Custom rules: none'
+  const n = `${r.rules.length} custom rule${r.rules.length === 1 ? '' : 's'}`
+  if (r.source === 'cloud') return `Custom rules: ${n} from Cloud`
+  return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
+}
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+const FLOOR_MARKER = '\u0000floor:'
+
+/**
+ * Anonymize with every NEW number above `floors[base]` (spec 017).
+ *
+ * The engine numbers above the highest number in the map it is given, so a
+ * marker entry at the floor moves the counter there. Markers hold a NUL no
+ * identifier contains, match nothing in the text, and are stripped from the
+ * returned map. Only added above the map's own highest, where they cannot
+ * overwrite a real entry. Same technique as the Cloud web app.
+ */
+function anonymizeAbove(
+  source: string,
+  options: Parameters<typeof anonymize>[1] & { existingMap: Record<string, string> },
+  floors: Record<string, number>
+): ReturnType<typeof anonymize> {
+  const inMap: Record<string, number> = {}
+  for (const p of Object.keys(options.existingMap)) {
+    const m = NUMBERED.exec(p)
+    if (m && Number(m[2]) > (inMap[m[1]] ?? 0)) inMap[m[1]] = Number(m[2])
+  }
+  const seeded = { ...options.existingMap }
+  for (const [base, floor] of Object.entries(floors)) {
+    if (floor > (inMap[base] ?? 0)) seeded[`${base}${floor}`] = `${FLOOR_MARKER}${base}`
+  }
+  const result = anonymize(source, { ...options, existingMap: seeded })
+  const map = Object.fromEntries(
+    Object.entries(result.map).filter(([, identifier]) => !identifier.startsWith(FLOOR_MARKER))
+  )
+  return { ...result, map }
+}
+
 const LANGUAGE_ENUM = ['auto', ...LANGUAGES]
 
 const LANGUAGE_PROP = {
@@ -183,10 +225,15 @@ function runAnonymize(
   // independently and a shared key is coincidence, not identity. See
   // mergeNamespace's own comment for why a naive `{ ...local, ...namespace }`
   // corrupts the store (spec 005 US4).
-  const { source: namespaceSource, namespace } = getNamespace()
+  const { source: namespaceSource, namespace, highest } = getNamespace()
   const existingMap = mergeNamespace(localMap, namespace)
   const language = (str(args, 'language') ?? 'auto') as 'auto'
-  const result = anonymize(source, { existingMap, language, secrets: 'redact' })
+  const rules = getRules()
+  const result = anonymizeAbove(
+    source,
+    { existingMap, language, secrets: 'redact', rules: rules.rules },
+    highest
+  )
   // Persist local-original, whatever this call genuinely minted, and only the
   // team-overlay entries this call actually USED — never the rest of the team
   // namespace. Persisting all of it would bake entries this project never
@@ -236,6 +283,9 @@ function runAnonymize(
     // Never absent (FR-016, Constitution V): a result that cannot say where its
     // names came from is the silent fallback this line exists to rule out.
     `Namespace: ${namespaceSource}`,
+    // Stated every time, like the namespace: an agent whose masking ignored the
+    // team's rules must be able to tell.
+    rulesLine(rules),
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')
@@ -326,12 +376,24 @@ export const TOOLS: ToolDefinition[] = [
       if (Object.keys(map).length === 0) {
         throw new ToolError(`no symbol map yet — run anonymize_file (or "${BIN_NAME} scrub") first`)
       }
+      // A placeholder the team's maps disagree about is never guessed (spec
+      // 017): a wrong restore reads exactly like a right one. It stays in the
+      // text and is named, whatever the local store says it means.
+      const { conflicts } = getNamespace()
+      for (const placeholder of conflicts) delete map[placeholder]
+      const ambiguous = conflicts.filter((p) => appearsAsToken(text, p))
       const result = restore(text, map)
+      const ambiguity =
+        ambiguous.length === 0
+          ? ''
+          : `\n\nWARNING: left as is: ${ambiguous.join(', ')}. The team's saved maps give ` +
+            `${ambiguous.length === 1 ? 'this placeholder' : 'these placeholders'} different ` +
+            `identifiers, so restoring would be a guess.`
       return {
         text:
           `Restored ${result.report.resolved.length} of ${Object.keys(map).length} placeholders; ` +
           `stripped ${result.strippedCount} AI artifact(s).` +
-          `${restoreReportLines(result.report)}\n\n--- restored ---\n${result.restored}`,
+          `${restoreReportLines(result.report)}${ambiguity}\n\n--- restored ---\n${result.restored}`,
       }
     },
   },

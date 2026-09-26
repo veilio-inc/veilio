@@ -121,7 +121,6 @@ describe('the map listing the merge depends on', () => {
             identifier_count: 1,
             created_at: '2026-01-01',
             updated_at: '2026-03-01',
-            storage: 'client-envelope',
           },
         ],
         teamMaps: [],

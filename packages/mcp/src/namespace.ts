@@ -17,7 +17,14 @@
 // happens once per process.
 
 import { readCredential, type Credential } from '@veilio-inc/cli/credential'
-import { listMaps, getMap, type CloudMapSummary, type CloudMapList } from '@veilio-inc/cli/cloud'
+import {
+  CloudError,
+  listMaps,
+  getMap,
+  getTeamEnvelopes,
+  type CloudMapSummary,
+  type CloudMapList,
+} from '@veilio-inc/cli/cloud'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import {
   importTeamKey,
@@ -34,9 +41,48 @@ export interface ResolvedNamespace {
   source: NamespaceSource
   /** Placeholder -> identifier. Empty for 'local' — there is nothing to merge. */
   namespace: Record<string, string>
+  /**
+   * Placeholders the team's saved maps give DIFFERENT identifiers (maps saved
+   * before Cloud reserved numbers - spec 017). Left out of `namespace`, so this
+   * server never emits one, and `restore_text` refuses to guess them.
+   */
+  conflicts: string[]
+  /**
+   * Highest number per placeholder base in ANY readable team map, conflicts
+   * included. New names are numbered above it, so this server never hands a
+   * new identifier a number the team already uses for something else.
+   */
+  highest: Record<string, number>
 }
 
-const LOCAL: ResolvedNamespace = { source: 'local', namespace: {} }
+const LOCAL: ResolvedNamespace = { source: 'local', namespace: {}, conflicts: [], highest: {} }
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+/** Highest number per base across every readable map. */
+export function highestAcross(entries: readonly TeamMapEntry[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const entry of entries) {
+    for (const placeholder of Object.keys(entry.map ?? {})) {
+      const m = NUMBERED.exec(placeholder)
+      if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+    }
+  }
+  return out
+}
+
+/** Placeholders that readable maps give more than one identifier. */
+export function findConflicts(entries: readonly TeamMapEntry[]): string[] {
+  const meanings = new Map<string, Set<string>>()
+  for (const entry of entries) {
+    for (const [placeholder, identifier] of Object.entries(entry.map ?? {})) {
+      const seen = meanings.get(placeholder) ?? new Set<string>()
+      seen.add(identifier)
+      meanings.set(placeholder, seen)
+    }
+  }
+  return [...meanings].filter(([, seen]) => seen.size > 1).map(([p]) => p)
+}
 
 let current: ResolvedNamespace = LOCAL
 let priming: Promise<ResolvedNamespace> | null = null
@@ -59,17 +105,26 @@ async function buildTeamNamespace(
   credential: Credential,
   keys: readonly { version: number; key: CryptoKeyLike }[],
   list: CloudMapList
-): Promise<Record<string, string> | null> {
+): Promise<{
+  namespace: Record<string, string>
+  conflicts: string[]
+  highest: Record<string, number>
+} | null> {
   // A member's OWN team maps arrive under personalMaps — the listing splits by
   // ownership, not by scope — so both lists have to be considered or this
   // member's own placeholders drop out of the shared namespace.
   const teamScoped = [...list.personalMaps, ...list.teamMaps].filter((m) => m.scope === 'team')
 
-  const entries = await Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
-  const namespace = mergeTeamNamespace(entries)
+  const entries = await readTeamEntries(credential, keys, teamScoped)
+  const merged = mergeTeamNamespace(entries)
   // Every map unreadable is not a team namespace, it is a failed one. Saying
   // `local` is honest; an empty `team` would claim agreement that is not there.
-  return Object.keys(namespace).length > 0 ? namespace : null
+  if (Object.keys(merged).length === 0) return null
+  const conflicts = findConflicts(entries)
+  const namespace = Object.fromEntries(
+    Object.entries(merged).filter(([p]) => !conflicts.includes(p))
+  )
+  return { namespace, conflicts, highest: highestAcross(entries) }
 }
 
 /**
@@ -110,6 +165,40 @@ async function heldTeamKeys(
   return keys
 }
 
+/**
+ * Every team map, opened with the held keys. One request where Cloud offers it;
+ * one per map only for an instance that predates it (404). A failure of the
+ * single request is NOT turned into skipped maps: it throws, and the caller
+ * reports `local` - a namespace missing a teammate's newest map restored their
+ * placeholders wrong (found on staging, 2026-09-26).
+ */
+async function readTeamEntries(
+  credential: Credential,
+  keys: readonly { version: number; key: CryptoKeyLike }[],
+  teamScoped: readonly CloudMapSummary[]
+): Promise<TeamMapEntry[]> {
+  let bulk: Awaited<ReturnType<typeof getTeamEnvelopes>>
+  try {
+    bulk = await getTeamEnvelopes(credential)
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404) {
+      return Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
+    }
+    throw err
+  }
+  return Promise.all(
+    bulk.maps.map(async (row): Promise<TeamMapEntry> => {
+      try {
+        const envelope = JSON.parse(row.map_data) as TeamMapEnvelope
+        return { createdAt: row.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
+      } catch {
+        // A version this member was never granted: skipped, not fatal.
+        return { createdAt: row.created_at, map: null }
+      }
+    })
+  )
+}
+
 /** One team map, opened if any held key fits. */
 async function openTeamMap(
   credential: Credential,
@@ -148,7 +237,9 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
     // An older self-hosted Cloud may still merge server-side, and that answer
     // needs no key at all. Checked before the vault key so such a deployment
     // keeps working for a member who has not unlocked one.
-    if (list.teamNamespace) return { source: 'team', namespace: list.teamNamespace }
+    if (list.teamNamespace) {
+      return { source: 'team', namespace: list.teamNamespace, conflicts: [], highest: {} }
+    }
 
     // Past here everything must be decrypted locally, so without keys on disk
     // there is nothing further to try. That is the state until somebody has run
@@ -158,9 +249,9 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
     const keys = await heldTeamKeys(credential, home, teamId)
     if (keys.length === 0) return LOCAL
 
-    const namespace = await buildTeamNamespace(credential, keys, list)
-    if (!namespace) return LOCAL
-    return { source: 'team', namespace }
+    const built = await buildTeamNamespace(credential, keys, list)
+    if (!built) return LOCAL
+    return { source: 'team', ...built }
   } catch {
     // Unreachable, revoked session, timed out — every network or auth failure
     // degrades the same way. A coding agent must keep working when Cloud is

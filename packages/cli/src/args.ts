@@ -15,6 +15,7 @@ export type Command =
   | 'whoami'
   | 'maps'
   | 'team'
+  | 'rules'
   | 'help'
   | 'version'
 
@@ -58,6 +59,8 @@ export interface ParsedArgs {
    * keys rather than the account or the local store.
    */
   teamAction: 'unlock' | 'lock' | null
+  /** `rules pull`. */
+  rulesAction: 'pull' | null
 
   /**
    * Base URL of the Veilio instance to sign in to. Null means the public Cloud.
@@ -81,6 +84,7 @@ const COMMANDS = new Set<Command>([
   'whoami',
   'maps',
   'team',
+  'rules',
   'help',
   'version',
 ])
@@ -91,7 +95,14 @@ const COMMANDS = new Set<Command>([
  * command without deciding which side of the line it falls on is a compile
  * error rather than an accident.
  */
-export const CLOUD_COMMANDS = new Set<Command>(['login', 'logout', 'whoami', 'maps', 'team'])
+export const CLOUD_COMMANDS = new Set<Command>([
+  'login',
+  'logout',
+  'whoami',
+  'maps',
+  'team',
+  'rules',
+])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
 const LANGUAGE_VALUES = new Set<string>([...LANGUAGES, 'auto'])
 
@@ -119,6 +130,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     instance: null,
     mapsAction: null,
     teamAction: null,
+    rulesAction: null,
   }
 
   if (argv.length === 0) return parsed
@@ -152,6 +164,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
           throw new UsageError(`unknown team action "${verb}" — expected unlock or lock`)
         }
         parsed.teamAction = verb
+        i = 2
+      }
+    }
+
+    if (parsed.command === 'rules') {
+      const verb = argv[1]
+      if (verb !== undefined && !verb.startsWith('-')) {
+        if (verb !== 'pull') {
+          throw new UsageError(`unknown rules action "${verb}" — expected pull`)
+        }
+        parsed.rulesAction = verb
         i = 2
       }
     }

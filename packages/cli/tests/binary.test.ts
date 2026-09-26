@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, symlinkSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -35,8 +35,12 @@ describe('the binary, executed as a binary', () => {
     ).toBe(true)
   })
 
-  it('runs when invoked by its real path', () => {
-    expect(run(process.execPath, [DIST, '--version']).trim()).toMatch(/^\d+\.\d+\.\d+$/)
+  it('runs when invoked by its real path, and reports its own package version', () => {
+    // From dist/, where the package.json lookup has to resolve one level up.
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
+    expect(run(process.execPath, [DIST, '--version']).trim()).toBe(pkg.version)
   })
 
   it('runs when invoked through a symlink, as npm installs it', () => {

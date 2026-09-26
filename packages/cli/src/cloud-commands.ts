@@ -15,6 +15,7 @@ import {
   getUserKeys,
   getTeamKeyWraps,
   listMaps,
+  listRules,
   request,
   type CloudMap,
   type CloudMapList,
@@ -30,10 +31,15 @@ import {
   encryptMapForVault,
   fromBase64,
   parseVaultEnvelope,
+  importTeamKey,
+  decryptTeamMapWithAny,
+  type CryptoKeyLike,
   type SymbolMap,
+  type TeamMapEnvelope,
 } from '@veilio-inc/engine'
 import { loadMap, loadRemote, saveMap } from './store.js'
 import {
+  readTeamUnlock,
   removeTeamUnlock,
   writeTeamUnlock,
   teamUnlockPath,
@@ -41,6 +47,7 @@ import {
   type StoredTeamKey,
 } from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
+import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 
@@ -50,6 +57,9 @@ const ENTITLED_PROBE = '/api/maps'
 interface LoginResponse {
   token: string
   user?: { email?: string }
+  /** The account has a second factor: `token` is then a five-minute CHALLENGE,
+   *  good only for POST /api/auth/2fa/verify - never a session. */
+  secondFactorRequired?: boolean
 }
 
 /**
@@ -99,6 +109,34 @@ export async function runLogin(instance: string | null, io: Io): Promise<number>
     })
   } catch (err) {
     return reportLoginFailure(err, io)
+  }
+
+  // A second factor. The token that came back is a challenge, not a session:
+  // storing it made every later command fail, and the failure read as a wrong
+  // password (found on staging, 2026-09-26). Ask for the code and complete the
+  // sign-in the way the web app does.
+  if (session.secondFactorRequired === true) {
+    const code = (await requirePrompt(io, 'Authentication code (or a recovery code): ')).trim()
+    if (code === '') {
+      io.stderr('veilio: no authentication code given\n')
+      return EXIT_ERROR
+    }
+    try {
+      session = await request<LoginResponse>('/api/auth/2fa/verify', {
+        credential: { token: session.token, account, instance: base },
+        method: 'POST',
+        body: { code },
+      })
+    } catch (err) {
+      if (err instanceof CloudError && err.kind === 'unauthenticated') {
+        io.stderr(
+          'veilio: that authentication code was not accepted, or it expired. ' +
+            'Run `veilio login` again with a fresh code.\n'
+        )
+        return EXIT_ERROR
+      }
+      return reportLoginFailure(err, io)
+    }
   }
 
   if (typeof session.token !== 'string' || session.token === '') {
@@ -154,6 +192,7 @@ export async function runLogout(io: Io): Promise<number> {
       // branch where signing out quietly kept the more dangerous half.
       try {
         removeTeamUnlock(io.home)
+        removeRules(io.home)
         removeCredential(io.home)
       } catch (removeErr) {
         io.stderr(
@@ -184,6 +223,17 @@ export async function runLogout(io: Io): Promise<number> {
     io.stderr(
       `veilio: the session was revoked, but the unlocked team keys could not be removed ` +
         `(${err instanceof Error ? err.message : String(err)}). Delete ${teamUnlockPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  // The rules are the account's too, and a whitelist among them keeps names
+  // readable: they go with the session rather than outliving it.
+  try {
+    removeRules(io.home)
+  } catch (err) {
+    io.stderr(
+      `veilio: the session was revoked, but the cached custom rules could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). Delete ${rulesPath(io.home)} by hand.\n`
     )
     return EXIT_ERROR
   }
@@ -307,6 +357,51 @@ export async function runMapsList(io: Io): Promise<number> {
 }
 
 /**
+ * Open a team map with the team keys `veilio team unlock` stored.
+ *
+ * The same keys the MCP server reads, for the same reason: this machine may
+ * have nobody present to type a vault passphrase, and the team key - not the
+ * vault key - is what a team map is sealed under. Reports and returns null
+ * when it cannot, so the caller writes nothing.
+ */
+async function openTeamEnvelope(
+  credential: Credential,
+  mapData: string,
+  io: Io
+): Promise<SymbolMap | null> {
+  const unlock = readTeamUnlock(
+    { instance: credential.instance, account: credential.account },
+    io.home
+  )
+  if (!unlock || unlock.keys.length === 0) {
+    io.stderr(
+      'veilio: that is a team map, and no team key is unlocked on this machine. ' +
+        'Run `veilio team unlock` first. Nothing was written.\n'
+    )
+    return null
+  }
+  const keys: { version: number; key: CryptoKeyLike }[] = []
+  for (const stored of unlock.keys) {
+    try {
+      keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
+    } catch {
+      // A damaged entry; the others may still open the map.
+      continue
+    }
+  }
+  try {
+    return await decryptTeamMapWithAny(keys, JSON.parse(mapData) as TeamMapEnvelope)
+  } catch (err) {
+    io.stderr(
+      `veilio: that team map could not be opened with the unlocked team keys — ` +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        'If the team key was rotated since, run `veilio team unlock` again. Nothing was written.\n'
+    )
+    return null
+  }
+}
+
+/**
  * Pull a map into the local store: decrypt FIRST, write second.
  *
  * The ordering is the control (Constitution IV). Writing before decrypting means
@@ -338,11 +433,26 @@ export async function runMapsPull(
     return reportCloudFailure(err, io)
   }
 
-  // A team map arrives already open — the server can read those, and says so in
-  // the privacy policy. Only a client envelope is ours to decrypt.
-  let map: SymbolMap
+  // Every map is an envelope the server cannot open: a personal map under the
+  // vault key, a team map under the team key. Which one is written on the
+  // envelope itself.
   if (typeof remote.map_data !== 'string') {
-    map = remote.map_data
+    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
+    return EXIT_ERROR
+  }
+  let envelope: { alg?: unknown }
+  try {
+    envelope = JSON.parse(remote.map_data) as { alg?: unknown }
+  } catch {
+    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
+    return EXIT_ERROR
+  }
+
+  let map: SymbolMap
+  if (envelope.alg === 'AES-256-GCM-TEAM') {
+    const opened = await openTeamEnvelope(credential, remote.map_data, io)
+    if (!opened) return EXIT_ERROR
+    map = opened
   } else {
     let vault: VaultInfo
     try {
@@ -496,6 +606,55 @@ function notSignedIn(io: Io): number {
 /** Same distinctions as a failed sign-in, minus the ones only login can hit. */
 function reportCloudFailure(err: unknown, io: Io): number {
   return reportLoginFailure(err, io)
+}
+
+// ─── rules: pull ──────────────────────────────────────────────────────────────
+
+/**
+ * Fetch the account's custom rules so `veilio scrub` can apply them offline.
+ *
+ * Merged here, in the web app's order, so every later scrub applies exactly
+ * what the browser would. A plan without custom rules REMOVES any cache left
+ * from before: rules the account can no longer use must not go on shaping
+ * its output. Any other failure keeps the cache and says so.
+ */
+export async function runRulesPull(io: Io): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) return notSignedIn(io)
+
+  let fetched: Awaited<ReturnType<typeof listRules>>
+  try {
+    fetched = await listRules(credential)
+  } catch (err) {
+    if (err instanceof CloudError && err.kind === 'unentitled') {
+      const removed = removeRules(io.home)
+      io.stderr(
+        `veilio: this account's plan does not include custom rules${removed ? ' - the cached rules were removed' : ''}.\n`
+      )
+      return EXIT_ERROR
+    }
+    return reportCloudFailure(err, io)
+  }
+
+  const personal = fetched.rules ?? []
+  const team = fetched.teamRules ?? []
+  const rules = mergeRules(personal, team)
+  writeRules(
+    {
+      instance: credential.instance,
+      account: credential.account,
+      pulledAt: new Date().toISOString(),
+      rules,
+    },
+    io.home
+  )
+  const skipped = personal.length + team.length - rules.length
+  io.stdout(
+    `Pulled ${rules.length} custom rule${rules.length === 1 ? '' : 's'} ` +
+      `(${personal.length} personal, ${team.length} team${skipped > 0 ? `, ${skipped} disabled and skipped` : ''}). ` +
+      '`veilio scrub` applies them.\n'
+  )
+  return EXIT_OK
 }
 
 // ─── team: unlock, lock ──────────────────────────────────────────────────────

@@ -903,13 +903,16 @@ export function anonymize(
   const whitelisted = new Set<string>()
 
   for (const name of identifiers) {
-    if (reverseExisting[name]) continue // already mapped
-
-    // 1. Whitelist: skip
+    // 1. Whitelist: skip - checked BEFORE "already mapped". A name a team map
+    //    or an earlier session already holds would otherwise stay masked for
+    //    ever, whatever the rule says (found on staging, 2026-09-26). The map
+    //    keeps its entry, so restore is unaffected; the text just keeps the name.
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {
       whitelisted.add(name)
       continue
     }
+
+    if (reverseExisting[name]) continue // already mapped
 
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))
@@ -1068,11 +1071,16 @@ export function restore(
   // Same reasoning as the substitution in anonymize: a replace per placeholder
   // is O(placeholders × text) and dominated the round trip on large inputs.
   // Sorting longest-first keeps `__CLS__10` from being eaten by `__CLS__1`,
-  // since alternation prefers the earliest matching branch.
+  // since alternation prefers the earliest matching branch - but only when
+  // `__CLS__10` is IN the map. When it is not (a teammate's placeholder this
+  // map has never seen), `__CLS__1` matched its prefix and `__CLS__10` came
+  // back as `Invoice0`: a wrong name, reported as success (found on staging,
+  // 2026-09-26). A placeholder never matches with a digit after it; the token
+  // is left alone and reported unresolved instead.
   const placeholders = Object.keys(map).sort((a, b) => b.length - a.length)
   const seen = new Set<string>()
   if (placeholders.length > 0) {
-    const pattern = new RegExp(placeholders.map(escapeRegex).join('|'), 'g')
+    const pattern = new RegExp(`(?:${placeholders.map(escapeRegex).join('|')})(?!\\d)`, 'g')
     result = result.replace(pattern, (match) => {
       seen.add(match)
       return map[match] ?? match

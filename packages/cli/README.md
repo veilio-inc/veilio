@@ -8,6 +8,8 @@ pbpaste | veilio restore                 # bring the answer back
 git diff --cached | veilio scan          # refuse to commit a live key
 ```
 
+Full guide - terminal, Cloud sign-in, and connecting AI assistants (Claude Code, Claude Desktop, Xcode, Cursor, VS Code): [docs/USING-THE-CLI-AND-MCP.md](../../docs/USING-THE-CLI-AND-MCP.md).
+
 ## Install
 
 ```bash
@@ -32,17 +34,15 @@ behavior; it only unlocks the four commands below that name Cloud explicitly.
 
 ## Cloud sync (Individual plan and above)
 
-> **None of this is in `0.1.0`, which is what npm currently has.** These
-> commands are merged here and ship with the next release; until then they run
-> from a clone — `npm run build:packages`, then
-> `node packages/cli/dist/index.js --help`.
-
 ```bash
-veilio login                    # prompts for email/password; --instance for self-hosted
+veilio login                    # email, password, and the authentication code if 2FA is on
 veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
 veilio maps push <name>         # upload the local map under a new Cloud name
+veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
+veilio team lock                # remove the unlocked team key from this machine
+veilio rules pull               # fetch your custom rules; scrub then applies them offline
 veilio logout                   # revokes server-side, then removes the local credential
 ```
 
@@ -53,10 +53,16 @@ accepted the sign-in. `0600` is the floor, not the final answer — the OS
 keychain is a stronger option and a planned follow-up. A personal map is
 zero-knowledge: pulling or pushing one prompts for the vault passphrase and
 derives the key here, on your machine — the passphrase and the key never
-leave it. A team map arrives already open, because the server can read those
-(stated in the privacy policy) and there is nothing local left to decrypt.
+leave it. A team map is sealed under the team key, which the server cannot
+read either; `veilio team unlock` opens it here with your vault passphrase.
 
-Every one of these six is a client of `GET /api/maps`, `GET /api/maps/:id` and
+Custom rules (whitelist and replace, set in the web app) are applied by
+`scrub` from a local copy that `veilio rules pull` writes to
+`~/.veilio/rules.json` (`0600`). `scrub` never fetches them itself - it stays
+offline - and says on every run how many rules it applied and how old the copy
+is. Pull again after the rules change; `logout` removes the copy.
+
+The map commands are clients of `GET /api/maps`, `GET /api/maps/:id` and
 `POST /api/maps` — the exact same routes the browser uses, behind the exact
 same entitlement check. There is no CLI-shaped API and nothing here can reach
 a plan feature the web app couldn't.

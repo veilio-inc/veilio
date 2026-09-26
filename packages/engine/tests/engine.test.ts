@@ -318,6 +318,30 @@ describe('anonymize with custom rules', () => {
     expect(Object.values(map)).not.toContain('apiSecretKey')
   })
 
+  it('whitelist applies to a name the existing map already holds (found on staging)', () => {
+    // A team namespace or an earlier session maps customerId. Whitelisting it
+    // afterwards must still leave it readable - before, the existing mapping
+    // was checked first and the rule silently did nothing, on every surface.
+    const rules = [helper(1, 'whitelist', '^customerId$')]
+    const seed: SymbolMap = { __VAR__4: 'customerId' }
+    const src = 'function settle(customerId: string) { return customerId }'
+    const { anonymized, map } = anonymize(src, { rules, existingMap: seed })
+    expect(anonymized).toContain('return customerId')
+    expect(anonymized).not.toContain('__VAR__4')
+    // The entry stays, so text anonymized before the rule still restores.
+    expect(map.__VAR__4).toBe('customerId')
+    expect(restore('return __VAR__4', map).restored).toBe('return customerId')
+  })
+
+  it('a replace rule does NOT re-number a name the existing map already holds', () => {
+    // Placeholders already sent to a model must keep meaning the same thing.
+    const rules = [helper(1, 'replace', '^customer', '__CUST__')]
+    const seed: SymbolMap = { __VAR__4: 'customerId' }
+    const { anonymized } = anonymize('let customerId = 1', { rules, existingMap: seed })
+    expect(anonymized).toContain('__VAR__4')
+    expect(anonymized).not.toContain('__CUST__')
+  })
+
   it('first matching replace rule wins by sort_order', () => {
     const rules = [
       helper(1, 'replace', '^api', '__FIRST__'),
@@ -387,5 +411,29 @@ describe('anonymize with custom rules', () => {
     // Both mappings must survive — original wasn't overwritten.
     expect(second.map['__APIKEY__1']).toBe('apiSecretKey')
     expect(second.map['__APIKEY__2']).toBe('apiPublicKey')
+  })
+})
+
+// Found on staging (spec 017 walk, 2026-09-26): a teammate's __FN__11 was not
+// in this member's map, __FN__1 was, and restore returned `chargeCustomer1`.
+describe('restore never matches a placeholder inside a longer number', () => {
+  it('leaves an unknown __FN__11 alone and reports it, even when __FN__1 is known', () => {
+    const r = restore('export function __FN__11(__VAR__3: string) {}', {
+      __FN__1: 'chargeCustomer',
+      __VAR__3: 'customerId',
+    })
+    expect(r.restored).toBe('export function __FN__11(customerId: string) {}')
+    expect(r.report.unresolved).toEqual(['__FN__11'])
+  })
+
+  it('still restores both when both are known', () => {
+    const r = restore('__FN__1(__FN__11)', { __FN__1: 'a', __FN__11: 'b' })
+    expect(r.restored).toBe('a(b)')
+  })
+
+  it('still restores a placeholder the model extended with letters', () => {
+    // `__FN__1Async` is a name the model derived; restoring the known part is
+    // the long-standing behaviour and is not a guess about a different number.
+    expect(restore('__FN__1Async()', { __FN__1: 'charge' }).restored).toBe('chargeAsync()')
   })
 })

@@ -24,6 +24,7 @@
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
 import type { Credential } from './credential.js'
+import type { CustomRule } from '@veilio-inc/engine'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
@@ -223,8 +224,6 @@ export interface CloudMapSummary {
    *  an older map already claimed. */
   created_at: string
   updated_at: string
-  /** `client-envelope` means WE decrypt it; anything else the server already did. */
-  storage: string
 }
 
 export interface CloudMapList {
@@ -279,6 +278,25 @@ export type VaultInfo =
 
 export function listMaps(credential: Credential): Promise<CloudMapList> {
   return request<CloudMapList>('/api/maps', { credential })
+}
+
+/** The account's custom rules: its own, and those of the teams it is in. */
+export function listRules(
+  credential: Credential
+): Promise<{ rules: CustomRule[]; teamRules: CustomRule[] }> {
+  return request<{ rules: CustomRule[]; teamRules: CustomRule[] }>('/api/rules', { credential })
+}
+
+/**
+ * Every team map this account can reach, with envelopes, in one request. Cloud
+ * added it so building the namespace is not one request per map against the
+ * maps rate limit. An older self-hosted instance answers 404 (a `server`
+ * CloudError with status 404); callers fall back to one getMap per map.
+ */
+export function getTeamEnvelopes(
+  credential: Credential
+): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
+  return request('/api/maps/team-envelopes', { credential })
 }
 
 export function getMap(credential: Credential, id: string): Promise<CloudMap> {

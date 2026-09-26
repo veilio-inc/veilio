@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module'
 import { parseArgs, UsageError } from './args.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
 import {
@@ -10,13 +11,20 @@ import {
   runMapsPush,
   runTeamUnlock,
   runTeamLock,
+  runRulesPull,
 } from './cloud-commands.js'
 import { resolveMapPath } from './store.js'
 import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-export const VERSION = '0.1.0'
+// Read from the package, not typed here: changesets bump package.json only, so
+// a literal drifted - the published 0.2.0 reported 0.1.0 (found 2026-09-26).
+// npm always ships package.json, and ../package.json resolves from src/ and
+// dist/ alike.
+export const VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version
 
 /** Testable entry point: everything that touches the process is injected. */
 export async function main(argv: readonly string[], io: Io): Promise<number> {
@@ -78,6 +86,10 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return EXIT_ERROR
         }
       }
+      case 'rules':
+        if (args.rulesAction === 'pull') return await runRulesPull(io)
+        io.stderr('veilio: rules needs an action — pull.\n')
+        return EXIT_ERROR
     }
   } catch (err) {
     io.stderr(`veilio: ${err instanceof Error ? err.message : String(err)}\n`)
