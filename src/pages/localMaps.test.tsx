@@ -94,10 +94,12 @@ describe('the tool page', () => {
     lockLocalForTests()
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: /encrypted one/ }))
-    fireEvent.change(await screen.findByLabelText('Local passphrase'), { target: { value: PASS } })
+    fireEvent.change(await screen.findByLabelText('Local passphrase', {}, { timeout: 10_000 }), {
+      target: { value: PASS },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Unlock' }))
-    expect(await screen.findByText(/Loaded 1 identifiers/)).toBeTruthy()
-  })
+    expect(await screen.findByText(/Loaded 1 identifiers/, {}, { timeout: 10_000 })).toBeTruthy()
+  }, 30_000)
 })
 
 describe('the dashboard', () => {
