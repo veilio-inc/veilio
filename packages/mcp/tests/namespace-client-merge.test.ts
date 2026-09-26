@@ -427,8 +427,16 @@ describe('an older Cloud that still merges server-side', () => {
 
 describe('placeholders the team disagrees about', () => {
   const MAPS = [
-    { id: 'm1', createdAt: '2026-09-26T10:00:00Z', map: { __FN__6: 'settleLedger', __CLS__1: 'Ledger' } },
-    { id: 'm2', createdAt: '2026-09-26T10:00:05Z', map: { __FN__6: 'voidLedger', __CLS__1: 'Ledger' } },
+    {
+      id: 'm1',
+      createdAt: '2026-09-26T10:00:00Z',
+      map: { __FN__6: 'settleLedger', __CLS__1: 'Ledger' },
+    },
+    {
+      id: 'm2',
+      createdAt: '2026-09-26T10:00:05Z',
+      map: { __FN__6: 'voidLedger', __CLS__1: 'Ledger' },
+    },
   ]
 
   it('are reported, and left out of the namespace used to anonymize', async () => {
@@ -445,7 +453,11 @@ describe('placeholders the team disagrees about', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
     saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'Ledger' })
-    const res = callTool('restore_text', { text: 'new __CLS__1().__FN__6()' }, { cwd, mapPath: null })
+    const res = callTool(
+      'restore_text',
+      { text: 'new __CLS__1().__FN__6()' },
+      { cwd, mapPath: null }
+    )
     expect(res.text).toContain('new Ledger().__FN__6()')
     expect(res.text).not.toContain('settleLedger')
     expect(res.text).toContain('WARNING: left as is: __FN__6')
@@ -457,7 +469,9 @@ describe('placeholders the team disagrees about', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
     saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
-    expect(callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text).not.toContain('left as is')
+    expect(
+      callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text
+    ).not.toContain('left as is')
   })
 
   it("a new name never takes a conflicting number, and the agent's own output restores (review)", async () => {
@@ -479,10 +493,18 @@ describe('placeholders the team disagrees about', () => {
     const stored = loadMap(resolveMapPath(null, cwd))
     expect(Object.values(stored).some((v) => v.includes('\u0000'))).toBe(false)
     // At the map's own highest (__CLS__1) no marker is added over the real entry.
-    expect(callTool('anonymize_text', { text: 'class Ledger {}' }, ctx).text).toContain('class __CLS__1')
+    expect(callTool('anonymize_text', { text: 'class Ledger {}' }, ctx).text).toContain(
+      'class __CLS__1'
+    )
   })
 
   it('findConflicts ignores unreadable maps and agreeing ones', () => {
-    expect(findConflicts([{ createdAt: 'a', map: null }, { createdAt: 'b', map: { __X__1: 'a' } }, { createdAt: 'c', map: { __X__1: 'a' } }])).toEqual([])
+    expect(
+      findConflicts([
+        { createdAt: 'a', map: null },
+        { createdAt: 'b', map: { __X__1: 'a' } },
+        { createdAt: 'c', map: { __X__1: 'a' } },
+      ])
+    ).toEqual([])
   })
 })

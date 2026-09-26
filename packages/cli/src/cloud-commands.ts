@@ -116,9 +116,7 @@ export async function runLogin(instance: string | null, io: Io): Promise<number>
   // password (found on staging, 2026-09-26). Ask for the code and complete the
   // sign-in the way the web app does.
   if (session.secondFactorRequired === true) {
-    const code = (
-      await requirePrompt(io, 'Authentication code (or a recovery code): ')
-    ).trim()
+    const code = (await requirePrompt(io, 'Authentication code (or a recovery code): ')).trim()
     if (code === '') {
       io.stderr('veilio: no authentication code given\n')
       return EXIT_ERROR

@@ -95,7 +95,14 @@ const COMMANDS = new Set<Command>([
  * command without deciding which side of the line it falls on is a compile
  * error rather than an accident.
  */
-export const CLOUD_COMMANDS = new Set<Command>(['login', 'logout', 'whoami', 'maps', 'team', 'rules'])
+export const CLOUD_COMMANDS = new Set<Command>([
+  'login',
+  'logout',
+  'whoami',
+  'maps',
+  'team',
+  'rules',
+])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
 const LANGUAGE_VALUES = new Set<string>([...LANGUAGES, 'auto'])
 

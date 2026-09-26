@@ -195,11 +195,18 @@ describe('an account with two-factor authentication', () => {
       const path = new URL(String(url)).pathname
       const auth = new Headers(init?.headers).get('Authorization')
       if (path === '/api/auth/login') {
-        return jsonResponse(200, { secondFactorRequired: true, token: 'challenge-token', expiresIn: 300 })
+        return jsonResponse(200, {
+          secondFactorRequired: true,
+          token: 'challenge-token',
+          expiresIn: 300,
+        })
       }
-      if (path === '/api/auth/2fa/verify') return verify(auth, JSON.parse(String(init?.body ?? '{}')))
+      if (path === '/api/auth/2fa/verify')
+        return verify(auth, JSON.parse(String(init?.body ?? '{}')))
       // The entitled probe: only the real session opens it.
-      return auth === 'Bearer session-token' ? jsonResponse(200, { maps: [] }) : jsonResponse(401, { error: 'Unauthorized' })
+      return auth === 'Bearer session-token'
+        ? jsonResponse(200, { maps: [] })
+        : jsonResponse(401, { error: 'Unauthorized' })
     })
   }
 

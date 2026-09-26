@@ -43,7 +43,10 @@ export function rulesPath(home: string = homedir()): string {
  * dropped and sort_order renumbered 0..n-1, so the engine sees one sequence.
  * Must match `useMergedRules` in the Cloud frontend.
  */
-export function mergeRules(personal: readonly CustomRule[], team: readonly CustomRule[]): CustomRule[] {
+export function mergeRules(
+  personal: readonly CustomRule[],
+  team: readonly CustomRule[]
+): CustomRule[] {
   const byOrder = (a: CustomRule, b: CustomRule): number => a.sort_order - b.sort_order
   const on = (list: readonly CustomRule[], type: CustomRule['type']): CustomRule[] =>
     list.filter((r) => r.enabled && r.type === type).sort(byOrder)

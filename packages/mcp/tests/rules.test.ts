@@ -23,12 +23,33 @@ let cwd: string
 let fetchMock: ReturnType<typeof vi.fn>
 
 function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
-function rule(id: string, type: 'replace' | 'whitelist', scope: 'personal' | 'team', pattern: string, extra = {}): CustomRule {
-  const base = { id, scope, team_id: scope === 'team' ? 't1' : null, name: id, pattern, enabled: true, sort_order: 0 }
-  return (type === 'replace' ? { ...base, type, placeholder: '__LEDGER__', ...extra } : { ...base, type, ...extra }) as CustomRule
+function rule(
+  id: string,
+  type: 'replace' | 'whitelist',
+  scope: 'personal' | 'team',
+  pattern: string,
+  extra = {}
+): CustomRule {
+  const base = {
+    id,
+    scope,
+    team_id: scope === 'team' ? 't1' : null,
+    name: id,
+    pattern,
+    enabled: true,
+    sort_order: 0,
+  }
+  return (
+    type === 'replace'
+      ? { ...base, type, placeholder: '__LEDGER__', ...extra }
+      : { ...base, type, ...extra }
+  ) as CustomRule
 }
 
 const WHITELIST = rule('w', 'whitelist', 'team', '^customerId$')
@@ -79,16 +100,28 @@ describe('rules at startup', () => {
     expect(text).not.toContain('settleLedger')
     // The tool call itself touched no network.
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(readRules({ instance: INSTANCE, account: ACCOUNT }, home)?.rules.map((r) => r.id)).toEqual(['w', 'r'])
+    expect(
+      readRules({ instance: INSTANCE, account: ACCOUNT }, home)?.rules.map((r) => r.id)
+    ).toEqual(['w', 'r'])
   })
 
   it('Cloud unreachable: the cached pull is used, and says so', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [WHITELIST] }, home)
+    writeRules(
+      {
+        instance: INSTANCE,
+        account: ACCOUNT,
+        pulledAt: new Date().toISOString(),
+        rules: [WHITELIST],
+      },
+      home
+    )
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
     expect((await primeRules(home)).source).toBe('cached')
     const text = anonymize()
-    expect(text).toContain('Custom rules: 1 custom rule cached, pulled just now - Cloud did not answer')
+    expect(text).toContain(
+      'Custom rules: 1 custom rule cached, pulled just now - Cloud did not answer'
+    )
     expect(text).toContain('return customerId')
   })
 
@@ -101,8 +134,18 @@ describe('rules at startup', () => {
 
   it('plan without rules: none, and the old cache is removed', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [WHITELIST] }, home)
-    fetchMock.mockResolvedValue(json(403, { error: 'Pro plan required for custom rules', upgrade: true }))
+    writeRules(
+      {
+        instance: INSTANCE,
+        account: ACCOUNT,
+        pulledAt: new Date().toISOString(),
+        rules: [WHITELIST],
+      },
+      home
+    )
+    fetchMock.mockResolvedValue(
+      json(403, { error: 'Pro plan required for custom rules', upgrade: true })
+    )
     expect((await primeRules(home)).source).toBe('none')
     expect(existsSync(rulesPath(home))).toBe(false)
     expect(anonymize()).not.toContain('return customerId')

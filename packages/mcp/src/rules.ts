@@ -36,7 +36,12 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
     // with the agent. A failed write costs nothing here.
     try {
       writeRules(
-        { instance: credential.instance, account: credential.account, pulledAt: new Date().toISOString(), rules },
+        {
+          instance: credential.instance,
+          account: credential.account,
+          pulledAt: new Date().toISOString(),
+          rules,
+        },
         home
       )
     } catch {

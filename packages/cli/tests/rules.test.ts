@@ -35,7 +35,10 @@ afterEach(() => {
   rmSync(cwd, { recursive: true, force: true })
 })
 
-async function run(argv: string[], stdin = ''): Promise<{ code: number; out: string; err: string }> {
+async function run(
+  argv: string[],
+  stdin = ''
+): Promise<{ code: number; out: string; err: string }> {
   let out = ''
   let err = ''
   const io: Io = {
@@ -52,7 +55,10 @@ async function run(argv: string[], stdin = ''): Promise<{ code: number; out: str
 }
 
 function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 function rule(
@@ -63,10 +69,20 @@ function rule(
   pattern: string,
   extra: Partial<CustomRule> = {}
 ): CustomRule {
-  const base = { id, scope, team_id: scope === 'team' ? 't1' : null, name: id, pattern, enabled: true, sort_order }
-  return (type === 'replace'
-    ? { ...base, type, placeholder: '__NAME__', ...extra }
-    : { ...base, type, ...extra }) as CustomRule
+  const base = {
+    id,
+    scope,
+    team_id: scope === 'team' ? 't1' : null,
+    name: id,
+    pattern,
+    enabled: true,
+    sort_order,
+  }
+  return (
+    type === 'replace'
+      ? { ...base, type, placeholder: '__NAME__', ...extra }
+      : { ...base, type, ...extra }
+  ) as CustomRule
 }
 
 function signIn(account = ACCOUNT): void {
@@ -101,8 +117,16 @@ describe('mergeRules', () => {
 
   it('a team replace rule wins a clash with a personal one', () => {
     const merged = mergeRules(
-      [rule('mine', 'replace', 'personal', 0, '^settle', { placeholder: '__MINE__' } as Partial<CustomRule>)],
-      [rule('ours', 'replace', 'team', 0, '^settle', { placeholder: '__OURS__' } as Partial<CustomRule>)]
+      [
+        rule('mine', 'replace', 'personal', 0, '^settle', {
+          placeholder: '__MINE__',
+        } as Partial<CustomRule>),
+      ],
+      [
+        rule('ours', 'replace', 'team', 0, '^settle', {
+          placeholder: '__OURS__',
+        } as Partial<CustomRule>),
+      ]
     )
     expect(merged[0].id).toBe('ours')
   })
@@ -137,8 +161,13 @@ describe('veilio rules pull', () => {
 
   it('a plan without custom rules removes the old cache', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] }, home)
-    fetchMock.mockResolvedValue(json(403, { error: 'Pro plan required for custom rules', upgrade: true }))
+    writeRules(
+      { instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] },
+      home
+    )
+    fetchMock.mockResolvedValue(
+      json(403, { error: 'Pro plan required for custom rules', upgrade: true })
+    )
     const res = await run(['rules', 'pull'])
     expect(res.code).toBe(EXIT_ERROR)
     expect(res.err).toMatch(/does not include custom rules - the cached rules were removed/)
@@ -147,7 +176,10 @@ describe('veilio rules pull', () => {
 
   it('an unreachable instance keeps the cache', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] }, home)
+    writeRules(
+      { instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] },
+      home
+    )
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
     const res = await run(['rules', 'pull'])
     expect(res.code).toBe(EXIT_ERROR)
@@ -165,7 +197,11 @@ describe('veilio rules pull', () => {
 // ─── scrub applies the cache, offline ────────────────────────────────────────
 
 describe('scrub with cached rules', () => {
-  function cache(rules: CustomRule[], owner = { instance: INSTANCE, account: ACCOUNT }, pulledAt = new Date().toISOString()): void {
+  function cache(
+    rules: CustomRule[],
+    owner = { instance: INSTANCE, account: ACCOUNT },
+    pulledAt = new Date().toISOString()
+  ): void {
     writeRules({ ...owner, pulledAt, rules }, home)
   }
 
@@ -173,7 +209,11 @@ describe('scrub with cached rules', () => {
     signIn()
     cache(
       mergeRules(
-        [rule('r', 'replace', 'personal', 0, '^settle', { placeholder: '__LEDGER__' } as Partial<CustomRule>)],
+        [
+          rule('r', 'replace', 'personal', 0, '^settle', {
+            placeholder: '__LEDGER__',
+          } as Partial<CustomRule>),
+        ],
         [rule('w', 'whitelist', 'team', 0, '^customerId$')]
       )
     )
@@ -219,7 +259,11 @@ describe('scrub with cached rules', () => {
 
   it('a replaced name restores', async () => {
     signIn()
-    cache([rule('r', 'replace', 'personal', 0, '^settle', { placeholder: '__LEDGER__' } as Partial<CustomRule>)])
+    cache([
+      rule('r', 'replace', 'personal', 0, '^settle', {
+        placeholder: '__LEDGER__',
+      } as Partial<CustomRule>),
+    ])
     const scrubbed = await run(['scrub'], SOURCE)
     const restored = await run(['restore'], scrubbed.out)
     expect(restored.out).toContain('settleLedger')
@@ -229,7 +273,10 @@ describe('scrub with cached rules', () => {
 describe('logout removes the cached rules', () => {
   it('with the session', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] }, home)
+    writeRules(
+      { instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] },
+      home
+    )
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     const res = await run(['logout'])
     expect(res.code, res.err).toBe(EXIT_OK)
@@ -238,7 +285,10 @@ describe('logout removes the cached rules', () => {
 
   it('also when the session was already revoked', async () => {
     signIn()
-    writeRules({ instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] }, home)
+    writeRules(
+      { instance: INSTANCE, account: ACCOUNT, pulledAt: new Date().toISOString(), rules: [] },
+      home
+    )
     fetchMock.mockResolvedValue(json(401, { error: 'Unauthorized' }))
     await run(['logout'])
     expect(existsSync(rulesPath(home))).toBe(false)
