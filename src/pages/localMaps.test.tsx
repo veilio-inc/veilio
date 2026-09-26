@@ -10,7 +10,6 @@ import {
   lockLocalForTests,
   setLocalPassphrase,
   saveLocalMap,
-  hasLegacyPlaintext,
   listLocalMaps,
 } from '../lib/localMapStore.js'
 
@@ -82,43 +81,12 @@ describe('saving locally when storage is full', () => {
 })
 
 describe('the tool page', () => {
-  const seedLegacy = () =>
-    localStorage.setItem(
-      'veilio_local_maps',
-      JSON.stringify([
-        {
-          id: 'local_1',
-          name: 'old map',
-          map: { __CLS__1: 'LegacySecret' },
-          savedAt: '2026-09-01T00:00:00Z',
-          identifierCount: 1,
-        },
-      ])
-    )
   const renderPage = () =>
     render(
       <MemoryRouter>
         <ScrubPage />
       </MemoryRouter>
     )
-
-  it('flags plaintext maps and encrypts them on request', async () => {
-    seedLegacy()
-    renderPage()
-    fireEvent.click(screen.getByRole('button', { name: 'Encrypt them' }))
-    await screen.findByLabelText('Local passphrase')
-    setPassphraseInModal()
-    await waitFor(() => expect(screen.queryByText(/still stored in plain text/)).toBeNull())
-    expect(hasLegacyPlaintext()).toBe(false)
-    expect(storageDump()).not.toContain('LegacySecret')
-  })
-
-  it('deletes plaintext maps on request', () => {
-    seedLegacy()
-    renderPage()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete them' }))
-    expect(localStorage.getItem('veilio_local_maps')).toBeNull()
-  })
 
   it('a locked map asks for the passphrase, then loads', async () => {
     await setLocalPassphrase(PASS, PASS)

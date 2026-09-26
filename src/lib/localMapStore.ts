@@ -13,7 +13,7 @@ import { assertUsablePassphrase } from './passphrase.js'
  * .veilio export - derived off the main thread, like the export, so the page
  * does not freeze for the second it takes.
  *
- * Every ciphertext carries the additional data `veilio-local-map:v1`, so it can
+ * Every ciphertext carries the additional data `veilio-local-map:v1:<id>`, so it can
  * only ever open as a local map.
  *
  * The picker needs names, counts and dates without a key, so those stay
@@ -21,10 +21,12 @@ import { assertUsablePassphrase } from './passphrase.js'
  */
 
 const MAPS_KEY = 'veilio_local_maps_v2'
-const LEGACY_KEY = 'veilio_local_maps'
 const LOCAL_KEY_RECORD = 'veilio_local_key'
 const ALG = 'AES-GCM'
-const AAD = new TextEncoder().encode('veilio-local-map:v1')
+/** Bound to the entry's id, so two entries' ciphertexts cannot be swapped
+ *  (by an extension, or anything else that can write this storage) and still
+ *  open as each other. */
+const aadFor = (id: string) => new TextEncoder().encode(`veilio-local-map:v1:${id}`)
 const CHECK_AAD = new TextEncoder().encode('veilio-local-key-check:v1')
 const CHECK_PLAINTEXT = 'veilio-local-key'
 
@@ -45,14 +47,6 @@ interface LocalKeyRecord {
   kdf: KdfParams
   salt: string
   verifier: { iv: string; data: string }
-}
-
-interface LegacyEntry {
-  id: string
-  name: string
-  map: SymbolMap
-  savedAt: string
-  identifierCount: number
 }
 
 export class LocalKeyLockedError extends Error {
@@ -90,11 +84,6 @@ function writeEntries(entries: StoredEntry[]): void {
   // No catch: a full or blocked storage must fail the save loudly. There is
   // no plaintext fallback to fall back to.
   localStorage.setItem(MAPS_KEY, JSON.stringify(entries))
-}
-
-function readLegacy(): LegacyEntry[] {
-  const list = readJson<unknown>(LEGACY_KEY, [])
-  return Array.isArray(list) ? (list as LegacyEntry[]) : []
 }
 
 function readKeyRecord(): LocalKeyRecord | null {
@@ -152,8 +141,7 @@ export function localKeyState(): 'none' | 'locked' | 'unlocked' {
   return readKeyRecord() ? 'locked' : 'none'
 }
 
-/** Set the local passphrase for the first time. Unlocks, then migrates any
- *  legacy plaintext under it. */
+/** Set the local passphrase for the first time, and unlock. */
 export async function setLocalPassphrase(passphrase: string, confirm: string): Promise<void> {
   if (readKeyRecord()) throw new Error('A local passphrase is already set')
   if (passphrase !== confirm) throw new Error('The two passphrases do not match')
@@ -169,7 +157,6 @@ export async function setLocalPassphrase(passphrase: string, confirm: string): P
   }
   localStorage.setItem(LOCAL_KEY_RECORD, JSON.stringify(record))
   localKey = key
-  await migrateLegacy()
 }
 
 /** Unlock for this session. False on a wrong passphrase - nothing decrypted. */
@@ -187,7 +174,6 @@ export async function unlockLocal(passphrase: string): Promise<boolean> {
     return false
   }
   localKey = key
-  await migrateLegacy()
   return true
 }
 
@@ -196,7 +182,6 @@ export function forgetLocal(): void {
   localKey = null
   localStorage.removeItem(MAPS_KEY)
   localStorage.removeItem(LOCAL_KEY_RECORD)
-  localStorage.removeItem(LEGACY_KEY)
 }
 
 /** Test-only: the in-memory key, to forge ciphertexts under it. */
@@ -225,17 +210,13 @@ export function listLocalMaps(): LocalMapMeta[] {
   }))
 }
 
-export function hasLegacyPlaintext(): boolean {
-  return readLegacy().length > 0
-}
-
 export async function saveLocalMap(
   name: string,
   map: SymbolMap,
   id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   savedAt = new Date().toISOString()
 ): Promise<LocalMapMeta> {
-  const sealed = await seal(requireKey(), JSON.stringify(map), AAD)
+  const sealed = await seal(requireKey(), JSON.stringify(map), aadFor(id))
   const entry: StoredEntry = {
     id,
     name,
@@ -250,34 +231,9 @@ export async function saveLocalMap(
 export async function openLocalMap(id: string): Promise<SymbolMap> {
   const entry = readEntries().find((e) => e.id === id)
   if (!entry) throw new Error('That local map no longer exists')
-  return JSON.parse(await open(requireKey(), entry, AAD)) as SymbolMap
+  return JSON.parse(await open(requireKey(), entry, aadFor(entry.id))) as SymbolMap
 }
 
 export function deleteLocalMap(id: string): void {
   writeEntries(readEntries().filter((e) => e.id !== id))
-}
-
-/**
- * Encrypt every legacy plaintext map under the local key, THEN remove the plaintext.
- * In that order: interrupted after the write, the next run finds the ids
- * already stored and only removes the plaintext. Never re-writes plaintext.
- * Returns how many maps were migrated.
- */
-export async function migrateLegacy(): Promise<number> {
-  const legacy = readLegacy()
-  if (legacy.length === 0) return 0
-  const have = new Set(readEntries().map((e) => e.id))
-  let migrated = 0
-  for (const old of legacy) {
-    if (have.has(old.id)) continue
-    await saveLocalMap(old.name, old.map ?? {}, old.id, old.savedAt)
-    migrated++
-  }
-  localStorage.removeItem(LEGACY_KEY)
-  return migrated
-}
-
-/** Delete legacy plaintext without migrating it (the user declined a key). */
-export function deleteLegacyPlaintext(): void {
-  localStorage.removeItem(LEGACY_KEY)
 }

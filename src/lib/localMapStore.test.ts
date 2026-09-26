@@ -11,9 +11,6 @@ import {
   openLocalMap,
   listLocalMaps,
   deleteLocalMap,
-  migrateLegacy,
-  hasLegacyPlaintext,
-  deleteLegacyPlaintext,
   LocalKeyLockedError,
 } from './localMapStore.js'
 
@@ -146,61 +143,21 @@ describe('purpose binding', () => {
   })
 })
 
-describe('migrating legacy plaintext (US3)', () => {
-  const seedLegacy = () =>
-    localStorage.setItem(
-      'veilio_local_maps',
-      JSON.stringify([
-        {
-          id: 'local_1',
-          name: 'old one',
-          map: MAP,
-          savedAt: '2026-09-01T00:00:00Z',
-          identifierCount: 3,
-        },
-        {
-          id: 'local_2',
-          name: 'old two',
-          map: { __CLS__9: 'LegacyThing' },
-          savedAt: '2026-09-02T00:00:00Z',
-          identifierCount: 1,
-        },
-      ])
-    )
-
-  it('setting the local passphrase encrypts every legacy map and removes the plaintext', async () => {
-    seedLegacy()
-    expect(hasLegacyPlaintext()).toBe(true)
+describe('review fixes', () => {
+  it('ciphertexts are bound to their entry: swapping two entries opens neither', async () => {
     await setLocalPassphrase(PASS, PASS)
-    expect(hasLegacyPlaintext()).toBe(false)
-    expectNoIdentifiers()
-    expect(storageDump()).not.toContain('LegacyThing')
-    expect(await openLocalMap('local_1')).toEqual(MAP)
-    expect(listLocalMaps().find((m) => m.id === 'local_2')?.savedAt).toBe('2026-09-02T00:00:00Z')
-  })
-
-  it('unlocking migrates legacy maps written by an older tab', async () => {
-    await setLocalPassphrase(PASS, PASS)
-    lockLocalForTests()
-    seedLegacy()
-    expect(await unlockLocal(PASS)).toBe(true)
-    expect(hasLegacyPlaintext()).toBe(false)
-    expect(await openLocalMap('local_2')).toEqual({ __CLS__9: 'LegacyThing' })
-  })
-
-  it('an interrupted migration completes without duplicates or loss', async () => {
-    seedLegacy()
-    await setLocalPassphrase(PASS, PASS) // migrates both
-    // Simulate a crash after the encrypted write but before the plaintext was removed.
-    seedLegacy()
-    expect(await migrateLegacy()).toBe(0)
-    expect(listLocalMaps()).toHaveLength(2)
-    expect(hasLegacyPlaintext()).toBe(false)
-  })
-
-  it('declining: the plaintext can be deleted without any key', () => {
-    seedLegacy()
-    deleteLegacyPlaintext()
-    expect(storageDump()).toBe('')
+    const a = await saveLocalMap('a', MAP)
+    const b = await saveLocalMap('b', { __CLS__1: 'Other' })
+    const stored = JSON.parse(localStorage.getItem('veilio_local_maps_v2')!) as {
+      id: string
+      iv: string
+      data: string
+    }[]
+    const ea = stored.find((e) => e.id === a.id)!
+    const eb = stored.find((e) => e.id === b.id)!
+    ;[ea.iv, eb.iv, ea.data, eb.data] = [eb.iv, ea.iv, eb.data, ea.data]
+    localStorage.setItem('veilio_local_maps_v2', JSON.stringify(stored))
+    await expect(openLocalMap(a.id)).rejects.toThrow()
+    await expect(openLocalMap(b.id)).rejects.toThrow()
   })
 })
