@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   localKeyConfig,
   localKeyState,
@@ -12,6 +12,7 @@ import {
   listLocalMaps,
   deleteLocalMap,
   LocalKeyLockedError,
+  dropLegacyPlaintextMaps,
 } from './localMapStore.js'
 
 // Spec 018. Local maps used to sit in localStorage as plain JSON: the real
@@ -159,5 +160,42 @@ describe('review fixes', () => {
     localStorage.setItem('veilio_local_maps_v2', JSON.stringify(stored))
     await expect(openLocalMap(a.id)).rejects.toThrow()
     await expect(openLocalMap(b.id)).rejects.toThrow()
+  })
+})
+
+describe('plaintext maps from earlier builds', () => {
+  // Builds before spec 018 kept maps as plain JSON under `veilio_local_maps`.
+  // They are not migrated (founder decision); they are deleted, so the names
+  // they hold do not stay readable on the machine indefinitely.
+  const LEGACY = [{ id: 'old', name: 'billing', savedAt: '2026-01-01', map: MAP }]
+
+  it('deletes them, so no identifier from them is left in storage', () => {
+    localStorage.setItem('veilio_local_maps', JSON.stringify(LEGACY))
+    dropLegacyPlaintextMaps()
+    expect(localStorage.getItem('veilio_local_maps')).toBeNull()
+    expectNoIdentifiers()
+  })
+
+  it('leaves the encrypted maps and the local key alone', async () => {
+    await setLocalPassphrase(PASS, PASS)
+    const saved = await saveLocalMap('billing', MAP)
+    localStorage.setItem('veilio_local_maps', JSON.stringify(LEGACY))
+    dropLegacyPlaintextMaps()
+    expect(listLocalMaps().map((m) => m.id)).toEqual([saved.id])
+    expect(await openLocalMap(saved.id)).toEqual(MAP)
+  })
+
+  it('does not throw when storage is unavailable', () => {
+    // Startup calls this before the first render: a throw here would leave a
+    // blank page for anyone whose browser blocks storage.
+    const spy = vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+      throw new Error('SecurityError')
+    })
+    try {
+      expect(() => dropLegacyPlaintextMaps()).not.toThrow()
+      expect(spy).toHaveBeenCalledWith('veilio_local_maps')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
