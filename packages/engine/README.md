@@ -72,7 +72,59 @@ tokens, PEM private keys and connection-string passwords are redacted; emails
 and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
 
+Every finding also says what actually happened to the value, in `disposition`:
+`'destroy'` (redacted, unrecoverable), `'mask'` (masked reversibly — see below),
+or `'report'` (left exactly as written). `redacted` remains the coarse boolean a
+badge can read; `disposition` is the finer answer.
+
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
+Under `'warn'` nothing is acted on: findings come back with `disposition:
+'report'` and the code unchanged.
+
+## Regulated identifiers
+
+A bank account or card number is not a credential — it is material a regulation
+cares about, and it is what this tool is most often reached for. It is also not
+an identifier a grammar produced, so `const iban = "GB29…"` had its **name**
+masked and its **value** passed through verbatim.
+
+Three formats are found by arithmetic over the value — never by inference, which
+would cost the zero-dependency guarantee — and masked **reversibly**, into the
+same map, so the round trip returns them:
+
+| Finding        | Placeholder  | Confirmed by           |
+| -------------- | ------------ | ---------------------- |
+| `iban`         | `__IBAN__n`  | IBAN mod-97 check      |
+| `payment-card` | `__PAN__n`   | issuer prefix and Luhn |
+| `pesel`        | `__PESEL__n` | PESEL check digit      |
+
+```ts
+const { anonymized, map } = anonymize('const acct = "GB29NWBK60161331926819"')
+// anonymized → 'const __VAR__1 = "__IBAN__1"'
+// restore(anonymized, map).restored → the original line, account number included
+```
+
+Each format gets its own placeholder base rather than a shared one, because the
+output's job is to be worked on by a model: "this is a bank account number" is
+information it can use, where "this is a redacted something" is not. Published
+test card numbers are not flagged at all — a fixture is not a leak.
+
+Three rules bound what the reversibility can cost:
+
+- **A credential wins.** Where a credential rule reads the same span — a
+  password assignment, a connection string, a bearer token — the value is
+  destroyed rather than masked, so it never reaches the map. An ambiguous
+  verdict (`possible-credential`) is destroyed too: masking might write a live
+  secret into the map, and reporting it would send that secret to the model
+  verbatim.
+- **A manual mark wins.** A value already marked by hand keeps its
+  `__MANUAL__n` placeholder rather than gaining a second one.
+- **They do not block a paste.** `hasBlockingSecrets` exists to stop a live
+  credential reaching a model; refusing the billing code this tool was built for
+  is not that.
+
+Under `'warn'` and `'off'` these values are left in place like any other finding
+— masking them is part of acting on a scan, not part of reporting one.
 
 ## Privacy & security properties
 
@@ -162,12 +214,33 @@ thrown on. It stays in the map and applies again where it is valid.
   measurement `anonymize` returns, for text it did not produce (after a manual
   mark is undone, say)
 - `detectSecrets(code)` → `SecretFinding[]` — scan without modifying
-- `scanSecrets(code, policy?)` → `{ findings, code }`
+- `scanSecrets(code, policy?)` → `{ findings, code, regulated }` — `regulated`
+  holds the values handed to the masking pass; `anonymize` calls this first and
+  masks them itself, so a caller doing its own masking is the only one that needs
+  the field
+- `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked
   code so a downstream AI treats the placeholders as intentional.
+
+### Shared team namespaces
+
+Used by the CLI and the MCP server so teammates agree on placeholders. The engine
+holds one implementation because two copies can drift between the test asserting
+they agree and the next commit, and the symptom would be a team silently forking
+its numbering with both repositories green.
+
+- `mergeTeamNamespace(entries)` / `TeamMapEntry` — merge team maps into one
+  namespace, oldest first, so an edited map cannot steal a placeholder an older
+  one already claimed
+- `unwrapPrivateKey`, `deriveWrappingKey`, `importPublicKey`, `unwrapTeamKey`,
+  `importTeamKey` / `exportTeamKey`, `decryptTeamMap`,
+  `decryptTeamMapWithAny`, `TeamKeyError` — the **read** path for team-key
+  envelopes. Minting a key, granting it to a teammate and confirming a
+  teammate's key need a person present to approve them and stay in the browser:
+  a client that can open maps has no business handing out access to them.
 
 ## License
 
