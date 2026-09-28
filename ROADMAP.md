@@ -118,22 +118,27 @@ Both now state that CE makes no third-party requests, at document version 1.2.
 
 The engine is the product. Everything here is a way it currently falls short.
 
-|     | Item                                         | State                                 |
-| --- | -------------------------------------------- | ------------------------------------- |
-| B1  | Make the advisory panel worth reading        | ready                                 |
-| B2  | Regulated identifiers                        | **partly addressed — manual marking** |
-| B3  | Comments are an open channel                 | **partly addressed — manual marking** |
-| B4  | Language honesty, then coverage              | ready                                 |
-| B5  | Report what the round trip failed to restore | **done**                              |
+|     | Item                                         | State                                    |
+| --- | -------------------------------------------- | ---------------------------------------- |
+| B1  | Make the advisory panel worth reading        | ready                                    |
+| B2  | Regulated identifiers                        | **partly addressed — IBAN, card, PESEL** |
+| B3  | Comments are an open channel                 | **partly addressed — manual marking**    |
+| B4  | Language honesty, then coverage              | ready                                    |
+| B5  | Report what the round trip failed to restore | **done**                                 |
 
 **B1.** The overwhelming majority of advisory findings are not actionable. A panel
 that cries wolf trains people to dismiss it, which is worse than no panel: the one
 finding that mattered arrives in the same grey list as ninety that did not.
 
-**B2.** Account numbers, patient and case identifiers, and similar
-domain-specific material can pass through verbatim today. This is the material
-the tool is most often reached for, so it should not be the material it handles
-least well.
+**B2 — partly addressed.** Bank account (IBAN), payment card and PESEL numbers
+are found by arithmetic over the value and masked reversibly into the same map,
+so the round trip returns them (`__IBAN__1`, `__PAN__1`, `__PESEL__1`). Where a
+credential rule reads the same span the value is destroyed instead, so the
+reversibility never reaches a live secret. What is left is the material no
+checksum confirms — a patient, case or internal account number — which is still
+a mark the author makes (`options.manual`) rather than something the engine finds
+on its own. That is the material the tool is most often reached for, so it should
+not stay the material it handles least well.
 
 **B3.** Identifiers are replaced; the prose around them is not. A comment naming a
 customer, an incident or a person leaves untouched. This is the largest remaining

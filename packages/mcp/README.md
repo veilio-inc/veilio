@@ -63,13 +63,23 @@ result from this server states which namespace produced its placeholders:
 - **`team`** — resolved against the team's shared dictionary, fetched from
   Cloud once at startup and reused for the life of the process, so every
   teammate's agent produces the same placeholder for the same identifier.
-- **`local`** — resolved locally: never signed in, offline, or the plan
-  doesn't include shared dictionaries. This is the normal, fully-functional
-  state for anyone not on a paid team — the server never blocks on it, and
-  the fallback is always stated, never silent.
+- **`local`** — resolved locally: not signed in, no team key unlocked on this
+  machine, offline, or the plan doesn't include shared dictionaries. This is the
+  normal, fully-functional state for anyone not on a paid team — the server never
+  blocks on it, and the fallback is always stated, never silent.
 
 There is no separate sign-in for the MCP server; it reads the same credential
 file `veilio login` already wrote.
+
+The merge happens **here, not in Cloud**: team maps arrive sealed under the team
+key, which the server cannot read. So on a Team plan the namespace is `team` only
+once `veilio team unlock` has opened that key on this machine — it is kept for
+seven days, and a key rotation ends it sooner. Signed in with nothing unlocked,
+the server reports `local`: there is nothing it could decrypt. A single map it
+cannot open is skipped rather than fatal, but a failed read of the namespace as a
+whole reports `local` too, because a namespace missing a teammate's newest map
+would restore their placeholders wrong. An older self-hosted Cloud that still
+merges server-side is honoured as it is, with no key needed here.
 
 The account's custom rules are fetched at startup the same way and applied to
 every anonymize call. Each result states their source: `from Cloud`, `cached`
