@@ -22,6 +22,10 @@
  * The second half looks arbitrary and is not: without it two placeholders could
  * bind to one identifier, and a restore would have no way to choose between
  * them.
+ *
+ * `analyzeTeamNamespace` reads the maps three ways (spec 017); it moved here from
+ * Cloud's shared package (spec 028) so the web app, the CLI and the MCP server
+ * all read a team's maps by one definition.
  */
 
 export interface TeamMapEntry {
@@ -30,14 +34,39 @@ export interface TeamMapEntry {
   map: Record<string, string> | null
 }
 
-export function mergeTeamNamespace(entries: readonly TeamMapEntry[]): Record<string, string> {
+/**
+ * What the team's saved maps say, read three ways (spec 017).
+ *
+ * - `namespace`: the first-write-wins merge above - what anonymize reuses.
+ * - `aliases`: a later placeholder dropped only because an earlier one already
+ *   holds the SAME identifier. Two members who add one new name at the same
+ *   time get two reserved numbers for it; text sent with either must restore.
+ * - `conflicts`: a placeholder the maps give DIFFERENT identifiers (saved before
+ *   numbers were reserved). Restoring it would be a guess, so restore leaves it
+ *   and says so. Value: how many distinct identifiers claim it.
+ * - `highest`: per placeholder base, the highest number in ANY readable map,
+ *   dropped entries included - the floor for the next reservation, so a number
+ *   in use anywhere is never handed out again.
+ */
+export interface TeamNamespaceAnalysis {
+  namespace: Record<string, string>
+  aliases: Record<string, string>
+  conflicts: Record<string, number>
+  highest: Record<string, number>
+}
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+export function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamNamespaceAnalysis {
   // Copy before sorting: callers pass state they still hold.
   const sorted = [...entries].sort((a, b) =>
     a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
   )
 
-  const merged: Record<string, string> = {}
+  const namespace: Record<string, string> = {}
   const claimedNames = new Set<string>()
+  const meanings = new Map<string, Set<string>>()
+  const highest: Record<string, number> = {}
 
   for (const entry of sorted) {
     // A map we could not decrypt is skipped, never fatal - one unreadable row
@@ -45,12 +74,36 @@ export function mergeTeamNamespace(entries: readonly TeamMapEntry[]): Record<str
     if (!entry.map) continue
 
     for (const [placeholder, identifier] of Object.entries(entry.map)) {
-      if (placeholder in merged) continue
+      const seen = meanings.get(placeholder) ?? new Set<string>()
+      seen.add(identifier)
+      meanings.set(placeholder, seen)
+
+      const numbered = NUMBERED.exec(placeholder)
+      if (numbered) {
+        const n = Number(numbered[2])
+        if (n > (highest[numbered[1]] ?? 0)) highest[numbered[1]] = n
+      }
+
+      if (placeholder in namespace) continue
       if (claimedNames.has(identifier)) continue
-      merged[placeholder] = identifier
+      namespace[placeholder] = identifier
       claimedNames.add(identifier)
     }
   }
 
-  return merged
+  const aliases: Record<string, string> = {}
+  const conflicts: Record<string, number> = {}
+  for (const [placeholder, seen] of meanings) {
+    if (seen.size > 1) {
+      conflicts[placeholder] = seen.size
+    } else if (!(placeholder in namespace)) {
+      aliases[placeholder] = [...seen][0]
+    }
+  }
+
+  return { namespace, aliases, conflicts, highest }
+}
+
+export function mergeTeamNamespace(entries: readonly TeamMapEntry[]): Record<string, string> {
+  return analyzeTeamNamespace(entries).namespace
 }
