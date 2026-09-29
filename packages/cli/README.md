@@ -119,13 +119,14 @@ Redacted credentials are **not** in the map. `restore` cannot bring them back, b
     sarif: veilio.sarif # optional: upload to code scanning
 ```
 
-**This example does not work yet, and needs two things that do not exist.** The
-`@v0.1.0` ref is a git tag on this repository — the only tags here are
-`engine-v*`, cut by semantic-release for the engine — and the Action's own script
-runs `npx --yes @veilio-inc/cli@<version>`, which needs the package on npm.
-Publishing supplies the second; the first is a tag someone has to cut, and note
-that `v*.*.*` is also what triggers the Community Edition release workflow, so
-the two are not independent.
+**This example does not work yet, and needs a tag that does not exist.** The
+`@v0.1.0` ref is a git tag on this repository, and the tags here are `engine-v*`
+(cut by semantic-release for the engine) and `@veilio-inc/cli@*` /
+`@veilio-inc/mcp@*` (cut by Changesets when the tools release) — neither shape
+matches. The Action's own script runs `npx --yes @veilio-inc/cli@<version>`,
+which is satisfied now that the CLI is published; what is left is a `v*.*.*` tag
+someone has to cut, and note that `v*.*.*` is also what triggers the Community
+Edition release workflow, so the two are not independent.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR

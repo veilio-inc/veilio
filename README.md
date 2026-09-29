@@ -14,6 +14,7 @@ Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSes
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
 - The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
+- Bank account (IBAN), payment card and PESEL numbers found by checksum and masked reversibly, so the round trip returns them; a live credential is destroyed instead and never enters the map
 - Maps saved to browser localStorage for convenience
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
 - Zero backend. Zero database. Zero secrets to manage.
@@ -38,15 +39,17 @@ npm install -g @veilio-inc/cli
 npx @veilio-inc/mcp   # or add to your agent's MCP config
 ```
 
-> **What npm has is `0.1.0`, the launch build** — `scrub`, `restore`, `scan` and
-> `map`, all local. The Cloud commands in the two package READMEs (`login`,
-> `logout`, `whoami`, `maps list|pull|push`) and the MCP team namespace are
-> merged here and not released, so against an npm install they answer
-> `unknown command`. Until the next release they run from a clone:
-> `npm run build:packages`, then `node packages/cli/dist/index.js --help`.
+`scrub`, `restore`, `scan` and `map` need no account and make no network call.
+The Cloud commands (`login`, `whoami`, `maps list|pull|push`, `team unlock|lock`,
+`rules pull`) and the MCP team namespace are released — they arrived in CLI and
+MCP `0.3.0`. This file is not the authority on what the registry has;
+`npm view @veilio-inc/cli version` is.
 
-See [`packages/cli/README.md`](packages/cli/README.md) and
-[`packages/mcp/README.md`](packages/mcp/README.md) for commands and config.
+**Start here:** [docs/USING-THE-CLI-AND-MCP.md](docs/USING-THE-CLI-AND-MCP.md) —
+install, what works without an account, and MCP setup for Claude Code, Claude
+Desktop, Xcode, Cursor and VS Code. Per-package reference:
+[`packages/cli/README.md`](packages/cli/README.md) and
+[`packages/mcp/README.md`](packages/mcp/README.md).
 
 ## Run it
 
