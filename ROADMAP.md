@@ -362,14 +362,28 @@ run of text, nothing skipped.
 ## D — Contribution on-ramp
 
 The governance files exist — [CONTRIBUTING](./CONTRIBUTING.md), [CLA](./CLA.md),
-[SECURITY](./SECURITY.md), [TRADEMARKS](./TRADEMARKS.md). The last mile does not.
+[SECURITY](./SECURITY.md), [TRADEMARKS](./TRADEMARKS.md). Most of the last mile
+now does too.
 
-- **Issue templates.** CONTRIBUTING says the most valuable contribution is _"a
-  failing test case from your own material"_, and there is currently no form that
-  asks for one. A template with input snippet, language, expected and actual turns
-  a vague report into something mergeable. Highest-leverage item in this section.
-- **PR template** carrying the CLA sign-off line, plus CODEOWNERS and a CLA bot —
-  CONTRIBUTING already promises the bot.
+- **Issue templates — done.** CONTRIBUTING says the most valuable contribution
+  is _"a failing test case from your own material"_, and nothing asked for one.
+  **Failing test case** now asks for input, language, expected and actual, plus
+  which surface and which version, so a report arrives as something that can
+  become a fixture. It says in the form that synthetic material is not second
+  best but the only kind that can be committed, and that a fake credential
+  belongs in a report about credential detection — a privacy tool inviting
+  people to paste their code needs to say where the line is.
+- **PR template — done.** It carries the CLA line verbatim, the DCO sign-off,
+  and the checks a contributor cannot be expected to infer: the commit scope
+  that decides whether the engine releases, the changeset the two tools need and
+  the engine does not, and the purity invariants that are not negotiable in a
+  PR.
+- **CODEOWNERS — done.** One owner, which is the truth about this repository
+  rather than an aspiration.
+- **A CLA bot — still open.** CONTRIBUTING promises one ("we may also use an
+  automated CLA check"), and the template makes the line easy to include rather
+  than checking that it was. That is a human reading a PR description until a
+  bot is wired up, and it is the remaining gap in this section.
 
 ---
 

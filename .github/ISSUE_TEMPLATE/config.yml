@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/veilio-inc/veilio/security/policy
+    about: Report it privately instead. Never open a public issue for a vulnerability — see SECURITY.md.
+  - name: Commercial or redistribution licence
+    url: mailto:hello@veilio.dev
+    about: The Community License does not cover reselling or hosting Veilio as a service. Ask here.

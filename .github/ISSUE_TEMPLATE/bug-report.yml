@@ -1,0 +1,42 @@
+name: Bug report
+description: Something else broke — the app, the CLI, the MCP server, the Docker image.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a masking or restore problem, use **Failing test case** instead — it
+        asks for the four things that make one reproducible.
+
+        Do not paste credentials, tokens or customer data into this form. If a
+        log line contains one, redact it before pasting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The shortest sequence that shows it. A command line is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: '@veilio-inc/cli 0.3.2, or ghcr.io/veilio-inc/veilio:latest'
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, browser, or the agent the MCP server is running under.
+      placeholder: macOS 15.5, Node 24.4.0
+    validations:
+      required: false
