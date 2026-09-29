@@ -1,9 +1,12 @@
 {
-  "//": "Typecheck only. Separate from tsconfig.json because that one is the BUILD config — it emits to dist with rootDir src, so adding tests to its include would ship them in the published tarball. The consequence was that tests were never typechecked at all: vitest runs them through esbuild, which strips types without checking them, so a test could read result.serverInfo.nmae and fail at runtime as 'undefined does not contain MCP' with the type annotation right there doing nothing. rootDir is widened to the package root only because tests sit outside src; it is meaningless under noEmit, but it is inherited and tsc rejects the include without it.",
+  "//": "Typecheck only. Separate from tsconfig.json because that one is the BUILD config \u2014 it emits to dist with rootDir src, so adding tests to its include would ship them in the published tarball. The consequence was that tests were never typechecked at all: vitest runs them through esbuild, which strips types without checking them, so a test could read result.serverInfo.nmae and fail at runtime as 'undefined does not contain MCP' with the type annotation right there doing nothing. rootDir is widened to the package root only because tests sit outside src; it is meaningless under noEmit, but it is inherited and tsc rejects the include without it. Widened to packages/ (spec 028) so the tests can import the engine's shared restore cases (engine/tests/fixtures/restore-cases.ts) - one fixture every surface is judged against.",
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".."
   },
-  "include": ["src", "tests"]
+  "include": [
+    "src",
+    "tests"
+  ]
 }

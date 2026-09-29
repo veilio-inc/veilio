@@ -276,8 +276,8 @@ export type VaultInfo =
       kdf?: { name: string; iterations: number }
     }
 
-export function listMaps(credential: Credential): Promise<CloudMapList> {
-  return request<CloudMapList>('/api/maps', { credential })
+export function listMaps(credential: Credential, signal?: AbortSignal): Promise<CloudMapList> {
+  return request<CloudMapList>('/api/maps', { credential, signal })
 }
 
 /** The account's custom rules: its own, and those of the teams it is in. */
@@ -294,13 +294,18 @@ export function listRules(
  * CloudError with status 404); callers fall back to one getMap per map.
  */
 export function getTeamEnvelopes(
-  credential: Credential
+  credential: Credential,
+  signal?: AbortSignal
 ): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
-  return request('/api/maps/team-envelopes', { credential })
+  return request('/api/maps/team-envelopes', { credential, signal })
 }
 
-export function getMap(credential: Credential, id: string): Promise<CloudMap> {
-  return request<CloudMap>(`/api/maps/${encodeURIComponent(id)}`, { credential })
+export function getMap(
+  credential: Credential,
+  id: string,
+  signal?: AbortSignal
+): Promise<CloudMap> {
+  return request<CloudMap>(`/api/maps/${encodeURIComponent(id)}`, { credential, signal })
 }
 
 /**

@@ -13,6 +13,9 @@ import {
   detectSecrets,
   hasBlockingSecrets,
   restore,
+  restoreLayers,
+  disputedNote,
+  locallyNumberedNote,
   summarizeSecrets,
   withAiPreamble,
   LANGUAGE_LABELS,
@@ -20,6 +23,7 @@ import {
   BIN_NAME,
   STORE_DIR,
   type SecretFinding,
+  type TeamLayer,
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
@@ -145,17 +149,52 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
   return EXIT_OK
 }
 
-export async function runRestore(args: ParsedArgs, io: Io): Promise<number> {
+/**
+ * Where `restore` gets the team's maps from. Injected, never imported: this file
+ * is the local command path and must not even be linked to the network code
+ * (tests/offline.test.ts). The entry point passes the Cloud one; nothing passed
+ * means no team layer - a local-only restore, as before spec 028.
+ * `missing`: the placeholders this project's map could not explain.
+ */
+export type TeamLayerSource = (
+  missing: readonly string[]
+) => Promise<{ team: TeamLayer | null; note: string | null }>
+
+export async function runRestore(
+  args: ParsedArgs,
+  io: Io,
+  teamLayer?: TeamLayerSource
+): Promise<number> {
   const source = await readInput(args, io)
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
-  const map = loadMap(mapPath)
+  const own = loadMap(mapPath)
 
-  if (Object.keys(map).length === 0) {
+  // The one restore rule (spec 028): the team's maps, this project's map on
+  // top where it is in the team's numbering. Asked whenever the text holds a
+  // placeholder - even one this project's map explains, because an entry
+  // numbered locally (signed out, during a lapse) can explain it WRONGLY, and
+  // only the team's maps can tell (review). Signed out, the source makes no
+  // request: that restore stays offline, as it always was.
+  const hasPlaceholders = restore(source, {}).report.unresolved.length > 0
+  const unexplained = restore(source, own).report.unresolved
+  let team: TeamLayer | null = null
+  let teamNote: string | null = null
+  if (hasPlaceholders && teamLayer) {
+    const found = await teamLayer(unexplained)
+    team = found.team
+    teamNote = found.note
+  }
+
+  if (Object.keys(own).length === 0 && !team && !teamNote) {
     // Restoring against an empty map returns the input verbatim, which looks
     // like success. Say so instead.
     io.stderr(`${BIN_NAME}: no symbol map at ${mapPath} — run "${BIN_NAME} scrub" first.\n`)
     return EXIT_ERROR
   }
+  const layers = restoreLayers({ own, team })
+  const map = layers.map
+  const disputed = layers.disputedIn(source)
+  const localOnly = layers.locallyNumberedIn(source)
 
   // Without --keep-docs the default strips JSDoc along with the narration and
   // TODOs. That is right for noise, wrong when the model was asked to document
@@ -164,13 +203,26 @@ export async function runRestore(args: ParsedArgs, io: Io): Promise<number> {
   const result = restore(source, map, { strip })
   io.stdout(result.restored)
 
-  const { resolved, missing, unresolved } = result.report
+  const { resolved } = result.report
+  // Measured against this project's map, not the whole team layer: a team of
+  // 400 placeholders is not 397 "renamed by the AI" (review).
+  const missing = result.report.missing.filter((p) => p in own)
+  const counted = new Set([...Object.keys(own), ...resolved]).size
+  // Left for a named reason - disputed, or numbered locally - is not "invented".
+  const unresolved = result.report.unresolved.filter(
+    (p) => !disputed.includes(p) && !localOnly.includes(p)
+  )
+
+  // Findings, never under --quiet: the output still holds these placeholders.
+  if (teamNote) io.stderr(`${BIN_NAME}: ${teamNote}\n`)
+  if (disputed.length > 0) io.stderr(`${BIN_NAME}: ${disputedNote(disputed)}\n`)
+  if (localOnly.length > 0) io.stderr(`${BIN_NAME}: ${locallyNumberedNote(localOnly)}\n`)
 
   // A token the map cannot explain is a finding, not a summary line: the text on
   // stdout now contains something that means nothing, and the user is about to
   // paste it into an editor. --quiet suppresses the all-clear, never findings —
   // the same contract `scan` follows.
-  if (unresolved.length > 0) {
+  if (unresolved.length > 0 && !teamNote) {
     io.stderr(
       `${BIN_NAME}: ${unresolved.length} placeholder-shaped token${unresolved.length === 1 ? '' : 's'} not in the map — ` +
         `${unresolved.join(', ')}\n`
@@ -182,7 +234,7 @@ export async function runRestore(args: ParsedArgs, io: Io): Promise<number> {
 
   if (!args.quiet) {
     io.stderr(
-      `${BIN_NAME}: restored ${resolved.length} of ${Object.keys(map).length} placeholders, stripped ${result.strippedCount} AI artifact${result.strippedCount === 1 ? '' : 's'}\n`
+      `${BIN_NAME}: restored ${resolved.length} of ${counted} placeholders, stripped ${result.strippedCount} AI artifact${result.strippedCount === 1 ? '' : 's'}\n`
     )
     // Usually innocent — an answer about one function omits the rest of the
     // file — so this sits under --quiet with the summary rather than above it.

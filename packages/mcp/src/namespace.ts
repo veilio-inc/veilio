@@ -16,247 +16,72 @@
 // threading a Promise through 78 existing call sites for one network call that
 // happens once per process.
 
-import { readCredential, type Credential } from '@veilio-inc/cli/credential'
-import {
-  CloudError,
-  listMaps,
-  getMap,
-  getTeamEnvelopes,
-  type CloudMapSummary,
-  type CloudMapList,
-} from '@veilio-inc/cli/cloud'
+import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
+import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
-import {
-  importTeamKey,
-  decryptTeamMapWithAny,
-  mergeTeamNamespace,
-  type CryptoKeyLike,
-  type TeamMapEntry,
-  type TeamMapEnvelope,
-} from '@veilio-inc/engine'
 
 export type NamespaceSource = 'team' | 'local'
 
 export interface ResolvedNamespace {
   source: NamespaceSource
-  /** Placeholder -> identifier. Empty for 'local' — there is nothing to merge. */
+  /** Placeholder -> identifier, WITHOUT the disputed placeholders - so this
+   *  server never emits one. Empty for 'local'. */
   namespace: Record<string, string>
-  /**
-   * Placeholders the team's saved maps give DIFFERENT identifiers (maps saved
-   * before Cloud reserved numbers - spec 017). Left out of `namespace`, so this
-   * server never emits one, and `restore_text` refuses to guess them.
-   */
-  conflicts: string[]
-  /**
-   * Highest number per placeholder base in ANY readable team map, conflicts
-   * included. New names are numbered above it, so this server never hands a
-   * new identifier a number the team already uses for something else.
-   */
+  /** A second number a team map kept for an identifier that already had one
+   *  (spec 017): text sent with it must restore too (spec 028). */
+  aliases: Record<string, string>
+  /** Placeholders the team's saved maps give DIFFERENT identifiers -> how many.
+   *  Never emitted, never guessed back (spec 017). */
+  conflicts: Record<string, number>
+  /** Highest number per placeholder base in any readable team map, conflicts
+   *  included: new names are numbered above it. */
   highest: Record<string, number>
+  /** What the CLI's resolver found - including why it is 'local' when the team
+   *  exists but its maps were not read (locked, unavailable). Never silent. */
+  found: TeamNamespaceResult
+  /** False for an older instance's server-merged namespace: usable to anonymize,
+   *  never to restore - it cannot tell a disputed placeholder (spec 028). */
+  conflictDetection: boolean
 }
 
-const LOCAL: ResolvedNamespace = { source: 'local', namespace: {}, conflicts: [], highest: {} }
-
-const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
-
-/** Highest number per base across every readable map. */
-export function highestAcross(entries: readonly TeamMapEntry[]): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const entry of entries) {
-    for (const placeholder of Object.keys(entry.map ?? {})) {
-      const m = NUMBERED.exec(placeholder)
-      if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
-    }
+function localFrom(found: TeamNamespaceResult): ResolvedNamespace {
+  return {
+    source: 'local',
+    namespace: {},
+    aliases: {},
+    conflicts: {},
+    highest: {},
+    found,
+    conflictDetection: true,
   }
-  return out
 }
 
-/** Placeholders that readable maps give more than one identifier. */
-export function findConflicts(entries: readonly TeamMapEntry[]): string[] {
-  const meanings = new Map<string, Set<string>>()
-  for (const entry of entries) {
-    for (const [placeholder, identifier] of Object.entries(entry.map ?? {})) {
-      const seen = meanings.get(placeholder) ?? new Set<string>()
-      seen.add(identifier)
-      meanings.set(placeholder, seen)
-    }
-  }
-  return [...meanings].filter(([, seen]) => seen.size > 1).map(([p]) => p)
-}
+const LOCAL: ResolvedNamespace = localFrom({ status: 'local' })
 
 let current: ResolvedNamespace = LOCAL
 let priming: Promise<ResolvedNamespace> | null = null
 
-/**
- * Build the team namespace from maps this member can actually open.
- *
- * Cloud used to merge these server-side and send the result. It stopped,
- * because merging meant decrypting every team map, and that was the only reason
- * it held a key that could read them. So the merge happens here now, over maps
- * only this member can decrypt, and the server holds nothing that would let it
- * do the same (spec 010).
- *
- * Entitlement is still not decided here, and still does not need to be. Cloud
- * serves team maps only for teams in `access.teams`, and refuses a non-member's
- * request for a team key outright. A user outside a paid team gets neither, so
- * there is nothing to merge — the gate is the data, not a flag this code reads.
- */
-async function buildTeamNamespace(
-  credential: Credential,
-  keys: readonly { version: number; key: CryptoKeyLike }[],
-  list: CloudMapList
-): Promise<{
-  namespace: Record<string, string>
-  conflicts: string[]
-  highest: Record<string, number>
-} | null> {
-  // A member's OWN team maps arrive under personalMaps — the listing splits by
-  // ownership, not by scope — so both lists have to be considered or this
-  // member's own placeholders drop out of the shared namespace.
-  const teamScoped = [...list.personalMaps, ...list.teamMaps].filter((m) => m.scope === 'team')
-
-  const entries = await readTeamEntries(credential, keys, teamScoped)
-  const merged = mergeTeamNamespace(entries)
-  // Every map unreadable is not a team namespace, it is a failed one. Saying
-  // `local` is honest; an empty `team` would claim agreement that is not there.
-  if (Object.keys(merged).length === 0) return null
-  const conflicts = findConflicts(entries)
-  const namespace = Object.fromEntries(
-    Object.entries(merged).filter(([p]) => !conflicts.includes(p))
-  )
-  return { namespace, conflicts, highest: highestAcross(entries) }
-}
-
-/**
- * The team keys this machine has unlocked, if any.
- *
- * Read from disk rather than derived, because an MCP server starts inside a
- * coding agent with nobody present to type a vault passphrase. `veilio team
- * unlock` is the interactive run that puts them there; see the CLI's
- * `team-unlock.ts` for what is stored and what it costs.
- *
- * Absent, expired, or belonging to another account all read the same way —
- * nothing unlocked — because all three mean the same thing here.
- */
-async function heldTeamKeys(
-  credential: Credential,
+/** The CLI's resolver, shaped for this server (spec 028: one resolver for both). */
+async function fetchNamespace(
   home: string | undefined,
-  teamId: string
-): Promise<{ version: number; key: CryptoKeyLike }[]> {
-  const unlock = readTeamUnlock(
-    { instance: credential.instance, account: credential.account },
-    home
-  )
-  if (!unlock) return []
-  // Unlocked for a different team than the one this account is currently in.
-  // Possible after leaving one team and joining another without re-unlocking.
-  if (unlock.teamId !== teamId) return []
-
-  const keys: { version: number; key: CryptoKeyLike }[] = []
-  for (const stored of unlock.keys) {
-    try {
-      keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
-    } catch {
-      // A damaged entry. Skipped rather than fatal, for the same reason an
-      // unopenable map is: the others may still carry the team's namespace.
-      continue
-    }
+  opts: { retryDelayMs?: number; deadlineMs?: number }
+): Promise<ResolvedNamespace> {
+  const found = await resolveTeamNamespace(home, opts)
+  if (found.status !== 'team') return localFrom(found)
+  const { namespace, aliases, conflicts, highest } = found.analysis
+  // A team with no maps yet has no namespace to share: 'local', as before. (A
+  // team whose maps exist but none opened is 'unavailable', from the resolver.)
+  if (Object.keys(namespace).length === 0 && Object.keys(conflicts).length === 0) {
+    return localFrom({ status: 'local' })
   }
-  return keys
-}
-
-/**
- * Every team map, opened with the held keys. One request where Cloud offers it;
- * one per map only for an instance that predates it (404). A failure of the
- * single request is NOT turned into skipped maps: it throws, and the caller
- * reports `local` - a namespace missing a teammate's newest map restored their
- * placeholders wrong (found on staging, 2026-09-26).
- */
-async function readTeamEntries(
-  credential: Credential,
-  keys: readonly { version: number; key: CryptoKeyLike }[],
-  teamScoped: readonly CloudMapSummary[]
-): Promise<TeamMapEntry[]> {
-  let bulk: Awaited<ReturnType<typeof getTeamEnvelopes>>
-  try {
-    bulk = await getTeamEnvelopes(credential)
-  } catch (err) {
-    if (err instanceof CloudError && err.status === 404) {
-      return Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys)))
-    }
-    throw err
-  }
-  return Promise.all(
-    bulk.maps.map(async (row): Promise<TeamMapEntry> => {
-      try {
-        const envelope = JSON.parse(row.map_data) as TeamMapEnvelope
-        return { createdAt: row.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
-      } catch {
-        // A version this member was never granted: skipped, not fatal.
-        return { createdAt: row.created_at, map: null }
-      }
-    })
-  )
-}
-
-/** One team map, opened if any held key fits. */
-async function openTeamMap(
-  credential: Credential,
-  summary: CloudMapSummary,
-  keys: readonly { version: number; key: CryptoKeyLike }[]
-): Promise<TeamMapEntry> {
-  const miss: TeamMapEntry = { createdAt: summary.created_at, map: null }
-  try {
-    const full = await getMap(credential, summary.id)
-    // A server-decrypted map arrives as an object. Nothing to open, and nothing
-    // that should be here — but reading it is safe and losing it would drop a
-    // teammate's placeholders for no reason.
-    if (typeof full.map_data !== 'string') {
-      return { createdAt: summary.created_at, map: full.map_data }
-    }
-    const envelope = JSON.parse(full.map_data) as TeamMapEnvelope
-    return {
-      createdAt: summary.created_at,
-      map: await decryptTeamMapWithAny(keys, envelope),
-    }
-  } catch {
-    // One unreadable map must never cost the team its namespace. `null` is how
-    // mergeTeamNamespace is told to skip it.
-    return miss
-  }
-}
-
-async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespace> {
-  const credential = readCredential(home)
-  // Not signed in. No request — a signed-out terminal has nothing to ask Cloud.
-  if (!credential) return LOCAL
-
-  try {
-    const list = await listMaps(credential)
-
-    // An older self-hosted Cloud may still merge server-side, and that answer
-    // needs no key at all. Checked before the vault key so such a deployment
-    // keeps working for a member who has not unlocked one.
-    if (list.teamNamespace) {
-      return { source: 'team', namespace: list.teamNamespace, conflicts: [], highest: {} }
-    }
-
-    // Past here everything must be decrypted locally, so without keys on disk
-    // there is nothing further to try. That is the state until somebody has run
-    // `veilio team unlock` in a terminal.
-    const teamId = list.team?.id
-    if (!teamId) return LOCAL
-    const keys = await heldTeamKeys(credential, home, teamId)
-    if (keys.length === 0) return LOCAL
-
-    const built = await buildTeamNamespace(credential, keys, list)
-    if (!built) return LOCAL
-    return { source: 'team', ...built }
-  } catch {
-    // Unreachable, revoked session, timed out — every network or auth failure
-    // degrades the same way. A coding agent must keep working when Cloud is
-    // down; the fallback itself is what gets reported, not this failure.
-    return LOCAL
+  return {
+    source: 'team',
+    namespace: Object.fromEntries(Object.entries(namespace).filter(([p]) => !(p in conflicts))),
+    aliases,
+    conflicts,
+    highest,
+    found,
+    conflictDetection: found.conflictDetection,
   }
 }
 
@@ -267,14 +92,66 @@ async function fetchNamespace(home: string | undefined): Promise<ResolvedNamespa
  * their own request. `home` is injectable for tests; production leaves it
  * undefined and `readCredential` falls back to the real home directory.
  */
-export function primeNamespace(home?: string): Promise<ResolvedNamespace> {
+export function primeNamespace(
+  home?: string,
+  opts: { retryDelayMs?: number } = {}
+): Promise<ResolvedNamespace> {
+  primedWith = { home, opts }
+  lastAttemptAt = Date.now()
   if (!priming) {
-    priming = fetchNamespace(home).then((resolved) => {
-      current = resolved
-      return resolved
-    })
+    priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
+      (resolved) => {
+        current = resolved
+        return resolved
+      }
+    )
   }
   return priming
+}
+
+/** A hung instance must not hold the agent's first tool call for 30 s. */
+const STARTUP_DEADLINE_MS = 10_000
+/** How often an 'unavailable' team is asked again, from a tool call. */
+const UNAVAILABLE_RECHECK_MS = 30_000
+
+let primedWith: { home?: string; opts: { retryDelayMs?: number } } = { opts: {} }
+let lastAttemptAt = 0
+
+/**
+ * The cache must not outlive the reason it was cached (review): `veilio team
+ * unlock` run after this server started said "restore again" and every retry
+ * met the same cached `locked`. Called at the start of each tool call. Cheap
+ * and synchronous - a local file read - and never waits: when there is
+ * something new to fetch it starts the fetch and says 'loading'; the next call
+ * sees the result. A settled `team` or `local` is kept for the process.
+ */
+export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | null {
+  const status = current.found.status
+  if (status !== 'locked' && status !== 'unavailable') return null
+  if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
+  const now = Date.now()
+  const credential = status === 'locked' ? readCredential(primedWith.home) : null
+  const due =
+    status === 'locked'
+      ? credential !== null &&
+        readTeamUnlock(
+          { instance: credential.instance, account: credential.account },
+          primedWith.home
+        ) !== null
+      : now - lastAttemptAt >= UNAVAILABLE_RECHECK_MS
+  if (!due) return null
+  priming = null
+  settledFlag = false
+  void primeNamespace(primedWith.home, primedWith.opts).then(() => {
+    settledFlag = true
+  })
+  return status === 'locked' ? 'unlocked' : 'retrying'
+}
+let settledFlag = true
+
+/** Test support and callers that can wait: the in-flight (or last) resolution. */
+export function namespaceSettled(): Promise<ResolvedNamespace> {
+  return priming ?? Promise.resolve(current)
 }
 
 /** The already-resolved namespace. `local` (with an empty namespace) until
@@ -288,50 +165,62 @@ export function getNamespace(): ResolvedNamespace {
 export function resetNamespaceCache(): void {
   current = LOCAL
   priming = null
+  settledFlag = true
+  lastAttemptAt = 0
+  primedWith = { opts: {} }
 }
 
 /**
- * Overlay a team namespace onto a local map, safely.
+ * The namespace line every anonymize result carries, with the reason when the
+ * team exists but was not used - so a fallback is never mistaken for agreement.
+ */
+export function namespaceLine(resolved: ResolvedNamespace): string {
+  if (resolved.source === 'team') return 'Namespace: team'
+  const { found } = resolved
+  if (found.status === 'locked')
+    return 'Namespace: local (the team key is locked on this machine - run `veilio team unlock`)'
+  if (found.status === 'unavailable')
+    return `Namespace: local (could not read the team's maps: ${found.reason})`
+  return 'Namespace: local'
+}
+
+/**
+ * The map handed to the engine to anonymize: this project's store and the
+ * team's namespace, reconciled so that nothing emitted can mean something else
+ * to a teammate (spec 028 R5; this replaced spec 005's "the local placeholder
+ * wins", which after a lapse emitted staging's `createInvoice` as __FN__1 - the
+ * team's `chargeCustomer`).
  *
- * Both are `Record<placeholder, identifier>`, and that similarity is a trap: the
- * two placeholder spaces are numbered independently — the local map by this
- * project's own engine, the team's by `mergeTeamNamespace` walking every
- * member's own maps — so `__CLS__1` in one has no relation to `__CLS__1` in the
- * other beyond coincidence. A blind `{ ...local, ...team }` merge treats that
- * coincidence as identity: two different identifiers that happen to land on the
- * same key collide, `saveMap` then refuses the write as data loss (or, worse,
- * silently drops one identifier's real mapping if the guard is bypassed), and
- * text already restored under the shadowed placeholder now resolves to the
- * wrong name.
+ * The two placeholder spaces are numbered independently, so a shared key is
+ * coincidence, not identity:
  *
- * So this reconciles by IDENTIFIER, which is the thing two teammates actually
- * want to agree on, and it only ever ADDS to `local` — never overwrites an
- * existing key, never introduces a second placeholder for an identifier `local`
- * already has under a different one:
- *
- *   - an identifier already known locally (under any placeholder) keeps its
- *     local placeholder — converging it to the team's would relabel every
- *     already-anonymized reference to it, which is not this call's to decide
- *   - a team entry whose placeholder KEY is already taken locally by a
- *     DIFFERENT identifier is dropped rather than forced in; that one
- *     identifier just doesn't converge with the team this round and gets a
- *     fresh local placeholder from the engine instead, which is a safe
- *     degradation, not a corruption
- *   - everything else — a team identifier neither known locally nor colliding
- *     on key — is added under the team's placeholder, which is the case two
- *     fresh sessions (T044) actually converge through
+ *   - An identifier the team knows takes the TEAM's placeholder. The project's
+ *     own placeholder for it is left out (it stays in the store, for restoring
+ *     text already sent) - one placeholder per identifier, always.
+ *   - A placeholder the project's store and the team use for DIFFERENT
+ *     identifiers is used for neither: the store must keep its meaning (text was
+ *     sent with it; `saveMap` refuses to lose it), and emitting it would mean the
+ *     team's identifier to every teammate. Both identifiers get fresh numbers.
+ *   - Everything else - a local entry the team does not contradict, a team entry
+ *     the store does not contradict - is used as it is.
  */
 export function mergeNamespace(
   local: Record<string, string>,
   team: Record<string, string>
 ): Record<string, string> {
-  const merged = { ...local }
-  const knownIdentifiers = new Set(Object.values(local))
+  const merged: Record<string, string> = {}
+  const placed = new Set<string>()
   for (const [placeholder, identifier] of Object.entries(team)) {
-    if (knownIdentifiers.has(identifier)) continue
-    if (placeholder in merged) continue
+    if (placeholder in local && local[placeholder] !== identifier) continue
+    if (placed.has(identifier)) continue
     merged[placeholder] = identifier
-    knownIdentifiers.add(identifier)
+    placed.add(identifier)
+  }
+  for (const [placeholder, identifier] of Object.entries(local)) {
+    if (placeholder in team && team[placeholder] !== identifier) continue
+    if (placed.has(identifier)) continue
+    merged[placeholder] = identifier
+    placed.add(identifier)
   }
   return merged
 }

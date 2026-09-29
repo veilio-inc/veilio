@@ -169,9 +169,17 @@ describe('the namespace fetch', () => {
  * shipping; these pin the fix.
  */
 describe('mergeNamespace — the two placeholder spaces are not the same space', () => {
-  it('keeps a local identifier on its local placeholder when a team entry claims the same key', () => {
+  // Spec 028 R5 changed the two cases below on purpose. The old rule kept a
+  // project's own placeholder for an identifier it already held - and after a
+  // lapse that placeholder was numbered locally: staging's `createInvoice` stayed
+  // __FN__1, which the team's maps use for `chargeCustomer`, so a teammate's
+  // restore of this member's output named the wrong function.
+  it('a placeholder the project and the team use for different identifiers is not used for either', () => {
+    // The store must keep LocalThing under __CLS__1 (text already sent with it),
+    // so this project cannot emit the team's __CLS__1; and emitting its own
+    // would mean PaymentGateway to every teammate. Both get fresh numbers.
     const merged = mergeNamespace({ __CLS__1: 'LocalThing' }, { __CLS__1: 'PaymentGateway' })
-    expect(merged).toEqual({ __CLS__1: 'LocalThing' })
+    expect(merged).toEqual({})
   })
 
   it('adds a team identifier under its own placeholder when nothing local collides', () => {
@@ -179,9 +187,17 @@ describe('mergeNamespace — the two placeholder spaces are not the same space',
     expect(merged).toEqual({ __CLS__1: 'PaymentGateway' })
   })
 
-  it('does not give an identifier a second placeholder when local already has one for it', () => {
+  it("an identifier the team knows takes the team's placeholder; never two at once", () => {
     const merged = mergeNamespace({ __CLS__5: 'PaymentGateway' }, { __CLS__1: 'PaymentGateway' })
-    expect(merged).toEqual({ __CLS__5: 'PaymentGateway' })
+    expect(merged).toEqual({ __CLS__1: 'PaymentGateway' })
+  })
+
+  it('the staging case: a lapse-era __FN__1 for createInvoice, where the team has __FN__1 chargeCustomer and __FN__2 createInvoice', () => {
+    const merged = mergeNamespace(
+      { __FN__1: 'createInvoice', __VAR__9: 'amount' },
+      { __FN__1: 'chargeCustomer', __FN__2: 'createInvoice' }
+    )
+    expect(merged).toEqual({ __FN__2: 'createInvoice', __VAR__9: 'amount' })
   })
 })
 

@@ -49,6 +49,7 @@
     "./credential": "./dist/credential.js",
     "./cloud": "./dist/cloud.js",
     "./team-unlock": "./dist/team-unlock.js",
+    "./team-namespace": "./dist/team-namespace.js",
     "./rules": "./dist/rules.js"
   },
   "repository": {

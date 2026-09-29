@@ -36,8 +36,10 @@ import {
   type CryptoKeyLike,
   type SymbolMap,
   type TeamMapEnvelope,
+  type TeamLayer,
 } from '@veilio-inc/engine'
 import { loadMap, loadRemote, saveMap } from './store.js'
+import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   readTeamUnlock,
   removeTeamUnlock,
@@ -802,3 +804,24 @@ export function runTeamLock(io: Io): number {
   io.stdout('Team keys locked.\n')
   return EXIT_OK
 }
+
+// ─── restore: the team layer ────────────────────────────────────────────────
+
+/**
+ * The team's maps for `veilio restore` (spec 028), handed to the local command
+ * as a callback so that command stays unlinked from the network. Signed out:
+ * no request, no layer - a local restore, as before.
+ */
+export async function teamLayerFor(
+  home: string | undefined,
+  missing: readonly string[]
+): Promise<{ team: TeamLayer | null; note: string | null }> {
+  // Signed out, the resolver answers 'local' without a request. At most 5 s: a
+  // hung instance must not stall a `... | veilio restore > file` pipeline.
+  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS })
+  if (found.status === 'team' && found.conflictDetection)
+    return { team: found.analysis, note: null }
+  return { team: null, note: teamLayerNote(found, missing) }
+}
+
+const RESTORE_CLOUD_WAIT_MS = 5000
