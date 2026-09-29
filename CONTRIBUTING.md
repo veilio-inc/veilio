@@ -70,7 +70,7 @@ visibly.
   A failing test case from your own material is worth more than a feature.
 - **A false positive.** Masking a reserved word breaks the code the model gets
   back, and a tool that mangles working code gets uninstalled by lunchtime.
-- **A credential pattern.** 33 detectors today (AWS, GCP, Azure, Stripe, GitHub,
+- **A credential pattern.** 36 detectors today (AWS, GCP, Azure, Stripe, GitHub,
   Slack, OpenAI, Anthropic, private-key blocks, JWTs…). Note the design: a
   detected credential is **redacted, not masked** — it is replaced by a token that
   never enters the map, so restore cannot bring it back and a synced map can never
@@ -80,6 +80,11 @@ visibly.
   ([SECURITY.md](./SECURITY.md)) if you do.
 - **A report that it failed you.** Open an issue describing what leaked or what
   broke, with material you are allowed to share. That is a contribution.
+
+The **Failing test case** issue template asks for the four things that make a
+report reproducible — input, language, expected, actual — because a case we can
+run is the one that becomes a fixture. Synthetic material is not second best
+here: it is the only kind that can be committed as one.
 
 ## Ground rules
 

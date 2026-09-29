@@ -1,0 +1,80 @@
+name: Failing test case
+description: The engine missed an identifier, masked something it should not have, or broke the round trip.
+# Labels that already exist in this repository — GitHub silently drops one
+# that does not, which is how a template ends up filing unlabelled issues.
+labels: ['area: engine', 'bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CONTRIBUTING calls this the most valuable thing you can send, because a
+        case we can run is the difference between "I think it handles Rust
+        lifetimes" and knowing.
+
+        **Share only material you are allowed to share.** A reproduction does not
+        need your real code: the shortest synthetic snippet that still fails is
+        worth more than a real one, and it is the only kind we can commit as a
+        fixture. Never paste a live credential — if the report is about one not
+        being detected, replace it with a same-shaped fake.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - A real identifier was left in the output (missed)
+        - Something was masked that should not have been (false positive)
+        - The round trip did not return the original
+        - A credential was not detected
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      description: As passed to `--language`, or `auto` if it was detected.
+      placeholder: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The smallest snippet that reproduces it.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: Paste it as it came back, including the summary line if there was one.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: '`veilio --version`, the `@veilio-inc/engine` version, or the CE build you ran.'
+      placeholder: '@veilio-inc/engine 1.7.0'
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - The web app (Community Edition)
+        - '`@veilio-inc/cli`'
+        - '`@veilio-inc/mcp`'
+        - '`@veilio-inc/engine` directly'
+    validations:
+      required: true
