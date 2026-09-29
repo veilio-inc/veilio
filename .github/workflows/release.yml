@@ -134,6 +134,58 @@ jobs:
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # ROADMAP A3 — the publish is gated on a scan, not on the tag.
+      #
+      # The push below is a single multi-arch step, and a multi-arch build cannot
+      # be loaded into the local daemon, so scanning "the image that is about to
+      # be pushed" means building one arch first and scanning that. The two
+      # builds share the same GHA cache, so the second is a cache hit rather than
+      # a second compile, and the bytes scanned are the bytes published for
+      # linux/amd64: same Dockerfile, same context, same build-arg.
+      #
+      # Gating BEFORE the push is the point. Scanning after it would report on an
+      # image `latest` already points at, which is a notification rather than a
+      # gate.
+      - name: Build linux/amd64 for scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: veilio:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_VEILIO_CLOUD_URL=https://veilio.dev
+
+      # The runtime image is `scratch` plus a static Go binary and the built
+      # site: there is no distro to patch and no package manager to query, so
+      # what this actually inspects is the Go binary's embedded module list —
+      # the standard library included. That is the whole point. A Go stdlib
+      # advisory is the one class of vulnerability this image can have, and
+      # before this step nothing in the pipeline would have noticed one.
+      #
+      # `ignore-unfixed` is deliberately false. An unfixed advisory in a
+      # dependency of a privacy tool is still something a self-hoster should be
+      # told about, and the remedy here is usually a base-image bump Dependabot
+      # already proposes.
+      #
+      # Secret scanning is NOT part of this gate. It belongs against the source
+      # tree rather than the artefact, and a false positive there would block
+      # publishing the app over a fixture — the wrong trade for a gate that must
+      # stay trustworthy enough to keep.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: veilio:scan
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+          format: table
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

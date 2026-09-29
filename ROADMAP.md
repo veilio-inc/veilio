@@ -43,7 +43,7 @@ The first ninety seconds: find the repo, run the thing.
 | --- | ------------------------------------------------ | ------------------------------ |
 | A1  | Shrink the runtime image                         | **done — 77.4 MB → 10.4 MB**   |
 | A2  | Cut a version tag so the Releases tarball exists | ready                          |
-| A3  | Vulnerability scan as a release gate             | ready                          |
+| A3  | Vulnerability scan as a release gate             | **done**                       |
 | A4  | Self-host the web fonts                          | **done**                       |
 | A5  | A light theme                                    | **done — see F below**         |
 | A6  | Keep CE's legal notices true as Cloud's move     | **done**                       |
@@ -92,9 +92,28 @@ neither is the `v*.*.*` tag this item needs, and that shape is also what
 triggers the CE release workflow. The `packages/cli/README.md` GitHub Action
 example is blocked on the same missing tag.
 
-**A3.** The image is a static binary plus static files, so its attack surface is
-what we compile in rather than a distro. That argues for scanning it on every
-publish rather than trusting the tag.
+**A3 — done.** The image is a static binary plus static files, so its attack
+surface is what we compile in rather than a distro. It is now scanned on every
+publish rather than trusted because it is small: `release.yml` builds
+`linux/amd64` first, runs Trivy over it at **HIGH and CRITICAL**, and only then
+logs in and pushes. A finding fails the run before anything reaches GHCR, which
+is the difference between a gate and a notification — scanning after the push
+reports on an image `latest` already points at.
+
+What it actually inspects, given there is no distro and no package manager, is
+the Go binary's embedded module list including the standard library. That is the
+one class of vulnerability this image can have, and nothing in the pipeline
+would have noticed one before. `ignore-unfixed` is off: an unfixed advisory is
+still something a self-hoster should be told about, and the remedy is usually a
+base-image bump Dependabot already proposes.
+
+The two builds share one GHA cache, so the scan build is a compile and the push
+is a cache hit rather than a second compile.
+
+**Not in this gate:** secret scanning. It belongs against the source tree rather
+than the artefact, and a false positive there would block publishing the app
+over a test fixture — a gate nobody trusts gets disabled, which costs more than
+it catches.
 
 **A4 — done.** `index.html` loaded Crimson Pro, Inter and JetBrains Mono from
 Google Fonts. Every page load therefore disclosed the user's IP address and
