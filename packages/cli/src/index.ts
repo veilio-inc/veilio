@@ -12,6 +12,7 @@ import {
   runTeamUnlock,
   runTeamLock,
   runRulesPull,
+  teamLayerFor,
 } from './cloud-commands.js'
 import { resolveMapPath } from './store.js'
 import { createInterface } from 'node:readline'
@@ -50,7 +51,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       case 'scrub':
         return await runScrub(args, io)
       case 'restore':
-        return await runRestore(args, io)
+        return await runRestore(args, io, (missing) => teamLayerFor(io.home, missing))
       case 'scan':
         return await runScan(args, io)
       case 'map':

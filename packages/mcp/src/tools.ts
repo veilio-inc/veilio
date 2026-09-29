@@ -23,6 +23,9 @@ import {
   detectSecrets,
   isPlaceholder,
   restore,
+  restoreLayers,
+  disputedNote,
+  locallyNumberedNote,
   summarizeSecrets,
   withAiPreamble,
   BIN_NAME,
@@ -33,7 +36,20 @@ import {
   type SecretFinding,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
-import { getNamespace, mergeNamespace } from './namespace.js'
+import {
+  getNamespace,
+  mergeNamespace,
+  namespaceLine,
+  refreshNamespaceIfStale,
+} from './namespace.js'
+import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
+
+/** Said when a tool call has just started reloading the team's maps. */
+function loadingNote(why: 'unlocked' | 'retrying'): string {
+  return why === 'unlocked'
+    ? "Note: the team key was unlocked - loading the team's maps now; call again in a moment to use them."
+    : "Note: asking Cloud for the team's maps again; call again in a moment to use them."
+}
 import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 
@@ -184,6 +200,19 @@ const FLOOR_MARKER = '\u0000floor:'
  * returned map. Only added above the map's own highest, where they cannot
  * overwrite a real entry. Same technique as the Cloud web app.
  */
+/** The team's highest number per base, raised to this project's own where higher. */
+function floorsWith(
+  highest: Record<string, number>,
+  local: Record<string, string>
+): Record<string, number> {
+  const floors = { ...highest }
+  for (const placeholder of Object.keys(local)) {
+    const m = NUMBERED.exec(placeholder)
+    if (m && Number(m[2]) > (floors[m[1]] ?? 0)) floors[m[1]] = Number(m[2])
+  }
+  return floors
+}
+
 function anonymizeAbove(
   source: string,
   options: Parameters<typeof anonymize>[1] & { existingMap: Record<string, string> },
@@ -225,14 +254,19 @@ function runAnonymize(
   // independently and a shared key is coincidence, not identity. See
   // mergeNamespace's own comment for why a naive `{ ...local, ...namespace }`
   // corrupts the store (spec 005 US4).
-  const { source: namespaceSource, namespace, highest } = getNamespace()
+  const refreshing = refreshNamespaceIfStale()
+  const resolved = getNamespace()
+  const { namespace, highest } = resolved
   const existingMap = mergeNamespace(localMap, namespace)
   const language = (str(args, 'language') ?? 'auto') as 'auto'
   const rules = getRules()
+  // New names go above the team's numbers AND this project's own: an entry
+  // mergeNamespace left out (a lapse-era number) stays in the store, and a new
+  // identifier must never be handed its number (spec 028 R5).
   const result = anonymizeAbove(
     source,
     { existingMap, language, secrets: 'redact', rules: rules.rules },
-    highest
+    floorsWith(highest, localMap)
   )
   // Persist local-original, whatever this call genuinely minted, and only the
   // team-overlay entries this call actually USED — never the rest of the team
@@ -242,14 +276,19 @@ function runAnonymize(
   // resolving through team placeholders while truthfully reporting `local`.
   // Persisting none of it, the other extreme, breaks `restore_text` for a
   // team placeholder that IS sitting in the output this call just returned.
-  const toPersist = Object.fromEntries(
-    Object.entries(result.map).filter(
-      ([placeholder]) =>
-        !(placeholder in namespace) ||
-        placeholder in localMap ||
-        appearsAsToken(result.anonymized, placeholder)
-    )
-  )
+  // Every entry the store already held is kept - including one mergeNamespace
+  // left out of this call - because text was already sent with it.
+  const toPersist = {
+    ...localMap,
+    ...Object.fromEntries(
+      Object.entries(result.map).filter(
+        ([placeholder]) =>
+          !(placeholder in namespace) ||
+          placeholder in localMap ||
+          appearsAsToken(result.anonymized, placeholder)
+      )
+    ),
+  }
   saveMap(mapPath, toPersist)
 
   const body =
@@ -282,7 +321,8 @@ function runAnonymize(
     `Placeholders in map: ${Object.keys(toPersist).length}`,
     // Never absent (FR-016, Constitution V): a result that cannot say where its
     // names came from is the silent fallback this line exists to rule out.
-    `Namespace: ${namespaceSource}`,
+    namespaceLine(resolved),
+    ...(refreshing ? [loadingNote(refreshing)] : []),
     // Stated every time, like the namespace: an agent whose masking ignored the
     // team's rules must be able to tell.
     rulesLine(rules),
@@ -372,28 +412,56 @@ export const TOOLS: ToolDefinition[] = [
     },
     handler: (args, ctx) => {
       const text = str(args, 'text', true)
-      const map = loadMap(resolveMapPath(ctx.mapPath, ctx.cwd))
-      if (Object.keys(map).length === 0) {
+      const own = loadMap(resolveMapPath(ctx.mapPath, ctx.cwd))
+      // The one restore rule (spec 028), shared with the web app and the CLI:
+      // the team's maps - aliases included, disputed placeholders left out -
+      // then this project's map on top where it is in the team's numbering.
+      const refreshing = refreshNamespaceIfStale()
+      const resolved = getNamespace()
+      const team =
+        resolved.source === 'team' && resolved.conflictDetection
+          ? {
+              namespace: resolved.namespace,
+              aliases: resolved.aliases,
+              conflicts: resolved.conflicts,
+            }
+          : null
+      const unexplained = restore(text, own).report.unresolved
+      const found = resolved.found
+      const note = team ? null : teamLayerNote(found, unexplained)
+      if (Object.keys(own).length === 0 && !team && !note) {
         throw new ToolError(`no symbol map yet — run anonymize_file (or "${BIN_NAME} scrub") first`)
       }
-      // A placeholder the team's maps disagree about is never guessed (spec
-      // 017): a wrong restore reads exactly like a right one. It stays in the
-      // text and is named, whatever the local store says it means.
-      const { conflicts } = getNamespace()
-      for (const placeholder of conflicts) delete map[placeholder]
-      const ambiguous = conflicts.filter((p) => appearsAsToken(text, p))
-      const result = restore(text, map)
-      const ambiguity =
-        ambiguous.length === 0
-          ? ''
-          : `\n\nWARNING: left as is: ${ambiguous.join(', ')}. The team's saved maps give ` +
-            `${ambiguous.length === 1 ? 'this placeholder' : 'these placeholders'} different ` +
-            `identifiers, so restoring would be a guess.`
+      const layers = restoreLayers({ own, team })
+      const disputed = layers.disputedIn(text)
+      const localOnly = layers.locallyNumberedIn(text)
+      const result = restore(text, layers.map)
+      // Measured against this project's map, not the whole team layer (review),
+      // and a placeholder left for a named reason is not "invented".
+      const report: RestoreReport = {
+        ...result.report,
+        missing: result.report.missing.filter((p) => p in own),
+        unresolved: result.report.unresolved.filter(
+          (p) => !disputed.includes(p) && !localOnly.includes(p)
+        ),
+      }
+      const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
+      const warnings = [
+        ...(refreshing ? [loadingNote(refreshing)] : []),
+        ...(note ? [`WARNING: ${note}`] : []),
+        ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
+        ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
+      ]
+      // Unrestored team placeholders because the team's maps could not be used
+      // (locked, unreadable): not a success, whatever else restored (FR-005).
+      const failed = found.status === 'locked' || found.status === 'unavailable'
       return {
+        isError: note !== null && failed,
         text:
-          `Restored ${result.report.resolved.length} of ${Object.keys(map).length} placeholders; ` +
+          `Restored ${result.report.resolved.length} of ${counted} placeholders; ` +
           `stripped ${result.strippedCount} AI artifact(s).` +
-          `${restoreReportLines(result.report)}${ambiguity}\n\n--- restored ---\n${result.restored}`,
+          `${restoreReportLines(report)}` +
+          `${warnings.length ? `\n\n${warnings.join('\n')}` : ''}\n\n--- restored ---\n${result.restored}`,
       }
     },
   },

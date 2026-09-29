@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { writeCredential } from '@veilio-inc/cli/credential'
 import { writeTeamUnlock, expiryFrom } from '@veilio-inc/cli/team-unlock'
 import { toBase64 } from '@veilio-inc/engine'
-import { primeNamespace, resetNamespaceCache, findConflicts } from '../src/namespace.js'
+import { primeNamespace, resetNamespaceCache } from '../src/namespace.js'
 import { callTool } from '../src/tools.js'
 import { saveMap, loadMap, resolveMapPath } from '@veilio-inc/cli/store'
 
@@ -411,10 +411,11 @@ describe('an older Cloud that still merges server-side', () => {
       })
     )
 
-    expect(await primeNamespace(home)).toEqual({
+    expect(await primeNamespace(home)).toMatchObject({
       source: 'team',
       namespace: { __CLS__1: 'PaymentGateway' },
-      conflicts: [],
+      aliases: {},
+      conflicts: {},
       highest: {},
     })
   })
@@ -443,24 +444,36 @@ describe('placeholders the team disagrees about', () => {
     const { home } = await scenario({ maps: MAPS })
     const resolved = await primeNamespace(home)
     expect(resolved.source).toBe('team')
-    expect(resolved.conflicts).toEqual(['__FN__6'])
+    expect(resolved.conflicts).toEqual({ __FN__6: 2 })
     expect(resolved.namespace).toEqual({ __CLS__1: 'Ledger' })
   })
 
-  it('restore_text leaves them and says why, whatever the local store holds', async () => {
+  // Spec 028 changed this deliberately. It used to leave a disputed placeholder
+  // "whatever the local store holds"; the web app lets the member's own map
+  // settle it, and the founder asked for one rule ("working properly and the
+  // same"). The project's own map records what THIS project sent.
+  it("restore_text leaves them and says why - unless this project's map settles one", async () => {
     const { home } = await scenario({ maps: MAPS })
     await primeNamespace(home)
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
-    saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'Ledger' })
-    const res = callTool(
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
+    const left = callTool(
       'restore_text',
       { text: 'new __CLS__1().__FN__6()' },
       { cwd, mapPath: null }
     )
-    expect(res.text).toContain('new Ledger().__FN__6()')
-    expect(res.text).not.toContain('settleLedger')
-    expect(res.text).toContain('WARNING: left as is: __FN__6')
+    expect(left.text).toContain('new Ledger().__FN__6()')
+    expect(left.text).toContain('WARNING: left as is: __FN__6')
+
+    saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'Ledger' })
+    const settled = callTool(
+      'restore_text',
+      { text: 'new __CLS__1().__FN__6()' },
+      { cwd, mapPath: null }
+    )
+    expect(settled.text).toContain('new Ledger().settleLedger()')
+    expect(settled.text).not.toContain('left as is')
   })
 
   it('no warning when the text does not hold one', async () => {
@@ -498,13 +511,6 @@ describe('placeholders the team disagrees about', () => {
     )
   })
 
-  it('findConflicts ignores unreadable maps and agreeing ones', () => {
-    expect(
-      findConflicts([
-        { createdAt: 'a', map: null },
-        { createdAt: 'b', map: { __X__1: 'a' } },
-        { createdAt: 'c', map: { __X__1: 'a' } },
-      ])
-    ).toEqual([])
-  })
+  // findConflicts moved into the engine as analyzeTeamNamespace (spec 028); its
+  // cases - unreadable maps skipped, agreeing maps no conflict - are tested there.
 })
