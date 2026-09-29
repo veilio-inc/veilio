@@ -44,7 +44,12 @@ anonymize(source, { language: 'rust' }) // or force it
 ```
 
 Supported: TypeScript/JavaScript, Python, Go, Java/Kotlin, C#, Rust, Ruby, PHP,
-C/C++, SQL. Detection falls back to TypeScript when the source is ambiguous.
+C/C++, SQL. Detection falls back to TypeScript when the source is ambiguous, and
+says so: `languageFallback` is `true` when no marker matched, which means the
+file was tokenised with rules that do not describe it and the masking is
+partial. It rides on the result rather than in UI state, so the web app, the CLI
+and the MCP server all see the same fact rather than each deciding whether to
+mention it.
 
 Comments are never masked — they are prose, and turning them into ciphertext is
 what makes a downstream model refuse to help. That applies to `#` comments,
@@ -143,10 +148,9 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 
 ## API
 
-- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, secrets, comments }`
+- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
-  - `options.style` — `'roles'` (default) | `'plain'` for legacy `__P<n>__`
   - `options.existingMap` — continue numbering from a previous session
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
@@ -163,11 +167,18 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     credential, is already a placeholder, or is a keyword in the resolved
     language. Marks replayed from `existingMap` never throw — a mark made in one
     language must not make a file in another language impossible to anonymize.
-- `restore(text, map)` → `{ restored, strippedItems, strippedCount, report }`
+- `restore(text, map, options?)` → `{ restored, strippedItems, strippedCount, report }`
+  - `options.strip` — which AI artifacts to remove: `'all'` (default), `'none'`,
+    or an explicit list of `StrippedItemType`. Worth setting: `'all'` deletes
+    JSDoc, and when a model was *asked* to document its output that is
+    destroying requested work rather than removing noise.
   - `report` — `{ resolved, missing, unresolved }`: which placeholders came back,
     which never appeared, and which placeholder-shaped tokens the map cannot
     explain. A model that renames `__FN__1` leaves no trace in the restored text,
     so this is the only place that failure is visible.
+- `isPlaceholder(token)` → `boolean` — whether a string is a placeholder this
+  engine could have produced. For validating a map that arrived from somewhere
+  else before trusting its keys.
 - `manualTermsIn(map)` → `string[]` — terms previously marked by hand
 - `MANUAL_BASE` / `ManualMaskError` — the manual placeholder base, and the error
   thrown when a mark is refused
@@ -235,12 +246,45 @@ its numbering with both repositories green.
 - `mergeTeamNamespace(entries)` / `TeamMapEntry` — merge team maps into one
   namespace, oldest first, so an edited map cannot steal a placeholder an older
   one already claimed
+- `analyzeTeamNamespace(entries)` → `{ namespace, aliases, conflicts, highest }`
+  — the same merge, plus what the merge had to decide: the placeholders two maps
+  disagree about, the aliases that still restore, and the highest number per
+  base so new names are minted above the team's
+- `restoreLayers({ own, team })` → the one restore rule, shared by the web app,
+  the CLI and the MCP server: the team's layer under this project's own, with
+  `disputedIn(text)` and `locallyNumberedIn(text)` naming the placeholders that
+  must be left alone rather than guessed. `disputedNote` / `locallyNumberedNote`
+  render the message each caller shows
 - `unwrapPrivateKey`, `deriveWrappingKey`, `importPublicKey`, `unwrapTeamKey`,
   `importTeamKey` / `exportTeamKey`, `decryptTeamMap`,
   `decryptTeamMapWithAny`, `TeamKeyError` — the **read** path for team-key
   envelopes. Minting a key, granting it to a teammate and confirming a
   teammate's key need a person present to approve them and stay in the browser:
   a client that can open maps has no business handing out access to them.
+
+### Encrypted `.veilio` files and the vault
+
+The crypto behind CE's export/import and Cloud's map sync lives here so both
+editions run the same code — a second implementation of a format that has to
+open files the first one wrote is a second thing to get subtly wrong. WebCrypto
+only, no dependency added.
+
+- `parseSymbolMap(raw)` → `SymbolMap` — validate an untrusted map before use;
+  throws `InvalidMapError`
+- `VeilioFile` / `KdfParams` / `parseKdfParams` — the `.veilio` envelope shape
+  and its KDF parameters, `CURRENT_FILE_KDF` for what new files get and
+  `LEGACY_FILE_KDF` for what older ones still open with
+- `assertUsablePassphrase(value)` / `MIN_PASSPHRASE_LENGTH` / `WeakPassphraseError`
+  — refuse a passphrase too weak for a file nobody can recover
+- `VaultEnvelope` / `parseVaultEnvelope` / `VaultEnvelopeError`,
+  `CURRENT_VAULT_KDF` / `LEGACY_VAULT_KDF`, `VAULT_SALT_BYTES`,
+  `randomVaultSalt()` — the account vault a personal map is sealed under, so the
+  server stores ciphertext it cannot read
+- `webCryptoSubtle()`, `randomBytes(n)`, `toBase64` / `fromBase64` — the small
+  platform layer the above are built on
+
+A lost `.veilio` passphrase is not recoverable, by construction. Nothing here
+holds an escrow copy and nothing in the format allows one.
 
 ## License
 

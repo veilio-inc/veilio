@@ -28,7 +28,7 @@ behavior; it only unlocks the four commands below that name Cloud explicitly.
 | Command              | Purpose                                                               |
 | -------------------- | --------------------------------------------------------------------- |
 | `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
-| `restore [files...]` | Swap placeholders back, strip AI-generated noise.                     |
+| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. |
 | `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
 | `map`                | Show the symbol map (`--clear` to wipe it).                           |
 
@@ -39,7 +39,7 @@ veilio login                    # email, password, and the authentication code i
 veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
-veilio maps push <name>         # upload the local map under a new Cloud name
+veilio maps push [name]         # upload the local map under a new Cloud name
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
@@ -62,6 +62,29 @@ Custom rules (whitelist and replace, set in the web app) are applied by
 offline - and says on every run how many rules it applied and how old the copy
 is. Pull again after the rules change; `logout` removes the copy.
 
+Three files, all `0600`, all under `~/.veilio/`: `credential.json` (the session,
+removed by `logout`), `rules.json` (the rules copy) and `team-keys.json` (the
+keys `team unlock` opened, kept seven days).
+
+### Restoring a teammate's placeholders
+
+`veilio restore` resolves a placeholder this project's map cannot explain
+against the team's maps, so a reply pasted from a teammate's agent comes back
+with the real names:
+
+- **A disputed placeholder is left, not guessed.** Where this project's store
+  and the team use the same placeholder for *different* identifiers, neither
+  wins and the placeholder stays in the output with a line naming it. Same for
+  one this project numbered on its own while the team was out of reach — a
+  wrong name restored silently is worse than a placeholder left visibly.
+- **Locked, and it says so.** With no team key on this machine it tells you to
+  run `veilio team unlock` rather than restoring half the text.
+- **Signed out, it makes no request at all** — that restore is as offline as it
+  has always been. Signed in, it waits at most **5 seconds** for Cloud, so a
+  hung instance cannot stall `… | veilio restore > file`.
+- **The counts are this project's.** "Restored 8 of 9" is measured against your
+  own map, not against a team namespace of four hundred entries.
+
 The map commands are clients of `GET /api/maps`, `GET /api/maps/:id` and
 `POST /api/maps` — the exact same routes the browser uses, behind the exact
 same entitlement check. There is no CLI-shaped API and nothing here can reach
@@ -77,8 +100,19 @@ a plan feature the web app couldn't.
 -m, --map <path>        Use a specific map file
     --json              Machine-readable output (scan, map)
     --strict            scan: also fail on advisory findings
--q, --quiet             Suppress the stderr summary
+    --keep-docs         restore: keep JSDoc blocks the model wrote
+-f, --force             Allow a map write that would drop existing entries
+-q, --quiet             Suppress the all-clear summary (findings always show)
+    --instance <url>    login: the Veilio instance to sign in to. Defaults to
+                        the public Cloud; https required (localhost excepted)
+-h, --help              Show this help
+-v, --version           Show the version
 ```
+
+`--keep-docs` is worth knowing about: the default strip removes JSDoc along with
+the narration and TODOs, which is wrong when the model was *asked* to document
+its output. `--quiet` suppresses the all-clear only — a finding still prints,
+because the text on stdout is what you are about to paste somewhere.
 
 ## Piping
 
