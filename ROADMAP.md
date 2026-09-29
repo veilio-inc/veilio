@@ -1,6 +1,6 @@
 # Roadmap — Veilio Community Edition
 
-_Last updated 2026-08-15._
+_Last updated 2026-09-29._
 
 This is the public roadmap for the Community Edition and the anonymizer engine:
 what the engine gets wrong today, what we intend to do about it, and what we have
@@ -24,6 +24,14 @@ Listed because a roadmap whose first section is aspirational is not worth much.
   `linux/arm64`, and is public.
 - CE and Cloud consume **the same** engine build, rather than two copies that
   drift.
+- The engine is at **1.7.0**: regulated identifiers round-trip, detection
+  findings are graded by blast radius, a file says when its language was not
+  recognised, and every result reports how much comment prose left unmasked.
+- **`@veilio-inc/cli` and `@veilio-inc/mcp` are published** (both 0.3.2). They
+  share one symbol map with each other, and neither makes a network call on any
+  local path — each ships a test that trips if one is ever introduced.
+- Maps saved in the browser are **encrypted at rest**, and the plaintext copies
+  earlier builds left in `localStorage` are deleted on startup.
 
 ---
 
@@ -37,7 +45,7 @@ The first ninety seconds: find the repo, run the thing.
 | A2  | Cut a version tag so the Releases tarball exists | ready                          |
 | A3  | Vulnerability scan as a release gate             | ready                          |
 | A4  | Self-host the web fonts                          | **done**                       |
-| A5  | A light theme                                    | **needs design — see F below** |
+| A5  | A light theme                                    | **done — see F below**         |
 | A6  | Keep CE's legal notices true as Cloud's move     | **done**                       |
 
 **A1 — done, in two steps.**
@@ -77,6 +85,12 @@ between a 10 MB and a 3 MB pull is not something a self-hoster will notice.
 **A2.** The README offers a static-bundle install for locked-down and air-gapped
 environments, pointing at Releases. There are no releases yet, so that path is
 currently a dead end for exactly the users most likely to need it.
+
+The repository is no longer untagged — `engine-v*` from semantic-release and
+`@veilio-inc/cli@*` / `@veilio-inc/mcp@*` from Changesets both exist — but
+neither is the `v*.*.*` tag this item needs, and that shape is also what
+triggers the CE release workflow. The `packages/cli/README.md` GitHub Action
+example is blocked on the same missing tag.
 
 **A3.** The image is a static binary plus static files, so its attack surface is
 what we compile in rather than a distro. That argues for scanning it on every
@@ -118,17 +132,28 @@ Both now state that CE makes no third-party requests, at document version 1.2.
 
 The engine is the product. Everything here is a way it currently falls short.
 
-|     | Item                                         | State                                    |
-| --- | -------------------------------------------- | ---------------------------------------- |
-| B1  | Make the advisory panel worth reading        | ready                                    |
-| B2  | Regulated identifiers                        | **partly addressed — IBAN, card, PESEL** |
-| B3  | Comments are an open channel                 | **partly addressed — manual marking**    |
-| B4  | Language honesty, then coverage              | ready                                    |
-| B5  | Report what the round trip failed to restore | **done**                                 |
+|     | Item                                         | State                                     |
+| --- | -------------------------------------------- | ----------------------------------------- |
+| B1  | Make the advisory panel worth reading        | **done**                                  |
+| B2  | Regulated identifiers                        | **partly addressed — IBAN, card, PESEL**  |
+| B3  | Comments are an open channel                 | **partly addressed — measured, unmasked** |
+| B4  | Language honesty, then coverage              | **partly addressed — honesty shipped**    |
+| B5  | Report what the round trip failed to restore | **done**                                  |
 
-**B1.** The overwhelming majority of advisory findings are not actionable. A panel
-that cries wolf trains people to dismiss it, which is worse than no panel: the one
-finding that mattered arrives in the same grey list as ninety that did not.
+**B1 — done.** 25 of 33 detection rules were graded `critical`, so the scale
+carried no information and a dozen example email addresses rendered with the
+weight of a leaked AWS key. Re-graded by blast radius: **8 critical, 16 high, 7
+medium, 2 low**, and a test fails if any one grade ever holds more than half the
+table again. The table has grown to 36 rules since, and the shape held —
+8 / 17 / 9 / 2 today.
+
+The re-grade was blocked by `severity` meaning four things at once — display,
+redaction, blocking and overlap resolution — so calming the panel would also
+have stopped destroying values, in a diff that reads as cosmetic. Redaction and
+blocking now key on the finding's **type**, and overlap resolution ranks by
+**specificity** (and, since the regulated work, by disposition first). A rule
+added tomorrow protects because it exists, not because someone remembered to opt
+it in.
 
 **B2 — partly addressed.** Bank account (IBAN), payment card and PESEL numbers
 are found by arithmetic over the value and masked reversibly into the same map,
@@ -140,14 +165,28 @@ a mark the author makes (`options.manual`) rather than something the engine find
 on its own. That is the material the tool is most often reached for, so it should
 not stay the material it handles least well.
 
-**B3.** Identifiers are replaced; the prose around them is not. A comment naming a
-customer, an incident or a person leaves untouched. This is the largest remaining
-silent leak and the hardest to bound — a comment is natural language, and the
-engine's guarantees rest on it _not_ guessing.
+**B3 — partly addressed.** Identifiers are replaced; the prose around them still
+is not. A comment naming a customer, an incident or a person leaves untouched,
+and that remains the largest silent leak and the hardest to bound — a comment is
+natural language, and the engine's guarantees rest on it _not_ guessing.
 
-**B4.** An unsupported language currently produces a weak result rather than a
-refusal. Silence is the wrong failure mode for a privacy tool: say plainly that a
-file is unsupported, then widen coverage.
+What changed is that the leak is no longer silent. Every result now carries a
+measurement: how many comment blocks leave verbatim, how many of them sit after
+the first line of code, how many characters, and a grade **capped at medium** —
+the engine cannot read the prose, so it never claims a comment _is_ sensitive.
+The number rides on the engine's result rather than in the web app, so the CLI
+and the MCP server state it too; a warning only the browser knew about would not
+be a warning at all. Measuring is not masking, and the item stays open on that
+basis.
+
+**B4 — partly addressed.** The honesty half shipped: when no language marker
+matches, the file is tokenised as TypeScript and the result says so
+(`languageFallback`), so "masked" and "masked with rules that do not describe
+this file" are no longer the same answer. The MCP server turns it into a warning
+the model reads before reasoning over the output.
+
+Coverage is untouched — ten languages, and an eleventh is still a weak result
+rather than a refusal.
 
 **B5 — done.** `restore()` now returns a report of what came back: which
 placeholders resolved, which never appeared, and which placeholder-shaped tokens
@@ -180,18 +219,36 @@ size.
 The web app costs four copy/pastes per turn, and people increasingly work inside
 editors and agents rather than a browser tab.
 
-|     | Item                                       | State        |
-| --- | ------------------------------------------ | ------------ |
-| C1  | A CLI consuming the published engine       | needs design |
-| C2  | An MCP server taking file paths, not blobs | needs design |
+|     | Item                                       | State    |
+| --- | ------------------------------------------ | -------- |
+| C1  | A CLI consuming the published engine       | **done** |
+| C2  | An MCP server taking file paths, not blobs | **done** |
 
-Both consume the published engine. An MCP tool that takes a _file path_ rather
-than a blob means masked code reaches the agent while the real identifiers never
-enter its context.
+**C1 — done.** `@veilio-inc/cli` (0.3.2). `scrub`, `restore`, `scan` and `map`
+work offline with no account: transformed code on stdout, everything else on
+stderr, so it composes in a pipe and in a pre-commit hook. `scan` exits 1 on a
+finding, which is what makes it usable as a gate.
 
-This is stated as intent, not as a commitment to a date or a package name. It is
-sequenced after the engine work above, because shipping more surfaces on top of
-B1–B4 would multiply the same shortcomings across three clients instead of one.
+**C2 — done.** `@veilio-inc/mcp` (0.3.2), with zero runtime dependencies —
+JSON-RPC framing is implemented directly, because pulling a transitive tree into
+the component that reads your source would undercut the argument the product
+makes. The primary tools take a **file path**: the server reads the file in its
+own process and the agent learns `__CLS__1.__FN__2()` rather than
+`PaymentGateway.chargeCard()`. A tool taking code as an argument would be
+pointless, since the identifiers would already be in the model's context.
+
+Both consume the published engine rather than a vendored copy, and both share
+one symbol map, so masking in an agent and restoring in a terminal is one store.
+Neither reaches the network on any local path.
+
+**The sequencing argument in this entry was only half kept, and that is worth
+recording.** It said C waited on B1–B4 so that shipping more surfaces would not
+multiply the same shortcomings across three clients. B1 and B5 were done by
+then; B2, B3 and B4 were not, and are still partial. What kept that from being
+the mistake the entry predicted is that each gap is now *reported* rather than
+silent — the comment measurement and the language-fallback flag ride on the
+engine's result, so all three clients say the same thing about what the masking
+did not cover, instead of each deciding for itself.
 
 ---
 
@@ -307,7 +364,7 @@ ones we have not fixed yet.
 |     | Item                                           | State        |
 | --- | ---------------------------------------------- | ------------ |
 | E1  | Patch the shipping router advisory             | **done**     |
-| E10 | Decide on React Router 7                       | needs design |
+| E10 | Decide on React Router 7                       | **done**     |
 | E2  | Least-privilege CI token                       | **done**     |
 | E3  | Content-Security-Policy and security headers   | **done**     |
 | E4  | Pin actions and base images by digest          | **done**     |
@@ -317,6 +374,7 @@ ones we have not fixed yet.
 | E8  | Passphrase strength, and a tighter KDF ceiling | **done**     |
 | E9  | Provenance for the container image             | **done**     |
 | E11 | Derive off the main thread                     | **done**     |
+| E12 | Encrypt the maps saved in the browser          | **done**     |
 
 **E1 — done.** `@remix-run/router` shipped in the bundle at a version inside the
 range for [GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42),
@@ -325,10 +383,12 @@ the existing semver range — `react-router-dom` 6.30.3 → 6.30.4 — so it cos
 lockfile bump and nothing else. Everything else `npm audit` reports is a
 devDependency that never reaches a user.
 
-**`npm audit` does not come back clean, and that is a decision rather than an
-oversight.** Two advisories remain against `react-router`, and their affected
-range is `6.0.0 - 7.17.0` — there is no 6.x that clears them. Neither is
-reachable here:
+**This paragraph used to say `npm audit` does not come back clean.** It does
+now — `npm audit --omit=dev` reports **0 vulnerabilities**, because the app is on
+React Router 7 (E10). What follows is kept as the record of why the two
+advisories were not an emergency while they stood, since that reasoning is what
+justified not rushing the major upgrade. Their affected range was
+`6.0.0 - 7.17.0` — no 6.x cleared them — and neither was reachable here:
 
 - _Arbitrary constructor injection via `deserializeErrors()` in SSR hydration._
   CE has no SSR. It mounts with `createRoot` and ships as a static bundle, so the
@@ -339,19 +399,25 @@ reachable here:
   against an allow-list before use. Nothing user-controlled reaches a navigation
   API.
 
-See E10 for the standing decision.
+See E10 for what became of that decision.
 
-**E10.** Clearing the two advisories above means React Router 7, which is a major
-migration for a four-route application. We have not taken it, because the
-advisories are not reachable (E1) and a rushed major upgrade of the routing layer
-is a larger risk to correctness than the thing it would silence.
+**E10 — done, and not the way this entry expected.** It said we were not taking
+React Router 7, because the advisories were unreachable and a rushed major
+upgrade of the routing layer risked more than it silenced. The upgrade arrived
+anyway, on **2026-08-15**, inside a Dependabot production-group bump
+(`33d6cfc`) — the same day this roadmap was last updated, which is why the entry
+went on claiming the opposite for six weeks. The app is on `react-router-dom`
+7.18.4 today and `npm audit --omit=dev` is clean.
 
-The cost of that choice is honest and worth stating: `npm audit` reports two
-moderate findings, and anyone running it — including a prospective customer's
-security review — will see them. This entry exists so the answer is written down
-rather than reconstructed each time. Revisit when the app grows a route with a
-user-controlled destination, when an advisory becomes reachable, or when v7 is
-warranted on its own merits.
+Worth stating plainly: the migration this entry called a risk turned out to be a
+lockfile bump for a four-route application with hard-coded navigation targets,
+and the browser suite caught nothing because there was nothing to catch. The
+judgement was not wrong on the evidence available — a major version of the
+routing layer is the right thing to be careful about — but the cost was
+overestimated, and a dependency group took the decision before we did. The
+lesson kept here is the second half: a grouped bump can move a major version
+that an open roadmap entry says is being deliberately deferred, and nothing
+reported the contradiction.
 
 **E2 — done.** `ci.yml` declared no `permissions:` block, so it ran with whatever
 the repository default grants rather than least privilege. It now starts from
@@ -558,6 +624,20 @@ window is too narrow to observe at all, though the responsiveness guarantee
 holds regardless of how fast the underlying crypto happens to be — it comes
 from moving the work off-thread, not from the operation being slow enough to
 catch in the act.
+
+**E12 — done.** Maps saved from the web app lived in `localStorage` as plain
+JSON, so a user's real identifier names sat readable in their browser profile
+for as long as the profile existed — on a shared or managed machine, for anyone
+with the profile. They are now encrypted at rest, each ciphertext bound to its
+own entry so one cannot be swapped for another, and the plaintext copies earlier
+builds left behind are deleted once at startup, before the first render, on
+whichever page the load lands. Blocked storage does not throw; a browser that
+refuses `localStorage` gets a working app rather than a crash.
+
+Deliberately no migration: the old entries are removed rather than re-encrypted.
+Re-encrypting silently would have required the key at a moment the user had not
+asked for anything, and the data it would have preserved is a convenience copy
+of a map they can export.
 
 **Not doing:** a bug bounty. Handling reports properly requires a response
 capacity CE does not have; [SECURITY.md](./SECURITY.md) describes what we can
