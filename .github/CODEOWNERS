@@ -1,0 +1,8 @@
+# Review routing. GitHub requests a review from the owner of every path a pull
+# request touches — this file is the only thing that makes that automatic, and
+# without it a PR against the engine or the release pipeline could sit unseen.
+#
+# One owner today, because that is the truth about this repository rather than
+# an aspiration. Add a path-specific line when someone else takes a component.
+
+* @DlgSHi
