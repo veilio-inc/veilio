@@ -21,15 +21,43 @@ engine in your own process, and neither opens a network connection.
 |                                       |                                                                                                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`@veilio-inc/cli`](../cli/README.md) | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential — for pipes, pre-commit hooks and CI.                 |
-| [`@veilio-inc/mcp`](../mcp/README.md) | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent only ever sees `__CLS__1.__FN__2()`. |
+| [`@veilio-inc/mcp`](../mcp/README.md) | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent sees `__CLS__1.__FN__2()`, not the real names. |
 
 They share one symbol map, so you can mask inside an agent and restore from a
 terminal, or the reverse.
 
-> Neither is on npm yet. They live here, they are tested here, and the install
-> instructions land in the same commit that publishes them — a README that tells
-> you to install something the registry does not have is worse than one that says
-> nothing.
+```bash
+npm install -g @veilio-inc/cli    # the `veilio` command
+npx -y @veilio-inc/mcp --root .   # the MCP server, as an agent launches it
+```
+
+## What it hides, and what it does not
+
+Masked:
+
+- every identifier the language does not define — classes, functions,
+  variables, properties, and the words of import paths — as `__CLS__n`,
+  `__FN__n`, `__VAR__n`, `__PKG__n`;
+- the words inside string literals — URL paths, error messages, the table and
+  column names in SQL — as `__STR__n`;
+- bank account, card and PESEL numbers (reversibly), and credentials
+  (irreversibly — see below).
+
+Not masked:
+
+- **comments**, on purpose (below). The result's `comments` counts how much
+  prose goes out as written;
+- **names written entirely in capitals** — constants, enum members, environment
+  variable names: `ACME_TENANT_ID`, `process.env.ACME_API_KEY`. They stay
+  readable so that SQL keywords and `MAX_RETRIES` stay code, which means a
+  company or customer name inside one goes out as written;
+- names of one or two characters, language keywords, and standard-library names;
+- numbers, and the shape of the program: its control flow and the structure of
+  its SQL and URLs.
+
+So what holds is: no mixed- or lower-case internal identifier, no string
+contents and no credential reaches the model. Not "the model cannot tell what
+this code does" — the shape and one comment will often say it is billing code.
 
 ## Ten languages, not one
 

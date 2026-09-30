@@ -1,12 +1,17 @@
 # @veilio-inc/mcp
 
-MCP server that lets a coding agent work on your code **without the real identifiers ever entering its context.**
+MCP server that lets a coding agent read your code **without the real identifiers entering its context.** What masking does and does not hide: [the engine's README](../engine/README.md#what-it-hides-and-what-it-does-not).
 
 ## Why path-based tools
 
 A naive MCP anonymizer takes source code as a tool argument. That is self-defeating: to call it, the agent must already hold the real code — so the identifiers are already in the model's context and nothing was protected.
 
 The primary tools here take a **file path**. The server reads the file in its own process and returns only the masked text. The agent learns `__CLS__1.__FN__2()` and never sees `PaymentGateway.chargeCard()`.
+
+That holds on the way in. On the way back, `restore_text` returns the restored
+text — the real names in it — to whoever called it. When the agent calls it, the
+names are in its context from then on. To keep them out, have the agent hand the
+reply over and restore it in a terminal: `veilio restore` reads the same map.
 
 ```
 tools/call anonymize_file { "path": "src/gateway.ts" }
@@ -32,7 +37,8 @@ Two more lines appear when they apply, and both are the model's only warning
 that the masking did not cover something: one when no language marker matched
 (the file was masked as TypeScript, which may be wrong), and one counting the
 **comment prose left exactly as written** — names and ticket numbers in comments
-are still real.
+are still real. Names written entirely in capitals are not masked either
+(`ACME_TENANT_ID`); nothing counts those.
 
 ## Tools
 
