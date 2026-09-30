@@ -87,12 +87,12 @@ function Section({
  *  as information rather than as a failure. Ranking both as warnings would make
  *  the panel noise, and a panel people dismiss is worse than no panel. */
 export default function RestoreReportPanel({ report }: Props) {
-  const { resolved, missing, unresolved } = report
+  const { resolved, missing, unresolved, altered } = report
   const total = resolved.length + missing.length
 
-  if (total === 0 && unresolved.length === 0) return null
+  if (total === 0 && unresolved.length === 0 && altered.length === 0) return null
 
-  const clean = missing.length === 0 && unresolved.length === 0
+  const clean = missing.length === 0 && unresolved.length === 0 && altered.length === 0
 
   return (
     <div className="surface" style={{ overflow: 'hidden' }}>
@@ -140,6 +140,15 @@ export default function RestoreReportPanel({ report }: Props) {
             title={`${unresolved.length} token${unresolved.length === 1 ? '' : 's'} the map cannot explain`}
             explanation="The model invented or altered these. They correspond to nothing and are still in your output - replace them by hand."
             tokens={unresolved}
+          />
+        )}
+
+        {altered.length > 0 && (
+          <Section
+            color="var(--danger)"
+            title={`${altered.length} placeholder${altered.length === 1 ? '' : 's'} whose shape the AI changed`}
+            explanation="The model changed their case or underscores, so no map can restore them. They are still in your output - ask the model to use the placeholders exactly as given, or replace them by hand."
+            tokens={altered}
           />
         )}
 

@@ -56,6 +56,13 @@ describe('the shared restore cases, through restore_text', () => {
       expect(r.text).not.toMatch(/left as is/)
     // Neither kind is also called invented by the AI (review).
     expect(r.text).not.toMatch(/invented or altered/)
+
+    // strict (spec 029): refused exactly when the restored text would still hold
+    // a placeholder; otherwise the same text.
+    const leaves = /__[A-Z][A-Z0-9_]*__\d/.test(c.restored.replace(/__REDACTED_\w+__/g, ''))
+    const s = callTool('restore_text', { text: c.text, strict: true }, ctxWith(c.own))
+    expect(s.isError ?? false, s.text).toBe(leaves)
+    expect(restoredPart(s.text)).toBe(leaves ? '' : c.restored)
   })
 })
 
@@ -68,6 +75,15 @@ describe('when the team layer is needed but not there', () => {
     expect(r.isError).toBe(true)
     expect(r.text).toMatch(/__FN__1[\s\S]*team key is locked[\s\S]*veilio team unlock/)
     expect(restoredPart(r.text)).toBe('x.__FN__1()')
+  })
+
+  it('strict, key locked: an error naming `veilio team unlock`, and no text', async () => {
+    await primeNamespace((await teamScenario(fetchMock, { maps, locked: true })).home)
+    const r = callTool('restore_text', { text: 'x.__FN__1()', strict: true }, ctxWith({}))
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/veilio team unlock/)
+    expect(r.text).toMatch(/strict: the restored text is withheld - __FN__1/)
+    expect(r.text).not.toContain('--- restored ---')
   })
 
   it('anonymize says why it is on the local namespace', async () => {

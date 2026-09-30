@@ -1101,13 +1101,12 @@ export function restore(
  *  already been substituted by then, so whatever still looks like a placeholder
  *  is by definition something the map could not account for.
  *
- *  Deliberately uses the strict `PLACEHOLDER_SCAN` and does no fuzzy matching. A
+ *  `unresolved` uses the strict `PLACEHOLDER_SCAN` and does no fuzzy matching. A
  *  case-insensitive scan would flag every Python dunder — `__init__`, `__name__`
  *  — as a mangled placeholder, and a panel that cries wolf is worse than no
- *  panel. A re-cased `__fn__1` therefore shows up as `missing`, not
- *  `unresolved`, which is the honest classification: we know the placeholder
- *  never came back, and we are not going to guess that the lowercase token
- *  nearby is what it became. */
+ *  panel. A re-cased `__fn__1` goes to `altered` instead (spec 029), which is
+ *  anchored on the kinds the engine mints and a number, so a dunder never
+ *  matches. */
 function buildRestoreReport(
   map: SymbolMap,
   seen: ReadonlySet<string>,
@@ -1127,5 +1126,47 @@ function buildRestoreReport(
     unresolved.push(token)
   }
 
-  return { resolved, missing, unresolved }
+  return { resolved, missing, unresolved, altered: alteredPlaceholders(restored, map) }
+}
+
+/** Every placeholder kind the engine mints, without its underscores. */
+const MINTED_KINDS = [
+  ...Object.values(ROLE_BASES),
+  ...Object.values(REGULATED_BASES),
+  '__MANUAL__',
+].map((base) => base.replace(/_/g, ''))
+
+/** A minted kind in any case, with one to three underscores on each side, a
+ *  number, and up to three trailing underscores. Not preceded by a letter, digit
+ *  or underscore, so it never starts inside a name (`tmp_fn_1`, `x__fn__1`); it
+ *  may be followed by one, because a model gluing a word to a placeholder it
+ *  mangled (`__cls__1Factory`) is still a placeholder nothing can restore. */
+const NEAR_PLACEHOLDER = new RegExp(
+  `(?<![A-Za-z0-9_$])_{1,3}(?:${MINTED_KINDS.join('|')})_{1,3}\\d+_{0,3}`,
+  'gi'
+)
+
+/**
+ * Placeholders whose shape the model changed - case or underscores (`__fn__1`,
+ * `_FN__1`) - found in `text`, each once, in order of first appearance.
+ *
+ * Not placeholders to the engine, so no map can restore them and `unresolved`
+ * does not see them: until spec 029 every surface passed them through without a
+ * word. Anchored on the kinds the engine mints and a number, so an ordinary name
+ * (`tmp_fn_1`), a dunder (`__init__`), an unknown kind (`__FOO__1`) and a
+ * redacted credential never match; an exact placeholder is `resolved` or
+ * `unresolved`, never this.
+ *
+ * Given the map, a token that is one of its real names is not altered: the
+ * user's own `_str_1` was masked and restored exactly (code review - without
+ * this, --strict refused correct output). `restore()` always passes it; a
+ * model-introduced name of that shape, in new code, is still named.
+ */
+export function alteredPlaceholders(text: string, map: SymbolMap = {}): string[] {
+  const realNames = new Set(Object.values(map))
+  const found = new Set<string>()
+  for (const [token] of text.matchAll(new RegExp(NEAR_PLACEHOLDER))) {
+    if (!isPlaceholder(token) && !realNames.has(token)) found.add(token)
+  }
+  return [...found]
 }

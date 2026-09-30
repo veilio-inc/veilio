@@ -10,6 +10,7 @@ const report = (over: Partial<RestoreReport> = {}): RestoreReport => ({
   resolved: [],
   missing: [],
   unresolved: [],
+  altered: [],
   ...over,
 })
 
@@ -86,5 +87,26 @@ describe('RestoreReportPanel', () => {
 
     expect(screen.getByText('__FN__4')).toBeTruthy()
     expect(screen.getByText('0 / 0 restored')).toBeTruthy()
+  })
+
+  // Spec 029: a placeholder whose case or underscores the model changed is not a
+  // placeholder to the map, so it restored to nothing - and said nothing.
+  it('names placeholders whose shape the AI changed, and is not clean', () => {
+    render(
+      <RestoreReportPanel
+        report={report({ resolved: ['__CLS__1', '__FN__1'], altered: ['__fn__1'] })}
+      />
+    )
+    expect(screen.getByText('1 placeholder whose shape the AI changed')).toBeTruthy()
+    expect(screen.getByText('__fn__1')).toBeTruthy()
+    expect(screen.queryByText(/came back exactly as it was sent/)).toBeNull()
+  })
+
+  it('shows even when an altered placeholder is the only finding', () => {
+    const { container } = render(
+      <RestoreReportPanel report={report({ altered: ['_FN__2', '__str__3'] })} />
+    )
+    expect(container.innerHTML).not.toBe('')
+    expect(screen.getByText('2 placeholders whose shape the AI changed')).toBeTruthy()
   })
 })

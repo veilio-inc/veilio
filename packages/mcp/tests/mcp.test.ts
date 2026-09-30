@@ -336,6 +336,64 @@ describe('restore_text', () => {
 // caller here is the model, and the model is usually what broke the
 // placeholder. Told which token it mangled, it can go back and fix its own
 // reply — a correction loop no human-facing panel can close.
+// A reader asked: when the model hands back a patch with a placeholder it
+// invented or half-copied, refuse or pass through? Passed through and named by
+// default; `strict` refuses, with the report and without the text. A
+// placeholder whose shape the model changed was passed through without a word.
+describe('restore_text — altered placeholders and strict', () => {
+  function seedMap() {
+    write('billing.ts', TS)
+    call('anonymize_file', { path: 'billing.ts' })
+  }
+
+  it('names a placeholder whose shape the model changed', () => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1().__fn__1()' })
+    expect(res.isError).toBeFalsy()
+    expect(res.text).toMatch(/WARNING: left as is: __fn__1[\s\S]*shape the AI changed/)
+    expect(res.text).toContain('--- restored ---\nnew PaymentGateway().__fn__1()')
+  })
+
+  it('strict, clean: the restored text, as usual', () => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1()', strict: true })
+    expect(res.isError).toBeFalsy()
+    expect(res.text).toContain('--- restored ---\nnew PaymentGateway()')
+  })
+
+  it.each([
+    ['an invented placeholder', 'new __CLS__1().__FN__9()', '__FN__9'],
+    ['an altered one', 'new __CLS__1().__fn__1()', '__fn__1'],
+  ])('strict, %s: an error naming it, and no restored text', (_what, text, token) => {
+    seedMap()
+    const res = call('restore_text', { text, strict: true })
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain(token)
+    expect(res.text).toMatch(/strict: the restored text is withheld/)
+    expect(res.text).not.toContain('--- restored ---')
+    expect(res.text).not.toContain('PaymentGateway')
+  })
+
+  // Code review: `strict: "true"` (a string, from a template or an env var)
+  // silently meant not strict - the one direction this flag must not fail in.
+  it.each(['true', 1])('strict must be a boolean: %j is an error, and no text', (strict) => {
+    seedMap()
+    const res = call('restore_text', { text: 'new __CLS__1().__FN__9()', strict })
+    expect(res.isError).toBe(true)
+    expect(res.text).toMatch(/strict/)
+    expect(res.text).not.toContain('PaymentGateway')
+  })
+
+  it('strict: a credential redacted on purpose is not a failure', () => {
+    seedMap()
+    const res = call('restore_text', {
+      text: 'new __CLS__1(__REDACTED_STRIPE_KEY_1__)',
+      strict: true,
+    })
+    expect(res.isError).toBeFalsy()
+  })
+})
+
 describe('restore_text — round-trip report', () => {
   function seedMap() {
     write('billing.ts', TS)

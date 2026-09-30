@@ -28,7 +28,7 @@ behavior; it only unlocks the four commands below that name Cloud explicitly.
 | Command              | Purpose                                                               |
 | -------------------- | --------------------------------------------------------------------- |
 | `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
-| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. |
+| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
 | `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
 | `map`                | Show the symbol map (`--clear` to wipe it).                           |
 
@@ -99,7 +99,8 @@ a plan feature the web app couldn't.
 -p, --preamble          Prepend the downstream-AI note and placeholder legend
 -m, --map <path>        Use a specific map file
     --json              Machine-readable output (scan, map)
-    --strict            scan: also fail on advisory findings
+    --strict            scan: also fail on advisory findings. restore: write
+                        nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
 -q, --quiet             Suppress the all-clear summary (findings always show)
@@ -108,6 +109,13 @@ a plan feature the web app couldn't.
 -h, --help              Show this help
 -v, --version           Show the version
 ```
+
+`restore --strict` is for pipelines that write the restored text somewhere: if a
+placeholder would be left in it — one the AI invented, one whose shape it changed
+(`__fn__1`), one the team's maps disagree on, or one the team's maps could not be
+read for — nothing goes to stdout and it exits 1. Without it, restore writes the
+text, placeholders and all, names each one on stderr and exits 0. A credential
+redacted on purpose is not a placeholder and never fails it.
 
 `--keep-docs` is worth knowing about: the default strip removes JSDoc along with
 the narration and TODOs, which is wrong when the model was *asked* to document
@@ -123,7 +131,7 @@ Transformed code goes to **stdout**; summaries, warnings and errors go to **stde
 | Code | Meaning                                |
 | ---- | -------------------------------------- |
 | 0    | Clean                                  |
-| 1    | Findings that should stop the pipeline |
+| 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder `restore --strict` would have left |
 | 2    | Usage or IO error                      |
 
 As a pre-commit hook:

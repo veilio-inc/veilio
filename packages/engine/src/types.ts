@@ -105,9 +105,9 @@ export interface RestoreReport {
   /** Map placeholders that never appeared in the response.
    *
    *  Not inherently an error: a model answering about one function legitimately
-   *  omits the rest of the file. It *is* the only signal available when a model
-   *  renames or re-cases a placeholder, since neither leaves anything
-   *  placeholder-shaped behind to detect. Present it as information, not as a
+   *  omits the rest of the file. It is the only signal available when a model
+   *  renames a placeholder, which leaves nothing placeholder-shaped behind; a
+   *  re-cased one is also in `altered`. Present it as information, not as a
    *  failure. */
   missing: string[]
   /** Placeholder-shaped tokens left in the output that no map entry explains —
@@ -117,6 +117,10 @@ export interface RestoreReport {
    *  `__REDACTED_*__` tokens are excluded. Those are credentials the engine
    *  deliberately never wrote to the map, so remaining is exactly correct. */
   unresolved: string[]
+  /** Placeholders whose case or underscores the model changed (`__fn__1`,
+   *  `_FN__1`), left in the output: no map can restore them (spec 029). Each
+   *  once, in order of first appearance; never also `unresolved`. */
+  altered: string[]
 }
 
 export interface RestoreResult {

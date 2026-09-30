@@ -46,7 +46,7 @@ are still real. Names written entirely in capitals are not masked either
 |---|---|
 | `anonymize_file` | Read a file and return only its masked form. **Preferred.** |
 | `anonymize_text` | Mask text the agent already holds (a user paste). Not for file contents. |
-| `restore_text` | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. |
+| `restore_text` | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). With `strict: true`, it returns an error naming them instead of the text. |
 | `scan_secrets` | Detect credentials without modifying anything, and without putting the values in context. |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names. |
 
@@ -114,6 +114,11 @@ the output, each named in a warning rather than substituted:
 - one this project's store and the team use for **different** identifiers, and
 - one this project **numbered on its own** while the team was out of reach.
 
+Two more are left because nothing can restore them, and are named too: one no
+map explains (`__FN__9`, "invented or altered by the AI"), and one whose **shape**
+the AI changed — case or underscores (`__fn__1`, `_FN__1`). A real name of that
+shape in your own code (`_str_1`) restored exactly and is not named.
+
 Either could be restored to a name that is not the one a teammate meant, and a
 confident wrong identifier is worse than a token the reader can see is
 unresolved. They are also excluded from the "invented or altered" count, since
@@ -124,6 +129,33 @@ locked, or Cloud could not be read — the call comes back as an **error result*
 saying which, even if some placeholders did restore. An older self-hosted Cloud
 that merges the namespace server-side is used for anonymizing but never for
 restoring: it cannot tell a disputed placeholder from a first-written one.
+
+### `strict`: refuse instead of returning half-restored text
+
+With `strict: true`, if any of those four would be left in the text, the call
+comes back as an **error result** carrying the report and the warnings, and
+**without** the text:
+
+```
+tools/call restore_text { "text": "new __CLS__1().__fn__1()", "strict": true }
+
+→ isError: true
+  Restored 1 of 3 placeholders.
+
+  2 placeholder(s) never appeared in the text: __FN__1, __VAR__1. Expected if
+  the text only covered part of the source; if it covered all of it, those names
+  came back renamed and are not recoverable from it.
+
+  WARNING: left as is: __fn__1. It looks like a placeholder whose shape the AI
+  changed (case or underscores), so nothing could restore it. Ask the AI to use
+  the placeholders exactly as given.
+
+  strict: the restored text is withheld - __fn__1 would have been left in it.
+```
+
+`strict` must be `true` or `false`; anything else (`"true"`) is an error, never
+"not strict". A credential redacted on purpose is not a placeholder and never
+fails it. Without `strict`, the text comes back with the warnings, as before.
 
 ### After a lapse
 
