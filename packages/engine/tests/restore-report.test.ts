@@ -87,7 +87,7 @@ describe('restore — report', () => {
   it('reports nothing for an empty map and clean text', () => {
     const { report } = restore('const a = 1', {}, { strip: 'none' })
 
-    expect(report).toEqual({ resolved: [], missing: [], unresolved: [] })
+    expect(report).toEqual({ resolved: [], missing: [], unresolved: [], altered: [] })
   })
 
   it('is unaffected by comment stripping', () => {

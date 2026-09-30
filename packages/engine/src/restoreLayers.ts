@@ -83,3 +83,13 @@ export function locallyNumberedNote(placeholders: readonly string[]): string {
     'so restoring would be a guess.'
   )
 }
+
+/** How the CLI and the MCP name the altered placeholders they left (spec 029). */
+export function alteredNote(placeholders: readonly string[]): string {
+  const one = placeholders.length === 1
+  return (
+    `left as is: ${placeholders.join(', ')}. ${one ? 'It looks' : 'They look'} like ` +
+    `${one ? 'a placeholder' : 'placeholders'} whose shape the AI changed (case or underscores), ` +
+    `so nothing could restore ${one ? 'it' : 'them'}. Ask the AI to use the placeholders exactly as given.`
+  )
+}

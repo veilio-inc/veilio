@@ -172,10 +172,20 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     or an explicit list of `StrippedItemType`. Worth setting: `'all'` deletes
     JSDoc, and when a model was *asked* to document its output that is
     destroying requested work rather than removing noise.
-  - `report` — `{ resolved, missing, unresolved }`: which placeholders came back,
-    which never appeared, and which placeholder-shaped tokens the map cannot
-    explain. A model that renames `__FN__1` leaves no trace in the restored text,
-    so this is the only place that failure is visible.
+  - `report` — `{ resolved, missing, unresolved, altered }`: which placeholders
+    came back, which never appeared, which placeholder-shaped tokens the map
+    cannot explain, and which placeholders the model changed the case or
+    underscores of (`__fn__1`, `_FN__1`) — no map can restore those. A model that
+    renames `__FN__1` leaves no trace in the restored text, so `missing` is the
+    only place that failure is visible. `altered` is new in 1.8.0 and always
+    present: code that builds a report by hand (a test fixture, say) needs
+    `altered: []` to type-check.
+- `alteredPlaceholders(text)` → `string[]` — the `altered` rule on its own:
+  tokens of a kind the engine mints (`CLS`, `FN`, `VAR`, `PKG`, `STR`, `MANUAL`,
+  `IBAN`, `PAN`, `PESEL`) with changed case or underscores. An ordinary name
+  (`tmp_fn_1`), a dunder or a redacted credential never matches.
+  `alteredPlaceholders(text, map)` also leaves out the map's real names, as
+  `restore()` does: your own `_str_1` restored exactly is not altered.
 - `isPlaceholder(token)` → `boolean` — whether a string is a placeholder this
   engine could have produced. For validating a map that arrived from somewhere
   else before trusting its keys.
