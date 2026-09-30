@@ -28,7 +28,12 @@ afterEach(() => vi.unstubAllGlobals())
 
 const OWN = { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' }
 
-async function run(stdin: string, argv: string[] = ['restore'], own = OWN, home?: string) {
+async function run(
+  stdin: string,
+  argv: string[] = ['restore'],
+  own: Record<string, string> = OWN,
+  home?: string
+) {
   const cwd = mkdtempSync(join(tmpdir(), 'veilio-strict-'))
   if (Object.keys(own).length) saveMap(resolveMapPath(null, cwd), own)
   let out = ''
