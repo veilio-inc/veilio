@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "description": "Veilio Community Edition — self-hostable, frontend-only AI code anonymizer",
+  "description": "Veilio Community Edition — self-hostable, frontend-only two-way code anonymizer for AI",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "private": true,
