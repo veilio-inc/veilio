@@ -9,21 +9,22 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  alteredNote,
   anonymize,
+  BIN_NAME,
   detectSecrets,
+  disputedNote,
   hasBlockingSecrets,
+  LANGUAGE_LABELS,
+  locallyNumberedNote,
   restore,
   restoreLayers,
-  disputedNote,
-  locallyNumberedNote,
-  summarizeSecrets,
-  withAiPreamble,
-  LANGUAGE_LABELS,
-  STRIPPABLE_TYPES,
-  BIN_NAME,
-  STORE_DIR,
   type SecretFinding,
+  STORE_DIR,
+  STRIPPABLE_TYPES,
+  summarizeSecrets,
   type TeamLayer,
+  withAiPreamble,
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
@@ -201,7 +202,6 @@ export async function runRestore(
   // its output — so the escape hatch is a flag, not a code change.
   const strip = args.keepDocs ? STRIPPABLE_TYPES.filter((t) => t !== 'jsdoc') : 'all'
   const result = restore(source, map, { strip })
-  io.stdout(result.restored)
 
   const { resolved } = result.report
   // Measured against this project's map, not the whole team layer: a team of
@@ -212,6 +212,16 @@ export async function runRestore(
   const unresolved = result.report.unresolved.filter(
     (p) => !disputed.includes(p) && !localOnly.includes(p)
   )
+  const altered = result.report.altered
+
+  // --strict: a restore that leaves any placeholder in the text writes nothing,
+  // so `... | veilio restore --strict > file` cannot produce a file that still
+  // holds one. A credential redacted on purpose is not a placeholder. The
+  // team's maps failing needs no case of its own: a placeholder they were needed
+  // for is unresolved.
+  const left = [...unresolved, ...disputed, ...localOnly, ...altered]
+  const refused = args.strict && left.length > 0
+  if (!refused) io.stdout(result.restored)
 
   // Findings, never under --quiet: the output still holds these placeholders.
   if (teamNote) io.stderr(`${BIN_NAME}: ${teamNote}\n`)
@@ -228,8 +238,16 @@ export async function runRestore(
         `${unresolved.join(', ')}\n`
     )
     io.stderr(
-      `${BIN_NAME}: the AI invented or altered these; they are still in the output above.\n`
+      `${BIN_NAME}: the AI invented or altered these; ${refused ? 'nothing was written (--strict)' : 'they are still in the output above'}.\n`
     )
+  }
+  if (altered.length > 0) io.stderr(`${BIN_NAME}: ${alteredNote(altered)}\n`)
+
+  if (refused) {
+    io.stderr(
+      `${BIN_NAME}: --strict: nothing written - ${left.join(', ')} would have been left in the text.\n`
+    )
+    return EXIT_FINDINGS
   }
 
   if (!args.quiet) {
@@ -246,10 +264,10 @@ export async function runRestore(
     }
   }
 
-  // Deliberately still EXIT_OK. `restore` writes usable text to stdout even when
-  // a token is unexplained, and exiting non-zero would break every
-  // `... | veilio restore > file` pipeline under `set -e` for a warning the user
-  // can act on. Gating that behind a flag is a separate decision from reporting.
+  // Deliberately still EXIT_OK without --strict. `restore` writes usable text to
+  // stdout even when a token is unexplained, and exiting non-zero would break
+  // every `... | veilio restore > file` pipeline under `set -e` for a warning the
+  // user can act on. --strict (above) is the opt-in refusal.
   return EXIT_OK
 }
 
@@ -352,7 +370,8 @@ OPTIONS
   -p, --preamble          Prepend the downstream-AI note and placeholder legend
   -m, --map <path>        Use a specific map file
       --json              Machine-readable output (scan, map)
-      --strict            scan: also fail on advisory findings
+      --strict            scan: also fail on advisory findings. restore: write
+                          nothing and exit 1 if a placeholder would be left
       --keep-docs         restore: keep JSDoc blocks the model wrote
   -f, --force             Allow a map write that would drop existing entries
   -q, --quiet             Suppress the all-clear summary (findings always show)

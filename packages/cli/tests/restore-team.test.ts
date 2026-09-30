@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { analyzeTeamNamespace } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
-import { EXIT_ERROR, type Io } from '../src/commands.js'
+import { EXIT_ERROR, EXIT_FINDINGS, type Io } from '../src/commands.js'
 import { saveMap, resolveMapPath } from '../src/store.js'
 import { RESTORE_CASES } from '../../engine/tests/fixtures/restore-cases.js'
 import { mapsFor, teamScenario } from './helpers/team-scenario.js'
@@ -64,6 +64,13 @@ describe('the shared restore cases, through `veilio restore`', () => {
     // Neither kind is also called invented by the AI.
     expect(r.err).not.toMatch(/invented or altered/)
     expect(r.code).toBe(0)
+
+    // --strict (spec 029): refused exactly when the restored text would still
+    // hold a placeholder - nothing written, exit 1; otherwise the same text.
+    const leaves = /__[A-Z][A-Z0-9_]*__\d/.test(c.restored.replace(/__REDACTED_\w+__/g, ''))
+    const s = await run(c.text, c.own, home, ['restore', '--strict'])
+    expect(s.code).toBe(leaves ? EXIT_FINDINGS : 0)
+    expect(s.out).toBe(leaves ? '' : c.restored)
   })
 })
 

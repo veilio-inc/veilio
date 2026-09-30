@@ -40,7 +40,7 @@ are still real.
 |---|---|
 | `anonymize_file` | Read a file and return only its masked form. **Preferred.** |
 | `anonymize_text` | Mask text the agent already holds (a user paste). Not for file contents. |
-| `restore_text` | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. |
+| `restore_text` | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). With `strict: true`, it returns an error naming them instead of the text. |
 | `scan_secrets` | Detect credentials without modifying anything, and without putting the values in context. |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names. |
 

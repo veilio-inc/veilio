@@ -34,6 +34,7 @@ import {
   PRODUCT_NAME,
   type RestoreReport,
   type SecretFinding,
+  alteredNote,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -86,6 +87,15 @@ function str(args: Record<string, unknown>, key: string, required = false): stri
     return undefined
   }
   if (typeof value !== 'string') throw new ToolError(`argument "${key}" must be a string`)
+  return value
+}
+
+/** An optional boolean. Anything else is an error, not `false`: a `strict: "true"`
+ *  read as not strict would hand back the text strict exists to withhold. */
+function bool(args: Record<string, unknown>, key: string): boolean {
+  const value = args[key]
+  if (value === undefined || value === null) return false
+  if (typeof value !== 'boolean') throw new ToolError(`argument "${key}" must be true or false`)
   return value
 }
 
@@ -406,12 +416,19 @@ export const TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Text containing placeholders.' },
+        strict: {
+          type: 'boolean',
+          description:
+            'Refuse instead of returning text that still holds a placeholder (invented, ' +
+            "altered, disputed, or the team's maps unreadable): an error naming them, and no text.",
+        },
       },
       required: ['text'],
       additionalProperties: false,
     },
     handler: (args, ctx) => {
       const text = str(args, 'text', true)
+      const strict = bool(args, 'strict')
       const own = loadMap(resolveMapPath(ctx.mapPath, ctx.cwd))
       // The one restore rule (spec 028), shared with the web app and the CLI:
       // the team's maps - aliases included, disputed placeholders left out -
@@ -446,15 +463,31 @@ export const TOOLS: ToolDefinition[] = [
         ),
       }
       const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
+      const altered = result.report.altered
+      const left = [...report.unresolved, ...disputed, ...localOnly, ...altered]
       const warnings = [
         ...(refreshing ? [loadingNote(refreshing)] : []),
         ...(note ? [`WARNING: ${note}`] : []),
         ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
+        ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used
       // (locked, unreadable): not a success, whatever else restored (FR-005).
       const failed = found.status === 'locked' || found.status === 'unavailable'
+      // strict: nothing that still holds a placeholder is handed back (the CLI's
+      // --strict, the same rule). A credential redacted on purpose is not one.
+      // A placeholder the team's maps were needed for is in `left` already.
+      if (strict && left.length > 0) {
+        return {
+          isError: true,
+          text:
+            `Restored ${result.report.resolved.length} of ${counted} placeholders.` +
+            `${restoreReportLines(report)}` +
+            `${warnings.length ? `\n\n${warnings.join('\n')}` : ''}\n\n` +
+            `strict: the restored text is withheld - ${left.join(', ')} would have been left in it.`,
+        }
+      }
       return {
         isError: note !== null && failed,
         text:
