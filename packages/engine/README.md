@@ -1,6 +1,6 @@
 # @veilio-inc/engine
 
-Two-way code anonymizer. Replace real identifiers in source code with role-typed
+Two-way code anonymizer for AI. Replace real identifiers in source code with role-typed
 placeholder tokens (`__CLS__1`, `__FN__2`, …) **before** sending it to an LLM,
 then restore them in the reply.
 

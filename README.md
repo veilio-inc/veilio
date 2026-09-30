@@ -6,7 +6,7 @@
 
 <p align="center"><em>Send the problem. Keep the names.</em></p>
 
-Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back ([what it hides, and what it does not](packages/engine/README.md#what-it-hides-and-what-it-does-not)). Source code never leaves your machine: the web app runs the engine in your browser, and the terminal and agent surfaces run it in your own process.
+Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back ([what it hides, and what it does not](packages/engine/README.md#what-it-hides-and-what-it-does-not)). Source code never leaves your machine: the web app runs the engine in your browser, and the terminal and agent surfaces run it in your own process.
 
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
