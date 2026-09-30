@@ -28,7 +28,7 @@ behavior; it only unlocks the four commands below that name Cloud explicitly.
 | Command              | Purpose                                                               |
 | -------------------- | --------------------------------------------------------------------- |
 | `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
-| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. |
+| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
 | `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
 | `map`                | Show the symbol map (`--clear` to wipe it).                           |
 
@@ -131,7 +131,7 @@ Transformed code goes to **stdout**; summaries, warnings and errors go to **stde
 | Code | Meaning                                |
 | ---- | -------------------------------------- |
 | 0    | Clean                                  |
-| 1    | Findings that should stop the pipeline |
+| 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder `restore --strict` would have left |
 | 2    | Usage or IO error                      |
 
 As a pre-commit hook:

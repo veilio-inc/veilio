@@ -47,6 +47,7 @@ Or run either without installing: `npx -y @veilio-inc/cli --help`.
 ```bash
 veilio scrub src/billing.ts | pbcopy     # anonymize; the map goes to .veilio/map.json
 pbpaste | veilio restore                 # put the real names back into the AI's answer
+pbpaste | veilio restore --strict > f.ts # the same, but write nothing if a placeholder would be left
 git diff --cached | veilio scan          # credentials only; exits 1 on findings
 veilio map                               # show the current symbol map (--clear to wipe it)
 ```
@@ -59,8 +60,14 @@ veilio map                               # show the current symbol map (--clear 
   `--secrets warn|off` changes how detected credentials are handled (default: redact,
   irreversibly).
 
-Exit codes: `0` clean, `1` findings (use it to stop a commit or a CI job),
+Exit codes: `0` clean, `1` findings (use it to stop a commit or a CI job): a
+credential from `scan`, or a placeholder `restore --strict` would have left;
 `2` usage or I/O error.
+
+`restore` names every placeholder it could not put back, on stderr: one no map
+explains, one whose shape the AI changed (`__fn__1` for `__FN__1`), one your
+team's maps disagree on. Without `--strict` the text is still written, so read
+the warnings before you paste it.
 
 ---
 
@@ -103,7 +110,7 @@ Once connected, your assistant gets five tools:
 |---|---|
 | `anonymize_file` | Reads a file inside the project root and returns it anonymized - the real code never enters the assistant's context. |
 | `anonymize_text` | Anonymizes text you or the assistant pass in. |
-| `restore_text` | Puts real names back into an answer and strips AI noise. |
+| `restore_text` | Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder. |
 | `scan_secrets` | Reports credentials without putting their values in context. |
 | `symbol_map_summary` | Counts and categories in the current map, never the names. |
 
@@ -226,7 +233,10 @@ Veilio is a standard **stdio** MCP server: command `npx`, arguments
    The assistant calls `anonymize_file` and only ever sees placeholders.
 2. It answers in placeholders.
 3. *"Restore that answer with veilio."* - `restore_text` gives back real names.
-   Anything it could not restore is listed, never guessed.
+   Anything it could not restore is listed, never guessed. Ask for `strict` when
+   the answer is going straight into a file.
+   The restored text is in the assistant's context from then on; to keep the real
+   names out of it, restore in the terminal instead (`pbpaste | veilio restore`).
 
 Tell your assistant once, for example in `CLAUDE.md` or your client's rules file:
 *"Before reading source files, use the veilio `anonymize_file` tool; restore answers
@@ -243,4 +253,6 @@ with `restore_text`."*
 | `this account's plan does not include terminal access` | Sign-in worked; the plan needs changing in the web app. |
 | The client says the server failed to start | The client cannot find `npx`/`node`: use absolute paths (section 5). |
 | A placeholder is "left as is" on restore | Two of your team's saved maps give it different names; restoring would be a guess. Load the map the text was anonymized with. |
+| Restore names `__fn__1` as a placeholder "whose shape the AI changed" | The model re-cased or re-underscored `__FN__1`, so no map matches it. Ask it to use the placeholders exactly as given, or fix that spot by hand. |
+| `restore --strict` wrote nothing and exited 1 | A placeholder would have been left in the text; stderr names it. Fix the answer (or restore without `--strict` and fix it by hand). |
 | `veilio scrub` did not apply a new rule | Run `veilio rules pull`; `scrub` uses the saved copy and prints its age. |

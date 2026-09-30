@@ -13,6 +13,7 @@ Two-way AI code anonymizer. Strip real identifiers (`UserAuthService.validateSes
 ## Features
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
+- Restore names every placeholder it could not put back — invented by the AI, re-cased (`__fn__1`), or disputed between maps — never guesses; `veilio restore --strict` and the MCP's `strict` refuse instead
 - The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
 - Bank account (IBAN), payment card and PESEL numbers found by checksum and masked reversibly, so the round trip returns them; a live credential is destroyed instead and never enters the map
 - Maps saved to browser localStorage for convenience
