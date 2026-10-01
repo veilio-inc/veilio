@@ -93,8 +93,13 @@ veilio logout                 # revoke the session and remove local credentials
   7 days (0600, under `~/.veilio/`). Run it again after 7 days, after the team key
   is rotated, or after you join a team.
 - **Custom rules** (whitelist and replace, set in the web app) are applied by
-  `veilio scrub` from the copy `rules pull` saves. `scrub` stays offline and prints
-  how many rules it applied and how old the copy is; pull again after the rules change.
+  `veilio scrub` from the copy `rules pull` saves - rules are never fetched by
+  `scrub` - and it prints how many rules it applied and how old the copy is; pull
+  again after the rules change.
+- **Team numbering.** Signed in to a team with the key unlocked, `veilio scrub`
+  numbers from the team's maps, as the web app and the MCP server do, so your
+  terminal's placeholders mean the same thing to a teammate. Locked or offline, it
+  masks from the project's map and says so. Signed out, it makes no request.
 - Self-hosted: `veilio login --instance https://veilio.example.com`.
 
 Everything is stored under `~/.veilio/` (credential, team key, rules), each file

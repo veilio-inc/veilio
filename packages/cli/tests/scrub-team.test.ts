@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import { EXIT_OK, type Io } from '../src/commands.js'
-import { loadMap, resolveMapPath } from '../src/store.js'
+import { loadMap, resolveMapPath, saveMap } from '../src/store.js'
 import { mapsFor, teamScenario } from './helpers/team-scenario.js'
 
 /**
@@ -23,8 +23,14 @@ afterEach(() => vi.unstubAllGlobals())
 const TEAM = { __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' }
 const CODE = 'export class LedgerService { settleInvoice() {} reverseEntry() {} }\n'
 
-async function scrub(stdin: string, home?: string, argv: string[] = ['scrub']) {
+async function scrub(
+  stdin: string,
+  home?: string,
+  argv: string[] = ['scrub'],
+  own: Record<string, string> = {}
+) {
   const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-'))
+  if (Object.keys(own).length) saveMap(resolveMapPath(null, cwd), own)
   let out = ''
   let err = ''
   const io: Io = {
@@ -47,6 +53,19 @@ describe('veilio scrub, signed in to a team', () => {
     expect(r.code).toBe(EXIT_OK)
     expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__4() {} }\n')
     expect(r.err).toMatch(/Namespace: team/)
+  })
+
+  it('never hands a new name a number this project and the team use for different names', async () => {
+    // __FN__4 is localOnlyName in this project and teamOnlyName in the team: the
+    // overlay uses it for neither, and the next new name must not be given it.
+    const maps = mapsFor({
+      namespace: { ...TEAM, __FN__4: 'teamOnlyName' },
+      aliases: {},
+      conflicts: {},
+    })
+    const { home } = await teamScenario(fetchMock, { maps })
+    const r = await scrub(CODE, home, ['scrub'], { __FN__4: 'localOnlyName' })
+    expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__5() {} }\n')
   })
 
   it('keeps in the project map only the team entries the output used', async () => {

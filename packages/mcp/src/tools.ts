@@ -19,7 +19,6 @@
 import { readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
-  anonymize,
   detectSecrets,
   isPlaceholder,
   restore,

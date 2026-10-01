@@ -10,7 +10,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   alteredNote,
-  anonymize,
   BIN_NAME,
   detectSecrets,
   disputedNote,

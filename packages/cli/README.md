@@ -17,11 +17,13 @@ npm install -g @veilio-inc/cli     # or run it without installing:
 npx @veilio-inc/cli scrub src/billing.ts
 ```
 
-Requires Node 24 or newer. No account, no API key, and no network call on
-`scrub`, `restore`, `scan` or `map` — `packages/cli/tests/purity.test.ts` and
-`offline.test.ts` walk the import graph and trap the network globals to keep it
-that way. Signing in is entirely optional and adds nothing to those commands'
-behavior; it only unlocks the four commands below that name Cloud explicitly.
+Requires Node 24 or newer. Signed out, there is no account, no API key, and no
+network call on `scrub`, `restore`, `scan` or `map` — `packages/cli/tests/purity.test.ts`
+and `offline.test.ts` walk the import graph and trap the network globals to keep
+it that way. Signing in is optional. Signed in to a team, `scrub` and `restore`
+also read the team's maps (below), so a teammate's placeholders mean the same
+thing in your terminal; `scan` and `map` stay offline either way. To keep a
+signed-in `scrub` offline, `veilio logout` first.
 
 ## Commands
 
@@ -65,6 +67,21 @@ is. Pull again after the rules change; `logout` removes the copy.
 Three files, all `0600`, all under `~/.veilio/`: `credential.json` (the session,
 removed by `logout`), `rules.json` (the rules copy) and `team-keys.json` (the
 keys `team unlock` opened, kept seven days).
+
+### Scrubbing with the team's numbering
+
+Signed in to a team with the team key unlocked, `veilio scrub` numbers from the
+team's maps, as the web app and the MCP server do: a name the team already knows
+gets the team's placeholder, and a new name is numbered above the team's and
+this project's highest, so it can never take a number that means something else
+to a teammate. Only the team entries the output uses are kept in this project's
+map. The summary says `Namespace: team`.
+
+- **Locked or unreachable, it still masks** — from this project's map — and says
+  so on stderr, with the reason, even under `--quiet`: those placeholders may
+  clash with the team's.
+- **Signed out, it makes no request**, exactly as before. Signed in, it waits at
+  most **5 seconds** for Cloud.
 
 ### Restoring a teammate's placeholders
 
