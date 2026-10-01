@@ -10,7 +10,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   alteredNote,
-  anonymize,
   BIN_NAME,
   detectSecrets,
   disputedNote,
@@ -30,6 +29,7 @@ import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
+import { anonymizeOverTeam } from './team-anonymize.js'
 
 export interface Io {
   cwd: string
@@ -77,23 +77,30 @@ function summaryLine(findings: readonly SecretFinding[]): string {
   return parts.join(', ')
 }
 
-export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
+export async function runScrub(
+  args: ParsedArgs,
+  io: Io,
+  teamSource?: TeamNamespaceSource
+): Promise<number> {
   const source = await readInput(args, io)
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
   const existingMap = loadMap(mapPath)
-  // The account's custom rules, as last pulled. Read from disk, never fetched:
-  // scrub stays offline. Signed out means no rules, whatever the cache holds.
+  // The account's custom rules, as last pulled. Read from disk, never fetched.
+  // Signed out means no rules, whatever the cache holds.
   const credential = readCredential(io.home)
   const cached = credential ? readRules(credential, io.home) : null
 
-  const result = anonymize(source, {
+  // Signed in to a team: the team's namespace, as the web app and the MCP server
+  // number (spec 030, F11). Signed out: no request - scrub stays offline.
+  const found = teamSource ? await teamSource() : { team: null, note: null }
+  const { result, toPersist } = anonymizeOverTeam(
+    source,
     existingMap,
-    language: args.language,
-    secrets: args.secrets,
-    rules: cached?.rules,
-  })
+    found.team ?? { namespace: {}, highest: {} },
+    { language: args.language, secrets: args.secrets, rules: cached?.rules }
+  )
 
-  saveMap(mapPath, result.map, { force: args.force })
+  saveMap(mapPath, toPersist, { force: args.force })
   io.stdout(args.preamble ? withAiPreamble(result.anonymized, result.map) : result.anonymized)
 
   // Survives --quiet. Everything else here describes work that went right; this
@@ -103,6 +110,9 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
   // language whose comment syntax we did not apply had its prose left in the
   // clear. Output that looks anonymised and is not is the one thing a pipeline
   // must not swallow.
+  // A finding, not the summary: the placeholders may clash with the team's.
+  if (found.note) io.stderr(`${BIN_NAME}: ${found.note}\n`)
+
   if (result.languageFallback) {
     io.stderr(
       `${BIN_NAME}: no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +
@@ -111,9 +121,10 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
   }
 
   if (!args.quiet) {
-    const added = Object.keys(result.map).length - Object.keys(existingMap).length
+    if (found.team) io.stderr(`${BIN_NAME}: Namespace: team (the team's maps, from Cloud)\n`)
+    const added = Object.keys(toPersist).length - Object.keys(existingMap).length
     io.stderr(
-      `${BIN_NAME}: ${LANGUAGE_LABELS[result.language]} — ${added} new placeholder${added === 1 ? '' : 's'}, ${Object.keys(result.map).length} in map\n`
+      `${BIN_NAME}: ${LANGUAGE_LABELS[result.language]} — ${added} new placeholder${added === 1 ? '' : 's'}, ${Object.keys(toPersist).length} in map\n`
     )
     // Said every time, with the age: a whitelist rule the team has since
     // removed would still leave that name readable until the next pull.
@@ -157,6 +168,12 @@ export async function runScrub(args: ParsedArgs, io: Io): Promise<number> {
  * means no team layer - a local-only restore, as before spec 028.
  * `missing`: the placeholders this project's map could not explain.
  */
+/** Where `scrub` gets the team's namespace from (index.ts: Cloud, 5 s at most). */
+export type TeamNamespaceSource = () => Promise<{
+  team: { namespace: Record<string, string>; highest: Record<string, number> } | null
+  note: string | null
+}>
+
 export type TeamLayerSource = (
   missing: readonly string[]
 ) => Promise<{ team: TeamLayer | null; note: string | null }>

@@ -19,7 +19,6 @@
 import { readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
-  anonymize,
   detectSecrets,
   isPlaceholder,
   restore,
@@ -37,13 +36,9 @@ import {
   alteredNote,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
-import {
-  getNamespace,
-  mergeNamespace,
-  namespaceLine,
-  refreshNamespaceIfStale,
-} from './namespace.js'
+import { getNamespace, namespaceLine, refreshNamespaceIfStale } from './namespace.js'
 import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
+import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
 function loadingNote(why: 'unlocked' | 'retrying'): string {
@@ -109,14 +104,6 @@ function safeResolve(path: string, cwd: string): string {
     throw new ToolError(`path "${path}" is outside the project root`)
   }
   return abs
-}
-
-/** Whether `placeholder` appears in `text` as a whole token, not as a prefix of
- *  a longer one — `__CLS__1` must not match inside `__CLS__10`. Used to decide
- *  which team-namespace entries a masking result actually leaned on. */
-function appearsAsToken(text: string, placeholder: string): boolean {
-  const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).test(text)
 }
 
 function readTarget(
@@ -198,52 +185,6 @@ function rulesLine(r: ResolvedRules): string {
   return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
 }
 
-const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
-const FLOOR_MARKER = '\u0000floor:'
-
-/**
- * Anonymize with every NEW number above `floors[base]` (spec 017).
- *
- * The engine numbers above the highest number in the map it is given, so a
- * marker entry at the floor moves the counter there. Markers hold a NUL no
- * identifier contains, match nothing in the text, and are stripped from the
- * returned map. Only added above the map's own highest, where they cannot
- * overwrite a real entry. Same technique as the Cloud web app.
- */
-/** The team's highest number per base, raised to this project's own where higher. */
-function floorsWith(
-  highest: Record<string, number>,
-  local: Record<string, string>
-): Record<string, number> {
-  const floors = { ...highest }
-  for (const placeholder of Object.keys(local)) {
-    const m = NUMBERED.exec(placeholder)
-    if (m && Number(m[2]) > (floors[m[1]] ?? 0)) floors[m[1]] = Number(m[2])
-  }
-  return floors
-}
-
-function anonymizeAbove(
-  source: string,
-  options: Parameters<typeof anonymize>[1] & { existingMap: Record<string, string> },
-  floors: Record<string, number>
-): ReturnType<typeof anonymize> {
-  const inMap: Record<string, number> = {}
-  for (const p of Object.keys(options.existingMap)) {
-    const m = NUMBERED.exec(p)
-    if (m && Number(m[2]) > (inMap[m[1]] ?? 0)) inMap[m[1]] = Number(m[2])
-  }
-  const seeded = { ...options.existingMap }
-  for (const [base, floor] of Object.entries(floors)) {
-    if (floor > (inMap[base] ?? 0)) seeded[`${base}${floor}`] = `${FLOOR_MARKER}${base}`
-  }
-  const result = anonymize(source, { ...options, existingMap: seeded })
-  const map = Object.fromEntries(
-    Object.entries(result.map).filter(([, identifier]) => !identifier.startsWith(FLOOR_MARKER))
-  )
-  return { ...result, map }
-}
-
 const LANGUAGE_ENUM = ['auto', ...LANGUAGES]
 
 const LANGUAGE_PROP = {
@@ -260,45 +201,24 @@ function runAnonymize(
 ): ToolResult {
   const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
   const localMap = loadMap(mapPath)
-  // Overlaid, not merged by key — the two placeholder spaces are numbered
-  // independently and a shared key is coincidence, not identity. See
-  // mergeNamespace's own comment for why a naive `{ ...local, ...namespace }`
-  // corrupts the store (spec 005 US4).
   const refreshing = refreshNamespaceIfStale()
   const resolved = getNamespace()
-  const { namespace, highest } = resolved
-  const existingMap = mergeNamespace(localMap, namespace)
+  const { namespace, highest, conflicts } = resolved
   const language = (str(args, 'language') ?? 'auto') as 'auto'
   const rules = getRules()
-  // New names go above the team's numbers AND this project's own: an entry
-  // mergeNamespace left out (a lapse-era number) stays in the store, and a new
-  // identifier must never be handed its number (spec 028 R5).
-  const result = anonymizeAbove(
+  // The same composition `veilio scrub` uses (spec 030): the team's maps over
+  // this project's, new names above both, and only the team entries the output
+  // uses kept in the store.
+  const { result, toPersist } = anonymizeOverTeam(
     source,
-    { existingMap, language, secrets: 'redact', rules: rules.rules },
-    floorsWith(highest, localMap)
+    localMap,
+    { namespace, highest, conflicts },
+    {
+      language,
+      secrets: 'redact',
+      rules: rules.rules,
+    }
   )
-  // Persist local-original, whatever this call genuinely minted, and only the
-  // team-overlay entries this call actually USED — never the rest of the team
-  // namespace. Persisting all of it would bake entries this project never
-  // references into the store, unboundedly, and they'd outlive the entitlement
-  // that fetched them: lose Cloud access later and the store keeps quietly
-  // resolving through team placeholders while truthfully reporting `local`.
-  // Persisting none of it, the other extreme, breaks `restore_text` for a
-  // team placeholder that IS sitting in the output this call just returned.
-  // Every entry the store already held is kept - including one mergeNamespace
-  // left out of this call - because text was already sent with it.
-  const toPersist = {
-    ...localMap,
-    ...Object.fromEntries(
-      Object.entries(result.map).filter(
-        ([placeholder]) =>
-          !(placeholder in namespace) ||
-          placeholder in localMap ||
-          appearsAsToken(result.anonymized, placeholder)
-      )
-    ),
-  }
   saveMap(mapPath, toPersist)
 
   const body =

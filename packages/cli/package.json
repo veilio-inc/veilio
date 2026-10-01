@@ -50,7 +50,8 @@
     "./cloud": "./dist/cloud.js",
     "./team-unlock": "./dist/team-unlock.js",
     "./team-namespace": "./dist/team-namespace.js",
-    "./rules": "./dist/rules.js"
+    "./rules": "./dist/rules.js",
+    "./team-anonymize": "./dist/team-anonymize.js"
   },
   "repository": {
     "type": "git",
