@@ -74,13 +74,20 @@ export function disputedNote(placeholders: readonly string[]): string {
   )
 }
 
-/** How the CLI and the MCP name a locally numbered placeholder they left. */
+/**
+ * How the CLI and the MCP name a placeholder they left because this project's
+ * map and the team's maps disagree on it. It states the disagreement, which is
+ * known, and gives the causes only as examples: a map pulled from Cloud
+ * disagrees just as one numbered while signed out does (staging walk,
+ * 2026-10-01).
+ */
 export function locallyNumberedNote(placeholders: readonly string[]): string {
+  const one = placeholders.length === 1
   return (
-    `left as is: ${placeholders.join(', ')}. This project's map numbered ` +
-    `${placeholders.length === 1 ? 'it' : 'them'} locally (signed out, during a lapse, or before ` +
-    "`veilio team unlock`), and the team's maps use the same number for a different identifier, " +
-    'so restoring would be a guess.'
+    `left as is: ${placeholders.join(', ')}. This project's map and the team's maps give ` +
+    `${one ? 'this placeholder' : 'these placeholders'} different identifiers - for example ` +
+    `${one ? 'it was' : 'they were'} numbered while signed out or before \`veilio team unlock\`, ` +
+    'or come from a personal map - so restoring would be a guess.'
   )
 }
 

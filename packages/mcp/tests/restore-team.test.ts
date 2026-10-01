@@ -51,7 +51,9 @@ describe('the shared restore cases, through restore_text', () => {
     for (const p of c.disputed)
       expect(r.text).toMatch(new RegExp(`left as is: ${p}[\\s\\S]*different identifiers`))
     for (const p of c.locallyNumbered ?? [])
-      expect(r.text).toMatch(new RegExp(`left as is: ${p}[\\s\\S]*numbered it locally`))
+      expect(r.text).toMatch(
+        new RegExp(`left as is: ${p}[\\s\\S]*give this placeholder different identifiers`)
+      )
     if (c.disputed.length === 0 && (c.locallyNumbered ?? []).length === 0)
       expect(r.text).not.toMatch(/left as is/)
     // Neither kind is also called invented by the AI (review).
@@ -196,7 +198,9 @@ describe('a project numbered during a lapse, after the team is back (spec 028 R5
     // Old text: __FN__1 is left and named - never restored as chargeCustomer.
     const old = callTool('restore_text', { text: 'x.__FN__1()' }, ctx)
     expect(restoredPart(old.text)).toBe('x.__FN__1()')
-    expect(old.text).toMatch(/left as is: __FN__1[\s\S]*numbered it locally/)
+    expect(old.text).toMatch(
+      /left as is: __FN__1[\s\S]*give this placeholder different identifiers/
+    )
     // New text restores.
     expect(restoredPart(callTool('restore_text', { text: 'x.__FN__2()' }, ctx).text)).toBe(
       'x.createInvoice()'

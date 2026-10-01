@@ -117,7 +117,9 @@ describe('restore --strict', () => {
     const r = await run('new __CLS__1()', ['restore', '--strict'], { __CLS__1: 'Foo' }, home)
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.out).toBe('')
-    expect(r.err).toMatch(/numbered it locally[\s\S]*--strict: nothing written - __CLS__1/)
+    expect(r.err).toMatch(
+      /give this placeholder different identifiers[\s\S]*--strict: nothing written - __CLS__1/
+    )
   })
 
   it("the team's maps could not be used (key locked): nothing written, exit 1", async () => {

@@ -58,7 +58,9 @@ describe('the shared restore cases, through `veilio restore`', () => {
     for (const p of c.disputed)
       expect(r.err).toMatch(new RegExp(`left as is: ${p}[\\s\\S]*different identifiers`))
     for (const p of c.locallyNumbered ?? [])
-      expect(r.err).toMatch(new RegExp(`left as is: ${p}[\\s\\S]*numbered it locally`))
+      expect(r.err).toMatch(
+        new RegExp(`left as is: ${p}[\\s\\S]*give this placeholder different identifiers`)
+      )
     if (c.disputed.length === 0 && (c.locallyNumbered ?? []).length === 0)
       expect(r.err).not.toMatch(/left as is/)
     // Neither kind is also called invented by the AI.
@@ -158,7 +160,7 @@ describe('when the team layer is needed but not there', () => {
     })
     const r = await run('new __CLS__1()', { __CLS__1: 'Foo' }, home)
     expect(r.out).toBe('new __CLS__1()')
-    expect(r.err).toMatch(/left as is: __CLS__1[\s\S]*numbered it locally/)
+    expect(r.err).toMatch(/left as is: __CLS__1[\s\S]*give this placeholder different identifiers/)
   })
 
   it('signed out: fully offline, whatever the text holds', async () => {
