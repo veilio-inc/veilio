@@ -68,6 +68,20 @@ describe('veilio scrub, signed in to a team', () => {
     expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__5() {} }\n')
   })
 
+  it("never emits a placeholder the team's maps dispute: the name gets a fresh number", async () => {
+    // Code review: the engine's namespace keeps a disputed placeholder's first
+    // meaning (for numbering); scrub emitted it, the MCP never does.
+    const maps = mapsFor({
+      namespace: { ...TEAM, __CLS__5: 'Foo' },
+      aliases: {},
+      conflicts: { __CLS__5: 2 },
+    })
+    const { home } = await teamScenario(fetchMock, { maps })
+    const r = await scrub('export class Foo {}\n', home)
+    expect(r.out).toBe('export class __CLS__6 {}\n')
+    expect(Object.keys(r.map)).not.toContain('__CLS__5')
+  })
+
   it('keeps in the project map only the team entries the output used', async () => {
     const big = { ...TEAM, __FN__9: 'unrelatedTeamName' }
     const { home } = await teamScenario(fetchMock, {

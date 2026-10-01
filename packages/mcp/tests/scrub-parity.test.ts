@@ -37,11 +37,17 @@ describe('scrub and anonymize_text, one team, one input', () => {
       'a team placeholder the project map would have numbered differently',
       'const auditTrail = new LedgerService()\n',
     ],
+    ['a name whose placeholder the team disputes', 'export class Foo { settleInvoice() {} }\n'],
   ])('%s: identical output', async (_what, code) => {
     const maps = mapsFor({
-      namespace: { __CLS__2: 'LedgerService', __FN__3: 'settleInvoice', __VAR__4: 'entryId' },
+      namespace: {
+        __CLS__2: 'LedgerService',
+        __FN__3: 'settleInvoice',
+        __VAR__4: 'entryId',
+        __CLS__5: 'Foo',
+      },
       aliases: {},
-      conflicts: {},
+      conflicts: { __CLS__5: 2 },
     })
     const { home } = await teamScenario(fetchMock, { maps })
     let cli = ''

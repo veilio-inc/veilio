@@ -203,7 +203,7 @@ function runAnonymize(
   const localMap = loadMap(mapPath)
   const refreshing = refreshNamespaceIfStale()
   const resolved = getNamespace()
-  const { namespace, highest } = resolved
+  const { namespace, highest, conflicts } = resolved
   const language = (str(args, 'language') ?? 'auto') as 'auto'
   const rules = getRules()
   // The same composition `veilio scrub` uses (spec 030): the team's maps over
@@ -212,7 +212,7 @@ function runAnonymize(
   const { result, toPersist } = anonymizeOverTeam(
     source,
     localMap,
-    { namespace, highest },
+    { namespace, highest, conflicts },
     {
       language,
       secrets: 'redact',

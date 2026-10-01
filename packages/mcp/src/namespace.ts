@@ -183,5 +183,3 @@ export function namespaceLine(resolved: ResolvedNamespace): string {
     return `Namespace: local (could not read the team's maps: ${found.reason})`
   return 'Namespace: local'
 }
-
-export { mergeNamespace } from '@veilio-inc/cli/team-anonymize'

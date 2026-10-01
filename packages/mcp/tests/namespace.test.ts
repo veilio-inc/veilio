@@ -5,12 +5,8 @@ import { tmpdir } from 'node:os'
 import { writeCredential } from '@veilio-inc/cli/credential'
 import { resolveMapPath, saveMap, loadMap } from '@veilio-inc/cli/store'
 import { callTool, type ToolContext } from '../src/tools.js'
-import {
-  primeNamespace,
-  getNamespace,
-  resetNamespaceCache,
-  mergeNamespace,
-} from '../src/namespace.js'
+import { primeNamespace, getNamespace, resetNamespaceCache } from '../src/namespace.js'
+import { mergeNamespace } from '@veilio-inc/cli/team-anonymize'
 
 /**
  * The shared namespace two teammates' agents must agree on, and the fallback

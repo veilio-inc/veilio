@@ -111,10 +111,21 @@ export function anonymizeAbove(
 export function anonymizeOverTeam(
   source: string,
   local: Record<string, string>,
-  team: { namespace: Record<string, string>; highest: Record<string, number> },
+  team: {
+    namespace: Record<string, string>
+    highest: Record<string, number>
+    /** Placeholders the team's maps give different names: never emitted (spec 028). */
+    conflicts?: Record<string, number>
+  },
   options: Omit<AnonymizeOptions, 'existingMap'>
 ): { result: ReturnType<typeof anonymize>; toPersist: Record<string, string> } {
-  const existingMap = mergeNamespace(local, team.namespace)
+  // A disputed placeholder keeps its first meaning in the engine's namespace
+  // (for numbering); it is never emitted - the name gets a fresh number above
+  // it (code review, spec 030: scrub emitted it, the MCP never did).
+  const settled = Object.fromEntries(
+    Object.entries(team.namespace).filter(([p]) => !(p in (team.conflicts ?? {})))
+  )
+  const existingMap = mergeNamespace(local, settled)
   const result = anonymizeAbove(
     source,
     { ...options, existingMap },
@@ -125,7 +136,7 @@ export function anonymizeOverTeam(
     ...Object.fromEntries(
       Object.entries(result.map).filter(
         ([placeholder]) =>
-          !(placeholder in team.namespace) ||
+          !(placeholder in settled) ||
           placeholder in local ||
           appearsAsToken(result.anonymized, placeholder)
       )
