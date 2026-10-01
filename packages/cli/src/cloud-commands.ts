@@ -517,9 +517,24 @@ export async function runMapsPull(
     // Reported, not resolved. Overwriting either side silently loses entries
     // that some text out there still depends on.
     io.stderr(
-      `veilio: this map changed in Cloud (${existing.updatedAt} → ${remote.updated_at}) and ` +
+      `veilio: this map changed in Cloud (${existing!.updatedAt} → ${remote.updated_at}) and ` +
         'locally since it was pulled. Neither copy has been touched.\n' +
         `Pass --force to overwrite the local copy, or export it first with \`veilio map --json\`.\n`
+    )
+    return EXIT_ERROR
+  }
+
+  // Whether or not the Cloud copy changed: a local entry the pulled map lacks,
+  // or gives another name, is a placeholder some masked text still depends on
+  // (staging walk, 2026-10-01 - a scrub after a pull was lost on the next pull).
+  const dropped = Object.keys(local).filter((p) => map[p] !== local[p])
+  if (dropped.length > 0 && options.force !== true) {
+    const shown =
+      dropped.slice(0, 5).join(', ') + (dropped.length > 5 ? ` and ${dropped.length - 5} more` : '')
+    io.stderr(
+      `veilio: pulling "${remote.name}" would drop ${dropped.length} placeholder(s) this project's map has: ${shown}. ` +
+        'Nothing was written.\n' +
+        `Push this map first (\`veilio maps push\`), pass --force to replace it, or export it with \`veilio map --json\`.\n`
     )
     return EXIT_ERROR
   }

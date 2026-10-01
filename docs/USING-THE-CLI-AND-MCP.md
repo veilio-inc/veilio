@@ -89,6 +89,9 @@ veilio logout                 # revoke the session and remove local credentials
   authentication are asked for the code (an authenticator code or a recovery code).
 - **Personal maps** are decrypted on your machine: `pull` and `push` ask for your
   **vault passphrase**, which never leaves the machine.
+- `pull` never drops a placeholder the project's map has and the pulled map
+  lacks or names differently: text masked with it would no longer restore. It
+  stops and names them; push the local map first, or pass `--force` to replace it.
 - **Team maps** open with the team key, which `veilio team unlock` stores for
   7 days (0600, under `~/.veilio/`). Run it again after 7 days, after the team key
   is rotated, or after you join a team.
