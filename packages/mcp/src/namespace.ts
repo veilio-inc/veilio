@@ -184,43 +184,4 @@ export function namespaceLine(resolved: ResolvedNamespace): string {
   return 'Namespace: local'
 }
 
-/**
- * The map handed to the engine to anonymize: this project's store and the
- * team's namespace, reconciled so that nothing emitted can mean something else
- * to a teammate (spec 028 R5; this replaced spec 005's "the local placeholder
- * wins", which after a lapse emitted staging's `createInvoice` as __FN__1 - the
- * team's `chargeCustomer`).
- *
- * The two placeholder spaces are numbered independently, so a shared key is
- * coincidence, not identity:
- *
- *   - An identifier the team knows takes the TEAM's placeholder. The project's
- *     own placeholder for it is left out (it stays in the store, for restoring
- *     text already sent) - one placeholder per identifier, always.
- *   - A placeholder the project's store and the team use for DIFFERENT
- *     identifiers is used for neither: the store must keep its meaning (text was
- *     sent with it; `saveMap` refuses to lose it), and emitting it would mean the
- *     team's identifier to every teammate. Both identifiers get fresh numbers.
- *   - Everything else - a local entry the team does not contradict, a team entry
- *     the store does not contradict - is used as it is.
- */
-export function mergeNamespace(
-  local: Record<string, string>,
-  team: Record<string, string>
-): Record<string, string> {
-  const merged: Record<string, string> = {}
-  const placed = new Set<string>()
-  for (const [placeholder, identifier] of Object.entries(team)) {
-    if (placeholder in local && local[placeholder] !== identifier) continue
-    if (placed.has(identifier)) continue
-    merged[placeholder] = identifier
-    placed.add(identifier)
-  }
-  for (const [placeholder, identifier] of Object.entries(local)) {
-    if (placeholder in team && team[placeholder] !== identifier) continue
-    if (placed.has(identifier)) continue
-    merged[placeholder] = identifier
-    placed.add(identifier)
-  }
-  return merged
-}
+export { mergeNamespace } from '@veilio-inc/cli/team-anonymize'

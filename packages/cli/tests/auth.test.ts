@@ -403,7 +403,7 @@ describe('a session revoked in the web app', () => {
     expect(existsSync(credentialPath(home)), 'the stale credential should be gone').toBe(false)
   })
 
-  it('leaves local commands entirely alone', async () => {
+  it('does not stop scrub: it still masks, and says nothing about a team', async () => {
     writeCredential({ token: 'stale', account: 'user@example.test', instance: INSTANCE }, home)
     fetchMock.mockResolvedValue(jsonResponse(401, { error: 'Session revoked or expired' }))
 
@@ -412,7 +412,9 @@ describe('a session revoked in the web app', () => {
     const local = await run(['scrub', 'a.ts'])
     expect(local.code, local.err).toBe(EXIT_OK)
     expect(local.out).toContain('__CLS__')
-    expect(fetchMock, 'a local command made a request').not.toHaveBeenCalled()
+    // Signed in, scrub asks for the team's maps (spec 030); a revoked session
+    // is no team, not a failure to report.
+    expect(local.err).not.toMatch(/team/i)
   })
 })
 

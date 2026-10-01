@@ -223,7 +223,10 @@ describe('scrub with cached rules', () => {
     expect(res.out).toContain('__LEDGER__1') // replaced with the rule's placeholder
     expect(res.out).not.toContain('settleLedger')
     expect(res.err).toMatch(/applied 2 custom rules pulled just now/)
-    expect(fetchMock).not.toHaveBeenCalled()
+    // Rules come from the cache, never fetched by scrub. (Signed in, scrub does
+    // ask for the team's maps - spec 030 - but not for rules.)
+    const paths = fetchMock.mock.calls.map((c) => new URL(String(c[0])).pathname)
+    expect(paths.filter((p) => p.includes('/rules'))).toEqual([])
   })
 
   it('without a cache masks as before and mentions no rules', async () => {

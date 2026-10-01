@@ -825,3 +825,24 @@ export async function teamLayerFor(
 }
 
 const RESTORE_CLOUD_WAIT_MS = 5000
+
+/** What `veilio scrub` numbers from (spec 030): the team's namespace, or this
+ *  project's map with the reason. Signed out or in no team: no request, no note. */
+export async function teamNamespaceForScrub(home: string | undefined): Promise<{
+  team: { namespace: Record<string, string>; highest: Record<string, number> } | null
+  note: string | null
+}> {
+  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS })
+  if (found.status === 'team') return { team: found.analysis, note: null }
+  if (found.status === 'locked')
+    return {
+      team: null,
+      note: "the team key is locked on this machine, so this was numbered from this project's map only and may clash with the team's placeholders. Run `veilio team unlock`, then scrub again.",
+    }
+  if (found.status === 'unavailable')
+    return {
+      team: null,
+      note: `could not read the team's maps (${found.reason}), so this was numbered from this project's map only and may clash with the team's placeholders.`,
+    }
+  return { team: null, note: null }
+}
