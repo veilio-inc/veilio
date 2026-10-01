@@ -1,5 +1,15 @@
 # @veilio-inc/cli
 
+## 0.5.1
+
+### Patch Changes
+
+- [#88](https://github.com/veilio-inc/veilio/pull/88) [`98b06fc`](https://github.com/veilio-inc/veilio/commit/98b06fc03265703bb681ce5cc2c092a98fda3857) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio maps pull` no longer drops placeholders the project's map has.
+
+  A staging walk found a project that had scrubbed new names after its pull, and then lost them on the next pull of an unchanged Cloud copy. Text already masked with those placeholders could no longer be restored. The old check refused only when the Cloud copy had changed too.
+
+  Now a pull stops, writes nothing and names the placeholders whenever the project's map has one that the pulled map lacks or names differently. This applies whether or not Cloud changed, and also to a project map that was never pulled. Push the local map first, or pass `--force` to replace it.
+
 ## 0.5.0
 
 ### Minor Changes
