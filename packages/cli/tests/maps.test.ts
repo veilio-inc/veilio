@@ -355,6 +355,81 @@ describe('a local copy that has diverged from Cloud (T035)', () => {
   })
 })
 
+// Found on the staging walk, 2026-10-01: the guard above fired only when the
+// Cloud copy had ALSO changed. A project that scrubbed new names after its pull
+// lost them on the next pull of an unchanged Cloud copy - and with them the
+// ability to restore text already sent masked.
+describe('a pull never drops local entries without --force', () => {
+  const CLOUD = { __CLS__1: 'Billing' }
+  beforeEach(async () => {
+    const sealed = await sealedFor(CLOUD)
+    const vault = await vaultBody()
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url)
+      if (u.endsWith('/api/auth/vault')) return json(200, vault)
+      return json(200, {
+        id: 'map-1',
+        name: 'billing',
+        scope: 'personal',
+        identifier_count: 1,
+        updated_at: '2026-09-01T00:00:00.000Z',
+        map_data: sealed,
+      })
+    })
+    mkdirSync(join(cwd, STORE_DIR), { recursive: true })
+  })
+  const seed = (map: SymbolMap, remote = true): string => {
+    const stored = JSON.stringify({
+      version: 1,
+      map,
+      ...(remote
+        ? { remote: { id: 'map-1', updatedAt: '2026-09-01T00:00:00.000Z', pulledAt: '2026-09-01' } }
+        : {}),
+    })
+    writeFileSync(mapPath(), stored)
+    return stored
+  }
+
+  it('the Cloud copy is unchanged, the project added a name: refused, nothing touched', async () => {
+    const before = seed({ __CLS__1: 'Billing', __FN__1: 'divergedLocally' })
+    const res = await run(['maps', 'pull', 'map-1'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/__FN__1/)
+    expect(res.err).toMatch(/--force/)
+    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+  })
+
+  it("a project's own map, never pulled, with names Cloud lacks: refused", async () => {
+    const before = seed({ __FN__4: 'ownProjectName' }, false)
+    const res = await run(['maps', 'pull', 'map-1'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+  })
+
+  it('the same placeholder with another name locally: refused (restoring would give the wrong name)', async () => {
+    const before = seed({ __CLS__1: 'Invoicing' })
+    const res = await run(['maps', 'pull', 'map-1'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/__CLS__1/)
+    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+  })
+
+  it('a local copy with nothing Cloud lacks is replaced quietly', async () => {
+    seed({})
+    expect((await run(['maps', 'pull', 'map-1'])).code).toBe(EXIT_OK)
+    seed({ __CLS__1: 'Billing' })
+    const res = await run(['maps', 'pull', 'map-1'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+  })
+
+  it('--force replaces it', async () => {
+    seed({ __CLS__1: 'Billing', __FN__1: 'divergedLocally' })
+    const res = await run(['maps', 'pull', 'map-1', '--force'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect((JSON.parse(readFileSync(mapPath(), 'utf8')) as { map: SymbolMap }).map).toEqual(CLOUD)
+  })
+})
+
 // Found against staging, 2026-09-26: `maps pull` on a TEAM map failed with
 // "Unrecognized vault envelope". It still assumed the server sent team maps
 // already open, and fed the team envelope to the vault key - while the key that
