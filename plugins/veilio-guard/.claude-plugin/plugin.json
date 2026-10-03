@@ -1,6 +1,6 @@
 {
   "name": "veilio-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Keeps your real identifiers and secrets away from the model: every file, command output and prompt reaches Claude with placeholders, and edits are restored before they land.",
   "author": { "name": "Veilio", "url": "https://veilio.dev" },
   "homepage": "https://github.com/veilio-inc/veilio/tree/main/plugins/veilio-guard#readme",

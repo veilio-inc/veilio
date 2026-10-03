@@ -78,6 +78,7 @@ claude plugin validate --strict plugins/veilio-guard
 claude plugin test plugins/veilio-guard       # the hooks, with payloads recorded from a live session
 npx vitest run tests/guard                    # lib/, and COVERAGE.md against the tests
 bash plugins/veilio-guard/tests/live/run-live.sh   # one real session (spends a little model usage)
+bash plugins/veilio-guard/tests/live/run-scale.sh  # three sessions on this whole repository
 ```
 
 A mod can only import files inside its plugin directory, so `vendor/engine` holds a copy of `packages/engine/dist`. CI fails when the copy differs from the build.
