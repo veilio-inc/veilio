@@ -44,20 +44,61 @@ test('shell output: known names replaced, and nothing added to the map', async (
   expect(p.writes.filter((w) => w.path.endsWith('map.json'))).toEqual([])
 })
 
+// Claude Code checks a hook's `{ result }` against the tool's output schema,
+// and an error's text never fits it: the error goes back as the text the model
+// reads, masked, the way a refusal does.
 test('a failed command: the error text is scrubbed and still an error', async ($, on) => {
   const failed = recorded('Bash', 1)
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __STR__1: 'nonexistent-dir' }) })
   on('tool.call', () => failed.r)
   const out: any = await $.tool.call(eventOf(failed))
-  expect(out.isError).toBe(true)
-  expect(out.result).not.toContain('nonexistent-dir')
+  expect(out.result).toBeUndefined()
+  expect(out.deny).toContain('No such file or directory')
+  expect(out.deny).not.toContain('nonexistent-dir')
+})
+
+test('a Read of a directory: the error reaches the model as masked text, not as a Read result', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  // Recorded from Claude Code 2.1.288 (Read on a directory).
+  on('tool.call', () => ({
+    ref: 1,
+    result: `Error: EISDIR: illegal operation on a directory, read '${ROOT}/src/${CANARY}'`,
+    text: `EISDIR: illegal operation on a directory, read '${ROOT}/src/${CANARY}'`,
+    isError: true,
+    isReadOnly: true,
+  }))
+  const out: any = await $.tool.call({ tool: 'Read', tool_use_id: 't1', file_path: `${ROOT}/src` })
+  expect(out.result).toBeUndefined()
+  expect(out.deny).toBe(`EISDIR: illegal operation on a directory, read '${ROOT}/src/__CLS__1'`)
+})
+
+test('a comment in a source Read: known names masked, everyday words left', async ($, on) => {
+  const read = recorded('Read')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__9: 'total', __STR__1: 'keep' }),
+  })
+  on('tool.call', () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: {
+        ...read.r.result.file,
+        content: `// keep the total in ${CANARY}\nexport class ${CANARY} {\n  total = 1\n}\n`,
+      },
+    },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  const lines = out.result.file.content.split('\n')
+  expect(lines[0]).toBe('// keep the __VAR__9 in __CLS__1')
+  expect(lines[1]).toBe('export class __CLS__1 {')
+  expect(lines[2]).toBe('  __VAR__9 = 1')
 })
 
 test('Grep in both modes and Glob: content and file names scrubbed, enums kept', async ($, on) => {
   const content = recorded('Grep')
   const files = recorded('Grep', 1)
   const glob = recorded('Glob')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__9: 'ledger' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __PKG__9: 'ledger' }) })
   on('tool.call', (_: any, e: any) =>
     e.tool === 'Glob' ? glob.r : e.output_mode === 'content' ? content.r : files.r
   )
@@ -124,4 +165,26 @@ test('an image Read is withheld: images are not scrubbed yet', async ($, on) => 
   const out: any = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/screen.png` })
   expect(out.deny).toContain('Veilio withheld this result')
   expect(out.deny).toContain('image')
+})
+
+test('part of a TypeScript file that reads like SQL is scrubbed as TypeScript: its prose is not masked', async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const fragment = [
+    '  // Select the live subscription, then update it where the order matches.',
+    '  const row = db.select().from(ledgerRows).where(eq(ledgerRows.orderId, orderId)).get()',
+    '  db.update(ledgerRows).set({ settledTotal: total }).where(eq(ledgerRows.id, row.id)).run()',
+  ].join('\n')
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content: fragment } },
+  }))
+  const out: any = await $.tool.call({ ...eventOf(read), offset: 160, limit: 3 })
+  const lines = out.result.file.content.split('\n')
+  // Read as SQL, every word of the comment was an identifier ("Select
+  // __VAR__10 __VAR__9 __VAR__1"). As TypeScript, only the code's own method
+  // names are masked, as they are anywhere in the file.
+  expect(lines[0]).toContain('// Select the live subscription, then')
+  expect(lines[0]).toContain('the order matches.')
+  expect(lines[2]).toContain('__VAR__1')
 })

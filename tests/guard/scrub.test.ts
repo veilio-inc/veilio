@@ -63,6 +63,31 @@ describe('applyMap: output, search results and prompts', () => {
     expect(applyMap('a.b and axb', { __STR__1: 'a.b' })).toBe('__STR__1 and axb')
   })
 
+  it('leaves everyday words from string literals in output, and still masks identifiers', () => {
+    // The scale run: a map built from a real repository holds the words of its
+    // string literals (the, and, keep), and applied everywhere they turned a
+    // git log into placeholders. Inside a source file the engine masks them
+    // where they sit in a literal.
+    expect(
+      applyMap('keep the total and Placeholder', {
+        __VAR__1: 'total',
+        __STR__1: 'the',
+        __STR__2: 'keep',
+        __STR__3: 'Placeholder',
+      })
+    ).toBe('keep the __VAR__1 and Placeholder')
+  })
+
+  it('masks a string-literal word shaped like a name: a table, a versioned route', () => {
+    expect(
+      applyMap('from customer_refunds via apiV2 and v2', {
+        __STR__1: 'customer_refunds',
+        __STR__2: 'apiV2',
+        __STR__3: 'v2',
+      })
+    ).toBe('from __STR__1 via __STR__2 and __STR__3')
+  })
+
   it('redacts a credential in output', () => {
     const out = applyMap(`STRIPE_SECRET_KEY=${STRIPE}\n`, {})
     expect(out).not.toContain(STRIPE)

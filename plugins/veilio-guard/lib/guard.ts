@@ -19,7 +19,7 @@ import {
   type SymbolMap,
 } from './mapfile.ts'
 import { isRawOnly, pathsInCommand } from './paths.ts'
-import { argumentPolicy, resultPolicy } from './policy.ts'
+import { argumentPolicy, languageOf, resultPolicy } from './policy.ts'
 import { applyMap, restoreArgs, scrubSource, survivingSecrets } from './scrub.ts'
 import { restore } from '../vendor/engine/index.js'
 
@@ -320,10 +320,21 @@ export class Guard {
   async afterTool(
     tool: string,
     args: ToolEvent,
-    received: { deny?: string; result?: unknown; isError?: boolean }
+    received: { deny?: string; result?: unknown; text?: string; isError?: boolean }
   ): Promise<ToolOutcome> {
     let outcome = received
     if (outcome.deny !== undefined) return { deny: this.applyText(outcome.deny) }
+    // An error's text never fits the tool's output schema, which Claude Code
+    // checks a hook's `{ result }` against: it goes back as the error text the
+    // model reads, masked.
+    if (outcome.isError) {
+      const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      const text = this.applyText(raw)
+      const left = survivingSecrets(text)
+      if (left.length > 0)
+        return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
+      return { deny: text }
+    }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
@@ -339,7 +350,7 @@ export class Guard {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
             if (field.mode === 'apply') return applyMap(s, working)
-            const scrubbed = scrubSource(s, working)
+            const scrubbed = scrubSource(s, working, languageOf(filePath))
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
             return scrubbed.text
@@ -350,8 +361,9 @@ export class Guard {
             )
           value = r.value
         }
-        // The fields the list does not name: known names replaced too.
-        // Applying the map twice to a listed field changes nothing.
+        // Every string, the listed ones included: in a source file this masks
+        // the names the map already has where the engine leaves text as
+        // written, in comments. Everyday words from literals are not applied.
         value = deepRewrite(value, (s) => applyMap(s, working), new Set(policy.keep))
       }
 
@@ -367,7 +379,7 @@ export class Guard {
       })
       if (left.length > 0)
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-      return outcome.isError ? { result: value, isError: true } : { result: value }
+      return { result: value }
     }
     return this.withhold(
       'another program kept changing .veilio/map.json while Veilio was writing to it'
