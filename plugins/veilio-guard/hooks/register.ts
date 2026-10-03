@@ -138,6 +138,9 @@ export function register(on: any, options: Options = {}) {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off') return r
+    if (g.state === 'stopped') {
+      return { text: `Veilio guard stopped: ${g.stoppedReason}. The skill's text was left out.` }
+    }
     return { ...r, text: g.applyText(r.text) }
   }).catch(async () => ({ text: 'Veilio could not check this skill, so its text was left out.' }))
 

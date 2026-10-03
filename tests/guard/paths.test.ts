@@ -66,3 +66,12 @@ describe('pathsInCommand', () => {
     expect(pathsInCommand('cp ~/.ssh/id_rsa /tmp/x')).toContain('~/.ssh/id_rsa')
   })
 })
+
+describe('pathsInCommand: flags that carry a path', () => {
+  it('checks the value of --flag=path', () => {
+    expect(pathsInCommand('node --env-file=.env -e x')).toContain('.env')
+    expect(pathsInCommand('docker run --env-file=config/.env.local alpine env')).toContain(
+      'config/.env.local'
+    )
+  })
+})

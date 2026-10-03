@@ -76,3 +76,19 @@ describe('deepRewrite', () => {
     })
   })
 })
+
+describe('deepRewrite keep: top-level enums only', () => {
+  it('keeps a top-level key and rewrites the same key deeper down', () => {
+    const out = deepRewrite({ type: 'text', nested: { type: 'secret' } }, UP, new Set(['type']))
+    expect(out).toEqual({ type: 'text', nested: { type: 'SECRET' } })
+  })
+
+  it('keeps the key in the blocks of a root list, as an MCP result has them', () => {
+    const out = deepRewrite(
+      [{ type: 'text', text: 'a', meta: { type: 'b' } }],
+      UP,
+      new Set(['type'])
+    )
+    expect(out).toEqual([{ type: 'text', text: 'A', meta: { type: 'B' } }])
+  })
+})

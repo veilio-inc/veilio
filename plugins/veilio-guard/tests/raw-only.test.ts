@@ -86,3 +86,72 @@ test("a project's own pattern is refused too", async ($, on) => {
   expect(ran).toBe(false)
   expect(out.deny).toContain('away from the model')
 })
+
+test('a search over the project drops the lines and files of raw-only files', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }) })
+  on('tool.call', (_: any, e: any) => {
+    if (e.tool === 'Glob')
+      return {
+        result: {
+          filenames: ['.env', 'src/a.ts', 'secrets/prod.yaml'],
+          durationMs: 1,
+          numFiles: 3,
+          truncated: false,
+        },
+      }
+    if (e.output_mode === 'files_with_matches') {
+      return {
+        result: { mode: 'files_with_matches', filenames: ['.env', 'src/a.ts'], numFiles: 2 },
+      }
+    }
+    return {
+      result: {
+        mode: 'content',
+        numFiles: 0,
+        filenames: [],
+        content:
+          '.env:1:DB_PASSWORD=hunter2\nsrc/a.ts:3:const password = read()\nsecrets/prod.yaml:2:password: hunter2',
+        numLines: 3,
+      },
+    }
+  })
+  const content: any = await $.tool.call({
+    tool: 'Grep',
+    pattern: 'password',
+    glob: '.env*',
+    output_mode: 'content',
+  })
+  const files: any = await $.tool.call({
+    tool: 'Grep',
+    pattern: 'password',
+    output_mode: 'files_with_matches',
+  })
+  const glob: any = await $.tool.call({ tool: 'Glob', pattern: '**/*' })
+  expect(content.result.content).toBe('src/a.ts:3:const password = read()')
+  expect(JSON.stringify(content)).not.toContain('hunter2')
+  expect(files.result.filenames).toEqual(['src/a.ts'])
+  expect(glob.result.filenames).toEqual(['src/a.ts'])
+})
+
+test('an MCP tool asked for a raw-only file is refused before it runs', async ($, on) => {
+  project(on, {})
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return { result: [{ type: 'text', text: 'ok' }] }
+  })
+  const a: any = await $.tool.call({ tool: 'mcp__filesystem__read_file', path: `${ROOT}/.env` })
+  const b: any = await $.tool.call({
+    tool: 'mcp__filesystem__read_file',
+    path: '.veilio/guard.json',
+  })
+  await $.tool.call({
+    tool: 'mcp__github__create_issue',
+    title: 'see the .env docs',
+    body: 'the .env file',
+  })
+  expect(a.deny).toContain('away from the model')
+  expect(b.deny).toContain('away from the model')
+  expect(seen.length).toBe(1)
+  expect(seen[0].tool).toBe('mcp__github__create_issue')
+})

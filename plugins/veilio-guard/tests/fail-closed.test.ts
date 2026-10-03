@@ -139,3 +139,29 @@ test('another writer giving our placeholder a different name: masked again, neve
   expect(out.result.file.content).toContain('__CLS__2')
   expect(out.result.file.content).not.toContain('__CLS__1')
 })
+
+test("a skill's text is not sent while the guard is stopped", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  on('skill.prompt', (_: any, e: any) => ({ text: e.text }))
+  const out: any = await $.skill.prompt({ skill: 'review', text: `Review ${CANARY}.` })
+  expect(out.text).not.toContain(CANARY)
+  expect(out.text).toContain('stopped')
+})
+
+test('another writer dropping our entries: the next save puts them back', async ($, on) => {
+  const read = recorded('Read')
+  const mapPath = `${ROOT}/.veilio/map.json`
+  // The guard loads a map holding settledTotal; before it saves the Read's new
+  // names, another program overwrites the file with a map that lacks it.
+  const p = project(
+    on,
+    { [mapPath]: mapFile({ __VAR__1: 'settledTotal' }) },
+    { inject: { path: mapPath, beforeExistsCall: 2, text: mapFile({ __FN__9: 'elsewhere' }) } }
+  )
+  on('tool.call', () => read.r)
+  await $.tool.call(eventOf(read))
+  const saved = JSON.parse(p.files[mapPath]).map
+  expect(saved.__VAR__1).toBe('settledTotal')
+  expect(saved.__FN__9).toBe('elsewhere')
+  expect(Object.values(saved)).toContain(CANARY)
+})

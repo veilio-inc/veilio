@@ -57,10 +57,16 @@ export function isRawOnly(path: string, extra: readonly string[]): boolean {
 }
 
 /** The words of a shell command that could name a file: unquoted, split on
- *  whitespace and shell operators, flags dropped. Over-inclusive on purpose. */
+ *  whitespace and shell operators, flags dropped but the value of a
+ *  `--flag=value` kept (`--env-file=.env`). Over-inclusive on purpose. */
 export function pathsInCommand(command: string): string[] {
   return command
     .split(/[\s|&;<>()`$]+/)
     .map((w) => w.replace(/^['"]+|['"]+$/g, ''))
+    .map((w) =>
+      w.startsWith('-') && w.includes('=')
+        ? w.slice(w.indexOf('=') + 1).replace(/^['"]+|['"]+$/g, '')
+        : w
+    )
     .filter((w) => w !== '' && !w.startsWith('-'))
 }

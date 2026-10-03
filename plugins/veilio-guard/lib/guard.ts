@@ -53,6 +53,10 @@ export function withheld(reason: string): { deny: string } {
   return { deny: `Veilio withheld this result: ${reason}.` }
 }
 
+function isPathLike(s: string): boolean {
+  return s.length > 0 && s.length < 4096 && !/\s/.test(s)
+}
+
 function join(dir: string, ...parts: string[]): string {
   return [dir.replace(/[\\/]+$/, ''), ...parts].join('/')
 }
@@ -147,9 +151,21 @@ export class Guard {
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
+    // Merged into what the file holds, so the project's own lists survive.
+    let settings: Record<string, unknown> = {}
+    if (await this.io.exists(this.settingsPath)) {
+      try {
+        const parsed: unknown = JSON.parse(await this.io.read(this.settingsPath))
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+          settings = parsed as Record<string, unknown>
+      } catch {
+        // An unreadable file is replaced; readSettings stopped the guard on it.
+      }
+    }
+    const changedAt = new Date().toISOString().slice(0, 10)
     await this.io.write(
       this.settingsPath,
-      `${JSON.stringify({ enabled, changedAt: new Date().toISOString().slice(0, 10) }, null, 2)}\n`
+      `${JSON.stringify({ ...settings, enabled, changedAt }, null, 2)}\n`
     )
     await this.ensureIgnored()
     this.state = enabled ? 'on' : 'off'
@@ -194,7 +210,9 @@ export class Guard {
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
       const r = restoreArgs(s, this.map)
-      r.unresolved.forEach((p) => unresolved.add(p))
+      // Only tokens Veilio could have minted end in a number: __DEV__,
+      // __FILE__ and __CLASS__ belong to the language and stay as written.
+      r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
       return r.text
     }
@@ -234,6 +252,43 @@ export class Guard {
       }
     }
 
+    // A tool with no row (an MCP server, a tool added later): any argument that
+    // is a raw-only path, as written or restored, refuses the call.
+    if (policy.paths.length === 0 && !policy.command) {
+      for (const source of [e, args]) {
+        const strings: string[] = []
+        for (const [k, v] of Object.entries(source)) {
+          if (!RESERVED.has(k)) deepRewrite(v, (s) => (strings.push(s), s))
+        }
+        for (const s of strings) {
+          if (isRawOnly(s, this.extraRawOnly) || (isPathLike(s) && (await this.rawOnlyHit(s)))) {
+            return this.deny(
+              `Veilio keeps ${this.applyText(s)} away from the model. Ask the user for what you need from it`,
+              false
+            )
+          }
+        }
+      }
+    }
+
+    // A redaction token written to a file would replace the real credential
+    // for good: refused, so the line is edited by a person.
+    if (policy.mode === 'strict') {
+      const redacted = new Set<string>()
+      for (const field of policy.restore) {
+        rewriteFields(args, [field], (s) => {
+          for (const m of s.matchAll(/__REDACTED_[A-Z0-9_]+__/g)) redacted.add(m[0])
+          return s
+        })
+      }
+      if (redacted.size > 0) {
+        return this.deny(
+          `the call writes ${[...redacted].join(', ')}, a credential Veilio removed. Writing it would ` +
+            'replace the real value in the file. Leave that line as it is, or ask the user to change it'
+        )
+      }
+    }
+
     if (policy.mode === 'strict' && (unresolved.size > 0 || altered.size > 0)) {
       const names = [...unresolved, ...altered].join(', ')
       return this.deny(
@@ -259,10 +314,12 @@ export class Guard {
   async afterTool(
     tool: string,
     args: ToolEvent,
-    outcome: { deny?: string; result?: unknown; isError?: boolean }
+    received: { deny?: string; result?: unknown; isError?: boolean }
   ): Promise<ToolOutcome> {
+    let outcome = received
     if (outcome.deny !== undefined) return { deny: this.applyText(outcome.deny) }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
+    outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
 
@@ -311,6 +368,30 @@ export class Guard {
     )
   }
 
+  /** A search over a directory or a glob can reach raw-only files the call
+   *  never named: their lines and names are dropped from the result. */
+  private dropRawOnly(tool: string, result: unknown): unknown {
+    if ((tool !== 'Grep' && tool !== 'Glob') || !result || typeof result !== 'object') return result
+    const record = result as Record<string, unknown>
+    const raw = (p: string) => isRawOnly(p, this.extraRawOnly)
+    const out: Record<string, unknown> = { ...record }
+    if (Array.isArray(record.filenames)) {
+      out.filenames = record.filenames.filter((f) => typeof f !== 'string' || !raw(f))
+    }
+    if (typeof record.content === 'string') {
+      // `path:12:text` for a match, `path-12-text` for a context line.
+      out.content = record.content
+        .split('\n')
+        .filter((line) => {
+          const colon = line.indexOf(':')
+          const context = /^(.+?)-\d+-/.exec(line)
+          return !((colon > 0 && raw(line.slice(0, colon))) || (context?.[1] && raw(context[1])))
+        })
+        .join('\n')
+    }
+    return out
+  }
+
   /** Adds entries to the map file: read what is there now, merge, write. */
   private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
     const run = this.writes.then(async () => {
@@ -324,7 +405,9 @@ export class Guard {
         }
         onDisk = parsed.stored
       }
-      const { merged, conflicts } = mergeAdditions(onDisk.map, additions)
+      // Everything this guard knows, not only the new entries: a writer that
+      // dropped ours (two programs saving at once) gets them back.
+      const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })
       if (conflicts.length > 0) {
         this.stored = onDisk
         return 'conflict' as const

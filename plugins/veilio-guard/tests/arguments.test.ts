@@ -129,3 +129,36 @@ test("Claude Code's own refusal, which quotes the restored command, reaches the 
   expect(out.deny).toContain('rm -rf __CLS__1')
   expect(out.deny).not.toContain(CANARY)
 })
+
+test('a write that would put a redaction token on disk is refused: the real key would be lost', async ($, on) => {
+  const write = recorded('Write')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return write.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(write),
+    content: 'const key = "__REDACTED_STRIPE_KEY_1__"\n',
+  })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('__REDACTED_STRIPE_KEY_1__')
+})
+
+test('tokens a language owns, such as the DEV and FILE globals, are not placeholders: the edit runs', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'if (__DEV__) log(__FILE__, __dirname)',
+    new_string: 'if (__DEV__) __CLS__1.log(__FILE__, __dirname)',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen[0].new_string).toBe(`if (__DEV__) ${CANARY}.log(__FILE__, __dirname)`)
+})

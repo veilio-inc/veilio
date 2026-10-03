@@ -31,3 +31,25 @@ test('/veilio on: back on, and scrubbing again', async ($, on) => {
   const r: any = await $.tool.call(eventOf(read))
   expect(JSON.stringify(r)).not.toContain(CANARY)
 })
+
+test("/veilio off and on keep the project's own lists in guard.json", async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/guard.json`]: JSON.stringify({
+      rawOnly: ['secrets/**'],
+      mcpRestore: ['local_db'],
+    }),
+  })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: 'x' }
+  })
+  await $.command.run({ command: 'veilio', args: 'off' })
+  await $.command.run({ command: 'veilio', args: 'on' })
+  const saved = JSON.parse(p.files[`${ROOT}/.veilio/guard.json`])
+  expect(saved.rawOnly).toEqual(['secrets/**'])
+  expect(saved.mcpRestore).toEqual(['local_db'])
+  const out: any = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/secrets/prod.yaml` })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('away from the model')
+})
