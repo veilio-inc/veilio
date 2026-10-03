@@ -25,6 +25,8 @@ You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and 
 
 Or from your shell: `claude plugin marketplace add veilio-inc/veilio`, then `claude plugin install veilio-guard@veilio`.
 
+The install may print `2 userConfig options not yet set`. Both options are optional and the guard runs without them; see [Configure](#configure).
+
 If the project already has a map (`veilio scrub` builds one), the guard uses it from the first message. Otherwise the map grows as Claude reads your source files.
 
 ## Use

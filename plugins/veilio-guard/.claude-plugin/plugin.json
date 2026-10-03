@@ -11,14 +11,14 @@
     "rawOnly": {
       "type": "string",
       "multiple": true,
-      "title": "Raw-only paths",
-      "description": "Extra glob patterns of files Claude must never read, on top of the built-in list (.env, keys, .veilio).",
+      "title": "Raw-only paths (optional)",
+      "description": "Extra glob patterns of files Claude must never read, on top of the built-in list (.env, keys, .veilio). Leave empty to use the built-in list only.",
       "default": []
     },
     "mcpRestore": {
       "type": "string",
       "multiple": true,
-      "title": "MCP servers that get real names",
+      "title": "MCP servers that get real names (optional)",
       "description": "MCP servers whose tool arguments are restored to real identifiers before the call. Leave empty to send them placeholders.",
       "default": []
     }
