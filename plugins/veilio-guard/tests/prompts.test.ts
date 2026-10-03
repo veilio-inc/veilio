@@ -70,3 +70,17 @@ test("a skill's text is masked", async ($, on) => {
   const out: any = await $.skill.prompt({ skill: 'review', text: `Review ${CANARY} carefully.` })
   expect(out.text).toBe('Review __CLS__1 carefully.')
 })
+
+test('a prompt naming a plain-word method still gets its placeholder, so it matches the code', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __FN__1: 'reconcile', __STR__1: 'the' }) })
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text }
+  })
+  await $.prompt.submit({
+    ...recordedPrompt('prompt.submit').e,
+    text: 'Rename the method reconcile to settle',
+  })
+  expect(sent[0].text).toBe('Rename the method __FN__1 to settle')
+})

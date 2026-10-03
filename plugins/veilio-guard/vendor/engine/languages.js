@@ -152,6 +152,16 @@ const COMMON = [
     'stringify',
     'toFixed',
     'hasOwnProperty',
+    'length',
+    'isArray',
+    'charCodeAt',
+    'getTime',
+    'toISOString',
+    // Function
+    'apply',
+    'call',
+    'bind',
+    'prototype',
 ];
 // ─── Per-language keywords ───────────────────────────────────────────────────
 const TYPESCRIPT = [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RECORDED } from '../../plugins/veilio-guard/tests/fixtures/recorded.ts'
-import { argumentPolicy, resultPolicy } from '../../plugins/veilio-guard/lib/policy.ts'
+import { argumentPolicy, languageOf, resultPolicy } from '../../plugins/veilio-guard/lib/policy.ts'
 
 // Spec 033 data-model tables A and B, as data. What a tool's arguments get
 // before it runs, and which fields of its result the model reads.
@@ -131,5 +131,29 @@ describe('resultPolicy (table B), on recorded results', () => {
     expect(resultPolicy('Agent', callOf('Agent').r.result, '')).toEqual({ kind: 'deep' })
     expect(resultPolicy('ToolSearch', callOf('ToolSearch').r.result, '')).toEqual({ kind: 'deep' })
     expect(resultPolicy('SomeNewTool', { anything: 'x' }, '')).toEqual({ kind: 'deep' })
+  })
+})
+
+describe('languageOf: the language a source Read is scrubbed as', () => {
+  // A Read with offset and limit hands the engine a fragment, and a fragment
+  // of TypeScript full of query builders reads as SQL: its comments were masked.
+  it('takes the language from the extension', () => {
+    expect(languageOf('/p/src/billing.ts')).toBe('typescript')
+    expect(languageOf('/p/App.TSX')).toBe('typescript')
+    expect(languageOf('/p/x.mjs')).toBe('typescript')
+    expect(languageOf('/p/x.py')).toBe('python')
+    expect(languageOf('/p/x.go')).toBe('go')
+    expect(languageOf('/p/x.rs')).toBe('rust')
+    expect(languageOf('/p/x.kt')).toBe('java')
+    expect(languageOf('/p/x.cs')).toBe('csharp')
+    expect(languageOf('/p/x.rb')).toBe('ruby')
+    expect(languageOf('/p/x.php')).toBe('php')
+    expect(languageOf('/p/x.hpp')).toBe('c')
+    expect(languageOf('/p/db/001.sql')).toBe('sql')
+  })
+
+  it('detects from the content when the extension names no language the engine has', () => {
+    expect(languageOf('/p/x.lua')).toBe('auto')
+    expect(languageOf('/p/Makefile')).toBe('auto')
   })
 })
