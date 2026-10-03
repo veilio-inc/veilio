@@ -47,6 +47,45 @@ describe('extractIdentifiers leaves standard built-in methods unmasked', () => {
     }
   })
 
+  it('does not extract length, or the function and object built-ins', () => {
+    // Found in the Claude Code guard's walk: `entries.length` came back as
+    // `__VAR__1.__VAR__3`, and the model guessed what the property was.
+    const ids = extractIdentifiers(
+      'n = xs.length; f.apply(t, a); f.call(t); g = f.bind(t); C.prototype.x = 1; Array.isArray(v); s.charCodeAt(0); d.getTime(); d.toISOString()'
+    )
+    for (const m of [
+      'length',
+      'apply',
+      'call',
+      'bind',
+      'prototype',
+      'isArray',
+      'charCodeAt',
+      'getTime',
+      'toISOString',
+    ]) {
+      expect(ids).not.toContain(m)
+    }
+  })
+
+  it('keeps length readable in TypeScript, where it was masked before', () => {
+    const code =
+      'export function total(batchEntries: string[]): number {\n  return batchEntries.length\n}'
+    const { anonymized, map } = anonymize(code, { language: 'typescript' })
+    expect(anonymized).toContain('.length')
+    expect(Object.values(map)).not.toContain('length')
+  })
+
+  it('a map that already holds length stops masking it, and still restores the old placeholder', () => {
+    const existingMap = { __VAR__1: 'batchEntries', __VAR__3: 'length' }
+    const { anonymized, map } = anonymize('const n = batchEntries.length', {
+      language: 'typescript',
+      existingMap,
+    })
+    expect(anonymized).toBe('const n = __VAR__1.length')
+    expect(restore('x.__VAR__3', map).restored).toBe('x.length')
+  })
+
   it('still masks a real domain identifier sitting next to a built-in', () => {
     const ids = extractIdentifiers('orders.forEach(processOrder)')
     expect(ids).toContain('processOrder')
