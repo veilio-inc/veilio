@@ -61,4 +61,5 @@ The interactive walk in a terminal was done on 2026-10-03 (the band, the redrawn
 - **Timeouts.** A scrub that overruns Claude Code's 10-second budget takes the same `.catch` path as one that throws. The kit can't force a timeout in a test, so there is no test of its own.
 - **Images and PDFs** are withheld, not scrubbed.
 - **Claude Code's own fixed texts.** Some texts Claude Code adds itself, such as the advisor tool's instructions, do not pass through the guard's hooks. They hold no project code, but a project name that is also an English word (`reconcile`) can appear in them as written.
+- **Searches reveal parts of names.** A search for a word matches inside the real names, so a match on a line where Claude sees only placeholders tells it that one of those names contains the word (`grep settle` matching the line of `settledTotal`). The names themselves stay masked.
 - **What Claude says it saw.** Your view is redrawn with the real names, so when Claude explains that it only sees placeholders, the placeholder it quotes is drawn as the real name too. Ask it to spell the name letter by letter to see what it received.
