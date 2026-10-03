@@ -156,10 +156,20 @@ export function register(on: any, options: Options = {}) {
     }
   )
 
+  // A row's input, and its result: an edit's diff, a command's output. Only
+  // placeholders change, so the result still fits the tool's schema.
   on('ui.render', { component: 'ToolUse' }, async ($: any, e: any, next: any) => {
     const g = guard
-    if (!g || g.state !== 'on' || e.props?.input === undefined) return next(e)
-    return next({ ...e, props: { ...e.props, input: deepDisplay(g, e.props.input) } })
+    if (!g || g.state !== 'on' || !e.props) return next(e)
+    const props = { ...e.props, input: deepDisplay(g, e.props.input) }
+    if (e.props.output !== undefined) props.output = deepDisplay(g, e.props.output)
+    return next({ ...e, props })
+  })
+
+  on('ui.render', { component: 'ToolResult' }, async ($: any, e: any, next: any) => {
+    const g = guard
+    if (!g || g.state !== 'on' || e.props?.output === undefined) return next(e)
+    return next({ ...e, props: { ...e.props, output: deepDisplay(g, e.props.output) } })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($: any, e: any, next: any) => {

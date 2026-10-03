@@ -53,6 +53,50 @@ test('a tool row is drawn with the real names in its input', async ($, on) => {
   expect(seen[0].props.input.command).toBe(`grep -rn ${CANARY} src`)
 })
 
+test("an edit's diff is drawn with the real names", async ($, on) => {
+  await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  const seen: any[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(
+    SITE('ToolResult', {
+      tool_use_id: 't1',
+      tool: 'Edit',
+      isErrored: false,
+      output: {
+        filePath: `${ROOT}/src/ledger.ts`,
+        oldString: 'class __CLS__1 {',
+        newString: 'class __CLS__1 {',
+        structuredPatch: [
+          { oldStart: 1, lines: ['-export class __CLS__1 {', '+export class __CLS__1 {'] },
+        ],
+      },
+    })
+  )
+  expect(seen[0].props.output.structuredPatch[0].lines).toEqual([
+    `-export class ${CANARY} {`,
+    `+export class ${CANARY} {`,
+  ])
+  expect(seen[0].props.output.structuredPatch[0].oldStart).toBe(1)
+})
+
+test("an unfolded tool row's result is drawn with the real names", async ($, on) => {
+  await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  const seen: any[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(
+    SITE('ToolUse', {
+      tool_use_id: 't1',
+      tool: 'Bash',
+      input: { command: 'cat src/ledger.ts' },
+      isRunning: false,
+      output: { stdout: 'export class __CLS__1 {}', stderr: '' },
+    })
+  )
+  expect(seen[0].props.output.stdout).toBe(`export class ${CANARY} {}`)
+})
+
 test('the band says the guard is on, with what it did', async ($, on) => {
   await loaded($, on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY, __VAR__1: 'x' }),
