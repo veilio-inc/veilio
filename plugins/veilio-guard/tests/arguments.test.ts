@@ -162,3 +162,71 @@ test('tokens a language owns, such as the DEV and FILE globals, are not placehol
   expect(out.deny).toBeUndefined()
   expect(seen[0].new_string).toBe(`if (__DEV__) ${CANARY}.log(__FILE__, __dirname)`)
 })
+
+// A shell command can write a file (sed -i, echo >), so the checks an edit gets
+// hold for it too. A placeholder the map does not have means nothing in the
+// real project, so refusing it refuses nothing Claude could use.
+function shell(on: any) {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return {
+      result: {
+        stdout: '',
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+        noOutputExpected: false,
+      },
+    }
+  })
+  return seen
+}
+
+test('a shell command naming a placeholder the map does not have is refused before it runs', async ($, on) => {
+  const seen = shell(on)
+  const out: any = await $.tool.call({
+    tool: 'Bash',
+    command: "sed -i '' 's/__VAR__1/__FN__9/' src/ledger.ts",
+    description: 'rename',
+  })
+  expect(seen.length).toBe(0)
+  expect(out.deny).toContain('__FN__9')
+  expect(out.deny).toContain('Edit')
+})
+
+test('a shell command with a re-cased placeholder is refused too', async ($, on) => {
+  const seen = shell(on)
+  const out: any = await $.tool.call({
+    tool: 'Bash',
+    command: "sed -i '' 's/x/__var__1/' src/ledger.ts",
+    description: 'rename',
+  })
+  expect(seen.length).toBe(0)
+  expect(out.deny).toContain('exact spelling')
+})
+
+test('a shell command that would write a redaction token is refused: the real key would be lost', async ($, on) => {
+  const seen = shell(on)
+  const out: any = await $.tool.call({
+    tool: 'Bash',
+    command: `echo 'const key = "__REDACTED_STRIPE_KEY_1__"' > src/config.ts`,
+    description: 'write config',
+  })
+  expect(seen.length).toBe(0)
+  expect(out.deny).toContain('__REDACTED_STRIPE_KEY_1__')
+})
+
+test('a shell command with known placeholders and language tokens runs', async ($, on) => {
+  const seen = shell(on)
+  const out: any = await $.tool.call({
+    tool: 'Bash',
+    command: "sed -i '' 's/__VAR__1/__VAR__3/' src/ledger.ts && grep -rn __DEV__ src",
+    description: 'rename',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen[0].command).toBe(
+    "sed -i '' 's/settledTotal/closedTotal/' src/ledger.ts && grep -rn __DEV__ src"
+  )
+})

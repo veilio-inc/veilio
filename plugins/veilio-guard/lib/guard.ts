@@ -272,9 +272,13 @@ export class Guard {
       }
     }
 
+    // An edit, or a shell command, which can write a file too (sed -i, echo >).
+    const writes = policy.mode === 'strict' || policy.command !== undefined
+    const viaEdit = policy.command ? '. Make the change with the Edit tool' : ''
+
     // A redaction token written to a file would replace the real credential
     // for good: refused, so the line is edited by a person.
-    if (policy.mode === 'strict') {
+    if (writes) {
       const redacted = new Set<string>()
       for (const field of policy.restore) {
         rewriteFields(args, [field], (s) => {
@@ -290,12 +294,13 @@ export class Guard {
       }
     }
 
-    if (policy.mode === 'strict' && (unresolved.size > 0 || altered.size > 0)) {
+    if (writes && (unresolved.size > 0 || altered.size > 0)) {
       const names = [...unresolved, ...altered].join(', ')
       return this.deny(
         `the call names ${names}, which the project's map does not have` +
           (altered.size ? ' (a placeholder was changed: keep its exact spelling)' : '') +
-          '. Read the file again and use the placeholders it shows'
+          '. Read the file again and use the placeholders it shows' +
+          viaEdit
       )
     }
     return { args }
