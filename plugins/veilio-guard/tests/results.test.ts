@@ -188,3 +188,19 @@ test('part of a TypeScript file that reads like SQL is scrubbed as TypeScript: i
   expect(lines[0]).toContain('the order matches.')
   expect(lines[2]).toContain('__VAR__1')
 })
+
+test('a map built before the engine kept length: a source Read leaves .length as written', async ($, on) => {
+  const read = recorded('Read')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__3: 'length' }),
+  })
+  on('tool.call', () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: { ...read.r.result.file, content: 'const n = batchEntries.length\n' },
+    },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  expect(out.result.file.content).toBe('const n = __VAR__2.length\n')
+})

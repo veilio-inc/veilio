@@ -40,11 +40,11 @@ for (const name of ['plain', 'guard-cold', 'guard-warm']) {
     if (s.reached.length > 0)
       failures.push(`second session: ${s.reached.length} names reached the model`)
     const log = s.results.find((r) => r.command.startsWith('git log'))
-    // A string-literal word shaped like a name (`TypeScript`, `apiV2`) is
-    // masked everywhere by design; an everyday one (`the`, `keep`) never is.
+    // A capitalised string-literal word (`TypeScript`) or one shaped like a
+    // name (`apiV2`) is masked everywhere by design; a lowercase one never is.
     const everyday = [...new Set(log?.text.match(/__STR__\d+/g) ?? [])]
       .map((p) => map[p])
-      .filter((w) => /^[A-Za-z][a-z]*$/.test(w ?? ''))
+      .filter((w) => /^[a-z]+$/.test(w ?? ''))
     if (everyday.length)
       failures.push(`second session: everyday words masked in the git log (${everyday.join(', ')})`)
     if (!log)

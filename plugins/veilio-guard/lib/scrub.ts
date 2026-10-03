@@ -12,11 +12,12 @@
 import {
   anonymize,
   detectSecrets,
+  isKeyword,
   restore,
   scanSecrets,
   SECRET_DISPOSITIONS,
 } from '../vendor/engine/index.js'
-import type { LanguageOption } from '../vendor/engine/index.js'
+import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 
@@ -49,7 +50,8 @@ function matcher(map: SymbolMap) {
   if (!c) {
     const byName = new Map<string, string>()
     for (const [placeholder, name] of Object.entries(map))
-      if (name !== '' && !everydayWord(placeholder, name)) byName.set(name, placeholder)
+      if (name !== '' && !everydayWord(placeholder, name) && !neverMasked(name))
+        byName.set(name, placeholder)
     const names = [...byName.keys()].sort((a, b) => b.length - a.length)
     c = { re: names.length ? new RegExp(names.map(escape).join('|'), 'g') : null, byName }
     compiled.set(map, c)
@@ -57,14 +59,34 @@ function matcher(map: SymbolMap) {
   return c
 }
 
-// A word from a string literal that is an everyday word (`the`, `keep`,
-// `Placeholder`) is masked where the engine finds it, inside a literal in a
-// source file. In output and prompts it is English, and masking it there turns
-// a git log into placeholders. One shaped like a name (`customer_refunds`,
-// `apiV2`) is still masked everywhere. Identifiers are masked everywhere, so a
-// prompt naming `reconcile` matches the code the model reads.
+// A lowercase word from a string literal (`the`, `keep`) is masked where the
+// engine finds it, inside a literal in a source file. In output and prompts it
+// is mostly English, and masking it there turns a git log into placeholders.
+// A capitalised one (`Contoso`) or one shaped like a name (`customer_refunds`,
+// `apiV2`) is still masked everywhere. A lowercase one-word name in a literal
+// (a surname, a codename) is the cost, and COVERAGE.md states it. Identifiers
+// are masked everywhere, so a prompt naming `reconcile` matches the code.
 function everydayWord(placeholder: string, name: string): boolean {
-  return placeholder.startsWith('__STR__') && /^[A-Za-z][a-z]*$/.test(name)
+  return placeholder.startsWith('__STR__') && /^[a-z]+$/.test(name)
+}
+
+// A name the engine keeps in every language (`length`) is never masked in a
+// source file, so it is never applied either. A map built by an older engine
+// may still hold it; restore still reads the old placeholder.
+const LANGUAGES: readonly Language[] = [
+  'typescript',
+  'python',
+  'go',
+  'java',
+  'csharp',
+  'rust',
+  'ruby',
+  'php',
+  'c',
+  'sql',
+]
+function neverMasked(name: string): boolean {
+  return LANGUAGES.every((language) => isKeyword(name, language))
 }
 
 function replaceNames(text: string, map: SymbolMap): string {
