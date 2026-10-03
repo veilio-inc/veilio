@@ -10,11 +10,29 @@ Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validat
 
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
+## New: Veilio guard for Claude Code
+
+Claude Code reads your files and runs commands itself, so code you would never paste into a chat reaches the model anyway. **[veilio-guard](plugins/veilio-guard/README.md)** closes that gap. It is a Claude Code plugin that sits between Claude Code's tools and the model:
+
+- Files, command output, search results and your prompts reach the model with identifiers as placeholders (`__CLS__1`) and credentials removed.
+- Edits and commands get the real names back before they run, so your code changes as usual.
+- `.env`, private keys and `.veilio/` are refused before Claude reads them.
+- You still see the real names on your screen. The model and the stored transcript keep the placeholders.
+- If the guard can't check something, it fails closed: nothing unchecked is sent.
+
+```text
+/plugin marketplace add veilio-inc/veilio
+/plugin install veilio-guard@veilio
+```
+
+It needs Claude Code 2.1.287 or later, uses the same map as the CLI, and makes no network call. Teams can enforce it for everyone through managed settings ([how](plugins/veilio-guard/README.md#for-a-team)). Every claim it makes has a test behind it, and the things it does not cover are listed too: [COVERAGE.md](plugins/veilio-guard/COVERAGE.md).
+
 ## Features
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
 - Restore names every placeholder it could not put back — invented by the AI, re-cased (`__fn__1`), or disputed between maps — never guesses; `veilio restore --strict` and the MCP's `strict` refuse instead
 - The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
+- A Claude Code plugin (`veilio-guard`) that masks everything Claude Code reads and restores what it writes
 - Bank account (IBAN), payment card and PESEL numbers found by checksum and masked reversibly, so the round trip returns them; a live credential is destroyed instead and never enters the map
 - Maps saved to browser localStorage for convenience
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
