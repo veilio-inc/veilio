@@ -1,0 +1,26 @@
+{
+  "name": "veilio-guard",
+  "version": "0.1.0",
+  "description": "Keeps your real identifiers and secrets away from the model: every file, command output and prompt reaches Claude with placeholders, and edits are restored before they land.",
+  "author": { "name": "Veilio", "url": "https://veilio.dev" },
+  "homepage": "https://github.com/veilio-inc/veilio/tree/main/plugins/veilio-guard#readme",
+  "repository": "https://github.com/veilio-inc/veilio",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": ["privacy", "anonymization", "secrets", "guard"],
+  "userConfig": {
+    "rawOnly": {
+      "type": "string",
+      "multiple": true,
+      "title": "Raw-only paths",
+      "description": "Extra glob patterns of files Claude must never read, on top of the built-in list (.env, keys, .veilio).",
+      "default": []
+    },
+    "mcpRestore": {
+      "type": "string",
+      "multiple": true,
+      "title": "MCP servers that get real names",
+      "description": "MCP servers whose tool arguments are restored to real identifiers before the call. Leave empty to send them placeholders.",
+      "default": []
+    }
+  }
+}

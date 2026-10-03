@@ -10,11 +10,29 @@ Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validat
 
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
+## New: Veilio guard for Claude Code
+
+Claude Code reads your files and runs commands itself, so code you would never paste into a chat reaches the model anyway. **[veilio-guard](plugins/veilio-guard/README.md)** closes that gap. It is a Claude Code plugin that sits between Claude Code's tools and the model:
+
+- Files, command output, search results and your prompts reach the model with identifiers as placeholders (`__CLS__1`) and credentials removed.
+- Edits and commands get the real names back before they run, so your code changes as usual.
+- `.env`, private keys and `.veilio/` are refused before Claude reads them.
+- You still see the real names on your screen. The model and the stored transcript keep the placeholders.
+- If the guard can't check something, it fails closed: nothing unchecked is sent.
+
+```text
+/plugin marketplace add veilio-inc/veilio
+/plugin install veilio-guard@veilio
+```
+
+It needs Claude Code 2.1.287 or later, uses the same map as the CLI, and makes no network call. Teams can enforce it for everyone through managed settings ([how](plugins/veilio-guard/README.md#for-a-team)). Every claim it makes has a test behind it, and the things it does not cover are listed too: [COVERAGE.md](plugins/veilio-guard/COVERAGE.md).
+
 ## Features
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
 - Restore names every placeholder it could not put back — invented by the AI, re-cased (`__fn__1`), or disputed between maps — never guesses; `veilio restore --strict` and the MCP's `strict` refuse instead
 - The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
+- A Claude Code plugin (`veilio-guard`) that masks everything Claude Code reads and restores what it writes
 - Bank account (IBAN), payment card and PESEL numbers found by checksum and masked reversibly, so the round trip returns them; a live credential is destroyed instead and never enters the map
 - Maps saved to browser localStorage for convenience
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
@@ -22,12 +40,13 @@ Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validat
 
 ## What is in this repository
 
-| Package                                        | What it is                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`packages/engine`](packages/engine/README.md) | The anonymizer itself — pure, zero runtime dependencies, published to npm as `@veilio-inc/engine`. Everything else wraps it.                                                                                                                                                   |
-| [`packages/cli`](packages/cli/README.md)       | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential. Pipes, pre-commit hooks, CI.                                                                                                                                                       |
-| [`packages/mcp`](packages/mcp/README.md)       | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent only ever sees `__CLS__1.__FN__2()` — a tool that took code as an argument would be pointless, since the real identifiers would already be in the model's context. |
-| `src/`                                         | The web app in this README — React, Vite, no backend.                                                                                                                                                                                                                          |
+| Package                                                  | What it is                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`packages/engine`](packages/engine/README.md)           | The anonymizer itself — pure, zero runtime dependencies, published to npm as `@veilio-inc/engine`. Everything else wraps it.                                                                                                                                                                                        |
+| [`packages/cli`](packages/cli/README.md)                 | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential. Pipes, pre-commit hooks, CI.                                                                                                                                                                                            |
+| [`packages/mcp`](packages/mcp/README.md)                 | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent only ever sees `__CLS__1.__FN__2()` — a tool that took code as an argument would be pointless, since the real identifiers would already be in the model's context.                                      |
+| [`plugins/veilio-guard`](plugins/veilio-guard/README.md) | A Claude Code plugin that keeps your real identifiers and secrets away from the model while Claude Code works: every file, command output and prompt reaches it with placeholders, and edits are restored before they land. What it covers and what it does not: [`COVERAGE.md`](plugins/veilio-guard/COVERAGE.md). |
+| `src/`                                                   | The web app in this README — React, Vite, no backend.                                                                                                                                                                                                                                                               |
 
 The CLI and the MCP server share one symbol map, so you can mask inside an agent
 and restore from a terminal, or the reverse. Neither makes a network call on any

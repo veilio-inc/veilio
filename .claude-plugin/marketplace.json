@@ -1,0 +1,11 @@
+{
+  "name": "veilio",
+  "owner": { "name": "Veilio", "url": "https://veilio.dev" },
+  "plugins": [
+    {
+      "name": "veilio-guard",
+      "source": "./plugins/veilio-guard",
+      "description": "Keeps your real identifiers and secrets away from the model in Claude Code."
+    }
+  ]
+}

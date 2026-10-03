@@ -99,6 +99,21 @@ jobs:
           echo "::error::Engine version is out of sync: npm has ${PUBLISHED}, this repo says ${LOCAL}."
           exit 1
 
+      # The Claude Code guard runs a copy of the engine's build (a mod cannot
+      # import packages). The copy must be the build this run just tested.
+      - name: Guard engine copy matches the build
+        run: node scripts/sync-guard-engine.mjs --check
+
+      # The guard's hooks run inside Claude Code, so its tests run under Claude
+      # Code's own test kit: no session, sign-in or network beyond the install.
+      # Pinned, because the mods API is new and the kit checks hook results
+      # against the installed version's types.
+      - name: Claude Code guard - validate and test
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.288
+          claude plugin validate --strict plugins/veilio-guard
+          cd plugins/veilio-guard && claude plugin test
+
       - name: Typecheck packages
         run: npm run typecheck --workspaces --if-present
 

@@ -38,6 +38,10 @@ export default defineConfig({
       // CLI's exports map into packages/cli/dist, a directory that exists only
       // after a build.
       'packages/**',
+      // The Claude Code guard's own tests import `claude-code/testing`, which
+      // exists only under `claude plugin test` (CI runs it). Its pure modules
+      // are tested from tests/guard instead.
+      'plugins/**',
     ],
   },
 })
