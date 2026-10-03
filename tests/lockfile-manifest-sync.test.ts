@@ -83,9 +83,10 @@ describe('every lockfile agrees with the package.json beside it', () => {
 
   it.each(LOCKFILES)('%s declares what its package.json declares', (lockPath) => {
     const manifestPath = join(dirname(lockPath), 'package.json')
-    expect(existsSync(join(REPO_ROOT, manifestPath)), `${lockPath} has no sibling package.json`).toBe(
-      true
-    )
+    expect(
+      existsSync(join(REPO_ROOT, manifestPath)),
+      `${lockPath} has no sibling package.json`
+    ).toBe(true)
 
     const lock = JSON.parse(readFileSync(join(REPO_ROOT, lockPath), 'utf8')) as Lockfile
     const manifest = JSON.parse(readFileSync(join(REPO_ROOT, manifestPath), 'utf8')) as Manifest
@@ -93,7 +94,10 @@ describe('every lockfile agrees with the package.json beside it', () => {
     // `packages[""]` is the lockfile's copy of its own root manifest. npm
     // compares exactly this when deciding whether the two are in sync.
     const mirrored = lock.packages?.['']
-    expect(mirrored, `${lockPath} has no packages[""] entry - unexpected lockfile shape`).toBeDefined()
+    expect(
+      mirrored,
+      `${lockPath} has no packages[""] entry - unexpected lockfile shape`
+    ).toBeDefined()
 
     for (const section of DEPENDENCY_SECTIONS) {
       expect(
