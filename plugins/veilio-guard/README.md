@@ -16,7 +16,7 @@ What it covers, what it doesn't, and the test behind each claim: [COVERAGE.md](C
 
 ## Install
 
-You need Claude Code 2.1.287 or later (`claude --version`).
+You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and Linux; Windows is untested.
 
 ```text
 /plugin marketplace add veilio-inc/veilio
@@ -38,6 +38,8 @@ Veilio guard on · 42 names in the map · 0 withheld · 0 refused
 - `/veilio` shows the state, the map, and what is covered.
 - `/veilio off` switches the guard off for this project. Claude then reads raw code, and the line above the prompt says so on every turn.
 - `/veilio on` switches it back on.
+
+To clear the map (`veilio map --clear`), close Claude Code first: an open session puts back the entries it knows on its next save.
 
 ## Configure
 

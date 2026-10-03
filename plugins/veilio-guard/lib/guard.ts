@@ -261,7 +261,8 @@ export class Guard {
           if (!RESERVED.has(k)) deepRewrite(v, (s) => (strings.push(s), s))
         }
         for (const s of strings) {
-          if (isRawOnly(s, this.extraRawOnly) || (isPathLike(s) && (await this.rawOnlyHit(s)))) {
+          // A path, not prose that mentions one: no whitespace.
+          if (isPathLike(s) && (await this.rawOnlyHit(s))) {
             return this.deny(
               `Veilio keeps ${this.applyText(s)} away from the model. Ask the user for what you need from it`,
               false

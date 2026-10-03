@@ -155,3 +155,25 @@ test('an MCP tool asked for a raw-only file is refused before it runs', async ($
   expect(seen.length).toBe(1)
   expect(seen[0].tool).toBe('mcp__github__create_issue')
 })
+
+test('prose that mentions a raw-only file is not a path: a subagent prompt or an issue body runs', async ($, on) => {
+  project(on, {})
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return { result: [{ type: 'text', text: 'ok' }] }
+  })
+  const a: any = await $.tool.call({
+    tool: 'Agent',
+    prompt: 'look at config/.env.local please',
+    description: 'x',
+  })
+  const b: any = await $.tool.call({
+    tool: 'mcp__github__create_issue',
+    title: 't',
+    body: 'the config/.env.production file is stale',
+  })
+  expect(a.deny).toBeUndefined()
+  expect(b.deny).toBeUndefined()
+  expect(seen.length).toBe(2)
+})
