@@ -1,6 +1,6 @@
 {
   "name": "@veilio-inc/engine",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Two-way code anonymizer for AI: replace real identifiers with role-typed placeholders (__CLS__1, __FN__2, ...) before sending source code to an LLM, restore them afterward. Pure, local, no network, no telemetry, zero runtime dependencies.",
   "type": "module",
   "main": "./dist/index.js",
