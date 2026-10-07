@@ -292,6 +292,19 @@ describe('path containment', () => {
     expect(call('anonymize_file', { path: 'src/a.ts' }).isError).toBeUndefined()
   })
 
+  it('allows a name inside the root that begins with two dots', () => {
+    write('..notes.ts', TS)
+    mkdirSync(join(cwd, '...'))
+    writeFileSync(join(cwd, '...', 'b.ts'), TS)
+    expect(call('anonymize_file', { path: '..notes.ts' }).isError).toBeUndefined()
+    expect(call('anonymize_file', { path: '.../b.ts' }).isError).toBeUndefined()
+  })
+
+  it('still says "cannot read" for a missing file inside the root', () => {
+    const res = call('anonymize_file', { path: 'src/missing.ts' })
+    expect(res.text).toContain('cannot read')
+  })
+
   // A link committed to a repository, or a Windows junction (no admin rights
   // needed), names a path inside the root that leads outside it. Comparing
   // the paths as text let the server read the target (Windows test report F5).
@@ -318,6 +331,31 @@ describe('path containment', () => {
       const res = call('anonymize_file', { path: 'link-outside/secret.txt' })
       expect(res.isError).toBe(true)
       expect(res.text).toContain('outside the project root')
+    })
+
+    it('says the same for a missing file behind the link, so it cannot probe outside the root', () => {
+      // Otherwise "cannot read" against "outside the project root" tells the
+      // agent which files exist outside the root.
+      symlinkSync(outside, join(cwd, 'link-outside'), 'junction')
+      const missing = call('anonymize_file', { path: 'link-outside/.ssh/id_rsa' })
+      expect(missing.isError).toBe(true)
+      expect(missing.text).toContain('outside the project root')
+    })
+
+    it('says the same for a dangling link, so it cannot probe whether its target exists', () => {
+      symlinkSync(join(outside, 'gone.txt'), join(cwd, 'dangling.ts'))
+      symlinkSync(join(outside, 'secret.txt'), join(cwd, 'live.ts'))
+      const dangling = call('anonymize_file', { path: 'dangling.ts' })
+      const live = call('anonymize_file', { path: 'live.ts' })
+      expect(dangling.text).toContain('outside the project root')
+      expect(dangling.text).toBe(live.text.replace('live.ts', 'dangling.ts'))
+    })
+
+    it('refuses a link that loops', () => {
+      symlinkSync(join(cwd, 'b.ts'), join(cwd, 'a.ts'))
+      symlinkSync(join(cwd, 'a.ts'), join(cwd, 'b.ts'))
+      const res = call('anonymize_file', { path: 'a.ts' })
+      expect(res.isError).toBe(true)
     })
 
     it('allows a link that stays inside the root', () => {
