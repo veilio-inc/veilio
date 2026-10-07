@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -290,6 +290,49 @@ describe('path containment', () => {
     mkdirSync(join(cwd, 'src'), { recursive: true })
     write('src/a.ts', TS)
     expect(call('anonymize_file', { path: 'src/a.ts' }).isError).toBeUndefined()
+  })
+
+  // A link committed to a repository, or a Windows junction (no admin rights
+  // needed), names a path inside the root that leads outside it. Comparing
+  // the paths as text let the server read the target (Windows test report F5).
+  describe('through links', () => {
+    let outside: string
+    beforeEach(() => {
+      outside = mkdtempSync(join(tmpdir(), 'veilio-mcp-outside-'))
+      writeFileSync(join(outside, 'secret.txt'), `OUTSIDE_ROOT_CANARY=1\n${TS}`)
+    })
+    afterEach(() => rmSync(outside, { recursive: true, force: true }))
+
+    it('refuses a file linked from inside the root to outside it', () => {
+      symlinkSync(join(outside, 'secret.txt'), join(cwd, 'notes.ts'))
+      for (const tool of ['anonymize_file', 'scan_secrets']) {
+        const res = call(tool, { path: 'notes.ts' })
+        expect(res.isError).toBe(true)
+        expect(res.text).toContain('outside the project root')
+        expect(res.text).not.toContain('PaymentGateway')
+      }
+    })
+
+    it('refuses a file under a linked directory that leads outside the root', () => {
+      symlinkSync(outside, join(cwd, 'link-outside'), 'junction')
+      const res = call('anonymize_file', { path: 'link-outside/secret.txt' })
+      expect(res.isError).toBe(true)
+      expect(res.text).toContain('outside the project root')
+    })
+
+    it('allows a link that stays inside the root', () => {
+      write('real.ts', TS)
+      symlinkSync(join(cwd, 'real.ts'), join(cwd, 'alias.ts'))
+      expect(call('anonymize_file', { path: 'alias.ts' }).isError).toBeUndefined()
+    })
+
+    it('allows a root that is itself reached through a link', () => {
+      write('a.ts', TS)
+      const linkedRoot = join(outside, 'root-link')
+      symlinkSync(cwd, linkedRoot, 'junction')
+      const res = callTool('anonymize_file', { path: 'a.ts' }, { cwd: linkedRoot, mapPath: null })
+      expect(res.isError).toBeUndefined()
+    })
   })
 })
 
