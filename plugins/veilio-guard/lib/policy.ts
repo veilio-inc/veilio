@@ -57,6 +57,9 @@ const ARGUMENTS: Record<string, ArgumentPolicy> = {
   Grep: { mode: 'lenient', restore: ['pattern', 'path', 'glob'], paths: ['path'] },
   Glob: { mode: 'lenient', restore: ['pattern', 'path'], paths: ['path'] },
   Bash: { mode: 'lenient', restore: ['command'], paths: [], command: 'command' },
+  // Claude Code's shell on Windows. It reads and writes files as Bash does
+  // (Get-Content, Set-Content, Out-File, >), so it gets the same checks.
+  PowerShell: { mode: 'lenient', restore: ['command'], paths: [], command: 'command' },
 }
 
 export function mcpServerOf(tool: string): string | null {

@@ -16,7 +16,7 @@ What it covers, what it doesn't, and the test behind each claim: [COVERAGE.md](C
 
 ## Install
 
-You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and Linux; Windows is untested.
+You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and Linux, and in one Windows 11 session (terminal CLI), where Claude Code's PowerShell tool gets the same checks as Bash.
 
 ```text
 /plugin marketplace add veilio-inc/veilio

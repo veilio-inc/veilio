@@ -57,16 +57,19 @@ export function isRawOnly(path: string, extra: readonly string[]): boolean {
 }
 
 /** The words of a shell command that could name a file: unquoted, split on
- *  whitespace and shell operators, flags dropped but the value of a
- *  `--flag=value` kept (`--env-file=.env`). Over-inclusive on purpose. */
+ *  whitespace, shell operators, braces and commas, flags dropped but the value
+ *  of a `--flag=value` or PowerShell `-Path:value` kept (`--env-file=.env`).
+ *  Braces and commas cover a PowerShell script block and argument list
+ *  (`{ gc .env }`, `gc a,.env`) and a Bash brace expansion. Over-inclusive on
+ *  purpose. */
 export function pathsInCommand(command: string): string[] {
   return command
-    .split(/[\s|&;<>()`$]+/)
+    .split(/[\s|&;<>()`$,{}]+/)
     .map((w) => w.replace(/^['"]+|['"]+$/g, ''))
-    .map((w) =>
-      w.startsWith('-') && w.includes('=')
-        ? w.slice(w.indexOf('=') + 1).replace(/^['"]+|['"]+$/g, '')
-        : w
-    )
+    .map((w) => {
+      if (!w.startsWith('-')) return w
+      const at = w.search(/[=:]/)
+      return at === -1 ? w : w.slice(at + 1).replace(/^['"]+|['"]+$/g, '')
+    })
     .filter((w) => w !== '' && !w.startsWith('-'))
 }
