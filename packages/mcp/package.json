@@ -1,6 +1,6 @@
 {
   "name": "@veilio-inc/mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "MCP server exposing the anonymizer to coding agents, so a model can work on masked code without the real identifiers ever entering its context.",
   "type": "module",
   "bin": {
