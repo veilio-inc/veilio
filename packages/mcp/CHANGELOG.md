@@ -1,5 +1,17 @@
 # @veilio-inc/mcp
 
+## 0.5.1
+
+### Patch Changes
+
+- [#99](https://github.com/veilio-inc/veilio/pull/99) [`6bc27cb`](https://github.com/veilio-inc/veilio/commit/6bc27cb04a72f3569452084b0dadf6b3cdbad5c6) Thanks [@DlgSHi](https://github.com/DlgSHi)! - A link or junction inside the project root that leads outside it is refused.
+
+  `anonymize_file` and `scan_secrets` compared paths as text, so `link-outside/secret.txt` under the root read a file outside it when `link-outside` was a symlink or a Windows directory junction, which needs no admin rights. The server now also checks where a path really leads, and reads that resolved path. Links that stay inside the root, and a root that is itself reached through a link, still work. Reported from a Windows test session; the same applies to a symlink committed to a repository on any platform.
+
+- [#99](https://github.com/veilio-inc/veilio/pull/99) [`5d046bd`](https://github.com/veilio-inc/veilio/commit/5d046bda4f3157562c858b8e0321e1de7c3a8335) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The MCP server starts when it is run through `npx`, an npm bin link, a path with a space, or on Windows.
+
+  The check that decides whether the file was run as a program compared `import.meta.url` with `file://` plus `argv[1]` as text. Through the symlink npx and npm use, from a path with a space, and for every Windows path, the two never matched: the server exited 0 without output and never answered `initialize`. This included the `npx -y @veilio-inc/mcp` set-up the README gives. The server now uses the same check as the CLI, which resolves the link and builds the URL the way Node does. Reported from a Windows test session; reproduced on macOS through `npx`.
+
 ## 0.5.0
 
 ### Minor Changes
