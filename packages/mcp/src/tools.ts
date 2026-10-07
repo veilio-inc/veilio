@@ -16,8 +16,8 @@
 // the text (a user pasted it into chat). Its description says so plainly, so the
 // model does not reach for it out of convenience and quietly defeat the purpose.
 
-import { readFileSync } from 'node:fs'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   detectSecrets,
   isPlaceholder,
@@ -94,16 +94,58 @@ function bool(args: Record<string, unknown>, key: string): boolean {
   return value
 }
 
+function isInside(root: string, target: string): boolean {
+  const rel = relative(root, target)
+  // `..notes.ts` is a name inside the root; only `..` itself, or `..` followed
+  // by a separator, climbs out of it.
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+}
+
+/** Where a path really leads, links and junctions followed. A path that does
+ *  not exist resolves through its deepest existing parent, so a missing file
+ *  behind a link that leads out is refused like an existing one: otherwise
+ *  "cannot read" against "outside" says which files exist outside the root.
+ *  Undefined when it cannot be resolved (a dangling or looping link, no
+ *  permission), which the caller refuses: fail closed. */
+function realPath(path: string): string | undefined {
+  try {
+    return realpathSync(path)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+    // ENOENT for a link that exists means its target does not: dangling.
+    if (isLink(path)) return undefined
+    const parent = dirname(path)
+    if (parent === path) return path
+    const real = realPath(parent)
+    return real === undefined ? undefined : join(real, basename(path))
+  }
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 /** Resolve a caller-supplied path and refuse anything outside `cwd`.
  *  The server reads files on the agent's behalf, so path traversal here would
- *  turn it into an arbitrary-file-read primitive. */
+ *  turn it into an arbitrary-file-read primitive.
+ *
+ *  Checked twice: as written, and where it really leads. A link committed to a
+ *  repository, or a Windows junction, sits inside the root as text and points
+ *  outside it, and the text check alone let the server read the target.
+ *  A link swapped between this check and the read is not caught; whatever can
+ *  do that already has a shell in the project. */
 function safeResolve(path: string, cwd: string): string {
   const abs = isAbsolute(path) ? path : resolve(cwd, path)
-  const rel = relative(cwd, abs)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new ToolError(`path "${path}" is outside the project root`)
-  }
-  return abs
+  const outside = new ToolError(`path "${path}" is outside the project root`)
+  if (!isInside(cwd, abs)) throw outside
+  const realTarget = realPath(abs)
+  const realRoot = realPath(cwd) ?? cwd
+  if (realTarget === undefined || !isInside(realRoot, realTarget)) throw outside
+  return realTarget
 }
 
 function readTarget(

@@ -136,3 +136,27 @@ test('the band warns while the guard is off', async ($, on) => {
     await ui.find({ type: 'Text', text: /OFF for this project: Claude reads raw code/ })
   ).toBeDefined()
 })
+
+// Windows test report F7: the band stayed empty after start-up until /veilio
+// ran, because the first draw happened before the guard had loaded and
+// nothing asked for another.
+test('the band appears once the guard has loaded, with no /veilio first', async ($, on) => {
+  await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  drawn(on, [])
+  const ui = await $.ui.mount(
+    SITE('AbovePrompt', {
+      hasSurvey: false,
+      isWorking: false,
+      maxRows: 5,
+      bodyColumns: 100,
+      scroll: { offset: 0, bodyRows: 5 },
+      view: {},
+    })
+  )
+  expect(await ui.find({ type: 'Text', text: /^Veilio guard on/ })).toBeUndefined()
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await ui.drawn()
+  expect(
+    await ui.find({ type: 'Text', text: /^Veilio guard on · 1 name in the map/ })
+  ).toBeDefined()
+})

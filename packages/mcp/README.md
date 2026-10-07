@@ -66,7 +66,7 @@ Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troublesh
 }
 ```
 
-`--root <dir>` (or `-r`) scopes every path the server will read; `--map <path>` (or `-m`) overrides the symbol-map location. Paths outside the root are refused — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
+`--root <dir>` (or `-r`) scopes every path the server will read; `--map <path>` (or `-m`) overrides the symbol-map location. Paths outside the root are refused, including a link or junction inside the root that leads outside it — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
 
 ## Team namespace (Team plan and above)
 

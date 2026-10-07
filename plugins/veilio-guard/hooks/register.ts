@@ -77,6 +77,9 @@ export function register(on: any, options: Options = {}) {
 
   on('session.start', async ($: any, e: any, next: any) => {
     await ready($)
+    // The band's first draw can come before the guard has loaded, and draws
+    // nothing then; without this it stayed empty until /veilio redrew it.
+    $.ui.invalidate('ui.render')
     await $.command.register({
       name: 'veilio',
       description: 'Veilio guard: status, and switch it on or off for this project',

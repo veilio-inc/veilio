@@ -5,6 +5,8 @@
 // here corrupts the protocol and the client drops the connection. Diagnostics
 // go to stderr, which MCP clients surface as server logs.
 
+import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { FrameReader, type JsonRpcResponse } from './server.js'
 import type { ToolContext } from './tools.js'
 import { primeNamespace } from './namespace.js'
@@ -45,6 +47,31 @@ async function start(): Promise<void> {
   process.stderr.write(`veilio-mcp: serving ${ctx.cwd}\n`)
 }
 
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Was this file run as a program, or imported?
+ *
+ * Comparing `import.meta.url` to `file://${process.argv[1]}` is wrong, and it
+ * shipped here as it once did in the CLI: npx and npm run a binary through a
+ * SYMLINK in node_modules/.bin, so `argv[1]` is the link while
+ * `import.meta.url` is the file it resolves to. A path with a space, and every
+ * Windows path (`C:\...` against `file:///C:/...`), fail the same way. The
+ * server then exited 0 having said nothing, and the agent saw a server that
+ * never answered.
+ *
+ * `realpathSync` resolves the link; `pathToFileURL` builds the URL the way
+ * Node does. Wrapped because `argv[1]` may name something unstattable
+ * (`node --eval`), which is not a program.
+ */
+function invokedAsProgram(): boolean {
+  const argv1 = process.argv[1]
+  if (argv1 === undefined) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(argv1)).href
+  } catch {
+    return false
+  }
+}
+
+if (invokedAsProgram()) {
   void start()
 }

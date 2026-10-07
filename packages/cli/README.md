@@ -143,6 +143,26 @@ because the text on stdout is what you are about to paste somewhere.
 
 Transformed code goes to **stdout**; summaries, warnings and errors go to **stderr**. That split is what makes the CLI composable — the summary stays visible without corrupting the pipe.
 
+### On Windows
+
+`pbcopy` and `pbpaste` are macOS. In PowerShell, first make pipes UTF-8 in both
+directions for the session (or put the line in your `$PROFILE`):
+
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+veilio scrub src\billing.ts | Set-Clipboard
+Get-Clipboard -Raw | veilio restore
+```
+
+Without that line, how a pipe treats non-ASCII text depends on the PowerShell
+version and the console's code page: Windows PowerShell 5.1 sends text piped
+into Veilio as ASCII, so `Get-Content file | veilio scrub` turns every `ż` into
+`?` before Veilio sees it, and restore cannot bring it back. Text piped out of
+Veilio is read with the console's code page, which may not be UTF-8. Passing
+files as arguments (`veilio scrub file`, `veilio restore answer.txt`) avoids
+the first problem; the line above avoids both. In 5.1, `>` also writes UTF-16,
+so write files from PowerShell 7 (`pwsh`).
+
 ## Exit codes
 
 | Code | Meaning                                |
