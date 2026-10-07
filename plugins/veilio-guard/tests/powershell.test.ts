@@ -43,6 +43,8 @@ for (const command of [
   "gc '.env.local' | Select-Object -First 1",
   'Get-Content notes.md,.env',
   'Invoke-Command {Get-Content .env}',
+  'Get-Content .ENV',
+  'gc .\\.env::$DATA',
 ]) {
   test(`PowerShell: ${command} is refused before it runs`, async ($, on) => {
     const seen = powershell(on)

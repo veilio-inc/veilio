@@ -25,6 +25,9 @@ export const DEFAULT_RAW_ONLY: readonly string[] = [
   '.pgpass',
 ]
 
+// Matched ignoring case: NTFS and APFS, the default file systems on Windows and
+// macOS, open `.ENV` as `.env`. On a case-sensitive one this refuses a little
+// more than it must, which is the side to err on.
 function globToRegExp(glob: string): RegExp {
   let re = ''
   for (let i = 0; i < glob.length; i++) {
@@ -37,7 +40,7 @@ function globToRegExp(glob: string): RegExp {
     else if (c === '?') re += '[^/]'
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
   }
-  return new RegExp(`^${re}$`)
+  return new RegExp(`^${re}$`, 'i')
 }
 
 function matches(path: string, pattern: string): boolean {
@@ -57,19 +60,23 @@ export function isRawOnly(path: string, extra: readonly string[]): boolean {
 }
 
 /** The words of a shell command that could name a file: unquoted, split on
- *  whitespace, shell operators, braces and commas, flags dropped but the value
- *  of a `--flag=value` or PowerShell `-Path:value` kept (`--env-file=.env`).
+ *  whitespace, shell operators, braces and commas, and each piece around `=`
+ *  and `:` checked too: a flag's or assignment's value (`--env-file=.env`,
+ *  `FOO=.env`, PowerShell's `-Path:.env`) and an NTFS stream (`.env::$DATA`).
  *  Braces and commas cover a PowerShell script block and argument list
- *  (`{ gc .env }`, `gc a,.env`) and a Bash brace expansion. Over-inclusive on
- *  purpose. */
+ *  (`{gc .env}`, `gc a,.env`). Flags themselves are dropped.
+ *
+ *  A check on the words as written, not a shell: quoting inside a word,
+ *  escapes, brace expansion and wildcards are not expanded (COVERAGE.md). */
 export function pathsInCommand(command: string): string[] {
-  return command
-    .split(/[\s|&;<>()`$,{}]+/)
-    .map((w) => w.replace(/^['"]+|['"]+$/g, ''))
-    .map((w) => {
-      if (!w.startsWith('-')) return w
-      const at = w.search(/[=:]/)
-      return at === -1 ? w : w.slice(at + 1).replace(/^['"]+|['"]+$/g, '')
-    })
-    .filter((w) => w !== '' && !w.startsWith('-'))
+  const words = new Set<string>()
+  const add = (w: string) => {
+    const word = w.replace(/^['"]+|['"]+$/g, '')
+    if (word !== '' && !word.startsWith('-')) words.add(word)
+  }
+  for (const token of command.split(/[\s|&;<>()`$,{}]+/)) {
+    add(token)
+    for (const piece of token.split(/[=:]+/)) add(piece)
+  }
+  return [...words]
 }

@@ -75,3 +75,43 @@ describe('pathsInCommand: flags that carry a path', () => {
     )
   })
 })
+
+// A command is refused when any of its words names a raw-only file. The check
+// reads the words as written; it is not a shell (COVERAGE.md).
+const refused = (command: string) => pathsInCommand(command).some((w) => isRawOnly(w, []))
+
+describe('pathsInCommand: values, streams and lists', () => {
+  it.each([
+    'gc .\\.env::$DATA',
+    'Get-Content -Path .env:Zone.Identifier',
+    'Get-Content -Path:.env',
+    'gc notes.md,.env',
+    'cat {README.md,.env}',
+    'node --opt:x=.env app.js',
+    'FOO=.env ./run.sh',
+  ])('refuses %s', (command) => {
+    expect(refused(command)).toBe(true)
+  })
+
+  it.each([
+    'cat src/env.ts',
+    'ls -la',
+    'git log --format=%h:%s',
+    'echo {a,b}.ts',
+    'gc notes.md',
+    'grep -rn ".*env" src',
+    'ls *.*',
+    "grep -rn '[z-a]env' src",
+  ])('lets %s through', (command) => {
+    expect(refused(command)).toBe(false)
+  })
+})
+
+describe('isRawOnly: case', () => {
+  it.each(['.ENV', 'C:\\work\\.Env.Local', 'keys/SERVER.PEM', '.VEILIO/map.json', 'ID_RSA'])(
+    'refuses %s: NTFS and APFS ignore case',
+    (p) => {
+      expect(isRawOnly(p, [])).toBe(true)
+    }
+  )
+})
