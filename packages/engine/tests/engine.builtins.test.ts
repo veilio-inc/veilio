@@ -86,6 +86,54 @@ describe('extractIdentifiers leaves standard built-in methods unmasked', () => {
     expect(restore('x.__VAR__3', map).restored).toBe('x.length')
   })
 
+  it('does not extract Math methods', () => {
+    const ids = extractIdentifiers(
+      'Math.round(a); Math.floor(b); Math.ceil(c); Math.trunc(d); Math.abs(e); Math.max(f, g); Math.min(h, i); Math.sqrt(j); Math.random(); Math.sign(k); Math.hypot(l, m)'
+    )
+    for (const m of [
+      'round',
+      'floor',
+      'ceil',
+      'trunc',
+      'abs',
+      'max',
+      'min',
+      'sqrt',
+      'random',
+      'sign',
+      'hypot',
+    ]) {
+      expect(ids).not.toContain(m)
+    }
+  })
+
+  it('does not extract Error properties or the standard error classes', () => {
+    const ids = extractIdentifiers(
+      'log(err.message, err.stack, err.name, err.cause); new ReferenceError(a); new SyntaxError(b); new AggregateError(c); new URIError(d); new EvalError(e)'
+    )
+    for (const m of [
+      'message',
+      'stack',
+      'name',
+      'cause',
+      'ReferenceError',
+      'SyntaxError',
+      'AggregateError',
+      'URIError',
+      'EvalError',
+    ]) {
+      expect(ids).not.toContain(m)
+    }
+  })
+
+  it('keeps Math.round readable and masks the value it rounds', () => {
+    const code = 'return Math.round(invoiceSubtotal * 100) / 100'
+    const { anonymized, map } = anonymize(code)
+    expect(anonymized).toContain('Math.round(')
+    expect(anonymized).not.toContain('invoiceSubtotal')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
   it('still masks a real domain identifier sitting next to a built-in', () => {
     const ids = extractIdentifiers('orders.forEach(processOrder)')
     expect(ids).toContain('processOrder')
