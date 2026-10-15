@@ -68,7 +68,7 @@ Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troublesh
 
 `--root <dir>` (or `-r`) scopes every path the server will read; `--map <path>` (or `-m`) overrides the symbol-map location. Paths outside the root are refused, including a link or junction inside the root that leads outside it — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
 
-**`--root` guards the files, not the conversation.** Everything the agent has read stays in its session. If you work on several clients' repos, a session that read client A's code still holds it when you switch to client B, and the model can repeat a name from it without reading a file. Placeholders are also numbered per project: `__CLS__1` in A's repo and `__CLS__1` in B's are different classes, so an answer about A restored through B's server comes back with B's names in it. Open a fresh session per client, from that repo's root, so each session has one root, one map and one client's code.
+**`--root` guards the files, not the conversation.** Everything the agent has read stays in its session. If you work on several clients' repos, a session that read client A's code still holds it when you switch to client B, and the model can repeat a name from it without reading a file. Without a team namespace, placeholders are also numbered per project: `__CLS__1` in A's repo and `__CLS__1` in B's are different classes, so an answer about A restored through B's server comes back with B's names in it. Open a fresh session per client, from that repo's root, so each session has one root, one map and one client's code.
 
 ## Team namespace (Team plan and above)
 

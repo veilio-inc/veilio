@@ -141,9 +141,10 @@ are refused); `--map <path>` uses a specific map file.
 **One client per session.** `--root` limits which files the server reads; it does
 not clear what the assistant already read. If you work for several clients, a
 session that read client A's code still holds it after you switch to client B,
-and the model can repeat one of A's names in B's work. Placeholders are numbered
-per project too, so `__CLS__1` means a different class in each repo, and
-restoring an answer about A through B's map puts B's names into it. Start a new
+and the model can repeat one of A's names in B's work. Without a team
+namespace, placeholders are numbered per project too, so `__CLS__1` means a
+different class in each repo, and restoring an answer about A through B's map
+puts B's names into it. Start a new
 session for each client, opened from that client's repo root.
 
 ---
