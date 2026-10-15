@@ -25,7 +25,7 @@ import {
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
-import { blankSpans, inSpan, traceVerbatimSpans } from './traces.js'
+import { blankSpans, inSpan, traceSpans } from './traces.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -896,8 +896,8 @@ export function anonymize(
   // What Node wrote in a pasted stack trace - V8's message wording, its own
   // frames - is neither extracted nor substituted (traces.ts). Blanked rather
   // than cut, so offsets and lines still match `source`.
-  const verbatim = traceVerbatimSpans(source)
-  const scannable = blankSpans(source, verbatim)
+  const { verbatim, unextracted } = traceSpans(source)
+  const scannable = blankSpans(source, [...verbatim, ...unextracted])
   const identifiers = extractIdentifiers(scannable, language)
   const roleOf = classifyIdentifiers(scannable, language)
 
@@ -964,7 +964,20 @@ export function anonymize(
   // does not change the output. The alternation goes first because its match
   // offsets are checked against the verbatim spans, which are offsets into the
   // untouched text; replacing an oversized token first would shift them.
-  const substitutable = identifiers.filter((n) => !whitelisted.has(n) && reverseExisting[n])
+  // A name in the function part of a `node:` frame was kept out of extraction,
+  // so it adds nothing to the map - but if the map already holds it, it is a
+  // user's name and is masked like anywhere else.
+  const extracted = new Set(identifiers)
+  const knownInFrames = extractIdentifiers(
+    unextracted.map(([start, end]) => source.slice(start, end)).join('\n'),
+    language
+  ).filter(
+    (n) =>
+      reverseExisting[n] && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n))
+  )
+  const substitutable = [...identifiers, ...knownInFrames]
+    .sort((a, b) => b.length - a.length)
+    .filter((n) => !whitelisted.has(n) && reverseExisting[n])
   const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
   const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
 

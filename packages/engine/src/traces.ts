@@ -41,32 +41,56 @@ const TEMPLATES: readonly RegExp[] = [
 // class name is not part of the span: a user's own error class is masked.
 const HEADER = /^(Uncaught )?[A-Za-z_$][\w$]*Error: /
 
-// A frame inside Node: `at fn (node:vm:149:12)` or `at node:internal/…:36:49`.
-// Everything on it is Node's, including names like `tracePromise.__proto__`.
-const NODE_FRAME = /^\s+at (?:async )?(?:\S[^\n]* \(node:[^)\n]*\)|node:\S+)$/
+// A frame inside Node: `at fn (node:vm:149:12)` or `at node:internal/…:36:49`,
+// with the line and column V8 always writes. The location is Node's. The
+// function part normally is too (`tracePromise.__proto__`), but a hand-written
+// or edited trace can put a user's name there, so it is only kept out of
+// extraction: a name the code or the rest of the trace made known is masked.
+const NODE_LOCATION = String.raw`node:[\w./-]+:\d+:\d+`
+const NODE_FRAME = new RegExp(
+  String.raw`^\s+at (?:async )?(?:(\S.*) (\(${NODE_LOCATION}\))|(${NODE_LOCATION}))$`,
+  'd'
+)
 
 // Inside any other frame, V8's own markers: `<anonymous>` where there is no
 // file or no function name, and `(index 0)` on a Promise.all frame.
 const FRAME = /^\s+at /
 const FRAME_MARKERS = /<anonymous>|\(index \d+\)$/g
 
-/** Ranges of `text` that Node wrote, in order and non-overlapping. */
-export function traceVerbatimSpans(text: string): Span[] {
-  const spans: Span[] = []
+export interface TraceSpans {
+  /** Node's text: neither extracted nor substituted. */
+  verbatim: Span[]
+  /** Not extracted, so it adds no name to the map, but a known name in it is
+   *  still masked: the function part of a `node:` frame. */
+  unextracted: Span[]
+}
+
+/** What Node wrote in `text`. Each list is in order and non-overlapping, and
+ *  the two never overlap each other. */
+export function traceSpans(text: string): TraceSpans {
+  const verbatim: Span[] = []
+  const unextracted: Span[] = []
   let lineStart = 0
-  for (const line of text.split('\n')) {
-    if (NODE_FRAME.test(line)) {
-      spans.push([lineStart, lineStart + line.length])
+  for (const raw of text.split('\n')) {
+    // A CRLF trace: match without the `\r`, which every `$` anchor would
+    // otherwise trip on, and leave it where it is.
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+    const node = NODE_FRAME.exec(line)
+    if (node?.indices) {
+      const [, fn, location, bare] = node.indices
+      if (fn) unextracted.push([lineStart + fn[0], lineStart + fn[1]])
+      const kept = location ?? bare
+      if (kept) verbatim.push([lineStart + kept[0], lineStart + kept[1]])
     } else if (FRAME.test(line)) {
       for (const m of line.matchAll(FRAME_MARKERS)) {
-        spans.push([lineStart + m.index, lineStart + m.index + m[0].length])
+        verbatim.push([lineStart + m.index, lineStart + m.index + m[0].length])
       }
     } else {
-      headerSpans(line, lineStart, spans)
+      headerSpans(line, lineStart, verbatim)
     }
-    lineStart += line.length + 1
+    lineStart += raw.length + 1
   }
-  return spans
+  return { verbatim, unextracted }
 }
 
 function headerSpans(line: string, lineStart: number, spans: Span[]): void {
@@ -99,7 +123,7 @@ export function blankSpans(text: string, spans: readonly Span[]): string {
   if (spans.length === 0) return text
   let out = ''
   let at = 0
-  for (const [start, end] of spans) {
+  for (const [start, end] of [...spans].sort((a, b) => a[0] - b[0])) {
     out += text.slice(at, start) + ' '.repeat(end - start)
     at = end
   }

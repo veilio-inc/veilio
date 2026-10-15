@@ -203,10 +203,38 @@ describe('Node’s own frames stay as Node wrote them', () => {
     expect(masked.anonymized).toBe(frame)
   })
 
+  it('a node: location without line and column is not trusted', () => {
+    const masked = mask('    at chargeCustomer (node:billingModule)')
+    expect(masked.anonymized).not.toContain('chargeCustomer')
+    expect(masked.anonymized).not.toContain('billingModule')
+  })
+
+  it('a known name in a node: frame is still masked', () => {
+    // V8 never writes a user's function at a node: location, but a
+    // hand-written or edited trace can. A name the code made known is masked.
+    const masked = mask('    at customerRecord.chargeCard (node:vm:149:12)')
+    expect(masked.anonymized).toBe(
+      `    at ${ph('customerRecord')}.${ph('chargeCard')} (node:vm:149:12)`
+    )
+  })
+
   it('keeps <anonymous> on a user frame and masks the path', () => {
     const masked = mask('    at Object.<anonymous> (/srv/app/src/billing/invoice.js:8:1)')
     expect(masked.anonymized).toContain('Object.<anonymous> (/')
     expect(masked.anonymized).not.toContain('billing')
+  })
+})
+
+describe('Windows line endings', () => {
+  it('a CRLF trace gets the same treatment', () => {
+    const lf = [
+      "TypeError: Cannot read properties of undefined (reading 'chargeCard')",
+      '    at Module._compile (node:internal/modules/cjs/loader:1554:14)',
+      '    at async Promise.all (index 0)',
+    ].join('\n')
+    const crlf = lf.replace(/\n/g, '\r\n')
+    expect(mask(crlf).anonymized).toBe(mask(lf).anonymized.replace(/\n/g, '\r\n'))
+    expect(restore(mask(crlf).anonymized, mask(crlf).map).restored).toBe(crlf)
   })
 })
 
