@@ -9,9 +9,54 @@ import type { Language } from '../src/languages.js'
 // comment besides.
 
 const C_STYLE: Language[] = ['typescript', 'go', 'java', 'csharp', 'rust', 'php', 'c']
+// Where a '…' or "…" string cannot contain a raw newline. Only there is a URL's
+// `//` read as code: elsewhere a stray apostrophe after the URL could open a
+// string that runs into later lines (see "a stray apostrophe" below).
+const LINE_BOUNDED: Language[] = ['typescript', 'go', 'c']
+
+describe('a stray apostrophe after a URL', () => {
+  // Review finding on the first version of this fix: reading the URL as code
+  // let the apostrophe in "user's" open a string that ran into the next line,
+  // ended at the quote of '//', and left the rest of that line as a comment.
+  it.each(C_STYLE)('%s: cannot turn a later line into a comment', (language) => {
+    const text =
+      "Fetched https://api.example.com/users/alice - user's profile\n" +
+      "const sep = '//'; const ownerName = 'bobSecret'"
+    const r = anonymize(text, { language })
+    expect(r.anonymized).not.toContain('ownerName')
+    expect(r.anonymized).not.toContain('bobSecret')
+  })
+
+  it.each(C_STYLE)('%s: cannot open a block comment either', (language) => {
+    const text =
+      "Fetched https://api.example.com/users/alice - user's profile\n" +
+      "const open = '/*'; const ownerName = 'bobSecret'\nconst ownerEmail = 1"
+    const r = anonymize(text, { language })
+    for (const word of ['ownerName', 'bobSecret', 'ownerEmail']) {
+      expect(r.anonymized).not.toContain(word)
+    }
+  })
+})
+
+describe('strings that may span lines still do', () => {
+  it('a template literal is one string across lines', () => {
+    const code = 'const sqlText = `select clientName\nfrom // not a comment\nacmeOrders`'
+    const r = anonymize(code, { language: 'typescript' })
+    expect(r.comments.total).toBe(0)
+    expect(r.anonymized).not.toContain('acmeOrders')
+  })
+
+  it('a backslash-continued string is one string across lines', () => {
+    const code = "const greeting = 'hello \\\n// still the string acmeClient'"
+    const r = anonymize(code, { language: 'typescript' })
+    expect(r.comments.total).toBe(0)
+    expect(r.anonymized).not.toContain('acmeClient')
+    expect(restore(r.anonymized, r.map).restored).toBe(code)
+  })
+})
 
 describe('a URL is not a comment', () => {
-  it.each(C_STYLE)('%s: a file:/// frame in a trace is masked', (language) => {
+  it.each(LINE_BOUNDED)('%s: a file:/// frame in a trace is masked', (language) => {
     const line = '    at chargeCustomer (file:///Users/jkowalski/acmeBilling/src/invoice.js:6:10)'
     const r = anonymize(line, { language })
     for (const word of ['jkowalski', 'acmeBilling', 'invoice']) {

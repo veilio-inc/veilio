@@ -242,7 +242,11 @@ function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE)
     }
 
     const lineOpener = syntax.line.find((o) => startsWithAt(o, i))
-    if (lineOpener === '//' && URL_SCHEME_BEFORE.test(code.slice(Math.max(0, i - 16), i))) {
+    if (
+      lineOpener === '//' &&
+      syntax.lineBounded.length > 0 &&
+      URL_SCHEME_BEFORE.test(code.slice(Math.max(0, i - 16), i))
+    ) {
       // The `//` of `file:///…` or `https://…`: part of a URL, which is masked
       // like code, not a comment left as written.
       buf += '//'
@@ -279,7 +283,11 @@ function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
       let str = c
       i++
+      const bounded = syntax.lineBounded.includes(c)
       while (i < n) {
+        // An unterminated '…' in a language where it cannot span lines ends at
+        // the line break, which stays outside the string.
+        if (bounded && code[i] === '\n') break
         str += code[i]
         if (code[i] === '\\') {
           if (i + 1 < n) str += code[++i]

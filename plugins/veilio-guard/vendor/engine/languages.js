@@ -1532,37 +1532,47 @@ const C_STYLE = {
     block: [['/*', '*/']],
     docstring: [],
     quotes: ['"', "'", '`'],
+    lineBounded: [],
 };
+// '…' and "…" cannot span lines in TypeScript/JavaScript, Go or C (a
+// backslash-newline continuation is an escape, consumed as one). Java has text
+// blocks, C# verbatim and raw strings, Rust multi-line literals: those keep
+// unbounded strings, and with them the old reading of a URL's `//`.
+const C_STYLE_LINE_BOUNDED = { ...C_STYLE, lineBounded: ['"', "'"] };
 const COMMENT_SYNTAX = {
-    typescript: C_STYLE,
-    go: C_STYLE,
+    typescript: C_STYLE_LINE_BOUNDED,
+    go: C_STYLE_LINE_BOUNDED,
     java: C_STYLE,
     csharp: C_STYLE,
     rust: C_STYLE,
-    c: C_STYLE,
+    c: C_STYLE_LINE_BOUNDED,
     python: {
         line: ['#'],
         block: [],
         docstring: ['"""', "'''"],
         quotes: ['"', "'"],
+        lineBounded: ['"', "'"],
     },
     ruby: {
         line: ['#'],
         block: [['=begin', '=end']],
         docstring: [],
         quotes: ['"', "'"],
+        lineBounded: [],
     },
     php: {
         line: ['//', '#'],
         block: [['/*', '*/']],
         docstring: [],
         quotes: ['"', "'"],
+        lineBounded: [],
     },
     sql: {
         line: ['--'],
         block: [['/*', '*/']],
         docstring: [],
         quotes: ["'", '"'],
+        lineBounded: [],
     },
 };
 export function commentSyntaxFor(language) {

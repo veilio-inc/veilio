@@ -22,6 +22,14 @@ export interface CommentSyntax {
     docstring: readonly string[];
     /** Quote characters that open a string literal. */
     quotes: readonly string[];
+    /**
+     * Quotes whose string cannot contain a raw newline in this language, so the
+     * scanner ends one at the line break. Text that is not code - a log line, a
+     * stack trace, "user's" in prose - then cannot carry an unmatched quote into
+     * later lines and shift what counts as string and comment there. Only where
+     * strings are bounded like this is the `//` of a URL read as code.
+     */
+    lineBounded: readonly string[];
 }
 export declare function commentSyntaxFor(language: Language): CommentSyntax;
 export interface LanguageGuess {
