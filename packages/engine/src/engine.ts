@@ -25,6 +25,7 @@ import {
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
+import { blankSpans, inSpan, traceVerbatimSpans } from './traces.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -892,8 +893,13 @@ export function anonymize(
   // the extractor then sees placeholders rather than the values.
   const source = applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters)
 
-  const identifiers = extractIdentifiers(source, language)
-  const roleOf = classifyIdentifiers(source, language)
+  // What Node wrote in a pasted stack trace - V8's message wording, its own
+  // frames - is neither extracted nor substituted (traces.ts). Blanked rather
+  // than cut, so offsets and lines still match `source`.
+  const verbatim = traceVerbatimSpans(source)
+  const scannable = blankSpans(source, verbatim)
+  const identifiers = extractIdentifiers(scannable, language)
+  const roleOf = classifyIdentifiers(scannable, language)
 
   // Split rules by type, sort by sort_order ASC (lower = earlier)
   const whitelist = rules
@@ -950,15 +956,14 @@ export function anonymize(
   // semantics are preserved — `OrderService` still wins over `Service`.
   // Whitelisted identifiers are simply left out of the alternation.
   // A token at or above MAX_REGEX_ATOM cannot go in the alternation without
-  // making the regex uncompilable, so it is replaced separately, before the
+  // making the regex uncompilable, so it is replaced separately, after the
   // alternation runs.
   //
-  // The ordering is defensive rather than load-bearing: both paths assert the
-  // same identifier boundaries, so neither can match a proper substring of a
-  // longer run of identifier characters, and swapping them is unobservable.
-  // Oversized tokens are nonetheless the longest ones (`identifiers` is sorted
-  // longest-first), so applying them first is the order that stays correct if
-  // either path's boundary handling is ever relaxed.
+  // Both paths assert the same identifier boundaries, so neither can match a
+  // proper substring of a longer run of identifier characters, and their order
+  // does not change the output. The alternation goes first because its match
+  // offsets are checked against the verbatim spans, which are offsets into the
+  // untouched text; replacing an oversized token first would shift them.
   const substitutable = identifiers.filter((n) => !whitelisted.has(n) && reverseExisting[n])
   const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
   const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
@@ -971,21 +976,36 @@ export function anonymize(
           'g'
         )
 
+  // `start` is the segment's offset in `source`, so a match can be checked
+  // against the verbatim spans. Oversized tokens skip that check: no span
+  // holds a word anywhere near MAX_REGEX_ATOM characters long.
   const substitute =
     substitutable.length === 0
       ? (text: string): string => text
-      : (text: string): string => {
-          let out = text
+      : (text: string, start: number): string => {
+          let out =
+            pattern === null
+              ? text
+              : text.replace(pattern, (m, offset: number) =>
+                  inSpan(verbatim, start + offset) ? m : (reverseExisting[m] ?? m)
+                )
           for (const name of oversized) {
             out = replaceWholeWord(out, name, reverseExisting[name] as string)
           }
-          return pattern === null ? out : out.replace(pattern, (m) => reverseExisting[m] ?? m)
+          return out
         }
 
   // One tokenize pass feeds both the substitution and the exposure count, so
   // the spans reported are by construction the spans left verbatim.
   const segments = tokenizeForMasking(source, language)
-  const anonymized = segments.map((s) => (s.isComment ? s.text : substitute(s.text))).join('')
+  let offset = 0
+  const anonymized = segments
+    .map((s) => {
+      const start = offset
+      offset += s.text.length
+      return s.isComment ? s.text : substitute(s.text, start)
+    })
+    .join('')
 
   return {
     anonymized,

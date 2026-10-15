@@ -63,6 +63,19 @@ describe('a stack trace masked with the code’s map', () => {
     }
   })
 
+  it('reads as Node wrote it, apart from the user’s names and paths', () => {
+    const placeholderOf = (name: string) =>
+      Object.keys(code.map).find((ph) => code.map[ph] === name) as string
+    expect(masked.anonymized).toContain(
+      "TypeError: Cannot read properties of undefined (reading 'reduce')"
+    )
+    expect(masked.anonymized).toContain('    at Script.runInContext (node:vm:')
+    expect(masked.anonymized).toContain(LOADER_FRAME)
+    expect(code.anonymized).toContain(
+      `return Math.round(${placeholderOf('subtotal')} * (1 + ${placeholderOf('taxRate')}) * 100) / 100`
+    )
+  })
+
   it('restores to the real trace, character for character', () => {
     expect(masked.anonymized).not.toContain('[object Object]')
     expect(restore(masked.anonymized, masked.map).restored).toBe(trace)
