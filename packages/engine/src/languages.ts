@@ -172,6 +172,17 @@ const COMMON = [
   'call',
   'bind',
   'prototype',
+  // URL schemes: `file:///…` in a stack trace, `https://…` in a log line
+  'file',
+  'http',
+  'https',
+  'wss',
+  'ssh',
+  'git',
+  'svn',
+  'ftp',
+  'sftp',
+  'ftps',
 ]
 
 // ─── Per-language keywords ───────────────────────────────────────────────────

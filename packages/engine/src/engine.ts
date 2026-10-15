@@ -201,6 +201,11 @@ function isModuleSpecifierContext(code: string, quotePos: number): boolean {
   return word === 'from' || word === 'import'
 }
 
+// A URL scheme right before `//`. A fixed list, not any `word:`, because
+// `default:// note`, a label or an object key followed by a comment must stay
+// a comment. The scheme must not be the tail of a longer word.
+const URL_SCHEME_BEFORE = /(?<![A-Za-z0-9_$])(?:file|https?|wss?|s?ftps?|ssh|git|svn):$/
+
 function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE): Segment[] {
   const syntax: CommentSyntax = commentSyntaxFor(language)
   const segments: Segment[] = []
@@ -237,6 +242,13 @@ function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE)
     }
 
     const lineOpener = syntax.line.find((o) => startsWithAt(o, i))
+    if (lineOpener === '//' && URL_SCHEME_BEFORE.test(code.slice(Math.max(0, i - 16), i))) {
+      // The `//` of `file:///…` or `https://…`: part of a URL, which is masked
+      // like code, not a comment left as written.
+      buf += '//'
+      i += 2
+      continue
+    }
     if (lineOpener !== undefined) {
       flush(true)
       while (i < n && code[i] !== '\n') buf += code[i++]
