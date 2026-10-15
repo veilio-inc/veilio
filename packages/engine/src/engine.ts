@@ -670,7 +670,8 @@ export function classifyIdentifiers(
   code: string,
   language: Language = DEFAULT_LANGUAGE
 ): Record<string, IdentifierRole> {
-  const roles: Record<string, IdentifierRole> = {}
+  // No prototype: keyed by identifier, and `__proto__` is an identifier.
+  const roles: Record<string, IdentifierRole> = Object.create(null)
   const classKeywords = classKeywordsFor(language)
   const fnKeywords = fnKeywordsFor(language)
   const bump = (name: string, role: IdentifierRole): void => {
@@ -823,7 +824,10 @@ export function anonymize(
   // at 3 for the __CLS__ base). Without this, a subsequent call with an
   // existingMap that already contains __CLS__1 would generate a fresh __CLS__1
   // for a new identifier and overwrite the previous mapping.
-  const reverseExisting: Record<string, string> = {}
+  // No prototype: keyed by real name, and a plain object answers `__proto__`
+  // with Object.prototype - the name would be "already mapped" to
+  // `[object Object]` and never come back.
+  const reverseExisting: Record<string, string> = Object.create(null)
   const namedCounters: Record<string, number> = {}
   for (const [placeholder, realName] of Object.entries(existingMap)) {
     reverseExisting[realName] = placeholder
