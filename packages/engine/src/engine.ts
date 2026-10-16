@@ -25,6 +25,7 @@ import {
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
+import { blankSpans, inSpan, traceSpans } from './traces.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -200,6 +201,11 @@ function isModuleSpecifierContext(code: string, quotePos: number): boolean {
   return word === 'from' || word === 'import'
 }
 
+// A URL scheme right before `//`. A fixed list, not any `word:`, because
+// `default:// note`, a label or an object key followed by a comment must stay
+// a comment. The scheme must not be the tail of a longer word.
+const URL_SCHEME_BEFORE = /(?<![A-Za-z0-9_$])(?:file|https?|wss?|s?ftps?|ssh|git|svn):$/
+
 function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE): Segment[] {
   const syntax: CommentSyntax = commentSyntaxFor(language)
   const segments: Segment[] = []
@@ -236,6 +242,17 @@ function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE)
     }
 
     const lineOpener = syntax.line.find((o) => startsWithAt(o, i))
+    if (
+      lineOpener === '//' &&
+      syntax.lineBounded.length > 0 &&
+      URL_SCHEME_BEFORE.test(code.slice(Math.max(0, i - 16), i))
+    ) {
+      // The `//` of `file:///…` or `https://…`: part of a URL, which is masked
+      // like code, not a comment left as written.
+      buf += '//'
+      i += 2
+      continue
+    }
     if (lineOpener !== undefined) {
       flush(true)
       while (i < n && code[i] !== '\n') buf += code[i++]
@@ -266,7 +283,11 @@ function tokenizeForMasking(code: string, language: Language = DEFAULT_LANGUAGE)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
       let str = c
       i++
+      const bounded = syntax.lineBounded.includes(c)
       while (i < n) {
+        // An unterminated '…' in a language where it cannot span lines ends at
+        // the line break, which stays outside the string.
+        if (bounded && code[i] === '\n') break
         str += code[i]
         if (code[i] === '\\') {
           if (i + 1 < n) str += code[++i]
@@ -670,7 +691,8 @@ export function classifyIdentifiers(
   code: string,
   language: Language = DEFAULT_LANGUAGE
 ): Record<string, IdentifierRole> {
-  const roles: Record<string, IdentifierRole> = {}
+  // No prototype: keyed by identifier, and `__proto__` is an identifier.
+  const roles: Record<string, IdentifierRole> = Object.create(null)
   const classKeywords = classKeywordsFor(language)
   const fnKeywords = fnKeywordsFor(language)
   const bump = (name: string, role: IdentifierRole): void => {
@@ -823,7 +845,10 @@ export function anonymize(
   // at 3 for the __CLS__ base). Without this, a subsequent call with an
   // existingMap that already contains __CLS__1 would generate a fresh __CLS__1
   // for a new identifier and overwrite the previous mapping.
-  const reverseExisting: Record<string, string> = {}
+  // No prototype: keyed by real name, and a plain object answers `__proto__`
+  // with Object.prototype - the name would be "already mapped" to
+  // `[object Object]` and never come back.
+  const reverseExisting: Record<string, string> = Object.create(null)
   const namedCounters: Record<string, number> = {}
   for (const [placeholder, realName] of Object.entries(existingMap)) {
     reverseExisting[realName] = placeholder
@@ -888,8 +913,13 @@ export function anonymize(
   // the extractor then sees placeholders rather than the values.
   const source = applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters)
 
-  const identifiers = extractIdentifiers(source, language)
-  const roleOf = classifyIdentifiers(source, language)
+  // What Node wrote in a pasted stack trace - V8's message wording, its own
+  // frames - is neither extracted nor substituted (traces.ts). Blanked rather
+  // than cut, so offsets and lines still match `source`.
+  const { verbatim, unextracted } = traceSpans(source)
+  const scannable = blankSpans(source, [...verbatim, ...unextracted])
+  const identifiers = extractIdentifiers(scannable, language)
+  const roleOf = classifyIdentifiers(scannable, language)
 
   // Split rules by type, sort by sort_order ASC (lower = earlier)
   const whitelist = rules
@@ -946,16 +976,28 @@ export function anonymize(
   // semantics are preserved — `OrderService` still wins over `Service`.
   // Whitelisted identifiers are simply left out of the alternation.
   // A token at or above MAX_REGEX_ATOM cannot go in the alternation without
-  // making the regex uncompilable, so it is replaced separately, before the
+  // making the regex uncompilable, so it is replaced separately, after the
   // alternation runs.
   //
-  // The ordering is defensive rather than load-bearing: both paths assert the
-  // same identifier boundaries, so neither can match a proper substring of a
-  // longer run of identifier characters, and swapping them is unobservable.
-  // Oversized tokens are nonetheless the longest ones (`identifiers` is sorted
-  // longest-first), so applying them first is the order that stays correct if
-  // either path's boundary handling is ever relaxed.
-  const substitutable = identifiers.filter((n) => !whitelisted.has(n) && reverseExisting[n])
+  // Both paths assert the same identifier boundaries, so neither can match a
+  // proper substring of a longer run of identifier characters, and their order
+  // does not change the output. The alternation goes first because its match
+  // offsets are checked against the verbatim spans, which are offsets into the
+  // untouched text; replacing an oversized token first would shift them.
+  // A name in the function part of a `node:` frame was kept out of extraction,
+  // so it adds nothing to the map - but if the map already holds it, it is a
+  // user's name and is masked like anywhere else.
+  const extracted = new Set(identifiers)
+  const knownInFrames = extractIdentifiers(
+    unextracted.map(([start, end]) => source.slice(start, end)).join('\n'),
+    language
+  ).filter(
+    (n) =>
+      reverseExisting[n] && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n))
+  )
+  const substitutable = [...identifiers, ...knownInFrames]
+    .sort((a, b) => b.length - a.length)
+    .filter((n) => !whitelisted.has(n) && reverseExisting[n])
   const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
   const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
 
@@ -967,21 +1009,36 @@ export function anonymize(
           'g'
         )
 
+  // `start` is the segment's offset in `source`, so a match can be checked
+  // against the verbatim spans. Oversized tokens skip that check: no span
+  // holds a word anywhere near MAX_REGEX_ATOM characters long.
   const substitute =
     substitutable.length === 0
       ? (text: string): string => text
-      : (text: string): string => {
-          let out = text
+      : (text: string, start: number): string => {
+          let out =
+            pattern === null
+              ? text
+              : text.replace(pattern, (m, offset: number) =>
+                  inSpan(verbatim, start + offset) ? m : (reverseExisting[m] ?? m)
+                )
           for (const name of oversized) {
             out = replaceWholeWord(out, name, reverseExisting[name] as string)
           }
-          return pattern === null ? out : out.replace(pattern, (m) => reverseExisting[m] ?? m)
+          return out
         }
 
   // One tokenize pass feeds both the substitution and the exposure count, so
   // the spans reported are by construction the spans left verbatim.
   const segments = tokenizeForMasking(source, language)
-  const anonymized = segments.map((s) => (s.isComment ? s.text : substitute(s.text))).join('')
+  let offset = 0
+  const anonymized = segments
+    .map((s) => {
+      const start = offset
+      offset += s.text.length
+      return s.isComment ? s.text : substitute(s.text, start)
+    })
+    .join('')
 
   return {
     anonymized,

@@ -172,6 +172,17 @@ const COMMON = [
   'call',
   'bind',
   'prototype',
+  // URL schemes: `file:///…` in a stack trace, `https://…` in a log line
+  'file',
+  'http',
+  'https',
+  'wss',
+  'ssh',
+  'git',
+  'svn',
+  'ftp',
+  'sftp',
+  'ftps',
 ]
 
 // ─── Per-language keywords ───────────────────────────────────────────────────
@@ -277,6 +288,32 @@ const TYPESCRIPT = [
   'String',
   'TypeError',
   'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'EvalError',
+  'URIError',
+  'AggregateError',
+  // Error properties: they head every stack trace an agent is asked to read.
+  'message',
+  'stack',
+  'name',
+  'cause',
+  // Math members: Math.__FN__3(x) hides that a value is being rounded.
+  'abs',
+  'ceil',
+  'floor',
+  'round',
+  'trunc',
+  'max',
+  'min',
+  'sqrt',
+  'cbrt',
+  'random',
+  'sign',
+  'hypot',
+  'exp',
+  'log2',
+  'log10',
   'console',
   'process',
   'require',
@@ -1543,6 +1580,14 @@ export interface CommentSyntax {
   docstring: readonly string[]
   /** Quote characters that open a string literal. */
   quotes: readonly string[]
+  /**
+   * Quotes whose string cannot contain a raw newline in this language, so the
+   * scanner ends one at the line break. Text that is not code - a log line, a
+   * stack trace, "user's" in prose - then cannot carry an unmatched quote into
+   * later lines and shift what counts as string and comment there. Only where
+   * strings are bounded like this is the `//` of a URL read as code.
+   */
+  lineBounded: readonly string[]
 }
 
 const C_STYLE: CommentSyntax = {
@@ -1550,38 +1595,49 @@ const C_STYLE: CommentSyntax = {
   block: [['/*', '*/']],
   docstring: [],
   quotes: ['"', "'", '`'],
+  lineBounded: [],
 }
 
+// '…' and "…" cannot span lines in TypeScript/JavaScript, Go or C (a
+// backslash-newline continuation is an escape, consumed as one). Java has text
+// blocks, C# verbatim and raw strings, Rust multi-line literals: those keep
+// unbounded strings, and with them the old reading of a URL's `//`.
+const C_STYLE_LINE_BOUNDED: CommentSyntax = { ...C_STYLE, lineBounded: ['"', "'"] }
+
 const COMMENT_SYNTAX: Record<Language, CommentSyntax> = {
-  typescript: C_STYLE,
-  go: C_STYLE,
+  typescript: C_STYLE_LINE_BOUNDED,
+  go: C_STYLE_LINE_BOUNDED,
   java: C_STYLE,
   csharp: C_STYLE,
   rust: C_STYLE,
-  c: C_STYLE,
+  c: C_STYLE_LINE_BOUNDED,
   python: {
     line: ['#'],
     block: [],
     docstring: ['"""', "'''"],
     quotes: ['"', "'"],
+    lineBounded: ['"', "'"],
   },
   ruby: {
     line: ['#'],
     block: [['=begin', '=end']],
     docstring: [],
     quotes: ['"', "'"],
+    lineBounded: [],
   },
   php: {
     line: ['//', '#'],
     block: [['/*', '*/']],
     docstring: [],
     quotes: ['"', "'"],
+    lineBounded: [],
   },
   sql: {
     line: ['--'],
     block: [['/*', '*/']],
     docstring: [],
     quotes: ["'", '"'],
+    lineBounded: [],
   },
 }
 
