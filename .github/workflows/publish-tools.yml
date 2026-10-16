@@ -73,7 +73,7 @@ jobs:
       # 24, not the engine workflow's 22. Both tools declare `engines: >=24` and
       # use Node APIs that floor there, so publishing from 22 would be testing a
       # runtime neither package claims to support.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
