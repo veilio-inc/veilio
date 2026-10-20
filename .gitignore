@@ -22,3 +22,14 @@ AGENTS.md
 # Coverage output
 /coverage/
 /social/
+
+# Private key material, wherever it lands. `age-keygen -o veilio-backup.key`
+# writes the private half into the directory you happen to be standing in, and
+# on 2026-10-20 that was the root of this repository - mode 600, untracked, and
+# one `git add -A` from being published. The key was discarded and regenerated
+# outside any repo. These patterns are the belt to that braces: nothing here
+# should ever hold a private key, so matching broadly costs nothing.
+*.key
+*.pem
+*.p12
+*.pfx
