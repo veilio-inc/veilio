@@ -1,6 +1,6 @@
 # Roadmap — Veilio Community Edition
 
-_Last updated 2026-09-29._
+_Last updated 2026-10-21._
 
 This is the public roadmap for the Community Edition and the anonymizer engine:
 what the engine gets wrong today, what we intend to do about it, and what we have
@@ -238,10 +238,11 @@ size.
 The web app costs four copy/pastes per turn, and people increasingly work inside
 editors and agents rather than a browser tab.
 
-|     | Item                                       | State    |
-| --- | ------------------------------------------ | -------- |
-| C1  | A CLI consuming the published engine       | **done** |
-| C2  | An MCP server taking file paths, not blobs | **done** |
+|     | Item                                       | State            |
+| --- | ------------------------------------------ | ---------------- |
+| C1  | A CLI consuming the published engine       | **done**         |
+| C2  | An MCP server taking file paths, not blobs | **done**         |
+| C3  | Writing a shared map, not only reading one | **needs design** |
 
 **C1 — done.** `@veilio-inc/cli` (0.3.2). `scrub`, `restore`, `scan` and `map`
 work offline with no account: transformed code on stdout, everything else on
@@ -259,6 +260,43 @@ pointless, since the identifiers would already be in the model's context.
 Both consume the published engine rather than a vendored copy, and both share
 one symbol map, so masking in an agent and restoring in a terminal is one store.
 Neither reaches the network on any local path.
+
+**C3 — needs design.** The CLI and the MCP server can *read* a team's shared
+map and cannot *write* one. `veilio maps push` uploads a **personal** map — the
+CLI's own test asserts exactly that — and the MCP server's five tools are all
+read or transform. So the only surface that creates, renames or deletes a
+shared map is the web app, and a developer working in a terminal or behind an
+agent has to open a browser tab to share what they just masked. That is the
+copy/paste tax this section exists to remove, moved one step along rather than
+removed.
+
+What is already in place, and should not be re-estimated: the team key is held
+unattended by `veilio team unlock`, the shared namespace is merged client-side
+by the same engine function every client uses, and the server routes for create,
+update and delete already exist and already enforce their own rules.
+
+Two things are missing, and the second is the hard one.
+
+**The engine exports `decryptTeamMap` and no team-map encrypt.** Sealing a map
+under the team key happens in Cloud's browser code today, so a terminal client
+has no way to produce an envelope its teammates can open. The function belongs
+in the engine, next to its inverse, for the reason this repository already
+gives for putting the namespace merge there: two implementations drift between
+the assertion that they agree and the next commit, and the symptom is a team
+silently forking its placeholder space.
+
+**Numbers in a shared space have to be reserved, not chosen.** The web app asks
+the server for a block of placeholder numbers before it saves; the CLI numbers
+locally above a floor it last saw. That is sound for a map nobody else writes
+and unsound for one several people do: two terminals that both number from the
+same floor produce maps that each look correct and that merge into a conflict,
+which the restore path then deliberately refuses to resolve. A write path for
+the CLI is a reservation client first and a new command second.
+
+**Deliberately not planned here: write tools for the MCP server.** An agent
+creating shared maps unattended, under a key sitting on disk for seven days, is
+a different security posture and not a missing feature. It is the same argument
+this project already makes about reading team maps in CI.
 
 **The sequencing argument in this entry was only half kept, and that is worth
 recording.** It said C waited on B1–B4 so that shipping more surfaces would not
