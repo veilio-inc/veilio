@@ -9,6 +9,8 @@
 
 import {
   CloudError,
+  startDeviceLogin,
+  exchangeDeviceCode,
   createMap,
   deleteMap,
   getMap,
@@ -55,6 +57,7 @@ import { readCredential, removeCredential, writeCredential, type Credential } fr
 import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
+import { VERSION } from './version.js'
 
 /** The endpoint a sign-in is checked against. See `runLogin`. */
 const ENTITLED_PROBE = '/api/maps'
@@ -91,8 +94,117 @@ interface LoginResponse {
  * attempt that failed, and everything looks signed in until the first command
  * that isn't.
  */
-export async function runLogin(instance: string | null, io: Io): Promise<number> {
+/**
+ * Sign in by asking a browser to do it (spec 046).
+ *
+ * The terminal shows a short code; a person approves it in a browser session
+ * that has already satisfied whatever that account requires - a CAPTCHA, a
+ * second factor, an identity provider - and the terminal exchanges a long code
+ * for an ordinary session. Nothing about the account is typed here, so there is
+ * nothing here for a CAPTCHA to protect.
+ */
+export async function runDeviceLogin(base: string, io: Io): Promise<number> {
+  let start
+  try {
+    start = await startDeviceLogin(base, `veilio CLI ${VERSION}`)
+  } catch (err) {
+    return reportLoginFailure(err, io)
+  }
+
+  // stderr, so `veilio login` still composes in a pipe: the instructions are
+  // for the person, not for whatever is reading stdout.
+  io.stderr(
+    `\nOpen this page in a browser where you are signed in:\n\n` +
+      `  ${start.verification_uri_complete}\n\n` +
+      `and confirm the code  ${start.user_code}\n\n` +
+      `Waiting for approval. Ctrl-C cancels, and nothing is signed in if you do.\n`
+  )
+
+  const deadline = Date.now() + start.expires_in * 1000
+  let interval = Math.max(1, start.interval) * 1000
+
+  for (;;) {
+    if (Date.now() >= deadline) {
+      io.stderr(
+        'veilio: that code expired before it was approved. Nothing was signed in — ' +
+          'run `veilio login` again for a fresh one.\n'
+      )
+      return EXIT_ERROR
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval))
+
+    try {
+      const { token } = await exchangeDeviceCode(base, start.device_code)
+      // Only now is anything written. Every refusal above leaves this machine
+      // exactly as it was (FR-010).
+      const account = await accountFor(base, token, io)
+      if (account === null) return EXIT_ERROR
+      writeCredential({ token, account, instance: base }, io.home)
+      io.stdout(`Signed in to ${base} as ${account}\n`)
+      return EXIT_OK
+    } catch (err) {
+      if (!(err instanceof CloudError)) return reportLoginFailure(err, io)
+      switch (err.message) {
+        case 'authorization_pending':
+          continue
+        case 'slow_down':
+          // Asked to wait longer, not refused. Backing off is the whole point
+          // of being told, so a client that ignored this would be the reason
+          // the server had to start refusing instead.
+          interval += 2000
+          continue
+        case 'access_denied':
+          io.stderr(
+            'veilio: that request was declined, so nothing was signed in. If you did not ' +
+              'decline it yourself, the browser session that approved it has since been ' +
+              'revoked — sign in to the web app again, then re-run `veilio login`.\n'
+          )
+          return EXIT_ERROR
+        case 'expired_token':
+          io.stderr(
+            'veilio: that code is no longer valid — it expired, or it has already been ' +
+              'used. Run `veilio login` again for a fresh one.\n'
+          )
+          return EXIT_ERROR
+        default:
+          return reportLoginFailure(err, io)
+      }
+    }
+  }
+}
+
+/** Who the new session belongs to, asked of the server rather than assumed. */
+async function accountFor(base: string, token: string, io: Io): Promise<string | null> {
+  try {
+    const me = await request<{ user?: { email?: string } }>('/api/auth/me', {
+      instance: base,
+      credential: { token, account: '', instance: base },
+    })
+    const email = me.user?.email
+    if (email) return email
+  } catch {
+    // Fall through: the session is good, we just could not label it.
+  }
+  io.stderr(
+    'veilio: signed in, but this instance did not say which account the session belongs to. ' +
+      'Nothing was written, because a credential with no account on it cannot be matched to ' +
+      'an unlocked team key later.\n'
+  )
+  return null
+}
+
+export async function runLogin(
+  instance: string | null,
+  io: Io,
+  opts: { device?: boolean } = {}
+): Promise<number> {
   const base = instance ?? DEFAULT_INSTANCE
+
+  // Asked for explicitly. The right choice for an account bound by a team's
+  // SSO requirement: a password typed here would be accepted by the login
+  // route and then refused by every later request, which reads as a broken
+  // tool rather than as the wrong way in.
+  if (opts.device === true) return runDeviceLogin(base, io)
 
   const account = (await requirePrompt(io, `Email for ${base}: `)).trim()
   if (account === '') {
@@ -113,6 +225,20 @@ export async function runLogin(instance: string | null, io: Io): Promise<number>
       body: { email: account, password },
     })
   } catch (err) {
+    // The instance requires a CAPTCHA, which this process cannot produce and
+    // which no amount of retrying will change. Falling back is not a guess:
+    // the refusal names the cause, and the browser flow is the way in that
+    // exists for exactly this. Reporting "CAPTCHA verification failed" to
+    // somebody who was never shown a CAPTCHA is the version of this that reads
+    // as a broken tool.
+    if (err instanceof CloudError && /captcha/i.test(err.message)) {
+      io.stderr(
+        `\nveilio: ${base} requires a browser check that a terminal cannot do, ` +
+          'so signing in continues in your browser. Your password was not sent anywhere ' +
+          'else and nothing was stored.\n'
+      )
+      return runDeviceLogin(base, io)
+    }
     return reportLoginFailure(err, io)
   }
 

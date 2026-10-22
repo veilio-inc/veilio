@@ -38,6 +38,7 @@ signed-in `scrub` offline, `veilio logout` first.
 
 ```bash
 veilio login                    # email, password, and the authentication code if 2FA is on
+veilio login --device           # approve in a browser instead; no password typed here
 veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
@@ -133,6 +134,9 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
+    --device            login: sign in through a browser instead of typing a
+                        password here. Required for an SSO-bound account, and
+                        used automatically when the instance asks for a CAPTCHA
     --team              scrub: number new placeholders out of the team's
                         shared allocation, for a map you intend to publish.
                         maps push: publish as the team's shared map

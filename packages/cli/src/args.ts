@@ -42,6 +42,15 @@ export interface ParsedArgs {
   /** Allow a map write that would drop entries already on disk. */
   force: boolean
   /**
+   * `login --device`: sign in through a browser instead of typing a password.
+   *
+   * The right choice for an account bound by a team's SSO requirement: a
+   * password typed here is accepted by the login route and then refused by
+   * every later request, which reads as a broken tool rather than as the wrong
+   * way in. Automatic anyway when the instance requires a CAPTCHA.
+   */
+  device: boolean
+  /**
    * `maps push --team`: publish to the team instead of to this account.
    *
    * A flag rather than a separate verb because it is the same act with a
@@ -137,6 +146,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     keepDocs: false,
     force: false,
     team: false,
+    device: false,
     instance: null,
     mapsAction: null,
     teamAction: null,
@@ -248,6 +258,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '-f':
       case '--team':
         parsed.team = true
+        break
+      case '--device':
+        parsed.device = true
         break
       case '--force':
         parsed.force = true
