@@ -443,3 +443,47 @@ async function bodyOf(response: Response): Promise<Record<string, unknown>> {
     return {}
   }
 }
+
+// ─── Device authorisation: signing in by asking a browser ────────────────────
+//
+// `POST /api/auth/login` requires a CAPTCHA token this process cannot produce,
+// and an account bound by a team's SSO requirement has no password path at all.
+// Rather than ask a terminal to be a browser, it asks one.
+
+export interface DeviceStart {
+  device_code: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete: string
+  expires_in: number
+  interval: number
+}
+
+export function startDeviceLogin(instance: string, client: string): Promise<DeviceStart> {
+  return request<DeviceStart>('/api/auth/device/code', {
+    instance,
+    method: 'POST',
+    body: { client },
+  })
+}
+
+/**
+ * Exchange the long code for a session.
+ *
+ * Refusals arrive as RFC 8628 codes in `CloudError.message`:
+ * `authorization_pending` while nobody has approved, `slow_down` when polling
+ * faster than told, `expired_token` when the ten minutes are up or the code has
+ * already been spent, `access_denied` when it was declined - or when the
+ * browser session that approved has since been revoked, which is the same
+ * answer on purpose.
+ */
+export function exchangeDeviceCode(
+  instance: string,
+  deviceCode: string
+): Promise<{ token: string }> {
+  return request<{ token: string }>('/api/auth/device/token', {
+    instance,
+    method: 'POST',
+    body: { device_code: deviceCode },
+  })
+}
