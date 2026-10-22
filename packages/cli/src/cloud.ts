@@ -339,9 +339,83 @@ export function getTeamKeyWraps(
 
 export function createMap(
   credential: Credential,
-  body: { name: string; map_data: string; identifier_count?: number; scope?: 'personal' }
+  body: {
+    name: string
+    map_data: string
+    identifier_count?: number
+    scope?: 'personal' | 'team'
+    description?: string
+    /**
+     * The team-key version `map_data` was sealed under. Team scope only.
+     *
+     * Required once a member has left the team holding a key: the server
+     * refuses a write that declares a compromised version, or one the writer
+     * does not actually hold (409 `rotationRequired`). Omitting it on a team
+     * map is accepted only while no departure has ever made a rotation owed,
+     * so it is always sent rather than sent conditionally.
+     */
+    key_version?: number
+  }
 ): Promise<{ id: string }> {
   return request<{ id: string }>('/api/maps', { credential, method: 'POST', body })
+}
+
+/** One base's reserved run of placeholder numbers, inclusive at both ends. */
+export interface PlaceholderRange {
+  base: string
+  start: number
+  end: number
+}
+
+/** A placeholder base, as the engine mints them: `__CLS__`, `__FN__`. */
+const PLACEHOLDER_BASE = /^__[A-Z][A-Z0-9_]*__$/
+
+/**
+ * Take numbers out of the team's shared allocation, so two members anonymizing
+ * at the same moment are never handed the same one.
+ *
+ * Counts and bases only. Never an identifier: the server cannot read a team's
+ * maps and does not need to in order to count. `floor` is the highest number
+ * this machine has already seen for that base - the server hands back
+ * `max(counter, floor) + 1`, so a map numbered locally before the team existed
+ * cannot be overwritten by a counter that never saw it.
+ *
+ * The base is checked here rather than only server-side. A malformed base would
+ * otherwise create a counter row under a name no placeholder can ever match,
+ * and the numbers reserved against it would be silently unusable.
+ */
+export async function reservePlaceholders(
+  credential: Credential,
+  teamId: string,
+  requests: readonly { base: string; count: number; floor: number }[],
+  signal?: AbortSignal
+): Promise<{ ranges: PlaceholderRange[] }> {
+  for (const { base, count } of requests) {
+    if (!PLACEHOLDER_BASE.test(base)) {
+      throw new CloudError(
+        'forbidden',
+        `${base} is not a placeholder base, so no numbers can be reserved for it`
+      )
+    }
+    if (!Number.isInteger(count) || count < 1) {
+      throw new CloudError('forbidden', `cannot reserve ${count} numbers for ${base}`)
+    }
+  }
+  return request<{ ranges: PlaceholderRange[] }>(
+    `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
+    { credential, method: 'POST', body: { requests }, signal }
+  )
+}
+
+/**
+ * Delete a map in Cloud.
+ *
+ * Who may delete a team map is the server's decision and is not restated here:
+ * a 403 means it belongs to someone else on the team, a 404 that there is no
+ * such map to this account. Both leave everything local untouched.
+ */
+export function deleteMap(credential: Credential, id: string): Promise<void> {
+  return request<void>(`/api/maps/${encodeURIComponent(id)}`, { credential, method: 'DELETE' })
 }
 
 /**
