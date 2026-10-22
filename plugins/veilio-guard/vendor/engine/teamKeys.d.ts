@@ -87,6 +87,21 @@ export declare function unwrapTeamKey(wrapJson: string, myPrivateKey: CryptoKeyL
 export declare function exportTeamKey(key: CryptoKeyLike): Promise<string>;
 /** The reverse, for a client reading one back off disk. */
 export declare function importTeamKey(rawBase64: string): Promise<CryptoKeyLike>;
+/**
+ * Seal a map under the team key held.
+ *
+ * The inverse of `decryptTeamMap`, and the only write in this file. Sealing a
+ * map under a key you already hold is not the act of granting that key to
+ * someone else: this widens nothing about who can read the team's maps, it only
+ * lets a member who can already read them contribute one. That is precisely
+ * what a terminal could not do before — the engine exported the open half and
+ * no seal, so the web app was the only surface that could write a shared map.
+ *
+ * A fresh 12-byte IV per call, never derived from the map. AES-GCM loses both
+ * confidentiality and authenticity if an IV repeats under one key, and two
+ * members sealing the same pairs is ordinary rather than unlikely.
+ */
+export declare function encryptTeamMap(teamKey: CryptoKeyLike, map: Record<string, string>): Promise<TeamMapEnvelope>;
 /** Open a team map with the team key held. */
 export declare function decryptTeamMap(teamKey: CryptoKeyLike, env: TeamMapEnvelope): Promise<Record<string, string>>;
 /**
