@@ -122,7 +122,9 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
-    --team              maps push: publish as the team's shared map
+    --team              scrub: number new placeholders out of the team's
+                        shared allocation, for a map you intend to publish.
+                        maps push: publish as the team's shared map
 -q, --quiet             Suppress the all-clear summary (findings always show)
     --instance <url>    login: the Veilio instance to sign in to. Defaults to
                         the public Cloud; https required (localhost excepted)

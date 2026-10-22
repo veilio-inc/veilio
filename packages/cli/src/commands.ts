@@ -29,7 +29,7 @@ import type { ParsedArgs } from './args.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
-import { anonymizeOverTeam } from './team-anonymize.js'
+import { anonymizeOverTeam, reservedAnonymizeOverTeam, type Reserve } from './team-anonymize.js'
 
 export interface Io {
   cwd: string
@@ -92,13 +92,60 @@ export async function runScrub(
 
   // Signed in to a team: the team's namespace, as the web app and the MCP server
   // number (spec 030, F11). Signed out: no request - scrub stays offline.
-  const found = teamSource ? await teamSource() : { team: null, note: null }
-  const { result, toPersist } = anonymizeOverTeam(
-    source,
-    existingMap,
-    found.team ?? { namespace: {}, highest: {} },
-    { language: args.language, secrets: args.secrets, rules: cached?.rules }
-  )
+  const found: Awaited<ReturnType<TeamNamespaceSource>> = teamSource
+    ? await teamSource()
+    : { team: null, note: null, reserve: null }
+  const options = { language: args.language, secrets: args.secrets, rules: cached?.rules }
+
+  // `--team`: take new numbers out of the team's SHARED allocation rather than
+  // from a floor computed here, because this map is going to be published.
+  //
+  // OPT-IN, not the default, and the reason is a second spec. Two members
+  // computing the same floor both minted __FN__6 on staging and one member's
+  // restore named the other's function (spec 017), so reserving is plainly
+  // better for a map that will be shared — but spec 030 FR-005 requires that
+  // `veilio scrub` and the MCP server's `anonymize_text` give the SAME
+  // placeholders for the same code and the same team, and the MCP server must
+  // never reserve (spec 011 FR-009: it does not publish, and an agent
+  // consuming the team's allocation on every tool call is a different thing
+  // again). Reserving unconditionally here would split the two surfaces apart
+  // for every user, to benefit the ones about to publish.
+  //
+  // So the person who is about to publish says so, and `maps push --team`
+  // refuses a map that conflicts anyway - naming this flag as the remedy.
+  let result: ReturnType<typeof anonymizeOverTeam>['result']
+  let toPersist: Record<string, string>
+  if (args.team && found.team && found.reserve) {
+    try {
+      ;({ result, toPersist } = await reservedAnonymizeOverTeam(
+        source,
+        existingMap,
+        found.team,
+        options,
+        found.reserve
+      ))
+    } catch (err) {
+      // Nothing is written and nothing is printed. Numbering locally instead
+      // would hand back placeholders that look correct and collide — the
+      // failure this path exists to prevent. Retrying without reservation is
+      // deliberately NOT offered.
+      const why = err instanceof Error ? err.message : String(err)
+      io.stderr(
+        `${BIN_NAME}: could not reserve placeholder numbers from the team (${why}), ` +
+          `so nothing was masked and nothing was written. ` +
+          `Numbering locally here would produce placeholders that clash with a ` +
+          `teammate's without either side noticing.\n`
+      )
+      return EXIT_ERROR
+    }
+  } else {
+    ;({ result, toPersist } = anonymizeOverTeam(
+      source,
+      existingMap,
+      found.team ?? { namespace: {}, highest: {} },
+      options
+    ))
+  }
 
   saveMap(mapPath, toPersist, { force: args.force })
   io.stdout(args.preamble ? withAiPreamble(result.anonymized, result.map) : result.anonymized)
@@ -170,8 +217,22 @@ export async function runScrub(
  */
 /** Where `scrub` gets the team's namespace from (index.ts: Cloud, 5 s at most). */
 export type TeamNamespaceSource = () => Promise<{
-  team: { namespace: Record<string, string>; highest: Record<string, number> } | null
+  team: {
+    namespace: Record<string, string>
+    highest: Record<string, number>
+    conflicts?: Record<string, number>
+  } | null
   note: string | null
+  /**
+   * Take new placeholder numbers out of the team's shared allocation.
+   *
+   * `null` when there is nothing to reserve against: signed out, not in a
+   * team, the key locked, the team's maps unreadable, or an older self-hosted
+   * instance that predates the endpoint. In each of those cases scrub numbers
+   * from a local floor and SAYS SO via `note` — which is the honest answer,
+   * because the alternative is pretending the number is safe.
+   */
+  reserve?: Reserve | null
 }>
 
 export type TeamLayerSource = (
@@ -354,6 +415,7 @@ USAGE
   ${BIN_NAME} <command> [files...] [options]
 
 COMMANDS
+  scrub --team         Number new placeholders from the team's allocation.
   scrub [files...]     Mask identifiers and redact credentials. Reads stdin when
                        no file is given. Writes the symbol map to ${STORE_DIR}/map.json.
   restore [files...]   Swap placeholders back and strip AI-generated noise.

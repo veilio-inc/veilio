@@ -12,6 +12,7 @@ import {
   createMap,
   deleteMap,
   getMap,
+  reservePlaceholders,
   getVault,
   getUserKeys,
   getTeamKeyWraps,
@@ -52,7 +53,7 @@ import {
 } from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
 import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
-import { EXIT_ERROR, EXIT_OK, type Io } from './commands.js'
+import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 
 /** The endpoint a sign-in is checked against. See `runLogin`. */
@@ -880,12 +881,33 @@ const RESTORE_CLOUD_WAIT_MS = 5000
 
 /** What `veilio scrub` numbers from (spec 030): the team's namespace, or this
  *  project's map with the reason. Signed out or in no team: no request, no note. */
-export async function teamNamespaceForScrub(home: string | undefined): Promise<{
-  team: { namespace: Record<string, string>; highest: Record<string, number> } | null
-  note: string | null
-}> {
+export async function teamNamespaceForScrub(
+  home: string | undefined
+): Promise<Awaited<ReturnType<TeamNamespaceSource>>> {
   const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS })
-  if (found.status === 'team') return { team: found.analysis, note: null }
+  if (found.status === 'team') {
+    const credential = readCredential(home)
+    const teamId = found.teamId
+    // No teamId means an older self-hosted instance that merged the namespace
+    // server-side. It predates the reservation endpoint too, so there is
+    // nothing to reserve against and a local floor is the only option - said
+    // out loud rather than passed off as safe.
+    if (!credential || !teamId) {
+      return {
+        team: found.analysis,
+        note:
+          teamId === null
+            ? "this Cloud instance is too old to reserve placeholder numbers, so this was numbered from this project's map only and may clash with the team's placeholders."
+            : null,
+        reserve: null,
+      }
+    }
+    return {
+      team: found.analysis,
+      note: null,
+      reserve: async (requests) => (await reservePlaceholders(credential, teamId, requests)).ranges,
+    }
+  }
   if (found.status === 'locked')
     return {
       team: null,
@@ -988,8 +1010,8 @@ async function pushToTeam(
     }
     if (clashes.length > 10) io.stderr(`  … and ${clashes.length - 10} more\n`)
     io.stderr(
-      'Re-run `veilio scrub` against the team namespace to renumber this project, ' +
-        'then push the result.\n'
+      'Re-run `veilio scrub --team` to number this project out of the team\u2019s own ' +
+        'allocation, then push the result.\n'
     )
     return EXIT_ERROR
   }

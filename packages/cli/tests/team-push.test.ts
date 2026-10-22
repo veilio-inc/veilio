@@ -562,4 +562,20 @@ describe('maps rm', () => {
     expect(err).toMatch(/not signed in/)
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('still removes a map while the team owes a key change (T022)', async () => {
+    // The key write-lock exists to stop NEW content being written under a key
+    // a departed member knows. Removing a map stores nothing under any key, so
+    // it is not refused — the server applies the lock to the create and
+    // re-encrypt routes only. Asserted here because the natural over-reach is
+    // to block every team write while a rotation is owed, which would leave a
+    // team unable to clean up precisely when it most wants to.
+    unlocked()
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+
+    const { code, err } = await run(['maps', 'rm', 'abc'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(err).not.toMatch(/rotation|key change/i)
+  })
 })
