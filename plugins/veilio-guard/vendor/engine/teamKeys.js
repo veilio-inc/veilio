@@ -6,16 +6,18 @@
 //
 //   vault key (passphrase)  ->  private key  ->  team key  ->  the map
 //
-// Only the read direction lives here. Minting a team key, granting it to a
-// teammate, and confirming a teammate's key are the write half, they need a
-// person present to approve them, and they stay in the browser. A client that
-// can open maps has no business being able to hand out access to them.
+// Reading, plus the one write that is not a grant: `encryptTeamMap` seals a map
+// under a key the caller already holds. Minting a team key, granting it to a
+// teammate, and confirming a teammate's key are the half that needs a person
+// present to approve it, and they stay in the browser. A client that can open
+// maps has no business being able to hand out access to them — but sealing one
+// does not hand out anything, which is why the terminal may do it (spec 011).
 //
 // Ported from `veilio-cloud`'s frontend so the MCP server can do what the
 // browser does: merge the team namespace itself, over maps only it can open,
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
-import { fromBase64, toBase64, webCryptoSubtle } from './envelope.js';
+import { fromBase64, randomBytes, toBase64, webCryptoSubtle } from './envelope.js';
 const WRAP_ALG = 'AES-GCM';
 /** The asymmetric algorithm a user's keypair uses. */
 export const USER_KEY_ALG = 'X25519';
@@ -175,6 +177,25 @@ export async function importTeamKey(rawBase64) {
         'encrypt',
         'decrypt',
     ]);
+}
+/**
+ * Seal a map under the team key held.
+ *
+ * The inverse of `decryptTeamMap`, and the only write in this file. Sealing a
+ * map under a key you already hold is not the act of granting that key to
+ * someone else: this widens nothing about who can read the team's maps, it only
+ * lets a member who can already read them contribute one. That is precisely
+ * what a terminal could not do before — the engine exported the open half and
+ * no seal, so the web app was the only surface that could write a shared map.
+ *
+ * A fresh 12-byte IV per call, never derived from the map. AES-GCM loses both
+ * confidentiality and authenticity if an IV repeats under one key, and two
+ * members sealing the same pairs is ordinary rather than unlikely.
+ */
+export async function encryptTeamMap(teamKey, map) {
+    const iv = randomBytes(12);
+    const data = await webCryptoSubtle().encrypt({ name: WRAP_ALG, iv }, teamKey, new TextEncoder().encode(JSON.stringify(map)));
+    return { v: 1, alg: TEAM_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(data) };
 }
 /** Open a team map with the team key held. */
 export async function decryptTeamMap(teamKey, env) {

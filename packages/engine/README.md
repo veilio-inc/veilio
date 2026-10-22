@@ -18,9 +18,9 @@ const { restored } = restore(aiReply, map)
 Two ready-made surfaces wrap this package, in the same repository. Both run the
 engine in your own process, and neither opens a network connection.
 
-|                                       |                                                                                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`@veilio-inc/cli`](../cli/README.md) | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential — for pipes, pre-commit hooks and CI.                 |
+|                                       |                                                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@veilio-inc/cli`](../cli/README.md) | `veilio scrub \| pbcopy`, `restore`, and a `scan` that exits non-zero on a live credential — for pipes, pre-commit hooks and CI.                           |
 | [`@veilio-inc/mcp`](../mcp/README.md) | An MCP server for coding agents. Its tools take a **file path**, so the server reads the file and the agent sees `__CLS__1.__FN__2()`, not the real names. |
 
 They share one symbol map, so you can mask inside an agent and restore from a
@@ -198,7 +198,7 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 - `restore(text, map, options?)` → `{ restored, strippedItems, strippedCount, report }`
   - `options.strip` — which AI artifacts to remove: `'all'` (default), `'none'`,
     or an explicit list of `StrippedItemType`. Worth setting: `'all'` deletes
-    JSDoc, and when a model was *asked* to document its output that is
+    JSDoc, and when a model was _asked_ to document its output that is
     destroying requested work rather than removing noise.
   - `report` — `{ resolved, missing, unresolved, altered }`: which placeholders
     came back, which never appeared, which placeholder-shaped tokens the map
@@ -295,10 +295,13 @@ its numbering with both repositories green.
   render the message each caller shows
 - `unwrapPrivateKey`, `deriveWrappingKey`, `importPublicKey`, `unwrapTeamKey`,
   `importTeamKey` / `exportTeamKey`, `decryptTeamMap`,
-  `decryptTeamMapWithAny`, `TeamKeyError` — the **read** path for team-key
-  envelopes. Minting a key, granting it to a teammate and confirming a
-  teammate's key need a person present to approve them and stay in the browser:
-  a client that can open maps has no business handing out access to them.
+  `decryptTeamMapWithAny`, `encryptTeamMap`, `TeamKeyError` — opening team-key
+  envelopes, and sealing one under a key you already hold. Minting a key,
+  granting it to a teammate and confirming a teammate's key need a person
+  present to approve them and stay in the browser: a client that can open maps
+  has no business handing out access to them. Sealing a map is not a grant —
+  it widens nothing about who can read the team's maps — which is why a
+  terminal may do it.
 
 ### Encrypted `.veilio` files and the vault
 
