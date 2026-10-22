@@ -38,7 +38,20 @@ export type TeamNamespaceResult =
    * no way to tell a disputed placeholder from a first-written one - fine for
    * anonymizing, never used to restore (spec 028, review).
    */
-  | { status: 'team'; analysis: TeamNamespaceAnalysis; conflictDetection: boolean }
+  | {
+      status: 'team'
+      analysis: TeamNamespaceAnalysis
+      conflictDetection: boolean
+      /**
+       * The team whose namespace this is, for reserving placeholder numbers
+       * against it (spec 011 FR-003).
+       *
+       * `null` only on an older self-hosted instance that merged the namespace
+       * server-side: it predates the reservation endpoint as well, so there is
+       * nothing to reserve against and the caller falls back to a local floor.
+       */
+      teamId: string | null
+    }
   /** Nothing to read: signed out, or not in a team. The local namespace is right. */
   | { status: 'local' }
   /** In a team, but no team key on this machine: `veilio team unlock`. */
@@ -127,6 +140,7 @@ async function attempt(
       status: 'team',
       analysis: { namespace: list.teamNamespace, aliases: {}, conflicts: {}, highest: {} },
       conflictDetection: false,
+      teamId: null,
     }
   }
 
@@ -140,7 +154,12 @@ async function attempt(
   if (entries.every((e) => e.map === null) && entries.length > 0) {
     return { status: 'unavailable', reason: 'none of the team maps opened with the unlocked key' }
   }
-  return { status: 'team', analysis: analyzeTeamNamespace(entries), conflictDetection: true }
+  return {
+    status: 'team',
+    analysis: analyzeTeamNamespace(entries),
+    conflictDetection: true,
+    teamId,
+  }
 }
 
 /** A member's OWN team maps arrive under personalMaps - the listing splits by
