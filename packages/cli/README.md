@@ -42,7 +42,7 @@ veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
 veilio maps push [name]         # upload the local map under a new Cloud name
-veilio maps push --team [name]   # publish it as the team's shared map instead
+veilio maps push --team [name]  # publish it as the team's shared map instead
 veilio maps rm <id>             # remove a map from Cloud
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key from this machine
@@ -59,6 +59,17 @@ zero-knowledge: pulling or pushing one prompts for the vault passphrase and
 derives the key here, on your machine — the passphrase and the key never
 leave it. A team map is sealed under the team key, which the server cannot
 read either; `veilio team unlock` opens it here with your vault passphrase.
+
+**Creating and removing a shared map are here; replacing one is not.** There is
+no `maps update --team`, and that is a decision rather than a gap. Replacing the
+contents of a map teammates already rely on changes what their placeholders
+mean after they have sent text using them — the old meaning is what their
+`restore` still needs, and nothing in a shared map records which version a given
+piece of text was masked under. Publish a new map and remove the old one when
+you are sure nobody is still restoring against it. Cloud does have a route that
+rewrites a team map's contents, used by key rotation to re-seal the same pairs
+under a new key; it exists for that one purpose and does not change what any
+placeholder means.
 
 Custom rules (whitelist and replace, set in the web app) are applied by
 `scrub` from a local copy that `veilio rules pull` writes to
