@@ -9,6 +9,7 @@ import {
   runMapsList,
   runMapsPull,
   runMapsPush,
+  runMapsRm,
   runTeamUnlock,
   runTeamLock,
   runRulesPull,
@@ -71,9 +72,11 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
           case 'pull':
             return await runMapsPull(args.files[0] ?? null, mapPath, io, { force: args.force })
           case 'push':
-            return await runMapsPush(args.files[0] ?? null, mapPath, io)
+            return await runMapsPush(args.files[0] ?? null, mapPath, io, args.team)
+          case 'rm':
+            return await runMapsRm(args.files[0] ?? null, io)
           default:
-            io.stderr('veilio: maps needs an action — list, pull or push.\n')
+            io.stderr('veilio: maps needs an action — list, pull, push or rm.\n')
             return EXIT_ERROR
         }
       }

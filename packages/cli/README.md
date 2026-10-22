@@ -27,12 +27,12 @@ signed-in `scrub` offline, `veilio logout` first.
 
 ## Commands
 
-| Command              | Purpose                                                               |
-| -------------------- | --------------------------------------------------------------------- |
-| `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
+| Command              | Purpose                                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file.                                                                                                                                   |
 | `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
-| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
-| `map`                | Show the symbol map (`--clear` to wipe it).                           |
+| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.                                                                                                                                           |
+| `map`                | Show the symbol map (`--clear` to wipe it).                                                                                                                                                             |
 
 ## Cloud sync (Individual plan and above)
 
@@ -42,6 +42,8 @@ veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
 veilio maps push [name]         # upload the local map under a new Cloud name
+veilio maps push --team [name]   # publish it as the team's shared map instead
+veilio maps rm <id>             # remove a map from Cloud
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
@@ -90,7 +92,7 @@ against the team's maps, so a reply pasted from a teammate's agent comes back
 with the real names:
 
 - **A disputed placeholder is left, not guessed.** Where this project's store
-  and the team use the same placeholder for *different* identifiers, neither
+  and the team use the same placeholder for _different_ identifiers, neither
   wins and the placeholder stays in the output with a line naming it. Same for
   one this project numbered on its own while the team was out of reach — a
   wrong name restored silently is worse than a placeholder left visibly.
@@ -120,6 +122,7 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
+    --team              maps push: publish as the team's shared map
 -q, --quiet             Suppress the all-clear summary (findings always show)
     --instance <url>    login: the Veilio instance to sign in to. Defaults to
                         the public Cloud; https required (localhost excepted)
@@ -135,7 +138,7 @@ text, placeholders and all, names each one on stderr and exits 0. A credential
 redacted on purpose is not a placeholder and never fails it.
 
 `--keep-docs` is worth knowing about: the default strip removes JSDoc along with
-the narration and TODOs, which is wrong when the model was *asked* to document
+the narration and TODOs, which is wrong when the model was _asked_ to document
 its output. `--quiet` suppresses the all-clear only — a finding still prints,
 because the text on stdout is what you are about to paste somewhere.
 
@@ -165,11 +168,11 @@ so write files from PowerShell 7 (`pwsh`).
 
 ## Exit codes
 
-| Code | Meaning                                |
-| ---- | -------------------------------------- |
-| 0    | Clean                                  |
+| Code | Meaning                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------ |
+| 0    | Clean                                                                                                              |
 | 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder `restore --strict` would have left |
-| 2    | Usage or IO error                      |
+| 2    | Usage or IO error                                                                                                  |
 
 As a pre-commit hook:
 

@@ -373,6 +373,8 @@ COMMANDS
                        decrypted here — the passphrase never leaves the machine.
                        A team map opens with the key from \`team unlock\`.
   maps push [name]     Encrypt the local map and upload it as a new map.
+  maps push --team     Publish it as the TEAM's shared map instead.
+  maps rm <id>         Remove a map from Cloud.
   team unlock          Open this account's team keys with the vault passphrase
                        and keep them on this machine (7 days), so team maps -
                        and the MCP server's shared namespace - work unattended.

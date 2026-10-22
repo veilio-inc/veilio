@@ -10,6 +10,7 @@
 import {
   CloudError,
   createMap,
+  deleteMap,
   getMap,
   getVault,
   getUserKeys,
@@ -32,6 +33,7 @@ import {
   fromBase64,
   parseVaultEnvelope,
   importTeamKey,
+  encryptTeamMap,
   decryptTeamMapWithAny,
   type CryptoKeyLike,
   type SymbolMap,
@@ -548,8 +550,41 @@ export async function runMapsPull(
   return EXIT_OK
 }
 
+/**
+ * Placeholders the local map and the team's namespace use for DIFFERENT names.
+ *
+ * Publishing one of these creates a DISPUTED placeholder, and
+ * `restoreLayers.disputedIn` then refuses to restore it for every member of
+ * the team until somebody deletes a map. One person's push, a cost paid by
+ * everyone, and nothing errors at the time - so it is checked before anything
+ * is sealed rather than reported afterwards.
+ *
+ * An identifier the team holds under a DIFFERENT placeholder is an alias, not
+ * a conflict: both still restore (spec 017), so those pass.
+ *
+ * A map anonymized with `reservedAnonymizeOverTeam` cannot reach this, because
+ * its numbers came out of the team's own allocation. This is for maps that
+ * predate it - numbered locally, possibly before this account joined a team.
+ */
+export function conflictsWithTeam(
+  local: Record<string, string>,
+  teamNamespace: Record<string, string>
+): { placeholder: string; mine: string; theirs: string }[] {
+  const out: { placeholder: string; mine: string; theirs: string }[] = []
+  for (const [placeholder, mine] of Object.entries(local)) {
+    const theirs = teamNamespace[placeholder]
+    if (theirs !== undefined && theirs !== mine) out.push({ placeholder, mine, theirs })
+  }
+  return out
+}
+
 /** Upload the local map. Same endpoint, same quotas, same validation. */
-export async function runMapsPush(name: string | null, mapPath: string, io: Io): Promise<number> {
+export async function runMapsPush(
+  name: string | null,
+  mapPath: string,
+  io: Io,
+  toTeam = false
+): Promise<number> {
   const credential = readCredential(io.home)
   if (!credential) return notSignedIn(io)
 
@@ -558,6 +593,8 @@ export async function runMapsPush(name: string | null, mapPath: string, io: Io):
     io.stderr(`veilio: there is no local map at ${mapPath} to push.\n`)
     return EXIT_ERROR
   }
+
+  if (toTeam) return pushToTeam(name, mapPath, map, credential, io)
 
   let vault: VaultInfo
   try {
@@ -860,4 +897,199 @@ export async function teamNamespaceForScrub(home: string | undefined): Promise<{
       note: `could not read the team's maps (${found.reason}), so this was numbered from this project's map only and may clash with the team's placeholders.`,
     }
   return { team: null, note: null }
+}
+
+/**
+ * Publish the local map as the TEAM's, from the terminal (spec 011 US1).
+ *
+ * Seals what is on disk AS IT IS NUMBERED. It does not renumber: by the time
+ * anybody runs this, the local map's placeholders are already present in the
+ * files they masked, and renumbering here would publish a map that disagrees
+ * with every one of them - while `saveMap(force)` rewrote the local map too,
+ * breaking local restore as well. Numbers come out of the team's allocation at
+ * ANONYMIZE time (`reservedAnonymizeOverTeam`), which is where the text and
+ * the numbers can still change together.
+ *
+ * So the ordering here is: establish that publishing is safe, THEN seal, THEN
+ * upload. Every refusal happens before the first byte leaves (FR-007).
+ */
+async function pushToTeam(
+  name: string | null,
+  mapPath: string,
+  map: Record<string, string>,
+  credential: Credential,
+  io: Io
+): Promise<number> {
+  // 1. The key. Read from the unlock file, never derived here: publishing
+  //    needs the TEAM key, and nobody's passphrase can produce it.
+  const unlock = readTeamUnlock(
+    { instance: credential.instance, account: credential.account },
+    io.home
+  )
+  if (!unlock || unlock.keys.length === 0) {
+    io.stderr(
+      'veilio: no team key is unlocked on this machine, so this map cannot be sealed for ' +
+        'the team. Run `veilio team unlock` first. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  // Newest first: a team mid-rotation holds two, and new content belongs under
+  // the newer one. The version is declared on upload so the server can refuse
+  // a write under a key a departed member knew (spec 014).
+  const newest = [...unlock.keys].sort((a, b) => b.version - a.version)[0]!
+  let teamKey
+  try {
+    teamKey = await importTeamKey(newest.key)
+  } catch (err) {
+    io.stderr(
+      `veilio: the unlocked team key could not be read (${err instanceof Error ? err.message : String(err)}). ` +
+        'Run `veilio team unlock` again. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  // 2. The team's namespace, for the conflict check and for the report. A
+  //    failure here is NOT fallback-to-local: publishing blind is what the
+  //    check exists to prevent.
+  const found = await resolveTeamNamespace(io.home)
+  if (found.status === 'local') {
+    io.stderr(
+      'veilio: this account is not in a team, so there is no shared map to publish to. ' +
+        'Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+  if (found.status === 'locked') {
+    io.stderr(
+      'veilio: the team key on this machine does not match this team. ' +
+        'Run `veilio team unlock` again. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+  if (found.status === 'unavailable') {
+    io.stderr(
+      `veilio: could not read the team's maps (${found.reason}), so whether this map ` +
+        'conflicts with the team cannot be known. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  // 3. The conflict check. Before sealing, so a refusal costs nothing.
+  const clashes = conflictsWithTeam(map, found.analysis.namespace)
+  if (clashes.length > 0) {
+    io.stderr(
+      `veilio: ${clashes.length} placeholder${clashes.length === 1 ? '' : 's'} in this map already ` +
+        `mean something else to the team. Publishing would leave ${clashes.length === 1 ? 'it' : 'them'} ` +
+        `unrestorable for every member, so nothing was uploaded:\n`
+    )
+    for (const { placeholder, mine, theirs } of clashes.slice(0, 10)) {
+      io.stderr(`  ${placeholder}: this map says ${mine}, the team says ${theirs}\n`)
+    }
+    if (clashes.length > 10) io.stderr(`  … and ${clashes.length - 10} more\n`)
+    io.stderr(
+      'Re-run `veilio scrub` against the team namespace to renumber this project, ' +
+        'then push the result.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  // 4. Seal and upload. Nothing above this line has sent anything.
+  const envelope = await encryptTeamMap(teamKey, map)
+  let created: { id: string }
+  try {
+    created = await createMap(credential, {
+      name: name ?? 'from the terminal',
+      map_data: JSON.stringify(envelope),
+      identifier_count: Object.keys(map).length,
+      scope: 'team',
+      key_version: newest.version,
+    })
+  } catch (err) {
+    return reportTeamWriteFailure(err, io)
+  }
+
+  // The local map is NOT rewritten with a remote id: a team map is not this
+  // project's copy of anything, and recording it as `remote` would make the
+  // next `maps pull` treat the team's map as this project's own.
+  const total = Object.keys(found.analysis.namespace).length + Object.keys(map).length
+  const disputed = Object.keys(found.analysis.conflicts).length
+  io.stdout(
+    `Published ${Object.keys(map).length} symbols to the team as ${created.id}\n` +
+      `The team's shared set now holds about ${total} identifiers` +
+      (disputed > 0
+        ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
+        : ', none disputed\n')
+  )
+  return EXIT_OK
+}
+
+/**
+ * Remove a map from Cloud.
+ *
+ * Who may remove a team map is the server's decision and is not second-guessed
+ * here - this says what each refusal means and changes nothing locally either
+ * way. Renaming and removing are allowed while a key rotation is owed, because
+ * neither stores anything under the key.
+ */
+export async function runMapsRm(id: string | null, io: Io): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) return notSignedIn(io)
+
+  if (!id) {
+    io.stderr('veilio: which map? Run `veilio maps list` for the ids.\n')
+    return EXIT_ERROR
+  }
+
+  try {
+    await deleteMap(credential, id)
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404) {
+      io.stderr(`veilio: there is no map ${id} on this account.\n`)
+      return EXIT_ERROR
+    }
+    if (err instanceof CloudError && err.status === 403) {
+      io.stderr(`veilio: ${id} belongs to someone else on your team, so it is theirs to remove.\n`)
+      return EXIT_ERROR
+    }
+    return reportCloudFailure(err, io)
+  }
+
+  io.stdout(`Removed ${id}\n`)
+  return EXIT_OK
+}
+
+/**
+ * A failed team-map write, said in terms of what happened and who can fix it.
+ *
+ * The person reading this is often not the person who can clear it: a rotation
+ * is owed by whoever holds the current key, not by whoever happened to push.
+ * An unexplained refusal in a terminal reads as a broken tool (spec 011 US3).
+ */
+function reportTeamWriteFailure(err: unknown, io: Io): number {
+  if (err instanceof CloudError && err.status === 409) {
+    io.stderr(
+      'veilio: a teammate left while holding the team key, so no new team content may be ' +
+        'written until the key is changed. A member who holds the current key has to do ' +
+        'that — it cannot be done from here. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+  if (err instanceof CloudError && err.status === 413) {
+    io.stderr(
+      'veilio: this map is too large for Cloud to accept, so nothing was stored. ' +
+        'Split it, or remove entries you no longer need.\n'
+    )
+    return EXIT_ERROR
+  }
+  if (err instanceof CloudError && err.kind === 'forbidden' && /limit/i.test(err.message)) {
+    // The ceiling is an abuse limit, not a plan feature. Saying "upgrade" here
+    // would take money for a change that does nothing.
+    io.stderr(
+      `veilio: ${err.message}\nThis ceiling is the same on every paid plan, so upgrading ` +
+        'will not raise it. Nothing was uploaded.\n'
+    )
+    return EXIT_ERROR
+  }
+  return reportCloudFailure(err, io)
 }
