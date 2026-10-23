@@ -27,21 +27,24 @@ signed-in `scrub` offline, `veilio logout` first.
 
 ## Commands
 
-| Command              | Purpose                                                               |
-| -------------------- | --------------------------------------------------------------------- |
-| `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file. |
+| Command              | Purpose                                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file.                                                                                                                                   |
 | `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
-| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.         |
-| `map`                | Show the symbol map (`--clear` to wipe it).                           |
+| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.                                                                                                                                           |
+| `map`                | Show the symbol map (`--clear` to wipe it).                                                                                                                                                             |
 
 ## Cloud sync (Individual plan and above)
 
 ```bash
 veilio login                    # email, password, and the authentication code if 2FA is on
+veilio login --device           # approve in a browser instead; no password typed here
 veilio whoami                   # who you're signed in as, no request made
 veilio maps list                # ids, scope and symbol counts for everything in Cloud
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
 veilio maps push [name]         # upload the local map under a new Cloud name
+veilio maps push --team [name]  # publish it as the team's shared map instead
+veilio maps rm <id>             # remove a map from Cloud
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
@@ -57,6 +60,17 @@ zero-knowledge: pulling or pushing one prompts for the vault passphrase and
 derives the key here, on your machine — the passphrase and the key never
 leave it. A team map is sealed under the team key, which the server cannot
 read either; `veilio team unlock` opens it here with your vault passphrase.
+
+**Creating and removing a shared map are here; replacing one is not.** There is
+no `maps update --team`, and that is a decision rather than a gap. Replacing the
+contents of a map teammates already rely on changes what their placeholders
+mean after they have sent text using them — the old meaning is what their
+`restore` still needs, and nothing in a shared map records which version a given
+piece of text was masked under. Publish a new map and remove the old one when
+you are sure nobody is still restoring against it. Cloud does have a route that
+rewrites a team map's contents, used by key rotation to re-seal the same pairs
+under a new key; it exists for that one purpose and does not change what any
+placeholder means.
 
 Custom rules (whitelist and replace, set in the web app) are applied by
 `scrub` from a local copy that `veilio rules pull` writes to
@@ -90,7 +104,7 @@ against the team's maps, so a reply pasted from a teammate's agent comes back
 with the real names:
 
 - **A disputed placeholder is left, not guessed.** Where this project's store
-  and the team use the same placeholder for *different* identifiers, neither
+  and the team use the same placeholder for _different_ identifiers, neither
   wins and the placeholder stays in the output with a line naming it. Same for
   one this project numbered on its own while the team was out of reach — a
   wrong name restored silently is worse than a placeholder left visibly.
@@ -120,6 +134,12 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
+    --device            login: sign in through a browser instead of typing a
+                        password here. Required for an SSO-bound account, and
+                        used automatically when the instance asks for a CAPTCHA
+    --team              scrub: number new placeholders out of the team's
+                        shared allocation, for a map you intend to publish.
+                        maps push: publish as the team's shared map
 -q, --quiet             Suppress the all-clear summary (findings always show)
     --instance <url>    login: the Veilio instance to sign in to. Defaults to
                         the public Cloud; https required (localhost excepted)
@@ -135,7 +155,7 @@ text, placeholders and all, names each one on stderr and exits 0. A credential
 redacted on purpose is not a placeholder and never fails it.
 
 `--keep-docs` is worth knowing about: the default strip removes JSDoc along with
-the narration and TODOs, which is wrong when the model was *asked* to document
+the narration and TODOs, which is wrong when the model was _asked_ to document
 its output. `--quiet` suppresses the all-clear only — a finding still prints,
 because the text on stdout is what you are about to paste somewhere.
 
@@ -165,11 +185,11 @@ so write files from PowerShell 7 (`pwsh`).
 
 ## Exit codes
 
-| Code | Meaning                                |
-| ---- | -------------------------------------- |
-| 0    | Clean                                  |
+| Code | Meaning                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------ |
+| 0    | Clean                                                                                                              |
 | 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder `restore --strict` would have left |
-| 2    | Usage or IO error                      |
+| 2    | Usage or IO error                                                                                                  |
 
 As a pre-commit hook:
 

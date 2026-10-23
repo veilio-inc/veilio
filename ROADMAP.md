@@ -1,6 +1,6 @@
 # Roadmap — Veilio Community Edition
 
-_Last updated 2026-09-29._
+_Last updated 2026-10-21._
 
 This is the public roadmap for the Community Edition and the anonymizer engine:
 what the engine gets wrong today, what we intend to do about it, and what we have
@@ -238,10 +238,11 @@ size.
 The web app costs four copy/pastes per turn, and people increasingly work inside
 editors and agents rather than a browser tab.
 
-|     | Item                                       | State    |
-| --- | ------------------------------------------ | -------- |
-| C1  | A CLI consuming the published engine       | **done** |
-| C2  | An MCP server taking file paths, not blobs | **done** |
+|     | Item                                       | State            |
+| --- | ------------------------------------------ | ---------------- |
+| C1  | A CLI consuming the published engine       | **done**         |
+| C2  | An MCP server taking file paths, not blobs | **done**         |
+| C3  | Writing a shared map, not only reading one | **done**         |
 
 **C1 — done.** `@veilio-inc/cli` (0.3.2). `scrub`, `restore`, `scan` and `map`
 work offline with no account: transformed code on stdout, everything else on
@@ -259,6 +260,78 @@ pointless, since the identifiers would already be in the model's context.
 Both consume the published engine rather than a vendored copy, and both share
 one symbol map, so masking in an agent and restoring in a terminal is one store.
 Neither reaches the network on any local path.
+
+**C3 — done** (2026-10-22). The CLI and the MCP server could *read* a team's shared
+map and cannot *write* one. `veilio maps push` uploads a **personal** map — the
+CLI's own test asserts exactly that — and the MCP server's five tools are all
+read or transform. So the only surface that creates, renames or deletes a
+shared map is the web app, and a developer working in a terminal or behind an
+agent has to open a browser tab to share what they just masked. That is the
+copy/paste tax this section exists to remove, moved one step along rather than
+removed.
+
+What is already in place, and should not be re-estimated: the team key is held
+unattended by `veilio team unlock`, the shared namespace is merged client-side
+by the same engine function every client uses, and the server routes for create,
+update and delete already exist and already enforce their own rules.
+
+Both of the things that were missing are now in place, and the second one
+turned out to be shaped differently than this entry assumed.
+
+**The engine exports `decryptTeamMap` and no team-map encrypt.** Sealing a map
+under the team key happens in Cloud's browser code today, so a terminal client
+has no way to produce an envelope its teammates can open. The function belongs
+in the engine, next to its inverse, for the reason this repository already
+gives for putting the namespace merge there: two implementations drift between
+the assertion that they agree and the next commit, and the symptom is a team
+silently forking its placeholder space.
+
+**Numbers in a shared space have to be reserved, not chosen.** The web app asks
+the server for a block of placeholder numbers before it saves; the CLI numbers
+locally above a floor it last saw. That is sound for a map nobody else writes
+and unsound for one several people do: two terminals that both number from the
+same floor produce maps that each look correct and that merge into a conflict,
+which the restore path then deliberately refuses to resolve. A write path for
+the CLI is a reservation client first and a new command second.
+
+**What shipped.** `encryptTeamMap` landed in the engine at **1.10.0**, beside
+its inverse, with a frozen envelope captured from Cloud's own implementation in
+the test so the two cannot drift silently — a renamed wire tag is
+self-consistent across the engine's own halves and is caught only by that
+fixture. Then `veilio maps push --team` and `veilio maps rm`, and
+`veilio scrub --team` for the numbering.
+
+**Where the reservation actually goes — the thing this entry got wrong.** The
+plan said `maps push` would reserve numbers and renumber the map before sealing
+it. That is not implementable: by the time anyone runs `push`, the
+placeholders are already in the files they masked, so renumbering publishes a
+map that disagrees with every one of them, and `saveMap(force)` rewrites the
+local map too, breaking local restore as well. The upload succeeds and the
+damage surfaces only when somebody restores. So reservation belongs in the
+*anonymize* path, where the text and the numbers can still change together, and
+`push` seals what is on disk as it is numbered.
+
+It is opt-in (`scrub --team`) rather than automatic, and that is a second spec's
+doing rather than caution: spec 030 FR-005 requires `veilio scrub` and the MCP
+server's `anonymize_text` to give the same placeholders for the same code and
+the same team. The MCP must never reserve, so reserving by default would split
+the two surfaces apart for every user in order to help the few about to
+publish. The existing parity tests caught this, which is what they are for.
+
+For maps that predate all of this — numbered locally, possibly before the
+account joined a team — `push` compares against the team namespace first and
+refuses a placeholder the team already means something else by. Publishing one
+makes it *disputed*, and restore then refuses it for every member until
+somebody deletes a map: one person's push, a cost paid by everyone, with
+nothing erroring at the time.
+
+**Deliberately not shipped: write tools for the MCP server.** An agent
+creating shared maps unattended, under a key sitting on disk for seven days, is
+a different security posture and not a missing feature. It is the same argument
+this project already makes about reading team maps in CI. An agent that reserved
+numbers it then discarded would also consume the team's allocation on every tool
+call, which is why the reserved path is a separate entry point rather than a
+flag on the function both clients share.
 
 **The sequencing argument in this entry was only half kept, and that is worth
 recording.** It said C waited on B1–B4 so that shipping more surfaces would not
