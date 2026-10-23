@@ -42,6 +42,24 @@ export interface ParsedArgs {
   /** Allow a map write that would drop entries already on disk. */
   force: boolean
   /**
+   * `login --device`: sign in through a browser instead of typing a password.
+   *
+   * The right choice for an account bound by a team's SSO requirement: a
+   * password typed here is accepted by the login route and then refused by
+   * every later request, which reads as a broken tool rather than as the wrong
+   * way in. Automatic anyway when the instance requires a CAPTCHA.
+   */
+  device: boolean
+  /**
+   * `maps push --team`: publish to the team instead of to this account.
+   *
+   * A flag rather than a separate verb because it is the same act with a
+   * different audience, and because `maps push` already means "upload the
+   * local map" — a `maps publish` beside it would read as a different
+   * operation on a different thing.
+   */
+  team: boolean
+  /**
    * `maps` subcommand: list, pull or push. Null when `maps` was given alone.
    *
    * A subcommand rather than three top-level commands, because `map` (singular,
@@ -49,7 +67,7 @@ export interface ParsedArgs {
    * reads like they are the same thing. `maps <verb>` keeps the cloud surface
    * visibly separate from the offline one.
    */
-  mapsAction: 'list' | 'pull' | 'push' | null
+  mapsAction: 'list' | 'pull' | 'push' | 'rm' | null
 
   /**
    * `team unlock` / `team lock`.
@@ -127,6 +145,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     strict: false,
     keepDocs: false,
     force: false,
+    team: false,
+    device: false,
     instance: null,
     mapsAction: null,
     teamAction: null,
@@ -149,8 +169,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     if (parsed.command === 'maps') {
       const verb = argv[1]
       if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'list' && verb !== 'pull' && verb !== 'push') {
-          throw new UsageError(`unknown maps action "${verb}" — expected list, pull or push`)
+        if (verb !== 'list' && verb !== 'pull' && verb !== 'push' && verb !== 'rm') {
+          throw new UsageError(`unknown maps action "${verb}" — expected list, pull, push or rm`)
         }
         parsed.mapsAction = verb
         i = 2
@@ -236,6 +256,12 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         parsed.keepDocs = true
         break
       case '-f':
+      case '--team':
+        parsed.team = true
+        break
+      case '--device':
+        parsed.device = true
+        break
       case '--force':
         parsed.force = true
         break

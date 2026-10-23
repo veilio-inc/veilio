@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from 'node:module'
 import { parseArgs, UsageError } from './args.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
 import {
@@ -9,6 +8,7 @@ import {
   runMapsList,
   runMapsPull,
   runMapsPush,
+  runMapsRm,
   runTeamUnlock,
   runTeamLock,
   runRulesPull,
@@ -20,13 +20,9 @@ import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-// Read from the package, not typed here: changesets bump package.json only, so
-// a literal drifted - the published 0.2.0 reported 0.1.0 (found 2026-09-26).
-// npm always ships package.json, and ../package.json resolves from src/ and
-// dist/ alike.
-export const VERSION: string = (
-  createRequire(import.meta.url)('../package.json') as { version: string }
-).version
+import { VERSION } from './version.js'
+
+export { VERSION }
 
 /** Testable entry point: everything that touches the process is injected. */
 export async function main(argv: readonly string[], io: Io): Promise<number> {
@@ -58,7 +54,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       case 'map':
         return await runMap(args, io)
       case 'login':
-        return await runLogin(args.instance, io)
+        return await runLogin(args.instance, io, { device: args.device })
       case 'logout':
         return await runLogout(io)
       case 'whoami':
@@ -71,9 +67,11 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
           case 'pull':
             return await runMapsPull(args.files[0] ?? null, mapPath, io, { force: args.force })
           case 'push':
-            return await runMapsPush(args.files[0] ?? null, mapPath, io)
+            return await runMapsPush(args.files[0] ?? null, mapPath, io, args.team)
+          case 'rm':
+            return await runMapsRm(args.files[0] ?? null, io)
           default:
-            io.stderr('veilio: maps needs an action — list, pull or push.\n')
+            io.stderr('veilio: maps needs an action — list, pull, push or rm.\n')
             return EXIT_ERROR
         }
       }
