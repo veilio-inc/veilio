@@ -15,6 +15,25 @@ import { buildVeilioFile } from './helpers-veilio-file.js'
 // technique quickstart.md's manual check describes doing by hand in
 // devtools) creates one without touching the app or its parameters.
 const MAX_ITERATIONS = 4_000_000
+
+/**
+ * Four million PBKDF2 iterations is the point of this file, and it is why the
+ * default thirty-second budget does not fit everywhere.
+ *
+ * Natively these two tests take about twenty seconds together. Inside a
+ * container on an emulated CPU the same derive runs several times slower and
+ * the budget is gone - reliably, not occasionally, and the shape says so:
+ * every retry failed at a DIFFERENT step (waiting for the file chooser, then
+ * the click, then `derive-busy` never clearing). A logic fault fails in the
+ * same place each time; a uniformly slow run fails wherever the clock happens
+ * to run out.
+ *
+ * The budget is raised rather than the iteration count lowered, because the
+ * iteration count IS the subject: the assertion is that the page keeps
+ * repainting while a deliberately hostile file is derived, and a cheaper file
+ * would not exercise that at all.
+ */
+test.describe.configure({ timeout: 120_000 })
 const PASSPHRASE = 'e2e-derive-worker-passphrase'
 const CPU_THROTTLE_RATE = 40
 
@@ -77,7 +96,7 @@ test('the page keeps repainting during a real derive, and the artifact still rou
   // callbacks throughout the window - a blocked thread would report 0.
   expect(rafDuringDerive).toBeGreaterThan(0)
 
-  await expect(page.getByTestId('derive-busy')).toBeHidden({ timeout: 30_000 })
+  await expect(page.getByTestId('derive-busy')).toBeHidden({ timeout: 90_000 })
   await expect(page.getByText('1 symbols')).toBeVisible()
 })
 
