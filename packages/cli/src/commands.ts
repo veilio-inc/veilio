@@ -271,7 +271,9 @@ function thirdPartyNames(
     l === 'typescript' || l === 'python' || l === 'go'
   // Text that declares no code (notes, data) does not count; a source file in
   // a language whose declarations are not read does, and keeps everything.
-  const prose = (name: string) => /\.(txt|md|markdown|rst|json|ya?ml|toml|csv|log|ini)$/i.test(name)
+  // Shell scripts declare nothing those languages import, so they count as prose here.
+  const prose = (name: string) =>
+    /\.(txt|md|markdown|rst|json|ya?ml|toml|csv|log|ini|sh|bash|zsh|ps1)$/i.test(name)
   const unknown = inputs.some(
     (i) => i.name === null || (!prose(i.name) && !parsed(languageFor(i.name)))
   )

@@ -39,6 +39,11 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+const { isKeyword } = await import(join(HERE, '../../vendor/engine/index.js'))
+// The languages a masked keyword is checked against: those the repository's
+// own source is in (set when the warm map is built).
+let LANGUAGES = ['typescript']
+const { languageOfPath } = await import(join(HERE, '../../vendor/engine/index.js'))
 const PLUGIN = resolve(HERE, '../..')
 const CLI = resolve(PLUGIN, '../../packages/cli/dist/index.js')
 const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm']
@@ -170,6 +175,11 @@ function validate() {
 // and on a mixed repository that masks one language's keywords in the other.
 // Built once, on a clean clone: a planted bug adds no name.
 let warmMap = null
+// Spec 050 FR-011: the project's distinctive own names, from that map - a
+// declared kind (variable, function, class), an inner capital or underscore,
+// four characters or more. A lowercase word (`total`) is left out: it is
+// English as often as a name, and counting it would report prose as leaks.
+let reference = new Set()
 function buildMap(repo) {
   if (!warmMap) {
     const clean = prepare(tasks[0], { mutate: false })
@@ -177,13 +187,27 @@ function buildMap(repo) {
       .split('\0')
       .filter((f) => SOURCE.test(f))
     for (const f of files) call('node', [CLI, 'scrub', '-q', f], clean.repo)
+    LANGUAGES = [...new Set(files.map((f) => languageOfPath(f)).filter(Boolean))]
     const map = mkdtempSync(join(tmpdir(), 'veilio-bench-map-'))
     temps.add(map)
     cpSync(join(clean.repo, '.veilio'), map, { recursive: true })
     cleanup(clean.dir)
     warmMap = map
+    const entries = Object.entries(readMap(join(map, 'map.json')))
+    reference = new Set(
+      entries
+        .filter(([placeholder]) => /^__(VAR|FN|CLS)__\d+$/.test(placeholder))
+        .map(([, name]) => name)
+        .filter(
+          (n) => n.length >= 4 && /[a-z][A-Z]|[a-zA-Z]_[a-zA-Z]/.test(n) && !/^[A-Z0-9_]+$/.test(n)
+        )
+    )
   }
-  cpSync(warmMap, join(repo, '.veilio'), { recursive: true })
+  if (repo) cpSync(warmMap, join(repo, '.veilio'), { recursive: true })
+}
+
+function readMap(path) {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')).map ?? {}) : {}
 }
 
 function mapSize(repo) {
@@ -211,11 +235,17 @@ function readStream(path) {
   const result = lines.findLast((l) => l.type === 'result') ?? {}
   const toolCalls = {}
   const toolResults = []
-  for (const l of lines)
+  // Everything the model was sent: tool results and the user's messages.
+  const sent = []
+  for (const l of lines) {
+    if (l.type === 'user' && typeof l.message?.content === 'string') sent.push(l.message.content)
     for (const c of l.message?.content ?? []) {
       if (c.type === 'tool_use') toolCalls[c.name] = (toolCalls[c.name] ?? 0) + 1
       if (c.type === 'tool_result') toolResults.push(text(c.content))
+      if (l.type === 'user' && c.type === 'text') sent.push(c.text)
     }
+  }
+  sent.push(...toolResults)
   const u = result.usage ?? {}
   const final = String(result.result ?? '')
   return {
@@ -238,6 +268,7 @@ function readStream(path) {
     // the reader would have to look up.
     finalHasPlaceholders: /__[A-Z]+__\d+/.test(final),
     final: final.slice(0, 600),
+    sent: sent.join('\n'),
     plugins: (init.plugins ?? []).map((p) => p.name ?? p),
     mcpServers: (init.mcp_servers ?? []).map((s) => s.name ?? s),
   }
@@ -305,10 +336,29 @@ function session(task, arm, rep, outDir) {
           .flatMap((l) => l.match(/__[A-Z]+__\d+/g) ?? [])
       ),
     ]
+    // FR-011: what of the project reached the model, and which keywords did not.
+    const { sent, ...stream } = s
+    const tokens = new Set(sent.match(/[A-Za-z_$][\w$]*/g) ?? [])
+    const leakedNames = [...reference].filter((n) => tokens.has(n))
+    const finalMap = readMap(join(repo, '.veilio/map.json'))
+    const maskedKeywords = [
+      ...new Set(
+        (sent.match(/__[A-Z]+__\d+/g) ?? [])
+          .map((p) => finalMap[p])
+          .filter((n) => n && LANGUAGES.some((l) => isKeyword(n, l)))
+      ),
+    ]
+    // A session that stopped to ask for its prompt again, and changed nothing.
+    const askedAgain =
+      changed.length === 0 &&
+      /paste|plain text|send (it|the command) again|which (test|file) you mean/i.test(stream.final)
     return {
       task: task.id,
       arm,
       rep,
+      leakedNames,
+      maskedKeywords,
+      askedAgain,
       passed: test.code === 0 && testsEdited.length === 0 && placeholdersWritten.length === 0,
       testPassed: test.code === 0,
       testsEdited,
@@ -317,7 +367,7 @@ function session(task, arm, rep, outDir) {
       mapBefore,
       mapAfter: mapSize(repo),
       wallMs,
-      ...s,
+      ...stream,
     }
   } finally {
     cleanup(dir)
@@ -334,6 +384,8 @@ if (!validate()) {
   process.exit(1)
 }
 if (opt.validate) process.exit(0)
+// The reference names (FR-011) come from the warm map, built once, whatever arms run.
+if (existsSync(CLI)) buildMap(null)
 if (arms.includes('guard-warm') && !existsSync(CLI))
   throw new Error(`${CLI} is missing: npm run build:packages first`)
 

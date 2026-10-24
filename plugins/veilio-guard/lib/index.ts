@@ -50,6 +50,10 @@ export type IndexState = 'new' | 'indexing' | 'complete' | 'unavailable'
 
 // The languages engine/imports.ts reads imports and declarations for.
 const PARSED = new Set<string>(['typescript', 'python', 'go'])
+// Shell scripts declare nothing a TypeScript, Python or Go file imports: they do
+// not turn the exemption off. Every other unread language does (a Java class, a
+// Vue component).
+const SHELL = /\.(sh|bash|zsh|ps1)$/i
 
 // A parsed JSON file, read field by field with optional chaining.
 type Json = { [key: string]: Json } | undefined
@@ -128,7 +132,7 @@ export class ProjectIndex {
     this.tracked = files
     this.shape = await this.readShape(files)
     this.pending = files.filter((f) => isSourcePath(f) && !this.skip(f))
-    this.unparsed = this.pending.some((f) => !PARSED.has(languageOf(f)))
+    this.unparsed = this.pending.some((f) => !PARSED.has(languageOf(f)) && !SHELL.test(f))
     this.total = this.pending.length
     this.state = this.pending.length ? 'indexing' : 'complete'
   }

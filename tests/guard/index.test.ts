@@ -169,3 +169,13 @@ describe('when nothing may be exempt (security reviews of 9355866 and 506324c)',
     expect(index.externalFor('unknown').has('vitest')).toBe(false)
   })
 })
+
+describe('a shell script does not turn the exemption off', () => {
+  it('a project with .sh files still exempts third-party names', async () => {
+    const files = { ...FILES, 'scripts/deploy.sh': 'deploy() { echo "$1"; }\n' }
+    const index = new ProjectIndex(io(files).value, record)
+    await index.start()
+    await index.run(Infinity)
+    expect(index.externalFor('typescript').has('vitest')).toBe(true)
+  })
+})

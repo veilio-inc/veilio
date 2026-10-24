@@ -94,6 +94,31 @@ out.push(
   ''
 )
 
+out.push('## What reached the model (spec 050 FR-011)', '')
+out.push(
+  'A project name here is one of its distinctive declared names (a variable, function or class name with an inner capital or underscore, four characters or more) found as a whole word in anything the model was sent. A masked keyword is a placeholder the model was sent whose real name is a keyword of a language the repository source is written in.',
+  ''
+)
+const has = (key) => (r) => Array.isArray(r[key]) && r[key].length > 0
+const measured = runs.some((r) => Array.isArray(r.leakedNames))
+if (!measured) out.push('_This run predates these measures; rescore a newer run._', '')
+else {
+  out.push(`| sessions where… | ${arms.join(' | ')} |`, `|---|${arms.map(() => '---').join('|')}|`)
+  out.push(
+    `| a project name reached the model | ${arms.map((a) => of(a).filter(has('leakedNames')).length).join(' | ')} |`
+  )
+  out.push(
+    `| distinct project names that reached it, most in one session | ${arms.map((a) => Math.max(0, ...of(a).map((r) => r.leakedNames?.length ?? 0))).join(' | ')} |`
+  )
+  out.push(
+    `| a keyword was masked | ${arms.map((a) => of(a).filter(has('maskedKeywords')).length).join(' | ')} |`
+  )
+  out.push(
+    `| it stopped to ask for the prompt again | ${arms.map((a) => of(a).filter((r) => r.askedAgain).length).join(' | ')} |`
+  )
+  out.push('')
+}
+
 out.push('## What went wrong', '')
 const reasons = [
   ['test still fails', (r) => !r.testPassed],
@@ -156,6 +181,14 @@ for (const r of runs) {
   if (r.mcpServers.length)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: MCP servers loaded (${r.mcpServers.join(', ')})`)
   if (r.subtype === 'no-result') warnings.push(`${r.task} ${r.arm} #${r.rep}: no result line`)
+  if (r.arm !== 'plain' && r.leakedNames?.length)
+    warnings.push(
+      `${r.task} ${r.arm} #${r.rep}: project names reached the model (${r.leakedNames.slice(0, 5).join(', ')})`
+    )
+  if (r.arm !== 'plain' && r.maskedKeywords?.length)
+    warnings.push(
+      `${r.task} ${r.arm} #${r.rep}: keywords were masked (${r.maskedKeywords.join(', ')})`
+    )
 }
 out.push('## Checks on the run itself', '')
 out.push(
