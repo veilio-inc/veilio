@@ -13,6 +13,7 @@ import {
   anonymize,
   detectSecrets,
   isKeyword,
+  isPlaceholder,
   restore,
   scanSecrets,
   SECRET_DISPOSITIONS,
@@ -135,6 +136,77 @@ export function applyMap(text: string, map: SymbolMap, _ctx: MaskContext = NO_CO
     out = out.split(span.value).join(token)
   }
   return out
+}
+
+// A name shaped like an identifier: an inner capital (`luhnValid`), an inner
+// underscore (`team_layers`), or PascalCase with two humps (`BatchReconciler`).
+// English almost never has these shapes, so they can be masked in output the
+// tokenizer must not see (spec 050 R1). A lowercase one-word name (`settle`)
+// has no shape: only the project index protects it.
+const SHAPED =
+  /(?<![\w$])(?:[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*[A-Za-z0-9]|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)(?![\w$])/g
+
+// Names of the platform and the tools, which reach every project's output.
+const PLATFORM = new Set([
+  'AssertionError',
+  'TypeError',
+  'RangeError',
+  'SyntaxError',
+  'ReferenceError',
+  'EvalError',
+  'URIError',
+  'AggregateError',
+  'JavaScript',
+  'TypeScript',
+  'GitHub',
+  'GitLab',
+  'NodeJS',
+  'PowerShell',
+  'macOS',
+  'iOS',
+  'iPhone',
+])
+
+function keywordIn(name: string, ctx: MaskContext): boolean {
+  if (ctx.language !== 'unknown') return isKeyword(name, ctx.language)
+  const languages = ctx.projectLanguages.size ? [...ctx.projectLanguages] : LANGUAGES
+  return languages.some((language) => isKeyword(name, language))
+}
+
+/** Masks the names shaped like identifiers that are still in `text` after the
+ *  map was applied, minting their placeholders through the engine so the
+ *  numbering is the map's, and returns them for the map file. Not for what the
+ *  user typed: a name they type that the map does not have goes as typed
+ *  (spec 033 COVERAGE). */
+export function maskShaped(
+  text: string,
+  map: SymbolMap,
+  ctx: MaskContext
+): { text: string; additions: SymbolMap } {
+  if (ctx.kind === 'prompt') return { text, additions: {} }
+  const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
+  const reused: SymbolMap = {}
+  const found = new Set<string>()
+  for (const [token] of text.matchAll(SHAPED)) {
+    const known = placeholderOf.get(token)
+    if (known) {
+      reused[known] = token
+      continue
+    }
+    if (isPlaceholder(token) || /^[A-Z0-9_]+$/.test(token)) continue
+    if (PLATFORM.has(token) || ctx.external.has(token) || keywordIn(token, ctx)) continue
+    found.add(token)
+  }
+  if (found.size === 0) return { text: replaceNames(text, reused), additions: {} }
+  // Declared, so the engine mints the kind a reader expects for each shape.
+  const source = [...found]
+    .map((t) => (/^[A-Z]/.test(t) && !t.includes('_') ? `class ${t} {}` : `let ${t} = 0`))
+    .join('\n')
+  const minted = anonymize(source, { existingMap: map, language: 'typescript', secrets: 'off' }).map
+  const additions: SymbolMap = {}
+  for (const [placeholder, name] of Object.entries(minted))
+    if (found.has(name) && map[placeholder] !== name) additions[placeholder] = name
+  return { text: replaceNames(text, { ...reused, ...additions }), additions }
 }
 
 /** Credentials still in text the guard is about to hand the model. */

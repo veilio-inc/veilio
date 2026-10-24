@@ -17,6 +17,17 @@ import { deepRewrite } from '../lib/fields.ts'
 
 type Options = { rawOnly?: string[]; mcpRestore?: string[] }
 
+// Spec 050 T002: session.start has the 10 s HookBudget; 6 s of it indexes the
+// project. A tool result keeps 2 s of its budget for masking.
+const START_MS = 6_000
+const SLICE_MS = 250
+const MASK_RESERVE_MS = 2_000
+
+function deadline(next: any, cap = Infinity): number {
+  const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
+  return Date.now() + Math.max(0, Math.min(cap, left))
+}
+
 let guard: Guard | null = null
 let loading: Promise<Guard> | null = null
 let config: { rawOnly: string[]; mcpRestore: string[] } = { rawOnly: [], mcpRestore: [] }
@@ -34,6 +45,15 @@ async function ready($: any): Promise<Guard> {
         $.fs.stat(path, { resolve: true }).then(
           (s: { realPath?: string }) => s.realPath,
           () => undefined
+        ),
+      // Spec 050: the tracked files, so the index can mask a result by what it
+      // contains. Not a git checkout, or git missing: only the files a result
+      // names are indexed.
+      list: (root) =>
+        $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
+          (r: { exitCode: number; stdout: string }) =>
+            r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null,
+          () => null
         ),
     }
     const g = new Guard(io, config)
@@ -76,7 +96,24 @@ export function register(on: any, options: Options = {}) {
   }
 
   on('session.start', async ($: any, e: any, next: any) => {
-    await ready($)
+    const g = await ready($)
+    // Spec 050: index the project while the session starts, then in short
+    // slices between calls. A timer runs outside any hook's budget, so each
+    // slice stops itself after SLICE_MS to keep the mod free for tool results.
+    if (g.state === 'on' && g.index) {
+      // A failure turns the background index off; results are then indexed by
+      // the files they name, and withheld when that fails.
+      const off = (err: unknown) => {
+        if (g.index) g.index.state = 'unavailable'
+        if (g.index) g.index.reason = String(err instanceof Error ? err.message : err)
+      }
+      await g.indexProject(deadline(next, START_MS)).catch(off)
+      const slice = () => {
+        if (g.index?.state !== 'indexing') return
+        g.indexProject(Date.now() + SLICE_MS).then(() => $.clock.after(0, slice), off)
+      }
+      $.clock.after(0, slice)
+    }
     // The band's first draw can come before the guard has loaded, and draws
     // nothing then; without this it stayed empty until /veilio redrew it.
     $.ui.invalidate('ui.render')
@@ -101,7 +138,7 @@ export function register(on: any, options: Options = {}) {
       return before
     }
     const outcome = await next(before.args)
-    const after = await g.afterTool(e.tool, before.args, outcome)
+    const after = await g.afterTool(e.tool, before.args, outcome, deadline(next))
     if ('deny' in after && after.deny.startsWith('Veilio withheld')) $.ui.log(after.deny)
     $.ui.invalidate('ui.render')
     return after
