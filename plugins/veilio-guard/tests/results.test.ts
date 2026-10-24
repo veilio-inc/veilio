@@ -33,7 +33,7 @@ test("a subagent's Read is scrubbed the same way", async ($, on) => {
   expect(JSON.stringify(out)).not.toContain(CANARY)
 })
 
-test('shell output: known names replaced, and nothing added to the map', async ($, on) => {
+test('shell output naming only known names: replaced, and the map is not rewritten', async ($, on) => {
   const bash = recorded('Bash')
   expect(JSON.stringify(bash.r.result)).toContain(CANARY)
   const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })

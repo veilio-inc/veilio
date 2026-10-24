@@ -4,6 +4,7 @@
 // without a ten-second busy loop, so COVERAGE.md states it without a test.
 import { expect, test } from 'claude-code/testing'
 import { CANARY, eventOf, mapFile, project, recorded, ROOT, STRIPE } from './helpers.ts'
+import { COLD_FILES, DECLARED, GREP, TEST_RUN } from './fixtures/cold.ts'
 
 test('a scrub that throws after the tool ran withholds the result', async ($, on) => {
   // Saving the new names fails after the Read ran: the hook throws past next.
@@ -164,4 +165,26 @@ test('another writer dropping our entries: the next save puts them back', async 
   expect(saved.__VAR__1).toBe('settledTotal')
   expect(saved.__FN__9).toBe('elsewhere')
   expect(Object.values(saved)).toContain(CANARY)
+})
+
+// Spec 050: on a project with no map, a result is masked by what it contains.
+// A source file it names that cannot be indexed means the result is withheld:
+// "no map yet" never means "pass through".
+test('a result naming a source file the guard cannot index is withheld', async ($, on) => {
+  project(on, { ...COLD_FILES }, { failRead: (p) => p.endsWith('/src/secrets.ts') })
+  on('tool.call', () => TEST_RUN.r)
+  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  expect(out.deny).toContain('Veilio withheld this result')
+  expect(out.deny).toContain('could not read to check')
+  // The reason reaches the model: it names no path, which can hold a project name.
+  expect(out.deny).not.toContain('secrets')
+  for (const name of DECLARED) expect(JSON.stringify(out)).not.toContain(name)
+})
+
+test('a search whose file cannot be indexed is withheld, not sent as found', async ($, on) => {
+  project(on, { ...COLD_FILES }, { failRead: (p) => p.endsWith('/src/batch.ts') })
+  on('tool.call', () => GREP.r)
+  const out: any = await $.tool.call(eventOf(GREP))
+  expect(out.deny).toContain('Veilio withheld this result')
+  expect(JSON.stringify(out)).not.toContain('reconcileBatch')
 })
