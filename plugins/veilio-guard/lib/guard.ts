@@ -388,7 +388,7 @@ export class Guard {
       // Only once every file is indexed: before that, a name imported here may
       // be declared in a file not read yet, so nothing is exempt - the
       // exemption fails closed (security review of 9355866).
-      external: this.index.state === 'complete' ? this.index.external : new Set<string>(),
+      external: this.index.externalFor(language),
       declared: this.index.declared,
     }
   }

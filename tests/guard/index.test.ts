@@ -64,21 +64,24 @@ describe('ProjectIndex', () => {
     const index = new ProjectIndex(io().value, record)
     await index.start()
     await index.run(Infinity)
-    const external = index.external
-    expect(external.has('vitest')).toBe(true)
-    expect(external.has('describe')).toBe(true)
+    const ts = index.externalFor('typescript')
+    const py = index.externalFor('python')
+    expect(ts.has('vitest')).toBe(true)
+    expect(ts.has('describe')).toBe(true)
     // Its own workspace package, its alias, and its own Python package.
-    expect(external.has('Ledger')).toBe(false)
-    expect(external.has('money')).toBe(false)
-    expect(external.has('helper')).toBe(false)
-    expect(external.has('numpy')).toBe(true)
+    expect(ts.has('Ledger')).toBe(false)
+    expect(ts.has('money')).toBe(false)
+    expect(py.has('helper')).toBe(false)
+    expect(py.has('numpy')).toBe(true)
+    // Per language: a Python import says nothing about a TypeScript word.
+    expect(ts.has('numpy')).toBe(false)
   })
 
   it('a name one file imports and another declares is not external', async () => {
     const index = new ProjectIndex(io().value, record)
     await index.start()
     await index.run(Infinity)
-    expect(index.external.has('expect')).toBe(false)
+    expect(index.externalFor('typescript').has('expect')).toBe(false)
   })
 
   it('stops at the deadline and reports what is left', async () => {
@@ -133,5 +136,36 @@ describe('ProjectIndex and its deadline (review of ef1a533)', () => {
     await index.start()
     expect(await index.index(['src/a.ts'], 100)).toEqual(['src/a.ts'])
     expect(index.indexed.has('src/a.ts')).toBe(false)
+  })
+})
+
+describe('when nothing may be exempt (security reviews of 9355866 and 506324c)', () => {
+  it('before every file is indexed', async () => {
+    const index = new ProjectIndex(io().value, record)
+    await index.start()
+    await index.index(['src/secrets.ts'], Infinity)
+    expect(index.externalFor('typescript').size).toBe(0)
+  })
+
+  it('when a file could not be read, even once the rest is done', async () => {
+    const index = new ProjectIndex(io(FILES, { failRead: 'src/shadow.ts' }).value, record)
+    await index.start()
+    await index.run(Infinity)
+    expect(index.externalFor('typescript').size).toBe(0)
+  })
+
+  it('when the project has a language whose declarations are not read', async () => {
+    const files = { ...FILES, 'src/Ledger.java': 'class Ledger { int expect; }' }
+    const index = new ProjectIndex(io(files).value, record)
+    await index.start()
+    await index.run(Infinity)
+    expect(index.externalFor('typescript').size).toBe(0)
+  })
+
+  it('text of unknown language gets only what every language imports', async () => {
+    const index = new ProjectIndex(io().value, record)
+    await index.start()
+    await index.run(Infinity)
+    expect(index.externalFor('unknown').has('vitest')).toBe(false)
   })
 })

@@ -49,16 +49,22 @@ export function scrubSource(
 ): { text: string; additions: SymbolMap } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole.
-  const rules: CustomRule[] = [...keep].map((name, i) => ({
-    id: `veilio-guard-keep-${i}`,
-    scope: 'personal',
-    team_id: null,
-    type: 'whitelist',
-    name,
-    pattern: `^${escape(name)}$`,
-    enabled: true,
-    sort_order: i,
-  }))
+  // One rule for every name: the engine matches each identifier against each
+  // rule, so a rule per name is slow on a large file (review of 9355866).
+  const rules: CustomRule[] = keep.size
+    ? [
+        {
+          id: 'veilio-guard-keep',
+          scope: 'personal',
+          team_id: null,
+          type: 'whitelist',
+          name: 'veilio-guard: third-party names',
+          pattern: `^(?:${[...keep].map(escape).join('|')})$`,
+          enabled: true,
+          sort_order: 0,
+        },
+      ]
+    : []
   const result = anonymize(text, { existingMap: map, language, rules })
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(result.map)) {
@@ -154,10 +160,26 @@ function leftAsWritten(
   if (ctx.external.has(name)) return true
   const kinds = m.kinds.get(name)
   if (CONVENTIONAL_DIRS.has(name) && kinds && [...kinds].every((k) => k === '__PKG__')) return true
-  // A command-line flag (`--tenant`, `-v`) is the tool's word, not the project's.
-  if (text[offset - 1] === '-' && (text[offset - 2] === '-' || !/\S/.test(text[offset - 2] ?? ' ')))
-    return true
-  return false
+  return ctx.kind === 'prompt' && isFlag(name, text, offset, kinds)
+}
+
+/** A command-line flag in what the user typed (`run it --verbose`): a dash or
+ *  two after a space or the start, a flag-shaped word, and a word the map
+ *  holds only as a path or a string, never as code. Negation (`-balance`), a
+ *  decrement (`--counter`), a diff's removed line and `<!--x-->` are not flags
+ *  (review of 9355866). */
+function isFlag(
+  name: string,
+  text: string,
+  offset: number,
+  kinds: Set<string> | undefined
+): boolean {
+  const dashes = text[offset - 2] === '-' ? 2 : text[offset - 1] === '-' ? 1 : 0
+  if (dashes === 0) return false
+  const before = text[offset - dashes - 1]
+  if (before !== undefined && !/\s/.test(before)) return false
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(name)) return false
+  return !!kinds && [...kinds].every((k) => k === '__PKG__' || k === '__STR__')
 }
 
 // A lowercase word from a string literal (`the`, `keep`) is masked where the

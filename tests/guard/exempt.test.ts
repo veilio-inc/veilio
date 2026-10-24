@@ -47,14 +47,40 @@ describe('exemptions, in their order', () => {
     expect(applyMap('tests', map, ctx())).not.toBe('tests')
   })
 
-  it('a flag stays; the project directory after it is masked', () => {
-    const prompt = ctx({ kind: 'prompt' })
-    expect(applyMap('npx vitest run --tenant packages/backend', MAP, prompt)).toBe(
-      'npx vitest run --tenant packages/__PKG__2'
-    )
-  })
-
   it('the same word as a value is still masked', () => {
     expect(applyMap('tenant = 1', MAP, ctx())).toBe('__VAR__7 = 1')
+  })
+})
+
+// Review of 9355866: the flag rule left code names after any dash.
+describe('the flag rule is for flags in what you type, nothing else', () => {
+  const map = {
+    __VAR__1: 'balance',
+    __VAR__2: 'counter',
+    __FN__3: 'settleAll',
+    __PKG__9: 'verbose',
+  }
+  it.each([
+    ['negation in code', 'return -balance;'],
+    ['a decrement', '--counter'],
+    ['a double dash inside a word', 'foo--balance'],
+    ['an HTML comment', '<!--balance-->'],
+    ['a removed diff line', '-settleAll()'],
+  ])('%s is masked', (_, text) => {
+    const out = applyMap(text, map, ctx({ kind: 'prompt' }))
+    expect(out).not.toMatch(/balance|counter|settleAll/)
+  })
+  it('in a result, not even a flag is exempt', () => {
+    expect(applyMap('run --verbose', map, ctx())).toBe('run --__PKG__9')
+  })
+  it('in a prompt, a flag-shaped word the map holds only as a path stays', () => {
+    expect(applyMap('run it with --verbose', map, ctx({ kind: 'prompt' }))).toBe(
+      'run it with --verbose'
+    )
+  })
+  it('in a prompt, a code name after a dash is masked', () => {
+    expect(applyMap('pass --balance to it', map, ctx({ kind: 'prompt' }))).toBe(
+      'pass --__VAR__1 to it'
+    )
   })
 })

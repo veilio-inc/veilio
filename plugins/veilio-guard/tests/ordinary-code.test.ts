@@ -87,7 +87,7 @@ test('a test file reads with its third-party names, and the project name is mask
 })
 
 test('a typed command keeps the runner, its flag and the test directory', async ($, on) => {
-  project(on, { ...COLD_FILES, [MAP]: mapFile({ ...POISONED, __VAR__77: 'tenant' }) })
+  project(on, { ...COLD_FILES, [MAP]: mapFile({ ...POISONED, __PKG__77: 'tenant' }) })
   const sent: any[] = []
   on('prompt.submit', (_: any, e: any) => {
     sent.push(e)

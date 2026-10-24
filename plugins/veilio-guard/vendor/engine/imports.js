@@ -226,6 +226,10 @@ export function isExternalSpecifier(specifier, language, project) {
         // Relative, absolute, and package.json `imports` (`#internal/…`).
         if (/^[./#]/.test(specifier))
             return false;
+        // A scope can be a company's private registry (`@acme/ledger`): what it
+        // names is not public, so it is never exempt (review of 9355866).
+        if (specifier.startsWith('@'))
+            return false;
         if ((project.baseDirs ?? []).includes(specifier.split('/')[0]))
             return false;
         if ((project.workspaces ?? []).some((w) => specifier === w || specifier.startsWith(`${w}/`)))
@@ -238,8 +242,9 @@ export function isExternalSpecifier(specifier, language, project) {
         return !(project.pythonModules ?? []).includes(specifier.split('.')[0]);
     }
     if (language === 'go') {
-        const mod = project.goModule;
-        return !(mod && (specifier === mod || specifier.startsWith(`${mod}/`)));
+        // Only the standard library: a path whose first element has a dot is a
+        // module someone hosts - a company's own, as likely as a public one.
+        return !specifier.split('/')[0].includes('.');
     }
     return false;
 }

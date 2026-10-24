@@ -48,6 +48,9 @@ export type FileIndexed = (
 
 export type IndexState = 'new' | 'indexing' | 'complete' | 'unavailable'
 
+// The languages engine/imports.ts reads imports and declarations for.
+const PARSED = new Set<string>(['typescript', 'python', 'go'])
+
 // A parsed JSON file, read field by field with optional chaining.
 type Json = { [key: string]: Json } | undefined
 
@@ -63,7 +66,12 @@ export class ProjectIndex {
   readonly failed = new Map<string, string>()
   readonly languages = new Set<Language>()
   readonly declared = new Set<string>()
-  private readonly imported = new Set<string>()
+  /** Names imported from outside, per language: a Python import says nothing
+   *  about a word in a Java file (review of 9355866). */
+  private readonly imported = new Map<Language, Set<string>>()
+  /** A source file in a language with no declaration parser: what it declares
+   *  is unknown, so no name may be exempted in this project. */
+  private unparsed = false
   private shape: ProjectShape = {}
   private tracked: string[] = []
   private starting: Promise<void> | null = null
@@ -74,11 +82,28 @@ export class ProjectIndex {
     private readonly skip: (rel: string) => boolean = () => false
   ) {}
 
-  /** What the project takes from outside, less every name it declares
-   *  anywhere: a word imported in one file and declared in another is the
-   *  project's (spec 050 data-model, Exemptions rule 1). */
-  get external(): Set<string> {
-    return new Set([...this.imported].filter((name) => !this.declared.has(name)))
+  /** Whether any name may be exempted yet: every file indexed, none failed,
+   *  and every language the project uses has a declaration parser. Until
+   *  then a name imported here may be declared in a file not read, and
+   *  nothing is exempt (security reviews of 9355866 and 506324c). */
+  get exemptible(): boolean {
+    return this.state === 'complete' && this.failed.size === 0 && !this.unparsed
+  }
+
+  /** What the project takes from outside for text of `language`, less every
+   *  name it declares anywhere (spec 050 data-model, Exemptions rule 1). For
+   *  text of unknown language, only what every language it uses imports. */
+  externalFor(language: Language | 'unknown'): Set<string> {
+    if (!this.exemptible) return new Set()
+    const sets =
+      language === 'unknown'
+        ? [...this.languages].map((l) => this.imported.get(l) ?? new Set<string>())
+        : [this.imported.get(language) ?? new Set<string>()]
+    if (sets.length === 0) return new Set()
+    const [first, ...rest] = sets
+    return new Set(
+      [...first!].filter((name) => !this.declared.has(name) && rest.every((s) => s.has(name)))
+    )
   }
 
   /** Lists the project once; later calls wait for the first. */
@@ -103,18 +128,20 @@ export class ProjectIndex {
     this.tracked = files
     this.shape = await this.readShape(files)
     this.pending = files.filter((f) => isSourcePath(f) && !this.skip(f))
+    this.unparsed = this.pending.some((f) => !PARSED.has(languageOf(f)))
     this.total = this.pending.length
     this.state = this.pending.length ? 'indexing' : 'complete'
   }
 
   private async readShape(files: string[]): Promise<ProjectShape> {
     const tops = new Set(files.filter((f) => f.includes('/')).map((f) => f.split('/')[0]!))
+    // Every directory on the way to a Python file, and every module's own name:
+    // `backend/app/models.py` makes `app` and `models` the project's.
     const pythonModules = new Set(tops)
-    for (const f of files) {
-      if (/^[^/]+\.py$/.test(f)) pythonModules.add(f.replace(/\.py$/, ''))
-      const underSrc = /^src\/([^/]+)\//.exec(f)
-      if (underSrc) pythonModules.add(underSrc[1]!)
+    for (const f of files.filter((f) => f.endsWith('.py'))) {
+      for (const part of f.replace(/\.py$/, '').split('/')) pythonModules.add(part)
     }
+    const baseDirs = new Set(tops)
     const workspaces: string[] = []
     for (const manifest of files
       .filter((f) => /(^|\/)package\.json$/.test(f))
@@ -124,6 +151,15 @@ export class ProjectIndex {
     }
     const pathAliases: string[] = []
     for (const config of files.filter((f) => /^tsconfig[^/]*\.json$/.test(f))) {
+      // `baseUrl`: `import 'models/invoice'` is the project's when models/ is there.
+      const baseUrl = await this.readJson(config, (j) => j?.compilerOptions?.baseUrl)
+      if (typeof baseUrl === 'string') {
+        const base = baseUrl.replace(/^\.\/?/, '').replace(/\/$/, '')
+        for (const f of files) {
+          const rest = base ? (f.startsWith(`${base}/`) ? f.slice(base.length + 1) : null) : f
+          if (rest?.includes('/')) baseDirs.add(rest.split('/')[0]!)
+        }
+      }
       const paths = await this.readJson(config, (j) => j?.compilerOptions?.paths)
       if (paths && typeof paths === 'object')
         for (const key of Object.keys(paths)) {
@@ -137,7 +173,7 @@ export class ProjectIndex {
       goModule = /^module\s+(\S+)/m.exec(text)?.[1]
     }
     return {
-      baseDirs: [...tops],
+      baseDirs: [...baseDirs],
       pythonModules: [...pythonModules],
       workspaces,
       pathAliases,
@@ -221,7 +257,9 @@ export class ProjectIndex {
       this.languages.add(language)
       for (const name of parseDeclarations(text, language)) this.declared.add(name)
       external = externalNames(text, language, this.shape)
-      for (const name of external) this.imported.add(name)
+      const into = this.imported.get(language) ?? new Set<string>()
+      for (const name of external) into.add(name)
+      this.imported.set(language, into)
     }
     await this.onFile(rel, text, language, external)
     this.indexed.add(rel)

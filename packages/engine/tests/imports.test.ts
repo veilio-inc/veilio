@@ -207,7 +207,7 @@ describe('isExternalSpecifier', () => {
     ['.models', 'python', false],
     ['fmt', 'go', true],
     ['github.com/acme/app/ledger', 'go', false],
-    ['github.com/other/lib', 'go', true],
+    ['github.com/other/lib', 'go', false],
     ['java.util', 'java', false],
   ] as const)('%s in %s is external: %s', (specifier, language, expected) => {
     expect(isExternalSpecifier(specifier, language, project)).toBe(expected)
@@ -319,5 +319,28 @@ describe('parseDeclarations sees parameters, fields and keys', () => {
     ].join('\n')
     const declared = parseDeclarations(src, 'go')
     for (const name of ['OwnerID', 'balance', 'batchRef']) expect(declared, name).toContain(name)
+  })
+})
+
+// Review of 9355866: what a company publishes privately is not public.
+describe('only public packages are external', () => {
+  it('a scoped package is never external: the scope can be a company', () => {
+    expect(isExternalSpecifier('@acme/ledger', 'typescript', {})).toBe(false)
+    expect(isExternalSpecifier('@types/node', 'typescript', {})).toBe(false)
+  })
+  it('in Go, only the standard library is external', () => {
+    expect(isExternalSpecifier('net/http', 'go', {})).toBe(true)
+    expect(isExternalSpecifier('git.corp/acme/billing/internal/ledger', 'go', {})).toBe(false)
+    expect(isExternalSpecifier('github.com/stretchr/testify/assert', 'go', {})).toBe(false)
+  })
+  it('a Python module found anywhere in the project is internal', () => {
+    expect(isExternalSpecifier('app.models', 'python', { pythonModules: ['backend', 'app'] })).toBe(
+      false
+    )
+  })
+  it('a baseUrl directory is internal', () => {
+    expect(isExternalSpecifier('models/invoice', 'typescript', { baseDirs: ['models'] })).toBe(
+      false
+    )
   })
 })
