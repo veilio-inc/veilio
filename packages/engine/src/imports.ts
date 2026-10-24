@@ -25,7 +25,13 @@ export interface ProjectShape {
   workspaces?: readonly string[]
   /** `tsconfig` path-alias prefixes such as `@/` (TS/JS). */
   pathAliases?: readonly string[]
-  /** Top-level module and package names found in the project (Python). */
+  /** Top-level directories of the project, and of its `tsconfig` `baseUrl`
+   *  (TS/JS): a bare specifier whose first segment is one of them is the
+   *  project's own (`src/billing/ledger`). */
+  baseDirs?: readonly string[]
+  /** Top-level module and package names found in the project (Python). The
+   *  caller must list every one: a missing name makes the project's own
+   *  modules read as external. */
   pythonModules?: readonly string[]
   /** The `module` path from `go.mod` (Go). */
   goModule?: string
@@ -54,9 +60,11 @@ function scriptImports(text: string): ImportEntry[] {
   const add = (at: number, specifier: string, names: string[]) =>
     found.push({ at, entry: { specifier, names } })
 
-  // The clause holds no quote or semicolon: `import 'x'` must not run on into the
-  // next statement's `from`.
-  const fromClause = /^[ \t]*(import|export)\s+(?:type\s+)?([^'";]*?)\s+from\s+['"]([^'"]+)['"]/gm
+  // The clause crosses a line only inside braces, and holds no quote or
+  // semicolon: `import 'x'`, or a statement with no semicolon, must not run on
+  // into the next statement's `from` and lend it its names.
+  const fromClause =
+    /^[ \t]*(import|export)\s+(?:type\s+)?((?:[^'";{}\n]|\{[^'";{}]*\})*?)\s+from\s+['"]([^'"]+)['"]/gm
   for (const m of text.matchAll(fromClause)) {
     const [, keyword, clause, specifier] = m
     const names: string[] = []
@@ -111,6 +119,15 @@ function pythonImports(text: string): ImportEntry[] {
   return found.sort((a, b) => a.at - b.at).map((f) => f.entry)
 }
 
+/** `name` is declared in Go source: a parameter, a `var`, or `:=`. */
+function boundInGo(text: string, name: string): boolean {
+  return (
+    new RegExp(`[(,]\\s*${name}\\s+[*\\[\\]\\w.]`).test(text) ||
+    new RegExp(`\\bvar\\s+${name}\\b`).test(text) ||
+    new RegExp(`\\b${name}\\s*(?:,\\s*\\w+\\s*)*:=`).test(text)
+  )
+}
+
 function goImports(text: string): ImportEntry[] {
   const specs: { alias: string | null; specifier: string }[] = []
   const one = /^[ \t]*import\s+(?:([A-Za-z_]\w*|\.)\s+)?"([^"]+)"/gm
@@ -122,10 +139,14 @@ function goImports(text: string): ImportEntry[] {
   return specs.map(({ alias, specifier }) => {
     const last = specifier.split('/').pop() ?? ''
     const local = alias ?? last
-    // Go reaches into a package by `pkg.Name`; those names are the package's.
-    const selectors = [...text.matchAll(new RegExp(`\\b${local}\\.([A-Za-z_]\\w*)`, 'g'))].map(
-      (m) => m[1]
-    )
+    // Go reaches into a package by `pkg.Name`, and those names are the
+    // package's - unless `local` is also bound in this file (a parameter or a
+    // variable named like the package), when `local.Field` may be the project's.
+    // A dot or blank import has no qualifier to follow.
+    const harvest = IDENT.test(local) && local !== '_' && !boundInGo(text, local)
+    const selectors = harvest
+      ? [...text.matchAll(new RegExp(`\\b${local}\\.([A-Z]\\w*)`, 'g'))].map((m) => m[1])
+      : []
     const names = [...(alias ? [] : [last]), ...new Set(selectors)]
     return { specifier, names }
   })
@@ -151,6 +172,16 @@ function scriptDeclarations(text: string): string[] {
     /^[ \t]+(?:(?:public|private|protected|static|readonly|async|override|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\([^)]*\)\s*(?::[^{;]+)?\{/gm,
   ]
   for (const re of patterns) for (const m of text.matchAll(re)) out.push(m[1])
+  // Class fields and object keys (`private secretKey: string`, `rotateAfter = 30`,
+  // `retentionDays: 7`). Over-counting here only masks more.
+  const members =
+    /^[ \t]+(?:(?:public|private|protected|static|readonly|declare|override)\s+)*([A-Za-z_$][\w$]*)\s*[?!]?\s*[:=](?![=>])/gm
+  for (const m of text.matchAll(members)) out.push(m[1])
+  for (const m of text.matchAll(/\{([^{}]*)\}\s*(?::[^=)]*)?\s*(?:[,)=]|$)/gm))
+    out.push(...namedList(m[1], /\s*[:=]\s*/))
+  // Parameters of functions, methods and arrows.
+  for (const m of text.matchAll(/\(([^()]*)\)\s*(?::[^{=]+)?\s*(?:\{|=>)/g))
+    out.push(...params(m[1]))
   const variables =
     /^[ \t]*(?:export\s+)?(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*([^\n]*)/gm
   for (const m of text.matchAll(variables)) {
@@ -163,9 +194,15 @@ function scriptDeclarations(text: string): string[] {
 
 function pythonDeclarations(text: string): string[] {
   const out: string[] = []
-  for (const m of text.matchAll(/^[ \t]*(?:async\s+)?def\s+([A-Za-z_]\w*)/gm)) out.push(m[1])
+  for (const m of text.matchAll(/^[ \t]*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/gm)) {
+    out.push(m[1], ...params(m[2]))
+  }
   for (const m of text.matchAll(/^[ \t]*class\s+([A-Za-z_]\w*)/gm)) out.push(m[1])
-  for (const m of text.matchAll(/^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)/gm)) out.push(m[1])
+  // Assignments at any depth, annotated or not: module names, class attributes
+  // and locals. Over-counting here only masks more.
+  for (const m of text.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)/gm)) out.push(m[1])
+  for (const m of text.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*:\s*[A-Za-z_][\w.[\], ]*$/gm))
+    out.push(m[1])
   return out
 }
 
@@ -175,6 +212,23 @@ function goDeclarations(text: string): string[] {
   for (const m of text.matchAll(/^(?:type|var|const)\s+([A-Za-z_]\w*)/gm)) out.push(m[1])
   for (const block of text.matchAll(/^(?:type|var|const)\s*\(([\s\S]*?)^\)/gm))
     for (const m of block[1].matchAll(/^[ \t]*([A-Za-z_]\w*)\b/gm)) out.push(m[1])
+  // Struct fields, and function and method parameters.
+  for (const block of text.matchAll(/\bstruct\s*\{([^}]*)\}/g))
+    for (const m of block[1].matchAll(/^[ \t]*([A-Za-z_]\w*)\s+\S/gm)) out.push(m[1])
+  for (const m of text.matchAll(/^func\s+(?:\(([^)]*)\)\s*)?[A-Za-z_]\w*\s*\(([^)]*)\)/gm))
+    out.push(...params(m[1] ?? ''), ...params(m[2]))
+  return out
+}
+
+/** The names in a parameter list, in any of the three languages: `a: T = 1`,
+ *  `...rest`, `{ x, y }: Opts`, `self, batch_ref`, `l *Ledger`, `a, b string`. */
+function params(list: string): string[] {
+  const out: string[] = []
+  for (const brace of list.matchAll(/\{([^}]*)\}/g)) out.push(...namedList(brace[1], /\s*[:=]\s*/))
+  for (const part of list.replace(/\{[^}]*\}/g, '').split(',')) {
+    const name = /^\s*(?:\.\.\.|\*{1,2})?([A-Za-z_$][\w$]*)/.exec(part)?.[1]
+    if (name) out.push(name)
+  }
   return out
 }
 
@@ -200,7 +254,9 @@ export function isExternalSpecifier(
   project: ProjectShape
 ): boolean {
   if (language === 'typescript') {
-    if (specifier.startsWith('.') || specifier.startsWith('/')) return false
+    // Relative, absolute, and package.json `imports` (`#internal/…`).
+    if (/^[./#]/.test(specifier)) return false
+    if ((project.baseDirs ?? []).includes(specifier.split('/')[0])) return false
     if ((project.workspaces ?? []).some((w) => specifier === w || specifier.startsWith(`${w}/`)))
       return false
     return !(project.pathAliases ?? []).some((a) => specifier.startsWith(a))

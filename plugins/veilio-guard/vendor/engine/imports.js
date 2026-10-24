@@ -29,9 +29,10 @@ function namedList(list, alias) {
 function scriptImports(text) {
     const found = [];
     const add = (at, specifier, names) => found.push({ at, entry: { specifier, names } });
-    // The clause holds no quote or semicolon: `import 'x'` must not run on into the
-    // next statement's `from`.
-    const fromClause = /^[ \t]*(import|export)\s+(?:type\s+)?([^'";]*?)\s+from\s+['"]([^'"]+)['"]/gm;
+    // The clause crosses a line only inside braces, and holds no quote or
+    // semicolon: `import 'x'`, or a statement with no semicolon, must not run on
+    // into the next statement's `from` and lend it its names.
+    const fromClause = /^[ \t]*(import|export)\s+(?:type\s+)?((?:[^'";{}\n]|\{[^'";{}]*\})*?)\s+from\s+['"]([^'"]+)['"]/gm;
     for (const m of text.matchAll(fromClause)) {
         const [, keyword, clause, specifier] = m;
         const names = [];
@@ -86,6 +87,12 @@ function pythonImports(text) {
     }
     return found.sort((a, b) => a.at - b.at).map((f) => f.entry);
 }
+/** `name` is declared in Go source: a parameter, a `var`, or `:=`. */
+function boundInGo(text, name) {
+    return (new RegExp(`[(,]\\s*${name}\\s+[*\\[\\]\\w.]`).test(text) ||
+        new RegExp(`\\bvar\\s+${name}\\b`).test(text) ||
+        new RegExp(`\\b${name}\\s*(?:,\\s*\\w+\\s*)*:=`).test(text));
+}
 function goImports(text) {
     const specs = [];
     const one = /^[ \t]*import\s+(?:([A-Za-z_]\w*|\.)\s+)?"([^"]+)"/gm;
@@ -98,8 +105,14 @@ function goImports(text) {
     return specs.map(({ alias, specifier }) => {
         const last = specifier.split('/').pop() ?? '';
         const local = alias ?? last;
-        // Go reaches into a package by `pkg.Name`; those names are the package's.
-        const selectors = [...text.matchAll(new RegExp(`\\b${local}\\.([A-Za-z_]\\w*)`, 'g'))].map((m) => m[1]);
+        // Go reaches into a package by `pkg.Name`, and those names are the
+        // package's - unless `local` is also bound in this file (a parameter or a
+        // variable named like the package), when `local.Field` may be the project's.
+        // A dot or blank import has no qualifier to follow.
+        const harvest = IDENT.test(local) && local !== '_' && !boundInGo(text, local);
+        const selectors = harvest
+            ? [...text.matchAll(new RegExp(`\\b${local}\\.([A-Z]\\w*)`, 'g'))].map((m) => m[1])
+            : [];
         const names = [...(alias ? [] : [last]), ...new Set(selectors)];
         return { specifier, names };
     });
@@ -128,6 +141,16 @@ function scriptDeclarations(text) {
     for (const re of patterns)
         for (const m of text.matchAll(re))
             out.push(m[1]);
+    // Class fields and object keys (`private secretKey: string`, `rotateAfter = 30`,
+    // `retentionDays: 7`). Over-counting here only masks more.
+    const members = /^[ \t]+(?:(?:public|private|protected|static|readonly|declare|override)\s+)*([A-Za-z_$][\w$]*)\s*[?!]?\s*[:=](?![=>])/gm;
+    for (const m of text.matchAll(members))
+        out.push(m[1]);
+    for (const m of text.matchAll(/\{([^{}]*)\}\s*(?::[^=)]*)?\s*(?:[,)=]|$)/gm))
+        out.push(...namedList(m[1], /\s*[:=]\s*/));
+    // Parameters of functions, methods and arrows.
+    for (const m of text.matchAll(/\(([^()]*)\)\s*(?::[^{=]+)?\s*(?:\{|=>)/g))
+        out.push(...params(m[1]));
     const variables = /^[ \t]*(?:export\s+)?(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*([^\n]*)/gm;
     for (const m of text.matchAll(variables)) {
         if (/^require\(/.test(m[2].trim()))
@@ -141,11 +164,16 @@ function scriptDeclarations(text) {
 }
 function pythonDeclarations(text) {
     const out = [];
-    for (const m of text.matchAll(/^[ \t]*(?:async\s+)?def\s+([A-Za-z_]\w*)/gm))
-        out.push(m[1]);
+    for (const m of text.matchAll(/^[ \t]*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/gm)) {
+        out.push(m[1], ...params(m[2]));
+    }
     for (const m of text.matchAll(/^[ \t]*class\s+([A-Za-z_]\w*)/gm))
         out.push(m[1]);
-    for (const m of text.matchAll(/^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)/gm))
+    // Assignments at any depth, annotated or not: module names, class attributes
+    // and locals. Over-counting here only masks more.
+    for (const m of text.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)/gm))
+        out.push(m[1]);
+    for (const m of text.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*:\s*[A-Za-z_][\w.[\], ]*$/gm))
         out.push(m[1]);
     return out;
 }
@@ -158,6 +186,25 @@ function goDeclarations(text) {
     for (const block of text.matchAll(/^(?:type|var|const)\s*\(([\s\S]*?)^\)/gm))
         for (const m of block[1].matchAll(/^[ \t]*([A-Za-z_]\w*)\b/gm))
             out.push(m[1]);
+    // Struct fields, and function and method parameters.
+    for (const block of text.matchAll(/\bstruct\s*\{([^}]*)\}/g))
+        for (const m of block[1].matchAll(/^[ \t]*([A-Za-z_]\w*)\s+\S/gm))
+            out.push(m[1]);
+    for (const m of text.matchAll(/^func\s+(?:\(([^)]*)\)\s*)?[A-Za-z_]\w*\s*\(([^)]*)\)/gm))
+        out.push(...params(m[1] ?? ''), ...params(m[2]));
+    return out;
+}
+/** The names in a parameter list, in any of the three languages: `a: T = 1`,
+ *  `...rest`, `{ x, y }: Opts`, `self, batch_ref`, `l *Ledger`, `a, b string`. */
+function params(list) {
+    const out = [];
+    for (const brace of list.matchAll(/\{([^}]*)\}/g))
+        out.push(...namedList(brace[1], /\s*[:=]\s*/));
+    for (const part of list.replace(/\{[^}]*\}/g, '').split(',')) {
+        const name = /^\s*(?:\.\.\.|\*{1,2})?([A-Za-z_$][\w$]*)/.exec(part)?.[1];
+        if (name)
+            out.push(name);
+    }
     return out;
 }
 /** The names `text` declares: functions, classes, types, module variables and,
@@ -176,7 +223,10 @@ export function parseDeclarations(text, language) {
  *  languages answer false: nothing of theirs is exempted. */
 export function isExternalSpecifier(specifier, language, project) {
     if (language === 'typescript') {
-        if (specifier.startsWith('.') || specifier.startsWith('/'))
+        // Relative, absolute, and package.json `imports` (`#internal/…`).
+        if (/^[./#]/.test(specifier))
+            return false;
+        if ((project.baseDirs ?? []).includes(specifier.split('/')[0]))
             return false;
         if ((project.workspaces ?? []).some((w) => specifier === w || specifier.startsWith(`${w}/`)))
             return false;

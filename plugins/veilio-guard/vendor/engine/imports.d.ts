@@ -11,7 +11,13 @@ export interface ProjectShape {
     workspaces?: readonly string[];
     /** `tsconfig` path-alias prefixes such as `@/` (TS/JS). */
     pathAliases?: readonly string[];
-    /** Top-level module and package names found in the project (Python). */
+    /** Top-level directories of the project, and of its `tsconfig` `baseUrl`
+     *  (TS/JS): a bare specifier whose first segment is one of them is the
+     *  project's own (`src/billing/ledger`). */
+    baseDirs?: readonly string[];
+    /** Top-level module and package names found in the project (Python). The
+     *  caller must list every one: a missing name makes the project's own
+     *  modules read as external. */
     pythonModules?: readonly string[];
     /** The `module` path from `go.mod` (Go). */
     goModule?: string;

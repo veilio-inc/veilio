@@ -126,8 +126,9 @@ describe('parseDeclarations', () => {
       'enum Kind { A }',
       'function describe() {}',
     ].join('\n')
-    expect(parseDeclarations(src, 'typescript').sort()).toEqual(
-      [
+    const declared = parseDeclarations(src, 'typescript')
+    expect(declared).toEqual(
+      expect.arrayContaining([
         'Batch',
         'Kind',
         'Mode',
@@ -138,8 +139,14 @@ describe('parseDeclarations', () => {
         'second',
         'settle',
         'total',
-      ].sort()
+        'batch',
+        'v',
+      ])
     )
+    // Taken from a package, not declared here: these must stay exemptible.
+    expect(declared).not.toContain('join')
+    // Keywords are never "declared".
+    expect(declared).not.toContain('if')
   })
 
   it('finds Python functions, classes and module-level assignments', () => {
@@ -150,7 +157,13 @@ describe('parseDeclarations', () => {
       'class Ledger:',
       '    pass',
     ].join('\n')
-    expect(parseDeclarations(src, 'python').sort()).toEqual(['Ledger', 'RATE', 'settle'])
+    expect(parseDeclarations(src, 'python').sort()).toEqual([
+      'Ledger',
+      'RATE',
+      'batch',
+      'inner',
+      'settle',
+    ])
   })
 
   it('finds Go functions, methods, types, vars and consts', () => {
@@ -168,6 +181,7 @@ describe('parseDeclarations', () => {
       'Ledger',
       'Max',
       'Settle',
+      'l',
       'limit',
     ])
   })
@@ -211,5 +225,89 @@ describe('externalNames', () => {
     expect([...externalNames(src, 'typescript', {})].sort()).toEqual(
       ['expect', 'fs', 'node', 'node:fs', 'vitest'].sort()
     )
+  })
+})
+
+// Review of 6bb19b3: each of these classified a project's own name as
+// external, and the guard would have sent it to the model as written.
+describe('a project name is never external', () => {
+  const project = { baseDirs: ['src'], workspaces: ['acme-app'] }
+
+  it('a bare specifier into a top-level project directory (tsconfig baseUrl) is internal', () => {
+    expect(isExternalSpecifier('src/billing/ledger', 'typescript', project)).toBe(false)
+  })
+
+  it('a package.json `imports` specifier (#internal) is internal', () => {
+    expect(isExternalSpecifier('#internal/payroll', 'typescript', project)).toBe(false)
+  })
+
+  it('a statement with no semicolon does not lend its names to the next one', () => {
+    const src = ['export const cfg = { apiKey, dbPass }', "export { z } from 'zod'"].join('\n')
+    expect(parseImports(src, 'typescript')).toEqual([{ specifier: 'zod', names: ['z'] }])
+    expect(externalNames(src, 'typescript', {}).has('apiKey')).toBe(false)
+  })
+
+  it('a Go dot-import harvests no selectors', () => {
+    const src = ['import . "github.com/x/y"', 'func f() { return order.Total }'].join('\n')
+    expect(parseImports(src, 'go')).toEqual([{ specifier: 'github.com/x/y', names: [] }])
+  })
+
+  it('a Go parameter that shadows a package name lends it no selectors', () => {
+    const src = [
+      'import "example.com/db"',
+      'func load(db *Conn) string { return db.SecretField }',
+      'func other() { db.Open() }',
+    ].join('\n')
+    const names = parseImports(src, 'go')[0]?.names ?? []
+    expect(names).not.toContain('SecretField')
+  })
+})
+
+describe('parseDeclarations sees parameters, fields and keys', () => {
+  it('TypeScript', () => {
+    const src = [
+      'export class Vault {',
+      '  private secretKey: string',
+      '  rotateAfter = 30',
+      '  open(passphrase: string, { tenantId, region }: Opts) {}',
+      '}',
+      'const settings = { retentionDays: 7 }',
+      'const pick = (accountRef: string) => accountRef',
+    ].join('\n')
+    const declared = parseDeclarations(src, 'typescript')
+    for (const name of [
+      'secretKey',
+      'rotateAfter',
+      'passphrase',
+      'tenantId',
+      'region',
+      'retentionDays',
+      'accountRef',
+    ])
+      expect(declared, name).toContain(name)
+  })
+
+  it('Python', () => {
+    const src = [
+      'class Ledger:',
+      '    owner_id: int = 0',
+      '    def close(self, batch_ref):',
+      '        total = 1',
+    ].join('\n')
+    const declared = parseDeclarations(src, 'python')
+    for (const name of ['owner_id', 'close', 'batch_ref', 'total'])
+      expect(declared, name).toContain(name)
+  })
+
+  it('Go', () => {
+    const src = [
+      'type Ledger struct {',
+      '  OwnerID int',
+      '  balance float64',
+      '}',
+      'func Close(batchRef string) {}',
+    ].join('\n')
+    const declared = parseDeclarations(src, 'go')
+    for (const name of ['OwnerID', 'balance', 'batchRef']) expect(declared, name).toContain(name)
   })
 })
