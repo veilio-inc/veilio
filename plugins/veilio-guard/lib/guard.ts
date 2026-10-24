@@ -285,7 +285,10 @@ export class Guard {
     for (const rel of [...found, ...unresolved]) {
       const onDisk = await this.findOnDisk(rel)
       if (onDisk) exist.push(onDisk)
-      else missing++
+      // Found only by stripping directories, it may be another file than the
+      // one printed: indexed, but not counted as checked (security review of
+      // 2947c81). Only a complete index then lets the result through.
+      if (onDisk !== rel) missing++
     }
     const missed = exist.length ? await this.indexFiles(exist, deadline) : []
     // A path the guard could not find may be in a file it has not indexed yet

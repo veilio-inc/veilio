@@ -209,3 +209,13 @@ test('with no listing, a source path the guard cannot find withholds the result'
   expect(out.deny).toContain('Veilio withheld this result')
   expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 })
+
+// Security review of 2947c81: a path found only by stripping directories may be
+// another file than the one printed; it does not count as checked.
+test('a path found only by stripping its directories is not trusted before the index is complete', async ($, on) => {
+  project(on, { ...COLD_FILES }, { noGit: true })
+  const run = shellWith(' ❯ settle vendor/acme/src/secrets.ts:3:1', 'toolu_strip')
+  on('tool.call', () => run.r)
+  const out: any = await $.tool.call(eventOf(run))
+  expect(out.deny).toContain('Veilio withheld this result')
+})
