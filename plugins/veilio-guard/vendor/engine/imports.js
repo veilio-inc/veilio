@@ -111,7 +111,7 @@ function goImports(text) {
         // A dot or blank import has no qualifier to follow.
         const harvest = IDENT.test(local) && local !== '_' && !boundInGo(text, local);
         const selectors = harvest
-            ? [...text.matchAll(new RegExp(`\\b${local}\\.([A-Z]\\w*)`, 'g'))].map((m) => m[1])
+            ? [...text.matchAll(new RegExp(`(?<![\\w.$])${local}\\.([A-Z]\\w*)`, 'g'))].map((m) => m[1])
             : [];
         const names = [...(alias ? [] : [last]), ...new Set(selectors)];
         return { specifier, names };

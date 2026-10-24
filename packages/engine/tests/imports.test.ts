@@ -261,6 +261,16 @@ describe('a project name is never external', () => {
     const names = parseImports(src, 'go')[0]?.names ?? []
     expect(names).not.toContain('SecretField')
   })
+
+  it('a Go struct field named like a package lends it no selectors', () => {
+    const src = [
+      'import "example.com/db"',
+      'func show(c Config) string { return c.db.SecretField + db.Open() }',
+    ].join('\n')
+    const names = parseImports(src, 'go')[0]?.names ?? []
+    expect(names).not.toContain('SecretField')
+    expect(names).toContain('Open')
+  })
 })
 
 describe('parseDeclarations sees parameters, fields and keys', () => {
