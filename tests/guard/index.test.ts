@@ -179,3 +179,12 @@ describe('a shell script does not turn the exemption off', () => {
     expect(index.externalFor('typescript').has('vitest')).toBe(true)
   })
 })
+
+it('a name a shell script declares is never exempt (security review of ce30398)', async () => {
+  const files = { ...FILES, 'scripts/deploy.sh': 'describe() { echo "$1"; }\n' }
+  const index = new ProjectIndex(io(files).value, record)
+  await index.start()
+  await index.run(Infinity)
+  expect(index.externalFor('typescript').has('describe')).toBe(false)
+  expect(index.externalFor('typescript').has('vitest')).toBe(true)
+})

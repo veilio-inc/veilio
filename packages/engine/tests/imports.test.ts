@@ -4,6 +4,7 @@ import {
   isExternalSpecifier,
   parseDeclarations,
   parseImports,
+  parseShellDeclarations,
 } from '../src/index.js'
 
 // Spec 050 R4: what a file takes from outside the project is public, and the
@@ -351,6 +352,24 @@ describe('a Go module with no dot in its path (security review of 4446710)', () 
     expect(isExternalSpecifier('ledger/settle', 'go', { baseDirs: ['ledger'] })).toBe(false)
     expect(isExternalSpecifier('fmt', 'go', { goModule: 'billing', baseDirs: ['ledger'] })).toBe(
       true
+    )
+  })
+})
+
+describe('parseShellDeclarations (security review of ce30398)', () => {
+  it('finds functions, exported and assigned variables, and PowerShell functions', () => {
+    const src = [
+      'deployLedger() { echo hi; }',
+      'function settle_batch {',
+      '  local inner=1',
+      '}',
+      'export LEDGER_HOST=db.internal',
+      'retryCount=3',
+      'function Invoke-Ledger { param($x) }',
+      'echo "$retryCount"',
+    ].join('\n')
+    expect(parseShellDeclarations(src).sort()).toEqual(
+      ['Invoke-Ledger', 'LEDGER_HOST', 'deployLedger', 'inner', 'retryCount', 'settle_batch'].sort()
     )
   })
 })

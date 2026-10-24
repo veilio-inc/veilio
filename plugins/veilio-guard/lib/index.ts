@@ -8,7 +8,7 @@
 // into the map through `onFile`. The guard hands every call a deadline: a file
 // it cannot read, or cannot reach in time, comes back so the result that named
 // it can be withheld rather than sent.
-import { externalNames, parseDeclarations } from '../vendor/engine/index.js'
+import { externalNames, parseDeclarations, parseShellDeclarations } from '../vendor/engine/index.js'
 import type { Language, ProjectShape } from '../vendor/engine/index.js'
 import { isSourcePath, languageOf } from './policy.ts'
 
@@ -50,9 +50,9 @@ export type IndexState = 'new' | 'indexing' | 'complete' | 'unavailable'
 
 // The languages engine/imports.ts reads imports and declarations for.
 const PARSED = new Set<string>(['typescript', 'python', 'go'])
-// Shell scripts declare nothing a TypeScript, Python or Go file imports: they do
-// not turn the exemption off. Every other unread language does (a Java class, a
-// Vue component).
+// Shell scripts do not turn the exemption off: what they declare is read with
+// parseShellDeclarations and counts as the project's. Every other unread
+// language does (a Java class, a Vue component).
 const SHELL = /\.(sh|bash|zsh|ps1)$/i
 
 // A parsed JSON file, read field by field with optional chaining.
@@ -256,6 +256,8 @@ export class ProjectIndex {
       return false
     }
     const language = languageOf(rel)
+    // A shell script is read for what it declares, nothing else.
+    if (SHELL.test(rel)) for (const name of parseShellDeclarations(text)) this.declared.add(name)
     let external = new Set<string>()
     if (language !== 'auto') {
       this.languages.add(language)

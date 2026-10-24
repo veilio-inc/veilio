@@ -338,3 +338,19 @@ export function languageOfPath(path: string): Language | null {
   const dot = name.lastIndexOf('.')
   return (dot > 0 && LANGUAGE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()]) || null
 }
+
+/** The names a shell or PowerShell script declares: functions (`name()`,
+ *  `function name`), and variables assigned or exported (`export NAME=`,
+ *  `local name=`, `name=`). A name a script declares is the project's, so it
+ *  is never exempted as a third-party one (security review of ce30398). */
+export function parseShellDeclarations(text: string): string[] {
+  const out = new Set<string>()
+  for (const m of text.matchAll(/^[ \t]*(?:function[ \t]+)?([A-Za-z_][\w-]*)[ \t]*\(\)/gm))
+    out.add(m[1]!)
+  for (const m of text.matchAll(/^[ \t]*function[ \t]+([A-Za-z_][\w-]*)/gm)) out.add(m[1]!)
+  for (const m of text.matchAll(
+    /^[ \t]*(?:export[ \t]+|local[ \t]+|readonly[ \t]+|declare[ \t]+(?:-\w+[ \t]+)?)?([A-Za-z_]\w*)=/gm
+  ))
+    out.add(m[1]!)
+  return [...out]
+}

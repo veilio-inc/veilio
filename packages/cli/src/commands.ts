@@ -18,6 +18,7 @@ import {
   type LanguageOption,
   languageOfPath,
   parseDeclarations,
+  parseShellDeclarations,
   type ProjectShape,
   disputedNote,
   hasBlockingSecrets,
@@ -271,7 +272,7 @@ function thirdPartyNames(
     l === 'typescript' || l === 'python' || l === 'go'
   // Text that declares no code (notes, data) does not count; a source file in
   // a language whose declarations are not read does, and keeps everything.
-  // Shell scripts declare nothing those languages import, so they count as prose here.
+  // Shell scripts count as prose here; what they declare is still read below.
   const prose = (name: string) =>
     /\.(txt|md|markdown|rst|json|ya?ml|toml|csv|log|ini|sh|bash|zsh|ps1)$/i.test(name)
   const unknown = inputs.some(
@@ -284,6 +285,10 @@ function thirdPartyNames(
     for (const name of parseDeclarations(i.text, languageFor(i.name) as Language))
       declared.add(name)
   }
+  // A shell script counts as prose above, but what it declares is the project's.
+  for (const i of inputs)
+    if (i.name && /\.(sh|bash|zsh|ps1)$/i.test(i.name))
+      for (const name of parseShellDeclarations(i.text)) declared.add(name)
   const shape = projectShape(cwd, inputs)
   for (const i of code) {
     const names = externalNames(i.text, languageFor(i.name) as Language, shape)

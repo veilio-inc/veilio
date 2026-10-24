@@ -105,3 +105,15 @@ describe('veilio scrub with several files', () => {
     expect(out.indexOf('package billing')).toBeLessThan(out.indexOf('import {'))
   })
 })
+
+describe('a shell script among the inputs (security review of ce30398)', () => {
+  it('what it declares stays masked, though a TypeScript file imports the same word', async () => {
+    mkdirSync(join(cwd, 'scripts'), { recursive: true })
+    writeFileSync(join(cwd, 'scripts/run.sh'), 'describe() { echo "$1"; }\n')
+    const { out, map } = await scrub(['src/ledger.ts', 'scripts/run.sh'], 'map.json')
+    const ledger = out.split('\n').find((l) => l.includes('vitest')) ?? ''
+    // The import line: vitest and expect as written, describe masked.
+    expect(ledger).toMatch(/^import \{ __\w+__\d+, expect \} from 'vitest'/)
+    expect(Object.values(map)).toContain('describe')
+  })
+})
