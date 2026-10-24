@@ -21,6 +21,25 @@ import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 
+/** What masking knows about the text in hand (spec 050): its language, the
+ *  project's languages, the names the project takes from outside and the names
+ *  it declares, and whether the user typed it. */
+export type MaskContext = {
+  language: Language | 'unknown'
+  projectLanguages: ReadonlySet<Language>
+  external: ReadonlySet<string>
+  declared: ReadonlySet<string>
+  kind: 'result' | 'prompt'
+}
+
+export const NO_CONTEXT: MaskContext = {
+  language: 'unknown',
+  projectLanguages: new Set(),
+  external: new Set(),
+  declared: new Set(),
+  kind: 'result',
+}
+
 export function scrubSource(
   text: string,
   map: SymbolMap,
@@ -103,7 +122,9 @@ function replaceNames(text: string, map: SymbolMap): string {
   })
 }
 
-export function applyMap(text: string, map: SymbolMap): string {
+// The context is accepted and not yet read: spec 050 T005 threads it through
+// every caller first, so the rules that use it land on a tested path.
+export function applyMap(text: string, map: SymbolMap, _ctx: MaskContext = NO_CONTEXT): string {
   const named = replaceNames(text, map)
   const scan = scanSecrets(named, 'redact')
   let out = scan.code

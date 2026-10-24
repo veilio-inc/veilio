@@ -159,6 +159,60 @@ export function languageOf(path: string): LanguageOption {
   return (dot > 0 && LANGUAGE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()]) || 'auto'
 }
 
+/** The language of one line of a Grep result (`path:12:text`, `path-12-text`
+ *  for a context line, or a bare path), from its file's extension (spec 050 R2). */
+export function languageOfGrepLine(line: string): Language | 'unknown' {
+  const path = /^(.+?):\d+:/.exec(line)?.[1] ?? /^(.+?)-\d+-/.exec(line)?.[1] ?? line.trim()
+  const language = languageOf(path)
+  return language === 'auto' ? 'unknown' : language
+}
+
+// Commands whose output is the text of the one file they are given, and the
+// filters that may follow them in a pipeline without changing what it is.
+const READERS = new Set([
+  'cat',
+  'head',
+  'tail',
+  'sed',
+  'nl',
+  'less',
+  'more',
+  'bat',
+  'get-content',
+  'gc',
+  'type',
+])
+const FILTERS = new Set([
+  'head',
+  'tail',
+  'grep',
+  'sed',
+  'nl',
+  'cut',
+  'sort',
+  'uniq',
+  'less',
+  'more',
+])
+
+/** The language of a command's output, when the command prints exactly one
+ *  source file (`cat src/a.ts | head -50`); otherwise unknown (spec 050 R2). */
+export function languageOfCommand(command: string): Language | 'unknown' {
+  // `cd dir && cat file` is the one compound form worth reading: Claude writes it often.
+  const body = command.replace(/^\s*cd\s+\S+\s*&&\s*/, '')
+  if (/[;&]|\|\||`|\$\(/.test(body)) return 'unknown'
+  const [first, ...rest] = body.split('|').map((s) => s.trim().split(/\s+/))
+  if (!first?.[0] || !READERS.has(first[0].toLowerCase())) return 'unknown'
+  if (rest.some((words) => !FILTERS.has((words[0] ?? '').toLowerCase()))) return 'unknown'
+  let args = first.slice(1).filter((w) => !w.startsWith('-') && !/^\d+$/.test(w))
+  // sed's first operand is its script unless -e gave one.
+  if (first[0] === 'sed' && !first.includes('-e')) args = args.slice(1)
+  const [file] = args
+  if (args.length !== 1 || file === undefined || /[*?[\]]/.test(file)) return 'unknown'
+  const language = languageOf(file.replace(/^['"]|['"]$/g, ''))
+  return language === 'auto' ? 'unknown' : language
+}
+
 export function isSourcePath(path: string): boolean {
   const name = path.split(/[\\/]/).pop() ?? ''
   const dot = name.lastIndexOf('.')

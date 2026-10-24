@@ -112,7 +112,7 @@ export function register(on: any, options: Options = {}) {
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
-    const text = g.applyText(e.text)
+    const text = g.applyText(e.text, 'prompt')
     const context = Array.isArray(e.context)
       ? e.context.map((c: string) => g.applyText(c))
       : undefined

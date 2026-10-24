@@ -20,7 +20,8 @@ import {
 } from './mapfile.ts'
 import { isRawOnly, pathsInCommand } from './paths.ts'
 import { argumentPolicy, languageOf, resultPolicy } from './policy.ts'
-import { applyMap, restoreArgs, scrubSource, survivingSecrets } from './scrub.ts'
+import { applyMap, NO_CONTEXT, restoreArgs, scrubSource, survivingSecrets } from './scrub.ts'
+import type { MaskContext } from './scrub.ts'
 import { restore } from '../vendor/engine/index.js'
 
 export interface GuardIO {
@@ -185,8 +186,13 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string): string {
-    return applyMap(text, this.map)
+  applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
+    return applyMap(text, this.map, this.context('unknown', kind))
+  }
+
+  /** What masking knows about a text of `language` (spec 050). */
+  context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
+    return { ...NO_CONTEXT, language, kind }
   }
 
   /** The real names, for drawing on this machine only. Never sent anywhere. */
@@ -344,12 +350,13 @@ export class Guard {
       const working: SymbolMap = { ...this.map }
       const additions: SymbolMap = {}
       let value: unknown = outcome.result
-      if (policy.kind === 'text') value = applyMap(value as string, working)
-      else if (policy.kind === 'deep') value = deepRewrite(value, (s) => applyMap(s, working))
+      const ctx = this.context('unknown')
+      if (policy.kind === 'text') value = applyMap(value as string, working, ctx)
+      else if (policy.kind === 'deep') value = deepRewrite(value, (s) => applyMap(s, working, ctx))
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
-            if (field.mode === 'apply') return applyMap(s, working)
+            if (field.mode === 'apply') return applyMap(s, working, ctx)
             const scrubbed = scrubSource(s, working, languageOf(filePath))
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
@@ -364,7 +371,7 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, (s) => applyMap(s, working), new Set(policy.keep))
+        value = deepRewrite(value, (s) => applyMap(s, working, ctx), new Set(policy.keep))
       }
 
       if (Object.keys(additions).length > 0) {
