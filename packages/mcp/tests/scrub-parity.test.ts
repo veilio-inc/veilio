@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../../cli/src/index.js'
@@ -63,6 +63,41 @@ describe('scrub and anonymize_text, one team, one input', () => {
     const mcp = callTool('anonymize_text', { text: code }, { cwd: fresh(), mapPath: null })
     const masked = (mcp.text.split('--- masked code ---\n')[1] ?? '').trim()
     expect(mcp.text).toMatch(/Namespace: team/)
+    expect(cli.trim()).toBe(masked)
+  })
+})
+
+// Spec 050 T033 (the founder's decision on spec 030 FR-005): for the same input
+// FORM, the same placeholders. A file scrubbed from the command line and the
+// same file through anonymize_file follow one third-party rule.
+describe('scrub <file> and anonymize_file, one project, one file', () => {
+  const project = () => {
+    const dir = fresh()
+    mkdirSync(join(dir, '.git'))
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(
+      join(dir, 'src/ledger.test.ts'),
+      "import { describe, expect } from 'vitest'\nexport function settleLedger(batchTotal: number) { return batchTotal }\n"
+    )
+    return dir
+  }
+
+  it('identical output', async () => {
+    let cli = ''
+    const code = await main(['scrub', '--quiet', 'src/ledger.test.ts'], {
+      cwd: project(),
+      stdin: async () => '',
+      stdout: (t) => (cli += t),
+      stderr: () => {},
+    })
+    expect(code).toBe(0)
+    const mcp = callTool(
+      'anonymize_file',
+      { path: 'src/ledger.test.ts' },
+      { cwd: project(), mapPath: null }
+    )
+    const masked = (mcp.text.split('--- masked code ---\n')[1] ?? '').trim()
+    expect(masked).not.toBe('')
     expect(cli.trim()).toBe(masked)
   })
 })
