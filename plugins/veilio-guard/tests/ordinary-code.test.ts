@@ -58,6 +58,7 @@ test('a search over TypeScript keeps the keywords on every line', async ($, on) 
 
 test('a test file reads with its third-party names, and the project name is masked', async ($, on) => {
   project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
+  on('session.start', () => ({ cwd: ROOT }))
   const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
   on('tool.call', () => ({
     ref: 1,
@@ -73,6 +74,8 @@ test('a test file reads with its third-party names, and the project name is mask
     },
     isReadOnly: true,
   }))
+  // As in a session: it starts, and the index runs to the end.
+  await $.session.start({ surface: 'terminal', isInteractive: false, cwd: ROOT })
   const out: any = await $.tool.call({
     tool: 'Read',
     tool_use_id: 't_t',
@@ -96,4 +99,30 @@ test('a typed command keeps the runner, its flag and the test directory', async 
   })
   expect(sent[0].text).toContain('npx vitest run --tenant tests/')
   expect(sent[0].text).not.toContain('luhnValid')
+})
+
+test('while the index is incomplete, a name imported from a package is still masked', async ($, on) => {
+  // Not every file is indexed yet: the one that declares `expect` might be next.
+  project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
+  const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
+  on('tool.call', () => ({
+    ref: 1,
+    result: {
+      type: 'text',
+      file: {
+        filePath: `${ROOT}/tests/secrets.test.ts`,
+        content,
+        numLines: 7,
+        startLine: 1,
+        totalLines: 7,
+      },
+    },
+    isReadOnly: true,
+  }))
+  const out: any = await $.tool.call({
+    tool: 'Read',
+    tool_use_id: 't_partial',
+    file_path: `${ROOT}/tests/secrets.test.ts`,
+  })
+  expect(out.result.file.content).not.toContain('expect,')
 })

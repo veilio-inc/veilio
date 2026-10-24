@@ -385,7 +385,10 @@ export class Guard {
       kind,
       projectLanguages: this.index.languages,
       // Less every name the project declares anywhere (spec 050 data-model).
-      external: this.index.external,
+      // Only once every file is indexed: before that, a name imported here may
+      // be declared in a file not read yet, so nothing is exempt - the
+      // exemption fails closed (security review of 9355866).
+      external: this.index.state === 'complete' ? this.index.external : new Set<string>(),
       declared: this.index.declared,
     }
   }
