@@ -25,6 +25,7 @@ import {
   isSourcePath,
   languageOf,
   languageOfCommand,
+  languageOfGrepLine,
   resultPolicy,
 } from './policy.ts'
 import {
@@ -58,11 +59,20 @@ export interface GuardIO {
 const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype', 'role'])
 
 /** deepRewrite, with the key each string sits under. */
-function rewriteKeyed(value: unknown, fn: (s: string, key: string) => string, key = ''): unknown {
+// The key is passed only at the record's top level, and in the blocks of a root
+// list (an MCP result's `type`), as `keep` works in fields.ts; deeper it is ''.
+function rewriteKeyed(
+  value: unknown,
+  fn: (s: string, key: string) => string,
+  key = '',
+  top = true
+): unknown {
   if (typeof value === 'string') return fn(value, key)
-  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, key))
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, '', top))
   if (value && typeof value === 'object')
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewriteKeyed(v, fn, k)]))
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, rewriteKeyed(v, fn, top ? k : '', false)])
+    )
   return value
 }
 
@@ -369,7 +379,26 @@ export class Guard {
 
   /** What masking knows about a text of `language` (spec 050). */
   context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
-    return { ...NO_CONTEXT, language, kind }
+    if (!this.index) return { ...NO_CONTEXT, language, kind }
+    return {
+      language,
+      kind,
+      projectLanguages: this.index.languages,
+      // Less every name the project declares anywhere (spec 050 data-model).
+      external: this.index.external,
+      declared: this.index.declared,
+    }
+  }
+
+  /** The language of a tool's result text (spec 050 R2): a Read's file, the
+   *  one file a command prints; otherwise unknown. Grep is per line. */
+  private resultLanguage(tool: string, args: ToolEvent, filePath: string): MaskContext['language'] {
+    if (tool === 'Read' || tool === 'NotebookRead') {
+      const language = languageOf(filePath)
+      return language === 'auto' ? 'unknown' : language
+    }
+    if (typeof args.command === 'string') return languageOfCommand(args.command)
+    return 'unknown'
   }
 
   /** The real names, for drawing on this machine only. Never sent anywhere. */
@@ -499,6 +528,35 @@ export class Guard {
     return withheld(reason)
   }
 
+  /** A denial's or an error's text, as the model reads it: the files it names
+   *  indexed, the map applied, leftover names shaped like identifiers masked
+   *  and saved, then the secret re-scan. One path for both, so neither can
+   *  skip a step (security review of f03f45c). */
+  private async maskMessage(
+    raw: string,
+    args: ToolEvent,
+    deadline: number,
+    indexed = false
+  ): Promise<ToolOutcome> {
+    if (!indexed) {
+      const unchecked = await this.indexNamed(args, [raw], deadline)
+      if (unchecked) return this.withhold(unchecked)
+    }
+    const ctx = this.context('unknown')
+    const shaped = maskShaped(applyMap(raw, this.map, ctx), this.map, ctx)
+    if (
+      Object.keys(shaped.additions).length > 0 &&
+      (await this.save(shaped.additions)) === 'conflict'
+    )
+      return this.withhold(
+        'another program changed .veilio/map.json while Veilio was writing to it'
+      )
+    const left = survivingSecrets(shaped.text)
+    if (left.length > 0)
+      return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
+    return { deny: shaped.text }
+  }
+
   /** After the tool ran: the listed fields scrubbed, new names saved, then the secret re-scan. */
   async afterTool(
     tool: string,
@@ -507,21 +565,8 @@ export class Guard {
     deadline = Date.now() + 6_000
   ): Promise<ToolOutcome> {
     let outcome = received
-    if (outcome.deny !== undefined) {
-      // A denial reaches the model like an error's text, and is masked the same way.
-      const unchecked = await this.indexNamed(args, [outcome.deny], deadline)
-      if (unchecked) return this.withhold(unchecked)
-      const ctx = this.context('unknown')
-      const shaped = maskShaped(applyMap(outcome.deny, this.map, ctx), this.map, ctx)
-      if (
-        Object.keys(shaped.additions).length > 0 &&
-        (await this.save(shaped.additions)) === 'conflict'
-      )
-        return this.withhold(
-          'another program changed .veilio/map.json while Veilio was writing to it'
-        )
-      return { deny: shaped.text }
-    }
+    // A denial reaches the model as text, like an error's: masked the same way.
+    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline)
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
@@ -536,20 +581,7 @@ export class Guard {
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
-      const ctx = this.context('unknown')
-      const shaped = maskShaped(applyMap(raw, this.map, ctx), this.map, ctx)
-      if (
-        Object.keys(shaped.additions).length > 0 &&
-        (await this.save(shaped.additions)) === 'conflict'
-      )
-        return this.withhold(
-          'another program changed .veilio/map.json while Veilio was writing to it'
-        )
-      const text = shaped.text
-      const left = survivingSecrets(text)
-      if (left.length > 0)
-        return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-      return { deny: text }
+      return this.maskMessage(raw, args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
@@ -560,14 +592,23 @@ export class Guard {
       const working: SymbolMap = { ...this.map }
       const additions: SymbolMap = {}
       let value: unknown = outcome.result
-      const ctx = this.context('unknown')
-      if (policy.kind === 'text') value = applyMap(value as string, working, ctx)
-      else if (policy.kind === 'deep') value = deepRewrite(value, (s) => applyMap(s, working, ctx))
+      const ctx = this.context(this.resultLanguage(tool, args, filePath))
+      // A Grep result mixes files: each line is masked in its own file's language.
+      const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
+        tool === 'Grep'
+          ? s
+              .split('\n')
+              .map((line) => fn(line, this.context(languageOfGrepLine(line))))
+              .join('\n')
+          : fn(s, ctx)
+      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      if (policy.kind === 'text') value = apply(value as string)
+      else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
-            if (field.mode === 'apply') return applyMap(s, working, ctx)
-            const scrubbed = scrubSource(s, working, languageOf(filePath))
+            if (field.mode === 'apply') return apply(s)
+            const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
             return scrubbed.text
@@ -581,17 +622,22 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, (s) => applyMap(s, working, ctx), new Set(policy.keep))
+        value = deepRewrite(value, apply, new Set(policy.keep))
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
       const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
       value = rewriteKeyed(value, (s, key) => {
-        if (keep.has(key) || ENUM_KEYS.has(key)) return s
-        const shaped = maskShaped(s, working, ctx)
-        Object.assign(working, shaped.additions)
-        Object.assign(additions, shaped.additions)
-        return shaped.text
+        if (keep.has(key)) return s
+        // An enum is one bare token at the top of a record; a sentence under
+        // `status`, or a value deeper down, is masked like any other.
+        if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
+        return perLine(s, (t, c) => {
+          const shaped = maskShaped(t, working, c)
+          Object.assign(working, shaped.additions)
+          Object.assign(additions, shaped.additions)
+          return shaped.text
+        })
       })
 
       if (Object.keys(additions).length > 0) {

@@ -5,7 +5,7 @@
 // never used Read, and every test run and search went out as written.
 import { expect, test } from 'claude-code/testing'
 import { COLD_FILES, DECLARED, GREP, TEST_RUN } from './fixtures/cold.ts'
-import { eventOf, mapFile, project, ROOT } from './helpers.ts'
+import { eventOf, mapFile, project, ROOT, STRIPE } from './helpers.ts'
 
 const MAP = `${ROOT}/.veilio/map.json`
 const leaked = (out: unknown) => {
@@ -149,4 +149,29 @@ test('in a record, a one-word value that is not an enum is still shape-masked', 
   const out: any = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec' })
   expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
   expect(out.result.type).toBe('text')
+})
+
+// Security review of f03f45c.
+test('an enum-like key deeper in a record, or holding a sentence, is still masked', async ($, on) => {
+  project(on, { ...COLD_FILES })
+  on('tool.call', () => ({
+    ref: 1,
+    result: {
+      type: 'text',
+      status: 'renderInvoiceTotals failed',
+      detail: { status: 'computeLedgerBalance' },
+    },
+    isReadOnly: true,
+  }))
+  const out: any = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec2' })
+  expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
+  expect(JSON.stringify(out)).not.toContain('computeLedgerBalance')
+  expect(out.result.type).toBe('text')
+})
+
+test('a denial that still holds a credential after masking is withheld', async ($, on) => {
+  project(on, { ...COLD_FILES })
+  on('tool.call', () => ({ deny: `refused: STRIPE_SECRET_KEY=${STRIPE}` }))
+  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  expect(JSON.stringify(out)).not.toContain(STRIPE)
 })

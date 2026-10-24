@@ -150,6 +150,11 @@ export function register(on: any, options: Options = {}) {
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+    // What you type is masked with every name the index knows: give it the
+    // budget to reach a few more files first (spec 050).
+    const state = g.index?.state
+    if (state === 'new' || state === 'indexing')
+      await g.indexProject(deadline(next)).catch(() => undefined)
     const text = g.applyText(e.text, 'prompt')
     const context = Array.isArray(e.context)
       ? e.context.map((c: string) => g.applyText(c))
