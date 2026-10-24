@@ -168,10 +168,10 @@ export class Guard {
         now: () => Date.now(),
         wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
       },
-      async (_rel, text, language) => {
+      async (rel, text, language) => {
         const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
         Object.assign(this.unsaved, additions)
-        this.batch.push(_rel)
+        this.batch.push(rel)
       },
       (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
     )
@@ -282,9 +282,11 @@ export class Guard {
     const { found, unresolved } = this.namedSources(args, texts)
     const exist: string[] = []
     let missing = 0
-    for (const rel of [...found, ...unresolved])
-      if (await this.io.exists(join(this.root, rel))) exist.push(rel)
+    for (const rel of [...found, ...unresolved]) {
+      const onDisk = await this.findOnDisk(rel)
+      if (onDisk) exist.push(onDisk)
       else missing++
+    }
     const missed = exist.length ? await this.indexFiles(exist, deadline) : []
     // A path the guard could not find may be in a file it has not indexed yet
     // (a name with a space, a form it does not read): the index is finished
@@ -295,8 +297,23 @@ export class Guard {
     if (unread) return `it names ${files(unread)} Veilio could not read to check`
     if (missed.length)
       return `Veilio is still indexing the project and has not checked ${files(missed.length)} it names yet`
-    if (missing > 0 && this.index.state === 'indexing')
-      return 'Veilio is still indexing the project and could not tell which file it names'
+    // Only a complete index can say a path it cannot find is not the project's.
+    // With no listing, or a late one, the result waits (final review of b0dded9).
+    if (missing > 0 && this.index.state !== 'complete')
+      return this.index.state === 'indexing'
+        ? 'Veilio is still indexing the project and could not tell which file it names'
+        : 'Veilio could not list the project, and the result names a source file it could not find'
+    return null
+  }
+
+  /** `rel` as a file under the root, in the forms tools print it: as written,
+   *  without a diff's `a/` or `b/`, or without up to three leading directories
+   *  (output printed from a subdirectory). */
+  private async findOnDisk(rel: string): Promise<string | null> {
+    const parts = rel.replace(/^[ab]\//, '').split('/')
+    const forms = [rel, ...[0, 1, 2, 3].map((n) => parts.slice(n).join('/'))]
+    for (const form of new Set(forms))
+      if (form.includes('.') && (await this.io.exists(join(this.root, form)))) return form
     return null
   }
 

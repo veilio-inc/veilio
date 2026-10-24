@@ -319,3 +319,25 @@ export function languageOfPath(path) {
 export function parseShellDeclarations(text) {
     return [...new Set(text.match(/[A-Za-z_][\w-]*/g) ?? [])].filter((w) => !/^-|-$/.test(w));
 }
+/** One whitelist rule leaving `names` as written, matched whole. One rule for
+ *  all of them: the engine matches each identifier against each rule, so a
+ *  rule per name is slow on a large file. Shared by the guard and the CLI so
+ *  the two cannot drift. */
+export function keepRule(names, id, label) {
+    const list = [...names];
+    if (list.length === 0)
+        return [];
+    const escape = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [
+        {
+            id,
+            scope: 'personal',
+            team_id: null,
+            type: 'whitelist',
+            name: label,
+            pattern: `^(?:${list.map(escape).join('|')})$`,
+            enabled: true,
+            sort_order: 0,
+        },
+    ];
+}

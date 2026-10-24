@@ -1,4 +1,5 @@
 import { type Language } from './languages.js';
+import type { CustomRuleWhitelist } from './types.js';
 export interface ImportEntry {
     specifier: string;
     /** Names the file takes from the package and uses under the package's own
@@ -47,3 +48,8 @@ export declare function languageOfPath(path: string): Language | null;
  *  `for x in`, after `;` or `&&`) to read it precisely, and every word counted
  *  here only stays masked, which is the safe side (security review of 70c6475). */
 export declare function parseShellDeclarations(text: string): string[];
+/** One whitelist rule leaving `names` as written, matched whole. One rule for
+ *  all of them: the engine matches each identifier against each rule, so a
+ *  rule per name is slow on a large file. Shared by the guard and the CLI so
+ *  the two cannot drift. */
+export declare function keepRule(names: Iterable<string>, id: string, label: string): CustomRuleWhitelist[];

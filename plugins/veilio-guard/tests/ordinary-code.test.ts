@@ -126,3 +126,64 @@ test('while the index is incomplete, a name imported from a package is still mas
   })
   expect(out.result.file.content).not.toContain('expect,')
 })
+
+// Final review of b0dded9: claims that had no test of their own.
+test('a word the project declares stays masked though a package it imports exports it', async ($, on) => {
+  const files = {
+    ...COLD_FILES,
+    // The project's own `expect`, beside the test that imports vitest's.
+    [`${ROOT}/src/expectations.ts`]: 'export function expect(total: number) { return total }\n',
+  }
+  project(on, { ...files, [MAP]: mapFile(POISONED) })
+  on('session.start', () => ({ cwd: ROOT }))
+  const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
+  on('tool.call', () => ({
+    ref: 1,
+    result: {
+      type: 'text',
+      file: {
+        filePath: `${ROOT}/tests/secrets.test.ts`,
+        content,
+        numLines: 7,
+        startLine: 1,
+        totalLines: 7,
+      },
+    },
+    isReadOnly: true,
+  }))
+  await $.session.start({ surface: 'terminal', isInteractive: false, cwd: ROOT })
+  const out: any = await $.tool.call({
+    tool: 'Read',
+    tool_use_id: 't_own',
+    file_path: `${ROOT}/tests/secrets.test.ts`,
+  })
+  const seen: string = out.result.file.content
+  expect(seen).toContain('describe')
+  expect(seen).not.toMatch(/\bexpect\b/)
+})
+
+test('a word that is a keyword in one language and a name in another is masked only where it is a name', async ($, on) => {
+  project(on, { ...COLD_FILES, [MAP]: mapFile({ __VAR__1016: 'new' }) })
+  on('tool.call', () => ({
+    ref: 1,
+    result: {
+      mode: 'content',
+      numFiles: 0,
+      filenames: [],
+      content: 'app/models.py:3:new = settle(1)\nsrc/batch.ts:4:  const card = new Card()',
+      numLines: 2,
+      totalLines: 2,
+    },
+    text: '',
+    isReadOnly: true,
+  }))
+  const out: any = await $.tool.call({
+    tool: 'Grep',
+    tool_use_id: 't_mix',
+    pattern: 'new',
+    output_mode: 'content',
+  })
+  const [py, tsLine] = String(out.result.content).split('\n')
+  expect(py).toContain('__VAR__1016 = ')
+  expect(tsLine).toContain('= new Card()')
+})

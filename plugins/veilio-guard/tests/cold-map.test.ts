@@ -104,21 +104,33 @@ const shellWith = (stdout: string, id: string) => ({
   r: { ...TEST_RUN.r, result: { ...TEST_RUN.r.result, stdout } },
 })
 
-for (const [form, stdout] of [
-  ['a Windows path', ' ❯ settle src\\secrets.ts:11:3'],
-  ['a file URL', ` ❯ settle file://${ROOT}/src/secrets.ts:11:3`],
-  ['a path in brackets', ' at settle [src/secrets.ts:11:3]'],
-  ['a path after a semicolon', 'see;src/secrets.ts: settle failed'],
-  ['a path relative to a subdirectory', ' ❯ settle ../src/secrets.ts:11:3'],
-] as const) {
-  test(`a lowercase name is masked when the output names its file as ${form}`, async ($, on) => {
-    project(on, { ...COLD_FILES })
-    const run = shellWith(stdout, `toolu_form_${form.length}`)
-    on('tool.call', () => run.r)
-    const out: any = await $.tool.call(eventOf(run))
-    expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
-  })
+const lowercaseNameIsMasked = (stdout: string) => async ($: any, on: any) => {
+  project(on, { ...COLD_FILES })
+  const run = shellWith(stdout, 'toolu_form')
+  on('tool.call', () => run.r)
+  const out: any = await $.tool.call(eventOf(run))
+  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 }
+test(
+  'a lowercase name is masked when the output names its file as a Windows path',
+  lowercaseNameIsMasked(' ❯ settle src\\secrets.ts:11:3')
+)
+test(
+  'a lowercase name is masked when the output names its file as a file URL',
+  lowercaseNameIsMasked(` ❯ settle file://${ROOT}/src/secrets.ts:11:3`)
+)
+test(
+  'a lowercase name is masked when the output names its file as a path in brackets',
+  lowercaseNameIsMasked(' at settle [src/secrets.ts:11:3]')
+)
+test(
+  'a lowercase name is masked when the output names its file as a path after a semicolon',
+  lowercaseNameIsMasked('see;src/secrets.ts: settle failed')
+)
+test(
+  'a lowercase name is masked when the output names its file as a path relative to a subdirectory',
+  lowercaseNameIsMasked(' ❯ settle ../src/secrets.ts:11:3')
+)
 
 test('a path the guard cannot resolve makes it finish the index before the result goes', async ($, on) => {
   const files = {
@@ -174,4 +186,26 @@ test('a denial that still holds a credential after masking is withheld', async (
   on('tool.call', () => ({ deny: `refused: STRIPE_SECRET_KEY=${STRIPE}` }))
   const out: any = await $.tool.call(eventOf(TEST_RUN))
   expect(JSON.stringify(out)).not.toContain(STRIPE)
+})
+
+// Final review of b0dded9: a path the guard could not find passed the result
+// unless the index was mid-way; with no listing, nothing stopped it.
+test('a diff names its files as a/ and b/: they are found and indexed', async ($, on) => {
+  project(on, { ...COLD_FILES })
+  const run = shellWith(
+    'diff --git a/src/secrets.ts b/src/secrets.ts\n-export function settle(batch: number[]): number {',
+    'toolu_diff'
+  )
+  on('tool.call', () => run.r)
+  const out: any = await $.tool.call(eventOf(run))
+  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
+})
+
+test('with no listing, a source path the guard cannot find withholds the result', async ($, on) => {
+  project(on, { ...COLD_FILES }, { noGit: true })
+  const run = shellWith(' ❯ settle lib/elsewhere/ledger.ts:3:1', 'toolu_nolist')
+  on('tool.call', () => run.r)
+  const out: any = await $.tool.call(eventOf(run))
+  expect(out.deny).toContain('Veilio withheld this result')
+  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 })

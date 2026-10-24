@@ -39,12 +39,7 @@ export function bounded<T>(
   return Promise.race([work, late])
 }
 
-export type FileIndexed = (
-  rel: string,
-  text: string,
-  language: Language | 'auto',
-  external: Set<string>
-) => Promise<void>
+export type FileIndexed = (rel: string, text: string, language: Language | 'auto') => Promise<void>
 
 export type IndexState = 'new' | 'indexing' | 'complete' | 'unavailable'
 
@@ -258,16 +253,15 @@ export class ProjectIndex {
     const language = languageOf(rel)
     // A shell script is read for what it declares, nothing else.
     if (SHELL.test(rel)) for (const name of parseShellDeclarations(text)) this.declared.add(name)
-    let external = new Set<string>()
     if (language !== 'auto') {
       this.languages.add(language)
       for (const name of parseDeclarations(text, language)) this.declared.add(name)
-      external = externalNames(text, language, this.shape)
+      const external = externalNames(text, language, this.shape)
       const into = this.imported.get(language) ?? new Set<string>()
       for (const name of external) into.add(name)
       this.imported.set(language, into)
     }
-    await this.onFile(rel, text, language, external)
+    await this.onFile(rel, text, language)
     this.indexed.add(rel)
     this.failed.delete(rel)
     return true

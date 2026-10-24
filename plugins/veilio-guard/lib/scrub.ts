@@ -14,11 +14,12 @@ import {
   detectSecrets,
   isKeyword,
   isPlaceholder,
+  keepRule,
   restore,
   scanSecrets,
   SECRET_DISPOSITIONS,
 } from '../vendor/engine/index.js'
-import type { CustomRule, Language, LanguageOption } from '../vendor/engine/index.js'
+import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 
@@ -49,22 +50,7 @@ export function scrubSource(
 ): { text: string; additions: SymbolMap } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole.
-  // One rule for every name: the engine matches each identifier against each
-  // rule, so a rule per name is slow on a large file (review of 9355866).
-  const rules: CustomRule[] = keep.size
-    ? [
-        {
-          id: 'veilio-guard-keep',
-          scope: 'personal',
-          team_id: null,
-          type: 'whitelist',
-          name: 'veilio-guard: third-party names',
-          pattern: `^(?:${[...keep].map(escape).join('|')})$`,
-          enabled: true,
-          sort_order: 0,
-        },
-      ]
-    : []
+  const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
   const result = anonymize(text, { existingMap: map, language, rules })
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(result.map)) {

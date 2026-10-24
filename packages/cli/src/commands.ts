@@ -11,9 +11,9 @@ import { join, resolve } from 'node:path'
 import {
   alteredNote,
   BIN_NAME,
-  type CustomRule,
   detectSecrets,
   externalNames,
+  keepRule,
   type Language,
   type LanguageOption,
   languageOfPath,
@@ -171,7 +171,10 @@ export async function runScrub(
   for (const input of inputs) {
     const language = languageFor(input.name)
     const own = keep.get(input) ?? new Set<string>()
-    const rules = [...(cached?.rules ?? []), ...whitelist(own)]
+    const rules = [
+      ...(cached?.rules ?? []),
+      ...keepRule(own, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
+    ]
     const masked = await mask(input.text, toPersist, {
       language,
       secrets: args.secrets,
@@ -260,8 +263,13 @@ export async function runScrub(
 
 /** The names each input takes from a public package, to leave as written
  *  (spec 050 FR-006, FR-007). Declarations are read from every input first, so
- *  a word one file imports and another declares stays masked; and nothing is
- *  kept when an input is in a language whose declarations are not read. */
+ *  a word one input imports and another declares stays masked; and nothing is
+ *  kept when an input is in a language whose declarations are not read.
+ *
+ *  Narrower than the guard: the guard knows every file the project declares
+ *  names in, scrub knows only its inputs. A word an input imports from a public
+ *  package and a file NOT given here declares is left as written; scrub the
+ *  files that declare it in the same call to keep it masked. */
 function thirdPartyNames(
   inputs: { name: string | null; text: string }[],
   languageFor: (name: string | null) => LanguageOption,
@@ -345,24 +353,6 @@ function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectSh
     if (i.name?.endsWith('.py'))
       for (const part of i.name.replace(/\.py$/, '').split('/')) pythonModules.add(part)
   return { baseDirs: [...baseDirs], workspaces, pathAliases, pythonModules: [...pythonModules] }
-}
-
-/** One whitelist rule for a set of names, matched whole. */
-function whitelist(names: Set<string>): CustomRule[] {
-  if (names.size === 0) return []
-  const escape = (n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return [
-    {
-      id: 'veilio-scrub-third-party',
-      scope: 'personal',
-      team_id: null,
-      type: 'whitelist',
-      name: 'veilio scrub: third-party names',
-      pattern: `^(?:${[...names].map(escape).join('|')})$`,
-      enabled: true,
-      sort_order: 0,
-    },
-  ]
 }
 
 /**

@@ -40,10 +40,8 @@ function io(
   return { value, reads }
 }
 
-const indexed: { rel: string; external: string[] }[] = []
-const record = async (rel: string, _text: string, _language: string, external: Set<string>) => {
-  indexed.push({ rel, external: [...external].sort() })
-}
+// The guard scrubs each file into the map here; these tests read the index alone.
+const record = async () => {}
 
 describe('ProjectIndex', () => {
   it('lists the tracked source files and indexes them all before the deadline', async () => {

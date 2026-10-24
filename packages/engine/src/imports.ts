@@ -11,6 +11,7 @@
 // import too, which can only leave more third-party names as written, never
 // mask fewer of the project's: declarations win over imports.
 import { isKeyword, type Language } from './languages.js'
+import type { CustomRuleWhitelist } from './types.js'
 
 export interface ImportEntry {
   specifier: string
@@ -346,4 +347,30 @@ export function languageOfPath(path: string): Language | null {
  *  here only stays masked, which is the safe side (security review of 70c6475). */
 export function parseShellDeclarations(text: string): string[] {
   return [...new Set(text.match(/[A-Za-z_][\w-]*/g) ?? [])].filter((w) => !/^-|-$/.test(w))
+}
+
+/** One whitelist rule leaving `names` as written, matched whole. One rule for
+ *  all of them: the engine matches each identifier against each rule, so a
+ *  rule per name is slow on a large file. Shared by the guard and the CLI so
+ *  the two cannot drift. */
+export function keepRule(
+  names: Iterable<string>,
+  id: string,
+  label: string
+): CustomRuleWhitelist[] {
+  const list = [...names]
+  if (list.length === 0) return []
+  const escape = (n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return [
+    {
+      id,
+      scope: 'personal',
+      team_id: null,
+      type: 'whitelist',
+      name: label,
+      pattern: `^(?:${list.map(escape).join('|')})$`,
+      enabled: true,
+      sort_order: 0,
+    },
+  ]
 }
