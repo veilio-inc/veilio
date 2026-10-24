@@ -34,6 +34,9 @@ import {
   type RestoreReport,
   type SecretFinding,
   alteredNote,
+  keepRule,
+  languageOfPath,
+  type LanguageOption,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import { getNamespace, namespaceLine, refreshNamespaceIfStale } from './namespace.js'
@@ -48,6 +51,7 @@ function loadingNote(why: 'unlocked' | 'retrying'): string {
 }
 import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
+import { thirdPartyNames } from '@veilio-inc/cli/third-party'
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */
@@ -239,14 +243,29 @@ function runAnonymize(
   source: string,
   label: string,
   args: Record<string, unknown>,
-  ctx: ToolContext
+  ctx: ToolContext,
+  /** The file's path, relative to the project root, when the input is a file. */
+  file?: string
 ): ToolResult {
   const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
   const localMap = loadMap(mapPath)
   const refreshing = refreshNamespaceIfStale()
   const resolved = getNamespace()
   const { namespace, highest, conflicts } = resolved
-  const language = (str(args, 'language') ?? 'auto') as 'auto'
+  // A file is masked in its extension's language unless one is asked for, and
+  // keeps the names it takes from a public package as written - the rule
+  // `veilio scrub <file>` follows, from the same module, so the two give the
+  // same placeholders for the same file (spec 030 FR-005, spec 050 T033-T036).
+  // Inline text has no file and no project: nothing is proven third-party.
+  const asked = (str(args, 'language') ?? 'auto') as LanguageOption
+  const language: LanguageOption =
+    asked !== 'auto' || !file ? asked : (languageOfPath(file) ?? 'auto')
+  const keep = file
+    ? (() => {
+        const input = { name: file, text: source }
+        return thirdPartyNames([input], [localMap, namespace], ctx.cwd).get(input) ?? new Set()
+      })()
+    : new Set<string>()
   const rules = getRules()
   // The same composition `veilio scrub` uses (spec 030): the team's maps over
   // this project's, new names above both, and only the team entries the output
@@ -258,7 +277,10 @@ function runAnonymize(
     {
       language,
       secrets: 'redact',
-      rules: rules.rules,
+      rules: [
+        ...(rules.rules ?? []),
+        ...keepRule(keep, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
+      ],
     }
   )
   saveMap(mapPath, toPersist)
@@ -343,7 +365,7 @@ export const TOOLS: ToolDefinition[] = [
       } catch {
         throw new ToolError(`cannot read "${path}"`)
       }
-      return runAnonymize(source, path, args, ctx)
+      return runAnonymize(source, path, args, ctx, path)
     },
   },
   {
