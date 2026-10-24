@@ -161,7 +161,8 @@ export async function runScrub(
   // guess from that file alone (spec 050 FR-004).
   const languageFor = (name: string | null): LanguageOption =>
     args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
-  const keep = thirdPartyNames(inputs, existingMap, io.cwd)
+  // What the team's maps hold counts as known code too (security review of 8adc729).
+  const keep = thirdPartyNames(inputs, { ...existingMap, ...(found.team?.namespace ?? {}) }, io.cwd)
 
   let toPersist: Record<string, string> = existingMap
   const outputs: string[] = []
