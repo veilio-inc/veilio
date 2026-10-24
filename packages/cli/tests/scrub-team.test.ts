@@ -169,3 +169,23 @@ describe('veilio scrub, a third-party name the team holds as code', () => {
     expect(out).not.toMatch(/import \{ describe\b/)
   })
 })
+
+// Security review of ec0cb00: the project map and the team's are two sources;
+// one placeholder in both must not drop either name.
+describe('veilio scrub, the same placeholder in the project map and the team', () => {
+  it('keeps both names masked', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: mapsFor({ namespace: { __FN__30: 'settleLedger' }, aliases: {}, conflicts: {} }),
+    })
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-clash-'))
+    mkdirSync(join(cwd, '.git'))
+    mkdirSync(join(cwd, 'src'))
+    saveMap(resolveMapPath(null, cwd), { __FN__30: 'describe' })
+    writeFileSync(join(cwd, 'src/a.test.ts'), "import { describe, expect } from 'vitest'\n")
+    let out = ''
+    const io: Io = { cwd, home, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
+    await main(['scrub', 'src/a.test.ts'], io)
+    expect(out).not.toMatch(/import \{ describe\b/)
+  })
+})

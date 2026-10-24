@@ -162,7 +162,7 @@ export async function runScrub(
   const languageFor = (name: string | null): LanguageOption =>
     args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
   // What the team's maps hold counts as known code too (security review of 8adc729).
-  const keep = thirdPartyNames(inputs, { ...existingMap, ...(found.team?.namespace ?? {}) }, io.cwd)
+  const keep = thirdPartyNames(inputs, [existingMap, found.team?.namespace ?? {}], io.cwd)
 
   let toPersist: Record<string, string> = existingMap
   const outputs: string[] = []
@@ -273,7 +273,9 @@ export async function runScrub(
  *  files that declare it in the same call to keep it masked. */
 function thirdPartyNames(
   inputs: { name: string | null; text: string }[],
-  existingMap: Record<string, string>,
+  /** The project map and the team's namespace, kept apart: merged by key, one
+   *  placeholder in both would drop a name (security review of ec0cb00). */
+  known: Record<string, string>[],
   cwd: string
 ): Map<object, Set<string>> {
   const out = new Map<object, Set<string>>()
@@ -311,7 +313,8 @@ function thirdPartyNames(
     // Nor a name the map already holds as code (a variable, function or class):
     // another file, or an earlier scrub, found it to be the project's.
     const held = new Set(
-      Object.entries(existingMap)
+      known
+        .flatMap((map) => Object.entries(map))
         .filter(([placeholder]) => /^__(VAR|FN|CLS)__\d+$/.test(placeholder))
         .map(([, name]) => name)
     )
