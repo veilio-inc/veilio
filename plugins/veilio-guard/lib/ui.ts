@@ -11,7 +11,14 @@ export function bandText(g: Guard): string {
   if (g.state === 'stopped')
     return `Veilio guard stopped: ${g.stoppedReason}. Every tool call is refused.`
   const names = Object.keys(g.map).length
-  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+  const index = g.index
+  const indexing =
+    index?.state === 'indexing'
+      ? ` · indexing ${index.indexed.size}/${index.total} files`
+      : index?.state === 'unavailable'
+        ? ` · index off (${index.reason})`
+        : ''
+  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
 }
 
 export function statusText(g: Guard, managed: boolean): string {

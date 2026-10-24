@@ -12,6 +12,8 @@ export type Project = {
   writes: { path: string; text: string }[]
   logs: string[]
   toasts: string[]
+  /** Timers the guard asked for ($.clock.after), recorded and never fired. */
+  timers: number[]
 }
 
 export type Options = {
@@ -26,6 +28,8 @@ export type Options = {
   inject?: { path: string; beforeExistsCall: number; text: string }
   /** The organisation's managed settings, as $.settings.read({ source: 'policy' }) answers. */
   policy?: Record<string, unknown>
+  /** `git ls-files` is refused, as in a project that is not a git checkout. */
+  noGit?: boolean
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -36,6 +40,7 @@ export function project(on: any, files: Record<string, string> = {}, opts: Optio
     writes: [],
     logs: [],
     toasts: [],
+    timers: [],
   }
   const exists = (path: string) => {
     const a = abs(path)
@@ -81,6 +86,22 @@ export function project(on: any, files: Record<string, string> = {}, opts: Optio
     return { value: undefined }
   })
   on('command.register', () => ({ value: { command: 'veilio' } }))
+  // `git ls-files -z`, as a checkout of these files answers it: every file under
+  // the root but git's own and Veilio's.
+  on('process.run', (_: any, e: any) => {
+    if (opts.noGit || e.argv[0] !== 'git') return { deny: 'spawn git ENOENT' }
+    const tracked = Object.keys(p.files)
+      .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
+      .map((f) => f.slice(ROOT.length + 1))
+    return { value: { exitCode: 0, stdout: tracked.map((f) => `${f}\0`).join(''), stderr: '' } }
+  })
+  // A wait that never ends: in a test the work always beats the deadline, as on
+  // a fast disk. The deadline paths are tested in tests/guard/index.test.ts.
+  on('clock.sleep', () => new Promise(() => undefined))
+  on('clock.after', (_: any, e: any) => {
+    p.timers.push(e.ms)
+    return { value: undefined }
+  })
   if (!opts.policy) on('settings.read', () => ({ value: {} }))
   else on('settings.read', () => ({ value: opts.policy }))
   return p

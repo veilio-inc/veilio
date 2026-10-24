@@ -19,8 +19,24 @@ import {
   type SymbolMap,
 } from './mapfile.ts'
 import { isRawOnly, pathsInCommand } from './paths.ts'
-import { argumentPolicy, languageOf, resultPolicy } from './policy.ts'
-import { applyMap, restoreArgs, scrubSource, survivingSecrets } from './scrub.ts'
+import { bounded, LATE, ProjectIndex } from './index.ts'
+import {
+  argumentPolicy,
+  isSourcePath,
+  languageOf,
+  languageOfCommand,
+  languageOfGrepLine,
+  resultPolicy,
+} from './policy.ts'
+import {
+  applyMap,
+  maskShaped,
+  NO_CONTEXT,
+  restoreArgs,
+  scrubSource,
+  survivingSecrets,
+} from './scrub.ts'
+import type { MaskContext } from './scrub.ts'
 import { restore } from '../vendor/engine/index.js'
 
 export interface GuardIO {
@@ -29,6 +45,35 @@ export interface GuardIO {
   exists(path: string): Promise<boolean>
   /** Where a path really leads (symbolic links followed), or undefined. */
   realPath(path: string): Promise<string | undefined>
+  /** The project's tracked files, relative to `root` (`git ls-files`), or null
+   *  when it cannot be listed. Absent: the project is never listed, and only
+   *  the files a result names are indexed. */
+  list?(root: string): Promise<string[] | null>
+  /** Resolves after `ms` ($.clock.sleep): bounds a read or `git` that hangs. */
+  sleep?(ms: number): Promise<void>
+}
+
+// Keys whose value in a record is an enum or a status (`type`, `status`):
+// Claude Code refuses a record whose enum changed, so the identifier-shape
+// fallback leaves these. Every other value is shape-masked (review of ef1a533).
+const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype', 'role'])
+
+/** deepRewrite, with the key each string sits under. */
+// The key is passed only at the record's top level, and in the blocks of a root
+// list (an MCP result's `type`), as `keep` works in fields.ts; deeper it is ''.
+function rewriteKeyed(
+  value: unknown,
+  fn: (s: string, key: string) => string,
+  key = '',
+  top = true
+): unknown {
+  if (typeof value === 'string') return fn(value, key)
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, '', top))
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, rewriteKeyed(v, fn, top ? k : '', false)])
+    )
+  return value
 }
 
 export interface GuardConfig {
@@ -75,7 +120,13 @@ export class Guard {
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
   counts = { withheld: 0, denied: 0 }
+  /** The project's source files, indexed so a result is masked by what it
+   *  contains (spec 050). Created when the guard loads. */
+  index: ProjectIndex | null = null
   private writes: Promise<unknown> = Promise.resolve()
+  private indexing: Promise<unknown> = Promise.resolve()
+  private unsaved: SymbolMap = {}
+  private batch: string[] = []
 
   constructor(
     private readonly io: GuardIO,
@@ -110,6 +161,163 @@ export class Guard {
     }
     await this.readSettings()
     await this.reloadMap()
+    this.index = new ProjectIndex(
+      {
+        list: () => (this.io.list ? this.io.list(this.root) : Promise.resolve(null)),
+        read: (rel) => this.io.read(join(this.root, rel)),
+        now: () => Date.now(),
+        wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
+      },
+      async (rel, text, language) => {
+        const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
+        Object.assign(this.unsaved, additions)
+        this.batch.push(rel)
+      },
+      (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
+    )
+  }
+
+  // ── project index (spec 050) ──────────────────────────────────────────────
+
+  /** Indexes `paths` before `deadline` and saves what they add, in one write.
+   *  Returns the paths it could not index. One batch at a time: the map's
+   *  placeholders are numbered from what the last batch saved. */
+  indexFiles(paths: readonly string[], deadline: number): Promise<string[]> {
+    const run = this.indexing.then(() =>
+      this.indexBatch(deadline, () => this.index!.index(paths, deadline))
+    )
+    this.indexing = run.catch(() => undefined)
+    // Waiting for the batch ahead counts against this deadline too: late, every
+    // path is unchecked, and the result naming them is withheld.
+    return bounded(run, deadline, this.clock).then((r) => (r === LATE ? [...paths] : r))
+  }
+
+  private get clock() {
+    return {
+      now: () => Date.now(),
+      wait: this.io.sleep ? (ms: number) => this.io.sleep!(ms) : undefined,
+    }
+  }
+
+  /** Continues through the project's files not indexed yet, until `deadline`. */
+  indexProject(deadline: number): Promise<string[]> {
+    const run = this.indexing.then(() =>
+      this.indexBatch(deadline, async () => {
+        await this.index!.run(deadline)
+        return []
+      })
+    )
+    this.indexing = run.catch(() => undefined)
+    return run
+  }
+
+  private async indexBatch(deadline: number, work: () => Promise<string[]>): Promise<string[]> {
+    if (!this.index) return []
+    // The listing gives the project's shape (what is external); a late one
+    // only means fewer names are exempt, so the batch goes on without it.
+    await bounded(this.index.start(), deadline, this.clock)
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      this.unsaved = {}
+      this.batch = []
+      const missed = await work()
+      if (Object.keys(this.unsaved).length === 0) return missed
+      const saved = await this.save(this.unsaved)
+      this.unsaved = {}
+      if (saved === 'saved') return missed
+      // Another program changed the map: this batch's numbers may clash with
+      // its, so the batch is indexed again from the map as it is now.
+      for (const rel of this.batch) this.index.forget(rel)
+    }
+    throw new Error('another program kept changing .veilio/map.json while Veilio was writing to it')
+  }
+
+  /** The project source files a result names, relative to the root: a Grep
+   *  match's path, a path in output or a stack trace, the file a command
+   *  prints. `unresolved` counts source-shaped paths that name no file the
+   *  guard can find: their file may be one it has not indexed yet. */
+  private namedSources(
+    args: ToolEvent,
+    texts: string[]
+  ): { found: string[]; unresolved: string[] } {
+    const roots = [this.root, this.root.replace(/^\/private(?=\/)/, ''), `/private${this.root}`]
+    const found = new Set<string>()
+    const loose: string[] = []
+    const consider = (raw: string) => {
+      let p = raw.replace(/:\d+(?::\d+)?$/, '')
+      const under = roots.find((r) => p.startsWith(`${r}/`))
+      if (under) p = p.slice(under.length + 1)
+      else if (p.startsWith('/')) return // outside the project
+      p = p.replace(/^(?:\.\.?\/)+/, '')
+      if (!p || !isSourcePath(p) || /(^|\/)node_modules\//.test(p)) return
+      if (this.index) {
+        const resolved = this.index.resolve(p)
+        if (resolved !== null) return void found.add(resolved)
+      }
+      loose.push(p)
+    }
+    for (const text of texts) {
+      // Windows separators and file URLs name the same files.
+      const plain = text.replace(/file:\/\//g, '').replace(/\\/g, '/')
+      for (const m of plain.matchAll(
+        /(?:^|[\s('"`=[<;:|,])((?:\.{0,2}\/|\/)?[\w@.$-]+(?:\/[\w@.$-]+)*\.[A-Za-z0-9]+)(?=$|[\s:)'"`,\]>;}|])/gm
+      ))
+        consider(m[1]!)
+    }
+    if (typeof args.command === 'string' && languageOfCommand(args.command) !== 'unknown')
+      for (const word of pathsInCommand(args.command)) consider(word)
+    return { found: [...found], unresolved: loose }
+  }
+
+  /** Indexes what a result names, and says why not when it cannot. The reason
+   *  reaches the model, so it names no path: a path can hold a project name. */
+  private async indexNamed(
+    args: ToolEvent,
+    texts: string[],
+    deadline: number
+  ): Promise<string | null> {
+    if (!this.index) return null
+    // Paths resolve against the listing, so it comes first (bounded: a late
+    // listing leaves every unknown path to the disk check below).
+    await bounded(this.index.start(), deadline, this.clock)
+    const { found, unresolved } = this.namedSources(args, texts)
+    const exist: string[] = []
+    let missing = 0
+    for (const rel of [...found, ...unresolved]) {
+      const onDisk = await this.findOnDisk(rel)
+      if (onDisk) exist.push(onDisk)
+      // Found only by stripping directories, it may be another file than the
+      // one printed: indexed, but not counted as checked (security review of
+      // 2947c81). Only a complete index then lets the result through.
+      if (onDisk !== rel) missing++
+    }
+    const missed = exist.length ? await this.indexFiles(exist, deadline) : []
+    // A path the guard could not find may be in a file it has not indexed yet
+    // (a name with a space, a form it does not read): the index is finished
+    // first, or the result waits.
+    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline)
+    const files = (n: number) => `${n} source file${n === 1 ? '' : 's'}`
+    const unread = missed.filter((rel) => this.index!.failed.has(rel)).length
+    if (unread) return `it names ${files(unread)} Veilio could not read to check`
+    if (missed.length)
+      return `Veilio is still indexing the project and has not checked ${files(missed.length)} it names yet`
+    // Only a complete index can say a path it cannot find is not the project's.
+    // With no listing, or a late one, the result waits (final review of b0dded9).
+    if (missing > 0 && this.index.state !== 'complete')
+      return this.index.state === 'indexing'
+        ? 'Veilio is still indexing the project and could not tell which file it names'
+        : 'Veilio could not list the project, and the result names a source file it could not find'
+    return null
+  }
+
+  /** `rel` as a file under the root, in the forms tools print it: as written,
+   *  without a diff's `a/` or `b/`, or without up to three leading directories
+   *  (output printed from a subdirectory). */
+  private async findOnDisk(rel: string): Promise<string | null> {
+    const parts = rel.replace(/^[ab]\//, '').split('/')
+    const forms = [rel, ...[0, 1, 2, 3].map((n) => parts.slice(n).join('/'))]
+    for (const form of new Set(forms))
+      if (form.includes('.') && (await this.io.exists(join(this.root, form)))) return form
+    return null
   }
 
   private async readSettings(): Promise<void> {
@@ -185,8 +393,35 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string): string {
-    return applyMap(text, this.map)
+  applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
+    return applyMap(text, this.map, this.context('unknown', kind))
+  }
+
+  /** What masking knows about a text of `language` (spec 050). */
+  context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
+    if (!this.index) return { ...NO_CONTEXT, language, kind }
+    return {
+      language,
+      kind,
+      projectLanguages: this.index.languages,
+      // Less every name the project declares anywhere (spec 050 data-model).
+      // Only once every file is indexed: before that, a name imported here may
+      // be declared in a file not read yet, so nothing is exempt - the
+      // exemption fails closed (security review of 9355866).
+      external: this.index.externalFor(language),
+      declared: this.index.declared,
+    }
+  }
+
+  /** The language of a tool's result text (spec 050 R2): a Read's file, the
+   *  one file a command prints; otherwise unknown. Grep is per line. */
+  private resultLanguage(tool: string, args: ToolEvent, filePath: string): MaskContext['language'] {
+    if (tool === 'Read' || tool === 'NotebookRead') {
+      const language = languageOf(filePath)
+      return language === 'auto' ? 'unknown' : language
+    }
+    if (typeof args.command === 'string') return languageOfCommand(args.command)
+    return 'unknown'
   }
 
   /** The real names, for drawing on this machine only. Never sent anywhere. */
@@ -316,24 +551,60 @@ export class Guard {
     return withheld(reason)
   }
 
+  /** A denial's or an error's text, as the model reads it: the files it names
+   *  indexed, the map applied, leftover names shaped like identifiers masked
+   *  and saved, then the secret re-scan. One path for both, so neither can
+   *  skip a step (security review of f03f45c). */
+  private async maskMessage(
+    raw: string,
+    args: ToolEvent,
+    deadline: number,
+    indexed = false
+  ): Promise<ToolOutcome> {
+    if (!indexed) {
+      const unchecked = await this.indexNamed(args, [raw], deadline)
+      if (unchecked) return this.withhold(unchecked)
+    }
+    const ctx = this.context('unknown')
+    const shaped = maskShaped(applyMap(raw, this.map, ctx), this.map, ctx)
+    if (
+      Object.keys(shaped.additions).length > 0 &&
+      (await this.save(shaped.additions)) === 'conflict'
+    )
+      return this.withhold(
+        'another program changed .veilio/map.json while Veilio was writing to it'
+      )
+    const left = survivingSecrets(shaped.text)
+    if (left.length > 0)
+      return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
+    return { deny: shaped.text }
+  }
+
   /** After the tool ran: the listed fields scrubbed, new names saved, then the secret re-scan. */
   async afterTool(
     tool: string,
     args: ToolEvent,
-    received: { deny?: string; result?: unknown; text?: string; isError?: boolean }
+    received: { deny?: string; result?: unknown; text?: string; isError?: boolean },
+    deadline = Date.now() + 6_000
   ): Promise<ToolOutcome> {
     let outcome = received
-    if (outcome.deny !== undefined) return { deny: this.applyText(outcome.deny) }
+    // A denial reaches the model as text, like an error's: masked the same way.
+    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline)
+    // Spec 050: the files this result names are indexed before it is masked,
+    // so their names are in the map even if Claude never read them.
+    const texts: string[] = []
+    deepRewrite(outcome.isError ? (outcome.text ?? outcome.result ?? '') : outcome.result, (s) => {
+      texts.push(s)
+      return s
+    })
+    const unchecked = await this.indexNamed(args, texts, deadline)
+    if (unchecked) return this.withhold(unchecked)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
-      const text = this.applyText(raw)
-      const left = survivingSecrets(text)
-      if (left.length > 0)
-        return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-      return { deny: text }
+      return this.maskMessage(raw, args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
@@ -344,13 +615,23 @@ export class Guard {
       const working: SymbolMap = { ...this.map }
       const additions: SymbolMap = {}
       let value: unknown = outcome.result
-      if (policy.kind === 'text') value = applyMap(value as string, working)
-      else if (policy.kind === 'deep') value = deepRewrite(value, (s) => applyMap(s, working))
+      const ctx = this.context(this.resultLanguage(tool, args, filePath))
+      // A Grep result mixes files: each line is masked in its own file's language.
+      const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
+        tool === 'Grep'
+          ? s
+              .split('\n')
+              .map((line) => fn(line, this.context(languageOfGrepLine(line))))
+              .join('\n')
+          : fn(s, ctx)
+      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      if (policy.kind === 'text') value = apply(value as string)
+      else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
-            if (field.mode === 'apply') return applyMap(s, working)
-            const scrubbed = scrubSource(s, working, languageOf(filePath))
+            if (field.mode === 'apply') return apply(s)
+            const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
             return scrubbed.text
@@ -364,8 +645,23 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, (s) => applyMap(s, working), new Set(policy.keep))
+        value = deepRewrite(value, apply, new Set(policy.keep))
       }
+      // A name shaped like an identifier that is still here - in a file the
+      // index has not reached - is masked and added (spec 050 R1).
+      const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
+      value = rewriteKeyed(value, (s, key) => {
+        if (keep.has(key)) return s
+        // An enum is one bare token at the top of a record; a sentence under
+        // `status`, or a value deeper down, is masked like any other.
+        if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
+        return perLine(s, (t, c) => {
+          const shaped = maskShaped(t, working, c)
+          Object.assign(working, shaped.additions)
+          Object.assign(additions, shaped.additions)
+          return shaped.text
+        })
+      })
 
       if (Object.keys(additions).length > 0) {
         const saved = await this.save(additions)

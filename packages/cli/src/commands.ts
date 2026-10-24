@@ -6,12 +6,20 @@
 //   2. Summaries, warnings and errors go to stderr, so they stay visible without
 //      corrupting that pipe.
 
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import {
   alteredNote,
   BIN_NAME,
   detectSecrets,
+  externalNames,
+  keepRule,
+  type Language,
+  type LanguageOption,
+  languageOfPath,
+  parseDeclarations,
+  parseShellDeclarations,
+  type ProjectShape,
   disputedNote,
   hasBlockingSecrets,
   LANGUAGE_LABELS,
@@ -62,6 +70,17 @@ async function readInput(args: ParsedArgs, io: Io): Promise<string> {
   return args.files.map((f) => readFileSync(resolve(io.cwd, f), 'utf8')).join('\n')
 }
 
+/** Each file on its own, or standard input as one text. One `anonymize` call
+ *  over joined files guessed one language for all of them: over this
+ *  repository's 226 files it chose Go (spec 050 US3). */
+async function readInputs(
+  args: ParsedArgs,
+  io: Io
+): Promise<{ name: string | null; text: string }[]> {
+  if (args.files.length === 0) return [{ name: null, text: await io.stdin() }]
+  return args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
+}
+
 function formatFinding(f: SecretFinding, file?: string): string {
   const where = file ? `${file}:${f.line}:${f.column}` : `line ${f.line}:${f.column}`
   const state = f.redacted ? 'redacted' : 'left in place'
@@ -82,7 +101,7 @@ export async function runScrub(
   io: Io,
   teamSource?: TeamNamespaceSource
 ): Promise<number> {
-  const source = await readInput(args, io)
+  const inputs = await readInputs(args, io)
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
   const existingMap = loadMap(mapPath)
   // The account's custom rules, as last pulled. Read from disk, never fetched.
@@ -95,7 +114,6 @@ export async function runScrub(
   const found: Awaited<ReturnType<TeamNamespaceSource>> = teamSource
     ? await teamSource()
     : { team: null, note: null, reserve: null }
-  const options = { language: args.language, secrets: args.secrets, rules: cached?.rules }
 
   // `--team`: take new numbers out of the team's SHARED allocation rather than
   // from a floor computed here, because this map is going to be published.
@@ -113,42 +131,68 @@ export async function runScrub(
   //
   // So the person who is about to publish says so, and `maps push --team`
   // refuses a map that conflicts anyway - naming this flag as the remedy.
-  let result: ReturnType<typeof anonymizeOverTeam>['result']
-  let toPersist: Record<string, string>
-  if (args.team && found.team && found.reserve) {
-    try {
-      ;({ result, toPersist } = await reservedAnonymizeOverTeam(
-        source,
-        existingMap,
-        found.team,
-        options,
-        found.reserve
-      ))
-    } catch (err) {
-      // Nothing is written and nothing is printed. Numbering locally instead
-      // would hand back placeholders that look correct and collide — the
-      // failure this path exists to prevent. Retrying without reservation is
-      // deliberately NOT offered.
-      const why = err instanceof Error ? err.message : String(err)
-      io.stderr(
-        `${BIN_NAME}: could not reserve placeholder numbers from the team (${why}), ` +
-          `so nothing was masked and nothing was written. ` +
-          `Numbering locally here would produce placeholders that clash with a ` +
-          `teammate's without either side noticing.\n`
-      )
-      return EXIT_ERROR
+  const mask = async (
+    source: string,
+    map: Record<string, string>,
+    options: Parameters<typeof anonymizeOverTeam>[3]
+  ): Promise<ReturnType<typeof anonymizeOverTeam> | null> => {
+    if (args.team && found.team && found.reserve) {
+      try {
+        return await reservedAnonymizeOverTeam(source, map, found.team, options, found.reserve)
+      } catch (err) {
+        // Nothing is written and nothing is printed. Numbering locally instead
+        // would hand back placeholders that look correct and collide — the
+        // failure this path exists to prevent. Retrying without reservation is
+        // deliberately NOT offered.
+        const why = err instanceof Error ? err.message : String(err)
+        io.stderr(
+          `${BIN_NAME}: could not reserve placeholder numbers from the team (${why}), ` +
+            `so nothing was masked and nothing was written. ` +
+            `Numbering locally here would produce placeholders that clash with a ` +
+            `teammate's without either side noticing.\n`
+        )
+        return null
+      }
     }
-  } else {
-    ;({ result, toPersist } = anonymizeOverTeam(
-      source,
-      existingMap,
-      found.team ?? { namespace: {}, highest: {} },
-      options
-    ))
+    return anonymizeOverTeam(source, map, found.team ?? { namespace: {}, highest: {} }, options)
+  }
+
+  // Each file in its own language: the flag's, else its extension's, else a
+  // guess from that file alone (spec 050 FR-004).
+  const languageFor = (name: string | null): LanguageOption =>
+    args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
+  // What the team's maps hold counts as known code too (security review of 8adc729).
+  const keep = thirdPartyNames(inputs, [existingMap, found.team?.namespace ?? {}], io.cwd)
+
+  let toPersist: Record<string, string> = existingMap
+  const outputs: string[] = []
+  const added = new Map<string, number>()
+  const results: { name: string | null; result: ReturnType<typeof anonymizeOverTeam>['result'] }[] =
+    []
+  for (const input of inputs) {
+    const language = languageFor(input.name)
+    const own = keep.get(input) ?? new Set<string>()
+    const rules = [
+      ...(cached?.rules ?? []),
+      ...keepRule(own, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
+    ]
+    const masked = await mask(input.text, toPersist, {
+      language,
+      secrets: args.secrets,
+      rules: rules.length ? rules : undefined,
+    })
+    if (!masked) return EXIT_ERROR
+    const before = Object.keys(toPersist).length
+    toPersist = masked.toPersist
+    const label = LANGUAGE_LABELS[masked.result.language]
+    added.set(label, (added.get(label) ?? 0) + Object.keys(toPersist).length - before)
+    outputs.push(masked.result.anonymized)
+    results.push({ name: input.name, result: masked.result })
   }
 
   saveMap(mapPath, toPersist, { force: args.force })
-  io.stdout(args.preamble ? withAiPreamble(result.anonymized, result.map) : result.anonymized)
+  const anonymized = outputs.join('\n')
+  io.stdout(args.preamble ? withAiPreamble(anonymized, toPersist) : anonymized)
 
   // Survives --quiet. Everything else here describes work that went right; this
   // says the masking itself may be wrong. No marker matched, so the file was
@@ -160,19 +204,20 @@ export async function runScrub(
   // A finding, not the summary: the placeholders may clash with the team's.
   if (found.note) io.stderr(`${BIN_NAME}: ${found.note}\n`)
 
-  if (result.languageFallback) {
+  for (const { name, result } of results) {
+    if (!result.languageFallback) continue
     io.stderr(
-      `${BIN_NAME}: no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +
+      `${BIN_NAME}: ${name ? `${name}: ` : ''}no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +
         `Pass --language to be sure.\n`
     )
   }
 
   if (!args.quiet) {
     if (found.team) io.stderr(`${BIN_NAME}: Namespace: team (the team's maps, from Cloud)\n`)
-    const added = Object.keys(toPersist).length - Object.keys(existingMap).length
-    io.stderr(
-      `${BIN_NAME}: ${LANGUAGE_LABELS[result.language]} — ${added} new placeholder${added === 1 ? '' : 's'}, ${Object.keys(toPersist).length} in map\n`
+    const parts = [...added].map(
+      ([label, n]) => `${label} — ${n} new placeholder${n === 1 ? '' : 's'}`
     )
+    io.stderr(`${BIN_NAME}: ${parts.join('; ')}, ${Object.keys(toPersist).length} in map\n`)
     // Said every time, with the age: a whitelist rule the team has since
     // removed would still leave that name readable until the next pull.
     if (cached && cached.rules.length > 0) {
@@ -187,18 +232,27 @@ export async function runScrub(
     // --quiet would defeat the flag and teach people to stop passing it. The
     // engine reports it on every result either way, so nothing is hidden from a
     // caller that wants it.
-    if (result.comments.total > 0) {
-      const { total, inline, characters } = result.comments
+    const comments = results.reduce(
+      (sum, { result }) => ({
+        total: sum.total + result.comments.total,
+        inline: sum.inline + result.comments.inline,
+        characters: sum.characters + result.comments.characters,
+      }),
+      { total: 0, inline: 0, characters: 0 }
+    )
+    if (comments.total > 0) {
+      const { total, inline, characters } = comments
       const where = inline === 0 ? 'above the code' : `${inline} inside the body`
       io.stderr(
         `${BIN_NAME}: ${total} comment${total === 1 ? '' : 's'} (${where}) left as written — ` +
           `${characters} characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\n`
       )
     }
-    if (result.secrets.length > 0) {
-      io.stderr(`${BIN_NAME}: credentials detected — ${summaryLine(result.secrets)}\n`)
-      for (const f of result.secrets) io.stderr(`${formatFinding(f)}\n`)
-      if (result.secrets.some((f) => f.redacted)) {
+    const secrets = results.flatMap(({ name, result }) => result.secrets.map((f) => ({ f, name })))
+    if (secrets.length > 0) {
+      io.stderr(`${BIN_NAME}: credentials detected — ${summaryLine(secrets.map(({ f }) => f))}\n`)
+      for (const { f, name } of secrets) io.stderr(`${formatFinding(f, name ?? undefined)}\n`)
+      if (secrets.some(({ f }) => f.redacted)) {
         io.stderr(
           `${BIN_NAME}: redacted values are NOT recoverable on restore. Rotate anything real.\n`
         )
@@ -206,6 +260,117 @@ export async function runScrub(
     }
   }
   return EXIT_OK
+}
+
+/** The names each input takes from a public package, to leave as written
+ *  (spec 050 FR-006, FR-007). Declarations are read from every input first, so
+ *  a word one input imports and another declares stays masked; and nothing is
+ *  kept when an input is in a language whose declarations are not read.
+ *
+ *  Narrower than the guard: the guard knows every file the project declares
+ *  names in, scrub knows only its inputs. A word an input imports from a public
+ *  package and a file NOT given here declares is left as written; scrub the
+ *  files that declare it in the same call to keep it masked. */
+function thirdPartyNames(
+  inputs: { name: string | null; text: string }[],
+  /** The project map and the team's namespace, kept apart: merged by key, one
+   *  placeholder in both would drop a name (security review of ec0cb00). */
+  known: Record<string, string>[],
+  cwd: string
+): Map<object, Set<string>> {
+  const out = new Map<object, Set<string>>()
+  // Each file by its OWN extension: --language overrides how a file is masked,
+  // never whether scrub can read what it declares (security review of #149).
+  const languageFor = (name: string | null): LanguageOption =>
+    (name ? languageOfPath(name) : null) ?? 'auto'
+  // Only from a project root: from anywhere else scrub cannot see the
+  // project's shape, and a project's own module would read as a package.
+  if (!existsSync(join(cwd, '.git')) && !existsSync(join(cwd, 'package.json'))) return out
+  const parsed = (l: LanguageOption): l is 'typescript' | 'python' | 'go' =>
+    l === 'typescript' || l === 'python' || l === 'go'
+  // Text that declares no code (notes, data) does not count; a source file in
+  // a language whose declarations are not read does, and keeps everything.
+  // Shell scripts count as prose here; what they declare is still read below.
+  const prose = (name: string) =>
+    /\.(txt|md|markdown|rst|json|ya?ml|toml|csv|log|ini|sh|bash|zsh|ps1)$/i.test(name)
+  const unknown = inputs.some(
+    (i) => i.name === null || (!prose(i.name) && !parsed(languageFor(i.name)))
+  )
+  if (unknown) return out
+  const declared = new Set<string>()
+  const code = inputs.filter((i) => parsed(languageFor(i.name)))
+  for (const i of code) {
+    for (const name of parseDeclarations(i.text, languageFor(i.name) as Language))
+      declared.add(name)
+  }
+  // A shell script counts as prose above, but what it declares is the project's.
+  for (const i of inputs)
+    if (i.name && /\.(sh|bash|zsh|ps1)$/i.test(i.name))
+      for (const name of parseShellDeclarations(i.text)) declared.add(name)
+  const shape = projectShape(cwd, inputs)
+  for (const i of code) {
+    const names = externalNames(i.text, languageFor(i.name) as Language, shape)
+    // Nor a name the map already holds as code (a variable, function or class):
+    // another file, or an earlier scrub, found it to be the project's.
+    const held = new Set(
+      known
+        .flatMap((map) => Object.entries(map))
+        .filter(([placeholder]) => /^__(VAR|FN|CLS)__\d+$/.test(placeholder))
+        .map(([, name]) => name)
+    )
+    out.set(i, new Set([...names].filter((n) => !declared.has(n) && !held.has(n))))
+  }
+  return out
+}
+
+/** What the CLI can see of the project's shape from where it runs: the
+ *  top-level directories, the package names in package.json files near the
+ *  root, tsconfig path aliases and baseUrl, and the Python module names on the
+ *  inputs' paths. */
+function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape {
+  const dirs = (dir: string) => {
+    try {
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
+        .map((d) => d.name)
+    } catch {
+      return []
+    }
+  }
+  const json = (path: string): any => {
+    try {
+      return JSON.parse(
+        readFileSync(path, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^\s*\/\/.*$/gm, '')
+          .replace(/,(\s*[}\]])/g, '$1')
+      )
+    } catch {
+      return undefined
+    }
+  }
+  const top = dirs(cwd)
+  const workspaces: string[] = []
+  for (const dir of [
+    '',
+    ...top,
+    ...top.flatMap((t) => dirs(join(cwd, t)).map((d) => `${t}/${d}`)),
+  ]) {
+    const name = json(join(cwd, dir, 'package.json'))?.name
+    if (typeof name === 'string') workspaces.push(name)
+  }
+  const tsconfig = json(join(cwd, 'tsconfig.json'))?.compilerOptions
+  const baseDirs = new Set(top)
+  if (typeof tsconfig?.baseUrl === 'string')
+    for (const d of dirs(join(cwd, tsconfig.baseUrl))) baseDirs.add(d)
+  const pathAliases = Object.keys(tsconfig?.paths ?? {})
+    .map((k) => k.replace(/\*.*$/, ''))
+    .filter(Boolean)
+  const pythonModules = new Set(top)
+  for (const i of inputs)
+    if (i.name?.endsWith('.py'))
+      for (const part of i.name.replace(/\.py$/, '').split('/')) pythonModules.add(part)
+  return { baseDirs: [...baseDirs], workspaces, pathAliases, pythonModules: [...pythonModules] }
 }
 
 /**
