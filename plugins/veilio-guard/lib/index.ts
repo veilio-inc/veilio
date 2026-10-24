@@ -17,6 +17,26 @@ export type IndexIO = {
   list: () => Promise<string[] | null>
   read: (rel: string) => Promise<string>
   now: () => number
+  /** Resolves after `ms`; bounds a read that hangs. Absent: nothing is bounded,
+   *  which only a test with no deadline may rely on. */
+  wait?: (ms: number) => Promise<void>
+}
+
+/** What `bounded` answers when the deadline came first. */
+export const LATE = Symbol('late')
+
+/** `work`, or LATE once `deadline` passes: a hook must answer inside Claude
+ *  Code's budget even when a read or `git` hangs (review of ef1a533). */
+export function bounded<T>(
+  work: Promise<T>,
+  deadline: number,
+  io: Pick<IndexIO, 'now' | 'wait'>
+): Promise<T | typeof LATE> {
+  const left = deadline - io.now()
+  if (!Number.isFinite(left) || !io.wait) return work
+  if (left <= 0) return Promise.resolve(LATE)
+  const late: Promise<typeof LATE> = io.wait(left).then(() => LATE)
+  return Promise.race([work, late])
 }
 
 export type FileIndexed = (
@@ -150,7 +170,7 @@ export class ProjectIndex {
         missed.push(rel)
         continue
       }
-      if (!(await this.indexOne(rel))) missed.push(rel)
+      if (!(await this.indexOne(rel, deadline))) missed.push(rel)
     }
     this.settle()
     return missed
@@ -158,10 +178,11 @@ export class ProjectIndex {
 
   /** Continues through the files not indexed yet, until `deadline`. */
   async run(deadline: number): Promise<void> {
-    await this.start()
+    if ((await bounded(this.start(), deadline, this.io)) === LATE) return
     while (this.pending.length && this.io.now() < deadline) {
       const rel = this.pending[0]!
-      if (!this.indexed.has(rel)) await this.indexOne(rel)
+      if (!this.indexed.has(rel) && !(await this.indexOne(rel, deadline)) && !this.failed.has(rel))
+        break // out of time: the file stays pending
       this.pending.shift()
     }
     this.settle()
@@ -177,16 +198,19 @@ export class ProjectIndex {
   /** A path as the project lists it. Output printed from a subdirectory
    *  (`cd packages/engine && npx vitest`) names `tests/a.test.ts`; when exactly
    *  one tracked file ends that way, that is the one. */
-  resolve(path: string): string {
+  resolve(path: string): string | null {
     if (this.tracked.length === 0 || this.tracked.includes(path)) return path
     const matches = this.tracked.filter((f) => f.endsWith(`/${path}`))
-    return matches.length === 1 ? matches[0]! : path
+    // Ambiguous or unknown: the caller checks the disk, then finishes the index.
+    return matches.length === 1 ? matches[0]! : null
   }
 
-  private async indexOne(rel: string): Promise<boolean> {
+  private async indexOne(rel: string, deadline: number): Promise<boolean> {
     let text: string
     try {
-      text = await this.io.read(rel)
+      const read = await bounded(this.io.read(rel), deadline, this.io)
+      if (read === LATE) return false
+      text = read
     } catch (err) {
       this.failed.set(rel, String(err instanceof Error ? err.message : err))
       return false

@@ -175,7 +175,9 @@ test('a result naming a source file the guard cannot index is withheld', async (
   on('tool.call', () => TEST_RUN.r)
   const out: any = await $.tool.call(eventOf(TEST_RUN))
   expect(out.deny).toContain('Veilio withheld this result')
-  expect(out.deny).toContain('src/secrets.ts')
+  expect(out.deny).toContain('could not read to check')
+  // The reason reaches the model: it names no path, which can hold a project name.
+  expect(out.deny).not.toContain('secrets')
   for (const name of DECLARED) expect(JSON.stringify(out)).not.toContain(name)
 })
 

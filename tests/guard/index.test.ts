@@ -117,3 +117,21 @@ describe('ProjectIndex', () => {
     expect(reads.filter((r) => r === 'src/secrets.ts')).toHaveLength(1)
   })
 })
+
+describe('ProjectIndex and its deadline (review of ef1a533)', () => {
+  it('a read that does not answer by the deadline counts as missed', async () => {
+    const files = { 'src/a.ts': 'export const a = 1' }
+    const index = new ProjectIndex(
+      {
+        list: async () => Object.keys(files),
+        read: () => new Promise(() => undefined), // hangs
+        now: () => 0,
+        wait: async () => undefined, // the deadline comes at once
+      },
+      record
+    )
+    await index.start()
+    expect(await index.index(['src/a.ts'], 100)).toEqual(['src/a.ts'])
+    expect(index.indexed.has('src/a.ts')).toBe(false)
+  })
+})

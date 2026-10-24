@@ -95,6 +95,9 @@ export function project(on: any, files: Record<string, string> = {}, opts: Optio
       .map((f) => f.slice(ROOT.length + 1))
     return { value: { exitCode: 0, stdout: tracked.map((f) => `${f}\0`).join(''), stderr: '' } }
   })
+  // A wait that never ends: in a test the work always beats the deadline, as on
+  // a fast disk. The deadline paths are tested in tests/guard/index.test.ts.
+  on('clock.sleep', () => new Promise(() => undefined))
   on('clock.after', (_: any, e: any) => {
     p.timers.push(e.ms)
     return { value: undefined }

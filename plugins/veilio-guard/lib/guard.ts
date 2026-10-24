@@ -19,7 +19,7 @@ import {
   type SymbolMap,
 } from './mapfile.ts'
 import { isRawOnly, pathsInCommand } from './paths.ts'
-import { ProjectIndex } from './index.ts'
+import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
   isSourcePath,
@@ -48,6 +48,22 @@ export interface GuardIO {
    *  when it cannot be listed. Absent: the project is never listed, and only
    *  the files a result names are indexed. */
   list?(root: string): Promise<string[] | null>
+  /** Resolves after `ms` ($.clock.sleep): bounds a read or `git` that hangs. */
+  sleep?(ms: number): Promise<void>
+}
+
+// Keys whose value in a record is an enum or a status (`type`, `status`):
+// Claude Code refuses a record whose enum changed, so the identifier-shape
+// fallback leaves these. Every other value is shape-masked (review of ef1a533).
+const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype', 'role'])
+
+/** deepRewrite, with the key each string sits under. */
+function rewriteKeyed(value: unknown, fn: (s: string, key: string) => string, key = ''): unknown {
+  if (typeof value === 'string') return fn(value, key)
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, key))
+  if (value && typeof value === 'object')
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewriteKeyed(v, fn, k)]))
+  return value
 }
 
 export interface GuardConfig {
@@ -140,6 +156,7 @@ export class Guard {
         list: () => (this.io.list ? this.io.list(this.root) : Promise.resolve(null)),
         read: (rel) => this.io.read(join(this.root, rel)),
         now: () => Date.now(),
+        wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
       },
       async (_rel, text, language) => {
         const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
@@ -156,15 +173,26 @@ export class Guard {
    *  Returns the paths it could not index. One batch at a time: the map's
    *  placeholders are numbered from what the last batch saved. */
   indexFiles(paths: readonly string[], deadline: number): Promise<string[]> {
-    const run = this.indexing.then(() => this.indexBatch(() => this.index!.index(paths, deadline)))
+    const run = this.indexing.then(() =>
+      this.indexBatch(deadline, () => this.index!.index(paths, deadline))
+    )
     this.indexing = run.catch(() => undefined)
-    return run
+    // Waiting for the batch ahead counts against this deadline too: late, every
+    // path is unchecked, and the result naming them is withheld.
+    return bounded(run, deadline, this.clock).then((r) => (r === LATE ? [...paths] : r))
+  }
+
+  private get clock() {
+    return {
+      now: () => Date.now(),
+      wait: this.io.sleep ? (ms: number) => this.io.sleep!(ms) : undefined,
+    }
   }
 
   /** Continues through the project's files not indexed yet, until `deadline`. */
   indexProject(deadline: number): Promise<string[]> {
     const run = this.indexing.then(() =>
-      this.indexBatch(async () => {
+      this.indexBatch(deadline, async () => {
         await this.index!.run(deadline)
         return []
       })
@@ -173,9 +201,11 @@ export class Guard {
     return run
   }
 
-  private async indexBatch(work: () => Promise<string[]>): Promise<string[]> {
+  private async indexBatch(deadline: number, work: () => Promise<string[]>): Promise<string[]> {
     if (!this.index) return []
-    await this.index.start()
+    // The listing gives the project's shape (what is external); a late one
+    // only means fewer names are exempt, so the batch goes on without it.
+    await bounded(this.index.start(), deadline, this.clock)
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       this.unsaved = {}
       this.batch = []
@@ -193,47 +223,71 @@ export class Guard {
 
   /** The project source files a result names, relative to the root: a Grep
    *  match's path, a path in output or a stack trace, the file a command
-   *  prints. Paths outside the project, or not source, are left out. */
-  private namedSources(args: ToolEvent, texts: string[]): string[] {
+   *  prints. `unresolved` counts source-shaped paths that name no file the
+   *  guard can find: their file may be one it has not indexed yet. */
+  private namedSources(
+    args: ToolEvent,
+    texts: string[]
+  ): { found: string[]; unresolved: string[] } {
+    const roots = [this.root, this.root.replace(/^\/private(?=\/)/, ''), `/private${this.root}`]
     const found = new Set<string>()
+    const loose: string[] = []
     const consider = (raw: string) => {
-      let p = raw.replace(/^['"(]+|['"),:]+$/g, '').replace(/:\d+(?::\d+)?$/, '')
-      if (p.startsWith(`${this.root}/`)) p = p.slice(this.root.length + 1)
-      p = p.replace(/^\.\//, '')
-      if (!p || p.startsWith('/') || p.startsWith('..') || !isSourcePath(p)) return
-      found.add(this.index?.resolve(p) ?? p)
+      let p = raw.replace(/:\d+(?::\d+)?$/, '')
+      const under = roots.find((r) => p.startsWith(`${r}/`))
+      if (under) p = p.slice(under.length + 1)
+      else if (p.startsWith('/')) return // outside the project
+      p = p.replace(/^(?:\.\.?\/)+/, '')
+      if (!p || !isSourcePath(p) || /(^|\/)node_modules\//.test(p)) return
+      if (this.index) {
+        const resolved = this.index.resolve(p)
+        if (resolved !== null) return void found.add(resolved)
+      }
+      loose.push(p)
     }
-    for (const text of texts)
-      for (const m of text.matchAll(
-        /(?:^|[\s('"`=])((?:\.{0,2}\/|\/)?[\w@.$-]+(?:\/[\w@.$-]+)*\.[A-Za-z0-9]+)(?=$|[\s:)'"`,])/gm
+    for (const text of texts) {
+      // Windows separators and file URLs name the same files.
+      const plain = text.replace(/file:\/\//g, '').replace(/\\/g, '/')
+      for (const m of plain.matchAll(
+        /(?:^|[\s('"`=[<;:|,])((?:\.{0,2}\/|\/)?[\w@.$-]+(?:\/[\w@.$-]+)*\.[A-Za-z0-9]+)(?=$|[\s:)'"`,\]>;}|])/gm
       ))
         consider(m[1]!)
-    if (typeof args.command === 'string') {
-      const one = languageOfCommand(args.command)
-      if (one !== 'unknown') for (const word of pathsInCommand(args.command)) consider(word)
     }
-    return [...found]
+    if (typeof args.command === 'string' && languageOfCommand(args.command) !== 'unknown')
+      for (const word of pathsInCommand(args.command)) consider(word)
+    return { found: [...found], unresolved: loose }
   }
 
-  /** Index what a result names, and say why not when it cannot. */
+  /** Indexes what a result names, and says why not when it cannot. The reason
+   *  reaches the model, so it names no path: a path can hold a project name. */
   private async indexNamed(
     args: ToolEvent,
     texts: string[],
     deadline: number
   ): Promise<string | null> {
     if (!this.index) return null
-    const named = this.namedSources(args, texts)
-    if (named.length === 0) return null
-    const exist = []
-    for (const rel of named) if (await this.io.exists(join(this.root, rel))) exist.push(rel)
-    const missed = await this.indexFiles(exist, deadline)
-    if (missed.length === 0) return null
-    const unread = missed.filter((rel) => this.index!.failed.has(rel))
-    const list = (xs: string[]) =>
-      xs.slice(0, 3).join(', ') + (xs.length > 3 ? ` and ${xs.length - 3} more` : '')
-    return unread.length
-      ? `it names ${list(unread)}, which Veilio could not read to check`
-      : `Veilio is still indexing the project and has not checked ${list(missed)} yet`
+    // Paths resolve against the listing, so it comes first (bounded: a late
+    // listing leaves every unknown path to the disk check below).
+    await bounded(this.index.start(), deadline, this.clock)
+    const { found, unresolved } = this.namedSources(args, texts)
+    const exist: string[] = []
+    let missing = 0
+    for (const rel of [...found, ...unresolved])
+      if (await this.io.exists(join(this.root, rel))) exist.push(rel)
+      else missing++
+    const missed = exist.length ? await this.indexFiles(exist, deadline) : []
+    // A path the guard could not find may be in a file it has not indexed yet
+    // (a name with a space, a form it does not read): the index is finished
+    // first, or the result waits.
+    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline)
+    const files = (n: number) => `${n} source file${n === 1 ? '' : 's'}`
+    const unread = missed.filter((rel) => this.index!.failed.has(rel)).length
+    if (unread) return `it names ${files(unread)} Veilio could not read to check`
+    if (missed.length)
+      return `Veilio is still indexing the project and has not checked ${files(missed.length)} it names yet`
+    if (missing > 0 && this.index.state === 'indexing')
+      return 'Veilio is still indexing the project and could not tell which file it names'
+    return null
   }
 
   private async readSettings(): Promise<void> {
@@ -453,7 +507,21 @@ export class Guard {
     deadline = Date.now() + 6_000
   ): Promise<ToolOutcome> {
     let outcome = received
-    if (outcome.deny !== undefined) return { deny: this.applyText(outcome.deny) }
+    if (outcome.deny !== undefined) {
+      // A denial reaches the model like an error's text, and is masked the same way.
+      const unchecked = await this.indexNamed(args, [outcome.deny], deadline)
+      if (unchecked) return this.withhold(unchecked)
+      const ctx = this.context('unknown')
+      const shaped = maskShaped(applyMap(outcome.deny, this.map, ctx), this.map, ctx)
+      if (
+        Object.keys(shaped.additions).length > 0 &&
+        (await this.save(shaped.additions)) === 'conflict'
+      )
+        return this.withhold(
+          'another program changed .veilio/map.json while Veilio was writing to it'
+        )
+      return { deny: shaped.text }
+    }
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
@@ -517,23 +585,14 @@ export class Guard {
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
-      const keep = policy.kind === 'fields' ? new Set(policy.keep) : undefined
-      // In a record, a string that is one bare token is a field's value - a
-      // status, an enum (`async_launched`) - and Claude Code refuses a record
-      // whose enum changed. The index and the map still cover a declared name
-      // there; only the shape fallback skips it.
-      const record = policy.kind !== 'text'
-      value = deepRewrite(
-        value,
-        (s) => {
-          if (record && /^[\w$.-]+$/.test(s)) return s
-          const shaped = maskShaped(s, working, ctx)
-          Object.assign(working, shaped.additions)
-          Object.assign(additions, shaped.additions)
-          return shaped.text
-        },
-        keep
-      )
+      const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
+      value = rewriteKeyed(value, (s, key) => {
+        if (keep.has(key) || ENUM_KEYS.has(key)) return s
+        const shaped = maskShaped(s, working, ctx)
+        Object.assign(working, shaped.additions)
+        Object.assign(additions, shaped.additions)
+        return shaped.text
+      })
 
       if (Object.keys(additions).length > 0) {
         const saved = await this.save(additions)

@@ -49,6 +49,7 @@ async function ready($: any): Promise<Guard> {
       // Spec 050: the tracked files, so the index can mask a result by what it
       // contains. Not a git checkout, or git missing: only the files a result
       // names are indexed.
+      sleep: (ms) => $.clock.sleep(ms),
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
           (r: { exitCode: number; stdout: string }) =>

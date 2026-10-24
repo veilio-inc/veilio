@@ -96,3 +96,57 @@ test('a name from a file the index cannot reach is masked when shaped like one',
   expect(out.result.stdout).toContain('AssertionError: expected 1 to be 2')
   expect(saved(p)).toContain('renderInvoiceTotals')
 })
+
+// Review of ef1a533: a path the result names in a form the guard did not read
+// left its file unindexed, and a lowercase name in it went out as written.
+const shellWith = (stdout: string, id: string) => ({
+  e: { ...TEST_RUN.e, tool_use_id: id },
+  r: { ...TEST_RUN.r, result: { ...TEST_RUN.r.result, stdout } },
+})
+
+for (const [form, stdout] of [
+  ['a Windows path', ' ❯ settle src\\secrets.ts:11:3'],
+  ['a file URL', ` ❯ settle file://${ROOT}/src/secrets.ts:11:3`],
+  ['a path in brackets', ' at settle [src/secrets.ts:11:3]'],
+  ['a path after a semicolon', 'see;src/secrets.ts: settle failed'],
+  ['a path relative to a subdirectory', ' ❯ settle ../src/secrets.ts:11:3'],
+] as const) {
+  test(`a lowercase name is masked when the output names its file as ${form}`, async ($, on) => {
+    project(on, { ...COLD_FILES })
+    const run = shellWith(stdout, `toolu_form_${form.length}`)
+    on('tool.call', () => run.r)
+    const out: any = await $.tool.call(eventOf(run))
+    expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
+  })
+}
+
+test('a path the guard cannot resolve makes it finish the index before the result goes', async ($, on) => {
+  const files = {
+    ...COLD_FILES,
+    [`${ROOT}/src/my dir/ledger.ts`]: 'export function reconcile() {}\n',
+  }
+  project(on, files)
+  const run = shellWith(' ❯ reconcile src/my dir/ledger.ts:1:17', 'toolu_space')
+  on('tool.call', () => run.r)
+  const out: any = await $.tool.call(eventOf(run))
+  expect(JSON.stringify(out)).not.toMatch(/\breconcile\b/)
+})
+
+test('a denial that names a project function is masked like a result', async ($, on) => {
+  project(on, { ...COLD_FILES })
+  on('tool.call', () => ({ deny: 'cannot run settle: src/secrets.ts is locked' }))
+  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  expect(out.deny).not.toMatch(/\bsettle\b/)
+})
+
+test('in a record, a one-word value that is not an enum is still shape-masked', async ($, on) => {
+  project(on, { ...COLD_FILES })
+  on('tool.call', () => ({
+    ref: 1,
+    result: { type: 'text', name: 'renderInvoiceTotals' },
+    isReadOnly: true,
+  }))
+  const out: any = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec' })
+  expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
+  expect(out.result.type).toBe('text')
+})
