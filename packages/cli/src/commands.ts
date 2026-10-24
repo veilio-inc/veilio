@@ -6,7 +6,7 @@
 //   2. Summaries, warnings and errors go to stderr, so they stay visible without
 //      corrupting that pipe.
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
   alteredNote,
@@ -161,7 +161,7 @@ export async function runScrub(
   // guess from that file alone (spec 050 FR-004).
   const languageFor = (name: string | null): LanguageOption =>
     args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
-  const keep = thirdPartyNames(inputs, languageFor, io.cwd)
+  const keep = thirdPartyNames(inputs, existingMap, io.cwd)
 
   let toPersist: Record<string, string> = existingMap
   const outputs: string[] = []
@@ -272,10 +272,17 @@ export async function runScrub(
  *  files that declare it in the same call to keep it masked. */
 function thirdPartyNames(
   inputs: { name: string | null; text: string }[],
-  languageFor: (name: string | null) => LanguageOption,
+  existingMap: Record<string, string>,
   cwd: string
 ): Map<object, Set<string>> {
   const out = new Map<object, Set<string>>()
+  // Each file by its OWN extension: --language overrides how a file is masked,
+  // never whether scrub can read what it declares (security review of #149).
+  const languageFor = (name: string | null): LanguageOption =>
+    (name ? languageOfPath(name) : null) ?? 'auto'
+  // Only from a project root: from anywhere else scrub cannot see the
+  // project's shape, and a project's own module would read as a package.
+  if (!existsSync(join(cwd, '.git')) && !existsSync(join(cwd, 'package.json'))) return out
   const parsed = (l: LanguageOption): l is 'typescript' | 'python' | 'go' =>
     l === 'typescript' || l === 'python' || l === 'go'
   // Text that declares no code (notes, data) does not count; a source file in
@@ -300,7 +307,14 @@ function thirdPartyNames(
   const shape = projectShape(cwd, inputs)
   for (const i of code) {
     const names = externalNames(i.text, languageFor(i.name) as Language, shape)
-    out.set(i, new Set([...names].filter((n) => !declared.has(n))))
+    // Nor a name the map already holds as code (a variable, function or class):
+    // another file, or an earlier scrub, found it to be the project's.
+    const held = new Set(
+      Object.entries(existingMap)
+        .filter(([placeholder]) => /^__(VAR|FN|CLS)__\d+$/.test(placeholder))
+        .map(([, name]) => name)
+    )
+    out.set(i, new Set([...names].filter((n) => !declared.has(n) && !held.has(n))))
   }
   return out
 }

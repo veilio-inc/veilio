@@ -117,3 +117,39 @@ describe('a shell script among the inputs (security review of ce30398)', () => {
     expect(Object.values(map)).toContain('describe')
   })
 })
+
+// Security review of the push to PR #149: scrub decides with less than the
+// guard knows, so it must fail closed where it cannot see.
+describe('what scrub may leave as written, when it cannot see everything', () => {
+  it('a name the map already holds as a project name stays masked', async () => {
+    const mapPath = join(cwd, 'held.json')
+    writeFileSync(mapPath, JSON.stringify({ version: 1, map: { __FN__90: 'describe' } }))
+    const { out } = await scrub(['src/ledger.ts'], 'held.json')
+    expect(out).not.toMatch(/import \{ describe\b/)
+  })
+
+  it('--language does not decide which files are parsed: their extensions do', async () => {
+    writeFileSync(join(cwd, 'src/Ledger.java'), 'class Ledger { int describe; }\n')
+    let out = ''
+    const io: Io = { cwd, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
+    await main(
+      [
+        'scrub',
+        '--map',
+        'lang.json',
+        '--language',
+        'typescript',
+        'src/ledger.ts',
+        'src/Ledger.java',
+      ],
+      io
+    )
+    expect(out).not.toMatch(/import \{ describe\b/)
+  })
+
+  it('outside a project root nothing is left as written', async () => {
+    rmSync(join(cwd, '.git'), { recursive: true, force: true })
+    const { out } = await scrub(['src/ledger.ts'], 'noroot.json')
+    expect(out).not.toMatch(/import \{ describe\b/)
+  })
+})
