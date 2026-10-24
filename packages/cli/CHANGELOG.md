@@ -1,5 +1,13 @@
 # @veilio-inc/cli
 
+## 0.5.2
+
+### Patch Changes
+
+- [#151](https://github.com/veilio-inc/veilio/pull/151) [`079a5e8`](https://github.com/veilio-inc/veilio/commit/079a5e831caed88d9e8acd65ce0347ea20bffa93) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The MCP server's `anonymize_file` now masks a file the way `veilio scrub <file>` does: in the language its extension names, unless one is asked for, and with the names it takes from a public package left as written. Both use one shared rule, `@veilio-inc/cli/third-party`, so the two give the same placeholders for the same file. `anonymize_text` is unchanged: with no file and no project, it treats nothing as third-party, as `scrub` does on standard input.
+
+- [#149](https://github.com/veilio-inc/veilio/pull/149) [`30c6dce`](https://github.com/veilio-inc/veilio/commit/30c6dcec72f2c75af13b02ffd8155d155522dc67) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio scrub a.ts b.go …` now masks each file in its own language, taken from the file's extension, and builds the same map as scrubbing the files one at a time. One call over many files used to guess a single language for all of them, so a mixed repository could get one language's keywords masked as another's identifiers. The names a file imports from a public package (an unscoped npm package, a Python module that is not in the project, the Go standard library) are left as written, unless another input declares the same name. Needs the engine release that adds `externalNames` and `languageOfPath`.
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.5.2
+
+### Patch Changes
+
+- [#151](https://github.com/veilio-inc/veilio/pull/151) [`079a5e8`](https://github.com/veilio-inc/veilio/commit/079a5e831caed88d9e8acd65ce0347ea20bffa93) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The MCP server's `anonymize_file` now masks a file the way `veilio scrub <file>` does: in the language its extension names, unless one is asked for, and with the names it takes from a public package left as written. Both use one shared rule, `@veilio-inc/cli/third-party`, so the two give the same placeholders for the same file. `anonymize_text` is unchanged: with no file and no project, it treats nothing as third-party, as `scrub` does on standard input.
+- Updated dependencies [[`079a5e8`](https://github.com/veilio-inc/veilio/commit/079a5e831caed88d9e8acd65ce0347ea20bffa93), [`30c6dce`](https://github.com/veilio-inc/veilio/commit/30c6dcec72f2c75af13b02ffd8155d155522dc67)]:
+  - @veilio-inc/cli@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes
