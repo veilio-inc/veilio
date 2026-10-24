@@ -41,8 +41,9 @@ export declare function externalNames(text: string, language: Language, project:
 export declare const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>>;
 /** The language a path's extension names, or null. */
 export declare function languageOfPath(path: string): Language | null;
-/** The names a shell or PowerShell script declares: functions (`name()`,
- *  `function name`), and variables assigned or exported (`export NAME=`,
- *  `local name=`, `name=`). A name a script declares is the project's, so it
- *  is never exempted as a third-party one (security review of ce30398). */
+/** The names a shell or PowerShell script may declare: every word shaped
+ *  like an identifier in it (`$name`, `name=`, `function Verb-Noun`). Shell
+ *  syntax has too many ways to bind a name (`typeset`, `name+=`, `read`,
+ *  `for x in`, after `;` or `&&`) to read it precisely, and every word counted
+ *  here only stays masked, which is the safe side (security review of 70c6475). */
 export declare function parseShellDeclarations(text: string): string[];

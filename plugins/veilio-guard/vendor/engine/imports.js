@@ -311,17 +311,11 @@ export function languageOfPath(path) {
     const dot = name.lastIndexOf('.');
     return (dot > 0 && LANGUAGE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()]) || null;
 }
-/** The names a shell or PowerShell script declares: functions (`name()`,
- *  `function name`), and variables assigned or exported (`export NAME=`,
- *  `local name=`, `name=`). A name a script declares is the project's, so it
- *  is never exempted as a third-party one (security review of ce30398). */
+/** The names a shell or PowerShell script may declare: every word shaped
+ *  like an identifier in it (`$name`, `name=`, `function Verb-Noun`). Shell
+ *  syntax has too many ways to bind a name (`typeset`, `name+=`, `read`,
+ *  `for x in`, after `;` or `&&`) to read it precisely, and every word counted
+ *  here only stays masked, which is the safe side (security review of 70c6475). */
 export function parseShellDeclarations(text) {
-    const out = new Set();
-    for (const m of text.matchAll(/^[ \t]*(?:function[ \t]+)?([A-Za-z_][\w-]*)[ \t]*\(\)/gm))
-        out.add(m[1]);
-    for (const m of text.matchAll(/^[ \t]*function[ \t]+([A-Za-z_][\w-]*)/gm))
-        out.add(m[1]);
-    for (const m of text.matchAll(/^[ \t]*(?:export[ \t]+|local[ \t]+|readonly[ \t]+|declare[ \t]+(?:-\w+[ \t]+)?)?([A-Za-z_]\w*)=/gm))
-        out.add(m[1]);
-    return [...out];
+    return [...new Set(text.match(/[A-Za-z_][\w-]*/g) ?? [])].filter((w) => !/^-|-$/.test(w));
 }

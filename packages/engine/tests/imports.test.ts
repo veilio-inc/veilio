@@ -368,8 +368,24 @@ describe('parseShellDeclarations (security review of ce30398)', () => {
       'function Invoke-Ledger { param($x) }',
       'echo "$retryCount"',
     ].join('\n')
-    expect(parseShellDeclarations(src).sort()).toEqual(
-      ['Invoke-Ledger', 'LEDGER_HOST', 'deployLedger', 'inner', 'retryCount', 'settle_batch'].sort()
+    // Every identifier-shaped word counts: over-counting only keeps more masked.
+    expect(parseShellDeclarations(src)).toEqual(
+      expect.arrayContaining([
+        'Invoke-Ledger',
+        'LEDGER_HOST',
+        'deployLedger',
+        'inner',
+        'retryCount',
+        'settle_batch',
+        // Not declarations, but words a script uses: counted too.
+        'echo',
+      ])
+    )
+  })
+
+  it('a word a script only uses, never assigns, still counts', () => {
+    expect(parseShellDeclarations('typeset -i total+=1; read -r ledgerRow')).toEqual(
+      expect.arrayContaining(['total', 'ledgerRow'])
     )
   })
 })
