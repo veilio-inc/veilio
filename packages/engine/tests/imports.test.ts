@@ -344,3 +344,13 @@ describe('only public packages are external', () => {
     )
   })
 })
+
+describe('a Go module with no dot in its path (security review of 4446710)', () => {
+  it('is the project when go.mod names it, or when it is a top-level directory', () => {
+    expect(isExternalSpecifier('billing/ledger', 'go', { goModule: 'billing' })).toBe(false)
+    expect(isExternalSpecifier('ledger/settle', 'go', { baseDirs: ['ledger'] })).toBe(false)
+    expect(isExternalSpecifier('fmt', 'go', { goModule: 'billing', baseDirs: ['ledger'] })).toBe(
+      true
+    )
+  })
+})

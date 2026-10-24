@@ -35,3 +35,9 @@ export declare function isExternalSpecifier(specifier: string, language: Languag
  *  specifier, its path segments, and the names imported from it - less any name
  *  the same text declares. */
 export declare function externalNames(text: string, language: Language, project: ProjectShape): Set<string>;
+/** The engine's languages, by file extension. An extension is the author's
+ *  own statement of the language; a guess from content misreads a file that
+ *  holds other languages' code in strings (spec 050 R2). */
+export declare const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>>;
+/** The language a path's extension names, or null. */
+export declare function languageOfPath(path: string): Language | null;

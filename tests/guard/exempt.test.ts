@@ -66,6 +66,7 @@ describe('the flag rule is for flags in what you type, nothing else', () => {
     ['a double dash inside a word', 'foo--balance'],
     ['an HTML comment', '<!--balance-->'],
     ['a removed diff line', '-settleAll()'],
+    ['a bullet before a word', '- balance is low'],
   ])('%s is masked', (_, text) => {
     const out = applyMap(text, map, ctx({ kind: 'prompt' }))
     expect(out).not.toMatch(/balance|counter|settleAll/)
@@ -83,4 +84,11 @@ describe('the flag rule is for flags in what you type, nothing else', () => {
       'pass --__VAR__1 to it'
     )
   })
+})
+
+// Security review of 4446710: only dashes directly before a word count.
+it('a bullet is not a flag, even for a word held only as a path', () => {
+  expect(applyMap('- verbose', { __PKG__9: 'verbose' }, { ...NO_CONTEXT, kind: 'prompt' })).toBe(
+    '- __PKG__9'
+  )
 })

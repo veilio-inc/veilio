@@ -174,7 +174,9 @@ function isFlag(
   offset: number,
   kinds: Set<string> | undefined
 ): boolean {
-  const dashes = text[offset - 2] === '-' ? 2 : text[offset - 1] === '-' ? 1 : 0
+  // Only dashes directly before the name: `- verbose`, a bullet, is not a flag
+  // (security review of 4446710).
+  const dashes = text[offset - 1] === '-' ? (text[offset - 2] === '-' ? 2 : 1) : 0
   if (dashes === 0) return false
   const before = text[offset - dashes - 1]
   if (before !== undefined && !/\s/.test(before)) return false

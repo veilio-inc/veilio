@@ -269,9 +269,16 @@ export function isExternalSpecifier(
     return !(project.pythonModules ?? []).includes(specifier.split('.')[0])
   }
   if (language === 'go') {
-    // Only the standard library: a path whose first element has a dot is a
-    // module someone hosts - a company's own, as likely as a public one.
-    return !specifier.split('/')[0]!.includes('.')
+    // The project's own modules first: a module path needs no dot (`module
+    // billing`), so `billing/ledger` would otherwise read as the standard
+    // library (security review of 4446710).
+    const mod = project.goModule
+    if (mod && (specifier === mod || specifier.startsWith(`${mod}/`))) return false
+    const first = specifier.split('/')[0]!
+    if ((project.baseDirs ?? []).includes(first)) return false
+    // Then only the standard library: a path whose first element has a dot is
+    // a module someone hosts - a company's own, as likely as a public one.
+    return !first.includes('.')
   }
   return false
 }
@@ -294,4 +301,40 @@ export function externalNames(
   }
   for (const name of declared) out.delete(name)
   return out
+}
+
+/** The engine's languages, by file extension. An extension is the author's
+ *  own statement of the language; a guess from content misreads a file that
+ *  holds other languages' code in strings (spec 050 R2). */
+export const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>> = {
+  ts: 'typescript',
+  tsx: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
+  js: 'typescript',
+  jsx: 'typescript',
+  mjs: 'typescript',
+  cjs: 'typescript',
+  py: 'python',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  kt: 'java',
+  kts: 'java',
+  cs: 'csharp',
+  rb: 'ruby',
+  php: 'php',
+  c: 'c',
+  h: 'c',
+  cc: 'c',
+  cpp: 'c',
+  hpp: 'c',
+  sql: 'sql',
+}
+
+/** The language a path's extension names, or null. */
+export function languageOfPath(path: string): Language | null {
+  const name = path.split(/[\\/]/).pop() ?? ''
+  const dot = name.lastIndexOf('.')
+  return (dot > 0 && LANGUAGE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()]) || null
 }

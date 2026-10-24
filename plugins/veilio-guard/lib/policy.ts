@@ -14,6 +14,7 @@
 // every string of its result rewritten, so a tool added tomorrow is covered
 // before anyone lists it.
 
+import { languageOfPath } from '../vendor/engine/index.js'
 import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type ArgumentPolicy = {
@@ -124,39 +125,13 @@ const SOURCE_EXTENSIONS = new Set([
   'ps1',
 ])
 
-// The engine's languages, by extension. A Read with offset and limit hands the
-// engine a fragment, and detection on a fragment can be wrong (TypeScript full
-// of query builders reads as SQL): the extension decides where it can.
-const LANGUAGE_BY_EXTENSION: Record<string, Language> = {
-  ts: 'typescript',
-  tsx: 'typescript',
-  mts: 'typescript',
-  cts: 'typescript',
-  js: 'typescript',
-  jsx: 'typescript',
-  mjs: 'typescript',
-  cjs: 'typescript',
-  py: 'python',
-  go: 'go',
-  rs: 'rust',
-  java: 'java',
-  kt: 'java',
-  kts: 'java',
-  cs: 'csharp',
-  rb: 'ruby',
-  php: 'php',
-  c: 'c',
-  h: 'c',
-  cc: 'c',
-  cpp: 'c',
-  hpp: 'c',
-  sql: 'sql',
-}
+// The engine's languages, by extension (engine/imports.ts, shared with the
+// CLI). A Read with offset and limit hands the engine a fragment, and
+// detection on a fragment can be wrong (TypeScript full of query builders reads
+// as SQL): the extension decides where it can.
 
 export function languageOf(path: string): LanguageOption {
-  const name = path.split(/[\\/]/).pop() ?? ''
-  const dot = name.lastIndexOf('.')
-  return (dot > 0 && LANGUAGE_BY_EXTENSION[name.slice(dot + 1).toLowerCase()]) || 'auto'
+  return languageOfPath(path) ?? 'auto'
 }
 
 /** The language of one line of a Grep result (`path:12:text`, `path-12-text`
