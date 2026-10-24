@@ -1,0 +1,48 @@
+{
+  "//": "Each task plants one bug the named test catches. run-bench.mjs checks that before any session runs: the test passes on the clean clone and fails once the bug is in.",
+  "prompt": "The command `{test}` fails. Find the bug in the source code it tests and fix it. Do not edit any test file. Run the command again to confirm it passes, then reply with one line saying what was wrong.",
+  "tasks": [
+    {
+      "id": "luhn",
+      "file": "packages/engine/src/secrets.ts",
+      "find": "if (d > 9) d -= 9",
+      "replace": "if (d > 9) d -= 8",
+      "test": "npx vitest run --root packages/engine tests/regulated.test.ts"
+    },
+    {
+      "id": "iban",
+      "file": "packages/engine/src/secrets.ts",
+      "find": "  return remainder === 1\n",
+      "replace": "  return remainder === 0\n",
+      "test": "npx vitest run --root packages/engine tests/regulated.test.ts"
+    },
+    {
+      "id": "pesel-check",
+      "file": "packages/engine/src/secrets.ts",
+      "find": "if (sum % 10 !== digits.charCodeAt(10) - 48) return false",
+      "replace": "if (sum % 10 !== digits.charCodeAt(9) - 48) return false",
+      "test": "npx vitest run --root packages/engine tests/regulated.test.ts"
+    },
+    {
+      "id": "altered",
+      "file": "packages/engine/src/engine.ts",
+      "find": "if (!isPlaceholder(token) && !realNames.has(token)) found.add(token)",
+      "replace": "if (!isPlaceholder(token) || !realNames.has(token)) found.add(token)",
+      "test": "npx vitest run --root packages/engine tests/altered.test.ts"
+    },
+    {
+      "id": "team-layers",
+      "file": "packages/engine/src/restoreLayers.ts",
+      "find": "p in layer && layer[p] !== own[p]",
+      "replace": "p in layer && layer[p] === own[p]",
+      "test": "npx vitest run --root packages/engine tests/restoreLayers.test.ts"
+    },
+    {
+      "id": "entropy",
+      "file": "packages/engine/src/secrets.ts",
+      "find": "    entropy -= p * Math.log2(p)\n",
+      "replace": "    entropy -= p * Math.log(p)\n",
+      "test": "npx vitest run --root packages/engine tests/secrets.test.ts"
+    }
+  ]
+}
