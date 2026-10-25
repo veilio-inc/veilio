@@ -197,6 +197,13 @@ export function writePersonalMapsKey(
 ): void {
   const path = personalMapsKeyPath(home)
   mkdirSync(dirname(path), { recursive: true })
+  // Tightened BEFORE the key is written, too: a file left world-readable by
+  // some earlier mistake must not hold the key even for a moment.
+  try {
+    chmodSync(path, 0o600)
+  } catch {
+    // Not there yet: `mode` below covers a new file.
+  }
   writeFileSync(path, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
 }

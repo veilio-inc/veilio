@@ -167,6 +167,16 @@ describe('every map call carries the project (FR-013)', () => {
     expect(r.err).toMatch(/No other project was used instead/)
     expect(cloud.requests.every((x) => x.query.get('project') === 'p-gone')).toBe(true)
   })
+
+  it('a removed project is not retried as if Cloud were down: one request, no wait', async () => {
+    signIn(home, { team: true, project: 'p-gone' })
+    writeFileSync(join(cwd, 'g.ts'), 'export class Gamma {}\n')
+    const started = Date.now()
+    const r = await run(['scrub', 'g.ts'])
+    expect(r.code).toBe(EXIT_OK)
+    expect(cloud.requests.filter((x) => x.path === '/api/maps')).toHaveLength(1)
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe('masking in one project uses none of another’s placeholders (SC-004)', () => {

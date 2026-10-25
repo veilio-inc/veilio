@@ -58,7 +58,9 @@ async function start(): Promise<void> {
 
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk: string) => reader.push(chunk))
-  process.stdin.on('end', () => process.exit(0))
+  process.stdin.on('end', () => {
+    void reader.drain().then(() => process.exit(0))
+  })
   process.stderr.write(`veilio-mcp: serving ${ctx.cwd}\n`)
 }
 

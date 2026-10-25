@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import { callToolAsync, type ToolContext } from '../src/tools.js'
 import { contextFromArgv } from '../src/index.js'
 import { FakeCloud, sealPersonal, signIn } from '../../cli/tests/helpers/fake-cloud.js'
@@ -102,6 +102,44 @@ describe('maps_remove', () => {
     )
     expect(r.isError ?? false, r.text).toBe(false)
     expect(cloud.maps).toHaveLength(0)
+  })
+})
+
+describe('maps_pull with force', () => {
+  it('off: refused where it would overwrite local entries, and the local map is untouched', async () => {
+    const row = cloud.add({
+      name: 'billing',
+      map_data: await sealPersonal({ __CLS__1: 'Other' }, 'pmk'),
+    })
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Mine' }, { force: true })
+    const r = await callToolAsync('maps_pull', { id: row.id, force: true }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('VEILIO_MCP_DESTRUCTIVE=1')
+    expect(loadMap(resolveMapPath(null, cwd))).toEqual({ __CLS__1: 'Mine' })
+  })
+
+  it('on: the local map is replaced, as asked', async () => {
+    const row = cloud.add({
+      name: 'billing',
+      map_data: await sealPersonal({ __CLS__1: 'Other' }, 'pmk'),
+    })
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Mine' }, { force: true })
+    const r = await callToolAsync(
+      'maps_pull',
+      { id: row.id, force: true },
+      { ...ctx, destructive: true }
+    )
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(loadMap(resolveMapPath(null, cwd))).toEqual({ __CLS__1: 'Other' })
+  })
+
+  it('off, with force, on a pull that drops nothing: it works', async () => {
+    const row = cloud.add({
+      name: 'billing',
+      map_data: await sealPersonal({ __CLS__1: 'Mine' }, 'pmk'),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id, force: true }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
   })
 })
 

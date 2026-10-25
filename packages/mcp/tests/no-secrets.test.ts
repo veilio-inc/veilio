@@ -175,14 +175,14 @@ describe('no secret in any tool result (FR-009)', () => {
     // in a successful pull went unseen until this was added (mutation test).
     const mustSucceed = [
       'maps_list',
-      'maps_pull',
       'maps_create',
       'team_status',
       'projects_list',
       'projects_use',
       // Every update in these states drops or clashes, so it goes through
       // only when drops are allowed.
-      ...(destructive ? ['maps_update', 'maps_remove'] : []),
+      // and every pull here overwrites local entries, so it needs force.
+      ...(destructive ? ['maps_pull', 'maps_update', 'maps_remove'] : []),
     ]
     expect(mustSucceed.filter((n) => !succeeded.has(n))).toEqual([])
   })

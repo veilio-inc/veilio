@@ -64,12 +64,11 @@ export async function useProject(
   const credential = readCredential(ctx.home)
   if (!credential) return refuse('not_signed_in')
   if (!ref) return refuse('which_project')
+  // The project list is asked without the current choice, so a chosen
+  // project that is gone never stops somebody choosing another.
   const listed = await listTeamProjects(ctx)
-  if (!listed.ok) {
-    // The CURRENT choice being gone must not stop somebody choosing another.
-    if (listed.refusal.code !== 'project_gone') return listed
-  }
-  const projects = listed.ok ? listed.value.projects : []
+  if (!listed.ok) return listed
+  const projects = listed.value.projects
   const byId = projects.find((p) => p.id === ref)
   const byName = projects.filter((p) => p.name === ref)
   if (!byId && byName.length > 1)

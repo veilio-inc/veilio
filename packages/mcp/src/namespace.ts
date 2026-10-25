@@ -149,6 +149,16 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
   if (primed && (!priming || settledFlag)) {
     const project = readCredential(primedWith.home)?.project ?? null
     if (invalidated || project !== primedProject) {
+      // Another project: the cached namespace is the OLD project's, and
+      // numbering with it - even for the one call that noticed - would put
+      // that project's placeholders into this one's store (FR-013). Until the
+      // new project's maps load, there is no team namespace, and that is said.
+      if (project !== primedProject) {
+        current = localFrom({
+          status: 'unavailable',
+          reason: "the team's maps for the project now in use are still loading",
+        })
+      }
       invalidated = false
       priming = null
       settledFlag = false

@@ -93,6 +93,11 @@ export class FakeCloud {
   maxBytes = 200_000
   /** Called after a map is read - a teammate's write can land here. */
   afterGet: ((map: FakeMap) => void) | null = null
+  /** Maps whose server-side layer cannot be peeled: left out of
+   *  /team-envelopes and reported in its `unreadable`. */
+  serverUnreadable = new Set<string>()
+  /** Paths that answer 503, for transient-failure tests. */
+  failing = new Set<string>()
   private nextId = 1
 
   /** Install the vault for PASSPHRASE. */
@@ -153,6 +158,7 @@ export class FakeCloud {
     const raw = typeof init?.body === 'string' ? init.body : ''
     const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw })
+    if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }
 
@@ -205,8 +211,10 @@ export class FakeCloud {
         (m) => m.scope === 'team' && this.teamId && (!f.id || m.project === f.id)
       )
       return json(200, {
-        maps: rows.map((m) => ({ id: m.id, created_at: m.created_at, map_data: m.map_data })),
-        unreadable: [],
+        maps: rows
+          .filter((m) => !this.serverUnreadable.has(m.id))
+          .map((m) => ({ id: m.id, created_at: m.created_at, map_data: m.map_data })),
+        unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
       })
     }
     if (path === '/api/maps' && method === 'POST') {

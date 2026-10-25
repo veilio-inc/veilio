@@ -174,6 +174,21 @@ describe('a personal map, updated in place', () => {
   })
 })
 
+describe('a failure reading the personal-maps key is not "no key"', () => {
+  it('a 503 on it refuses, rather than sealing under the vault key or saying none exists', async () => {
+    signIn(home)
+    await cloud.withVault()
+    await cloud.withPmkWrap()
+    cloud.failing.add('/api/auth/keys/personal-maps')
+    local({ __CLS__1: 'A' })
+    const r = await run(['maps', 'push', 'mine'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(/reported an error/)
+    expect(r.err).not.toMatch(/no personal-maps key yet/)
+    expect(cloud.requests.filter((x) => x.method === 'POST')).toHaveLength(0)
+  })
+})
+
 describe('entries the update would drop (FR-005)', () => {
   it('are refused with the count, and nothing is sent', async () => {
     signIn(home, { pmk: true })

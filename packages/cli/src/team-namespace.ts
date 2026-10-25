@@ -72,6 +72,8 @@ export type TeamNamespaceResult =
  * failure either (review): there is no team to speak of.
  */
 function transient(err: unknown): boolean {
+  // A chosen project that is gone does not come back in a second either.
+  if (err instanceof CloudError && err.status === 404) return false
   return err instanceof CloudError && (err.kind === 'unreachable' || err.kind === 'server')
 }
 
@@ -174,8 +176,12 @@ async function attempt(
     .filter((id) => id !== excludeMapId)
     .map((id) => ({ id, name: names.get(id) ?? null }))
   const entries: TeamMapEntry[] = kept.map(({ createdAt, map }) => ({ createdAt, map }))
-  // Every map unreadable is not a team namespace, it is a failed one.
-  if (entries.length > 0 && entries.every((e) => e.map === null)) {
+  // Every map unreadable is not a team namespace, it is a failed one - and
+  // that includes every map being one the SERVER could not read, which never
+  // reaches `entries` at all (code review): an empty namespace there would be
+  // a blind publish passed off as a checked one.
+  const noneRead = entries.length > 0 ? entries.every((e) => e.map === null) : unreadable.length > 0
+  if (noneRead) {
     return {
       status: 'unavailable',
       reason: `none of the team maps opened with the unlocked key: ${describeMaps(unreadable)}`,

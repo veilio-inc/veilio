@@ -181,7 +181,12 @@ async function personalKeys(
   try {
     const answer = await getPersonalMapsKeyWrap(credential)
     wrapped = typeof answer?.wrapped === 'string' && answer.wrapped !== '' ? answer.wrapped : null
-  } catch {
+  } catch (err) {
+    // Only the route being absent means "no key": anything else - a 503, a
+    // dropped connection - says nothing about the account, and treating it as
+    // "none" would seal a new map where the MCP server cannot open it, or
+    // tell somebody their key does not exist (code review).
+    if (!(err instanceof CloudError && err.status === 404)) return cloudRefusal(err, credential)
     wrapped = null
   }
   if (wrapped === null) return ok({ pmk: null, vault: vaultKey })

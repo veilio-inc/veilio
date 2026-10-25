@@ -394,6 +394,18 @@ describe('the same outcome as the CLI (SC-002)', () => {
 })
 
 describe('over stdio', () => {
+  it('drain() waits for Cloud answers still on their way, so stdin closing loses none', async () => {
+    signIn(home)
+    const sent: JsonRpcResponse[] = []
+    const reader = new FrameReader(ctx, (r) => sent.push(r))
+    reader.push(
+      '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"maps_list","arguments":{}}}\n'
+    )
+    expect(sent).toHaveLength(0)
+    await reader.drain()
+    expect(sent.map((r) => r.id)).toEqual([5])
+  })
+
   it('a Cloud tool answers after the offline frames behind it, matched by id', async () => {
     signIn(home)
     const sent: JsonRpcResponse[] = []
@@ -420,7 +432,7 @@ describe('the namespace follows the project while the server runs', () => {
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-billing',
-      map_data: await sealTeam({ __CLS__1: 'Alpha' }),
+      map_data: await sealTeam({ __CLS__4: 'Alpha' }),
     })
     cloud.add({
       scope: 'team',
@@ -429,11 +441,17 @@ describe('the namespace follows the project while the server runs', () => {
       map_data: await sealTeam({ __CLS__5: 'Gamma' }),
     })
     await primeNamespace(home)
-    expect(getNamespace().namespace).toEqual({ __CLS__1: 'Alpha' })
+    expect(getNamespace().namespace).toEqual({ __CLS__4: 'Alpha' })
 
     expect((await cli(['projects', 'use', 'tools'])).code).toBe(0)
-    const first = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctx)
+    // The call that notices the change must not number with the OLD
+    // project's maps: billing's __CLS__4 never reaches a tools session.
+    const first = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
     expect(first.text).toMatch(/another project chosen/)
+    expect(first.text).not.toContain('__CLS__4')
+    // Nor does a call made while the new project's maps are still loading.
+    const during = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    expect(during.text).not.toContain('__CLS__4')
     await namespaceSettled()
     expect(getNamespace().namespace).toEqual({ __CLS__5: 'Gamma' })
     expect(refreshNamespaceIfStale()).toBeNull()

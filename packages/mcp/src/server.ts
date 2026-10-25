@@ -187,6 +187,8 @@ export function respondToFrame(
  *  separate from process wiring so it can be driven directly in tests. */
 export class FrameReader {
   private buffer = ''
+  /** Cloud answers still on their way. */
+  private pending = new Set<Promise<void>>()
 
   constructor(
     private readonly ctx: ToolContext,
@@ -201,8 +203,20 @@ export class FrameReader {
       this.buffer = this.buffer.slice(index + 1)
       if (line.length === 0) continue
       const response = respondToFrame(line, this.ctx)
-      if (response instanceof Promise) void response.then((r) => this.send(r))
-      else if (response !== null) this.send(response)
+      if (response instanceof Promise) {
+        const sending = response.then((r) => this.send(r))
+        this.pending.add(sending)
+        void sending.finally(() => this.pending.delete(sending))
+      } else if (response !== null) this.send(response)
     }
+  }
+
+  /**
+   * Wait for every Cloud answer still on its way. Called when stdin closes:
+   * exiting at once would drop a result - and abort a write mid-request, so
+   * nobody could say whether a map was updated or removed (code review).
+   */
+  async drain(): Promise<void> {
+    while (this.pending.size > 0) await Promise.allSettled([...this.pending])
   }
 }

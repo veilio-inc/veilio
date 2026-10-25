@@ -123,3 +123,19 @@ describe('pulling one that does not open', () => {
     expect(r.err).toMatch(/could not be opened with the unlocked team keys/)
   })
 })
+
+describe('maps the server itself cannot read', () => {
+  it('all of them: refused like any unreadable namespace, naming them - never a blind publish', async () => {
+    const a = cloud.add({
+      scope: 'team',
+      owner: TEAMMATE,
+      name: 'peeled',
+      map_data: await sealTeam({ __FN__1: 'x' }),
+    })
+    cloud.serverUnreadable.add(a.id)
+    const r = await run(['maps', 'push', '--team', 'mine'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain(`"peeled" (${a.id})`)
+    expect(cloud.requests.filter((x) => x.method === 'POST')).toHaveLength(0)
+  })
+})

@@ -124,20 +124,34 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         id: ID,
         force: {
           type: 'boolean',
-          description: 'Replace the local map even where it would drop local entries.',
+          description:
+            'Replace the local map even where it would drop local entries. Needs the destructive setting.',
         },
       },
       required: ['id'],
       additionalProperties: false,
     },
-    handler: async (args, ctx) =>
-      answered(
-        await pullCloudMap(client(ctx), text(args, 'id'), {
-          mapPath: mapPathOf(ctx),
-          force: flag(args, 'force'),
-        }),
+    handler: async (args, ctx) => {
+      const askedToForce = flag(args, 'force')
+      // force overwrites local entries - and the local map is the one thing
+      // that restores text already masked - so it is gated like a drop
+      // (FR-010, code review). A pull that overwrites nothing still works.
+      const pulled = await pullCloudMap(client(ctx), text(args, 'id'), {
+        mapPath: mapPathOf(ctx),
+        force: askedToForce && ctx.destructive === true,
+      })
+      if (
+        !pulled.ok &&
+        askedToForce &&
+        !ctx.destructive &&
+        (pulled.refusal.code === 'pull_would_drop' || pulled.refusal.code === 'diverged')
+      )
+        return refusalResult(refusal('destructive_off'))
+      return answered(
+        pulled,
         ({ name, count, path }) => `Pulled "${name}" (${count} symbols) into ${path}`
-      ),
+      )
+    },
   },
   {
     name: 'maps_create',
