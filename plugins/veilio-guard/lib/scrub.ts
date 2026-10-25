@@ -264,21 +264,27 @@ export function destroyedValues(texts: readonly string[]): string[] {
   return [...values]
 }
 
-/** `out` with every occurrence of every value removed: a rule matches a
- *  credential in its context, and the same value elsewhere, bare, is the same
- *  secret (security review of 28414f4). Occurrences are found first and
+/** `text` with every occurrence of every value removed, each with the key
+ *  characters that run on after it: a rule matches a credential in its
+ *  context, the same value elsewhere, bare, is the same secret (security
+ *  review of 28414f4), and a rule that took only part of a secret leaves the
+ *  rest beside its value (review of fe5078c). Occurrences are found first and
  *  overlapping ones merged, so a value inside a longer one cannot leave part
- *  of the longer behind. Tokens are numbered after the scan's own, so two
- *  secrets never share one. */
-function sweep(out: string, values: readonly string[]): string {
-  if (values.length === 0) return out
+ *  of the longer behind. Tokens are numbered after the ones already in the
+ *  text, so two secrets never share one. Run on text as written, before any
+ *  masking, so no repeat of a value can reach the map. */
+export function redactKnown(text: string, values: readonly string[]): string {
+  if (values.length === 0) return text
   const spans: [number, number][] = []
   for (const value of new Set(values)) {
     if (value === '') continue
-    for (let i = out.indexOf(value); i !== -1; i = out.indexOf(value, i + 1))
-      spans.push([i, i + value.length])
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
+      let end = i + value.length
+      while (end < text.length && /[A-Za-z0-9+/=]/.test(text[end]!)) end++
+      spans.push([i, end])
+    }
   }
-  if (spans.length === 0) return out
+  if (spans.length === 0) return text
   spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
   const merged: [number, number][] = []
   for (const [start, end] of spans) {
@@ -288,32 +294,40 @@ function sweep(out: string, values: readonly string[]): string {
   }
   let n = Math.max(
     0,
-    ...[...out.matchAll(/__REDACTED_CREDENTIAL_(\d+)__/g)].map((m) => Number(m[1]))
+    ...[...text.matchAll(/__REDACTED_CREDENTIAL_(\d+)__/g)].map((m) => Number(m[1]))
   )
   let result = ''
   let at = 0
   for (const [start, end] of merged) {
-    result += out.slice(at, start) + `__REDACTED_CREDENTIAL_${++n}__`
+    result += text.slice(at, start) + `__REDACTED_CREDENTIAL_${++n}__`
     at = end
   }
-  return result + out.slice(at)
+  return result + text.slice(at)
+}
+
+/** Several texts that go to the model together (a result's strings, a
+ *  prompt and its context): each value any of them destroys removed from all
+ *  of them, as written. */
+export function redactTogether(texts: readonly string[]): string[] {
+  const values = destroyedValues(texts)
+  return texts.map((t) => redactKnown(t, values))
 }
 
 export function applyMap(
   text: string,
   map: SymbolMap,
   ctx: MaskContext = NO_CONTEXT,
-  options: { scanned?: boolean; destroyed?: readonly string[] } = {}
+  options: { scanned?: boolean } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
   // once, a Read's source the engine masked): only the names the map has
   // since learned are replaced.
-  if (options.scanned) return replaceAround(sweep(text, options.destroyed ?? []), map, ctx)
+  if (options.scanned) return replaceAround(text, map, ctx)
   // Credentials are found in the text as written, before any name is
   // replaced, and nothing the map holds overrides what the scan finds
   // (security review of a162a37).
   const scan = scanSecrets(text, 'redact')
-  let redacted = sweep(scan.code, [...destroyedIn(text, scan), ...(options.destroyed ?? [])])
+  let redacted = redactKnown(scan.code, destroyedIn(text, scan))
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
   // token and the residue together. Only after a pass that redacted something.

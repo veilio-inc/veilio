@@ -155,9 +155,12 @@ export function register(on: any, options: Options = {}) {
     const state = g.index?.state
     if (state === 'new' || state === 'indexing')
       await g.indexProject(deadline(next)).catch(() => undefined)
-    const text = g.applyText(e.text, 'prompt')
+    // A credential with its key in one is removed from the others too.
+    const given: string[] = Array.isArray(e.context) ? e.context : []
+    const [typed, ...rest] = g.applyTogether([e.text, ...given], (t) => t)
+    const text = g.applyText(typed!, 'prompt')
     const context = Array.isArray(e.context)
-      ? e.context.map((c: string) => g.applyContext(c))
+      ? rest.map((c: string) => g.applyContext(c))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
@@ -181,7 +184,11 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
-    const blocks = r.blocks.map((b: { text: string }) => ({ ...b, text: g.applyText(b.text) }))
+    const texts = g.applyTogether(
+      r.blocks.map((b: { text: string }) => b.text),
+      (t) => g.applyText(t)
+    )
+    const blocks = r.blocks.map((b: { text: string }, i: number) => ({ ...b, text: texts[i] }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 

@@ -476,3 +476,30 @@ test('a source Read: a secret a rule only partly took is removed whole, and the 
   expect(out.deny).toBeUndefined()
   expect(out.result.file.content).toMatch(/= "__REDACTED_[A-Z_]+_\d+__"/)
 })
+
+// Review of fe5078c: values a scan destroys are removed from the text as
+// written, before any masking, so no repeat of one reaches the map.
+test('a source Read: a password repeated in a string literal never reaches the map', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = 'const password = "Tr0ub4dor3xzQ"\nconsole.log("using Tr0ub4dor3xzQ now")\n'
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content } },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(out)).not.toContain('Tr0ub4dor3xzQ')
+  expect(p.files[`${ROOT}/.veilio/map.json`] ?? '').not.toContain('Tr0ub4dor3xzQ')
+})
+
+test('a bare repeat of a secret a rule only partly took is removed whole', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const secret = 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY1234567890ab'
+  const stdout = `aws_secret_access_key = "${secret}"\nlog: ${secret} done\n`
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  const sent = JSON.stringify(out)
+  expect(sent).not.toContain('34567890ab')
+  expect(sent).not.toContain('wJalrXUtn')
+})

@@ -31,6 +31,8 @@ import {
 import {
   applyMap,
   destroyedValues,
+  redactKnown,
+  redactTogether,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
@@ -403,6 +405,13 @@ export class Guard {
     return applyMap(text, this.map, this.context('unknown', kind))
   }
 
+  /** Texts that reach the model together (a prompt and its context, the
+   *  first message's blocks): a credential any of them holds with its key is
+   *  removed from all of them, then each is masked. */
+  applyTogether(texts: readonly string[], one: (text: string) => string): string[] {
+    return redactTogether(texts).map(one)
+  }
+
   /** The context Claude Code sends with the first message (the blocks
    *  prompt.context answered, as an attachment or a prompt's context): masked
    *  as a whole, secret scan included, with the guard's own note held as one
@@ -619,17 +628,36 @@ export class Guard {
     })
     const unchecked = await this.indexNamed(args, texts, deadline)
     if (unchecked) return this.withhold(unchecked)
+    // What any scan of this result destroys is removed from all of it, as
+    // written, before anything is masked: no repeat of a credential on
+    // another line, in another field or in a source's literal can reach the
+    // map or the model (security reviews of 75fe4c0 and fe5078c). Enum
+    // fields are left for the last scan, which withholds the result.
+    const destroyed = destroyedValues(texts)
+    const strip = (s: string) => redactKnown(s, destroyed)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
-      return this.maskMessage(raw, args, deadline, true)
+      return this.maskMessage(strip(raw), args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
+    if (destroyed.length > 0)
+      outcome = {
+        ...outcome,
+        result:
+          policy.kind === 'text'
+            ? strip(outcome.result as string)
+            : deepRewrite(
+                outcome.result,
+                strip,
+                new Set(policy.kind === 'fields' ? policy.keep : [])
+              ),
+      }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const working: SymbolMap = { ...this.map }
@@ -644,9 +672,7 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line))))
               .join('\n')
           : fn(s, ctx)
-      // What any scan of this result destroys is removed from all of it.
-      const destroyed = destroyedValues(texts)
-      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c, { destroyed }))
+      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
       // What a field pass already scanned for credentials, as written: the
       // pass over every string only replaces the names the map has since
       // learned there. Scanned again, the masked text would be judged as text,
@@ -658,9 +684,7 @@ export class Guard {
         return out
       }
       const again = (s: string) =>
-        scanned.has(s)
-          ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true, destroyed }))
-          : apply(s)
+        scanned.has(s) ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true })) : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
       else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {

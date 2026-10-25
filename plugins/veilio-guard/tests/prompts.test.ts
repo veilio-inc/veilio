@@ -189,3 +189,30 @@ test("an earlier build's context type carries the note as written too", async ($
   expect(out.text).toContain(MODEL_NOTE)
   expect(out.text).toContain('branch of the __VAR__249: __CLS__1')
 })
+
+test('a credential with its key in the context is removed from the typed prompt too', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text, context: e.context }
+  })
+  await $.prompt.submit({
+    ...recordedPrompt('prompt.submit').e,
+    text: 'use xk9mq2vlp7rz on staging',
+    context: ['DB_PASSWORD = "xk9mq2vlp7rz"'],
+  })
+  expect(JSON.stringify(sent)).not.toContain('xk9mq2vlp7rz')
+})
+
+test('a credential with its key in one context block is removed from the others', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.context', () => ({
+    blocks: [
+      { name: 'claudeMd', text: 'DB_PASSWORD = "xk9mq2vlp7rz"' },
+      { name: 'gitStatus', text: 'last commit: rotate xk9mq2vlp7rz' },
+    ],
+  }))
+  const out: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  expect(JSON.stringify(out.blocks)).not.toContain('xk9mq2vlp7rz')
+})
