@@ -16,6 +16,8 @@
 // the text (a user pasted it into chat). Its description says so plainly, so the
 // model does not reach for it out of convenience and quietly defeat the purpose.
 
+// First: every request this process makes is labelled as the MCP server's.
+import './identity.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {

@@ -62,6 +62,8 @@ export interface Recorded {
   query: URLSearchParams
   body: Record<string, unknown> | null
   raw: string
+  /** The request's headers, lower-cased names. */
+  headers: Record<string, string>
 }
 
 function json(status: number, body: unknown): Response {
@@ -162,7 +164,13 @@ export class FakeCloud {
     const method = (init?.method ?? 'GET').toUpperCase()
     const raw = typeof init?.body === 'string' ? init.body : ''
     const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null
-    this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw })
+    const headers = Object.fromEntries(
+      Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [
+        k.toLowerCase(),
+        v,
+      ])
+    )
+    this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
     if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }

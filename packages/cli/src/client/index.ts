@@ -3,6 +3,7 @@
 // one table of words for every refusal, so the two clients cannot drift apart.
 // Nothing here prints; every operation answers an `Outcome`.
 
+export { setClientIdentity, clientIdentity, type ClientIdentity } from '../cloud.js'
 export * from './wording.js'
 export * from './maps.js'
 export * from './keys.js'

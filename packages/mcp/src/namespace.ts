@@ -16,6 +16,8 @@
 // threading a Promise through 78 existing call sites for one network call that
 // happens once per process.
 
+// The namespace read is the MCP server's request too.
+import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'

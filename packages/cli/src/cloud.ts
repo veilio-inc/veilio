@@ -24,10 +24,47 @@
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
 import type { Credential } from './credential.js'
+import { VERSION } from './version.js'
 import type { CustomRule } from '@veilio-inc/engine'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
+
+/**
+ * Which program is talking: the label and the User-Agent every request
+ * carries (tracker d12).
+ *
+ * A burst of requests hit Cloud's rate limit, and nothing said what had sent
+ * them, because the MCP server's requests went out through this module
+ * labelled `cli`, under Node's default User-Agent. The process that uses this
+ * module now says who it is: the CLI by default, and the MCP server by calling
+ * `setClientIdentity` when it loads. One identity per process: the two
+ * programs never share one.
+ *
+ * A SELF-REPORT, and that is the whole of it. The server logs it and labels a
+ * session with it; it must never decide access, because anyone can set a
+ * header.
+ */
+export interface ClientIdentity {
+  client: 'cli' | 'mcp'
+  /** `veilio-cli/0.6.0`, `veilio-mcp/0.6.0`. */
+  userAgent: string
+}
+
+let identity: ClientIdentity = { client: 'cli', userAgent: `veilio-cli/${VERSION}` }
+
+export function setClientIdentity(next: ClientIdentity): void {
+  // A header value is printable ASCII; anything else would make every
+  // request throw inside fetch, far from here.
+  if (!/^[\x20-\x7e]+$/.test(next.userAgent)) {
+    throw new Error(`not a usable User-Agent: ${JSON.stringify(next.userAgent)}`)
+  }
+  identity = { ...next }
+}
+
+export function clientIdentity(): ClientIdentity {
+  return { ...identity }
+}
 
 /** How long any single request may take before we give up on it. */
 export const REQUEST_TIMEOUT_MS = 15_000
@@ -106,7 +143,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     // What this session gets labelled in the user's sessions list. It is a
     // self-report and the server treats it as one — it must never gate access,
     // or a header anyone can set becomes an authorisation input.
-    'X-Veilio-Client': 'cli',
+    'X-Veilio-Client': identity.client,
+    // Which program and version, for the server's logs (tracker d12). Node's
+    // default User-Agent says only "node".
+    'User-Agent': identity.userAgent,
     Accept: 'application/json',
   }
   if (options.credential) headers.Authorization = `Bearer ${options.credential.token}`
