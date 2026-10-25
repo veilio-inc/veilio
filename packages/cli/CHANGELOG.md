@@ -1,5 +1,13 @@
 # @veilio-inc/cli
 
+## 0.5.3
+
+### Patch Changes
+
+- [#152](https://github.com/veilio-inc/veilio/pull/152) [`f3daa82`](https://github.com/veilio-inc/veilio/commit/f3daa82dc39f9d69b25530495026c742031e88cd) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio scrub --team` with nobody signed in now says that it numbered from the project's own map, and names `veilio login`. Before, it said nothing, so a flag that asked for the team's numbers quietly did less. With no account there is no team to clash with, so numbering locally stays the right thing to do; it is now just stated. A Community Edition contract test pins what the CLI and the MCP server do with no account: offline commands and tools work with no request, every Cloud command refuses with "not signed in. Run `veilio login` first.", and the MCP server lists only its offline tools.
+
+- [#152](https://github.com/veilio-inc/veilio/pull/152) [`9b0a32e`](https://github.com/veilio-inc/veilio/commit/9b0a32eb23abf120533e8281f9d3707e6e4e1acf) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio maps push --team` now names the map it published beside its id, and reports the team's shared set as an exact union ("now holds 2 identifiers"), not an "about" sum that counted a name twice when this map and the team both held it. `veilio maps rm` confirms which map went by its name and id, falling back to the id alone only when the name cannot be read; a failed read never stops the removal.
+
 ## 0.5.2
 
 ### Patch Changes
