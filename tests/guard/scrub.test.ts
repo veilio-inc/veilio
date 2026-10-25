@@ -218,10 +218,10 @@ describe('redactKnown', () => {
     expect(redactKnown('x abcdef-12_ y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
   })
 
-  it('a run-on after a value is taken up to eight characters', () => {
+  it('a run-on after a value is taken whole, however long', () => {
     const known = new Destroyed()
     known.learn(['abcdef'])
-    expect(redactKnown('x abcdef12345678 y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
-    expect(redactKnown('x abcdef123456789 y', known)).toBe('x __REDACTED_CREDENTIAL_1001__9 y')
+    const tail = 'Zq8vB3nM1kL0pW'.repeat(15)
+    expect(redactKnown(`x abcdef${tail} y`, known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
   })
 })

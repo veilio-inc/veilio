@@ -551,3 +551,16 @@ test('the rest of a partly taken secret with dashes and underscores is removed f
   const out: any = await $.tool.call(eventOf(bash))
   expect(JSON.stringify(out)).not.toContain('67890')
 })
+
+// Security review of 69d4619: the run-on is not capped; its cost is bounded.
+test('a key of over 300 characters repeated bare is removed whole, no tail left', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const key = `wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY${'Zq8vB3nM1kL0pW+/'.repeat(20)}abcdef`
+  const stdout = `aws_secret_access_key = "${key}"\nlog: ${key} done\n`
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  const sent = JSON.stringify(out)
+  expect(sent).not.toContain('Zq8vB3nM1kL0pW')
+  expect(sent).not.toContain('abcdef')
+})

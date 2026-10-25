@@ -225,11 +225,7 @@ const REDACTION_TOKEN = new RegExp(`(${REDACTION_TOKENS.source})`)
 // What a rule left of a secret it only partly took, before the value's
 // closing quote (`__REDACTED_AWS_SECRET_1__3"`).
 const KEY_CHAR = /[A-Za-z0-9+/=_-]/
-const RUN_ON = 8
-const RESIDUE = new RegExp(
-  `(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]{1,${RUN_ON}}(?=["'\`])`,
-  'g'
-)
+const RESIDUE = new RegExp(`(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]+(?=["'\`])`, 'g')
 
 /** `fn` on each piece of `text` between redaction tokens, never across one:
  *  a token's edges are word characters, so a name written against one would
@@ -255,7 +251,10 @@ function destroyedIn(text: string, scan: ReturnType<typeof scanSecrets>): string
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
   return found.map((f) => {
     const start = (starts[f.line - 1] ?? 0) + f.column - 1
-    return text.slice(start, start + f.length)
+    // The whole extent: a rule may have taken only part of a longer key.
+    let end = start + f.length
+    while (end < text.length && KEY_CHAR.test(text[end]!)) end++
+    return text.slice(start, end)
   })
 }
 
@@ -289,7 +288,7 @@ export class Destroyed {
   }
 }
 
-/** `text` with every occurrence of every value removed, with up to eight key
+/** `text` with every occurrence of every value removed, with all the key
  *  characters that run on after it: a rule matches a credential in its
  *  context, the same value elsewhere, bare, is the same secret, and a rule
  *  that took only part of a secret leaves the rest beside its value. The
@@ -315,10 +314,16 @@ export function redactKnown(text: string, known: Destroyed): string {
     } else merged.push([start, end, value])
   }
   for (const [start, end, value] of spans) add(start, end, value)
+  // Each merged span takes every key character that runs on after it,
+  // however many: a capped run-on leaves the tail of a long key (security
+  // review of 69d4619). The cost is bounded instead: the run-on of a span
+  // starts where the last one stopped, so the text is read once.
   const once = merged.splice(0)
+  let reach = 0
   for (const [start, end, value] of once) {
-    let to = end
-    while (to < text.length && to - end < RUN_ON && KEY_CHAR.test(text[to]!)) to++
+    let to = Math.max(end, reach)
+    while (to < text.length && KEY_CHAR.test(text[to]!)) to++
+    reach = to
     add(start, to, value)
   }
   let result = ''
@@ -347,12 +352,13 @@ export function applyMap(
   // removed first under its one token; the scan then takes what is left.
   const known = options.known ?? new Destroyed()
   known.learn(destroyedIn(text, scanSecrets(text, 'redact')))
-  const scan = scanSecrets(redactKnown(text, known), 'redact')
+  const swept = redactKnown(text, known)
+  const scan = scanSecrets(swept, 'redact')
   let redacted = scan.code
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
   // token and the residue together. Only after a pass that redacted something.
-  for (let pass = 0; pass < 3 && scan.findings.some((f) => f.redacted); pass++) {
+  for (let pass = 0; pass < 3 && (swept !== text || redacted !== swept); pass++) {
     const again = scanSecrets(redacted, 'redact').code
     if (again === redacted) break
     redacted = again
