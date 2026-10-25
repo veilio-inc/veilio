@@ -72,7 +72,8 @@ export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcRespon
           : LATEST_PROTOCOL_VERSION
       return ok(id, {
         protocolVersion,
-        capabilities: { tools: { listChanged: false } },
+        // The list follows the sign-in (spec 052 FR-023): see sign-in-watch.ts.
+        capabilities: { tools: { listChanged: true } },
         serverInfo: { name: `${PRODUCT_NAME} MCP`, version: SERVER_VERSION },
         instructions:
           `Use anonymize_file before reasoning about proprietary source: it reads the file ` +

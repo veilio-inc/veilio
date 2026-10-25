@@ -11,6 +11,7 @@ import { FrameReader, type JsonRpcResponse } from './server.js'
 import type { ToolContext } from './tools.js'
 import { primeNamespace } from './namespace.js'
 import { primeRules } from './rules.js'
+import { SIGN_IN_POLL_MS, SignInWatcher, TOOLS_LIST_CHANGED } from './sign-in-watch.js'
 
 export { FrameReader, handleFrame, handleMessage, SERVER_VERSION } from './server.js'
 export { TOOLS, CLOUD_TOOLS, callTool, callToolAsync, listTools } from './tools.js'
@@ -55,6 +56,12 @@ async function start(): Promise<void> {
   // racing the first one in (contracts/shared-namespace.md R-007). Never
   // throws — see namespace.ts — so this can only delay startup, not fail it.
   await Promise.all([primeNamespace(), primeRules()])
+
+  // Signing in or out while this runs changes the tool list; say so.
+  const watcher = new SignInWatcher(ctx.home, () =>
+    process.stdout.write(`${JSON.stringify(TOOLS_LIST_CHANGED)}\n`)
+  )
+  setInterval(() => watcher.check(), SIGN_IN_POLL_MS).unref()
 
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk: string) => reader.push(chunk))
