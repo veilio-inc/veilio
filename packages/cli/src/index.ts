@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs, UsageError } from './args.js'
+import { feedSecret, type SecretState } from './secret-input.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
 import {
   runLogin,
@@ -178,23 +179,22 @@ function readSecret(label: string): Promise<string> {
     stdin.setRawMode(true)
     stdin.resume()
     stdin.setEncoding('utf8')
-    let value = ''
+    let state: SecretState = { value: '', done: false, cancelled: false }
     const done = (err?: Error): void => {
       stdin.setRawMode(false)
       stdin.pause()
       stdin.removeListener('data', onData)
       process.stderr.write('\n')
       if (err) rejectPromise(err)
-      else resolvePromise(value)
+      else resolvePromise(state.value)
     }
     const onData = (chunk: string): void => {
-      for (const ch of chunk) {
-        if (ch === '\n' || ch === '\r' || ch === '\u0004') return done()
-        // Ctrl-C must still abort, or raw mode traps the terminal.
-        if (ch === '\u0003') return done(new Error('cancelled'))
-        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1)
-        else value += ch
-      }
+      // Pasted text arrives wrapped in bracketed-paste markers, which
+      // `feedSecret` drops along with any other escape sequence.
+      state = feedSecret(state, chunk)
+      // Ctrl-C must still abort, or raw mode traps the terminal.
+      if (state.cancelled) return done(new Error('cancelled'))
+      if (state.done) return done()
     }
     stdin.on('data', onData)
   })
