@@ -1160,11 +1160,17 @@ async function pushToTeam(
   // The local map is NOT rewritten with a remote id: a team map is not this
   // project's copy of anything, and recording it as `remote` would make the
   // next `maps pull` treat the team's map as this project's own.
-  const total = Object.keys(found.analysis.namespace).length + Object.keys(map).length
+  // A union, not a sum: a name already in the team that this map also holds is
+  // ONE identifier in the shared set, and the pre-flight above has just checked
+  // that every such overlap agrees. Adding the two counts said "about" three
+  // for two (spec 011 T030).
+  const total = new Set([...Object.keys(found.analysis.namespace), ...Object.keys(map)]).size
   const disputed = Object.keys(found.analysis.conflicts).length
+  // The name the person chose, beside the id they would type to remove it (T014).
+  const label = name ?? 'from the terminal'
   io.stdout(
-    `Published ${Object.keys(map).length} symbols to the team as ${created.id}\n` +
-      `The team's shared set now holds about ${total} identifiers` +
+    `Published "${label}" (${Object.keys(map).length} symbols) to the team as ${created.id}\n` +
+      `The team's shared set now holds ${total} identifiers` +
       (disputed > 0
         ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
         : ', none disputed\n')
@@ -1189,6 +1195,17 @@ export async function runMapsRm(id: string | null, io: Io): Promise<number> {
     return EXIT_ERROR
   }
 
+  // The name, read first, so the confirmation says WHICH map went: an id is
+  // what a person types, the name is what they recognise (spec 011 T032). A
+  // failed read never stops the removal - it only means the id is all there is
+  // to report.
+  let label: string | null
+  try {
+    label = (await getMap(credential, id)).name || null
+  } catch {
+    label = null
+  }
+
   try {
     await deleteMap(credential, id)
   } catch (err) {
@@ -1203,7 +1220,7 @@ export async function runMapsRm(id: string | null, io: Io): Promise<number> {
     return reportCloudFailure(err, io)
   }
 
-  io.stdout(`Removed ${id}\n`)
+  io.stdout(label ? `Removed "${label}" (${id})\n` : `Removed ${id}\n`)
   return EXIT_OK
 }
 
