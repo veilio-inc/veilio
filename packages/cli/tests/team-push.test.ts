@@ -336,6 +336,30 @@ describe('maps push --team', () => {
     expect(out).toContain('none disputed')
   })
 
+  it('counts the shared set as a union: a name already in the team is counted once (T030)', async () => {
+    // The team holds __CLS__1; this map holds the same entry and one new one.
+    // The shared set is two identifiers. Adding the two counts said three.
+    unlocked()
+    saveMap(mapPath(), { __CLS__1: 'Existing', __CLS__9: 'Fresh' }, { force: true })
+    serve({ teamNamespace: { __CLS__1: 'Existing' } })
+
+    const { code, out } = await run(['maps', 'push', 'billing', '--team'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toMatch(/shared set now holds 2 identifiers/)
+    expect(out).not.toMatch(/about/)
+  })
+
+  it('names the map it published, beside its id (T014)', async () => {
+    unlocked()
+    saveMap(mapPath(), { __CLS__9: 'Fresh' }, { force: true })
+    serve({})
+
+    const { out } = await run(['maps', 'push', 'billing', '--team'])
+
+    expect(out).toMatch(/"billing"/)
+  })
+
   it('does not report a team map as a personal push', async () => {
     unlocked()
     saveMap(mapPath(), LOCAL, { force: true })
@@ -505,16 +529,39 @@ describe('maps push --team', () => {
 })
 
 describe('maps rm', () => {
-  it('removes a map and says so', async () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+  it('removes a map and confirms it by name, with its id (T032)', async () => {
+    fetchMock.mockImplementation(async (_url: string | URL, init?: RequestInit) =>
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : json(200, {
+            id: 'abc',
+            name: 'billing',
+            scope: 'team',
+            identifier_count: 3,
+            created_at: 'x',
+            map_data: '{}',
+          })
+    )
+
+    const { code, out } = await run(['maps', 'rm', 'abc'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toContain('"billing"')
+    expect(out).toContain('abc')
+    const del = fetchMock.mock.calls.find(([, init]) => (init as RequestInit)?.method === 'DELETE')!
+    expect(String(del[0])).toContain('/api/maps/abc')
+  })
+
+  it('confirms by id alone when the name cannot be read, and still removes it', async () => {
+    fetchMock.mockImplementation(async (_url: string | URL, init?: RequestInit) =>
+      init?.method === 'DELETE' ? new Response(null, { status: 204 }) : json(500, { error: 'boom' })
+    )
 
     const { code, out } = await run(['maps', 'rm', 'abc'])
 
     expect(code).toBe(EXIT_OK)
     expect(out).toContain('abc')
-    const [url, init] = fetchMock.mock.calls[0]!
-    expect(String(url)).toContain('/api/maps/abc')
-    expect((init as RequestInit).method).toBe('DELETE')
+    expect(out).not.toContain('"')
   })
 
   it('reports a 403 as somebody else’s map', async () => {

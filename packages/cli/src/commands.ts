@@ -199,6 +199,18 @@ export async function runScrub(
   // must not swallow.
   // A finding, not the summary: the placeholders may clash with the team's.
   if (found.note) io.stderr(`${BIN_NAME}: ${found.note}\n`)
+  // `--team` asked for the team's numbers, and with nobody signed in there is
+  // no team to ask - the Community Edition's case. Numbering locally is right
+  // (there is nobody to clash with), but only if it is said: a flag that
+  // quietly does less than it promised reads as having worked (spec 011 T034,
+  // spec 052 FR-024). Signed in with no team, the team lookup's own note says it.
+  else if (args.team && credential === null) {
+    io.stderr(
+      `${BIN_NAME}: --team numbers from your team's shared placeholders, and nobody is ` +
+        `signed in, so this was numbered from this project's map only. Run \`${BIN_NAME} login\` ` +
+        `to use your team's numbers.\n`
+    )
+  }
 
   for (const { name, result } of results) {
     if (!result.languageFallback) continue
