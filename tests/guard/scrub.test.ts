@@ -126,6 +126,40 @@ describe('survivingSecrets', () => {
     expect(survivingSecrets(`k=${STRIPE}`).length).toBeGreaterThan(0)
     expect(survivingSecrets(applyMap(`k=${STRIPE}`, {}))).toEqual([])
   })
+
+  it('reads back every placeholder form the map holds, legacy ones included', () => {
+    const map = { __P1__: 'Zx9kQ2mLpWq7Rt5vYb3nHc8d', __S12__: 'Tr0ub4dor3xzQ' }
+    expect(survivingSecrets('token: "__P1__"', map)).not.toEqual([])
+    expect(survivingSecrets('password = "__S12__"', map)).not.toEqual([])
+  })
+
+  it('reads a placeholder whole: one key is not read inside a longer one', () => {
+    const map = { __VAR__12: 'a' }
+    // `__VAR__1234567` is a placeholder the map does not hold, judged as it
+    // stands; read as `a` and 34567 it would pass as a plain word.
+    expect(survivingSecrets('password = "__VAR__1234567"', map)).not.toEqual([])
+    expect(survivingSecrets('password = "__VAR__12"', map)).toEqual([])
+  })
+
+  it('leaves values masked on purpose masked', () => {
+    const map = { __MANUAL__1: 'Tr0ub4dor3xzQ', __IBAN__1: 'GB82WEST12345698765432' }
+    expect(survivingSecrets('password = "__MANUAL__1"', map)).toEqual([])
+    expect(survivingSecrets('api_key = "__IBAN__1"', map)).toEqual([])
+  })
+
+  it('masks a large masked file in linear time', () => {
+    const map: Record<string, string> = {}
+    const lines: string[] = []
+    for (let i = 1; i <= 16_000; i++) {
+      map[`__VAR__${i}`] = `name${i}`
+      lines.push(`const __VAR__${i} = __VAR__${i}`)
+    }
+    const text = lines.join('\n')
+    const started = performance.now()
+    applyMap(text, map)
+    survivingSecrets(text, map)
+    expect(performance.now() - started).toBeLessThan(1_500)
+  })
 })
 
 describe('restoreArgs', () => {

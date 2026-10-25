@@ -513,8 +513,15 @@ const KNOWN_DUMMY = new Set([
     'new-password',
     'one-time-code',
 ]);
-function classifyValue(value, assignmentShaped) {
+function classifyValue(value, assignmentShaped, known) {
     const trimmed = value.trim();
+    // A value that is exactly one placeholder the caller's symbol map holds is a
+    // name or a literal the masking already judged: the scan of the text as
+    // written decides whether it was a credential (guard follow-up d03a). A
+    // placeholder with anything beside it is judged as text, since it may stand
+    // for part of a credential (`__CLS__1!9xQz`).
+    if (known?.has(trimmed))
+        return 'placeholder';
     // A value that is nothing but redaction tokens carries no secret: it is what
     // a redaction already left (guard follow-up d03a). The guard scans a result
     // it redacted once more before sending it, and read the token as a
@@ -600,7 +607,7 @@ function positionOf(starts, offset) {
     }
     return { line: lo + 1, column: offset - starts[lo] + 1 };
 }
-function collectMatches(code) {
+function collectMatches(code, known) {
     const found = [];
     for (const pattern of PATTERNS) {
         // The only two patterns that read their value out of an assignment, and so
@@ -636,7 +643,7 @@ function collectMatches(code) {
             // a finding at all: it never reaches the panel, the policy, or the map.
             if (pattern.validate !== undefined && !pattern.validate(value))
                 continue;
-            let verdict = classifyValue(value, assignmentShaped);
+            let verdict = classifyValue(value, assignmentShaped, known);
             if (verdict === 'placeholder')
                 continue;
             // Assignment-shaped findings also get an entropy check: `password: "the
@@ -834,8 +841,8 @@ const REDACTION_TOKENS = new RegExp(`__REDACTED_(?:${[...new Set(Object.values(T
     .map((type) => type.toUpperCase().replace(/[^A-Z0-9]/g, '_'))
     .join('|')})__`, 'g');
 /** Detect credentials in `code` without modifying it. */
-export function detectSecrets(code) {
-    return scanSecrets(code, 'warn').findings;
+export function detectSecrets(code, options = {}) {
+    return scanSecrets(code, 'warn', options).findings;
 }
 /**
  * Detect credentials and, under the `redact` policy, replace critical/high
@@ -846,10 +853,10 @@ export function detectSecrets(code) {
  * never written to the SymbolMap, `restore()` leaves it in place — the redaction
  * is one-way by construction, not by convention.
  */
-export function scanSecrets(code, policy = 'redact') {
+export function scanSecrets(code, policy = 'redact', options = {}) {
     if (policy === 'off')
         return { findings: [], code, regulated: [] };
-    const matches = dropOverlaps(collectMatches(code));
+    const matches = dropOverlaps(collectMatches(code, options.knownPlaceholders));
     if (matches.length === 0)
         return { findings: [], code, regulated: [] };
     const starts = lineIndex(code);

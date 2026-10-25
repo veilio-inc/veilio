@@ -666,8 +666,18 @@ const KNOWN_DUMMY = new Set([
  */
 type ValueVerdict = 'placeholder' | 'ambiguous' | 'credential'
 
-function classifyValue(value: string, assignmentShaped: boolean): ValueVerdict {
+function classifyValue(
+  value: string,
+  assignmentShaped: boolean,
+  known: ReadonlySet<string> | undefined
+): ValueVerdict {
   const trimmed = value.trim()
+  // A value that is exactly one placeholder the caller's symbol map holds is a
+  // name or a literal the masking already judged: the scan of the text as
+  // written decides whether it was a credential (guard follow-up d03a). A
+  // placeholder with anything beside it is judged as text, since it may stand
+  // for part of a credential (`__CLS__1!9xQz`).
+  if (known?.has(trimmed)) return 'placeholder'
   // A value that is nothing but redaction tokens carries no secret: it is what
   // a redaction already left (guard follow-up d03a). The guard scans a result
   // it redacted once more before sending it, and read the token as a
@@ -765,7 +775,7 @@ function positionOf(starts: number[], offset: number): { line: number; column: n
   return { line: lo + 1, column: offset - starts[lo] + 1 }
 }
 
-function collectMatches(code: string): RawMatch[] {
+function collectMatches(code: string, known?: ReadonlySet<string>): RawMatch[] {
   const found: RawMatch[] = []
   for (const pattern of PATTERNS) {
     // The only two patterns that read their value out of an assignment, and so
@@ -798,7 +808,7 @@ function collectMatches(code: string): RawMatch[] {
       // timestamp, version and port in the file. An unconfirmed candidate is not
       // a finding at all: it never reaches the panel, the policy, or the map.
       if (pattern.validate !== undefined && !pattern.validate(value)) continue
-      let verdict = classifyValue(value, assignmentShaped)
+      let verdict = classifyValue(value, assignmentShaped, known)
       if (verdict === 'placeholder') continue
       // Assignment-shaped findings also get an entropy check: `password: "the
       // user's password"` in prose is not a credential. Patterned filler such as
@@ -1035,8 +1045,15 @@ const REDACTION_TOKENS = new RegExp(
   'g'
 )
 /** Detect credentials in `code` without modifying it. */
-export function detectSecrets(code: string): SecretFinding[] {
-  return scanSecrets(code, 'warn').findings
+export function detectSecrets(code: string, options: ScanOptions = {}): SecretFinding[] {
+  return scanSecrets(code, 'warn', options).findings
+}
+
+/** What a caller that already masked the text knows about it. */
+export interface ScanOptions {
+  /** Placeholders of the caller's symbol map. A value that is exactly one of
+   *  them is not a credential; one with anything beside it is judged as text. */
+  knownPlaceholders?: ReadonlySet<string>
 }
 
 /**
@@ -1048,10 +1065,14 @@ export function detectSecrets(code: string): SecretFinding[] {
  * never written to the SymbolMap, `restore()` leaves it in place — the redaction
  * is one-way by construction, not by convention.
  */
-export function scanSecrets(code: string, policy: SecretPolicy = 'redact'): SecretScan {
+export function scanSecrets(
+  code: string,
+  policy: SecretPolicy = 'redact',
+  options: ScanOptions = {}
+): SecretScan {
   if (policy === 'off') return { findings: [], code, regulated: [] }
 
-  const matches = dropOverlaps(collectMatches(code))
+  const matches = dropOverlaps(collectMatches(code, options.knownPlaceholders))
   if (matches.length === 0) return { findings: [], code, regulated: [] }
 
   const starts = lineIndex(code)

@@ -117,3 +117,38 @@ describe('anything beside a token is still judged', () => {
     ).toEqual(['connection-string'])
   })
 })
+
+describe('a placeholder the caller knows is not a credential on its own', () => {
+  const known = new Set(['__VAR__1290', '__CLS__1', '__P1__'])
+  const with_ = (text: string) =>
+    detectSecrets(text, { knownPlaceholders: known })
+      .filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
+      .map((f) => f.type)
+
+  it('without the option, a long placeholder number reads as key material', () => {
+    expect(blocking(`client_secret = "__VAR__1290"`)).toEqual(['password-assignment'])
+  })
+
+  it('with it, a value that is exactly a known placeholder is not a credential', () => {
+    expect(with_(`client_secret = "__VAR__1290"`)).toEqual([])
+    expect(with_(`token: "__P1__"`)).toEqual([])
+  })
+
+  it('it is redacted by neither a scan nor a rescan', () => {
+    const text = `client_secret = "__VAR__1290"`
+    expect(scanSecrets(text, 'redact', { knownPlaceholders: known }).code).toBe(text)
+  })
+
+  it('a placeholder the caller does not know is judged as before', () => {
+    expect(with_(`client_secret = "__VAR__9871"`)).toEqual(['password-assignment'])
+  })
+
+  it('a known placeholder with anything beside it is judged as text', () => {
+    expect(with_(`DB_PASSWORD = "__CLS__1!9xQz"`)).toEqual(['password-assignment'])
+    expect(with_(`client_secret = "__VAR__1290x"`)).toEqual(['password-assignment'])
+  })
+
+  it('a real credential elsewhere in the text is still caught', () => {
+    expect(with_(`a = "__VAR__1290"; password = "Tr0ub4dor3xzQ"`)).toEqual(['password-assignment'])
+  })
+})

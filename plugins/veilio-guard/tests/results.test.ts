@@ -309,3 +309,28 @@ test('a hand-marked value already masked in output stays masked for the last sca
   expect(out.deny).toBeUndefined()
   expect(out.result.stdout).toContain('__MANUAL__1')
 })
+
+// Third review (ccc5fff): names are replaced before the secret scan, so a name
+// written against what a rule redacts is still masked.
+test('a project name written against a redacted key is still masked', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __CLS__7: 'AcmeBilling' }) })
+  const stdout =
+    '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA7bq9xZ2kLmN3pQ4rS5tU6vW7xY8zA9bC0dE1fG2hI3jK4lM5\n-----END RSA PRIVATE KEY-----AcmeBilling.pem\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('AcmeBilling')
+  expect(JSON.stringify(out)).not.toContain('MIIEowIBAAKCAQEA')
+})
+
+test('a regulated number used as a key reads as in a Read: masked, not destroyed', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __IBAN__1: 'GB82WEST12345698765432' }),
+  })
+  const stdout = 'api_key = "GB82WEST12345698765432"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.stdout).toContain('"__IBAN__1"')
+})
