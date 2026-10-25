@@ -157,7 +157,7 @@ export function register(on: any, options: Options = {}) {
       await g.indexProject(deadline(next)).catch(() => undefined)
     const text = g.applyText(e.text, 'prompt')
     const context = Array.isArray(e.context)
-      ? e.context.map((c: string) => g.applyText(c))
+      ? e.context.map((c: string) => g.applyContext(c))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
@@ -168,7 +168,9 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
     if (g.state === 'stopped') return { text: null }
-    return { ...r, text: g.applyText(r.text) }
+    // Only the first message's context carries the guard's note.
+    const text = e.type === 'context_sections' ? g.applyContext(r.text) : g.applyText(r.text)
+    return { ...r, text }
   }).catch(async () => ({ text: null }))
 
   on('prompt.context', async ($: any, e: any, next: any) => {

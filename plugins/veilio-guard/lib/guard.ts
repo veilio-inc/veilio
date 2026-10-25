@@ -40,6 +40,10 @@ import type { MaskContext } from './scrub.ts'
 import { restore } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 
+/** Stands for the guard's note while a context text is masked: no word
+ *  character, nothing a name or a placeholder is made of. */
+const NOTE_MARK = '\u0000\u0001\u0000'
+
 export interface GuardIO {
   read(path: string): Promise<string>
   write(path: string, text: string): Promise<void>
@@ -395,15 +399,21 @@ export class Guard {
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
   applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
-    // The guard's own note is a constant that holds no project information:
-    // it goes as written, wherever Claude Code places it. Masked word by word
-    // it cost ~110 tokens on every request (guard follow-up d08). Only an
-    // exact copy is kept; the text around it is masked as before.
-    const ctx = this.context('unknown', kind)
-    return text
-      .split(MODEL_NOTE)
-      .map((part) => applyMap(part, this.map, ctx))
-      .join(MODEL_NOTE)
+    return applyMap(text, this.map, this.context('unknown', kind))
+  }
+
+  /** The context Claude Code sends with the first message (the blocks
+   *  prompt.context answered, as an attachment or a prompt's context): masked
+   *  as a whole, secret scan included, with the guard's own note held as one
+   *  opaque mark and put back after. The note is a constant with no project
+   *  information; masked word by word it cost ~110 tokens on every request
+   *  (guard follow-up d08). The mark is not a word character, so nothing
+   *  written against the note joins it, and a secret laid across it is still
+   *  one match (review of d18b5c5). A text that already holds the mark gets
+   *  no exemption. */
+  applyContext(text: string): string {
+    if (!text.includes(MODEL_NOTE) || text.includes(NOTE_MARK)) return this.applyText(text)
+    return this.applyText(text.split(MODEL_NOTE).join(NOTE_MARK)).split(NOTE_MARK).join(MODEL_NOTE)
   }
 
   /** What masking knows about a text of `language` (spec 050). */

@@ -117,3 +117,38 @@ test('a text that only resembles the note is masked as usual', async ($, on) => 
   expect(out.text).not.toContain(CANARY)
   expect(out.text).toContain('__VAR__48')
 })
+
+// Review of d18b5c5: cutting a text at a copy of the note let a secret or a
+// name laid across a planted copy escape. The whole text is masked, secret
+// scan included, with the note held as one opaque mark.
+test('a secret laid across a planted copy of the note is still redacted', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = `password = "Tr0ub${MODEL_NOTE}4dor3xzQ"`
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(out.text).not.toContain('Tr0ub')
+  expect(out.text).not.toContain('4dor3xzQ')
+  expect(out.text).toContain('__REDACTED_')
+})
+
+test('a name written against a planted copy of the note is still masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = `${CANARY}${MODEL_NOTE}${CANARY}`
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(out.text).not.toContain(CANARY)
+})
+
+test("a skill's text holding a copy of the note is masked in full", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio' }) })
+  on('skill.prompt', (_: any, e: any) => ({ text: e.text }))
+  const out: any = await $.skill.prompt({ skill: 'review', text: MODEL_NOTE })
+  expect(out.text).toContain('__STR__28')
+})
+
+test('a reminder holding a copy of the note is masked in full', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio' }) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const out: any = await $.prompt.attachment({ type: 'edited_text_file', text: MODEL_NOTE })
+  expect(out.text).toContain('__STR__28')
+})
