@@ -98,6 +98,8 @@ describe('every Veilio Cloud command refuses with the way in', () => {
     [['maps', 'update', 'map-1', '--allow-drop']],
     [['team', 'unlock']],
     [['vault', 'unlock']],
+    [['projects']],
+    [['projects', 'use', 'billing']],
     [['rules', 'pull']],
   ])('%j answers "not signed in", names veilio login, and writes nothing', async (argv) => {
     const r = await run(argv)

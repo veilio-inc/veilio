@@ -50,6 +50,7 @@ import {
 } from './client/maps.js'
 import { renderRefusal, type Refusal } from './client/wording.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
+import { listTeamProjects, useProject } from './client/projects.js'
 import { personalMapsKeyPath, removePersonalMapsKey } from './client/personal-maps-key.js'
 import { VERSION } from './version.js'
 
@@ -403,7 +404,11 @@ export function runWhoami(io: Io): number {
     io.stdout('Not signed in. Run `veilio login` to connect a Veilio Cloud account.\n')
     return EXIT_OK
   }
-  io.stdout(`${credential.account} on ${credential.instance}\n`)
+  io.stdout(
+    `${credential.account} on ${credential.instance}` +
+      (credential.project ? `, project ${credential.project}` : '') +
+      '\n'
+  )
   return EXIT_OK
 }
 
@@ -800,6 +805,43 @@ export function runTeamLock(io: Io): number {
     return EXIT_ERROR
   }
   io.stdout('Team keys locked.\n')
+  return EXIT_OK
+}
+
+// ─── projects ────────────────────────────────────────────────────────────────
+
+/** The team's projects, the one in use marked with `*`. */
+export async function runProjectsList(io: Io): Promise<number> {
+  const listed = await listTeamProjects(clientContext(io))
+  if (!listed.ok) return refused(listed.refusal, io)
+  const { projects, chosen } = listed.value
+  for (const p of projects) {
+    const marks = [
+      ...(p.inUse ? ['in use'] : []),
+      ...(p.isDefault ? ['default'] : []),
+      ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
+    ]
+    io.stdout(`${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})\n`)
+  }
+  if (chosen === null) {
+    // Said, because "none" is a real state with a real consequence: team maps
+    // from every project the team works in are listed and masked with.
+    io.stderr(
+      'veilio: No project is chosen, so team maps from every project are listed and used, and a new ' +
+        'team map lands in the default. Run `veilio projects use <name>` to work in one.\n'
+    )
+  }
+  return EXIT_OK
+}
+
+/** Choose the project this sign-in works in. */
+export async function runProjectsUse(ref: string | null, io: Io): Promise<number> {
+  const used = await useProject(clientContext(io), ref)
+  if (!used.ok) return refused(used.refusal, io)
+  io.stdout(
+    `Now working in project ${used.value.name} (${used.value.id}). Team maps, pushes, updates and ` +
+      '`scrub --team` use this project only; the MCP server picks it up on its next call.\n'
+  )
   return EXIT_OK
 }
 

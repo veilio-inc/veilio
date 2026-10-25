@@ -16,6 +16,7 @@ export type Command =
   | 'maps'
   | 'team'
   | 'vault'
+  | 'projects'
   | 'rules'
   | 'help'
   | 'version'
@@ -94,6 +95,8 @@ export interface ParsedArgs {
   /** `vault unlock --days N`, `team unlock --days N`: how long the unlock
    *  lasts. Null: the default, 7 days. */
   days: number | null
+  /** `projects` (or `projects list`) and `projects use <name|id>`. */
+  projectsAction: 'list' | 'use' | null
   /** `rules pull`. */
   rulesAction: 'pull' | null
 
@@ -120,6 +123,7 @@ const COMMANDS = new Set<Command>([
   'maps',
   'team',
   'vault',
+  'projects',
   'rules',
   'help',
   'version',
@@ -138,6 +142,7 @@ export const CLOUD_COMMANDS = new Set<Command>([
   'maps',
   'team',
   'vault',
+  'projects',
   'rules',
 ])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
@@ -171,6 +176,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     allowDrop: false,
     teamAction: null,
     vaultAction: null,
+    projectsAction: null,
     days: null,
     rulesAction: null,
   }
@@ -225,6 +231,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
           throw new UsageError(`unknown vault action "${verb}" — expected unlock or lock`)
         }
         parsed.vaultAction = verb
+        i = 2
+      }
+    }
+
+    if (parsed.command === 'projects') {
+      const verb = argv[1]
+      if (verb !== undefined && !verb.startsWith('-')) {
+        if (verb !== 'list' && verb !== 'use') {
+          throw new UsageError(`unknown projects action "${verb}" — expected list or use`)
+        }
+        parsed.projectsAction = verb
         i = 2
       }
     }

@@ -15,6 +15,8 @@ import {
   runTeamLock,
   runVaultUnlock,
   runVaultLock,
+  runProjectsList,
+  runProjectsUse,
   runRulesPull,
   teamLayerFor,
   teamNamespaceForScrub,
@@ -105,6 +107,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return EXIT_ERROR
         }
       }
+      case 'projects':
+        if (args.projectsAction === 'use') return await runProjectsUse(args.files[0] ?? null, io)
+        return await runProjectsList(io)
       case 'rules':
         if (args.rulesAction === 'pull') return await runRulesPull(io)
         io.stderr('veilio: rules needs an action — pull.\n')

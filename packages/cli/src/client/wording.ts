@@ -52,6 +52,7 @@ export const REFUSAL_CODES = [
   'rotation_owed',
   'too_large',
   'abuse_limit',
+  'which_project',
   'project_not_found',
   'project_ambiguous',
   'project_gone',
@@ -247,6 +248,10 @@ export const WORDING: Record<RefusalCode, Words> = {
   abuse_limit: (p) => ({
     message: `${sentence(p.detail)} This ceiling is the same on every paid plan, so upgrading will not raise it. Nothing was uploaded.`,
     resolve: 'Remove maps you no longer need with `veilio maps rm <id>`.',
+  }),
+  which_project: () => ({
+    message: 'which project? None was named, so nothing was changed.',
+    resolve: 'Run `veilio projects` for their names, then `veilio projects use <name>`.',
   }),
   project_not_found: (p) => ({
     message: `"${p.project}" is not a project your team works in, so nothing was changed.`,

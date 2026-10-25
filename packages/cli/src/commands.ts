@@ -511,6 +511,11 @@ COMMANDS
                        and the MCP server's map tools - work without a
                        passphrase. Re-seals older personal maps under it.
   vault lock           Remove the personal-maps key from this machine.
+  projects             List the projects your team works in; * marks the one
+                       in use. A team map belongs to exactly one project.
+  projects use <name>  Work in that project: team maps, pushes, updates and
+                       scrub --team use it only. Kept with the sign-in, so the
+                       MCP server uses it too.
   rules pull           Fetch this account's custom rules (personal and team).
                        \`scrub\` then applies them offline, as the web app does.
 
