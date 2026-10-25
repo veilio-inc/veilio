@@ -1022,10 +1022,16 @@ const TYPE_TOKENS: Record<SecretType, string> = {
 }
 
 /** The redaction tokens scanSecrets writes (`__REDACTED_CREDENTIAL_1__`), and
- *  the one the guard writes for a regulated number it cannot mask
- *  (`__REDACTED_IBAN__`), whole and of a known kind. */
+ *  the one the guard writes for a masked-kind number it cannot mask
+ *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
+ *  whole and of a known kind. */
 const REDACTION_TOKENS = new RegExp(
-  `__REDACTED_(?:${[...new Set(Object.values(TYPE_TOKENS))].join('|')})_\\d+__|__REDACTED_(?:IBAN|PAYMENT_CARD|PESEL)__`,
+  `__REDACTED_(?:${[...new Set(Object.values(TYPE_TOKENS))].join('|')})_\\d+__|__REDACTED_(?:${(
+    Object.keys(SECRET_DISPOSITIONS) as SecretType[]
+  )
+    .filter((type) => SECRET_DISPOSITIONS[type] === 'mask')
+    .map((type) => type.toUpperCase().replace(/[^A-Z0-9]/g, '_'))
+    .join('|')})__`,
   'g'
 )
 /** Detect credentials in `code` without modifying it. */

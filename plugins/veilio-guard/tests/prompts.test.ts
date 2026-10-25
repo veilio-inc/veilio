@@ -161,3 +161,31 @@ test('a secret a rule only partly took is redacted whole in a reminder', async (
   const out: any = await $.prompt.attachment({ type: 'edited_text_file', text })
   expect(out.text).toMatch(/= "__REDACTED_[A-Z_]+_\d+__"$/)
 })
+
+// Second review of 1a48240: secrets are judged on the text as written, before
+// names are replaced, so a credential whose key is a project name is caught.
+test('a typed password under a key that is a project name is redacted', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__4: 'db_password' }) })
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text }
+  })
+  await $.prompt.submit({
+    ...recordedPrompt('prompt.submit').e,
+    text: 'Why does db_password = "Xk9!mQ2vLp7" fail?',
+  })
+  expect(sent[0].text).not.toContain('Xk9!mQ2vLp7')
+  expect(sent[0].text).toContain('__VAR__4')
+})
+
+test("an earlier build's context type carries the note as written too", async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio', __VAR__249: 'user' }),
+  })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = `# gitStatus\nbranch of the user: ${CANARY}\n\n# veilioGuard\n${MODEL_NOTE}`
+  const out: any = await $.prompt.attachment({ type: 'session_context', text })
+  expect(out.text).toContain(MODEL_NOTE)
+  expect(out.text).toContain('branch of the __VAR__249: __CLS__1')
+})

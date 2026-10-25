@@ -216,18 +216,39 @@ function replaceNames(text: string, map: SymbolMap, ctx: MaskContext = NO_CONTEX
   })
 }
 
+// Stand-ins for placeholders while the secret scan runs: no word character,
+// nothing a credential is made of.
+const MARK_OPEN = '\u0002'
+const MARK_CLOSE = '\u0003'
+
 export function applyMap(text: string, map: SymbolMap, ctx: MaskContext = NO_CONTEXT): string {
-  const named = replaceNames(text, map, ctx)
-  const scan = scanSecrets(named, 'redact')
-  let out = scan.code
+  // Credentials are judged on the text as written, before names are replaced:
+  // a key that is a project name (`db_password`) must still read as one
+  // (review of 1a48240). A placeholder already in the text (a result masked
+  // once, a Read's source) is one opaque mark to the scan, so a plain word
+  // whose placeholder looks like key material (`"__VAR__1290"`) is not
+  // redacted, while a credential written around one still is.
+  const marks: string[] = []
+  const opaque =
+    text.includes('__') && !text.includes(MARK_OPEN) && !text.includes(MARK_CLOSE)
+      ? text.replace(PLACEHOLDER_IN_TEXT, (p) =>
+          Object.hasOwn(map, p) ? `${MARK_OPEN}${marks.push(p) - 1}${MARK_CLOSE}` : p
+        )
+      : text
+  const scan = scanSecrets(opaque, 'redact')
+  let redacted = scan.code
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
-  // token and the residue together, until nothing more is redacted.
-  for (let pass = 0; pass < 3; pass++) {
-    const again = scanSecrets(out, 'redact').code
-    if (again === out) break
-    out = again
+  // token and the residue together. Only after a pass that redacted something.
+  for (let pass = 0; pass < 3 && redacted !== opaque; pass++) {
+    const again = scanSecrets(redacted, 'redact').code
+    if (again === redacted) break
+    redacted = again
   }
+  marks.forEach((p, i) => {
+    redacted = redacted.split(`${MARK_OPEN}${i}${MARK_CLOSE}`).join(p)
+  })
+  let out = replaceNames(redacted, map, ctx)
   // A regulated number (an IBAN, a card, a PESEL) the map does not have yet:
   // output adds no entries, so it is removed, irreversibly.
   for (const span of scan.regulated) {
@@ -308,22 +329,30 @@ export function maskShaped(
   return { text: replaceNames(text, { ...reused, ...additions }, ctx), additions }
 }
 
-const REGULATED_PLACEHOLDER = /^__(?:IBAN|PAN|PESEL)__\d+$/
+// Placeholders that stand for a value masked on purpose: a regulated number
+// (`__PAN__1`) or a value the author marked by hand (`__MANUAL__1`). They stay
+// masked when the last scan reads the rest back.
+const KEPT_MASKED = /^__(?:IBAN|PAN|PESEL|MANUAL)__\d+$/
+const PLACEHOLDER_IN_TEXT = /__[A-Z]+__\d+/g
+
+/** The text with the map's placeholders put back, in memory only, for the
+ *  secret scan; those kept masked on purpose stay. */
+function readBack(text: string, map: SymbolMap): string {
+  if (!text.includes('__')) return text
+  return text.replace(PLACEHOLDER_IN_TEXT, (p) =>
+    !KEPT_MASKED.test(p) && Object.hasOwn(map, p) ? (map[p] as string) : p
+  )
+}
 
 /** Credentials still in text the guard is about to hand the model, judged on
  *  what the placeholders stand for: a placeholder can hide part of a
  *  credential (`__CLS__1!9xQz` is `Acme!9xQz`), and a long placeholder number
  *  can look like key material where the name is a plain word
- *  (`client_secret: "__STR__1290"` is `"disabled"`). The restored text is
- *  only read here, never sent. Redaction tokens stay, and are not credentials
- *  (guard follow-up d03a). */
+ *  (`secret: "__VAR__1290"` is `"abAbab"`). The restored text is only read
+ *  here, never sent. Redaction tokens stay, and are not credentials (guard
+ *  follow-up d03a). One pass over the text, no regex built per map. */
 export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
-  // A regulated number (`__PAN__1`) is masked on purpose and stays masked here.
-  const names: SymbolMap = {}
-  for (const [placeholder, name] of Object.entries(map))
-    if (!REGULATED_PLACEHOLDER.test(placeholder)) names[placeholder] = name
-  const real = Object.keys(names).length ? restore(text, names, { strip: 'none' }).restored : text
-  return detectSecrets(real)
+  return detectSecrets(readBack(text, map))
     .filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
     .map((f) => f.type)
 }

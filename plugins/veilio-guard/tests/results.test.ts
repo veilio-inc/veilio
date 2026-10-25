@@ -274,3 +274,38 @@ test('a credential-shaped placeholder for a plain word in output is not read as 
   expect(out.deny).toBeUndefined()
   expect(out.result.stdout).not.toContain('abAbab')
 })
+
+test('a plain word under a long placeholder number is masked, not redacted, in output', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'disabled' }) })
+  const stdout = 'client_secret: "disabled"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.stdout).toContain('"__VAR__1290"')
+})
+
+test('a value the author marked by hand is sent, without the value, not withheld', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __MANUAL__1: 'Tr0ub4dor3xzQ' }),
+  })
+  const stdout = 'password = "Tr0ub4dor3xzQ"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain('Tr0ub4dor3xzQ')
+})
+
+test('a hand-marked value already masked in output stays masked for the last scan', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __MANUAL__1: 'Tr0ub4dor3xzQ' }),
+  })
+  // Output that already holds the mark, such as a masked file printed again.
+  const stdout = 'password = "__MANUAL__1"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.stdout).toContain('__MANUAL__1')
+})
