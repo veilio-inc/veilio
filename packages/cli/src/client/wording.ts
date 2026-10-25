@@ -36,6 +36,7 @@ export const REFUSAL_CODES = [
   'vault_locked',
   'no_pmk_yet',
   'pmk_unopenable',
+  'keys_not_set_up',
   'personal_old_seal',
   'personal_unopenable',
   'not_envelope',
@@ -171,6 +172,12 @@ export const WORDING: Record<RefusalCode, Words> = {
     message:
       "the account's personal-maps key could not be opened with this vault key, so it looks damaged. Nothing was changed.",
     resolve: 'Contact Veilio support with the account email; do not create a new vault.',
+  }),
+  keys_not_set_up: () => ({
+    message:
+      "this account's keys are not set up yet, so there is nowhere to keep a personal-maps key. Nothing was changed.",
+    resolve:
+      'Unlock your vault once in the web app to set up your keys, then run `veilio vault unlock` again.',
   }),
   personal_old_seal: (p) => ({
     message: `${label(p)} is still sealed with the vault key, which this machine does not hold. Nothing was written.`,

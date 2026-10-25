@@ -267,6 +267,23 @@ describe('the first unlock', () => {
   })
 })
 
+describe('an account whose keys are not set up yet', () => {
+  it('is refused, naming the web-app step - not treated as another client winning a race', async () => {
+    cloud.keysSetUp = false
+    const r = await run(['vault', 'unlock'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(/web app/)
+    expect(r.err).toMatch(/unlock your vault/i)
+    expect(r.err).not.toMatch(/damaged/)
+    // A race would GET the key again; this must not.
+    expect(
+      cloud.requests.filter((x) => x.path === '/api/auth/keys/personal-maps' && x.method === 'GET')
+    ).toHaveLength(1)
+    expect(existsSync(personalMapsKeyPath(home))).toBe(false)
+    expect(cloud.pmkWrap).toBeNull()
+  })
+})
+
 describe('the next unlock', () => {
   it('unwraps the stored key and creates no second one', async () => {
     await cloud.withPmkWrap()

@@ -91,6 +91,9 @@ export async function vaultUnlock(
         // sealed under it, and replacing it is exactly what the server's 409
         // exists to stop. Ours was never used for anything.
         if (!(err instanceof CloudError && err.status === 409)) return fail(err)
+        // Two 409s, told apart by code. One is an account with no keypair
+        // yet: there is no race to recover from, only a step in the web app.
+        if (err.body?.code === 'keys_not_set_up') return refuse('keys_not_set_up')
         const theirs = (await getPersonalMapsKeyWrap(credential)).wrapped
         const opened = typeof theirs === 'string' ? await unwrapped(vaultKey, theirs) : null
         if (!opened) return refuse('pmk_unopenable')

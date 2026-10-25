@@ -96,6 +96,9 @@ export class FakeCloud {
   /** Maps whose server-side layer cannot be peeled: left out of
    *  /team-envelopes and reported in its `unreadable`. */
   serverUnreadable = new Set<string>()
+  /** The account has a keypair; without one, the server refuses to store a
+   *  personal-maps key (409 keys_not_set_up). */
+  keysSetUp = true
   /** An older instance that merges the team namespace server-side. */
   legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
@@ -279,7 +282,13 @@ export class FakeCloud {
     if (path === '/api/auth/keys/personal-maps') {
       if (method === 'GET') return json(200, { wrapped: this.pmkWrap })
       if (method === 'PUT') {
-        if (this.pmkWrap !== null) return json(409, { error: 'already set' })
+        if (!this.keysSetUp)
+          return json(409, {
+            code: 'keys_not_set_up',
+            error: 'Unlock your vault once in the web app to set up your keys, then try again.',
+          })
+        if (this.pmkWrap !== null)
+          return json(409, { code: 'personal_maps_key_exists', error: 'already set' })
         this.pmkWrap = String(body?.wrapped)
         return json(201, { ok: true })
       }
