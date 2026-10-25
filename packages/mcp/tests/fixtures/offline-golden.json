@@ -7,7 +7,7 @@
         "protocolVersion": "2025-06-18",
         "capabilities": {
           "tools": {
-            "listChanged": false
+            "listChanged": true
           }
         },
         "serverInfo": {
