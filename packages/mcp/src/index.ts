@@ -13,7 +13,22 @@ import { primeNamespace } from './namespace.js'
 import { primeRules } from './rules.js'
 
 export { FrameReader, handleFrame, handleMessage, SERVER_VERSION } from './server.js'
-export { TOOLS, callTool } from './tools.js'
+export { TOOLS, CLOUD_TOOLS, callTool, callToolAsync, listTools } from './tools.js'
+
+/**
+ * The server's context from its arguments and environment.
+ *
+ * `destructive` is read from VEILIO_MCP_DESTRUCTIVE here, once, at start, and
+ * only an exact "1" turns it on: it is the person's decision, made where they
+ * configure the server, and nothing a tool call carries can change it
+ * (spec 052 FR-010).
+ */
+export function contextFromArgv(
+  argv: readonly string[],
+  env: Record<string, string | undefined> = process.env
+): ToolContext {
+  return { ...parseCliContext(argv), destructive: env.VEILIO_MCP_DESTRUCTIVE === '1' }
+}
 
 function parseCliContext(argv: readonly string[]): ToolContext {
   let cwd = process.cwd()
@@ -29,7 +44,7 @@ function parseCliContext(argv: readonly string[]): ToolContext {
 }
 
 async function start(): Promise<void> {
-  const ctx = parseCliContext(process.argv.slice(2))
+  const ctx = contextFromArgv(process.argv.slice(2))
   const send = (response: JsonRpcResponse): void => {
     process.stdout.write(`${JSON.stringify(response)}\n`)
   }

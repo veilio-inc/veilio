@@ -57,9 +57,7 @@
                   "description": "Prepend a note explaining the placeholders, for forwarding to another model."
                 }
               },
-              "required": [
-                "path"
-              ],
+              "required": ["path"],
               "additionalProperties": false
             }
           },
@@ -96,9 +94,7 @@
                   "description": "Prepend the explanatory note."
                 }
               },
-              "required": [
-                "text"
-              ],
+              "required": ["text"],
               "additionalProperties": false
             }
           },
@@ -118,9 +114,7 @@
                   "description": "Refuse instead of returning text that still holds a placeholder (invented, altered, disputed, or the team's maps unreadable): an error naming them, and no text."
                 }
               },
-              "required": [
-                "text"
-              ],
+              "required": ["text"],
               "additionalProperties": false
             }
           },

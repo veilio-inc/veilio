@@ -97,6 +97,8 @@ export function primeNamespace(
   opts: { retryDelayMs?: number } = {}
 ): Promise<ResolvedNamespace> {
   primedWith = { home, opts }
+  primed = true
+  primedProject = readCredential(home)?.project ?? null
   lastAttemptAt = Date.now()
   if (!priming) {
     priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
@@ -116,6 +118,20 @@ const UNAVAILABLE_RECHECK_MS = 30_000
 
 let primedWith: { home?: string; opts: { retryDelayMs?: number } } = { opts: {} }
 let lastAttemptAt = 0
+let primed = false
+/** The project the cached namespace is for (spec 052 FR-013). */
+let primedProject: string | null = null
+/** Set by a team write through this server: the cache no longer matches. */
+let invalidated = false
+
+/**
+ * The team's maps just changed through this server - a team map created,
+ * updated or removed, or another project chosen - so the cached namespace is
+ * out of date. The next tool call starts loading it again.
+ */
+export function invalidateNamespace(): void {
+  invalidated = true
+}
 
 /**
  * The cache must not outlive the reason it was cached (review): `veilio team
@@ -125,7 +141,23 @@ let lastAttemptAt = 0
  * something new to fetch it starts the fetch and says 'loading'; the next call
  * sees the result. A settled `team` or `local` is kept for the process.
  */
-export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | null {
+export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' | null {
+  // Another project chosen - by `veilio projects use` in a terminal while this
+  // server runs, or by projects_use here - or a team write made here: the
+  // namespace cached for the old state must not go on numbering the new one
+  // (spec 052 edge case: the next call uses the new state).
+  if (primed && (!priming || settledFlag)) {
+    const project = readCredential(primedWith.home)?.project ?? null
+    if (invalidated || project !== primedProject) {
+      invalidated = false
+      priming = null
+      settledFlag = false
+      void primeNamespace(primedWith.home, primedWith.opts).then(() => {
+        settledFlag = true
+      })
+      return 'changed'
+    }
+  }
   const status = current.found.status
   if (status !== 'locked' && status !== 'unavailable') return null
   if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
@@ -168,6 +200,9 @@ export function resetNamespaceCache(): void {
   settledFlag = true
   lastAttemptAt = 0
   primedWith = { opts: {} }
+  primed = false
+  primedProject = null
+  invalidated = false
 }
 
 /**

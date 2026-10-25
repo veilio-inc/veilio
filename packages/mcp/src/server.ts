@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module'
 import { PRODUCT_NAME } from '@veilio-inc/engine'
-import { callTool, TOOLS, type ToolContext } from './tools.js'
+import { callTool, callToolAsync, isCloudTool, listTools, type ToolContext } from './tools.js'
 
 // Read from the package, not typed here - told to every MCP client, and a
 // literal drifted from what npm published (found 2026-09-26).
@@ -90,7 +90,7 @@ export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcRespon
 
     case 'tools/list':
       return ok(id, {
-        tools: TOOLS.map((t) => ({
+        tools: listTools(ctx).map((t) => ({
           name: t.name,
           title: t.title,
           description: t.description,
@@ -118,7 +118,47 @@ export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcRespon
   }
 }
 
-/** Parse and handle one newline-delimited frame. */
+/**
+ * Handle one message, the Cloud tools included (spec 052).
+ *
+ * `handleMessage` stays synchronous for everything it always answered: the
+ * offline tools never wait on anything, and making them return a Promise would
+ * thread one through every caller for a network call they never make. A call
+ * to a Cloud tool is the one thing that needs the network, so it alone answers
+ * with a Promise. JSON-RPC matches answers to requests by id, so a slow Cloud
+ * call finishing after a later offline one is in order.
+ */
+export function respond(
+  message: unknown,
+  ctx: ToolContext
+): JsonRpcResponse | null | Promise<JsonRpcResponse> {
+  if (typeof message === 'object' && message !== null && !Array.isArray(message)) {
+    const req = message as Partial<JsonRpcRequest>
+    const params = req.params ?? {}
+    if (
+      req.method === 'tools/call' &&
+      typeof params.name === 'string' &&
+      isCloudTool(params.name)
+    ) {
+      const rawArgs = params.arguments
+      const args =
+        typeof rawArgs === 'object' && rawArgs !== null && !Array.isArray(rawArgs)
+          ? (rawArgs as Record<string, unknown>)
+          : {}
+      const id = req.id ?? null
+      return callToolAsync(params.name, args, ctx).then((result) =>
+        ok(id, {
+          content: [{ type: 'text', text: result.text }],
+          isError: result.isError === true,
+        })
+      )
+    }
+  }
+  return handleMessage(message, ctx)
+}
+
+/** Parse and handle one newline-delimited frame. Synchronous: the offline
+ *  path, as it always was. The stdio reader uses `respondToFrame`. */
 export function handleFrame(line: string, ctx: ToolContext): JsonRpcResponse | null {
   let parsed: unknown
   try {
@@ -127,6 +167,20 @@ export function handleFrame(line: string, ctx: ToolContext): JsonRpcResponse | n
     return fail(null, PARSE_ERROR, 'invalid JSON')
   }
   return handleMessage(parsed, ctx)
+}
+
+/** One frame, the Cloud tools included. */
+export function respondToFrame(
+  line: string,
+  ctx: ToolContext
+): JsonRpcResponse | null | Promise<JsonRpcResponse> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return fail(null, PARSE_ERROR, 'invalid JSON')
+  }
+  return respond(parsed, ctx)
 }
 
 /** Accumulates stdin chunks and emits one response per complete line. Kept
@@ -146,8 +200,9 @@ export class FrameReader {
       const line = this.buffer.slice(0, index).trim()
       this.buffer = this.buffer.slice(index + 1)
       if (line.length === 0) continue
-      const response = handleFrame(line, this.ctx)
-      if (response !== null) this.send(response)
+      const response = respondToFrame(line, this.ctx)
+      if (response instanceof Promise) void response.then((r) => this.send(r))
+      else if (response !== null) this.send(response)
     }
   }
 }

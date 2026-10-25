@@ -7,7 +7,9 @@ export * from './wording.js'
 export * from './maps.js'
 export * from './keys.js'
 export * from './projects.js'
+export * from './status.js'
 export {
+  personalMapsKeyExpiry,
   personalMapsKeyPath,
   readPersonalMapsKey,
   removePersonalMapsKey,

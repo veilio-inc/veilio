@@ -145,6 +145,22 @@ export function readPersonalMapsKey(
   }
 }
 
+/** Until when the key on disk for this sign-in lasts, or null when there is
+ *  none to use. Never the key itself: this is for saying "unlocked until". */
+export function personalMapsKeyExpiry(
+  binding: { instance: string; account: string },
+  home: string = homedir(),
+  now: Date = new Date()
+): string | null {
+  if (!readPersonalMapsKey(binding, home, now)) return null
+  try {
+    return (JSON.parse(readFileSync(personalMapsKeyPath(home), 'utf8')) as StoredPersonalMapsKey)
+      .expiresAt
+  } catch {
+    return null
+  }
+}
+
 /** Write it, readable only by this user. `chmod` after, as `writeCredential`
  *  does, because `mode` applies only to a file being created. */
 export function writePersonalMapsKey(
