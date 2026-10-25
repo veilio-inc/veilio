@@ -666,8 +666,44 @@ const KNOWN_DUMMY = new Set([
  */
 type ValueVerdict = 'placeholder' | 'ambiguous' | 'credential'
 
-function classifyValue(value: string, assignmentShaped: boolean): ValueVerdict {
+/** The shortest value each assignment rule matches on its own. */
+const ASSIGNMENT_MINIMUM: Partial<Record<SecretType, number>> = {
+  'password-assignment': 6,
+  'high-entropy-string': 24,
+}
+
+let veilioTokens: RegExp | null = null
+/** Veilio's own tokens, complete and of a known kind: a redaction token this
+ *  module writes (`__REDACTED_CREDENTIAL_1__`), the one the guard writes for a
+ *  regulated number it cannot mask (`__REDACTED_IBAN__`), and a symbol-map
+ *  placeholder (`__VAR__12`). Built on first use, after TYPE_TOKENS exists. */
+function tokenPattern(): RegExp {
+  if (!veilioTokens) {
+    const bases = [...new Set(Object.values(TYPE_TOKENS))].join('|')
+    veilioTokens = new RegExp(
+      `__REDACTED_(?:${bases})_\\d+__|__REDACTED_(?:IBAN|PAYMENT_CARD|PESEL)__|__(?:CLS|FN|VAR|PKG|STR|MANUAL|IBAN|PAN|PESEL)__\\d+`,
+      'g'
+    )
+  }
+  veilioTokens.lastIndex = 0
+  return veilioTokens
+}
+
+function classifyValue(value: string, type: SecretType, assignmentShaped: boolean): ValueVerdict {
   const trimmed = value.trim()
+  // Veilio's own tokens carry no secret (guard follow-up d03a): text the guard
+  // already redacted is scanned again before it is sent, and the token read as
+  // a credential withheld every result from a file of sample credentials.
+  // What is left once they are removed is judged; nothing, or less than the
+  // rule matches on its own (a residue of a longer secret), is a placeholder.
+  // The structural rules (a connection string) take any remainder as a
+  // password, since nothing else can sit there.
+  const rest = trimmed.replace(tokenPattern(), '')
+  if (rest !== trimmed) {
+    const minimum = (assignmentShaped && ASSIGNMENT_MINIMUM[type]) || 1
+    if (rest.length < minimum) return 'placeholder'
+    return classifyValue(rest, type, assignmentShaped)
+  }
   if (KNOWN_DUMMY.has(trimmed.toLowerCase())) return 'placeholder'
   // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
   // case-insensitively against the ORIGINAL — lowercasing first would stop
@@ -789,7 +825,7 @@ function collectMatches(code: string): RawMatch[] {
       // timestamp, version and port in the file. An unconfirmed candidate is not
       // a finding at all: it never reaches the panel, the policy, or the map.
       if (pattern.validate !== undefined && !pattern.validate(value)) continue
-      let verdict = classifyValue(value, assignmentShaped)
+      let verdict = classifyValue(value, pattern.type, assignmentShaped)
       if (verdict === 'placeholder') continue
       // Assignment-shaped findings also get an entropy check: `password: "the
       // user's password"` in prose is not a credential. Patterned filler such as

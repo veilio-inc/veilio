@@ -204,3 +204,26 @@ test('a map built before the engine kept length: a source Read leaves .length as
   const out: any = await $.tool.call(eventOf(read))
   expect(out.result.file.content).toBe('const n = __VAR__2.length\n')
 })
+
+// Guard follow-up d03a: a file of sample credentials (a secret detector and its
+// tests) was redacted, then the last scan read the redaction tokens as
+// credentials and withheld every edit to it.
+test('an edit to a file of sample credentials: redacted, and the result is sent', async ($, on) => {
+  const edit = recorded('Edit')
+  const samples = [
+    "const kinds = { 'google-api-key': 'GOOGLE_KEY', 'password-assignment': 'CREDENTIAL' }",
+    'export const fixture = { password: "Tr0ub4dor3xzQ" }',
+    'const url = "postgres://admin:Tr0ub4dor3xz@db.internal:5432/prod"',
+  ].join('\n')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  on('tool.call', () => ({ ...edit.r, result: { ...edit.r.result, originalFile: samples } }))
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: '__VAR__1',
+    new_string: '__VAR__1',
+  })
+  expect(out.deny).toBeUndefined()
+  const sent = JSON.stringify(out.result)
+  expect(sent).not.toContain('Tr0ub4dor3xz')
+  expect(sent).toContain('__REDACTED_')
+})
