@@ -373,3 +373,24 @@ test('a credential in a field the guard has no row for is redacted, not only cau
   expect(out.deny).toBeUndefined()
   expect(JSON.stringify(out)).not.toContain('Tr0ub4dor3xzQ')
 })
+
+// Security review of 28414f4: a scan redacts the occurrence it matched in
+// context; the same value elsewhere, bare, must go too.
+test('a credential that appears twice, once with its key and once bare, is redacted in both', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const stdout = 'password="xk9mq2vlp7rzq"\nretrying login with xk9mq2vlp7rzq (attempt 2)\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  // Not shaped like a name, so nothing but the redaction would hide it.
+  expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rzq')
+})
+
+test('a credential repeated bare in a typed prompt is redacted in both places', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = 'DB_PASSWORD = "xk9mq2vlp7rz"\nthe URL is postgres://app@db/x?pw=xk9mq2vlp7rz'
+  const out: any = await $.prompt.attachment({ type: 'edited_text_file', text })
+  expect(out.text).not.toContain('xk9mq2vlp7rz')
+})

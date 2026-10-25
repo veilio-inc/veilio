@@ -232,6 +232,31 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
     .join('')
 }
 
+/** The scan's redacted text, with every other occurrence of each value it
+ *  destroyed removed too: a rule matches a credential in its context (after
+ *  its key), and the same value elsewhere, bare, is the same secret (security
+ *  review of 28414f4). Values come from the text as written; one of fewer
+ *  than six characters is left to the rule, since removed everywhere it would
+ *  take ordinary words with it. */
+function sweep(text: string, scan: ReturnType<typeof scanSecrets>): string {
+  let out = scan.code
+  const destroyed = scan.findings.filter((f) => f.redacted && f.length >= 6)
+  if (destroyed.length === 0) return out
+  const starts = [0]
+  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+  // Numbered after the scan's own tokens, so two secrets never share one.
+  let n = Math.max(
+    0,
+    ...[...out.matchAll(/__REDACTED_CREDENTIAL_(\d+)__/g)].map((m) => Number(m[1]))
+  )
+  for (const f of destroyed) {
+    const start = (starts[f.line - 1] ?? 0) + f.column - 1
+    const value = text.slice(start, start + f.length)
+    if (out.includes(value)) out = out.split(value).join(`__REDACTED_CREDENTIAL_${++n}__`)
+  }
+  return out
+}
+
 export function applyMap(
   text: string,
   map: SymbolMap,
@@ -246,7 +271,7 @@ export function applyMap(
   // replaced, and nothing the map holds overrides what the scan finds
   // (security review of a162a37).
   const scan = scanSecrets(text, 'redact')
-  let redacted = scan.code
+  let redacted = sweep(text, scan)
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
   // token and the residue together. Only after a pass that redacted something.
