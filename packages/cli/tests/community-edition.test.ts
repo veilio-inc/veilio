@@ -94,7 +94,10 @@ describe('every Veilio Cloud command refuses with the way in', () => {
     [['maps', 'push', 'billing', '--team']],
     [['maps', 'pull', 'map-1']],
     [['maps', 'rm', 'map-1']],
+    [['maps', 'update', 'map-1']],
+    [['maps', 'update', 'map-1', '--allow-drop']],
     [['team', 'unlock']],
+    [['vault', 'unlock']],
     [['rules', 'pull']],
   ])('%j answers "not signed in", names veilio login, and writes nothing', async (argv) => {
     const r = await run(argv)
@@ -108,6 +111,7 @@ describe('every Veilio Cloud command refuses with the way in', () => {
     [['whoami'], /not signed in/i],
     [['logout'], /not signed in/i],
     [['team', 'lock'], /no team keys were unlocked/i],
+    [['vault', 'lock'], /no personal-maps key was unlocked/i],
   ])('%j answers politely with exit 0', async (argv, answer) => {
     const r = await run(argv)
     expect(r.code).toBe(EXIT_OK)

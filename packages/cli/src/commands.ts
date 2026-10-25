@@ -506,6 +506,11 @@ COMMANDS
                        and keep them on this machine (7 days), so team maps -
                        and the MCP server's shared namespace - work unattended.
   team lock            Remove the unlocked team keys from this machine.
+  vault unlock         Unlock the personal-maps key with the vault passphrase
+                       and keep only that key here (7 days), so personal maps -
+                       and the MCP server's map tools - work without a
+                       passphrase. Re-seals older personal maps under it.
+  vault lock           Remove the personal-maps key from this machine.
   rules pull           Fetch this account's custom rules (personal and team).
                        \`scrub\` then applies them offline, as the web app does.
 
@@ -520,6 +525,7 @@ OPTIONS
                           nothing and exit 1 if a placeholder would be left
       --keep-docs         restore: keep JSDoc blocks the model wrote
   -f, --force             Allow a map write that would drop existing entries
+      --days <n>          vault unlock, team unlock: keep the key n days (1-30)
       --allow-drop        maps update: allow dropping entries the Cloud map has
   -q, --quiet             Suppress the all-clear summary (findings always show)
       --instance <url>    login: the Veilio instance to sign in to. Defaults to

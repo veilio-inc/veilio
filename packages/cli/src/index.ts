@@ -13,6 +13,8 @@ import {
   runMapsUpdate,
   runTeamUnlock,
   runTeamLock,
+  runVaultUnlock,
+  runVaultLock,
   runRulesPull,
   teamLayerFor,
   teamNamespaceForScrub,
@@ -84,11 +86,22 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       case 'team': {
         switch (args.teamAction) {
           case 'unlock':
-            return await runTeamUnlock(io)
+            return await runTeamUnlock(io, args.days ?? undefined)
           case 'lock':
             return runTeamLock(io)
           default:
             io.stderr('veilio: team needs an action — unlock or lock.\n')
+            return EXIT_ERROR
+        }
+      }
+      case 'vault': {
+        switch (args.vaultAction) {
+          case 'unlock':
+            return await runVaultUnlock(io, args.days ?? undefined)
+          case 'lock':
+            return runVaultLock(io)
+          default:
+            io.stderr('veilio: vault needs an action — unlock or lock.\n')
             return EXIT_ERROR
         }
       }

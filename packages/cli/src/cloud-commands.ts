@@ -49,6 +49,8 @@ import {
   type ClientContext,
 } from './client/maps.js'
 import { renderRefusal, type Refusal } from './client/wording.js'
+import { vaultLock, vaultUnlock } from './client/keys.js'
+import { personalMapsKeyPath, removePersonalMapsKey } from './client/personal-maps-key.js'
 import { VERSION } from './version.js'
 
 /** The endpoint a sign-in is checked against. See `runLogin`. */
@@ -315,6 +317,7 @@ export async function runLogout(io: Io): Promise<number> {
       // branch where signing out quietly kept the more dangerous half.
       try {
         removeTeamUnlock(io.home)
+        removePersonalMapsKey(io.home)
         removeRules(io.home)
         removeCredential(io.home)
       } catch (removeErr) {
@@ -346,6 +349,16 @@ export async function runLogout(io: Io): Promise<number> {
     io.stderr(
       `veilio: the session was revoked, but the unlocked team keys could not be removed ` +
         `(${err instanceof Error ? err.message : String(err)}). Delete ${teamUnlockPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  // The personal-maps key, for the same reason as the team keys.
+  try {
+    removePersonalMapsKey(io.home)
+  } catch (err) {
+    io.stderr(
+      `veilio: the session was revoked, but the unlocked personal-maps key could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). Delete ${personalMapsKeyPath(io.home)} by hand.\n`
     )
     return EXIT_ERROR
   }
@@ -787,6 +800,56 @@ export function runTeamLock(io: Io): number {
     return EXIT_ERROR
   }
   io.stdout('Team keys locked.\n')
+  return EXIT_OK
+}
+
+// ─── vault: unlock, lock ─────────────────────────────────────────────────────
+
+/**
+ * Unlock the personal-maps key for processes that cannot ask for a passphrase
+ * (spec 052 FR-011). See `client/keys.ts` for what is kept: that key, and
+ * nothing else the vault protects.
+ */
+export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
+  const unlocked = await vaultUnlock(clientContext(io), { days })
+  if (!unlocked.ok) return refused(unlocked.refusal, io)
+  const u = unlocked.value
+  io.stdout(
+    `${u.created ? 'Created and unlocked' : 'Unlocked'} the personal-maps key until ${u.expiresAt}.\n` +
+      `Stored in ${u.path}, readable only by you. It opens your personal maps and nothing else; ` +
+      'the vault passphrase and key were not kept. Run `veilio vault lock` to remove it.\n' +
+      (u.resealed > 0
+        ? `Re-sealed ${u.resealed} personal map${u.resealed === 1 ? '' : 's'} under it, so the MCP server can open ${u.resealed === 1 ? 'it' : 'them'}.\n`
+        : '')
+  )
+  if (u.failed.length > 0) {
+    io.stderr(
+      `veilio: ${u.failed.length} personal map${u.failed.length === 1 ? '' : 's'} could not be re-sealed and ` +
+        `${u.failed.length === 1 ? 'is' : 'are'} still under the vault key, which the MCP server cannot open:\n` +
+        u.failed.map((f) => `  "${f.name}" (${f.id}): ${f.reason}\n`).join('') +
+        'Run `veilio vault unlock` again to retry them; the key itself is unlocked.\n'
+    )
+    return EXIT_ERROR
+  }
+  return EXIT_OK
+}
+
+/** Remove the personal-maps key from this machine. */
+export function runVaultLock(io: Io): number {
+  try {
+    if (!vaultLock(clientContext(io))) {
+      io.stdout('No personal-maps key was unlocked.\n')
+      return EXIT_OK
+    }
+  } catch (err) {
+    io.stderr(
+      `veilio: the personal-maps key could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). ` +
+        `Delete ${personalMapsKeyPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  io.stdout('Personal-maps key locked.\n')
   return EXIT_OK
 }
 

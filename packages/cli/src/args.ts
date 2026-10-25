@@ -15,6 +15,7 @@ export type Command =
   | 'whoami'
   | 'maps'
   | 'team'
+  | 'vault'
   | 'rules'
   | 'help'
   | 'version'
@@ -84,6 +85,15 @@ export interface ParsedArgs {
    * keys rather than the account or the local store.
    */
   teamAction: 'unlock' | 'lock' | null
+  /**
+   * `vault unlock` / `vault lock` (spec 052): the personal-maps key, kept on
+   * this machine so personal maps open without a passphrase - for the MCP
+   * server above all. `vault`, not `team`: it is the account's own key.
+   */
+  vaultAction: 'unlock' | 'lock' | null
+  /** `vault unlock --days N`, `team unlock --days N`: how long the unlock
+   *  lasts. Null: the default, 7 days. */
+  days: number | null
   /** `rules pull`. */
   rulesAction: 'pull' | null
 
@@ -109,6 +119,7 @@ const COMMANDS = new Set<Command>([
   'whoami',
   'maps',
   'team',
+  'vault',
   'rules',
   'help',
   'version',
@@ -126,6 +137,7 @@ export const CLOUD_COMMANDS = new Set<Command>([
   'whoami',
   'maps',
   'team',
+  'vault',
   'rules',
 ])
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
@@ -158,6 +170,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     mapsAction: null,
     allowDrop: false,
     teamAction: null,
+    vaultAction: null,
+    days: null,
     rulesAction: null,
   }
 
@@ -200,6 +214,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
           throw new UsageError(`unknown team action "${verb}" — expected unlock or lock`)
         }
         parsed.teamAction = verb
+        i = 2
+      }
+    }
+
+    if (parsed.command === 'vault') {
+      const verb = argv[1]
+      if (verb !== undefined && !verb.startsWith('-')) {
+        if (verb !== 'unlock' && verb !== 'lock') {
+          throw new UsageError(`unknown vault action "${verb}" — expected unlock or lock`)
+        }
+        parsed.vaultAction = verb
         i = 2
       }
     }
@@ -281,6 +306,16 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '--force':
         parsed.force = true
         break
+      case '--days': {
+        const value = requireValue(arg, argv[++i])
+        // Whole days, and not for ever: what is kept is key material, and a
+        // forgotten unlock should run out on its own.
+        if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 30) {
+          throw new UsageError(`--days must be a whole number from 1 to 30 (got "${value}")`)
+        }
+        parsed.days = Number(value)
+        break
+      }
       case '--allow-drop':
         parsed.allowDrop = true
         break

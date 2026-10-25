@@ -134,6 +134,8 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
+    --days <n>          vault unlock, team unlock: keep the key for n days
+                        (1 to 30; 7 by default)
     --allow-drop        maps update: allow dropping entries the Cloud map has
                         and the local map does not
     --device            login: sign in through a browser instead of typing a

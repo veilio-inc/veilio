@@ -5,6 +5,7 @@
 
 export * from './wording.js'
 export * from './maps.js'
+export * from './keys.js'
 export {
   personalMapsKeyPath,
   readPersonalMapsKey,

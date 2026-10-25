@@ -273,6 +273,7 @@ export class FakeCloud {
         return json(201, { ok: true })
       }
     }
+    if (path === '/api/auth/logout' && method === 'POST') return new Response(null, { status: 204 })
     if (path === '/api/projects') {
       if (!this.teamId) return json(200, { projects: [], teamId: null })
       return json(200, {
