@@ -134,7 +134,7 @@ export async function runDeviceLogin(base: string, io: Io): Promise<number> {
       // exactly as it was (FR-010).
       const account = await accountFor(base, token, io)
       if (account === null) return EXIT_ERROR
-      writeCredential({ token, account, instance: base }, io.home)
+      writeCredential(keptProject({ token, account, instance: base }, io), io.home)
       io.stdout(`Signed in to ${base} as ${account}\n`)
       return EXIT_OK
     } catch (err) {
@@ -166,6 +166,27 @@ export async function runDeviceLogin(base: string, io: Io): Promise<number> {
       }
     }
   }
+}
+
+/**
+ * A new sign-in keeps the project chosen under the previous one only when it
+ * is the same account on the same instance (spec 052, founder 2026-10-25).
+ * A project id from another account or instance means nothing here, and
+ * keeping it would point every team map call at somebody else's choice. It is
+ * dropped, and that is said, so nobody wonders why they are back to every
+ * project's maps.
+ */
+function keptProject(next: Credential, io: Io): Credential {
+  const prior = readCredential(io.home)
+  if (!prior?.project) return next
+  if (prior.instance === next.instance && prior.account === next.account) {
+    return { ...next, project: prior.project }
+  }
+  io.stderr(
+    `veilio: project ${prior.project} was chosen for ${prior.account} on ${prior.instance}, so it does not ` +
+      'carry over to this sign-in. Run `veilio projects use <name>` to choose one.\n'
+  )
+  return next
 }
 
 /** Who the new session belongs to, asked of the server rather than assumed. */
@@ -284,7 +305,7 @@ export async function runLogin(
     return reportLoginFailure(err, io)
   }
 
-  writeCredential(credential, io.home)
+  writeCredential(keptProject(credential, io), io.home)
   io.stdout(`Signed in to ${base} as ${credential.account}\n`)
   return EXIT_OK
 }
