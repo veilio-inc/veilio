@@ -141,13 +141,7 @@ export declare function destroysValue(type: SecretType): boolean;
  */
 export declare function blocksPaste(type: SecretType): boolean;
 /** Detect credentials in `code` without modifying it. */
-export declare function detectSecrets(code: string, options?: ScanOptions): SecretFinding[];
-/** What a caller that already masked the text knows about it. */
-export interface ScanOptions {
-    /** Placeholders of the caller's symbol map. A value that is exactly one of
-     *  them is not a credential; one with anything beside it is judged as text. */
-    knownPlaceholders?: ReadonlySet<string>;
-}
+export declare function detectSecrets(code: string): SecretFinding[];
 /**
  * Detect credentials and, under the `redact` policy, replace critical/high
  * findings with `__REDACTED_<TYPE>_<n>__` tokens.
@@ -157,7 +151,7 @@ export interface ScanOptions {
  * never written to the SymbolMap, `restore()` leaves it in place — the redaction
  * is one-way by construction, not by convention.
  */
-export declare function scanSecrets(code: string, policy?: SecretPolicy, options?: ScanOptions): SecretScan;
+export declare function scanSecrets(code: string, policy?: SecretPolicy): SecretScan;
 /** True when the scan found anything that should stop a user from pasting. */
 export declare function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean;
 /** Count findings by severity, for badges and audit records. */

@@ -323,7 +323,7 @@ test('a project name written against a redacted key is still masked', async ($, 
   expect(JSON.stringify(out)).not.toContain('MIIEowIBAAKCAQEA')
 })
 
-test('a regulated number used as a key reads as in a Read: masked, not destroyed', async ($, on) => {
+test('a regulated number in a credential slot is destroyed as written, and the result is sent', async ($, on) => {
   const bash = recorded('Bash')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __IBAN__1: 'GB82WEST12345698765432' }),
@@ -331,6 +331,45 @@ test('a regulated number used as a key reads as in a Read: masked, not destroyed
   const stdout = 'api_key = "GB82WEST12345698765432"\n'
   on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
   const out: any = await $.tool.call(eventOf(bash))
+  // As written it is a credential, and that finding stands (security review of a162a37).
   expect(out.deny).toBeUndefined()
-  expect(out.result.stdout).toContain('"__IBAN__1"')
+  expect(JSON.stringify(out)).not.toContain('GB82WEST12345698765432')
+  expect(out.result.stdout).toContain('__REDACTED_')
+})
+
+// Security review of a162a37: credentials are found in the text as written,
+// before any name is replaced, and nothing the map knows overrides that.
+test('a short connection-string password under a mapped user is redacted', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__5: 'ledger_user' }) })
+  const stdout = 'DATABASE_URL=postgres://ledger_user:x9Q@db.internal:5432/prod\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('x9Q@')
+  expect(JSON.stringify(out)).not.toContain('ledger_user')
+})
+
+test('a credential that reads as one as written stays destroyed, whatever the map holds', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'disabled' }) })
+  // As written, this value has the entropy of key material: it is destroyed,
+  // though it is spelled like one of the map's placeholders.
+  const stdout = 'password = "__VAR__1290"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('__VAR__1290')
+  expect(JSON.stringify(out)).toContain('__REDACTED_')
+})
+
+test('a credential in a field the guard has no row for is redacted, not only caught', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const note = 'exit 1: password = "Tr0ub4dor3xzQ"'
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, returnCodeInterpretation: note },
+  }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain('Tr0ub4dor3xzQ')
 })

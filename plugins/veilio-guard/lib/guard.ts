@@ -644,15 +644,28 @@ export class Guard {
               .join('\n')
           : fn(s, ctx)
       const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      // What a field pass already scanned for credentials, as written: the
+      // pass over every string only replaces the names the map has since
+      // learned there. Scanned again, the masked text would be judged as text,
+      // and a placeholder that looks like key material destroyed.
+      const scanned = new Set<string>()
+      const once = (s: string) => {
+        const out = apply(s)
+        scanned.add(out)
+        return out
+      }
+      const again = (s: string) =>
+        scanned.has(s) ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true })) : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
       else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
-            if (field.mode === 'apply') return apply(s)
+            if (field.mode === 'apply') return once(s)
             const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
+            scanned.add(scrubbed.text)
             return scrubbed.text
           })
           if (!r.ok)
@@ -664,7 +677,7 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, apply, new Set(policy.keep))
+        value = deepRewrite(value, again, new Set(policy.keep))
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
