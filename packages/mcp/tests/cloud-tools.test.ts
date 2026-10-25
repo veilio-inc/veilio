@@ -472,3 +472,70 @@ describe('the namespace follows the project while the server runs', () => {
     expect(getNamespace().namespace).toEqual({ __CLS__1: 'Ledger' })
   })
 })
+
+describe('a prime in flight when the project changes (SC-004, security review)', () => {
+  afterEach(() => resetNamespaceCache())
+
+  /** Hold billing's team envelopes until released, so a prime for billing is
+   *  still in flight while the project changes. */
+  function holdBilling(): () => void {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const real = cloud.fetch
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = new URL(url)
+      if (
+        u.pathname === '/api/maps/team-envelopes' &&
+        u.searchParams.get('project') === 'p-billing'
+      )
+        await gate
+      return real(url, init)
+    })
+    return release
+  }
+
+  async function twoProjects(): Promise<void> {
+    resetNamespaceCache()
+    signIn(home, { team: true, project: 'p-billing' })
+    cloud.add({
+      scope: 'team',
+      owner: TEAMMATE,
+      project: 'p-billing',
+      map_data: await sealTeam({ __CLS__4: 'Alpha' }),
+    })
+    cloud.add({
+      scope: 'team',
+      owner: TEAMMATE,
+      project: 'p-tools',
+      map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+    })
+  }
+
+  it('a change during the prime is caught, and none of the old project’s placeholders are used', async () => {
+    await twoProjects()
+    const release = holdBilling()
+    const billing = primeNamespace(home)
+    signIn(home, { team: true, project: 'p-tools' })
+    expect(refreshNamespaceIfStale()).toBe('changed')
+    const during = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    expect(during.text).not.toContain('__CLS__4')
+    release()
+    await billing
+    await namespaceSettled()
+    expect(getNamespace().namespace).toEqual({ __CLS__5: 'Gamma' })
+    const after = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    expect(after.text).not.toContain('__CLS__4')
+  })
+
+  it('a prime that finishes after the project changed is discarded', async () => {
+    await twoProjects()
+    const release = holdBilling()
+    const billing = primeNamespace(home)
+    // Changed on disk, and nothing has asked yet.
+    signIn(home, { team: true, project: 'p-tools' })
+    release()
+    await billing
+    expect(getNamespace().namespace).not.toHaveProperty('__CLS__4')
+    expect(getNamespace().source).toBe('local')
+  })
+})
