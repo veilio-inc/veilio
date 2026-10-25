@@ -15,11 +15,8 @@
 // maps, and nothing else the vault protects.
 
 import {
-  checkVaultVerifier,
   decryptMapFromVault,
-  deriveVaultKey,
   encryptMapForVault,
-  fromBase64,
   parseVaultEnvelope,
   toBase64,
   type CryptoKeyLike,
@@ -28,7 +25,6 @@ import {
   CloudError,
   getMap,
   getPersonalMapsKeyWrap,
-  getVault,
   listMaps,
   putPersonalMapsKeyWrap,
   updateMapContent,
@@ -44,6 +40,7 @@ import {
   wrapPersonalMapsKey,
   writePersonalMapsKey,
 } from './personal-maps-key.js'
+import { vaultKeyFor } from './vault-key.js'
 import { refuse, refusalFromCloudError, type Outcome } from './wording.js'
 import type { ClientContext } from './maps.js'
 
@@ -70,23 +67,9 @@ export async function vaultUnlock(
     refusal: refusalFromCloudError(err, { project: credential.project }),
   })
 
-  let vault
-  try {
-    vault = await getVault(credential)
-  } catch (err) {
-    return fail(err)
-  }
-  if (!vault.initialized) return refuse('no_vault')
-  const passphrase = await ctx.passphrase()
-  if (passphrase === '') return refuse('no_passphrase')
-  const vaultKey = await deriveVaultKey(
-    passphrase,
-    fromBase64(vault.salt),
-    vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-  )
-  // Before anything is created, uploaded or written: a key wrapped under the
-  // wrong passphrase would be stored for good (PUT never replaces one).
-  if (!(await checkVaultVerifier(vaultKey, vault.verifier))) return refuse('wrong_passphrase')
+  const derived = await vaultKeyFor(credential, ctx.passphrase)
+  if (!derived.ok) return derived
+  const vaultKey = derived.value
 
   let raw: Uint8Array
   let created = false

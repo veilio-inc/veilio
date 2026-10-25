@@ -22,13 +22,10 @@
 // person is present to type it (the CLI), the vault passphrase.
 
 import {
-  checkVaultVerifier,
   decryptMapFromVault,
   decryptTeamMapWithAny,
-  deriveVaultKey,
   encryptMapForVault,
   encryptTeamMap,
-  fromBase64,
   importTeamKey,
   parseVaultEnvelope,
   type CryptoKeyLike,
@@ -41,7 +38,6 @@ import {
   deleteMap,
   getMap,
   getPersonalMapsKeyWrap,
-  getVault,
   listMaps,
   listProjects,
   updateMapContent,
@@ -57,6 +53,7 @@ import {
   readPersonalMapsKey,
   unwrapPersonalMapsKey,
 } from './personal-maps-key.js'
+import { vaultKeyFor } from './vault-key.js'
 import { refuse, refusalFromCloudError, type Outcome, type Refusal } from './wording.js'
 
 export interface ClientContext {
@@ -154,26 +151,9 @@ async function personalKeys(
   if (stored) return ok({ pmk: await importPersonalMapsKey(stored), vault: null })
   if (!ctx.passphrase) return refuse('vault_locked')
 
-  let vault
-  try {
-    vault = await getVault(credential)
-  } catch (err) {
-    return cloudRefusal(err, credential)
-  }
-  // Stated plainly rather than as a decryption failure: there is nothing to
-  // try a passphrase against.
-  if (!vault.initialized) return refuse('no_vault')
-
-  const passphrase = await ctx.passphrase()
-  if (passphrase === '') return refuse('no_passphrase')
-  const vaultKey = await deriveVaultKey(
-    passphrase,
-    fromBase64(vault.salt),
-    vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-  )
-  // Named as a wrong passphrase here, rather than surfacing later as an
-  // authentication-tag failure that reads like corruption.
-  if (!(await checkVaultVerifier(vaultKey, vault.verifier))) return refuse('wrong_passphrase')
+  const derived = await vaultKeyFor(credential, ctx.passphrase)
+  if (!derived.ok) return derived
+  const vaultKey = derived.value
 
   // The account's personal-maps key, if the server holds one. An instance
   // that predates spec 052 has no such route; that is "no key yet", and
@@ -239,6 +219,8 @@ async function openPersonal(
 }
 
 interface TeamKeys {
+  /** The team these keys were unlocked for. */
+  teamId: string
   all: { version: number; key: CryptoKeyLike }[]
   newest: { version: number; key: CryptoKeyLike }
 }
@@ -272,7 +254,7 @@ async function teamKeys(credential: Credential, ctx: ClientContext): Promise<Out
       continue
     }
   }
-  return ok({ all, newest: { version: newestStored.version, key: newest } })
+  return ok({ teamId: unlock.teamId, all, newest: { version: newestStored.version, key: newest } })
 }
 
 async function openTeam(
@@ -295,6 +277,20 @@ function isTeamEnvelope(mapData: string): boolean | null {
     return (JSON.parse(mapData) as { alg?: unknown }).alg === 'AES-256-GCM-TEAM'
   } catch {
     return null
+  }
+}
+
+/** The team this account acts for, as the listing says. */
+async function actingTeam(credential: Credential): Promise<Outcome<string | null>> {
+  try {
+    return ok((await listMaps(credential)).team?.id ?? null)
+  } catch (err) {
+    // Not knowing the team is not knowing whether this map is safe to publish.
+    const detail =
+      err instanceof CloudError
+        ? `${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`
+        : String(err)
+    return refuse('team_maps_unreadable', { detail })
   }
 }
 
@@ -518,6 +514,15 @@ export async function createCloudMap(
   if (opts.scope === 'team') {
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
+    // Keys unlocked for a team this account has since left - or another
+    // team entirely - must never seal a map for this one: the team could not
+    // read it, and whoever holds that other key could. Checked HERE, at the
+    // key, the way the namespace read checks it - not left to the namespace
+    // read, which an older instance answers with no key at all (code review).
+    const team = await actingTeam(credential)
+    if (!team.ok) return team
+    if (team.value === null) return refuse('not_in_team')
+    if (team.value !== keys.value.teamId) return refuse('team_key_mismatch')
     const check = await checkAgainstTeam(ctx, credential, map)
     if (!check.ok) return check
     // Nothing above this line has sent anything.
@@ -627,6 +632,16 @@ export async function updateCloudMap(
       return refuse('map_not_in_project', { id, project: await projectName(credential) })
     }
     return refuse('map_not_found', { id })
+  }
+
+  // A team map: the keys on this machine must be THIS team's before the map
+  // is even read (security review) - a key from a team this account has left
+  // must never seal or open anything for this one.
+  const summary = list.personalMaps.find((m) => m.id === id)!
+  if (summary.scope === 'team') {
+    const keys = await teamKeys(credential, ctx)
+    if (!keys.ok) return keys
+    if (list.team?.id !== keys.value.teamId) return refuse('team_key_mismatch')
   }
 
   let remote: CloudMap
@@ -747,9 +762,14 @@ export async function removeCloudMap(
   if (!credential) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
 
+  // The name from the listing, not from the map: downloading a whole
+  // envelope to read one label was a round trip and a server-side decrypt
+  // for nothing (code review). Not listed - another project's team map, or
+  // the listing failing - leaves the id as all there is to report.
   let name: string | null
   try {
-    name = (await getMap(credential, id)).name || null
+    const list = await listMaps(credential)
+    name = [...list.personalMaps, ...list.teamMaps].find((m) => m.id === id)?.name || null
   } catch {
     name = null
   }

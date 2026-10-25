@@ -12,22 +12,13 @@ import {
   startDeviceLogin,
   exchangeDeviceCode,
   reservePlaceholders,
-  getVault,
   getUserKeys,
   getTeamKeyWraps,
   listMaps,
   listRules,
   request,
 } from './cloud.js'
-import {
-  checkVaultVerifier,
-  deriveVaultKey,
-  unwrapPrivateKey,
-  unwrapTeamKey,
-  exportTeamKey,
-  fromBase64,
-  type TeamLayer,
-} from '@veilio-inc/engine'
+import { unwrapPrivateKey, unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   removeTeamUnlock,
@@ -50,6 +41,7 @@ import {
 } from './client/maps.js'
 import { renderRefusal, type Refusal } from './client/wording.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
+import { vaultKeyFor } from './client/vault-key.js'
 import { listTeamProjects, useProject } from './client/projects.js'
 import { personalMapsKeyPath, removePersonalMapsKey } from './client/personal-maps-key.js'
 import { VERSION } from './version.js'
@@ -729,32 +721,9 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
       return EXIT_ERROR
     }
 
-    const vault = await getVault(credential)
-    if (!vault.initialized) {
-      io.stderr(
-        'veilio: this account has no vault, so there is no key to unwrap anything with. ' +
-          'Create one in the web app first.\n'
-      )
-      return EXIT_ERROR
-    }
-
-    const passphrase = io.password ? await io.password('Vault passphrase: ') : ''
-    if (passphrase === '') {
-      io.stderr('veilio: no passphrase given\n')
-      return EXIT_ERROR
-    }
-
-    const vaultKey = await deriveVaultKey(
-      passphrase,
-      fromBase64(vault.salt),
-      vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-    )
-    // Named as a wrong passphrase here rather than surfacing later as an
-    // authentication-tag failure that reads like corruption.
-    if (!(await checkVaultVerifier(vaultKey, vault.verifier))) {
-      io.stderr('veilio: that vault passphrase is not right. Nothing was written.\n')
-      return EXIT_ERROR
-    }
+    const derived = await vaultKeyFor(credential, clientContext(io).passphrase)
+    if (!derived.ok) return refused(derived.refusal, io)
+    const vaultKey = derived.value
 
     const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
 

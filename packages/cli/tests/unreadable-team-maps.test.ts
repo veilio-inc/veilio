@@ -139,3 +139,57 @@ describe('maps the server itself cannot read', () => {
     expect(cloud.requests.filter((x) => x.method === 'POST')).toHaveLength(0)
   })
 })
+
+describe('team keys unlocked for another team (security)', () => {
+  it('are refused before anything is sealed, even where the namespace needs no key', async () => {
+    // An older instance merges the namespace server-side, so the namespace
+    // read never checks the key: the key step must.
+    const { writeTeamUnlock } = await import('../src/team-unlock.js')
+    const { toBase64 } = await import('@veilio-inc/engine')
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: 'https://veilio.test',
+        account: 'me@example.test',
+        teamId: 'team-previous',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: [{ version: 1, key: toBase64(new Uint8Array(32).fill(8)) }],
+      },
+      home
+    )
+    cloud.legacyNamespace = { __CLS__3: 'Shared' }
+    const r = await run(['maps', 'push', '--team', 'mine'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(/does not match this team/)
+    expect(cloud.requests.filter((x) => x.method === 'POST')).toHaveLength(0)
+  })
+
+  it('an update with them is refused at the key, too', async () => {
+    const mine = cloud.add({
+      scope: 'team',
+      name: 'mine',
+      map_data: await sealTeam({ __CLS__1: 'Ledger' }),
+    })
+    const { writeTeamUnlock } = await import('../src/team-unlock.js')
+    const { toBase64 } = await import('@veilio-inc/engine')
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: 'https://veilio.test',
+        account: 'me@example.test',
+        teamId: 'team-previous',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        // The same bytes as this team's key: only the team id tells them apart.
+        keys: [{ version: 1, key: toBase64(new Uint8Array(32).fill(7)) }],
+      },
+      home
+    )
+    saveMap(join(cwd, STORE_DIR, STORE_FILE), { __CLS__1: 'Ledger', __FN__2: 'y' }, { force: true })
+    const r = await run(['maps', 'update', mine.id])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(/does not match this team/)
+    expect(cloud.requests.filter((x) => x.method === 'PATCH')).toHaveLength(0)
+    // Refused before the map itself was even downloaded.
+    expect(cloud.requests.some((x) => x.path === `/api/maps/${mine.id}`)).toBe(false)
+  })
+})

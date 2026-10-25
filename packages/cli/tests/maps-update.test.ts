@@ -352,6 +352,22 @@ describe('a teammate’s write in between (stale version)', () => {
   })
 })
 
+describe('maps rm', () => {
+  it('reads the name from the listing, never downloading the map itself', async () => {
+    signIn(home, { pmk: true })
+    const row = cloud.add({
+      name: 'billing',
+      map_data: await sealPersonal({ __CLS__1: 'A' }, 'pmk'),
+    })
+    const r = await run(['maps', 'rm', row.id])
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toBe(`Removed "billing" (${row.id})\n`)
+    expect(
+      cloud.requests.filter((x) => x.method === 'GET' && x.path === `/api/maps/${row.id}`)
+    ).toHaveLength(0)
+  })
+})
+
 describe('the ordinary refusals', () => {
   it('signed out: the sign-in sentence, and no request', async () => {
     local({ __CLS__1: 'A' })

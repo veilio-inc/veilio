@@ -96,6 +96,8 @@ export class FakeCloud {
   /** Maps whose server-side layer cannot be peeled: left out of
    *  /team-envelopes and reported in its `unreadable`. */
   serverUnreadable = new Set<string>()
+  /** An older instance that merges the team namespace server-side. */
+  legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
   failing = new Set<string>()
   private nextId = 1
@@ -202,6 +204,7 @@ export class FakeCloud {
           : [],
         team: this.teamId ? { id: this.teamId } : null,
         plan: 'team',
+        ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
       })
     }
     if (path === '/api/maps/team-envelopes') {
