@@ -11,13 +11,14 @@
 // read it than it can read the private key; a terminal unwraps it once with the
 // passphrase (`veilio vault unlock`) and keeps ONLY this key, 0600, for 7 days.
 //
-// THE WRAP IS THE BROWSER'S, BYTE FOR BYTE
+// THE WRAP IS THE BROWSER’S, BYTE FOR BYTE
 //
-// `JSON.stringify({ v: 1, alg: 'AES-GCM', iv, data })`, a 12-byte IV, no
-// additional data, the raw 32 key bytes as plaintext: the same envelope the web
-// app's `createKeypair` wraps the private key in (frontend `userKeys.ts`), so
-// either client opens what the other wrote. `personal-maps-key.test.ts` pins it
-// against WebCrypto called directly, not through this file.
+// `JSON.stringify({ v: 1, alg: 'AES-GCM', iv, data })`, a 12-byte IV, the raw
+// 32 key bytes as plaintext, and the additional data "veilio-pmk-wrap-v1": the
+// envelope shape the web app wraps the private key in (frontend `userKeys.ts`),
+// bound to this purpose so neither blob can stand in for the other. The web app
+// writes the same bytes; `vault-unlock.test.ts` pins one shared vector, and a
+// second built with WebCrypto called directly, not through this file.
 //
 // THE FILE
 //
@@ -40,6 +41,14 @@ import {
 export const PMK_FILE = 'personal-maps-key.json'
 export const PMK_BYTES = 32
 const WRAP_ALG = 'AES-GCM'
+/**
+ * Additional authenticated data on the wrap: it binds the blob to its purpose.
+ * The vault key also wraps the account's private key, in the same envelope
+ * shape; without this, a blob wrapped for one purpose would open as the other
+ * (key confusion, cloud security review 2026-10-25). The web app's suite pins
+ * the same bytes with the same vector.
+ */
+const WRAP_AAD = new TextEncoder().encode('veilio-pmk-wrap-v1')
 
 export interface StoredPersonalMapsKey {
   v: 1
@@ -71,13 +80,32 @@ export async function importPersonalMapsKey(raw: Uint8Array): Promise<CryptoKeyL
   ])
 }
 
+/**
+ * WebCrypto with `additionalData` in its types. The engine's own accessor
+ * declares only the IV, because no engine format uses AAD. This one does.
+ */
+function aead(): {
+  encrypt(
+    alg: { name: string; iv: Uint8Array; additionalData: Uint8Array },
+    key: CryptoKeyLike,
+    data: Uint8Array
+  ): Promise<ArrayBuffer>
+  decrypt(
+    alg: { name: string; iv: Uint8Array; additionalData: Uint8Array },
+    key: CryptoKeyLike,
+    data: Uint8Array
+  ): Promise<ArrayBuffer>
+} {
+  return webCryptoSubtle() as unknown as ReturnType<typeof aead>
+}
+
 /** Wrap the PMK under the vault key. `iv` is for the test vector only. */
 export async function wrapPersonalMapsKey(
   vaultKey: CryptoKeyLike,
   raw: Uint8Array,
   iv: Uint8Array = randomBytes(12)
 ): Promise<string> {
-  const data = await webCryptoSubtle().encrypt({ name: WRAP_ALG, iv }, vaultKey, raw)
+  const data = await aead().encrypt({ name: WRAP_ALG, iv, additionalData: WRAP_AAD }, vaultKey, raw)
   return JSON.stringify({ v: 1, alg: WRAP_ALG, iv: toBase64(iv), data: toBase64(data) })
 }
 
@@ -97,8 +125,8 @@ export async function unwrapPersonalMapsKey(
     throw new Error('the stored personal-maps key is not an envelope this client knows')
   }
   const raw = new Uint8Array(
-    await webCryptoSubtle().decrypt(
-      { name: WRAP_ALG, iv: fromBase64(env.iv) },
+    await aead().decrypt(
+      { name: WRAP_ALG, iv: fromBase64(env.iv), additionalData: WRAP_AAD },
       vaultKey,
       fromBase64(env.data)
     )

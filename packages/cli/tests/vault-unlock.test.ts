@@ -106,15 +106,16 @@ async function opensWith(raw: Uint8Array, mapData: string): Promise<SymbolMap | 
   }
 }
 
-describe('the wrap is the browser’s, byte for byte', () => {
-  it('matches WebCrypto called directly: {v:1, alg:"AES-GCM", iv, data} over the raw key', async () => {
+describe('the wrap: AES-GCM under the vault key, bound to its purpose', () => {
+  const AAD = new TextEncoder().encode('veilio-pmk-wrap-v1')
+
+  it('matches WebCrypto called directly: {v:1, alg:"AES-GCM", iv, data}, AAD "veilio-pmk-wrap-v1"', async () => {
     const iv = new Uint8Array(12).fill(4)
     const key = await vaultKey()
     const ours = await wrapPersonalMapsKey(key, PMK_RAW, iv)
-    // The same construction the web app's createKeypair uses for the private
-    // key, built here without this package's code.
+    // Built here without this package's code.
     const ct = await globalThis.crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv, additionalData: AAD },
       key as unknown as CryptoKey,
       PMK_RAW
     )
@@ -123,6 +124,37 @@ describe('the wrap is the browser’s, byte for byte', () => {
     )
     expect(Object.keys(JSON.parse(ours) as object)).toEqual(['v', 'alg', 'iv', 'data'])
     expect(await unwrapPersonalMapsKey(key, ours)).toEqual(PMK_RAW)
+  })
+
+  it('the shared vector: the web app’s suite asserts the same bytes', async () => {
+    const vault = await globalThis.crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(32).fill(1),
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt', 'decrypt']
+    )
+    const wrapped = await wrapPersonalMapsKey(
+      vault,
+      new Uint8Array(32).fill(2),
+      new Uint8Array(12).fill(3)
+    )
+    expect(wrapped).toBe(
+      '{"v":1,"alg":"AES-GCM","iv":"AwMDAwMDAwMDAwMD","data":"+mMWmP2GNWuv/uRlzhsmqroxo0+FzcCwrhK/RKhIhHEiQDcVhjFtXLjZQTREBYtr"}'
+    )
+    expect(await unwrapPersonalMapsKey(vault, wrapped)).toEqual(new Uint8Array(32).fill(2))
+  })
+
+  it('a wrap made without the AAD does not unwrap - another blob under the vault key cannot pass for it', async () => {
+    const iv = new Uint8Array(12).fill(4)
+    const key = await vaultKey()
+    const ct = await globalThis.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key as unknown as CryptoKey,
+      PMK_RAW
+    )
+    const bare = JSON.stringify({ v: 1, alg: 'AES-GCM', iv: toBase64(iv), data: toBase64(ct) })
+    await expect(unwrapPersonalMapsKey(key, bare)).rejects.toThrow()
   })
 
   it('a wrong vault key fails cleanly rather than yielding a key', async () => {
