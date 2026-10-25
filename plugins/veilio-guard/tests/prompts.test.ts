@@ -216,3 +216,40 @@ test('a credential with its key in one context block is removed from the others'
   const out: any = await $.prompt.context(recordedPrompt('prompt.context').e)
   expect(JSON.stringify(out.blocks)).not.toContain('xk9mq2vlp7rz')
 })
+
+// Review of 8aed5e8: what the guard destroys once in a session it removes
+// from everything after, whichever way the text arrives.
+test('a credential in the project instructions is removed from a prompt typed later', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text }
+  })
+  await $.prompt.attachment({ type: 'instructions', text: 'DB_PASSWORD = "xk9mq2vlp7rz"' })
+  await $.prompt.submit({
+    ...recordedPrompt('prompt.submit').e,
+    text: 'use xk9mq2vlp7rz on staging',
+  })
+  expect(sent[0].text).not.toContain('xk9mq2vlp7rz')
+})
+
+test('a credential in a context block masked earlier is removed from the typed prompt', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'DB_PASSWORD = "xk9mq2vlp7rz"' }],
+  }))
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text }
+  })
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  await $.prompt.submit({
+    ...recordedPrompt('prompt.submit').e,
+    text: 'use xk9mq2vlp7rz on staging',
+    context: ctx.blocks.map((b: any) => b.text),
+  })
+  expect(JSON.stringify(sent)).not.toContain('xk9mq2vlp7rz')
+})

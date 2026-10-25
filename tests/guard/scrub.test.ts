@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  Destroyed,
+  redactKnown,
   applyMap,
   restoreArgs,
   scrubSource,
@@ -184,5 +186,42 @@ describe('restoreArgs', () => {
   it('changes nothing else in the text: no comment is stripped', () => {
     const text = '// TODO: keep\n/** doc */\nconst a = __VAR__1\n'
     expect(restoreArgs(text, map).text).toBe('// TODO: keep\n/** doc */\nconst a = settledTotal\n')
+  })
+})
+
+describe('redactKnown', () => {
+  it('a 1 MB base64 blob holding a secret thousands of times is redacted fast and whole', () => {
+    const secret = 'xk9mq2'
+    const chunk = `${secret}AbCdEfGh0123456789+/`
+    const blob = chunk.repeat(Math.ceil(1_000_000 / chunk.length))
+    const started = performance.now()
+    const known = new Destroyed()
+    known.learn([secret])
+    const out = redactKnown(blob, known)
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(out).not.toContain(secret)
+  })
+
+  it('a value that repeats inside itself is found once per occurrence, fast', () => {
+    const known = new Destroyed()
+    known.learn(['a'.repeat(20)])
+    const blob = 'a'.repeat(2_000_000)
+    const started = performance.now()
+    const out = redactKnown(blob, known)
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(out).not.toContain('a'.repeat(20))
+  })
+
+  it('the run-on takes dashes and underscores, as a key does', () => {
+    const known = new Destroyed()
+    known.learn(['abcdef'])
+    expect(redactKnown('x abcdef-12_ y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
+  })
+
+  it('a run-on after a value is taken up to eight characters', () => {
+    const known = new Destroyed()
+    known.learn(['abcdef'])
+    expect(redactKnown('x abcdef12345678 y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
+    expect(redactKnown('x abcdef123456789 y', known)).toBe('x __REDACTED_CREDENTIAL_1001__9 y')
   })
 })

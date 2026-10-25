@@ -503,3 +503,51 @@ test('a bare repeat of a secret a rule only partly took is removed whole', async
   expect(sent).not.toContain('34567890ab')
   expect(sent).not.toContain('wJalrXUtn')
 })
+
+test('one secret gets one token everywhere, and two secrets two tokens', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  on('tool.call', () => ({
+    ...bash.r,
+    result: {
+      ...bash.r.result,
+      stdout: 'password = "Tr0ub4dor3xzQ"\n',
+      stderr: 'api_key = "Zq8vB3nM1kL0pW"\nwarn: Tr0ub4dor3xzQ rejected\n',
+    },
+  }))
+  const out: any = await $.tool.call(eventOf(bash))
+  const a = /"(__REDACTED_[A-Z_]+_\d+__)"/.exec(out.result.stdout)?.[1]
+  const b = /api_key = "(__REDACTED_[A-Z_]+_\d+__)"/.exec(out.result.stderr)?.[1]
+  const c = /warn: (__REDACTED_[A-Z_]+_\d+__) rejected/.exec(out.result.stderr)?.[1]
+  expect(a).toBeDefined()
+  expect(a).toBe(c)
+  expect(a).not.toBe(b)
+})
+
+test('a source Read: an identifier holding a secret is one placeholder everywhere, and the map holds no secret', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content =
+    'const password = "Hunt3r2xyzQ"\nexport function connectHunt3r2xyzQPool() {}\nconnectHunt3r2xyzQPool()\n'
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content } },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  const seen: string = out.result.file.content
+  const decl = /export function (\S+)\(\)/.exec(seen)?.[1]
+  expect(decl).toBeDefined()
+  expect(seen).toContain(`\n${decl}()`)
+  expect(p.files[`${ROOT}/.veilio/map.json`] ?? '').not.toContain('Hunt3r2xyzQ')
+  expect(JSON.stringify(out)).not.toContain('Hunt3r2xyzQ')
+})
+
+test('the rest of a partly taken secret with dashes and underscores is removed from a bare repeat', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const secret = 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY12345-67890_ab'
+  const stdout = `aws_secret_access_key = "${secret}"\nlog: ${secret} done\n`
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('67890')
+})

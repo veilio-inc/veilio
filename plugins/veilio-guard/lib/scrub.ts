@@ -224,7 +224,12 @@ function replaceNames(text: string, map: SymbolMap, ctx: MaskContext = NO_CONTEX
 const REDACTION_TOKEN = new RegExp(`(${REDACTION_TOKENS.source})`)
 // What a rule left of a secret it only partly took, before the value's
 // closing quote (`__REDACTED_AWS_SECRET_1__3"`).
-const RESIDUE = new RegExp(`(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]{1,8}(?=["'\`])`, 'g')
+const KEY_CHAR = /[A-Za-z0-9+/=_-]/
+const RUN_ON = 8
+const RESIDUE = new RegExp(
+  `(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]{1,${RUN_ON}}(?=["'\`])`,
+  'g'
+)
 
 /** `fn` on each piece of `text` between redaction tokens, never across one:
  *  a token's edges are word characters, so a name written against one would
@@ -264,60 +269,72 @@ export function destroyedValues(texts: readonly string[]): string[] {
   return [...values]
 }
 
-/** `text` with every occurrence of every value removed, each with the key
- *  characters that run on after it: a rule matches a credential in its
- *  context, the same value elsewhere, bare, is the same secret (security
- *  review of 28414f4), and a rule that took only part of a secret leaves the
- *  rest beside its value (review of fe5078c). Occurrences are found first and
- *  overlapping ones merged, so a value inside a longer one cannot leave part
- *  of the longer behind. Tokens are numbered after the ones already in the
- *  text, so two secrets never share one. Run on text as written, before any
- *  masking, so no repeat of a value can reach the map. */
-export function redactKnown(text: string, values: readonly string[]): string {
-  if (values.length === 0) return text
-  const spans: [number, number][] = []
-  for (const value of new Set(values)) {
-    if (value === '') continue
-    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
-      let end = i + value.length
-      while (end < text.length && /[A-Za-z0-9+/=]/.test(text[end]!)) end++
-      spans.push([i, end])
-    }
+/** The credentials a session has destroyed, held in memory only, each with
+ *  one token: the same secret reads as the same token everywhere, two
+ *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
+ *  from the tokens a single scan writes. */
+export class Destroyed {
+  private tokens = new Map<string, string>()
+  private next = 1001
+  learn(values: readonly string[]): void {
+    for (const v of values)
+      if (v !== '' && !this.tokens.has(v))
+        this.tokens.set(v, `__REDACTED_CREDENTIAL_${this.next++}__`)
   }
+  get values(): string[] {
+    return [...this.tokens.keys()]
+  }
+  tokenFor(value: string): string {
+    return this.tokens.get(value) ?? '__REDACTED_CREDENTIAL__'
+  }
+}
+
+/** `text` with every occurrence of every value removed, with up to eight key
+ *  characters that run on after it: a rule matches a credential in its
+ *  context, the same value elsewhere, bare, is the same secret, and a rule
+ *  that took only part of a secret leaves the rest beside its value. The
+ *  occurrences of one value do not overlap, so the search is one pass per
+ *  value; overlapping spans of different values are merged and take the
+ *  longest one's token. Run on text as written, before any masking, so no
+ *  repeat of a value can reach the map. */
+export function redactKnown(text: string, known: Destroyed): string {
+  const values = known.values
+  if (values.length === 0) return text
+  const spans: [number, number, string][] = []
+  for (const value of values)
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + value.length))
+      spans.push([i, i + value.length, value])
   if (spans.length === 0) return text
   spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
-  const merged: [number, number][] = []
-  for (const [start, end] of spans) {
+  const merged: [number, number, string][] = []
+  const add = (start: number, end: number, value: string) => {
     const last = merged[merged.length - 1]
-    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
-    else merged.push([start, end])
+    if (last && start <= last[1]) {
+      last[1] = Math.max(last[1], end)
+      if (value.length > last[2].length) last[2] = value
+    } else merged.push([start, end, value])
   }
-  let n = Math.max(
-    0,
-    ...[...text.matchAll(/__REDACTED_CREDENTIAL_(\d+)__/g)].map((m) => Number(m[1]))
-  )
+  for (const [start, end, value] of spans) add(start, end, value)
+  const once = merged.splice(0)
+  for (const [start, end, value] of once) {
+    let to = end
+    while (to < text.length && to - end < RUN_ON && KEY_CHAR.test(text[to]!)) to++
+    add(start, to, value)
+  }
   let result = ''
   let at = 0
-  for (const [start, end] of merged) {
-    result += text.slice(at, start) + `__REDACTED_CREDENTIAL_${++n}__`
+  for (const [start, end, value] of merged) {
+    result += text.slice(at, start) + known.tokenFor(value)
     at = end
   }
   return result + text.slice(at)
-}
-
-/** Several texts that go to the model together (a result's strings, a
- *  prompt and its context): each value any of them destroys removed from all
- *  of them, as written. */
-export function redactTogether(texts: readonly string[]): string[] {
-  const values = destroyedValues(texts)
-  return texts.map((t) => redactKnown(t, values))
 }
 
 export function applyMap(
   text: string,
   map: SymbolMap,
   ctx: MaskContext = NO_CONTEXT,
-  options: { scanned?: boolean } = {}
+  options: { scanned?: boolean; known?: Destroyed } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
   // once, a Read's source the engine masked): only the names the map has
@@ -326,12 +343,16 @@ export function applyMap(
   // Credentials are found in the text as written, before any name is
   // replaced, and nothing the map holds overrides what the scan finds
   // (security review of a162a37).
-  const scan = scanSecrets(text, 'redact')
-  let redacted = redactKnown(scan.code, destroyedIn(text, scan))
+  // Every value this text destroys, with every one the session has, is
+  // removed first under its one token; the scan then takes what is left.
+  const known = options.known ?? new Destroyed()
+  known.learn(destroyedIn(text, scanSecrets(text, 'redact')))
+  const scan = scanSecrets(redactKnown(text, known), 'redact')
+  let redacted = scan.code
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
   // token and the residue together. Only after a pass that redacted something.
-  for (let pass = 0; pass < 3 && redacted !== text; pass++) {
+  for (let pass = 0; pass < 3 && scan.findings.some((f) => f.redacted); pass++) {
     const again = scanSecrets(redacted, 'redact').code
     if (again === redacted) break
     redacted = again

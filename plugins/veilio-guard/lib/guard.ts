@@ -30,9 +30,9 @@ import {
 } from './policy.ts'
 import {
   applyMap,
+  Destroyed,
   destroyedValues,
   redactKnown,
-  redactTogether,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
@@ -128,6 +128,9 @@ export class Guard {
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
   counts = { withheld: 0, denied: 0 }
+  /** Credentials destroyed this session, in memory only: removed from
+   *  everything masked after, under one token each (review of 8aed5e8). */
+  readonly destroyed = new Destroyed()
   /** The project's source files, indexed so a result is masked by what it
    *  contains (spec 050). Created when the guard loads. */
   index: ProjectIndex | null = null
@@ -402,14 +405,15 @@ export class Guard {
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
   applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
-    return applyMap(text, this.map, this.context('unknown', kind))
+    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed })
   }
 
   /** Texts that reach the model together (a prompt and its context, the
    *  first message's blocks): a credential any of them holds with its key is
    *  removed from all of them, then each is masked. */
   applyTogether(texts: readonly string[], one: (text: string) => string): string[] {
-    return redactTogether(texts).map(one)
+    this.destroyed.learn(destroyedValues(texts))
+    return texts.map(one)
   }
 
   /** The context Claude Code sends with the first message (the blocks
@@ -595,7 +599,11 @@ export class Guard {
       if (unchecked) return this.withhold(unchecked)
     }
     const ctx = this.context('unknown')
-    const shaped = maskShaped(applyMap(raw, this.map, ctx), this.map, ctx)
+    const shaped = maskShaped(
+      applyMap(raw, this.map, ctx, { known: this.destroyed }),
+      this.map,
+      ctx
+    )
     if (
       Object.keys(shaped.additions).length > 0 &&
       (await this.save(shaped.additions)) === 'conflict'
@@ -633,8 +641,8 @@ export class Guard {
     // another line, in another field or in a source's literal can reach the
     // map or the model (security reviews of 75fe4c0 and fe5078c). Enum
     // fields are left for the last scan, which withholds the result.
-    const destroyed = destroyedValues(texts)
-    const strip = (s: string) => redactKnown(s, destroyed)
+    this.destroyed.learn(destroyedValues(texts))
+    const strip = (s: string) => redactKnown(s, this.destroyed)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
@@ -646,7 +654,7 @@ export class Guard {
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
-    if (destroyed.length > 0)
+    if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
         result:
@@ -672,7 +680,8 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line))))
               .join('\n')
           : fn(s, ctx)
-      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      const apply = (s: string) =>
+        perLine(s, (t, c) => applyMap(t, working, c, { known: this.destroyed }))
       // What a field pass already scanned for credentials, as written: the
       // pass over every string only replaces the names the map has since
       // learned there. Scanned again, the masked text would be judged as text,
