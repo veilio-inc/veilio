@@ -58,6 +58,13 @@ export type TeamNamespaceResult =
        * tell what to remove (2026-10-25). Empty on an older instance.
        */
       unreadable: { id: string; name: string | null }[]
+      /**
+       * The map named by `excludeMapId`, as read in the same request - so an
+       * update need not download it a second time (spec 052: the staging
+       * journey met the rate limit at about eight listings per command).
+       * `map: null` when it did not open; absent when it was not among them.
+       */
+      excluded?: { map: Record<string, string> | null }
     }
   /** Nothing to read: signed out, or not in a team. The local namespace is right. */
   | { status: 'local' }
@@ -72,8 +79,10 @@ export type TeamNamespaceResult =
  * failure either (review): there is no team to speak of.
  */
 function transient(err: unknown): boolean {
-  // A chosen project that is gone does not come back in a second either.
-  if (err instanceof CloudError && err.status === 404) return false
+  // A chosen project that is gone does not come back in a second either. And
+  // a rate limit is the one answer a retry makes worse: the second request
+  // counts against the same limit (staging journey, 2026-10-26).
+  if (err instanceof CloudError && (err.status === 404 || err.status === 429)) return false
   return err instanceof CloudError && (err.kind === 'unreachable' || err.kind === 'server')
 }
 
@@ -101,6 +110,11 @@ export async function resolveTeamNamespace(
      * a clash with its own old value.
      */
     excludeMapId?: string
+    /**
+     * A listing this command already holds. Read again here it was a second
+     * request for the same answer, on every team push and update.
+     */
+    list?: CloudMapList
   } = {}
 ): Promise<TeamNamespaceResult> {
   const credential = readCredential(home)
@@ -116,7 +130,7 @@ export async function resolveTeamNamespace(
   })
   try {
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId)
+      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
@@ -125,7 +139,7 @@ export async function resolveTeamNamespace(
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId)
+      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
@@ -145,9 +159,10 @@ async function attempt(
   credential: Credential,
   home: string | undefined,
   signal: AbortSignal,
-  excludeMapId: string | undefined
+  excludeMapId: string | undefined,
+  given: CloudMapList | undefined
 ): Promise<TeamNamespaceResult> {
-  const list = await listMaps(credential, signal)
+  const list = given ?? (await listMaps(credential, signal))
 
   // An older self-hosted Cloud may still merge server-side; that answer needs no
   // key. It carries no aliases or conflicts - it predates both.
@@ -170,6 +185,7 @@ async function attempt(
   const read = await readTeamEntries(credential, keys, scoped, signal)
   const names = new Map(scoped.map((m) => [m.id, m.name]))
   const kept = read.entries.filter((e) => e.id !== excludeMapId)
+  const excludedEntry = read.entries.find((e) => e.id === excludeMapId)
   const unreadable = [
     ...new Set([...read.unreadable, ...kept.filter((e) => e.map === null).map((e) => e.id)]),
   ]
@@ -193,6 +209,7 @@ async function attempt(
     conflictDetection: true,
     teamId,
     unreadable,
+    ...(excludedEntry ? { excluded: { map: excludedEntry.map } } : {}),
   }
 }
 

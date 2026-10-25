@@ -280,10 +280,11 @@ function isTeamEnvelope(mapData: string): boolean | null {
   }
 }
 
-/** The team this account acts for, as the listing says. */
-async function actingTeam(credential: Credential): Promise<Outcome<string | null>> {
+/** The listing, for a team write: which team this account acts for, and the
+ *  maps the namespace read then reuses. */
+async function listingForTeam(credential: Credential): Promise<Outcome<CloudMapList>> {
   try {
-    return ok((await listMaps(credential)).team?.id ?? null)
+    return ok(await listMaps(credential))
   } catch (err) {
     // Not knowing the team is not knowing whether this map is safe to publish.
     const detail =
@@ -407,13 +408,19 @@ interface TeamCheck {
  * team's maps is NOT fallback-to-local: publishing blind is what the check is
  * for. `excludeMapId` leaves the map being updated out of its own check.
  */
-async function checkAgainstTeam(
+type TeamFound = Extract<Awaited<ReturnType<typeof resolveTeamNamespace>>, { status: 'team' }>
+
+/** The team's namespace for a write, read once - from the listing this
+ *  command already holds (spec 052: one listing per command). Anything but a
+ *  readable team namespace is a refusal: publishing blind is what the clash
+ *  check exists to prevent. */
+async function teamForWrite(
   ctx: ClientContext,
   credential: Credential,
-  map: Record<string, string>,
+  list: CloudMapList,
   excludeMapId?: string
-): Promise<Outcome<TeamCheck>> {
-  const found = await resolveTeamNamespace(ctx.home, { excludeMapId })
+): Promise<Outcome<TeamFound>> {
+  const found = await resolveTeamNamespace(ctx.home, { excludeMapId, list })
   if (found.status === 'local') return refuse('not_in_team')
   if (found.status === 'locked') return refuse('team_key_mismatch')
   if (found.status === 'unavailable') {
@@ -421,6 +428,10 @@ async function checkAgainstTeam(
       return refuse('project_gone', { project: credential.project ?? 'the default' })
     return refuse('team_maps_unreadable', { detail: found.reason })
   }
+  return ok(found)
+}
+
+function checkAgainstTeam(found: TeamFound, map: Record<string, string>): Outcome<TeamCheck> {
   const clashes = conflictsWithTeam(map, found.analysis.namespace)
   if (clashes.length > 0) {
     return refuse(
@@ -519,11 +530,14 @@ export async function createCloudMap(
     // read it, and whoever holds that other key could. Checked HERE, at the
     // key, the way the namespace read checks it - not left to the namespace
     // read, which an older instance answers with no key at all (code review).
-    const team = await actingTeam(credential)
-    if (!team.ok) return team
-    if (team.value === null) return refuse('not_in_team')
-    if (team.value !== keys.value.teamId) return refuse('team_key_mismatch')
-    const check = await checkAgainstTeam(ctx, credential, map)
+    const listed = await listingForTeam(credential)
+    if (!listed.ok) return listed
+    const teamId = listed.value.team?.id ?? null
+    if (teamId === null) return refuse('not_in_team')
+    if (teamId !== keys.value.teamId) return refuse('team_key_mismatch')
+    const found = await teamForWrite(ctx, credential, listed.value)
+    if (!found.ok) return found
+    const check = checkAgainstTeam(found.value, map)
     if (!check.ok) return check
     // Nothing above this line has sent anything.
     const envelope = await encryptTeamMap(keys.value.newest.key, map)
@@ -644,34 +658,45 @@ export async function updateCloudMap(
     if (list.team?.id !== keys.value.teamId) return refuse('team_key_mismatch')
   }
 
-  let remote: CloudMap
-  try {
-    remote = await getMap(credential, id)
-  } catch (err) {
-    if (err instanceof CloudError && err.status === 404 && !/project/i.test(err.message))
-      return refuse('map_not_found', { id })
-    return cloudRefusal(err, credential)
-  }
-  if (typeof remote.map_data !== 'string') return refuse('not_envelope')
-  const team = isTeamEnvelope(remote.map_data)
-  if (team === null) return refuse('not_envelope')
-  const label = { id: remote.id, name: remote.name }
+  const team = summary.scope === 'team'
+  const label = { id, name: summary.name }
+  // The version this update replaces: the one the listing read. A write that
+  // landed since is refused by the server (409), never overwritten.
+  const ifUpdatedAt = summary.updated_at
 
-  // Open the Cloud copy with the key it will be sealed under again, so the
-  // drop count is measured against what is really there.
   let sealed: { map_data: string; key_version?: number }
   let current: SymbolMap
   let notes: string[] = []
   if (team) {
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
-    const opened = await openTeam(keys.value, remote.map_data, label)
+    // The team's maps, read once, with this one among them: its current
+    // content comes from the same request as the clash check, not from a
+    // second download (spec 052, the staging rate limit).
+    const found = await teamForWrite(ctx, credential, list, id)
+    if (!found.ok) return found
+    let opened: Outcome<SymbolMap>
+    if (found.value.excluded) {
+      opened =
+        found.value.excluded.map === null
+          ? refuse('team_map_unopenable', {
+              ...label,
+              detail: 'it did not open with the unlocked team keys',
+            })
+          : ok(found.value.excluded.map)
+    } else {
+      // Not in the bulk read (an older instance, or one the server itself
+      // could not read): fetched on its own.
+      const fetched = await fetchEnvelope(credential, id)
+      if (!fetched.ok) return fetched
+      opened = await openTeam(keys.value, fetched.value.map_data, label)
+    }
     if (!opened.ok) return opened
     current = opened.value
     const dropped = droppedBy(current, local)
     if (dropped.length > 0 && opts.allowDrop !== true)
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
-    const check = await checkAgainstTeam(ctx, credential, local, id)
+    const check = checkAgainstTeam(found.value, local)
     if (!check.ok) return check
     notes = check.value.notes
     sealed = {
@@ -679,9 +704,12 @@ export async function updateCloudMap(
       key_version: keys.value.newest.version,
     }
   } else {
+    const fetched = await fetchEnvelope(credential, id)
+    if (!fetched.ok) return fetched
+    if (isTeamEnvelope(fetched.value.map_data) !== false) return refuse('not_envelope')
     const keys = await personalKeys(credential, ctx)
     if (!keys.ok) return keys
-    const opened = await openPersonal(keys.value, remote.map_data, label)
+    const opened = await openPersonal(keys.value, fetched.value.map_data, label)
     if (!opened.ok) return opened
     current = opened.value
     const dropped = droppedBy(current, local)
@@ -698,7 +726,7 @@ export async function updateCloudMap(
     answer = await updateMapContent(credential, id, {
       ...sealed,
       identifier_count: Object.keys(local).length,
-      if_updated_at: remote.updated_at,
+      if_updated_at: ifUpdatedAt,
     })
   } catch (err) {
     return teamWriteRefusal(err, credential, 'update', label)
@@ -718,13 +746,30 @@ export async function updateCloudMap(
   }
   return ok({
     id,
-    name: remote.name,
+    name: summary.name,
     scope: team ? 'team' : 'personal',
     count: Object.keys(local).length,
     dropped: droppedBy(current, local).length,
     updatedAt,
     notes,
   })
+}
+
+/** One map's envelope, by id. */
+async function fetchEnvelope(
+  credential: Credential,
+  id: string
+): Promise<Outcome<{ map_data: string; updated_at: string }>> {
+  let remote: CloudMap
+  try {
+    remote = await getMap(credential, id)
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404 && !/project/i.test(err.message))
+      return refuse('map_not_found', { id })
+    return cloudRefusal(err, credential)
+  }
+  if (typeof remote.map_data !== 'string') return refuse('not_envelope')
+  return ok({ map_data: remote.map_data, updated_at: remote.updated_at })
 }
 
 /** The chosen project's name, or its id when the server cannot say. */

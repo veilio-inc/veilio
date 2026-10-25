@@ -300,7 +300,12 @@ describe('a team map, updated in place', () => {
     signIn(home, { team: true })
     const row = cloud.add({ scope: 'team', map_data: await sealTeam({ __CLS__1: 'X' }) })
     // Listed as ours when listed; by the write, the server says otherwise.
-    cloud.afterGet = (m) => (m.owner = TEAMMATE)
+    const real = cloud.fetch
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const answer = await real(url, init)
+      if (new URL(url).pathname === '/api/maps') row.owner = TEAMMATE
+      return answer
+    })
     local({ __CLS__1: 'X', __FN__2: 'y' })
     const r = await run(['maps', 'update', row.id])
     expect(r.code).toBe(EXIT_ERROR)

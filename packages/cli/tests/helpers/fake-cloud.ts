@@ -105,7 +105,10 @@ export class FakeCloud {
   legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
   failing = new Set<string>()
+  /** Paths that answer 429, as the maps rate limit does. */
+  limited = new Set<string>()
   private nextId = 1
+  private counters = new Map<string, number>()
 
   /** Install the vault for PASSPHRASE. */
   async withVault(): Promise<CryptoKeyLike> {
@@ -172,6 +175,7 @@ export class FakeCloud {
     )
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
     if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
+    if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }
 
@@ -313,6 +317,15 @@ export class FakeCloud {
         defaultProjectId: this.projects[0]?.id ?? null,
       })
     }
+    if (path === `/api/teams/${TEAM_ID}/placeholders/reserve` && method === 'POST') {
+      const asked = (body?.requests ?? []) as { base: string; count: number; floor: number }[]
+      const ranges = asked.map(({ base, count, floor }) => {
+        const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
+        this.counters.set(base, start + count - 1)
+        return { base, start, end: start + count - 1 }
+      })
+      return json(200, { ranges })
+    }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {
       return json(200, {
         version: 1,
@@ -344,14 +357,15 @@ export async function sealTeam(map: Record<string, string>, raw = TEAM_RAW): Pro
 /** Sign in under `home`, optionally with the team key and/or the PMK unlocked. */
 export function signIn(
   home: string,
-  opts: { team?: boolean; pmk?: boolean; project?: string } = {}
+  opts: { team?: boolean; pmk?: boolean; project?: string; instance?: string } = {}
 ): void {
+  const instance = opts.instance ?? INSTANCE
   mkdirSync(join(home, '.veilio'), { recursive: true })
   writeCredential(
     {
       token: 'tok',
       account: ME,
-      instance: INSTANCE,
+      instance,
       ...(opts.project ? { project: opts.project } : {}),
     },
     home
@@ -361,7 +375,7 @@ export function signIn(
     writeTeamUnlock(
       {
         v: 1,
-        instance: INSTANCE,
+        instance,
         account: ME,
         teamId: TEAM_ID,
         expiresAt,
@@ -370,8 +384,5 @@ export function signIn(
       home
     )
   if (opts.pmk)
-    writePersonalMapsKey(
-      { v: 1, instance: INSTANCE, account: ME, expiresAt, key: toBase64(PMK_RAW) },
-      home
-    )
+    writePersonalMapsKey({ v: 1, instance, account: ME, expiresAt, key: toBase64(PMK_RAW) }, home)
 }
