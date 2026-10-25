@@ -56,7 +56,11 @@ export class CloudError extends Error {
   constructor(
     readonly kind: CloudErrorKind,
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    /** The failure response's JSON body, when it had one. A 409 on a map
+     *  update carries `current_updated_at`, and a refusal that names the
+     *  version it lost to needs it (spec 052). */
+    readonly body?: Record<string, unknown>
   ) {
     super(message)
     this.name = 'CloudError'
@@ -68,7 +72,7 @@ export interface RequestOptions {
   instance?: string
   /** Bearer credential, when the call needs one. */
   credential?: Credential | null
-  method?: 'GET' | 'POST' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   signal?: AbortSignal
 }
@@ -174,7 +178,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         response.status
       )
     }
-    throw new CloudError('forbidden', message ?? 'not permitted on this account', 403)
+    throw new CloudError('forbidden', message ?? 'not permitted on this account', 403, body)
   }
 
   if (!response.ok) {
@@ -184,7 +188,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       typeof body.error === 'string' && body.error !== ''
         ? body.error
         : `${base} returned ${response.status}`,
-      response.status
+      response.status,
+      body
     )
   }
 
@@ -276,8 +281,18 @@ export type VaultInfo =
       kdf?: { name: string; iterations: number }
     }
 
+/**
+ * `?project=<id>` when this sign-in has chosen a project (spec 052 FR-013), so
+ * the team half of a listing and of the namespace is that project's alone.
+ * Nothing when none is chosen: the server then answers as it always has, which
+ * keeps an older credential, and an older instance, working unchanged.
+ */
+function projectQuery(credential: Credential): string {
+  return credential.project ? `?project=${encodeURIComponent(credential.project)}` : ''
+}
+
 export function listMaps(credential: Credential, signal?: AbortSignal): Promise<CloudMapList> {
-  return request<CloudMapList>('/api/maps', { credential, signal })
+  return request<CloudMapList>(`/api/maps${projectQuery(credential)}`, { credential, signal })
 }
 
 /** The account's custom rules: its own, and those of the teams it is in. */
@@ -297,7 +312,7 @@ export function getTeamEnvelopes(
   credential: Credential,
   signal?: AbortSignal
 ): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
-  return request('/api/maps/team-envelopes', { credential, signal })
+  return request(`/api/maps/team-envelopes${projectQuery(credential)}`, { credential, signal })
 }
 
 export function getMap(
@@ -357,7 +372,76 @@ export function createMap(
     key_version?: number
   }
 ): Promise<{ id: string }> {
-  return request<{ id: string }>('/api/maps', { credential, method: 'POST', body })
+  // A team map lands in the chosen project; a personal map has none (the
+  // server ignores the field for it, and sending it would only blur that).
+  const withProject =
+    body.scope === 'team' && credential.project ? { ...body, project: credential.project } : body
+  return request<{ id: string }>('/api/maps', { credential, method: 'POST', body: withProject })
+}
+
+/**
+ * Replace a map's content in place: same id, name and project (spec 052 §2).
+ *
+ * `if_updated_at` is the version this client read. The server refuses with 409
+ * when the map has moved on since, so two writers can never silently overwrite
+ * each other - the refusal carries `current_updated_at`. A team map needs its
+ * publisher (403) and a team that owes no key rotation (423).
+ */
+export function updateMapContent(
+  credential: Credential,
+  id: string,
+  body: {
+    map_data: string
+    identifier_count: number
+    if_updated_at: string
+    /** Team maps: the key version `map_data` is sealed under, as on create. */
+    key_version?: number
+  }
+): Promise<{ id: string; updated_at: string }> {
+  return request(`/api/maps/${encodeURIComponent(id)}`, { credential, method: 'PATCH', body })
+}
+
+/**
+ * The personal-maps key, wrapped under the vault key (spec 052 §1). Opaque to
+ * the server, exactly as the wrapped private key is. `null` until the first
+ * `vault unlock` (or browser unlock) creates one.
+ */
+export function getPersonalMapsKeyWrap(
+  credential: Credential
+): Promise<{ wrapped: string | null }> {
+  return request('/api/auth/keys/personal-maps', { credential })
+}
+
+/** Store it - once. A second PUT is refused (409) by design: a silent
+ *  replacement is how every map sealed under the first would become
+ *  unreadable (research §7). */
+export function putPersonalMapsKeyWrap(credential: Credential, wrapped: string): Promise<unknown> {
+  return request('/api/auth/keys/personal-maps', { credential, method: 'PUT', body: { wrapped } })
+}
+
+/** One project the acting team works in, as `GET /api/projects` lists it. */
+export interface CloudProject {
+  id: string
+  name: string
+  /** The team's own maps in it - never another team's. */
+  maps?: number
+}
+
+export function listProjects(credential: Credential): Promise<{
+  projects: CloudProject[]
+  teamId: string | null
+  defaultProjectId?: string | null
+}> {
+  return request('/api/projects', { credential })
+}
+
+/** Whether the team owes a key rotation. Only `rotationNeededSince` is read
+ *  from the answer; the rest names teammates and has no business here. */
+export function getTeamKeyPending(
+  credential: Credential,
+  teamId: string
+): Promise<{ rotationNeededSince?: string | null }> {
+  return request(`/api/teams/${encodeURIComponent(teamId)}/key/pending`, { credential })
 }
 
 /** One base's reserved run of placeholder numbers, inclusive at both ends. */

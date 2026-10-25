@@ -11,9 +11,6 @@ import {
   CloudError,
   startDeviceLogin,
   exchangeDeviceCode,
-  createMap,
-  deleteMap,
-  getMap,
   reservePlaceholders,
   getVault,
   getUserKeys,
@@ -21,32 +18,18 @@ import {
   listMaps,
   listRules,
   request,
-  type CloudMap,
-  type CloudMapList,
-  type VaultInfo,
 } from './cloud.js'
 import {
   checkVaultVerifier,
-  decryptMapFromVault,
   deriveVaultKey,
   unwrapPrivateKey,
   unwrapTeamKey,
   exportTeamKey,
-  encryptMapForVault,
   fromBase64,
-  parseVaultEnvelope,
-  importTeamKey,
-  encryptTeamMap,
-  decryptTeamMapWithAny,
-  type CryptoKeyLike,
-  type SymbolMap,
-  type TeamMapEnvelope,
   type TeamLayer,
 } from '@veilio-inc/engine'
-import { loadMap, loadRemote, saveMap } from './store.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
-  readTeamUnlock,
   removeTeamUnlock,
   writeTeamUnlock,
   teamUnlockPath,
@@ -57,6 +40,15 @@ import { readCredential, removeCredential, writeCredential, type Credential } fr
 import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
+import {
+  createCloudMap,
+  listCloudMaps,
+  pullCloudMap,
+  removeCloudMap,
+  updateCloudMap,
+  type ClientContext,
+} from './client/maps.js'
+import { renderRefusal, type Refusal } from './client/wording.js'
 import { VERSION } from './version.js'
 
 /** The endpoint a sign-in is checked against. See `runLogin`. */
@@ -455,94 +447,65 @@ async function requirePassword(io: Io, label: string): Promise<string> {
   return io.password(label)
 }
 
-// ─── maps: list, pull, push ──────────────────────────────────────────────────
+// ─── maps: list, pull, push, update, rm ──────────────────────────────────────
+//
+// The work is done in `client/maps.ts`, which the MCP server's map tools call
+// too (spec 052 §3). What is left here is the terminal's half: asking for the
+// passphrase, and saying what happened - results on stdout, refusals on
+// stderr, in the words of the shared table.
+
+/** The client's context for a terminal run: the person can be asked. */
+function clientContext(io: Io): ClientContext {
+  return {
+    home: io.home,
+    passphrase: io.password ? () => io.password!('Vault passphrase: ') : undefined,
+  }
+}
+
+/** A refusal on stderr, and the exit code that goes with it. */
+function refused(refusal: Refusal, io: Io): number {
+  io.stderr(renderRefusal(refusal))
+  return EXIT_ERROR
+}
+
+function notes(lines: readonly string[], io: Io): void {
+  for (const line of lines) io.stderr(`veilio: ${line}\n`)
+}
 
 /**
  * List what the account holds.
  *
  * Prints the id, because `pull` takes one. A name would be friendlier and is
  * wrong: names are not unique, and picking "the first one that matches" is how
- * somebody pulls a different map over the one they were using.
+ * somebody pulls a different map over the one they were using. A teammate's
+ * team map is marked, because it is theirs to update or remove.
  */
 export async function runMapsList(io: Io): Promise<number> {
-  const credential = readCredential(io.home)
-  if (!credential) return notSignedIn(io)
-
-  let list: CloudMapList
-  try {
-    list = await listMaps(credential)
-  } catch (err) {
-    return reportCloudFailure(err, io)
-  }
-
-  const all = [...list.personalMaps, ...list.teamMaps]
-  if (all.length === 0) {
+  const listed = await listCloudMaps(clientContext(io))
+  if (!listed.ok) return refused(listed.refusal, io)
+  const { maps, project } = listed.value
+  if (maps.length === 0) {
     io.stdout('No maps in Cloud yet. `veilio maps push <name>` uploads the local one.\n')
     return EXIT_OK
   }
-  for (const map of all) {
-    const count = map.identifier_count === null ? '?' : String(map.identifier_count)
-    io.stdout(`${map.id}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${map.name}\n`)
+  for (const map of maps) {
+    const count = map.count === null ? '?' : String(map.count)
+    const whose = map.scope === 'team' && !map.mine ? '  (a teammate’s)' : ''
+    io.stdout(
+      `${map.id}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${map.name}${whose}\n`
+    )
   }
+  // Said on stderr so the listing itself stays parseable: which project's team
+  // maps these are, or that no project was chosen.
+  if (project)
+    io.stderr(`veilio: team maps of project ${project} (\`veilio projects\` to change)\n`)
   return EXIT_OK
 }
 
 /**
- * Open a team map with the team keys `veilio team unlock` stored.
- *
- * The same keys the MCP server reads, for the same reason: this machine may
- * have nobody present to type a vault passphrase, and the team key - not the
- * vault key - is what a team map is sealed under. Reports and returns null
- * when it cannot, so the caller writes nothing.
- */
-async function openTeamEnvelope(
-  credential: Credential,
-  mapData: string,
-  io: Io
-): Promise<SymbolMap | null> {
-  const unlock = readTeamUnlock(
-    { instance: credential.instance, account: credential.account },
-    io.home
-  )
-  if (!unlock || unlock.keys.length === 0) {
-    io.stderr(
-      'veilio: that is a team map, and no team key is unlocked on this machine. ' +
-        'Run `veilio team unlock` first. Nothing was written.\n'
-    )
-    return null
-  }
-  const keys: { version: number; key: CryptoKeyLike }[] = []
-  for (const stored of unlock.keys) {
-    try {
-      keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
-    } catch {
-      // A damaged entry; the others may still open the map.
-      continue
-    }
-  }
-  try {
-    return await decryptTeamMapWithAny(keys, JSON.parse(mapData) as TeamMapEnvelope)
-  } catch (err) {
-    io.stderr(
-      `veilio: that team map could not be opened with the unlocked team keys — ` +
-        `${err instanceof Error ? err.message : String(err)}. ` +
-        'If the team key was rotated since, run `veilio team unlock` again. Nothing was written.\n'
-    )
-    return null
-  }
-}
-
-/**
- * Pull a map into the local store: decrypt FIRST, write second.
- *
- * The ordering is the control (Constitution IV). Writing before decrypting means
- * a wrong passphrase leaves a half-built store behind — and the store is the one
- * thing that can restore text already anonymized, so a partial write there is
- * not an inconvenience, it is unrecoverable text.
- *
- * A personal map is opened HERE. The server holds the salt and a verifier and
- * nothing else; the passphrase never leaves this machine, and there is no code
- * path in this package that could send it.
+ * Pull a map into the local store: decrypt FIRST, write second (see
+ * `pullCloudMap`). A personal map is opened HERE - the passphrase never leaves
+ * this machine, and there is no code path in this package that could send it.
  */
 export async function runMapsPull(
   id: string | null,
@@ -550,232 +513,75 @@ export async function runMapsPull(
   io: Io,
   options: { force?: boolean } = {}
 ): Promise<number> {
-  const credential = readCredential(io.home)
-  if (!credential) return notSignedIn(io)
-  if (!id) {
-    io.stderr('veilio: which map? Run `veilio maps list` for the ids.\n')
-    return EXIT_ERROR
-  }
-
-  let remote: CloudMap
-  try {
-    remote = await getMap(credential, id)
-  } catch (err) {
-    return reportCloudFailure(err, io)
-  }
-
-  // Every map is an envelope the server cannot open: a personal map under the
-  // vault key, a team map under the team key. Which one is written on the
-  // envelope itself.
-  if (typeof remote.map_data !== 'string') {
-    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
-    return EXIT_ERROR
-  }
-  let envelope: { alg?: unknown }
-  try {
-    envelope = JSON.parse(remote.map_data) as { alg?: unknown }
-  } catch {
-    io.stderr('veilio: that map is not an encrypted envelope, so it was not written.\n')
-    return EXIT_ERROR
-  }
-
-  let map: SymbolMap
-  if (envelope.alg === 'AES-256-GCM-TEAM') {
-    const opened = await openTeamEnvelope(credential, remote.map_data, io)
-    if (!opened) return EXIT_ERROR
-    map = opened
-  } else {
-    let vault: VaultInfo
-    try {
-      vault = await getVault(credential)
-    } catch (err) {
-      return reportCloudFailure(err, io)
-    }
-    if (!vault.initialized) {
-      // Stated plainly rather than surfaced as a decryption failure. There is
-      // nothing to try a passphrase against, and inviting one would be asking
-      // somebody to guess at a lock that does not exist.
-      io.stderr(
-        'veilio: this account has no vault, so there is no key for that map. ' +
-          'Create one in the web app first — it is the passphrase your maps are encrypted under.\n'
-      )
-      return EXIT_ERROR
-    }
-
-    const passphrase = io.password ? await io.password('Vault passphrase: ') : ''
-    if (passphrase === '') {
-      io.stderr('veilio: no passphrase given\n')
-      return EXIT_ERROR
-    }
-
-    const key = await deriveVaultKey(
-      passphrase,
-      fromBase64(vault.salt),
-      vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-    )
-    // The verifier answers "is this the right passphrase" before anything is
-    // decrypted, so a wrong one is named as a wrong passphrase rather than
-    // surfacing as an authentication-tag failure that reads like corruption.
-    if (!(await checkVaultVerifier(key, vault.verifier))) {
-      io.stderr('veilio: that vault passphrase is not right. Nothing was written.\n')
-      return EXIT_ERROR
-    }
-    try {
-      map = await decryptMapFromVault(key, parseVaultEnvelope(remote.map_data))
-    } catch (err) {
-      io.stderr(
-        `veilio: that map could not be opened — ${err instanceof Error ? err.message : String(err)}. ` +
-          'Nothing was written.\n'
-      )
-      return EXIT_ERROR
-    }
-  }
-
-  // Only now is anything touched on disk.
-  const existing = loadRemote(mapPath)
-  const local = loadMap(mapPath)
-  const hasLocal = Object.keys(local).length > 0
-  const diverged =
-    hasLocal &&
-    existing !== undefined &&
-    existing.id === remote.id &&
-    existing.updatedAt !== remote.updated_at &&
-    JSON.stringify(local) !== JSON.stringify(map)
-
-  if (diverged && options.force !== true) {
-    // Reported, not resolved. Overwriting either side silently loses entries
-    // that some text out there still depends on.
-    io.stderr(
-      `veilio: this map changed in Cloud (${existing!.updatedAt} → ${remote.updated_at}) and ` +
-        'locally since it was pulled. Neither copy has been touched.\n' +
-        `Pass --force to overwrite the local copy, or export it first with \`veilio map --json\`.\n`
-    )
-    return EXIT_ERROR
-  }
-
-  // Whether or not the Cloud copy changed: a local entry the pulled map lacks,
-  // or gives another name, is a placeholder some masked text still depends on
-  // (staging walk, 2026-10-01 - a scrub after a pull was lost on the next pull).
-  const dropped = Object.keys(local).filter((p) => map[p] !== local[p])
-  if (dropped.length > 0 && options.force !== true) {
-    const shown =
-      dropped.slice(0, 5).join(', ') + (dropped.length > 5 ? ` and ${dropped.length - 5} more` : '')
-    io.stderr(
-      `veilio: pulling "${remote.name}" would drop ${dropped.length} placeholder(s) this project's map has: ${shown}. ` +
-        'Nothing was written.\n' +
-        `Push this map first (\`veilio maps push\`), pass --force to replace it, or export it with \`veilio map --json\`.\n`
-    )
-    return EXIT_ERROR
-  }
-
-  const now = new Date().toISOString()
-  saveMap(mapPath, map, {
-    force: true,
-    remote: { id: remote.id, updatedAt: remote.updated_at, pulledAt: now },
-  })
-  io.stdout(`Pulled "${remote.name}" (${Object.keys(map).length} symbols) into ${mapPath}\n`)
+  const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
+  if (!pulled.ok) return refused(pulled.refusal, io)
+  const { name, count, path } = pulled.value
+  io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
   return EXIT_OK
 }
 
-/**
- * Placeholders the local map and the team's namespace use for DIFFERENT names.
- *
- * Publishing one of these creates a DISPUTED placeholder, and
- * `restoreLayers.disputedIn` then refuses to restore it for every member of
- * the team until somebody deletes a map. One person's push, a cost paid by
- * everyone, and nothing errors at the time - so it is checked before anything
- * is sealed rather than reported afterwards.
- *
- * An identifier the team holds under a DIFFERENT placeholder is an alias, not
- * a conflict: both still restore (spec 017), so those pass.
- *
- * A map anonymized with `reservedAnonymizeOverTeam` cannot reach this, because
- * its numbers came out of the team's own allocation. This is for maps that
- * predate it - numbered locally, possibly before this account joined a team.
- */
-export function conflictsWithTeam(
-  local: Record<string, string>,
-  teamNamespace: Record<string, string>
-): { placeholder: string; mine: string; theirs: string }[] {
-  const out: { placeholder: string; mine: string; theirs: string }[] = []
-  for (const [placeholder, mine] of Object.entries(local)) {
-    const theirs = teamNamespace[placeholder]
-    if (theirs !== undefined && theirs !== mine) out.push({ placeholder, mine, theirs })
-  }
-  return out
-}
-
-/** Upload the local map. Same endpoint, same quotas, same validation. */
+/** Upload the local map, personal or the team's. Same endpoint, same quotas,
+ *  same validation as the web app. */
 export async function runMapsPush(
   name: string | null,
   mapPath: string,
   io: Io,
   toTeam = false
 ): Promise<number> {
-  const credential = readCredential(io.home)
-  if (!credential) return notSignedIn(io)
-
-  const map = loadMap(mapPath)
-  if (Object.keys(map).length === 0) {
-    io.stderr(`veilio: there is no local map at ${mapPath} to push.\n`)
-    return EXIT_ERROR
-  }
-
-  if (toTeam) return pushToTeam(name, mapPath, map, credential, io)
-
-  let vault: VaultInfo
-  try {
-    vault = await getVault(credential)
-  } catch (err) {
-    return reportCloudFailure(err, io)
-  }
-  if (!vault.initialized) {
-    io.stderr(
-      'veilio: this account has no vault, so there is no key to encrypt with. ' +
-        'Create one in the web app first.\n'
-    )
-    return EXIT_ERROR
-  }
-
-  const passphrase = io.password ? await io.password('Vault passphrase: ') : ''
-  if (passphrase === '') {
-    io.stderr('veilio: no passphrase given\n')
-    return EXIT_ERROR
-  }
-  const key = await deriveVaultKey(
-    passphrase,
-    fromBase64(vault.salt),
-    vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-  )
-  if (!(await checkVaultVerifier(key, vault.verifier))) {
-    // Caught before anything is uploaded. Pushing under the wrong key would
-    // store a map the account can never open again.
-    io.stderr('veilio: that vault passphrase is not right. Nothing was uploaded.\n')
-    return EXIT_ERROR
-  }
-
-  const envelope = await encryptMapForVault(key, map)
-  let created: { id: string }
-  try {
-    created = await createMap(credential, {
-      name: name ?? 'from the terminal',
-      map_data: JSON.stringify(envelope),
-      identifier_count: Object.keys(map).length,
-      scope: 'personal',
-    })
-  } catch (err) {
-    return reportCloudFailure(err, io)
-  }
-
-  saveMap(mapPath, map, {
-    force: true,
-    remote: {
-      id: created.id,
-      updatedAt: new Date().toISOString(),
-      pushedAt: new Date().toISOString(),
-    },
+  const created = await createCloudMap(clientContext(io), {
+    name,
+    scope: toTeam ? 'team' : 'personal',
+    mapPath,
   })
-  io.stdout(`Pushed ${Object.keys(map).length} symbols to Cloud as ${created.id}\n`)
+  if (!created.ok) return refused(created.refusal, io)
+  const c = created.value
+  notes(c.notes, io)
+  if (c.scope === 'personal') {
+    io.stdout(`Pushed ${c.count} symbols to Cloud as ${c.id}\n`)
+    return EXIT_OK
+  }
+  const disputed = c.disputed ?? 0
+  io.stdout(
+    `Published "${c.name}" (${c.count} symbols) to the team as ${c.id}\n` +
+      `The team's shared set now holds ${c.teamTotal} identifiers` +
+      (disputed > 0
+        ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
+        : ', none disputed\n')
+  )
+  return EXIT_OK
+}
+
+/** Replace a Cloud map's entries with the local map's, in place (spec 052). */
+export async function runMapsUpdate(
+  id: string | null,
+  mapPath: string,
+  io: Io,
+  options: { allowDrop?: boolean } = {}
+): Promise<number> {
+  const updated = await updateCloudMap(clientContext(io), id, {
+    mapPath,
+    allowDrop: options.allowDrop,
+  })
+  if (!updated.ok) return refused(updated.refusal, io)
+  const u = updated.value
+  notes(u.notes, io)
+  io.stdout(
+    `Updated "${u.name}" (${u.id}) in place: ${u.count} symbols` +
+      (u.dropped > 0 ? `, ${u.dropped} dropped as asked` : '') +
+      `${u.scope === 'team' ? ', sealed with the team key' : ''}\n`
+  )
+  return EXIT_OK
+}
+
+/**
+ * Remove a map from Cloud. Renaming and removing are allowed while a key
+ * rotation is owed, because neither stores anything under the key.
+ */
+export async function runMapsRm(id: string | null, io: Io): Promise<number> {
+  const removed = await removeCloudMap(clientContext(io), id)
+  if (!removed.ok) return refused(removed.refusal, io)
+  const { name } = removed.value
+  io.stdout(name ? `Removed "${name}" (${removed.value.id})\n` : `Removed ${removed.value.id}\n`)
   return EXIT_OK
 }
 
@@ -1047,214 +853,6 @@ export async function teamNamespaceForScrub(
   return { team: null, note: null }
 }
 
-/**
- * Publish the local map as the TEAM's, from the terminal (spec 011 US1).
- *
- * Seals what is on disk AS IT IS NUMBERED. It does not renumber: by the time
- * anybody runs this, the local map's placeholders are already present in the
- * files they masked, and renumbering here would publish a map that disagrees
- * with every one of them - while `saveMap(force)` rewrote the local map too,
- * breaking local restore as well. Numbers come out of the team's allocation at
- * ANONYMIZE time (`reservedAnonymizeOverTeam`), which is where the text and
- * the numbers can still change together.
- *
- * So the ordering here is: establish that publishing is safe, THEN seal, THEN
- * upload. Every refusal happens before the first byte leaves (FR-007).
- */
-async function pushToTeam(
-  name: string | null,
-  mapPath: string,
-  map: Record<string, string>,
-  credential: Credential,
-  io: Io
-): Promise<number> {
-  // 1. The key. Read from the unlock file, never derived here: publishing
-  //    needs the TEAM key, and nobody's passphrase can produce it.
-  const unlock = readTeamUnlock(
-    { instance: credential.instance, account: credential.account },
-    io.home
-  )
-  if (!unlock || unlock.keys.length === 0) {
-    io.stderr(
-      'veilio: no team key is unlocked on this machine, so this map cannot be sealed for ' +
-        'the team. Run `veilio team unlock` first. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-
-  // Newest first: a team mid-rotation holds two, and new content belongs under
-  // the newer one. The version is declared on upload so the server can refuse
-  // a write under a key a departed member knew (spec 014).
-  const newest = [...unlock.keys].sort((a, b) => b.version - a.version)[0]!
-  let teamKey
-  try {
-    teamKey = await importTeamKey(newest.key)
-  } catch (err) {
-    io.stderr(
-      `veilio: the unlocked team key could not be read (${err instanceof Error ? err.message : String(err)}). ` +
-        'Run `veilio team unlock` again. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-
-  // 2. The team's namespace, for the conflict check and for the report. A
-  //    failure here is NOT fallback-to-local: publishing blind is what the
-  //    check exists to prevent.
-  const found = await resolveTeamNamespace(io.home)
-  if (found.status === 'local') {
-    io.stderr(
-      'veilio: this account is not in a team, so there is no shared map to publish to. ' +
-        'Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-  if (found.status === 'locked') {
-    io.stderr(
-      'veilio: the team key on this machine does not match this team. ' +
-        'Run `veilio team unlock` again. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-  if (found.status === 'unavailable') {
-    io.stderr(
-      `veilio: could not read the team's maps (${found.reason}), so whether this map ` +
-        'conflicts with the team cannot be known. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-
-  // 3. The conflict check. Before sealing, so a refusal costs nothing.
-  const clashes = conflictsWithTeam(map, found.analysis.namespace)
-  if (clashes.length > 0) {
-    io.stderr(
-      `veilio: ${clashes.length} placeholder${clashes.length === 1 ? '' : 's'} in this map already ` +
-        `mean something else to the team. Publishing would leave ${clashes.length === 1 ? 'it' : 'them'} ` +
-        `unrestorable for every member, so nothing was uploaded:\n`
-    )
-    for (const { placeholder, mine, theirs } of clashes.slice(0, 10)) {
-      io.stderr(`  ${placeholder}: this map says ${mine}, the team says ${theirs}\n`)
-    }
-    if (clashes.length > 10) io.stderr(`  … and ${clashes.length - 10} more\n`)
-    io.stderr(
-      'Re-run `veilio scrub --team` to number this project out of the team\u2019s own ' +
-        'allocation, then push the result.\n'
-    )
-    return EXIT_ERROR
-  }
-
-  // 4. Seal and upload. Nothing above this line has sent anything.
-  const envelope = await encryptTeamMap(teamKey, map)
-  let created: { id: string }
-  try {
-    created = await createMap(credential, {
-      name: name ?? 'from the terminal',
-      map_data: JSON.stringify(envelope),
-      identifier_count: Object.keys(map).length,
-      scope: 'team',
-      key_version: newest.version,
-    })
-  } catch (err) {
-    return reportTeamWriteFailure(err, io)
-  }
-
-  // The local map is NOT rewritten with a remote id: a team map is not this
-  // project's copy of anything, and recording it as `remote` would make the
-  // next `maps pull` treat the team's map as this project's own.
-  // A union, not a sum: a name already in the team that this map also holds is
-  // ONE identifier in the shared set, and the pre-flight above has just checked
-  // that every such overlap agrees. Adding the two counts said "about" three
-  // for two (spec 011 T030).
-  const total = new Set([...Object.keys(found.analysis.namespace), ...Object.keys(map)]).size
-  const disputed = Object.keys(found.analysis.conflicts).length
-  // The name the person chose, beside the id they would type to remove it (T014).
-  const label = name ?? 'from the terminal'
-  io.stdout(
-    `Published "${label}" (${Object.keys(map).length} symbols) to the team as ${created.id}\n` +
-      `The team's shared set now holds ${total} identifiers` +
-      (disputed > 0
-        ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
-        : ', none disputed\n')
-  )
-  return EXIT_OK
-}
-
-/**
- * Remove a map from Cloud.
- *
- * Who may remove a team map is the server's decision and is not second-guessed
- * here - this says what each refusal means and changes nothing locally either
- * way. Renaming and removing are allowed while a key rotation is owed, because
- * neither stores anything under the key.
- */
-export async function runMapsRm(id: string | null, io: Io): Promise<number> {
-  const credential = readCredential(io.home)
-  if (!credential) return notSignedIn(io)
-
-  if (!id) {
-    io.stderr('veilio: which map? Run `veilio maps list` for the ids.\n')
-    return EXIT_ERROR
-  }
-
-  // The name, read first, so the confirmation says WHICH map went: an id is
-  // what a person types, the name is what they recognise (spec 011 T032). A
-  // failed read never stops the removal - it only means the id is all there is
-  // to report.
-  let label: string | null
-  try {
-    label = (await getMap(credential, id)).name || null
-  } catch {
-    label = null
-  }
-
-  try {
-    await deleteMap(credential, id)
-  } catch (err) {
-    if (err instanceof CloudError && err.status === 404) {
-      io.stderr(`veilio: there is no map ${id} on this account.\n`)
-      return EXIT_ERROR
-    }
-    if (err instanceof CloudError && err.status === 403) {
-      io.stderr(`veilio: ${id} belongs to someone else on your team, so it is theirs to remove.\n`)
-      return EXIT_ERROR
-    }
-    return reportCloudFailure(err, io)
-  }
-
-  io.stdout(label ? `Removed "${label}" (${id})\n` : `Removed ${id}\n`)
-  return EXIT_OK
-}
-
-/**
- * A failed team-map write, said in terms of what happened and who can fix it.
- *
- * The person reading this is often not the person who can clear it: a rotation
- * is owed by whoever holds the current key, not by whoever happened to push.
- * An unexplained refusal in a terminal reads as a broken tool (spec 011 US3).
- */
-function reportTeamWriteFailure(err: unknown, io: Io): number {
-  if (err instanceof CloudError && err.status === 409) {
-    io.stderr(
-      'veilio: a teammate left while holding the team key, so no new team content may be ' +
-        'written until the key is changed. A member who holds the current key has to do ' +
-        'that — it cannot be done from here. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-  if (err instanceof CloudError && err.status === 413) {
-    io.stderr(
-      'veilio: this map is too large for Cloud to accept, so nothing was stored. ' +
-        'Split it, or remove entries you no longer need.\n'
-    )
-    return EXIT_ERROR
-  }
-  if (err instanceof CloudError && err.kind === 'forbidden' && /limit/i.test(err.message)) {
-    // The ceiling is an abuse limit, not a plan feature. Saying "upgrade" here
-    // would take money for a change that does nothing.
-    io.stderr(
-      `veilio: ${err.message}\nThis ceiling is the same on every paid plan, so upgrading ` +
-        'will not raise it. Nothing was uploaded.\n'
-    )
-    return EXIT_ERROR
-  }
-  return reportCloudFailure(err, io)
-}
+/** Kept importable from here: tests and callers written before spec 052 moved
+ *  it into the shared client. */
+export { conflictsWithTeam } from './client/maps.js'
