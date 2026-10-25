@@ -68,8 +68,9 @@ it refuses in the same words for the same reasons.
 | `projects_list` | The projects the team works in; `*` marks the one in use. |
 | `projects_use` | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too. |
 
-- **Destructive tools are off by default.** `maps_remove`, and a `maps_update`
-  that would drop entries (`allowDrop: true`), are refused unless you start the
+- **Destructive tools are off by default.** `maps_remove`, a `maps_update`
+  that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
+  that would overwrite local entries, are refused unless you start the
   server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting the agent
   cannot reach. Even then, a removal must repeat the map's exact name. Creating,
   pulling, listing and updates that drop nothing always work.
