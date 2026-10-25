@@ -38,6 +38,7 @@ import {
 } from './scrub.ts'
 import type { MaskContext } from './scrub.ts'
 import { restore } from '../vendor/engine/index.js'
+import { MODEL_NOTE } from './ui.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -394,7 +395,15 @@ export class Guard {
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
   applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
-    return applyMap(text, this.map, this.context('unknown', kind))
+    // The guard's own note is a constant that holds no project information:
+    // it goes as written, wherever Claude Code places it. Masked word by word
+    // it cost ~110 tokens on every request (guard follow-up d08). Only an
+    // exact copy is kept; the text around it is masked as before.
+    const ctx = this.context('unknown', kind)
+    return text
+      .split(MODEL_NOTE)
+      .map((part) => applyMap(part, this.map, ctx))
+      .join(MODEL_NOTE)
   }
 
   /** What masking knows about a text of `language` (spec 050). */

@@ -2,6 +2,7 @@
 // reach the model with known names as placeholders and secrets removed.
 import { expect, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, recordedPrompt, ROOT, STRIPE } from './helpers.ts'
+import { MODEL_NOTE } from '../lib/ui.ts'
 
 const MAP = { __CLS__1: CANARY }
 
@@ -83,4 +84,36 @@ test('a prompt naming a plain-word method still gets its placeholder, so it matc
     text: 'Rename the method reconcile to settle',
   })
   expect(sent[0].text).toBe('Rename the method __FN__1 to settle')
+})
+
+// Guard follow-up d08: the note is the guard's own constant and holds no
+// project information, but it reached the model masked word by word
+// (`__STR__28 guard is on in this project`) wherever the project's map held
+// one of its words. Only the note is exempt: the text around it is masked.
+test("the guard's own note reaches the model as written, and the text around it is masked", async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      ...MAP,
+      __STR__28: 'Veilio',
+      __VAR__48: 'files',
+      __VAR__249: 'user',
+      __FN__18: 'match',
+    }),
+  })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = `# claudeMd\nThe user files name ${CANARY}.\n\n# veilioGuard\n${MODEL_NOTE}\n\nThis is ambient context for the user.`
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(out.text).toContain(MODEL_NOTE)
+  expect(out.text).not.toContain(CANARY)
+  expect(out.text).toContain('The __VAR__249 __VAR__48 name __CLS__1.')
+  expect(out.text).toContain('ambient context for the __VAR__249.')
+})
+
+test('a text that only resembles the note is masked as usual', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__48: 'files' }) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const near = MODEL_NOTE.replace('Veilio guard is on', `${CANARY} guard is on`)
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text: near })
+  expect(out.text).not.toContain(CANARY)
+  expect(out.text).toContain('__VAR__48')
 })
