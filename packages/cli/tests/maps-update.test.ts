@@ -376,6 +376,22 @@ describe('the ordinary refusals', () => {
     expect(patches()).toBe(0)
   })
 
+  it('with a project chosen, a map outside it says which project is in use and how to switch', async () => {
+    signIn(home, { team: true, project: 'p-tools' })
+    const elsewhere = cloud.add({
+      scope: 'team',
+      project: 'p-billing',
+      map_data: await sealTeam({ __CLS__1: 'A' }),
+    })
+    local({ __CLS__1: 'A', __FN__2: 'b' })
+    const r = await run(['maps', 'update', elsewhere.id])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toBe(
+      `veilio: No map ${elsewhere.id} in project tools (the project in use). \`veilio projects use <other>\` to work in another one.\n`
+    )
+    expect(patches()).toBe(0)
+  })
+
   it('no local map: nothing to send', async () => {
     signIn(home, { pmk: true })
     const row = cloud.add({ map_data: await sealPersonal({ __CLS__1: 'A' }, 'pmk') })

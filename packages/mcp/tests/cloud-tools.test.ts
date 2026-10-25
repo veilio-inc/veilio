@@ -304,6 +304,22 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(sent).toBe(cloud.rotationOwed ? 2 : 0)
   })
 
+  it('maps_update of a map outside the chosen project: the same sentence as the CLI', async () => {
+    signIn(home, { team: true, project: 'p-tools' })
+    local({ __CLS__1: 'A', __FN__2: 'b' })
+    const id = cloud.add({
+      scope: 'team',
+      project: 'p-billing',
+      map_data: await sealTeam({ __CLS__1: 'A' }),
+    }).id
+    const r = await callToolAsync('maps_update', { id }, ctx)
+    const c = await cli(['maps', 'update', id])
+    expect(r.text).toBe(
+      `Veilio: No map ${id} in project tools (the project in use). \`veilio projects use <other>\` to work in another one.`
+    )
+    expect(sentenceOf(r.text)).toBe(sentenceOf(c.err))
+  })
+
   it('a clash result names placeholders, never the names behind them', async () => {
     signIn(home, { team: true })
     local({ __CLS__1: 'X', __CLS__9: 'MyRouter' })

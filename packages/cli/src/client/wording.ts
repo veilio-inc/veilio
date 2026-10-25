@@ -26,6 +26,7 @@ export const REFUSAL_CODES = [
   'not_signed_in',
   'which_map',
   'map_not_found',
+  'map_not_in_project',
   'not_yours_remove',
   'not_yours_update',
   'no_local_map',
@@ -125,6 +126,10 @@ export const WORDING: Record<RefusalCode, Words> = {
   map_not_found: (p) => ({
     message: `there is no map ${p.id} on this account.`,
     resolve: 'Run `veilio maps list` for the ids.',
+  }),
+  map_not_in_project: (p) => ({
+    message: `No map ${p.id} in project ${p.project} (the project in use).`,
+    resolve: '`veilio projects use <other>` to work in another one.',
   }),
   not_yours_remove: (p) => ({
     message: `${label(p)} belongs to someone else on your team, so it is theirs to remove.`,

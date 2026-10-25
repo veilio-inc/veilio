@@ -43,6 +43,7 @@ import {
   getPersonalMapsKeyWrap,
   getVault,
   listMaps,
+  listProjects,
   updateMapContent,
   type CloudMap,
   type CloudMapList,
@@ -619,7 +620,14 @@ export async function updateCloudMap(
   }
   const theirs = list.teamMaps.find((m) => m.id === id)
   if (theirs) return refuse('not_yours_update', { id, name: theirs.name })
-  if (!list.personalMaps.some((m) => m.id === id)) return refuse('map_not_found', { id })
+  if (!list.personalMaps.some((m) => m.id === id)) {
+    // With a project chosen the listing is that project's, so "not here" may
+    // well mean "in another project": said, with the way to switch.
+    if (credential.project) {
+      return refuse('map_not_in_project', { id, project: await projectName(credential) })
+    }
+    return refuse('map_not_found', { id })
+  }
 
   let remote: CloudMap
   try {
@@ -702,6 +710,16 @@ export async function updateCloudMap(
     updatedAt,
     notes,
   })
+}
+
+/** The chosen project's name, or its id when the server cannot say. */
+async function projectName(credential: Credential): Promise<string> {
+  try {
+    const found = (await listProjects(credential)).projects.find((p) => p.id === credential.project)
+    return found?.name ?? credential.project!
+  } catch {
+    return credential.project!
+  }
 }
 
 /** What the Cloud copy holds that the update would lose: a placeholder the
