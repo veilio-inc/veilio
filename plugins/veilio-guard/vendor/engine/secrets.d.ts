@@ -140,6 +140,11 @@ export declare function destroysValue(type: SecretType): boolean;
  * Like its sibling, it must never consult `SecretSeverity`.
  */
 export declare function blocksPaste(type: SecretType): boolean;
+/** The redaction tokens scanSecrets writes (`__REDACTED_CREDENTIAL_1__`), and
+ *  the one the guard writes for a masked-kind number it cannot mask
+ *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
+ *  whole and of a known kind. */
+export declare const REDACTION_TOKENS: RegExp;
 /** Detect credentials in `code` without modifying it. */
 export declare function detectSecrets(code: string): SecretFinding[];
 /**

@@ -30,6 +30,7 @@ import {
 } from './policy.ts'
 import {
   applyMap,
+  destroyedValues,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
@@ -643,7 +644,9 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line))))
               .join('\n')
           : fn(s, ctx)
-      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      // What any scan of this result destroys is removed from all of it.
+      const destroyed = destroyedValues(texts)
+      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c, { destroyed }))
       // What a field pass already scanned for credentials, as written: the
       // pass over every string only replaces the names the map has since
       // learned there. Scanned again, the masked text would be judged as text,
@@ -655,7 +658,9 @@ export class Guard {
         return out
       }
       const again = (s: string) =>
-        scanned.has(s) ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true })) : apply(s)
+        scanned.has(s)
+          ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true, destroyed }))
+          : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
       else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {

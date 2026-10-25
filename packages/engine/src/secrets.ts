@@ -1025,7 +1025,7 @@ const TYPE_TOKENS: Record<SecretType, string> = {
  *  the one the guard writes for a masked-kind number it cannot mask
  *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
  *  whole and of a known kind. */
-const REDACTION_TOKENS = new RegExp(
+export const REDACTION_TOKENS = new RegExp(
   `__REDACTED_(?:${[...new Set(Object.values(TYPE_TOKENS))].join('|')})_\\d+__|__REDACTED_(?:${(
     Object.keys(SECRET_DISPOSITIONS) as SecretType[]
   )

@@ -394,3 +394,85 @@ test('a credential repeated bare in a typed prompt is redacted in both places', 
   const out: any = await $.prompt.attachment({ type: 'edited_text_file', text })
   expect(out.text).not.toContain('xk9mq2vlp7rz')
 })
+
+// Security review of 75fe4c0: what a scan destroys anywhere in a result is
+// removed from all of it, and values that overlap are removed whole.
+test('a secret found on one Grep line is removed from every line of the result', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/notes.md:1:password="xk9mq2vlp7rz"`,
+    `${ROOT}/notes.md:7:the staging login still uses xk9mq2vlp7rz`,
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 2 } }))
+  const out: any = await $.tool.call(eventOf(grep))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rz')
+})
+
+test('a secret found in one field of a result is removed from the others', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  on('tool.call', () => ({
+    ...bash.r,
+    result: {
+      ...bash.r.result,
+      stdout: 'password="xk9mq2vlp7rz"\n',
+      stderr: 'warning: xk9mq2vlp7rz is weak\n',
+    },
+  }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rz')
+})
+
+test('two secrets where one is a prefix of the other are both removed whole', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const stdout = [
+    'password="xk9mq2vlp7rz"',
+    'api_key="xk9mq2vlp7rzwq8tn4"',
+    'rotated to xk9mq2vlp7rzwq8tn4 today',
+  ].join('\n')
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  const sent = JSON.stringify(out)
+  expect(sent).not.toContain('xk9mq2vlp7rz')
+  expect(sent).not.toContain('wq8tn4')
+})
+
+test('a source Read: a secret repeated in a comment is removed there too', async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = 'const password = "xk9mq2vlp7rz"\n// was xk9mq2vlp7rz before the rotation\n'
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content } },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rz')
+})
+
+// Review of 28414f4.
+test('a new project name written against a redacted key is masked and added', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const stdout =
+    '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA7bq9xZ2kLmN3pQ4rS5tU6vW7xY8zA9bC0dE1fG2hI3jK4lM5\n-----END RSA PRIVATE KEY-----AcmeBilling.pem\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('AcmeBilling')
+})
+
+test('a source Read: a secret a rule only partly took is removed whole, and the Read is sent', async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = 'const aws_secret_access_key = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY123"\n'
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content } },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.file.content).toMatch(/= "__REDACTED_[A-Z_]+_\d+__"/)
+})

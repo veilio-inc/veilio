@@ -11,6 +11,7 @@
 //   else changed. The caller decides what an unknown placeholder means.
 import {
   MANUAL_BASE,
+  REDACTION_TOKENS,
   REGULATED_BASES,
   anonymize,
   detectSecrets,
@@ -218,60 +219,101 @@ function replaceNames(text: string, map: SymbolMap, ctx: MaskContext = NO_CONTEX
   })
 }
 
-// The redaction tokens a scan writes (`__REDACTED_CREDENTIAL_1__`) and the
-// guard's own for a regulated number (`__REDACTED_IBAN__`).
-const REDACTION_TOKEN = /(__REDACTED_[A-Z0-9_]*?_\d+__|__REDACTED_[A-Z_]*[A-Z]__)/
+// The redaction tokens the engine treats as its own (a scan's
+// `__REDACTED_CREDENTIAL_1__`, the guard's `__REDACTED_IBAN__`), exactly.
+const REDACTION_TOKEN = new RegExp(`(${REDACTION_TOKENS.source})`)
+// What a rule left of a secret it only partly took, before the value's
+// closing quote (`__REDACTED_AWS_SECRET_1__3"`).
+const RESIDUE = new RegExp(`(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]{1,8}(?=["'\`])`, 'g')
 
-/** Names replaced around redaction tokens, never across them: a token's edges
- *  are word characters, so a name written against one would not be whole. */
-function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
-  if (!text.includes('__REDACTED_')) return replaceNames(text, map, ctx)
+/** `fn` on each piece of `text` between redaction tokens, never across one:
+ *  a token's edges are word characters, so a name written against one would
+ *  not be whole. */
+function aroundTokens(text: string, fn: (part: string) => string): string {
+  if (!text.includes('__REDACTED_')) return fn(text)
   return text
     .split(REDACTION_TOKEN)
-    .map((part, i) => (i % 2 === 1 ? part : replaceNames(part, map, ctx)))
+    .map((part, i) => (i % 2 === 1 ? part : fn(part)))
     .join('')
 }
 
-/** The scan's redacted text, with every other occurrence of each value it
- *  destroyed removed too: a rule matches a credential in its context (after
- *  its key), and the same value elsewhere, bare, is the same secret (security
- *  review of 28414f4). Values come from the text as written; one of fewer
- *  than six characters is left to the rule, since removed everywhere it would
- *  take ordinary words with it. */
-function sweep(text: string, scan: ReturnType<typeof scanSecrets>): string {
-  let out = scan.code
-  const destroyed = scan.findings.filter((f) => f.redacted && f.length >= 6)
-  if (destroyed.length === 0) return out
+function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
+  return aroundTokens(text.replace(RESIDUE, '$1'), (part) => replaceNames(part, map, ctx))
+}
+
+/** The values a scan of `text` as written destroys, six characters or more:
+ *  fewer, removed everywhere, would take ordinary words with them. */
+function destroyedIn(text: string, scan: ReturnType<typeof scanSecrets>): string[] {
+  const found = scan.findings.filter((f) => f.redacted && f.length >= 6)
+  if (found.length === 0) return []
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-  // Numbered after the scan's own tokens, so two secrets never share one.
+  return found.map((f) => {
+    const start = (starts[f.line - 1] ?? 0) + f.column - 1
+    return text.slice(start, start + f.length)
+  })
+}
+
+/** Every value the scans of a whole result destroy, so that a secret found in
+ *  one string of it (a Grep line, a field) is removed from all of them
+ *  (security review of 75fe4c0). */
+export function destroyedValues(texts: readonly string[]): string[] {
+  const values = new Set<string>()
+  for (const text of texts)
+    for (const value of destroyedIn(text, scanSecrets(text, 'redact'))) values.add(value)
+  return [...values]
+}
+
+/** `out` with every occurrence of every value removed: a rule matches a
+ *  credential in its context, and the same value elsewhere, bare, is the same
+ *  secret (security review of 28414f4). Occurrences are found first and
+ *  overlapping ones merged, so a value inside a longer one cannot leave part
+ *  of the longer behind. Tokens are numbered after the scan's own, so two
+ *  secrets never share one. */
+function sweep(out: string, values: readonly string[]): string {
+  if (values.length === 0) return out
+  const spans: [number, number][] = []
+  for (const value of new Set(values)) {
+    if (value === '') continue
+    for (let i = out.indexOf(value); i !== -1; i = out.indexOf(value, i + 1))
+      spans.push([i, i + value.length])
+  }
+  if (spans.length === 0) return out
+  spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
+  const merged: [number, number][] = []
+  for (const [start, end] of spans) {
+    const last = merged[merged.length - 1]
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
+    else merged.push([start, end])
+  }
   let n = Math.max(
     0,
     ...[...out.matchAll(/__REDACTED_CREDENTIAL_(\d+)__/g)].map((m) => Number(m[1]))
   )
-  for (const f of destroyed) {
-    const start = (starts[f.line - 1] ?? 0) + f.column - 1
-    const value = text.slice(start, start + f.length)
-    if (out.includes(value)) out = out.split(value).join(`__REDACTED_CREDENTIAL_${++n}__`)
+  let result = ''
+  let at = 0
+  for (const [start, end] of merged) {
+    result += out.slice(at, start) + `__REDACTED_CREDENTIAL_${++n}__`
+    at = end
   }
-  return out
+  return result + out.slice(at)
 }
 
 export function applyMap(
   text: string,
   map: SymbolMap,
   ctx: MaskContext = NO_CONTEXT,
-  options: { scanned?: boolean } = {}
+  options: { scanned?: boolean; destroyed?: readonly string[] } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
   // once, a Read's source the engine masked): only the names the map has
   // since learned are replaced.
-  if (options.scanned) return replaceAround(text, map, ctx)
+  if (options.scanned) return replaceAround(sweep(text, options.destroyed ?? []), map, ctx)
   // Credentials are found in the text as written, before any name is
   // replaced, and nothing the map holds overrides what the scan finds
   // (security review of a162a37).
   const scan = scanSecrets(text, 'redact')
-  let redacted = sweep(text, scan)
+  let redacted = sweep(scan.code, [...destroyedIn(text, scan), ...(options.destroyed ?? [])])
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
   // token and the residue together. Only after a pass that redacted something.
@@ -336,6 +378,28 @@ export function maskShaped(
   ctx: MaskContext
 ): { text: string; additions: SymbolMap } {
   if (ctx.kind === 'prompt') return { text, additions: {} }
+  // A name written against a redaction token is masked like any other.
+  if (text.includes('__REDACTED_')) {
+    let working = map
+    const additions: SymbolMap = {}
+    const out = aroundTokens(text, (part) => {
+      const r = maskShapedPart(part, working, ctx)
+      if (Object.keys(r.additions).length) {
+        Object.assign(additions, r.additions)
+        working = { ...working, ...r.additions }
+      }
+      return r.text
+    })
+    return { text: out, additions }
+  }
+  return maskShapedPart(text, map, ctx)
+}
+
+function maskShapedPart(
+  text: string,
+  map: SymbolMap,
+  ctx: MaskContext
+): { text: string; additions: SymbolMap } {
   const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
   const reused: SymbolMap = {}
   const found = new Set<string>()
