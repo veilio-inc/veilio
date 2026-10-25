@@ -152,3 +152,12 @@ test('a reminder holding a copy of the note is masked in full', async ($, on) =>
   const out: any = await $.prompt.attachment({ type: 'edited_text_file', text: MODEL_NOTE })
   expect(out.text).toContain('__STR__28')
 })
+
+test('a secret a rule only partly took is redacted whole in a reminder', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  // 41 characters; the AWS rule takes 40, and the last one was left beside its token.
+  const text = 'aws_secret_access_key = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY123"'
+  const out: any = await $.prompt.attachment({ type: 'edited_text_file', text })
+  expect(out.text).toMatch(/= "__REDACTED_[A-Z_]+_\d+__"$/)
+})

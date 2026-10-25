@@ -227,3 +227,50 @@ test('an edit to a file of sample credentials: redacted, and the result is sent'
   expect(sent).not.toContain('Tr0ub4dor3xz')
   expect(sent).toContain('__REDACTED_')
 })
+
+// Review of 9d3f6d0: a placeholder can stand for part of a credential.
+test('a password holding a project name is still redacted in shell output', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __CLS__7: 'Acme' }) })
+  const stdout = 'DB_PASSWORD = "Acme!9xQz"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('9xQz')
+  expect(JSON.stringify(out)).not.toContain('Acme')
+})
+
+test('a secret a rule only partly took is redacted whole, and the result is sent', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  // 41 characters; the AWS rule takes 40 and left the last one beside its token.
+  const stdout = 'aws_secret_access_key = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY123"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.stdout).toMatch(/= "__REDACTED_[A-Z_]+_\d+__"/)
+})
+
+test('a plain word under a long placeholder number is not read as a credential', async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__1290: 'disabled' }) })
+  const content = 'export const auth = { client_secret: "disabled" }\n'
+  on('tool.call', () => ({
+    ...read.r,
+    result: { ...read.r.result, file: { ...read.r.result.file, content } },
+  }))
+  const out: any = await $.tool.call(eventOf(read))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.file.content).toContain('__STR__1290')
+})
+
+test('a credential-shaped placeholder for a plain word in output is not read as a credential', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1289: 'otherName' }) })
+  // `abAbab` is too plain to be a credential; masked, its placeholder
+  // (`__VAR__1290`) has the entropy of one. The last scan reads what it stands for.
+  const stdout = 'secret: "abAbab"\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.stdout).not.toContain('abAbab')
+})

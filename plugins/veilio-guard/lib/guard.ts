@@ -593,7 +593,7 @@ export class Guard {
       return this.withhold(
         'another program changed .veilio/map.json while Veilio was writing to it'
       )
-    const left = survivingSecrets(shaped.text)
+    const left = survivingSecrets(shaped.text, { ...this.map, ...shaped.additions })
     if (left.length > 0)
       return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
     return { deny: shaped.text }
@@ -689,7 +689,7 @@ export class Guard {
 
       const left: string[] = []
       deepRewrite(value, (s) => {
-        left.push(...survivingSecrets(s))
+        left.push(...survivingSecrets(s, working))
         return s
       })
       if (left.length > 0)

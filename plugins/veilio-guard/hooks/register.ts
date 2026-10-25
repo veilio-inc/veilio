@@ -168,8 +168,11 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
     if (g.state === 'stopped') return { text: null }
-    // Only the first message's context carries the guard's note.
-    const text = e.type === 'context_sections' ? g.applyContext(r.text) : g.applyText(r.text)
+    // Only the first message's context carries the guard's note: on 2.1.310
+    // the plugins' blocks come as context_sections, and earlier builds sent
+    // them with userEmail as session_context.
+    const first = e.type === 'context_sections' || e.type === 'session_context'
+    const text = first ? g.applyContext(r.text) : g.applyText(r.text)
     return { ...r, text }
   }).catch(async () => ({ text: null }))
 

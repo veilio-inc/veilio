@@ -220,6 +220,14 @@ export function applyMap(text: string, map: SymbolMap, ctx: MaskContext = NO_CON
   const named = replaceNames(text, map, ctx)
   const scan = scanSecrets(named, 'redact')
   let out = scan.code
+  // A rule can take fewer characters than the secret had, leaving a residue
+  // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
+  // token and the residue together, until nothing more is redacted.
+  for (let pass = 0; pass < 3; pass++) {
+    const again = scanSecrets(out, 'redact').code
+    if (again === out) break
+    out = again
+  }
   // A regulated number (an IBAN, a card, a PESEL) the map does not have yet:
   // output adds no entries, so it is removed, irreversibly.
   for (const span of scan.regulated) {
@@ -300,9 +308,22 @@ export function maskShaped(
   return { text: replaceNames(text, { ...reused, ...additions }, ctx), additions }
 }
 
-/** Credentials still in text the guard is about to hand the model. */
-export function survivingSecrets(text: string): string[] {
-  return detectSecrets(text)
+const REGULATED_PLACEHOLDER = /^__(?:IBAN|PAN|PESEL)__\d+$/
+
+/** Credentials still in text the guard is about to hand the model, judged on
+ *  what the placeholders stand for: a placeholder can hide part of a
+ *  credential (`__CLS__1!9xQz` is `Acme!9xQz`), and a long placeholder number
+ *  can look like key material where the name is a plain word
+ *  (`client_secret: "__STR__1290"` is `"disabled"`). The restored text is
+ *  only read here, never sent. Redaction tokens stay, and are not credentials
+ *  (guard follow-up d03a). */
+export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
+  // A regulated number (`__PAN__1`) is masked on purpose and stays masked here.
+  const names: SymbolMap = {}
+  for (const [placeholder, name] of Object.entries(map))
+    if (!REGULATED_PLACEHOLDER.test(placeholder)) names[placeholder] = name
+  const real = Object.keys(names).length ? restore(text, names, { strip: 'none' }).restored : text
+  return detectSecrets(real)
     .filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
     .map((f) => f.type)
 }

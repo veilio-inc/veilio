@@ -513,40 +513,18 @@ const KNOWN_DUMMY = new Set([
     'new-password',
     'one-time-code',
 ]);
-/** The shortest value each assignment rule matches on its own. */
-const ASSIGNMENT_MINIMUM = {
-    'password-assignment': 6,
-    'high-entropy-string': 24,
-};
-let veilioTokens = null;
-/** Veilio's own tokens, complete and of a known kind: a redaction token this
- *  module writes (`__REDACTED_CREDENTIAL_1__`), the one the guard writes for a
- *  regulated number it cannot mask (`__REDACTED_IBAN__`), and a symbol-map
- *  placeholder (`__VAR__12`). Built on first use, after TYPE_TOKENS exists. */
-function tokenPattern() {
-    if (!veilioTokens) {
-        const bases = [...new Set(Object.values(TYPE_TOKENS))].join('|');
-        veilioTokens = new RegExp(`__REDACTED_(?:${bases})_\\d+__|__REDACTED_(?:IBAN|PAYMENT_CARD|PESEL)__|__(?:CLS|FN|VAR|PKG|STR|MANUAL|IBAN|PAN|PESEL)__\\d+`, 'g');
-    }
-    veilioTokens.lastIndex = 0;
-    return veilioTokens;
-}
-function classifyValue(value, type, assignmentShaped) {
+function classifyValue(value, assignmentShaped) {
     const trimmed = value.trim();
-    // Veilio's own tokens carry no secret (guard follow-up d03a): text the guard
-    // already redacted is scanned again before it is sent, and the token read as
-    // a credential withheld every result from a file of sample credentials.
-    // What is left once they are removed is judged; nothing, or less than the
-    // rule matches on its own (a residue of a longer secret), is a placeholder.
-    // The structural rules (a connection string) take any remainder as a
-    // password, since nothing else can sit there.
-    const rest = trimmed.replace(tokenPattern(), '');
-    if (rest !== trimmed) {
-        const minimum = (assignmentShaped && ASSIGNMENT_MINIMUM[type]) || 1;
-        if (rest.length < minimum)
-            return 'placeholder';
-        return classifyValue(rest, type, assignmentShaped);
-    }
+    // A value that is nothing but redaction tokens carries no secret: it is what
+    // a redaction already left (guard follow-up d03a). The guard scans a result
+    // it redacted once more before sending it, and read the token as a
+    // credential, withholding every result from a file of sample credentials.
+    // Only whole tokens of this module's own kinds count, and only when nothing
+    // else is left: a residue next to a token is part of a longer secret, and a
+    // symbol-map placeholder may stand for a project name inside a credential,
+    // so both are judged as before (review of 9d3f6d0).
+    if (trimmed !== '' && trimmed.replace(REDACTION_TOKENS, '') === '')
+        return 'placeholder';
     if (KNOWN_DUMMY.has(trimmed.toLowerCase()))
         return 'placeholder';
     // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
@@ -658,7 +636,7 @@ function collectMatches(code) {
             // a finding at all: it never reaches the panel, the policy, or the map.
             if (pattern.validate !== undefined && !pattern.validate(value))
                 continue;
-            let verdict = classifyValue(value, pattern.type, assignmentShaped);
+            let verdict = classifyValue(value, assignmentShaped);
             if (verdict === 'placeholder')
                 continue;
             // Assignment-shaped findings also get an entropy check: `password: "the
@@ -847,6 +825,10 @@ const TYPE_TOKENS = {
     'payment-card': 'CARD_NUMBER',
     pesel: 'PESEL',
 };
+/** The redaction tokens scanSecrets writes (`__REDACTED_CREDENTIAL_1__`), and
+ *  the one the guard writes for a regulated number it cannot mask
+ *  (`__REDACTED_IBAN__`), whole and of a known kind. */
+const REDACTION_TOKENS = new RegExp(`__REDACTED_(?:${[...new Set(Object.values(TYPE_TOKENS))].join('|')})_\\d+__|__REDACTED_(?:IBAN|PAYMENT_CARD|PESEL)__`, 'g');
 /** Detect credentials in `code` without modifying it. */
 export function detectSecrets(code) {
     return scanSecrets(code, 'warn').findings;

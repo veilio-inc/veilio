@@ -2,14 +2,15 @@ import { describe, it, expect } from 'vitest'
 import { SECRET_DISPOSITIONS, detectSecrets, scanSecrets } from '../src/secrets.js'
 
 /**
- * Veilio's own tokens are not credentials (guard follow-up d03a).
+ * A redaction token is not a credential (guard follow-up d03a).
  *
  * The guard redacts a result, then scans it once more and withholds it if a
  * credential is left. The second scan read the redaction token itself as a
  * hardcoded credential (`'api-key': '__REDACTED_CREDENTIAL_1__'`), so every
  * result from a file of sample credentials was withheld, although nothing
- * real was left in it. Redaction must be idempotent, and a real credential
- * must still be found wherever it sits next to a token.
+ * real was left in it. Redaction must be idempotent, and anything beside a
+ * token - a residue of a longer secret, a symbol-map placeholder that may
+ * stand for part of a credential - is judged as before.
  */
 
 /** The findings that make the guard withhold a result. */
@@ -19,7 +20,7 @@ function blocking(text: string): string[] {
     .map((f) => f.type)
 }
 
-describe('a value made only of Veilio tokens is not a credential', () => {
+describe('a value that is only redaction tokens is not a credential', () => {
   it('a redaction token assigned to a key-like name', () => {
     expect(blocking(`const kinds = { 'google-api-key': '__REDACTED_CREDENTIAL_1__' }`)).toEqual([])
   })
@@ -28,28 +29,19 @@ describe('a value made only of Veilio tokens is not a credential', () => {
     expect(blocking(`password = "__REDACTED_DB_PASSWORD_12__"`)).toEqual([])
   })
 
-  it('a regulated-number token the guard writes, with no number', () => {
+  it('the token the guard writes for a regulated number', () => {
     expect(blocking(`secret: '__REDACTED_PAYMENT_CARD__'`)).toEqual([])
   })
 
-  it('a map placeholder assigned to a password', () => {
-    expect(blocking(`const client_secret = "__VAR__1290"`)).toEqual([])
+  it('two redaction tokens in one value', () => {
+    expect(blocking(`api_key = '__REDACTED_CREDENTIAL_1____REDACTED_SECRET_2__'`)).toEqual([])
   })
 
-  it('two tokens in one value', () => {
-    expect(blocking(`api_key = '__STR__4__REDACTED_CREDENTIAL_2__'`)).toEqual([])
-  })
-
-  it('a token in a high-entropy assignment', () => {
+  it('a redaction token in a high-entropy assignment', () => {
     expect(blocking(`auth_token: "__REDACTED_SECRET_3__"`)).toEqual([])
   })
 
-  it('a token followed by a residue too short to be a credential', () => {
-    // A rule took 40 of a fixture's 41 characters: one is left after the token.
-    expect(blocking(`aws_secret_access_key = "__REDACTED_AWS_SECRET_1__3"`)).toEqual([])
-  })
-
-  it('a token as a connection string password', () => {
+  it('a redaction token as a connection string password', () => {
     expect(blocking(`const url = "postgres://admin:__REDACTED_DB_PASSWORD_1__@db:5432/x"`)).toEqual(
       []
     )
@@ -69,14 +61,14 @@ describe('redaction is idempotent', () => {
     expect(once.findings.filter((f) => f.redacted)).toHaveLength(4)
   })
 
-  it('scanning the redacted text again finds nothing', () => {
+  it('scanning the redacted text again finds nothing and changes nothing', () => {
     const once = scanSecrets(sample, 'redact').code
     expect(blocking(once)).toEqual([])
     expect(scanSecrets(once, 'redact').code).toBe(once)
   })
 })
 
-describe('a real credential beside a token is still caught', () => {
+describe('anything beside a token is still judged', () => {
   it('a real password with no token', () => {
     expect(blocking(`password = "Tr0ub4dor3xzQ"`)).toEqual(['password-assignment'])
   })
@@ -91,27 +83,37 @@ describe('a real credential beside a token is still caught', () => {
     expect(blocking(`password = "__REDACTED_x9kQ7mZ2pL"`)).toEqual(['password-assignment'])
   })
 
-  it('a made-up kind that is not one of Veilio tokens', () => {
+  it('a made-up kind that is not one of the redaction tokens', () => {
     expect(blocking(`password = "__REDACTED_HUNTER2XYZ_1__"`)).toEqual(['password-assignment'])
   })
 
+  it('a short residue of a longer secret after a token', () => {
+    // A rule took most of a longer secret: what is left is real key material.
+    expect(blocking(`aws_secret_access_key = "__REDACTED_AWS_SECRET_1__Zx9Q7"`)).not.toEqual([])
+  })
+
+  it('a one-character residue after a token', () => {
+    expect(blocking(`aws_secret_access_key = "__REDACTED_AWS_SECRET_1__3"`)).not.toEqual([])
+  })
+
   it('a token with a long real secret after it', () => {
-    expect(blocking(`password = "__VAR__3Tr0ub4dor3xzQ"`)).toEqual(['password-assignment'])
-  })
-
-  it('a token inside a long real secret', () => {
-    expect(blocking(`api_key = "Tr0ub4__VAR__7dor3xzQ"`)).toEqual(['password-assignment'])
-  })
-
-  it('a token with a short real password after it, in a connection string', () => {
-    // The structural rules have no minimum worth trusting: anything left is a password.
-    expect(blocking(`const url = "postgres://admin:__VAR__2pw9@db:5432/x"`)).toEqual([
-      'connection-string',
+    expect(blocking(`password = "__REDACTED_CREDENTIAL_1__Tr0ub4dor3xzQ"`)).toEqual([
+      'password-assignment',
     ])
   })
 
-  it('a high-entropy value with a token and enough key material after it', () => {
-    // Both assignment rules read it; whichever wins, it is still a credential.
-    expect(blocking(`auth_token: "__VAR__1aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v"`)).toHaveLength(1)
+  it('a symbol-map placeholder may stand for part of a credential', () => {
+    // `Acme!9xQz` with the project name `Acme` already replaced (review of 9d3f6d0).
+    expect(blocking(`DB_PASSWORD = "__CLS__1!9xQz"`)).toEqual(['password-assignment'])
+  })
+
+  it('a symbol-map placeholder followed by digits', () => {
+    expect(blocking(`password = "__MANUAL__1839201"`)).not.toEqual([])
+  })
+
+  it('a real password after a token in a connection string', () => {
+    expect(
+      blocking(`const url = "postgres://admin:__REDACTED_DB_PASSWORD_1__pw9@db:5432/x"`)
+    ).toEqual(['connection-string'])
   })
 })
