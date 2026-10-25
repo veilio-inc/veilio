@@ -44,9 +44,14 @@ veilio maps list                # ids, scope and symbol counts for everything in
 veilio maps pull <id>           # decrypt locally, write second — never a partial write
 veilio maps push [name]         # upload the local map under a new Cloud name
 veilio maps push --team [name]  # publish it as the team's shared map instead
+veilio maps update <id>         # replace a Cloud map's entries with the local map's, in place
 veilio maps rm <id>             # remove a map from Cloud
+veilio projects                 # the projects your team works in; * marks the one in use
+veilio projects use <name>      # work in that project (kept with the sign-in)
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key from this machine
+veilio vault unlock             # keep the personal-maps key here (7 days), for the MCP server
+veilio vault lock               # remove it from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
 veilio logout                   # revokes server-side, then removes the local credential
 ```
@@ -61,16 +66,35 @@ derives the key here, on your machine — the passphrase and the key never
 leave it. A team map is sealed under the team key, which the server cannot
 read either; `veilio team unlock` opens it here with your vault passphrase.
 
-**Creating and removing a shared map are here; replacing one is not.** There is
-no `maps update --team`, and that is a decision rather than a gap. Replacing the
-contents of a map teammates already rely on changes what their placeholders
-mean after they have sent text using them — the old meaning is what their
-`restore` still needs, and nothing in a shared map records which version a given
-piece of text was masked under. Publish a new map and remove the old one when
-you are sure nobody is still restoring against it. Cloud does have a route that
-rewrites a team map's contents, used by key rotation to re-seal the same pairs
-under a new key; it exists for that one purpose and does not change what any
-placeholder means.
+**Updating a map in place.** `veilio maps update <id>` replaces a Cloud map's
+entries with the local map's and keeps its id, name and project, so refreshing a
+map never leaves a second copy behind. Before anything is sent it refuses, and
+says why:
+
+- an update that would **drop entries** the Cloud map holds (a placeholder the
+  local map lacks, or gives another name), with the count, unless you pass
+  `--allow-drop` - text masked under the old meaning still depends on it;
+- for a team map, a placeholder that **another team map** gives a different
+  name - publishing it would leave it unrestorable for every member;
+- a **teammate's map** - only its publisher updates or removes it.
+
+The server refuses the rest: a team that owes a key change, and a map that
+changed in Cloud since it was read (two writers never silently overwrite each
+other). A team map is sealed with the team's current key; a personal map with
+the personal-maps key.
+
+**Projects.** A team map belongs to one project. `veilio projects use <name>`
+chooses the one this sign-in works in: listing, pushing, updating and
+`scrub --team` then use that project's team maps only, and the MCP server uses
+the same choice. With none chosen, team maps of every project are used.
+
+**The personal-maps key.** `veilio vault unlock` asks for the vault passphrase
+once and keeps, on this machine, only a key that opens personal maps - not the
+passphrase, not the vault key, which also unlocks your team keys. The first time,
+it creates that key and stores it in Cloud wrapped under your vault key, where
+the server cannot read it; it also re-seals older personal maps under it. Then
+`maps pull`, `push` and `update` - and the MCP server - open personal maps
+without a passphrase. Without it, the CLI asks for the passphrase as before.
 
 Custom rules (whitelist and replace, set in the web app) are applied by
 `scrub` from a local copy that `veilio rules pull` writes to
@@ -78,9 +102,11 @@ Custom rules (whitelist and replace, set in the web app) are applied by
 offline - and says on every run how many rules it applied and how old the copy
 is. Pull again after the rules change; `logout` removes the copy.
 
-Three files, all `0600`, all under `~/.veilio/`: `credential.json` (the session,
-removed by `logout`), `rules.json` (the rules copy) and `team-keys.json` (the
-keys `team unlock` opened, kept seven days).
+Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
+and the chosen project, removed by `logout`), `rules.json` (the rules copy),
+`team-keys.json` (the keys `team unlock` opened, kept seven days) and
+`personal-maps-key.json` (the key `vault unlock` opened, kept seven days). `logout`
+removes all of them.
 
 ### Scrubbing with the team's numbering
 
@@ -116,8 +142,8 @@ with the real names:
 - **The counts are this project's.** "Restored 8 of 9" is measured against your
   own map, not against a team namespace of four hundred entries.
 
-The map commands are clients of `GET /api/maps`, `GET /api/maps/:id` and
-`POST /api/maps` — the exact same routes the browser uses, behind the exact
+The map commands are clients of `GET /api/maps`, `GET /api/maps/:id`,
+`POST /api/maps` and `PATCH /api/maps/:id` — the exact same routes the browser uses, behind the exact
 same entitlement check. There is no CLI-shaped API and nothing here can reach
 a plan feature the web app couldn't.
 
