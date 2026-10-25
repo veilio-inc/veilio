@@ -134,6 +134,8 @@ a plan feature the web app couldn't.
                         nothing and exit 1 if a placeholder would be left
     --keep-docs         restore: keep JSDoc blocks the model wrote
 -f, --force             Allow a map write that would drop existing entries
+    --allow-drop        maps update: allow dropping entries the Cloud map has
+                        and the local map does not
     --device            login: sign in through a browser instead of typing a
                         password here. Required for an SSO-bound account, and
                         used automatically when the instance asks for a CAPTCHA

@@ -67,7 +67,14 @@ export interface ParsedArgs {
    * reads like they are the same thing. `maps <verb>` keeps the cloud surface
    * visibly separate from the offline one.
    */
-  mapsAction: 'list' | 'pull' | 'push' | 'rm' | null
+  mapsAction: 'list' | 'pull' | 'push' | 'update' | 'rm' | null
+  /**
+   * `maps update --allow-drop`: let an update remove entries the Cloud map
+   * holds and the local map does not (spec 052 FR-005). Its own flag rather
+   * than `--force`, which already means "overwrite the LOCAL map" on a pull:
+   * one word for two opposite directions is how somebody loses the wrong copy.
+   */
+  allowDrop: boolean
 
   /**
    * `team unlock` / `team lock`.
@@ -149,6 +156,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     device: false,
     instance: null,
     mapsAction: null,
+    allowDrop: false,
     teamAction: null,
     rulesAction: null,
   }
@@ -169,8 +177,16 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     if (parsed.command === 'maps') {
       const verb = argv[1]
       if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'list' && verb !== 'pull' && verb !== 'push' && verb !== 'rm') {
-          throw new UsageError(`unknown maps action "${verb}" — expected list, pull, push or rm`)
+        if (
+          verb !== 'list' &&
+          verb !== 'pull' &&
+          verb !== 'push' &&
+          verb !== 'update' &&
+          verb !== 'rm'
+        ) {
+          throw new UsageError(
+            `unknown maps action "${verb}" — expected list, pull, push, update or rm`
+          )
         }
         parsed.mapsAction = verb
         i = 2
@@ -264,6 +280,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         break
       case '--force':
         parsed.force = true
+        break
+      case '--allow-drop':
+        parsed.allowDrop = true
         break
       case '--instance': {
         const value = requireValue(arg, argv[++i])

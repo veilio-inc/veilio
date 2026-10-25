@@ -498,6 +498,9 @@ COMMANDS
                        A team map opens with the key from \`team unlock\`.
   maps push [name]     Encrypt the local map and upload it as a new map.
   maps push --team     Publish it as the TEAM's shared map instead.
+  maps update <id>     Replace a Cloud map's entries with the local map's, in
+                       place: same id, name and project. Refuses to drop
+                       entries unless --allow-drop is given.
   maps rm <id>         Remove a map from Cloud.
   team unlock          Open this account's team keys with the vault passphrase
                        and keep them on this machine (7 days), so team maps -
@@ -517,6 +520,7 @@ OPTIONS
                           nothing and exit 1 if a placeholder would be left
       --keep-docs         restore: keep JSDoc blocks the model wrote
   -f, --force             Allow a map write that would drop existing entries
+      --allow-drop        maps update: allow dropping entries the Cloud map has
   -q, --quiet             Suppress the all-clear summary (findings always show)
       --instance <url>    login: the Veilio instance to sign in to. Defaults to
                           the public Cloud; https required (localhost excepted)
