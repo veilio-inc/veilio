@@ -258,6 +258,22 @@ describe('scrub --team', () => {
     expect(err).toMatch(/could not reserve|outside the numbers reserved/)
   })
 
+  it('says so when not signed in at all, as for an account in no team (spec 011 T034)', async () => {
+    // The Community Edition case: no account, so no team and nobody to clash
+    // with. Numbering locally is right; doing it WITHOUT saying so is not -
+    // the person asked for the team's numbers and must learn they did not get
+    // them (spec 052 FR-024).
+    rmSync(join(home, '.veilio'), { recursive: true, force: true })
+
+    const { code, out, err } = await run(['scrub', '--team'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toContain('__CLS__1')
+    expect(err).toMatch(/--team/)
+    expect(err).toMatch(/veilio login/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('falls back to a local floor with a note when not in a team', async () => {
     fetchMock.mockImplementation(async (url: string | URL) => {
       const u = String(url)
