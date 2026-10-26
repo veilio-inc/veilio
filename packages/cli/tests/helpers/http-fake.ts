@@ -61,12 +61,12 @@ export function credentialFor(
 export function runBinary(
   bin: string,
   args: string[],
-  opts: { cwd: string; home: string; input?: string }
+  opts: { cwd: string; home: string; input?: string; env?: Record<string, string> }
 ): Promise<{ code: number | null; out: string; err: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [bin, ...args], {
       cwd: opts.cwd,
-      env: { ...process.env, HOME: opts.home, USERPROFILE: opts.home },
+      env: { ...process.env, HOME: opts.home, USERPROFILE: opts.home, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let out = ''

@@ -66,6 +66,48 @@ describe('the team namespace is read once, not per call', () => {
     expect(paths()).toEqual(['GET /api/maps', 'GET /api/maps/team-envelopes'])
   })
 
+  it('with VEILIO_PROJECT set: twenty anonymize calls inside 30 s cost one projects request in all', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
+    try {
+      const env = { VEILIO_PROJECT: 'tools' }
+      const pinned = { ...ctx, env }
+      await primeNamespace(home, { env })
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(1_000)
+        await callToolAsync('anonymize_text', { text: `export class Thing${i} {}` }, pinned)
+      }
+      expect(paths().filter((p) => p === 'GET /api/projects')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('with VEILIO_PROJECT naming nothing: the refusal is asked again once per 30 s, by one path', async () => {
+    vi.useFakeTimers({ toFake: ['performance', 'Date'] })
+    try {
+      const env = { VEILIO_PROJECT: 'payroll' }
+      const pinned = { ...ctx, env }
+      await primeNamespace(home, { env })
+      const calls = async (n: number): Promise<void> => {
+        for (let i = 0; i < n; i++) {
+          vi.advanceTimersByTime(1_000)
+          const r = await callToolAsync('anonymize_text', { text: 'export class A {}' }, pinned)
+          expect(r.isError).toBe(true)
+        }
+      }
+      const listings = (): number => paths().filter((p) => p === 'GET /api/projects').length
+      await calls(20)
+      expect(listings()).toBe(1)
+      vi.advanceTimersByTime(30_000)
+      await calls(20)
+      expect(listings()).toBe(2)
+      // Nothing else was read: no team maps for a project that is not there.
+      expect(paths().filter((p) => p === 'GET /api/maps')).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a team write here reloads it once, then it is cached again', async () => {
     await primeNamespace(home)
     saveMap(resolveMapPath(null, cwd), { __CLS__2: 'Fresh' }, { force: true })

@@ -30,6 +30,8 @@ import {
   type CloudMapSummary,
 } from './cloud.js'
 import { readTeamUnlock } from './team-unlock.js'
+import { projectOverride, resolveOverride, type Env } from './client/project-scope.js'
+import type { Refusal } from './client/wording.js'
 
 export type TeamNamespaceResult =
   /**
@@ -72,6 +74,13 @@ export type TeamNamespaceResult =
   | { status: 'locked' }
   /** In a team, and the maps could not be read. `reason` says why. */
   | { status: 'unavailable'; reason: string }
+  /**
+   * VEILIO_PROJECT names no project the team works in, or a name two share
+   * (spec 052 FR-012a). Not 'unavailable': numbering from the local map with a
+   * note is the fallback the variable rules out, because somebody typed it.
+   * The caller refuses the command, in these words.
+   */
+  | { status: 'refused'; refusal: Refusal }
 
 /**
  * Worth one more try: the network, or the server. Not a 401/402/403 - a lapsed
@@ -98,28 +107,56 @@ function noTeamToSpeakOf(err: unknown): boolean {
 
 const RETRY_DELAY_MS = 1500
 
+type ResolveOptions = {
+  retryDelayMs?: number
+  /** Give up after this long in total (the CLI's pipeline cap). */
+  deadlineMs?: number
+  /**
+   * Leave this map out of the namespace: the map being UPDATED (spec 052
+   * FR-003). Checked against itself, every entry it changes would read as
+   * a clash with its own old value.
+   */
+  excludeMapId?: string
+  /**
+   * A listing this command already holds. Read again here it was a second
+   * request for the same answer, on every team push and update.
+   */
+  list?: CloudMapList
+  /**
+   * The credential this command already scoped (VEILIO_PROJECT resolved).
+   * Absent: read from `home` and scoped here, against `env`.
+   */
+  credential?: Credential
+  /** Where VEILIO_PROJECT is read from. Undefined: this process's. */
+  env?: Env
+  /**
+   * Told the project id this read was for, once it is known (VEILIO_PROJECT
+   * resolved, or the stored choice; null for none). A caller that caches the
+   * answer keys it on this, not on the variable's value: a project renamed,
+   * and its old name given to another, keeps the value and changes the id.
+   */
+  onProject?: (project: string | null) => void
+}
+
+/** Scoped by the caller (`credential` given): VEILIO_PROJECT is not resolved here, so it cannot be refused here. */
+export function resolveTeamNamespace(
+  home: string | undefined,
+  opts: ResolveOptions & { credential: Credential }
+): Promise<Exclude<TeamNamespaceResult, { status: 'refused' }>>
+export function resolveTeamNamespace(
+  home?: string,
+  opts?: ResolveOptions
+): Promise<TeamNamespaceResult>
 export async function resolveTeamNamespace(
   home?: string,
-  opts: {
-    retryDelayMs?: number
-    /** Give up after this long in total (the CLI's pipeline cap). */
-    deadlineMs?: number
-    /**
-     * Leave this map out of the namespace: the map being UPDATED (spec 052
-     * FR-003). Checked against itself, every entry it changes would read as
-     * a clash with its own old value.
-     */
-    excludeMapId?: string
-    /**
-     * A listing this command already holds. Read again here it was a second
-     * request for the same answer, on every team push and update.
-     */
-    list?: CloudMapList
-  } = {}
+  opts: ResolveOptions = {}
 ): Promise<TeamNamespaceResult> {
-  const credential = readCredential(home)
+  const credential = opts.credential ?? readCredential(home)
   // Not signed in: no request - a signed-out terminal has nothing to ask Cloud.
   if (!credential) return { status: 'local' }
+  // VEILIO_PROJECT, unless the caller scoped the credential already. Resolved
+  // inside each attempt: under the same deadline, with the same retry.
+  const override = opts.credential ? null : projectOverride(opts.env)
 
   const giveUp = new AbortController()
   const timer =
@@ -130,7 +167,7 @@ export async function resolveTeamNamespace(
   })
   try {
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
+      return await attempt(credential, override, home, giveUp.signal, opts)
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
@@ -139,7 +176,7 @@ export async function resolveTeamNamespace(
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
+      return await attempt(credential, override, home, giveUp.signal, opts)
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
@@ -156,12 +193,23 @@ function describe(err: unknown): string {
 }
 
 async function attempt(
-  credential: Credential,
+  stored: Credential,
+  override: string | null,
   home: string | undefined,
   signal: AbortSignal,
-  excludeMapId: string | undefined,
-  given: CloudMapList | undefined
+  opts: ResolveOptions
 ): Promise<TeamNamespaceResult> {
+  const { excludeMapId, list: given } = opts
+  let credential = stored
+  if (override !== null) {
+    // A failed listing throws, and is retried or given up on like any read
+    // here. A listing that has no such project is refused - never the
+    // stored choice, never the local map with a note (FR-012a).
+    const scoped = await resolveOverride(stored, override, signal)
+    if (!scoped.ok) return { status: 'refused', refusal: scoped.refusal }
+    credential = scoped.value
+  }
+  opts.onProject?.(credential.project ?? null)
   const list = given ?? (await listMaps(credential, signal))
 
   // An older self-hosted Cloud may still merge server-side; that answer needs no

@@ -52,9 +52,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
         io.stdout(`${VERSION}\n`)
         return 0
       case 'scrub':
-        return await runScrub(args, io, () => teamNamespaceForScrub(io.home))
+        return await runScrub(args, io, () => teamNamespaceForScrub(io.home, io.env))
       case 'restore':
-        return await runRestore(args, io, (missing) => teamLayerFor(io.home, missing))
+        return await runRestore(args, io, (missing) => teamLayerFor(io.home, missing, io.env))
       case 'scan':
         return await runScan(args, io)
       case 'map':

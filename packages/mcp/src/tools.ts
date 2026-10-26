@@ -41,7 +41,12 @@ import {
   type LanguageOption,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
-import { getNamespace, namespaceLine, refreshNamespaceIfStale } from './namespace.js'
+import {
+  confirmProject,
+  getNamespace,
+  namespaceLine,
+  refreshNamespaceIfStale,
+} from './namespace.js'
 import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
@@ -57,7 +62,7 @@ import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 import { thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
-import { refusal } from '@veilio-inc/cli/client'
+import { projectOverride, refusal } from '@veilio-inc/cli/client'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -82,6 +87,12 @@ export interface ToolContext {
    * person's choice, never a tool argument's.
    */
   destructive?: boolean
+  /**
+   * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
+   * repository's `.mcp.json` `env`, it pins that repository's project for
+   * every tool call. Undefined: this process's environment.
+   */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 export interface ToolResult {
@@ -275,6 +286,10 @@ function runAnonymize(
   const localMap = loadMap(mapPath)
   const refreshing = refreshNamespaceIfStale()
   const resolved = getNamespace()
+  // VEILIO_PROJECT names no project the team works in (FR-012a): refused,
+  // before anything is masked or stored. Masking from the local map instead
+  // is the quiet fallback the variable exists to rule out.
+  if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
   const { namespace, highest, conflicts } = resolved
   // A file is masked in its extension's language unless one is asked for, and
   // keeps the names it takes from a public package as written - the rule
@@ -443,6 +458,7 @@ export const TOOLS: ToolDefinition[] = [
       // then this project's map on top where it is in the team's numbering.
       const refreshing = refreshNamespaceIfStale()
       const resolved = getNamespace()
+      if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
       const team =
         resolved.source === 'team' && resolved.conflictDetection
           ? {
@@ -603,7 +619,12 @@ export async function callToolAsync(
   ctx: ToolContext
 ): Promise<ToolResult> {
   const cloud = CLOUD_TOOLS_BY_NAME.get(name)
-  if (!cloud) return callTool(name, args, ctx)
+  if (!cloud) {
+    // A tool that numbers placeholders from the team namespace asks first
+    // which project VEILIO_PROJECT names now (see confirmProject).
+    if (needsProjectCheck(name, ctx)) await confirmProject()
+    return callTool(name, args, ctx)
+  }
   if (!readCredential(ctx.home)) return refusalResult(refusal('not_signed_in'))
   try {
     return await cloud.handler(args, ctx)
@@ -615,7 +636,20 @@ export async function callToolAsync(
   }
 }
 
-/** Whether a call goes to a Cloud tool, and so answers asynchronously. */
-export function isCloudTool(name: string): boolean {
-  return CLOUD_TOOLS_BY_NAME.has(name)
+/**
+ * Whether a call must be checked against the project VEILIO_PROJECT names now
+ * before it runs: it numbers or restores from the team namespace (anonymize,
+ * restore), and the server's environment pins a project, whose name can move to another
+ * project meanwhile. Without the variable nothing is asked.
+ */
+function needsProjectCheck(name: string, ctx: ToolContext): boolean {
+  return (
+    (name.startsWith('anonymize_') || name === 'restore_text') && projectOverride(ctx.env) !== null
+  )
+}
+
+/** Whether a call answers asynchronously: a Cloud tool, or a masking tool
+ *  that first confirms the project the variable names. */
+export function isCloudTool(name: string, ctx?: ToolContext): boolean {
+  return CLOUD_TOOLS_BY_NAME.has(name) || (ctx !== undefined && needsProjectCheck(name, ctx))
 }

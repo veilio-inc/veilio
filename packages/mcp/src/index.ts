@@ -28,7 +28,7 @@ export function contextFromArgv(
   argv: readonly string[],
   env: Record<string, string | undefined> = process.env
 ): ToolContext {
-  return { ...parseCliContext(argv), destructive: env.VEILIO_MCP_DESTRUCTIVE === '1' }
+  return { ...parseCliContext(argv), destructive: env.VEILIO_MCP_DESTRUCTIVE === '1', env }
 }
 
 function parseCliContext(argv: readonly string[]): ToolContext {
@@ -55,7 +55,7 @@ async function start(): Promise<void> {
   // for the rest of this process sees the answer already settled rather than
   // racing the first one in (contracts/shared-namespace.md R-007). Never
   // throws — see namespace.ts — so this can only delay startup, not fail it.
-  await Promise.all([primeNamespace(), primeRules()])
+  await Promise.all([primeNamespace(undefined, { env: ctx.env }), primeRules()])
 
   // Signing in or out while this runs changes the tool list; say so.
   const watcher = new SignInWatcher(ctx.home, () =>

@@ -467,12 +467,15 @@ export interface CloudProject {
   maps?: number
 }
 
-export function listProjects(credential: Credential): Promise<{
+export function listProjects(
+  credential: Credential,
+  signal?: AbortSignal
+): Promise<{
   projects: CloudProject[]
   teamId: string | null
   defaultProjectId?: string | null
 }> {
-  return request('/api/projects', { credential })
+  return request('/api/projects', { credential, signal })
 }
 
 /** Whether the team owes a key rotation. Only `rotationNeededSince` is read

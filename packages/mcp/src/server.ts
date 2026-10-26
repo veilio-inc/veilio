@@ -139,7 +139,7 @@ export function respond(
     if (
       req.method === 'tools/call' &&
       typeof params.name === 'string' &&
-      isCloudTool(params.name)
+      isCloudTool(params.name, ctx)
     ) {
       const rawArgs = params.arguments
       const args =
