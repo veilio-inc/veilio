@@ -419,32 +419,36 @@ function vowelRatio(letters: string): number {
   return letters.length === 0 ? 0 : (letters.match(/[aeiouy]/gi)?.length ?? 0) / letters.length
 }
 
-/** Path-, URL- or version-shaped (review of d55d9e2): after an optional
- *  scheme (`https://`) or drive (`C:\`), two or more segments between
- *  `/ \ . :` (one after a scheme or drive; `-` joins parts inside one), each a number or letters with digits only at the end that
- *  read as a word (a quarter vowels or more, or a short lower-case piece such
- *  as `usr` or `v2`; a part of six letters or more must not look random,
- *  `EuXoBa`), and at least one a word of four letters or more. One
- *  random segment after `/` or `./`, and dotted random segments
- *  (`Kq7.Zw3.Xv9.Rt2`), are not paths: their entropy decides. */
+/** Path-, URL- or version-shaped, failing closed (reviews of d55d9e2,
+ *  f9c46d4 and 92c4ca2): after an optional scheme (`https://`) or drive
+ *  (`C:\`), always two or more segments between `/ \ . :` (`-` joins parts
+ *  inside one); every part a number, a version's letter (`v2`), or a plain
+ *  word in lower or title case, a quarter vowels or more (`y` counts) and not
+ *  random-looking; and at least one word of four letters or more. Anything
+ *  else is not a path and its entropy decides: a path blacked out is a
+ *  nuisance, a key not carried is a leak. */
 function pathShaped(value: string): boolean {
   const rest = value.replace(/^(?:[a-z][a-z0-9+.-]*:\/\/|[A-Za-z]:\\)/, '')
   // Segments are cut only at `/ . : \`: `-` alone never makes a path, or a
   // dashed key would be one (commit review of f9c46d4). Inside a segment,
   // `-` joins parts (`3-Beta`), each judged.
   const segments = rest.split(/[/.:\\]+/).filter(Boolean)
-  if (segments.length < (rest === value ? 2 : 1)) return false
+  // Two segments always, prefix or not: `https://Kq7Zw3` is no URL.
+  if (segments.length < 2) return false
   let word = false
   for (const part of segments.flatMap((seg) => seg.split('-')).filter(Boolean)) {
     if (/^[0-9]+$/.test(part)) continue
-    const m = /^([A-Za-z]+)[0-9]*$/.exec(part)
+    // A version's letter (`v2`, `r10`) is the one part without a vowel.
+    if (/^[a-z][0-9]+$/.test(part)) continue
+    // Every other part a plain word: lower or title case, a vowel in it, a
+    // quarter vowels or more, not random-looking. Any mixed-case part
+    // (`iDebI`, `kLemO`) and it is no path: when in doubt, carry it (commit
+    // security review of 92c4ca2).
+    const m = /^([A-Z]?[a-z]+)[0-9]*$/.exec(part)
     if (!m) return false
     const letters = m[1]!
-    const wordy = vowelRatio(letters) >= 0.25
-    if (!wordy && !/^[a-z]{1,3}$/.test(letters)) return false
-    // Enough vowels is not enough for a long part: `EuXoBa` is random.
-    if (letters.length >= 6 && randomLooking(part)) return false
-    if (wordy && letters.length >= 4) word = true
+    if (vowelRatio(letters) < 0.25 || randomLooking(part)) return false
+    if (letters.length >= 4) word = true
   }
   return word
 }

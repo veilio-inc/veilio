@@ -119,7 +119,17 @@ export function generate(seed: number): Case {
               `${str(r, 'aeiou', 1)}${str(r, 'BCDFG', 1)}${str(r, 'aeiou', 1)}${str(r, 'bcdfg', 1)}${str(r, 'AEIOU', 1)}${Math.floor(r() * 10)}`
           )
           .join('-')
+      const mixed = () =>
+        [0, 1, 2].map(
+          () =>
+            `${str(r, 'aeiou', 1)}${str(r, 'BCDFG', 1)}${str(r, 'aeiou', 1)}${str(r, 'bcdfg', 1)}${str(r, 'AEIOU', 1)}${Math.floor(r() * 10)}`
+        )
       const v = pick(r, [
+        // Mixed-case parts behind '.' and '/', and a scheme with one random
+        // segment (commit security review of 92c4ca2).
+        mixed().join(pick(r, ['.', '/'])),
+        `/Users/${mixed().join('/')}`,
+        `https://${str(r, ALNUM, 9)}${Math.floor(r() * 10)}`,
         `/${vowelly()}9`,
         dashed(),
         `/${str(r, ALNUM, 15)}7`,

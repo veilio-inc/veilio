@@ -711,3 +711,36 @@ describe('final review of 0ef312b..d55d9e2: reproduced leaks', () => {
       expect(highSignal(v)).toBe(false)
   })
 })
+
+describe('the path rule fails closed (commit security review of 92c4ca2)', () => {
+  const carried = (text: string, v: string) => {
+    const known = new Destroyed()
+    applyMap(text, {}, undefined, { known })
+    return known.values.includes(v) && !redactKnown(`bare ${v} again`, known).includes(v)
+  }
+  it('a mixed-case part means not a path: the value is carried', () => {
+    for (const v of [
+      'aBecE1.iDebI4/kLemO3',
+      '/Users/kLemO/iDebI2',
+      'Lorem.kLemO.Ipsum7',
+      'docs/iDebI/v2',
+      // Short title-case parts that are no words.
+      '/home/Qe/Ux/Ab9',
+    ])
+      expect(carried(`password = "${v}"`, v)).toBe(true)
+  })
+  it('a scheme or drive and one random segment is not a URL or a path', () => {
+    expect(carried('password = "https://Kq7Zw3"', 'https://Kq7Zw3')).toBe(true)
+    expect(carried('password = "https://Qwazyx9381"', 'https://Qwazyx9381')).toBe(true)
+  })
+  it('paths, URLs and versions of plain words still are not carried', () => {
+    for (const v of [
+      '/usr/lib/python3.11',
+      'https://example.org/v2/Path',
+      'v1.2.3-Beta.4',
+      'C:\\Users\\Bob2',
+      '/run/secrets/Client2',
+    ])
+      expect(highSignal(v)).toBe(false)
+  })
+})
