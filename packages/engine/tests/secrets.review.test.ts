@@ -124,7 +124,6 @@ describe('5. --password counts only in a command context', () => {
     'Pass --password to set the database password.',
     'Use --password for the admin account.',
     'The --password is required in CI.',
-    'deploy --password hunter22',
     '  --password TEXT  The database password.',
     '  --password PASSWORD  password to use (default: none)',
     '  --password=PASSWORD  password to use',
@@ -136,7 +135,12 @@ describe('5. --password counts only in a command context', () => {
     'mongosh -u admin -p --host db',
   ]
   for (const code of prose) {
-    it(`prose or help text: ${JSON.stringify(code)}`, () => nothing(code))
+    it(`prose or help text: ${JSON.stringify(code)}`, () => {
+      nothing(code)
+      for (const path of ['README.md', 'docs/cli.mdx', 'HELP.txt', 'man/deploy.1', 'guide.rst']) {
+        nothing(code, path)
+      }
+    })
   }
   const commands: [string, string?][] = [
     ['$ deploy --password §'],
@@ -152,21 +156,31 @@ describe('5. --password counts only in a command context', () => {
     ['args: ["--password=§"]'],
   ]
   for (const [template] of commands) {
-    it(`command: ${template}`, () => redacted(template, 'hunter22'))
+    it(`command: ${template}, also in a prose file`, () => {
+      redacted(template, 'hunter22')
+      redacted(template, 'hunter22', 'README.md')
+    })
   }
+  it('an argv element in single quotes, in a prose file', () => {
+    redacted("args: ['--password=§']", 'hunter22', 'README.md')
+  })
+  it('a continued command line in a prose file', () => {
+    redacted('docker login \\\n  --username me \\\n  --password §', 'hunter22', 'README.md')
+  })
   it('inside a code fence', () => {
     for (const fence of ['```sh', '```bash', '```', '~~~console']) {
       const close = fence.startsWith('~') ? '~~~' : '```'
       const code = `Run it:\n\n${fence}\ndeploy --password hunter22\n${close}\n`
-      const out = scanSecrets(code).code
+      const out = scanSecrets(code, 'redact', { path: 'README.md' }).code
       expect(out, fence).toMatch(new RegExp(`deploy --password ${TOKEN.source}\\n`))
     }
     // A fence closes only on its own marker.
-    expect(scanSecrets('```sh\n~~~\ndeploy --password hunter22\n```\n').code).toMatch(
-      new RegExp(`deploy --password ${TOKEN.source}\\n`)
-    )
+    expect(
+      scanSecrets('```sh\n~~~\ndeploy --password hunter22\n```\n', 'redact', { path: 'README.md' })
+        .code
+    ).toMatch(new RegExp(`deploy --password ${TOKEN.source}\\n`))
     // After the fence closes it is prose again.
-    nothing('```sh\nls\n```\ndeploy --password hunter22\n')
+    nothing('```sh\nls\n```\ndeploy --password hunter22\n', 'README.md')
   })
   it('in a shell script file, every line is a command', () => {
     redacted('deploy --password §', 'hunter22', 'scripts/deploy.sh')
@@ -249,10 +263,8 @@ describe('9. X-Api-Key followed by code is left alone', () => {
     "X-Api-Key: os.environ['API_KEY']",
     'X-Api-Key: os.environ.get("API_KEY")',
     'X-Api-Key: config.key',
-    'X-Api-Key: settings.api.key',
     'X-Api-Key: ${API_KEY}',
     'X-Api-Key: $API_KEY',
-    'X-Api-Key: getKey()',
   ]) {
     it(JSON.stringify(code), () => nothing(code))
   }
@@ -283,5 +295,126 @@ describe('10. ${VAR:-default}: the default is the value', () => {
   }
   it('a weak default in a test file is report-only', () => {
     reportedOnly('PGPASSWORD=${PG_PASS:-Summer24} psql', 'tests/db.test.ts')
+  })
+})
+
+// Security review of the review round: the command-context exemption let a
+// password through in source code, where the command sits in a string.
+describe('second review, 1: the prose exemption applies only to prose', () => {
+  const SOURCES: [string, string][] = [
+    ['exec("mysql --password §mysqldb")', 'src/db.ts'],
+    ['subprocess.run(["mysql", "--password", "§"])', 'tools/backup.py'],
+    ["subprocess.run(['mysql', '--password', '§'])", 'tools/backup.py'],
+    ['const cmd = `psql --password=§ -h ${host}`', 'src/db.ts'],
+    ['args: ["--password", "§"]', 'deploy/values.yaml'],
+    ['subprocess.run(["mysql", "-uroot", "-p§"])', 'tools/backup.py'],
+  ]
+  for (const [template, path] of SOURCES) {
+    it(`${template} in ${path}, and with no path`, () => {
+      const secret = 'hunter22'
+      const t = template.replace('§mysqldb', '§ db')
+      redacted(t, secret, path)
+      redacted(t, secret)
+    })
+  }
+  it('in source a metavar-looking value is judged as a password', () => {
+    redacted('run("deploy --password §")', 'TEXT', 'src/cli.ts')
+    redacted('deploy --password §', 'HUNTER2X', 'scripts/deploy.sh')
+  })
+  it('with no path, a bare command is a password unless the value is prose-like', () => {
+    redacted('deploy --password §', 'hunter22')
+    nothing('Use --password for the admin account.')
+  })
+  it('in a prose file, quoted code on a line is judged as code', () => {
+    redacted('Call `exec("deploy --password §")` from a script.', 'hunter22', 'README.md')
+  })
+  it('a short flag that is its own argv element takes only a bare value', () => {
+    // The quote after the flag closes its element; it does not open a value.
+    nothing("run(command('redis-cli') + '-a')", 'src/a.ts')
+    nothing('spawn("sshpass", ["-p", user])', 'src/a.ts')
+    redacted('spawn("redis-cli", ["-a§"])', 'hunter22', 'src/a.ts')
+  })
+
+  it('an ellipsis is a placeholder', () => {
+    nothing('$ deploy --password …')
+    nothing('exec("mysql --password ... db")', 'src/a.ts')
+  })
+
+  it('a placeholder template in source stays a placeholder', () => {
+    nothing('const cmd = `psql --password=${pw} -h db`', 'src/db.ts')
+  })
+})
+
+describe('second review, 2: only a generic match inside the fixture is dropped', () => {
+  it('a generic match that extends past the fixture is redacted', () => {
+    const code = 'db_password = "postgres://app:Summer24@db/app"'
+    const scan = scanSecrets(code, 'redact', { path: 'tests/x.test.ts' })
+    expect(scan.code).toMatch(new RegExp(`^db_password = "${TOKEN.source}"$`))
+  })
+  it('a generic match with the fixture span is dropped', () => {
+    reportedOnly('PGPASSWORD="Summer24" psql', 'tests/x.test.ts')
+  })
+})
+
+describe('second review, 3: only a closed list of metavars', () => {
+  for (const value of ['HUNTER2X', 'SUMMER2024', 'ADMIN']) {
+    it(`--password ${value} is a password, even in a prose file`, () => {
+      redacted('$ deploy --password §', value, 'README.md')
+      redacted('$ deploy --password §', value)
+    })
+  }
+  for (const metavar of [
+    'PASSWORD',
+    'PASS',
+    'PASSWD',
+    'PWD',
+    'TEXT',
+    'VALUE',
+    'SECRET',
+    'STRING',
+    'TOKEN',
+    'KEY',
+    '[PASSWORD]',
+    '<pw>',
+  ]) {
+    it(`--password ${metavar} is a metavar in prose`, () => {
+      nothing(`  --password ${metavar}  The password.`, 'README.md')
+      nothing(`  --password ${metavar}  The password.`)
+    })
+  }
+  it('to/for/is are prose only in prose', () => {
+    nothing('Pass --password to the tool.', 'README.md')
+    redacted('run("deploy --password §")', 'to', 'src/a.ts')
+  })
+})
+
+describe('second review, 4: a header value is code only from a known code root', () => {
+  for (const code of [
+    'X-Api-Key: process.env.API_KEY',
+    "X-Api-Key: os.environ['API_KEY']",
+    'X-Api-Key: os.getenv("API_KEY")',
+    "X-Api-Key: ENV['API_KEY']",
+    'X-Api-Key: config.apiKey',
+    'X-Api-Key: settings.API_KEY',
+    'X-Api-Key: secrets.API_KEY',
+    'X-Api-Key: import.meta.env.VITE_KEY',
+    'X-Api-Key: ${API_KEY}',
+    'X-Api-Key: $API_KEY',
+    'X-Api-Key: {{ api_key }}',
+  ]) {
+    it(`left alone: ${code}`, () => nothing(code))
+  }
+  for (const value of ['abc.def', 'abcd.efgh.ijkl', 'key(1234)', 'ab[cd]ef', 'getKey()']) {
+    it(`redacted: X-Api-Key: ${value}`, () => redacted('X-Api-Key: §', value))
+  }
+  it('a JWT whose payload is not JSON is still a credential in a header', () => {
+    redacted('X-Api-Key: §', 'eyJhbGciOiJub25lIn0.cGF5bG9hZA.c2lnbmF0dXJl')
+  })
+
+  it('a JWT is a credential in a header', () => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
+    redacted('X-Api-Key: §', jwt)
+    redacted('Authorization: Bearer §', 'abcd.efgh.ijkl')
   })
 })

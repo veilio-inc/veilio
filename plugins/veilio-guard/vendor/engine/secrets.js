@@ -185,12 +185,15 @@ function isHighEntropyToken(value) {
 function isTokenShaped(value) {
     return isHighEntropyToken(value);
 }
-/** A header value that is code, not a literal: a shell variable, a member
- *  access, an index or a call (an environment lookup, `config.key`). */
+/** A header value that is code, not a literal: it starts at a known code
+ *  root (an environment lookup, a config object, a template variable). A
+ *  dotted or bracketed literal is not code (`abc.def`), and a JWT - three
+ *  base64url parts, the first a JSON header - is always a credential (second
+ *  security review). */
 function isCodeExpression(value) {
-    return (value.startsWith('$') ||
-        /[[(]/.test(value) ||
-        /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(value));
+    if (/^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(value))
+        return false;
+    return /^(?:process\.env\.|os\.environ|os\.getenv\(|ENV\[|config\.|settings\.|secrets\.|import\.meta\.env\.|\$|\{\{)/.test(value);
 }
 /** `${NAME:-default}`, `${NAME-default}`, `${NAME:=default}`, and Spring's
  *  `${NAME:default}`: the default is the value (finding 10). `${NAME}` and
@@ -208,11 +211,16 @@ const BARE = '([^\\s"\'`;&|]{1,256})';
 // After a separating space a bare value that starts with `-` is the next flag.
 const BARE_ARG = '((?!-)[^\\s"\'`;&|]{1,256})';
 /** A command word: the name standing alone, then whitespace. */
-const command = (names) => `(?<![\\w.-])(?:${names})(?:\\.exe)?(?=\\s)`;
+const command = (names) => `(?<![\\w.-])(?:${names})(?:\\.exe)?(?=[\\s"'])`;
 /** The rest of the command, bounded so a scan stays linear. A backslash at
  *  the end of a line continues it (finding 8). A backtick ends it: in
  *  Markdown it closes the inline code the command sits in. */
-const SAME_LINE = '(?:[^\\n;&|`\\\\]|\\\\\\r?\\n|\\\\[^\\n]){0,300}?[ \\t]';
+const WINDOW = '(?:[^\\n;&|`\\\\]|\\\\\\r?\\n|\\\\[^\\n]){0,300}?';
+const SAME_LINE = `${WINDOW}[ \\t]`;
+/** A short flag on the command line, or as an element of an argv array
+ *  (`"-pVALUE"`, the value bare up to the closing quote). The argv form has
+ *  no quoted value of its own: the quote after the flag closes its element. */
+const flagOnLine = (flag, form) => `(?:${SAME_LINE}${form}|${WINDOW}["']${flag}${BARE})`;
 /** A short flag with its value attached only. */
 const attachedFlag = (flag) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`;
 /** A short flag with its value attached or after spaces. */
@@ -253,8 +261,10 @@ const SHELL_LINE = /^\s*(?:(?:\$|>)\s|RUN\s|(?:-\s+)?(?:run|script|command|cmd|e
  *  assignments, then a known command or a path to one. */
 const COMMAND_LINE = new RegExp(`^\\s*(?:(?:sudo|exec|env|time|nohup)\\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*` +
     `(?:(?:${KNOWN_COMMANDS})(?:\\.exe)?|\\.{0,2}/\\S+|~/\\S+|[\\w.-]+/[\\w./-]+)(?=\\s)`);
-/** Files in which every line is a command. */
-const SHELL_FILE = /(?:\.(?:sh|bash|zsh|ksh|fish|ps1|psm1|bat|cmd)|(?:^|\/)(?:makefile|justfile))$/i;
+/** Prose and help files: Markdown, text, reStructuredText, AsciiDoc, man
+ *  pages. Only there, and in text of unknown origin, can `--password` be
+ *  prose (second security review of #166). */
+const PROSE_FILE = /(?:\.(?:md|markdown|mdx|txt|text|rst|adoc|asciidoc|[1-9])|(?:^|\/)(?:readme|help|usage))$/i;
 /** The fenced code blocks of a Markdown text: from the line after an opening
  *  fence to the start of the closing one. An unclosed fence runs to the end. */
 function fencesOf(code) {
@@ -295,13 +305,30 @@ function logicalLineStart(code, at) {
     }
     return start;
 }
-/** Whether `--password` at `at` is on a command line rather than in prose or
- *  help text: a shell script, an argv element (the flag right after a quote), a fenced
- *  code block, a prompt or CI shell key, or a line that starts with a known
- *  command (finding 5). */
-function inCommandContext(at, scan) {
-    if (scan.shellFile)
+/**
+ * Whether the value after `--password` at `at` is judged as a password.
+ *
+ * In source, config and scripts, always: the command may sit in a string
+ * literal or an argv array (a command run from code), and help text there
+ * is rare enough to redact. With no path, unless the value is prose-like. In a
+ * prose or help file, only on a command line - a fenced code block, a prompt,
+ * a CI shell key, a line that starts with a known command, or code in a
+ * string - and then unless the value is prose-like (second security review
+ * of #166, findings 1 and 3).
+ */
+function passwordFlagCounts(at, scan, value) {
+    if (scan.kind === 'source')
         return true;
+    if (scan.kind === 'unknown')
+        return !proseValue(value);
+    if (inCommandContext(at, scan) || inStringOnLine(at, scan))
+        return !proseValue(value);
+    return false;
+}
+/** On a command line in a prose file: an argv element (the flag right after a
+ *  quote), a fenced code block, a prompt or CI shell key, or a line that
+ *  starts with a known command (finding 5). */
+function inCommandContext(at, scan) {
     const before = scan.code[at - 1];
     if (before === '"' || before === "'")
         return true;
@@ -311,10 +338,19 @@ function inCommandContext(at, scan) {
     const line = scan.code.slice(logicalLineStart(scan.code, at), at).slice(0, 300);
     return SHELL_LINE.test(line) || COMMAND_LINE.test(line);
 }
-/** A help-text metavar (`TEXT`, `PASSWORD`) or prose (`--password to ...`)
- *  where a value would be. */
-function notAFlagValue(value) {
-    return /^[A-Z][A-Z0-9_-]*$/.test(value) || /^(?:to|for|is)$/i.test(value);
+/** Inside a double-quoted string on its line: code quoted in prose. Single
+ *  quotes are not counted, as an apostrophe would open one. */
+function inStringOnLine(at, scan) {
+    const line = scan.code.slice(scan.code.lastIndexOf('\n', at - 1) + 1, at);
+    return (line.match(/"/g)?.length ?? 0) % 2 === 1;
+}
+/** A value that reads as help text or prose: one of a closed list of
+ *  metavars, a bracketed metavar, or `to` / `for` / `is` (finding 3). Any
+ *  other all-caps value (`HUNTER2X`) is a password. */
+function proseValue(value) {
+    return (/^(?:PASSWORD|PASS|PASSWD|PWD|TEXT|VALUE|SECRET|STRING|TOKEN|KEY)$/.test(value) ||
+        /^\[[^\]]*\]$/.test(value) ||
+        /^(?:to|for|is)$/.test(value));
 }
 // Patterns are written to be linear-time: no nested quantifiers over the same
 // character class, and bounded repetition wherever the input is attacker-shaped.
@@ -579,8 +615,8 @@ const PATTERNS = [
         disposition: 'destroy',
         severity: 'medium',
         label: 'Password on a command line',
-        re: new RegExp(`${command(MYSQL_CLIENTS)}${SAME_LINE}${attachedFlag('-p')}`, 'g'),
-        groups: [1, 2, 3],
+        re: new RegExp(`${command(MYSQL_CLIENTS)}${flagOnLine('-p', attachedFlag('-p'))}`, 'g'),
+        groups: [1, 2, 3, 4],
         position: true,
     },
     {
@@ -588,8 +624,8 @@ const PATTERNS = [
         disposition: 'destroy',
         severity: 'medium',
         label: 'Password on a command line',
-        re: new RegExp(`${command(SEPARATED_P_CLIENTS)}${SAME_LINE}${shortFlag('-p')}`, 'g'),
-        groups: FLAG_GROUPS,
+        re: new RegExp(`${command(SEPARATED_P_CLIENTS)}${flagOnLine('-p', shortFlag('-p'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
         position: true,
     },
     {
@@ -597,8 +633,8 @@ const PATTERNS = [
         disposition: 'destroy',
         severity: 'medium',
         label: 'Password on a command line',
-        re: new RegExp(`${command(DASH_CAP_P_TOOLS)}${SAME_LINE}${shortFlag('-P')}`, 'g'),
-        groups: FLAG_GROUPS,
+        re: new RegExp(`${command(DASH_CAP_P_TOOLS)}${flagOnLine('-P', shortFlag('-P'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
         position: true,
     },
     {
@@ -606,8 +642,8 @@ const PATTERNS = [
         disposition: 'destroy',
         severity: 'medium',
         label: 'Password on a command line',
-        re: new RegExp(`${command('redis-cli')}${SAME_LINE}${shortFlag('-a')}`, 'g'),
-        groups: FLAG_GROUPS,
+        re: new RegExp(`${command('redis-cli')}${flagOnLine('-a', shortFlag('-a'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
         position: true,
     },
     {
@@ -618,11 +654,12 @@ const PATTERNS = [
         disposition: 'destroy',
         severity: 'medium',
         label: 'Password on a command line',
-        re: new RegExp(`--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`, 'g'),
-        groups: FLAG_GROUPS,
+        re: new RegExp(`--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG})|["'][ \\t]*,[ \\t]*(?:${DQ}|${SQ}))`, 'g'),
+        // The argv array form (the flag and its value as two quoted elements)
+        // adds groups 7 and 8.
+        groups: [...FLAG_GROUPS, 7, 8],
         position: true,
-        context: inCommandContext,
-        validate: (value) => !notAFlagValue(value),
+        context: passwordFlagCounts,
     },
     {
         // curl only: `-u 1000:1000` is a uid:gid for docker. The user is kept.
@@ -893,6 +930,9 @@ function classifyValue(value, assignmentShaped) {
         return 'placeholder';
     if (/^\[redacted\]$/i.test(trimmed))
         return 'placeholder';
+    // An ellipsis stands for a value left out.
+    if (/^(?:…|\.{3})$/.test(trimmed))
+        return 'placeholder';
     // Everything below is a guess about prose, and prose is only a plausible
     // reading where the value could have been an enum or a mode. A connection
     // string or an Authorization header puts its value in a slot that is
@@ -1068,7 +1108,7 @@ function collectMatches(code, scan) {
                 start = m.index + offset;
                 value = captured;
             }
-            if (pattern.context !== undefined && !pattern.context(m.index, scan))
+            if (pattern.context !== undefined && !pattern.context(m.index, scan, value))
                 continue;
             // `${NAME:-default}`: the default is the value, and only it is replaced.
             const withDefault = WITH_DEFAULT.exec(value);
@@ -1176,11 +1216,13 @@ function dispositionRank(type) {
 function dropOverlaps(all) {
     // The context verdict first: a generic assignment match over a downgraded
     // fixture is the same value read without its context, and must not turn a
-    // report back into a redaction. A provider-format match still wins below.
+    // report back into a redaction. Only one that lies within the fixture: one
+    // that runs past it holds more than the fixture, and the normal order
+    // decides (second security review). A provider-format match still wins.
     const fixtures = all.filter((m) => m.fixture === true);
     const matches = fixtures.length === 0
         ? all
-        : all.filter((m) => m.generic !== true || !fixtures.some((f) => f.start < m.end && m.start < f.end));
+        : all.filter((m) => m.generic !== true || !fixtures.some((f) => f.start <= m.start && m.end <= f.end));
     const sorted = [...matches].sort((a, b) => {
         const byDisposition = dispositionRank(b.type) - dispositionRank(a.type);
         if (byDisposition !== 0)
@@ -1313,7 +1355,11 @@ function scanContext(code, options) {
     return {
         code,
         example: path !== undefined && isExamplePath(path, options.root),
-        shellFile: path !== undefined && SHELL_FILE.test(path.replace(/\\/g, '/')),
+        kind: path === undefined
+            ? 'unknown'
+            : PROSE_FILE.test(path.replace(/\\/g, '/'))
+                ? 'prose'
+                : 'source',
     };
 }
 /**

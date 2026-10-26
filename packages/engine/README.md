@@ -128,15 +128,20 @@ types into one:
 - password flags: `-p<pw>` (attached only) after a mysql or mariadb client,
   where `-p <word>` is the database name; `-p <pw>` attached or not after a
   mongo client or sshpass; `-P <pw>` for sqlcmd, bcp, osql, isql and ipmitool;
-  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=` or a
-  space, on a command line only: a shell script, a fenced code block, a line
-  after a `$ ` or `> ` prompt, a Dockerfile `RUN` or CI `run:` line, a line
-  that starts with a known command or a path, or an argv element in quotes.
-  Prose and help text (`--password TEXT`, `--password to set it`) are left
-  alone, and so are port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
+  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=`, a
+  space, or as the next element of an argv array. In source, config and
+  scripts the value is always judged, including inside a string literal
+  (a command run from code). Only in a prose or help file (Markdown,
+  text, reStructuredText, AsciiDoc, man pages) or text with no path can it be
+  prose: there a help-text metavar (`PASSWORD`, `TEXT`, `VALUE`, `KEY` and a
+  few more, `[…]`, `<…>`) or `to`/`for`/`is` is not a password, and in a prose
+  file only a command line counts (a fenced code block, a `$ ` or `> `
+  prompt, a Dockerfile `RUN` or CI `run:` line, a line that starts with a
+  known command or a path, or quoted code). Any other all-caps value is a
+  password. Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
   `docker run -p`) and flags with no value (`--password-stdin`,
-  `--password-file`, `--no-password`). A command continued with a trailing
-  backslash is one command;
+  `--password-file`, `--no-password`) are left alone. A command continued
+  with a trailing backslash is one command;
 - well-known password environment variables: `PGPASSWORD`, `MYSQL_PWD`,
   `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MSSQL_SA_PASSWORD`,
   `REDISCLI_AUTH`, `SSHPASS` and others, in shell, dotenv, compose and
@@ -145,8 +150,9 @@ types into one:
   empty), never the user or the host;
 - auth headers: `Authorization` / `Proxy-Authorization` with `Bearer` from 8
   characters or `Basic` credentials of any length, `X-Api-Key` with a literal
-  value (a code expression such as an environment lookup or `config.key` is
-  left alone), the same inside curl `-H`, and the password of curl
+  value (one that starts at a code root such as an environment lookup,
+  `config.`, `settings.`, `secrets.`, `$` or `{{` is left alone; a JWT never
+  is), the same inside curl `-H`, and the password of curl
   `-u user:pass`.
 
 The user half is a credential too when it is a token (`https://<token>@host`,
