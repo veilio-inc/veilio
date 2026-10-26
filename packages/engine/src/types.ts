@@ -196,4 +196,12 @@ export interface AnonymizeOptions {
    *  and high findings irreversibly; 'warn' reports without changing the code;
    *  'off' skips the scan entirely. */
   secrets?: SecretPolicy
+  /** The file the code was read from. In a test, fixture or example file a
+   *  weak password in a secret position (a password flag, a password
+   *  environment variable, URL userinfo, an auth header) is reported rather
+   *  than redacted; a strong one is redacted everywhere. Absent: real source. */
+  path?: string
+  /** The project root, for an absolute `path`: only folders inside it count
+   *  as test or example folders. */
+  root?: string
 }
