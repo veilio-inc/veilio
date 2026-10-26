@@ -4,6 +4,7 @@
 
 import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engine'
 import type { SecretPolicy } from '@veilio-inc/engine'
+import { belongsTo, flagFor, flagsOf, spell, type CommandKey } from './flags.js'
 
 export type Command =
   | 'scrub'
@@ -110,7 +111,49 @@ export interface ParsedArgs {
   instance: string | null
 }
 
-export class UsageError extends Error {}
+export class UsageError extends Error {
+  /** The command the error is about, when there is one: the CLI then prints
+   *  `veilio scrub: …` rather than `veilio: …`. */
+  readonly command: string | undefined
+
+  constructor(message: string, command?: string) {
+    super(message)
+    this.command = command
+  }
+}
+
+/** The key the flag table knows a parsed command by, or null when there is
+ *  none to check: no command (`veilio --help`), or a group command with no
+ *  action (`veilio maps`), which is refused for that reason anyway. */
+function commandKey(parsed: ParsedArgs): CommandKey | null {
+  switch (parsed.command) {
+    case 'help':
+    case 'version':
+      return null
+    case 'maps':
+      return parsed.mapsAction ? `maps ${parsed.mapsAction}` : null
+    case 'team':
+      return parsed.teamAction ? `team ${parsed.teamAction}` : null
+    case 'vault':
+      return parsed.vaultAction ? `vault ${parsed.vaultAction}` : null
+    case 'projects':
+      return parsed.projectsAction ? `projects ${parsed.projectsAction}` : 'projects'
+    case 'rules':
+      return parsed.rulesAction ? `rules ${parsed.rulesAction}` : null
+    default:
+      return parsed.command
+  }
+}
+
+/** The refusal for a flag the command does not take, naming the ones it does. */
+function foreignFlag(spelling: string, command: CommandKey): UsageError {
+  const own = flagsOf(command).filter((f) => f.commands !== 'all')
+  const tail =
+    own.length > 0
+      ? `Options for ${command}: ${flagsOf(command).map(spell).join(', ')}.`
+      : `${command} takes no options of its own; --help (-h) and --version (-v) work with any command.`
+  return new UsageError(`unknown option ${spelling}. ${tail}`, command)
+}
 
 const COMMANDS = new Set<Command>([
   'scrub',
@@ -258,8 +301,16 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
+  // Fixed once the command and its action are read, before any flag: a flag
+  // is checked against the command it was written for.
+  const key = commandKey(parsed)
+
   for (; i < argv.length; i++) {
     const arg = argv[i]
+    // A flag that exists but is not this command's is refused, not ignored.
+    // `veilio scrub --days 3` used to run with `--days` doing nothing.
+    const flag = arg.startsWith('-') && arg !== '-' ? flagFor(arg) : undefined
+    if (flag && key !== null && !belongsTo(flag, key)) throw foreignFlag(arg, key)
     switch (arg) {
       case '-h':
       case '--help':

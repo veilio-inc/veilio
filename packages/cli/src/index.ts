@@ -37,7 +37,8 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     args = parseArgs(argv)
   } catch (err) {
     if (err instanceof UsageError) {
-      io.stderr(`veilio: ${err.message}\n\nRun "veilio --help" for usage.\n`)
+      const who = err.command ? `veilio ${err.command}` : 'veilio'
+      io.stderr(`${who}: ${err.message}\n\nRun "veilio --help" for usage.\n`)
       return EXIT_ERROR
     }
     throw err

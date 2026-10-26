@@ -29,6 +29,7 @@ import {
   withAiPreamble,
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
+import { optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -543,25 +544,7 @@ COMMANDS
                        \`scrub\` then applies them offline, as the web app does.
 
 OPTIONS
-  -l, --language <lang>   auto (default), typescript, python, go, java, csharp,
-                          rust, ruby, php, c, sql
-  -s, --secrets <policy>  redact (default) | warn | off
-  -p, --preamble          Prepend the downstream-AI note and placeholder legend
-  -m, --map <path>        Use a specific map file
-      --json              Machine-readable output (scan, map)
-      --strict            scan: also fail on advisory findings. restore: write
-                          nothing and exit 1 if a placeholder would be left
-      --keep-docs         restore: keep JSDoc blocks the model wrote
-  -f, --force             Allow a map write that would drop existing entries
-      --days <n>          vault unlock, team unlock: keep the key n days (1-30)
-      --allow-drop        maps update: allow dropping entries the Cloud map has
-  -q, --quiet             Suppress the all-clear summary (findings always show)
-      --device            login: approve the sign-in in a browser instead of
-                          typing a password here
-      --instance <url>    login: the Veilio instance to sign in to. Defaults to
-                          the public Cloud; https required (localhost excepted)
-  -h, --help              Show this help
-  -v, --version           Show the version
+${optionsHelp()}
 
 EXIT CODES
   0  clean    1  findings that should stop the pipeline    2  usage or IO error
