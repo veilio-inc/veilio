@@ -252,5 +252,7 @@ test('indexing a file whose name holds a destroyed credential saves the other na
   const shown: string = out.result.content
   expect(shown).not.toContain('Xk9mQ2vL7Q')
   expect(shown).not.toContain('connect')
-  expect(shown).toMatch(/export function __FN__\d+\(\) \{\}/)
+  // A placeholder of its own namespace, which no saved entry can ever share.
+  expect(shown).toMatch(/export function __QUARANTINED__\d+\(\) \{\}/)
+  expect(p.files[MAP]).not.toContain('__QUARANTINED__')
 })

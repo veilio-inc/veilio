@@ -280,14 +280,15 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
  *  `postgres`, a structural rule's finding in a docker-compose URL, is
  *  removed where its rule finds it and nowhere else: learned, it ate every
  *  `import postgres` after it (review of 99325ba). */
-// Defaults everyone knows, never secrets of the project: learned, a session
-// would remove `postgres` from every `import postgres` after a docker-compose
-// URL. Still destroyed where a rule finds them; only not swept elsewhere.
+// Defaults everyone knows, exactly as they stand: learned, a session would
+// remove `postgres` from every `import postgres` after a docker-compose URL.
+// With anything added (`admin2024`, `Welcome1`) it is a password and is
+// learned (review of 58d3dae). Still destroyed where a rule finds them.
 const DEFAULTS =
-  /^(?:postgres|postgresql|mysql|mariadb|redis|mongo|mongodb|root|toor|admin|administrator|superuser|sa|password|passwd|pass|changeme|secret|example|test|testing|guest|user|demo|default|qwerty|letmein|welcome|dev|local|localhost)[0-9]{0,6}$/i
+  /^(?:postgres|postgresql|mysql|mariadb|redis|mongo|mongodb|root|toor|admin|administrator|superuser|sa|password|passwd|pass|changeme|secret|example|test|testing|guest|user|demo|default|qwerty|letmein|welcome|dev|local|localhost)$/i
 
 /** Worth learning: every value a credential rule took, six characters or
- *  more, but a known default (review of 7b930ad). */
+ *  more, but a bare known default (reviews of 7b930ad and 58d3dae). */
 function credentialLike(value: string): boolean {
   return value.length >= 6 && !DEFAULTS.test(value)
 }
@@ -448,7 +449,9 @@ export class Destroyed {
       if (v.length < value.length) tooLong = true
       if (v === '' || this.sweep.has(v)) continue
       this.tokenFor(v)
-      this.sweep.set(v, { period: periodOf(v), inside: highEntropy(v) })
+      // Inside longer words too when high-entropy or twelve characters or
+      // more: a long password must not hide in a word (review of 58d3dae).
+      this.sweep.set(v, { period: periodOf(v), inside: highEntropy(v) || v.length >= 12 })
       this.list = null
     }
     if (tooLong) throw new Error('a destroyed credential too long to remove safely')

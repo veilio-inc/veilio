@@ -371,12 +371,17 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     applyMap(text, {}, undefined, { known })
     return known
   }
-  it('a low-entropy password is learned and removed as a token in a later text', () => {
-    const known = learnedFrom('password = "my-secret-pass"')
-    expect(known.values).toContain('my-secret-pass')
-    expect(redactKnown('use my-secret-pass, not my-secret-passport', known)).toBe(
-      'use __REDACTED_CREDENTIAL_1001__, not my-secret-passport'
+  it('a short low-entropy password is learned and removed as a token in a later text', () => {
+    const known = learnedFrom('password = "my-secretpw"')
+    expect(known.values).toContain('my-secretpw')
+    expect(redactKnown('use my-secretpw, not my-secretpwd', known)).toBe(
+      'use __REDACTED_CREDENTIAL_1001__, not my-secretpwd'
     )
+  })
+
+  it('a long low-entropy password is removed inside a longer word too', () => {
+    const known = learnedFrom('password = "my-secret-pass"')
+    expect(redactKnown('my-secret-passport', known)).toBe('__REDACTED_CREDENTIAL_1001__port')
   })
   it('a learned app_pass leaves app_password alone', () => {
     const known = new Destroyed()
@@ -385,9 +390,21 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       '__REDACTED_CREDENTIAL_1001__ and app_password'
     )
   })
-  it('a known default is not learned: postgres, root1234', () => {
+  it('only a bare default is not learned: postgres; root1234 and Welcome2024 are', () => {
     expect(learnedFrom('postgres://postgres:postgres@db/x').values).toEqual([])
-    expect(learnedFrom('password = "root1234"').values).toEqual([])
+    const known = learnedFrom('password = "root1234"\npasswd = "Welcome2024"')
+    expect(known.values).toEqual(expect.arrayContaining(['root1234', 'Welcome2024']))
+    expect(redactKnown('login root1234 / Welcome2024 here', known)).not.toMatch(
+      /root1234|Welcome2024/
+    )
+  })
+
+  it('a long password is removed inside a longer word, whatever its entropy', () => {
+    const known = new Destroyed()
+    known.learn(['hunterpasswordlong', 'app_pass'])
+    expect(redactKnown('xhunterpasswordlong and app_password', known)).toBe(
+      'x__REDACTED_CREDENTIAL_1001__ and app_password'
+    )
   })
   it('a high-entropy value is removed inside a longer word', () => {
     const known = learnedFrom('password = "Xk9mQ2vL7Zp"')

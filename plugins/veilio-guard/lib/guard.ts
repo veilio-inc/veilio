@@ -155,14 +155,19 @@ export class Guard {
   private quarantine: SymbolMap = {}
   /** How many names the last save sent to the quarantine. */
   private quarantined = 0
+  private quarantineNext = 0
   private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
 
   /** What masking reads: the saved map and this session's quarantine. */
   get map(): SymbolMap {
     const size = Object.keys(this.quarantine).length
     if (size === 0) return this.stored.map
-    if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size)
+    if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size) {
+      for (const key of Object.keys(this.quarantine))
+        if (Object.hasOwn(this.stored.map, key))
+          throw new Error('a quarantined placeholder is also a saved one')
       this.merged = { base: this.stored.map, size, map: { ...this.stored.map, ...this.quarantine } }
+    }
     return this.merged.map
   }
 
@@ -914,8 +919,13 @@ export class Guard {
       const kept: SymbolMap = {}
       for (const [placeholder, name] of Object.entries(additions)) {
         if (learned.some((v) => name.includes(v))) {
-          this.quarantine[placeholder] = name
-          this.destroyed.hold(name, placeholder)
+          // A namespace of its own, which no saved entry can share (review
+          // of 58d3dae). Minted before any text holds the engine's number:
+          // only indexing raw files sends a name here.
+          const own = `__QUARANTINED__${++this.quarantineNext}`
+          void placeholder
+          this.quarantine[own] = name
+          this.destroyed.hold(name, own)
           this.quarantined++
         } else kept[placeholder] = name
       }
