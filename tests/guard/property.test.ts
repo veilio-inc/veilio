@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+
+// A map grown any way but grow() throws here (review of 5347c7c).
+;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
 import { join, resolve } from 'node:path'
 
 // Property: whatever mix of credentials, regulated numbers, map placeholders
@@ -10,43 +13,9 @@ import { join, resolve } from 'node:path'
 // GUARD_ROOT runs the same property against another checkout of the plugin.
 const PLUGIN = process.env.GUARD_ROOT ?? resolve(import.meta.dirname, '../../plugins/veilio-guard')
 const { applyMap, Destroyed, survivingSecrets } = await import(join(PLUGIN, 'lib/scrub.ts'))
-// What must be gone is the spec's (research R4), judged by this tree's rule
-// whichever checkout is under test.
-const { highSignal } = await import(
-  resolve(import.meta.dirname, '../../plugins/veilio-guard/lib/scrub.ts')
-)
-const { scanSecrets, SECRET_DISPOSITIONS } = await import(join(PLUGIN, 'vendor/engine/index.js'))
 const { generate } = await import(
   resolve(import.meta.dirname, '../../plugins/veilio-guard/tests/fixtures/generate.ts')
 )
-
-const HEURISTIC = new Set([
-  'password-assignment',
-  'high-entropy-string',
-  'connection-string',
-  'basic-auth',
-  'bearer-token',
-  'possible-credential',
-])
-
-/** What must not reach the model, for each value the scanner flags on the
- *  raw text: the value itself anywhere, when a provider-format rule found it
- *  or it has structural signal; otherwise the value where its rule found it,
- *  with what stood before it (research R4: a low-entropy value is redacted
- *  in place and not carried forward). */
-export function forbidden(text: string): string[] {
-  const starts = [0]
-  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-  return scanSecrets(text, 'warn')
-    .findings.filter((f: any) => SECRET_DISPOSITIONS[f.type] !== 'report')
-    .map((f: any) => {
-      const start = (starts[f.line - 1] ?? 0) + f.column - 1
-      const v = text.slice(start, start + f.length)
-      return !HEURISTIC.has(f.type) || highSignal(v)
-        ? v
-        : text.slice(Math.max(0, start - 10), start + f.length)
-    })
-}
 
 describe('masking, as a property', () => {
   it('removes every flagged value and keeps names and placeholders, over 1,500 random texts', () => {
@@ -55,7 +24,7 @@ describe('masking, as a property', () => {
       const c = generate(seed)
       const known = new Destroyed()
       const out: string = applyMap(c.text, c.map, undefined, { known })
-      for (const v of forbidden(c.text))
+      for (const v of c.forbidden)
         if (out.includes(v)) failures.push(`seed ${seed}: ${JSON.stringify(v)} survived`)
       for (const name of c.names)
         if (!out.includes(name)) failures.push(`seed ${seed}: name ${name} lost`)

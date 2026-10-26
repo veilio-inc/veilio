@@ -366,3 +366,42 @@ test(
   'a quarantined placeholder is refused on restore',
   refusedRestore({ __QUARANTINED__1: 'connectXk9mQ2vL7QPool' }, '__QUARANTINED__1()')
 )
+
+// Review of 5347c7c: judged by what restore() resolved, worded by kind.
+test('a name that merely contains a hand-marked value restores fine', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__9: 'AcmeLedger', __MANUAL__1: 'Acme' }),
+  })
+  on('tool.call', () => edit.r)
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'new __VAR__9()',
+  })
+  expect(out.deny).toBeUndefined()
+})
+
+test('each refusal names what it would have written back', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      ...MAP,
+      __MANUAL__1: 'Contoso Harbour Bank',
+      __IBAN__1: 'GB29NWBK60161331926819',
+    }),
+  })
+  on('tool.call', () => edit.r)
+  const manual: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: '__MANUAL__1',
+  })
+  expect(manual.deny).toContain('marked by hand')
+  const iban: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: '__IBAN__1',
+  })
+  expect(iban.deny).toContain('regulated number')
+})

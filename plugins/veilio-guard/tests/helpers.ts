@@ -3,6 +3,9 @@
 // the way Claude Code would answer them, with every write recorded.
 import { RECORDED } from './fixtures/recorded.ts'
 
+// Every hook test: a map grown any way but grow() throws (review of 5347c7c).
+;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
+
 export const ROOT = '/work/project'
 export const CANARY = 'QuasarLedgerReconciler'
 export const STRIPE = 'sk_live_' + '51HbFakeFakeFake0123456789abcdefABCDEF'

@@ -89,12 +89,23 @@ type Matcher = {
   kinds: Map<string, Set<string>>
   /** The map's version when this was built. */
   version: number
+  /** How many entries it had then, checked only under strict maps. */
+  keys: number
 }
 // How many times each map object has grown in place, so caches built from it
 // know when they are stale without counting its keys on every call (review of
 // 6e14ec6). Grow a map only through grow().
 const versions = new WeakMap<SymbolMap, number>()
 const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
+
+// Tests set this so that a map grown any other way than grow() throws at the
+// next cache read, instead of masking with a stale cache (review of 5347c7c).
+const strictMaps = () =>
+  (globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps === true
+function checkGrown(map: SymbolMap, keys: number): void {
+  if (strictMaps() && Object.keys(map).length !== keys)
+    throw new Error('a map grew without grow(): its caches would be stale')
+}
 
 /** Adds entries to a map object, telling the caches it changed. */
 export function grow(map: SymbolMap, additions: SymbolMap): void {
@@ -108,6 +119,7 @@ const compiled = new WeakMap<SymbolMap, Matcher>()
 function matcher(map: SymbolMap): Matcher {
   let c = compiled.get(map)
   // Rebuilt when the same object grew (reviews of da4ff84 and 6e14ec6).
+  if (c && c.version === versionOf(map)) checkGrown(map, c.keys)
   if (!c || c.version !== versionOf(map)) {
     const byName = new Map<string, string>()
     const kinds = new Map<string, Set<string>>()
@@ -123,6 +135,7 @@ function matcher(map: SymbolMap): Matcher {
       byName,
       kinds,
       version: versionOf(map),
+      keys: Object.keys(map).length,
     }
     compiled.set(map, c)
   }
@@ -297,26 +310,39 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
   return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
 }
 
-/** A credential's value worth removing wherever it appears again: six
- *  characters or more and key material by its own look, at least two kinds of
- *  character (letters and digits, two cases, a symbol). A plain word such as
- *  `postgres`, a structural rule's finding in a docker-compose URL, is
- *  removed where its rule finds it and nowhere else: learned, it ate every
- *  `import postgres` after it (review of 99325ba). */
 /** A value with structural signal, the only kind the session learns and
- *  sweeps everywhere (research R4, founder decision #5): high-entropy key
- *  material (eight characters or more, letters and digits, 3 bits or more of
- *  entropy per character), or a mixed-class string (ten characters or more
- *  with three of lower case, upper case, digits and symbols other than `_`
- *  and `-`). A dictionary word (`required`, `Configuration`, `postgres`) meets
- *  neither. A provider-format key is learned by its rule, whatever it looks
- *  like. A low-entropy value is redacted where its rule finds it and is not
- *  carried forward. */
+ *  sweeps everywhere (research R4, founder decision #5). Never one that holds
+ *  whitespace. `_` and `-` separate parts of a token and count for nothing.
+ *  Any of:
+ *  - high-entropy key material: eight characters or more, letters and
+ *    digits, 3 bits or more of entropy per character;
+ *  - a mixed-class string: ten characters or more with three of lower case,
+ *    upper case, digits and symbols (not `_ - / . :`, which paths and URLs
+ *    are made of);
+ *  - a letters-only token: sixteen letters or more, 3 bits or more of
+ *    entropy, and cut by its case into short pieces at least a third of the
+ *    time, where words and identifiers (`requiredFieldsConfiguration`,
+ *    `snake_case_identifier_name`) cut into long ones.
+ *  A provider-format key is learned by its rule, whatever it looks like. A
+ *  low-entropy value is redacted where its rule finds it and is not carried
+ *  forward (review of 5347c7c). */
 export function highSignal(value: string): boolean {
-  if (/[A-Za-z]/.test(value) && /[0-9]/.test(value) && value.length >= 8)
-    if (shannonEntropy(value) >= 3) return true
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_-]/].filter((c) => c.test(value)).length
-  return value.length >= 10 && classes >= 3
+  if (/\s/.test(value)) return false
+  const core = value.replace(/[_-]/g, '')
+  if (/[A-Za-z]/.test(core) && /[0-9]/.test(core) && core.length >= 8)
+    if (shannonEntropy(core) >= 3) return true
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_\-/.:]/].filter((c) =>
+    c.test(value)
+  ).length
+  if (core.length >= 10 && classes >= 3) return true
+  if (/^[A-Za-z]{16,}$/.test(core) && shannonEntropy(core) >= 3) {
+    const pieces = value
+      .split(/[_-]+/)
+      .flatMap((part) => part.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) ?? [])
+    const short = pieces.filter((p) => p.length <= 2).length
+    return pieces.length > 0 && short / pieces.length >= 1 / 3
+  }
+  return false
 }
 
 // A value made only of placeholders or redaction tokens: the map's own
@@ -333,8 +359,7 @@ function destroyedSpans(
 ): { start: number; matched: number; end: number; type: string }[] {
   const found = scan.findings.filter((f) => f.redacted)
   if (found.length === 0) return []
-  const starts = [0]
-  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+  const starts = lineStarts(text)
   // In text order: the scanner reports by severity, and a span loop that
   // skips what starts before its cursor would drop an earlier finding
   // (review of da4ff84).
@@ -354,7 +379,7 @@ export type ScanResult = ReturnType<typeof scanSecrets>
 // their findings defer to a value the map already masks reversibly. A
 // provider-format finding (an AWS or GitHub key, a private key block, a JWT)
 // always wins (security review of 933156e).
-const HEURISTIC = new Set([
+export const HEURISTIC: ReadonlySet<string> = new Set([
   'password-assignment',
   'high-entropy-string',
   'connection-string',
@@ -363,61 +388,35 @@ const HEURISTIC = new Set([
   'possible-credential',
 ])
 
-/** The provider-format keys in `text`, one entry per occurrence. */
-export function providerKeys(text: string): string[] {
-  const found = detectSecrets(text).filter(
-    (f) => !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] === 'destroy'
-  )
-  if (found.length === 0) return []
+type Finding = ReturnType<typeof detectSecrets>[number]
+
+/** Where each line of `text` starts, for a finding's line and column. */
+export function lineStarts(text: string): number[] {
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+  return starts
+}
+
+/** The text of each finding the predicate keeps, one entry per occurrence. */
+export function findingValues(
+  text: string,
+  keep: (f: Finding) => boolean,
+  findings: readonly Finding[] = detectSecrets(text)
+): string[] {
+  const found = findings.filter(keep)
+  if (found.length === 0) return []
+  const starts = lineStarts(text)
   return found.map((f) => {
     const start = (starts[f.line - 1] ?? 0) + f.column - 1
     return text.slice(start, start + f.length)
   })
 }
 
-/** Whether a restoration wrote back a value masked on purpose: judged by
- *  the keys restore() itself resolved (its own matching rule, review of
- *  55ae576), each of a never-restored kind whose value `before` does not
- *  already hold as text. */
-export function restoresNeverRestored(
-  before: string,
-  resolved: readonly string[],
-  map: SymbolMap
-): boolean {
-  return resolved.some(
-    (p) =>
-      NEVER_RESTORED.some((base) => p.startsWith(base)) &&
-      Object.hasOwn(map, p) &&
-      !before.includes(map[p]!)
-  )
-}
-
-/** The same invariant by value, belt and braces: a regulated number the
- *  scanner finds in `after` and not in `before`, or the value of a
- *  never-restored entry that `after` holds and `before` does not. */
-export function addsMaskedValue(before: string, after: string, map: SymbolMap): boolean {
-  for (const [p, v] of Object.entries(map))
-    if (
-      NEVER_RESTORED.some((base) => p.startsWith(base)) &&
-      after.includes(v) &&
-      !before.includes(v)
-    )
-      return true
-  const values = (text: string) => {
-    const starts = [0]
-    for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-    return detectSecrets(text)
-      .filter((f) => SECRET_DISPOSITIONS[f.type] === 'mask')
-      .map((f) => {
-        const start = (starts[f.line - 1] ?? 0) + f.column - 1
-        return text.slice(start, start + f.length)
-      })
-  }
+/** Whether `after` holds a value, or more copies of one, than `before`. */
+function adds(before: readonly string[], after: readonly string[]): boolean {
   const had = new Map<string, number>()
-  for (const v of values(before)) had.set(v, (had.get(v) ?? 0) + 1)
-  for (const v of values(after)) {
+  for (const v of before) had.set(v, (had.get(v) ?? 0) + 1)
+  for (const v of after) {
     const n = had.get(v) ?? 0
     if (n === 0) return true
     had.set(v, n - 1)
@@ -425,28 +424,62 @@ export function addsMaskedValue(before: string, after: string, map: SymbolMap): 
   return false
 }
 
-/** Whether `after` holds a provider-format key `before` does not, or more
- *  copies of one: compared by value, so a key already written cannot cover
- *  for a different one a restoration puts back (review of 5f11069). */
-export function addsProviderKey(before: string, after: string): boolean {
-  const had = new Map<string, number>()
-  for (const k of providerKeys(before)) had.set(k, (had.get(k) ?? 0) + 1)
-  for (const k of providerKeys(after)) {
-    const n = had.get(k) ?? 0
-    if (n === 0) return true
-    had.set(k, n - 1)
-  }
-  return false
+const isProviderKey = (f: Finding) =>
+  !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] === 'destroy'
+const isRegulated = (f: Finding) => SECRET_DISPOSITIONS[f.type] === 'mask'
+
+/** The provider-format keys in `text`, one entry per occurrence. */
+export function providerKeys(text: string): string[] {
+  return findingValues(text, isProviderKey)
 }
 
-const mapNames = new WeakMap<SymbolMap, { version: number; set: ReadonlySet<string> }>()
+/** What a restoration writes back that the arguments as written did not
+ *  hold, from one scan of each: a provider-format key (compared by value, so
+ *  one already written cannot cover for another, review of 5f11069) or a
+ *  regulated number the scanner reads (belt and braces beside the keys
+ *  restore() resolved). */
+export function restoreAdds(before: string, after: string): 'credential' | 'regulated' | null {
+  const b = detectSecrets(before)
+  const a = detectSecrets(after)
+  if (adds(findingValues(before, isProviderKey, b), findingValues(after, isProviderKey, a)))
+    return 'credential'
+  if (adds(findingValues(before, isRegulated, b), findingValues(after, isRegulated, a)))
+    return 'regulated'
+  return null
+}
+
+/** Whether a restoration wrote back a value masked on purpose, judged by the
+ *  keys restore() itself resolved (its own matching rule, review of 55ae576),
+ *  each of a never-restored kind whose value `before` does not already hold.
+ *  Says which kind, for the refusal's words (review of 5347c7c). */
+export function restoresNeverRestored(
+  before: string,
+  resolved: readonly string[],
+  map: SymbolMap
+): 'regulated' | 'manual' | 'credential' | null {
+  for (const p of resolved) {
+    const base = NEVER_RESTORED.find((b) => p.startsWith(b))
+    if (!base || !Object.hasOwn(map, p) || before.includes(map[p]!)) continue
+    return base === MANUAL_BASE ? 'manual' : base === '__QUARANTINED__' ? 'credential' : 'regulated'
+  }
+  return null
+}
+
+const mapNames = new WeakMap<
+  SymbolMap,
+  { version: number; keys: number; set: ReadonlySet<string> }
+>()
 /** The names a map holds, which are masked reversibly and never destroyed.
  *  Rebuilt when the same object grows (reviews of da4ff84 and 6e14ec6). */
 function namesOf(map: SymbolMap): ReadonlySet<string> {
   const version = versionOf(map)
   let c = mapNames.get(map)
+  if (c && c.version === version) checkGrown(map, c.keys)
   if (!c || c.version !== version)
-    mapNames.set(map, (c = { version, set: new Set(Object.values(map)) }))
+    mapNames.set(
+      map,
+      (c = { version, keys: Object.keys(map).length, set: new Set(Object.values(map)) })
+    )
   return c.set
 }
 
@@ -759,8 +792,7 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
   // A value that is one of the map's names is masked reversibly, not a
   // credential left behind (review of 99325ba).
   const names = namesOf(map)
-  const starts = [0]
-  for (let i = 0; i < real.length; i++) if (real[i] === '\n') starts.push(i + 1)
+  const starts = lineStarts(real)
   return found
     .filter((f) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1

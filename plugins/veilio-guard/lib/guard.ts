@@ -32,11 +32,10 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
-  addsProviderKey,
+  restoreAdds,
   grow,
   redactKnown,
   restoresNeverRestored,
-  addsMaskedValue,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
@@ -607,11 +606,12 @@ export class Guard {
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
-      if (restoresNeverRestored(s, r.resolved, this.stored.map)) restoresSecret = true
+      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.stored.map)
       return r.text
     }
 
-    let restoresSecret = false
+    // What the call would write back that Veilio keeps from it, if anything.
+    let restoresWhat: 'credential' | 'regulated' | 'manual' | null = null
     let args: ToolEvent = e
     // A credential Veilio destroyed is never put back, whatever a placeholder
     // says it stands for (security review of 933156e).
@@ -620,13 +620,14 @@ export class Guard {
     // session learned: a provider-format key that was not in the arguments as
     // written is refused (security review of 2af9fca).
     const putsBack = (before: string, after: string) =>
-      after !== before &&
-      (learned.some((v) => after.includes(v) && !before.includes(v)) ||
-        addsProviderKey(before, after) ||
-        addsMaskedValue(before, after, this.stored.map))
+      after === before
+        ? null
+        : learned.some((v) => after.includes(v) && !before.includes(v))
+          ? 'credential'
+          : restoreAdds(before, after)
     const guarded = (s: string) => {
       const out = restoreOne(s)
-      if (putsBack(s, out)) restoresSecret = true
+      restoresWhat ??= putsBack(s, out)
       return out
     }
     if (policy.restore.includes('*')) {
@@ -638,8 +639,16 @@ export class Guard {
       if (!r.ok) return this.deny(`its arguments are not in the expected form (${r.reason})`)
       args = r.value as ToolEvent
     }
-    if (restoresSecret)
-      return this.deny('a placeholder in it stands for a credential Veilio removed. Ask the user')
+    if (restoresWhat)
+      return this.deny(
+        `a placeholder in it stands for ${
+          restoresWhat === 'regulated'
+            ? 'a regulated number Veilio masks (an IBAN, a card or a PESEL)'
+            : restoresWhat === 'manual'
+              ? 'a value marked by hand'
+              : 'a credential Veilio removed'
+        }, which is never written back. Ask the user`
+      )
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
@@ -926,8 +935,8 @@ export class Guard {
     return out
   }
 
-  /** Adds entries to the map file: read what is there now, merge, write. */
-  /** Saves the additions; says how many names went to the quarantine instead
+  /** Adds entries to the map file: read what is there now, merge, write.
+   *  Says how many names went to the quarantine instead
    *  (review of 6e14ec6: returned, not shared through guard state). */
   private save(
     additions: SymbolMap

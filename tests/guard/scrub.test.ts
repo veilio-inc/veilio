@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
+
+// A map grown any way but grow() throws here (review of 5347c7c).
+;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
 import {
+  highSignal,
   NEVER_RESTORED,
   restoresNeverRestored,
   grow,
@@ -428,9 +432,16 @@ describe('a large map', () => {
     const map: Record<string, string> = {}
     for (let i = 1; i <= 20_000; i++) map[`__VAR__${i}`] = `name${i}x`
     applyMap('warm', map)
-    const started = performance.now()
-    for (let i = 0; i < 3_000; i++) applyMap(`call name${(i % 20_000) + 1}x now`, map)
-    expect(performance.now() - started).toBeLessThan(4_000)
+    // As in a session: the strict check counts keys on purpose, so it is off.
+    const g = globalThis as { __veilioStrictMaps?: boolean }
+    g.__veilioStrictMaps = false
+    try {
+      const started = performance.now()
+      for (let i = 0; i < 3_000; i++) applyMap(`call name${(i % 20_000) + 1}x now`, map)
+      expect(performance.now() - started).toBeLessThan(4_000)
+    } finally {
+      g.__veilioStrictMaps = true
+    }
   })
 })
 
@@ -470,7 +481,44 @@ describe('the kinds never restored', () => {
       expect(survivingSecrets(`id ${p} end`, map)).toEqual([])
       expect(survivingSecrets('id AKIAQ7RZ2XKM4PLB8WNE end', map)).not.toEqual([])
       // …and refused on restore.
-      expect(restoresNeverRestored('x', [p], map)).toBe(true)
+      expect(restoresNeverRestored('x', [p], map)).not.toBeNull()
     }
+  })
+})
+
+describe('structural signal, by example (review of 5347c7c)', () => {
+  const learned = (v: string) => {
+    const known = new Destroyed()
+    applyMap(`api_token = "${v}"`, {}, undefined, { known })
+    return known.values.includes(v)
+  }
+  it('letters-only and separated tokens are learned and swept', () => {
+    for (const v of ['xQzWvRtYpLmNbKjHgFdSaBcDeF', 'kSjdhf-KJhsdf-kjHSDk-fjhsdk']) {
+      expect(highSignal(v)).toBe(true)
+      expect(learned(v)).toBe(true)
+    }
+    const known = new Destroyed()
+    known.learn(['xQzWvRtYpLmNbKjHgFdSaBcDeF'])
+    expect(redactKnown('Bearer xQzWvRtYpLmNbKjHgFdSaBcDeF.', known)).not.toContain('xQzW')
+  })
+  it('identifiers and words are not', () => {
+    for (const v of [
+      'requiredFieldsConfiguration',
+      'HelloWorldWide',
+      'snake_case_identifier_name',
+      'Hello World',
+      '/usr/local/Lib',
+      'https://example.org/Path',
+    ])
+      expect(highSignal(v)).toBe(false)
+  })
+})
+
+describe('strict maps', () => {
+  it('a map grown without grow() throws at the next read', () => {
+    const map: Record<string, string> = { __CLS__1: 'Alpha' }
+    applyMap('Alpha', map)
+    map.__CLS__2 = 'Beta'
+    expect(() => applyMap('Beta', map)).toThrow(/grow\(\)/)
   })
 })
