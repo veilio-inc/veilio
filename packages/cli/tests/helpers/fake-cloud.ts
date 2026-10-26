@@ -107,6 +107,15 @@ export class FakeCloud {
   failing = new Set<string>()
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
+  /** This account's keypair, as the web app makes it; null until made. */
+  keypair: { publicKey: string; privateKeyEncrypted: string; privateKey: CryptoKey } | null = null
+  /** Every team-key wrap the team holds, anyone's. */
+  wraps: { user: string; version: number; wrapped_key: string; wrapped_by: string }[] = []
+  /** Versions the team has used, departed holders' included. */
+  usedVersions = 0
+  /** This account's role, and the team's members (for "a team of one"). */
+  role: 'owner' | 'admin' | 'member' = 'owner'
+  members: string[] = [ME]
   private nextId = 1
   private counters = new Map<string, number>()
 
@@ -125,6 +134,32 @@ export class FakeCloud {
       kdf: { name: 'PBKDF2-SHA256', iterations: ITERATIONS },
     }
     return key
+  }
+
+  /** A keypair, the private half wrapped under the vault key exactly as the
+   *  web app's createKeypair wraps it. */
+  async withKeypair(): Promise<void> {
+    const subtle = globalThis.crypto.subtle
+    const pair = (await subtle.generateKey({ name: 'X25519' }, true, [
+      'deriveBits',
+    ])) as CryptoKeyPair
+    const pkcs8 = await subtle.exportKey('pkcs8', pair.privateKey)
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12))
+    const data = await subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      (await vaultKey()) as unknown as CryptoKey,
+      pkcs8
+    )
+    this.keypair = {
+      publicKey: toBase64(await subtle.exportKey('raw', pair.publicKey)),
+      privateKeyEncrypted: JSON.stringify({
+        v: 1,
+        alg: 'AES-GCM',
+        iv: toBase64(iv),
+        data: toBase64(data),
+      }),
+      privateKey: pair.privateKey,
+    }
   }
 
   /** The PMK, wrapped under the vault key, as the server would hold it. */
@@ -305,6 +340,61 @@ export class FakeCloud {
         return json(201, { ok: true })
       }
     }
+    if (path === '/api/auth/me') return json(200, { user: { id: 'u-me', email: ME } })
+    if (path === '/api/auth/keys' && method === 'GET')
+      return json(
+        200,
+        this.keypair
+          ? {
+              initialized: true,
+              publicKey: this.keypair.publicKey,
+              privateKeyEncrypted: this.keypair.privateKeyEncrypted,
+              alg: 'X25519',
+            }
+          : { initialized: false }
+      )
+    if (path === '/api/teams/mine')
+      return json(200, {
+        team: this.teamId
+          ? { id: this.teamId, role: this.role, members: this.members.map((email) => ({ email })) }
+          : null,
+      })
+    if (path === `/api/teams/${TEAM_ID}/key` && method === 'GET') {
+      const mine = this.wraps
+        .filter((w) => w.user === 'u-me')
+        .map((w) => ({
+          version: w.version,
+          wrapped_key: w.wrapped_key,
+          wrapped_by: w.wrapped_by,
+          created_at: 'x',
+        }))
+      return json(200, { wraps: mine, granted: mine.length > 0 })
+    }
+    if (path === `/api/teams/${TEAM_ID}/key/grant` && method === 'POST') {
+      // The server's bootstrap rule (routes/teams.ts): no wraps at all, the
+      // next unused version, to yourself, by an owner or admin.
+      const b = body ?? {}
+      const next = this.usedVersions + 1
+      const toSelf = b.userId === 'u-me'
+      if (this.wraps.some((w) => w.user === b.userId && w.version === b.version))
+        return json(409, { error: 'That member already holds this version of the team key.' })
+      if (this.wraps.length === 0 && b.version === next && toSelf) {
+        if (this.role === 'member')
+          return json(403, {
+            error:
+              'Only the team owner or an admin can set up the team key. Ask one of them to open Veilio once; the key is then shared with you automatically.',
+          })
+        this.wraps.push({
+          user: 'u-me',
+          version: next,
+          wrapped_key: String(b.wrappedKey),
+          wrapped_by: 'u-me',
+        })
+        this.usedVersions = next
+        return json(201, { ok: true })
+      }
+      return json(403, { error: 'You do not hold that version of the team key' })
+    }
     if (path === '/api/auth/logout' && method === 'POST') return new Response(null, { status: 204 })
     if (path === '/api/projects') {
       if (!this.teamId) return json(200, { projects: [], teamId: null })
@@ -328,7 +418,8 @@ export class FakeCloud {
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {
       return json(200, {
-        version: 1,
+        version: this.usedVersions,
+        nextVersion: this.usedVersions + 1,
         rotationNeededSince: this.rotationOwed ? '2026-10-19T00:00:00.000Z' : null,
         // Who could be asked. The clients must never repeat it.
         holders: [{ email: TEAMMATE }],

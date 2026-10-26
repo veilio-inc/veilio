@@ -480,8 +480,34 @@ export function listProjects(credential: Credential): Promise<{
 export function getTeamKeyPending(
   credential: Credential,
   teamId: string
-): Promise<{ rotationNeededSince?: string | null }> {
+): Promise<{ rotationNeededSince?: string | null; nextVersion?: number }> {
   return request(`/api/teams/${encodeURIComponent(teamId)}/key/pending`, { credential })
+}
+
+/** Who this session belongs to: the account id a key grant names. */
+export function getMe(credential: Credential): Promise<{ user?: { id?: string; email?: string } }> {
+  return request('/api/auth/me', { credential })
+}
+
+/** Post a team-key wrap. Used here only to grant the team's first key to
+ *  oneself; whether it is allowed is the server's decision. */
+export function grantTeamKey(
+  credential: Credential,
+  teamId: string,
+  body: { userId: string; version: number; wrappedKey: string }
+): Promise<unknown> {
+  return request(`/api/teams/${encodeURIComponent(teamId)}/key/grant`, {
+    credential,
+    method: 'POST',
+    body,
+  })
+}
+
+/** The account's team and its members - only how many is read here. */
+export function getMyTeam(
+  credential: Credential
+): Promise<{ team: { id: string; members?: unknown[] } | null }> {
+  return request('/api/teams/mine', { credential })
 }
 
 /** One base's reserved run of placeholder numbers, inclusive at both ends. */

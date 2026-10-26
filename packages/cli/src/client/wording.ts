@@ -37,6 +37,9 @@ export const REFUSAL_CODES = [
   'no_pmk_yet',
   'pmk_unopenable',
   'keys_not_set_up',
+  'team_key_waiting',
+  'team_key_not_startable',
+  'team_key_solo_unavailable',
   'personal_old_seal',
   'personal_unopenable',
   'not_envelope',
@@ -174,10 +177,25 @@ export const WORDING: Record<RefusalCode, Words> = {
     resolve: 'Contact Veilio support with the account email; do not create a new vault.',
   }),
   keys_not_set_up: () => ({
-    message:
-      "this account's keys are not set up yet, so there is nowhere to keep a personal-maps key. Nothing was changed.",
+    message: "this account's keys are not set up yet (it has no keypair), so nothing was changed.",
     resolve:
-      'Unlock your vault once in the web app to set up your keys, then run `veilio vault unlock` again.',
+      'Open the web app and unlock your vault once to set up your keys, then run the command again.',
+  }),
+  team_key_waiting: () => ({
+    message:
+      'no one in the team has granted this account the team key yet, so nothing was unlocked.',
+    resolve:
+      'Ask a team member who holds it to open the web app, which performs the grant, then run `veilio team unlock` again.',
+  }),
+  team_key_not_startable: (p) => ({
+    message: `the team has no key yet, and this account may not set one up: ${sentence(p.detail)}`,
+    resolve:
+      'Ask the team owner or an admin to open Veilio once, then run `veilio team unlock` again.',
+  }),
+  team_key_solo_unavailable: (p) => ({
+    message: `this account is the team's only member, and its key could not be set up from here (${p.detail}). Nothing was unlocked.`,
+    resolve:
+      'Open the team page in the web app, which sets the key up, then run `veilio team unlock` again.',
   }),
   personal_old_seal: (p) => ({
     message: `${label(p)} is still sealed with the vault key, which this machine does not hold. Nothing was written.`,

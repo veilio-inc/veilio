@@ -14,6 +14,7 @@ import {
   reservePlaceholders,
   getUserKeys,
   getTeamKeyWraps,
+  getMyTeam,
   listMaps,
   listRules,
   request,
@@ -39,7 +40,8 @@ import {
   updateCloudMap,
   type ClientContext,
 } from './client/maps.js'
-import { renderRefusal, type Refusal } from './client/wording.js'
+import { refusal, renderRefusal, type Refusal } from './client/wording.js'
+import { bootstrapTeamKey } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
 import { listTeamProjects, useProject } from './client/projects.js'
@@ -704,28 +706,47 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     }
 
     const mine = await getUserKeys(credential)
-    if (!mine.initialized) {
-      io.stderr(
-        'veilio: this account has no keypair yet. Open the web app once — that is where a ' +
-          'keypair is created and where a teammate grants you the team key.\n'
-      )
-      return EXIT_ERROR
-    }
+    // No keypair: there is nothing to unwrap a team key with, nor to wrap a
+    // first one to. The web app makes it on the first vault unlock.
+    if (!mine.initialized) return refused(refusal('keys_not_set_up'), io)
 
-    const { wraps } = await getTeamKeyWraps(credential, teamId)
-    if (wraps.length === 0) {
-      io.stderr(
-        'veilio: no teammate has granted you the team key yet. Ask someone already in the ' +
-          'team to open the web app, which is what performs the grant.\n'
-      )
-      return EXIT_ERROR
-    }
+    let { wraps } = await getTeamKeyWraps(credential, teamId)
 
     const derived = await vaultKeyFor(credential, clientContext(io).passphrase)
     if (!derived.ok) return refused(derived.refusal, io)
     const vaultKey = derived.value
 
     const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
+
+    // None held here: the team may have no key at all - a team of one always
+    // starts that way - so try to mint its first one, as the web app does.
+    // The server says whether that is a bootstrap; a refusal means a key
+    // exists (or this member may not start one), never a reason to mint again.
+    let minted: { version: number } | null = null
+    if (wraps.length === 0) {
+      const tried = await bootstrapTeamKey(credential, teamId, {
+        privateKey,
+        publicKey: mine.publicKey,
+      })
+      if (tried.status === 'refused') {
+        if (tried.reason && /owner or an admin/i.test(tried.reason))
+          return refused(refusal('team_key_not_startable', { detail: tried.reason }), io)
+        // A team of one has nobody to ask, and must not be told to.
+        if (await isTeamOfOne(credential)) {
+          return refused(
+            refusal('team_key_solo_unavailable', {
+              detail: tried.reason ?? 'the server did not accept a first key',
+            }),
+            io
+          )
+        }
+        return refused(refusal('team_key_waiting'), io)
+      }
+      minted = { version: tried.version }
+      // Read back, rather than trusting what was sent: the unwrap below is the
+      // proof that what the server now holds opens for this account.
+      ;({ wraps } = await getTeamKeyWraps(credential, teamId))
+    }
 
     const keys: StoredTeamKey[] = []
     for (const wrap of wraps) {
@@ -747,7 +768,7 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     if (keys.length === 0) {
       io.stderr(
         'veilio: none of the team key wraps held for this account could be opened. ' +
-          'Ask a teammate to grant access again from the web app.\n'
+          'Grant it again from the team page in the web app, then run `veilio team unlock` again.\n'
       )
       return EXIT_ERROR
     }
@@ -767,6 +788,12 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     )
 
     const versions = keys.map((k) => `v${k.version}`).join(', ')
+    if (minted) {
+      io.stdout(
+        `Set up the team key (v${minted.version}): the team had none, so this account made its first one ` +
+          'and holds it. It was never sent anywhere unwrapped.\n'
+      )
+    }
     io.stdout(
       `Unlocked ${keys.length === 1 ? 'the team key' : 'team keys'} (${versions}) until ` +
         `${expiresAt}.\n` +
@@ -776,6 +803,17 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     return EXIT_OK
   } catch (err) {
     return reportCloudFailure(err, io)
+  }
+}
+
+/** Whether this account is its team's only member. Unknown counts as not:
+ *  the general wording is still true for a team of one, just less helpful. */
+async function isTeamOfOne(credential: Credential): Promise<boolean> {
+  try {
+    const members = (await getMyTeam(credential)).team?.members
+    return Array.isArray(members) && members.length === 1
+  } catch {
+    return false
   }
 }
 
