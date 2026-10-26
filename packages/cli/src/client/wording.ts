@@ -38,6 +38,8 @@ export const REFUSAL_CODES = [
   'pmk_unopenable',
   'keys_not_set_up',
   'team_key_waiting',
+  'own_public_key_mismatch',
+  'team_key_readback_mismatch',
   'team_key_not_startable',
   'team_key_solo_unavailable',
   'personal_old_seal',
@@ -180,6 +182,17 @@ export const WORDING: Record<RefusalCode, Words> = {
     message: "this account's keys are not set up yet (it has no keypair), so nothing was changed.",
     resolve:
       'Open the web app and unlock your vault once to set up your keys, then run the command again.',
+  }),
+  own_public_key_mismatch: () => ({
+    message:
+      'the public key Cloud returned for this account does not belong to its private key, so no team key was made, wrapped or unlocked.',
+    resolve:
+      'Contact Veilio support, and do not grant or unlock team keys for this account until it is explained.',
+  }),
+  team_key_readback_mismatch: () => ({
+    message:
+      'the team key Cloud handed back (read back after it was set up) is not the one made here, so nothing was unlocked and nothing will be sealed under it.',
+    resolve: 'Contact Veilio support, and do not publish team maps until it is explained.',
   }),
   team_key_waiting: () => ({
     message:

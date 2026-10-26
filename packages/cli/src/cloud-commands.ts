@@ -19,7 +19,7 @@ import {
   listRules,
   request,
 } from './cloud.js'
-import { unwrapPrivateKey, unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
+import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   removeTeamUnlock,
@@ -41,7 +41,7 @@ import {
   type ClientContext,
 } from './client/maps.js'
 import { refusal, renderRefusal, type Refusal } from './client/wording.js'
-import { bootstrapTeamKey } from './client/team-key-bootstrap.js'
+import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
 import { listTeamProjects, useProject } from './client/projects.js'
@@ -716,7 +716,14 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     if (!derived.ok) return refused(derived.refusal, io)
     const vaultKey = derived.value
 
-    const privateKey = await unwrapPrivateKey(vaultKey, mine.privateKeyEncrypted)
+    // The keypair, and its public half computed from the private one: a
+    // public key the server hands back is never trusted on its own word, not
+    // for a wrap's context and above all not for wrapping a key to (security
+    // review). A server answer that differs stops everything.
+    const own = await openOwnKeypair(vaultKey, mine.privateKeyEncrypted, mine.publicKey)
+    if (!own.ok) return refused(refusal('own_public_key_mismatch'), io)
+    const privateKey = own.privateKey
+    const myPublicKey = own.publicKey
 
     // None held here: the team may have no key at all - a team of one always
     // starts that way - so try to mint its first one, as the web app does.
@@ -726,8 +733,10 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
     if (wraps.length === 0) {
       const tried = await bootstrapTeamKey(credential, teamId, {
         privateKey,
-        publicKey: mine.publicKey,
+        publicKey: myPublicKey,
       })
+      if (tried.status === 'readback_mismatch')
+        return refused(refusal('team_key_readback_mismatch'), io)
       if (tried.status === 'refused') {
         if (tried.reason && /owner or an admin/i.test(tried.reason))
           return refused(refusal('team_key_not_startable', { detail: tried.reason }), io)
@@ -754,7 +763,7 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
         const teamKey = await unwrapTeamKey(wrap.wrapped_key, privateKey, {
           teamId,
           version: wrap.version,
-          myPublicKey: mine.publicKey,
+          myPublicKey,
         })
         keys.push({ version: wrap.version, key: await exportTeamKey(teamKey) })
       } catch {

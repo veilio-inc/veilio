@@ -116,6 +116,10 @@ export class FakeCloud {
   /** This account's role, and the team's members (for "a team of one"). */
   role: 'owner' | 'admin' | 'member' = 'owner'
   members: string[] = [ME]
+  /** A dishonest server: the public key it hands back for this account. */
+  servedPublicKey: string | null = null
+  /** A dishonest server: the wrap it hands back instead of the one stored. */
+  servedWrap: string | null = null
   private nextId = 1
   private counters = new Map<string, number>()
 
@@ -347,7 +351,7 @@ export class FakeCloud {
         this.keypair
           ? {
               initialized: true,
-              publicKey: this.keypair.publicKey,
+              publicKey: this.servedPublicKey ?? this.keypair.publicKey,
               privateKeyEncrypted: this.keypair.privateKeyEncrypted,
               alg: 'X25519',
             }
@@ -364,7 +368,7 @@ export class FakeCloud {
         .filter((w) => w.user === 'u-me')
         .map((w) => ({
           version: w.version,
-          wrapped_key: w.wrapped_key,
+          wrapped_key: this.servedWrap ?? w.wrapped_key,
           wrapped_by: w.wrapped_by,
           created_at: 'x',
         }))

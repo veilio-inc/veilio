@@ -124,6 +124,43 @@ describe('a team with no key yet', () => {
   })
 })
 
+describe('a server that lies about this account’s public key (security review)', () => {
+  it('is refused before anything is minted or posted: the key is checked against the private key', async () => {
+    await cloud.withKeypair()
+    // The server hands back ITS OWN public key, hoping to be wrapped to.
+    const attacker = (await globalThis.crypto.subtle.generateKey({ name: 'X25519' }, true, [
+      'deriveBits',
+    ])) as CryptoKeyPair
+    cloud.servedPublicKey = toBase64(
+      await globalThis.crypto.subtle.exportKey('raw', attacker.publicKey)
+    )
+    const r = await run(['team', 'unlock'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(
+      /public key Cloud returned for this account does not belong to its private key/
+    )
+    expect(grants()).toBe(0)
+    expect(cloud.wraps).toHaveLength(0)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+
+  it('a key that reads back different from the one minted is refused, and nothing is unlocked', async () => {
+    await cloud.withKeypair()
+    // After the grant, the server serves a wrap of a DIFFERENT key - one it
+    // knows - wrapped properly to this account.
+    const priv = cloud.keypair!.privateKey as unknown as CryptoKeyLike
+    const pub = cloud.keypair!.publicKey
+    cloud.servedWrap = await wrapTeamKeyFor(new Uint8Array(32).fill(1), priv, pub, pub, {
+      teamId: TEAM_ID,
+      version: 1,
+    })
+    const r = await run(['team', 'unlock'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toMatch(/read back/)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+})
+
 describe('the race: the team got a key first', () => {
   it('the server refuses the bootstrap, this stands down, and no second key exists', async () => {
     await cloud.withKeypair()
