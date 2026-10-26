@@ -430,11 +430,20 @@ function pathShaped(value: string): boolean {
     )
 }
 
-/** An environment variable's name, or another all-caps reference, used as a
- *  value (`'google-api-key': 'GOOGLE_KEY'`): a reference, not a secret, left
- *  as written (founder decision 2). One that looks random is not a name. */
-function referenceName(value: string): boolean {
-  return /^[A-Z][A-Z0-9_]*$/.test(value) && /[A-Z]{2}/.test(value) && !randomLooking(value)
+/** An environment variable's name used as a value (`'google-api-key':
+ *  'GOOGLE_KEY'`): a reference, not a secret, left as written (founder
+ *  decision 2). Narrowed by the review of f19df80: only for assignment-style
+ *  findings, never a bearer, basic-auth or connection-string value; it must
+ *  read as words, upper case with at least one `_` and every segment of at
+ *  most twelve characters holding a vowel (`DATABASE_URL`,
+ *  `STRIPE_SECRET_KEY`), which also rules out a run of sixteen letters or
+ *  more. All caps alone (`QXZRTPLMKWVBNHGF`) is not a name. */
+function referenceName(value: string, type: string): boolean {
+  if (PUNCTUATED_RULES.has(type)) return false
+  if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value)) return false
+  // The twelve-character cap also rules out every run of sixteen letters,
+  // high entropy or not.
+  return value.split('_').every((seg) => seg.length <= 12 && /[AEIOUY]/.test(seg))
 }
 
 /** A value with structural signal, the only kind the session learns and
@@ -803,7 +812,7 @@ export function applyMap(
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     if (start < at) continue
     const core = text.slice(start, matched)
-    if (HEURISTIC.has(type) && (names.has(core) || referenceName(core))) continue
+    if (HEURISTIC.has(type) && (names.has(core) || referenceName(core, type))) continue
     redacted += text.slice(at, start) + known.tokenFor(core)
     at = end
   }
@@ -952,7 +961,7 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
     .filter((f) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1
       const v = real.slice(start, start + f.length)
-      return !HEURISTIC.has(f.type) || !(names.has(v) || referenceName(v))
+      return !HEURISTIC.has(f.type) || !(names.has(v) || referenceName(v, f.type))
     })
     .map((f) => f.type)
 }

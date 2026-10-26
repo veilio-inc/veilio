@@ -604,6 +604,20 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
     )
     expect(applyMap(`password = "AWS_SECRET_ACCESS_KEY"`, {})).toContain('"AWS_SECRET_ACCESS_KEY"')
     expect(survivingSecrets(`password = "AWS_SECRET_ACCESS_KEY"`)).toEqual([])
+    expect(applyMap(`password = "DATABASE_URL"`, {})).toContain('"DATABASE_URL"')
+    expect(applyMap(`secret = "STRIPE_SECRET_KEY"`, {})).toContain('"STRIPE_SECRET_KEY"')
+    // Narrowed (review of f19df80): all caps alone is not a name.
+    expect(applyMap(`password = "QXZRTPLMKWVBNHGF"`, {})).not.toContain('QXZRTPLMKWVBNHGF')
+    expect(applyMap(`password = "ABCDEFGHQWERTZ"`, {})).not.toContain('ABCDEFGHQWERTZ')
+    expect(applyMap(`password = "QXZRT_PLMKW_VBNHG"`, {})).not.toContain('QXZRT_PLMKW_VBNHG')
+    expect(applyMap(`password = "ABCDEFGHIJKLMNOP_KEY"`, {})).not.toContain('ABCDEFGHIJKLMNOP')
+    expect(applyMap(`password = "ABCDEFGHIJKLM_KEY"`, {})).not.toContain('ABCDEFGHIJKLM')
+    // A bearer token shaped like a name is a token still. (The engine's bearer
+    // rule needs twenty characters; `Bearer ABCDEF_GHIJKL` it does not find.)
+    expect(applyMap(`Authorization: Bearer ABCDEF_GHIJKL_MNOPQR`, {})).not.toContain(
+      'ABCDEF_GHIJKL'
+    )
+    expect(survivingSecrets(`Authorization: Bearer GOOGLE_API_TOKEN_VALUE`)).not.toEqual([])
     // An all-caps value that looks random is a credential still.
     expect(applyMap(`password = "X7K9Q2LM4PZ8"`, {})).not.toContain('X7K9Q2LM4PZ8')
   })
