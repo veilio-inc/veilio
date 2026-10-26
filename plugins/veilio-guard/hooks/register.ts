@@ -158,10 +158,10 @@ export function register(on: any, options: Options = {}) {
     // A credential with its key in one is removed from the others too; each
     // text is scanned once.
     const given: string[] = Array.isArray(e.context) ? e.context : []
-    const [scan] = g.learnTogether([e.text, ...given])
+    const [scan, ...scans] = g.learnTogether([e.text, ...given])
     const text = g.applyText(e.text, 'prompt', scan)
     const context = Array.isArray(e.context)
-      ? given.map((c: string) => g.applyContext(c))
+      ? given.map((c: string, i: number) => g.applyContext(c, scans[i]))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })

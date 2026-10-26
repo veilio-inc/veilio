@@ -69,27 +69,7 @@ export function deepRewrite(
   fn: Rewrite,
   keep: ReadonlySet<string> = NONE
 ): unknown {
-  return rewriteDeep(value, fn, keep, true)
-}
-
-// `keep` holds at the record's top level, and in the blocks of a root list (an
-// MCP result's `type`), never deeper: a nested `type` can carry a name.
-function rewriteDeep(
-  value: unknown,
-  fn: Rewrite,
-  keep: ReadonlySet<string>,
-  top: boolean
-): unknown {
-  if (typeof value === 'string') return fn(value)
-  if (Array.isArray(value)) return value.map((v) => rewriteDeep(v, fn, keep, top))
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = top && keep.has(k) ? v : rewriteDeep(v, fn, keep, false)
-    }
-    return out
-  }
-  return value
+  return deepRewritePaths(value, (s) => fn(s), keep)
 }
 
 const NONE: ReadonlySet<string> = new Set()

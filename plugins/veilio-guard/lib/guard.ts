@@ -33,7 +33,6 @@ import {
   Destroyed,
   destroyedValues,
   addsProviderKey,
-  restorableMap,
   redactKnown,
   maskShaped,
   NO_CONTEXT,
@@ -230,8 +229,16 @@ export class Guard {
       this.batch = []
       const missed = await work()
       if (Object.keys(this.unsaved).length === 0) return missed
-      const saved = await this.save(this.unsaved)
-      this.unsaved = {}
+      let saved: 'saved' | 'conflict'
+      try {
+        saved = await this.save(this.unsaved)
+      } catch (err) {
+        // Not left marked as indexed: their names were never saved.
+        for (const rel of this.batch) this.index.forget(rel)
+        throw err
+      } finally {
+        this.unsaved = {}
+      }
       if (saved === 'saved') return missed
       // Another program changed the map: this batch's numbers may clash with
       // its, so the batch is indexed again from the map as it is now.
@@ -403,7 +410,15 @@ export class Guard {
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
   applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
+    const out = applyMap(text, this.map, this.context('unknown', kind), {
+      known: this.destroyed,
+      scan,
+    })
+    // The same last gate as a tool's result: a credential still here fails
+    // the text (the hook drops the prompt or leaves the text out).
+    if (survivingSecrets(out, this.map).length > 0)
+      throw new Error('a credential remained after masking')
+    return out
   }
 
   /** Texts that reach the model together (a prompt and its context, the
@@ -443,10 +458,7 @@ export class Guard {
    *  nothing written against it joins it, and a secret laid across it is
    *  still one match (review of d18b5c5). A text that already holds a mark's
    *  characters gets no exemption. */
-  applyContext(text: string): string {
-    // Held only as whole sections: a section's body that starts with the held
-    // text and ends with it, or with a blank line after it. Text that merely
-    // contains one is masked in full (security review of 933156e).
+  applyContext(text: string, scan?: ScanResult): string {
     // Every copy is held as one opaque mark while the text is masked, so a
     // secret laid across one is still one match. Only a copy that is a whole
     // section (a body that is the held text, or starts with it before a
@@ -454,30 +466,50 @@ export class Guard {
     // the text around it (security review of 933156e).
     const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
     if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
-      return this.applyText(text)
-    const whole = (h: string) => {
-      for (let i = text.indexOf(h); i !== -1; i = text.indexOf(h, i + 1)) {
-        const before = i === 0 || text[i - 1] === '\n'
-        const after = text.slice(i + h.length)
-        if (before && (after === '' || after.startsWith('\n\n') || after.startsWith('\n#')))
-          return true
-      }
-      return false
+      return this.applyText(text, 'result', scan)
+    // Whole or not, decided for each copy where it stands.
+    const isWhole = (at: number, h: string) => {
+      const before = at === 0 || text[at - 1] === '\n'
+      const after = text.slice(at + h.length)
+      return before && (after === '' || after.startsWith('\n\n') || after.startsWith('\n#'))
     }
-    const mark = (i: number) => `\u0000${'\u0001'.repeat(i + 1)}\u0000`
-    let marked = text
-    held.forEach((h, i) => {
-      marked = marked.split(h).join(mark(i))
-    })
+    const marks: { mark: string; back: () => string }[] = []
+    let marked = ''
+    let at = 0
+    while (at < text.length) {
+      let next = -1
+      let hit = ''
+      for (const h of held) {
+        const i = text.indexOf(h, at)
+        if (i !== -1 && (next === -1 || i < next || (i === next && h.length > hit.length))) {
+          next = i
+          hit = h
+        }
+      }
+      if (next === -1) break
+      const whole = isWhole(next, hit)
+      const mark = `\u0000${'\u0001'.repeat(marks.length + 1)}\u0000`
+      // What goes back: a whole section as written (the note) or with the
+      // names and credentials learned since (a masked block); any other copy
+      // masked like the text around it (review of da4ff84).
+      const h = hit
+      marks.push({
+        mark,
+        back: () =>
+          !whole
+            ? this.applyText(h)
+            : h === MODEL_NOTE
+              ? h
+              : applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
+                  scanned: true,
+                }),
+      })
+      marked += text.slice(at, next) + mark
+      at = next + hit.length
+    }
+    marked += text.slice(at)
     let out = this.applyText(marked)
-    held.forEach((h, i) => {
-      const back = !whole(h)
-        ? this.applyText(h)
-        : h === MODEL_NOTE
-          ? h
-          : applyMap(h, this.map, this.context('unknown'), { scanned: true })
-      out = out.split(mark(i)).join(back)
-    })
+    for (const { mark, back } of marks) out = out.split(mark).join(back())
     // The whole, read back, scanned once more: anything a hold let through
     // sends the text through full masking instead.
     if (survivingSecrets(out, this.map).length > 0) return this.applyText(text)
@@ -531,7 +563,7 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
-      const r = restoreArgs(s, restorableMap(this.map))
+      const r = restoreArgs(s, this.map)
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
@@ -855,13 +887,16 @@ export class Guard {
 
   /** Adds entries to the map file: read what is there now, merge, write. */
   private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
-    // No credential Veilio destroyed is ever minted into the map: a name that
-    // holds one fails the save, and the result that minted it is withheld
-    // (security review of 933156e).
+    // No credential Veilio destroyed is ever minted into the map (security
+    // review of 933156e).
+    // Only the entry that holds one is left out; the rest are saved (review
+    // of da4ff84). Its placeholder then resolves to nothing, so no edit can
+    // put it back.
     const learned = this.destroyed.values
-    for (const name of Object.values(additions))
-      if (learned.some((v) => name.includes(v)))
-        return Promise.reject(new Error('a new map entry holds a credential Veilio removed'))
+    if (learned.length > 0)
+      additions = Object.fromEntries(
+        Object.entries(additions).filter(([, name]) => !learned.some((v) => name.includes(v)))
+      )
     const run = this.writes.then(async () => {
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)

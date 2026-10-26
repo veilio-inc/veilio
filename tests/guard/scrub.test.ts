@@ -346,10 +346,56 @@ describe('what the session learns', () => {
 
   it('the last scan reads placeholders back without building a regex per map', () => {
     const map: Record<string, string> = {}
-    for (let i = 1; i <= 20_000; i++) map[`__VAR__${i}`] = `name${i}`
-    const started = performance.now()
-    // A fresh copy per call, as afterTool and maskMessage pass one.
-    for (let i = 0; i < 200; i++) survivingSecrets(`x = __VAR__${i} y`, { ...map })
-    expect(performance.now() - started).toBeLessThan(3_000)
+    for (let i = 1; i <= 500; i++) map[`__VAR__${i}`] = `name${i}`
+    const Real = RegExp
+    let built = 0
+    globalThis.RegExp = new Proxy(Real, {
+      construct(target, args) {
+        built++
+        return new target(...(args as [string, string?]))
+      },
+    }) as RegExpConstructor
+    try {
+      // A fresh copy per call, as afterTool and maskMessage pass one.
+      for (let i = 0; i < 50; i++) survivingSecrets(`x = __VAR__${i + 1} y`, { ...map })
+    } finally {
+      globalThis.RegExp = Real
+    }
+    expect(built).toBe(0)
+  })
+})
+
+describe('the learn bar, by example (review of da4ff84)', () => {
+  const learned = (pw: string) => {
+    const known = new Destroyed()
+    applyMap(`password = "${pw}"`, {}, undefined, { known })
+    return known.values.includes(pw)
+  }
+  it('underscores and hyphens do not make a word key material', () => {
+    expect(learned('app_pass')).toBe(false)
+    expect(learned('my-secret')).toBe(false)
+    // Strong enough to be destroyed where they stand, and still no key material.
+    expect(learned('Kestrel_Harbor_Lantern')).toBe(false)
+    expect(learned('Quartz-Meadow-Falcon')).toBe(false)
+  })
+  it('a plain word is not learned', () => {
+    expect(learned('postgres')).toBe(false)
+  })
+  it('letters and digits are: root1234 is a password, removed wherever it appears', () => {
+    expect(learned('root1234')).toBe(true)
+  })
+  it('a placeholder or a token is never learned', () => {
+    const known = new Destroyed()
+    applyMap('client_secret = "__VAR__1290x7"', {}, undefined, { known })
+    expect(known.values).toEqual([])
+  })
+})
+
+describe('a map that grows in place', () => {
+  it('its new names defer to the map at once', () => {
+    const map: Record<string, string> = { __CLS__1: 'X' }
+    applyMap('a', map)
+    map.__STR__9 = 'Zq8vB3nM1kL0pW9xYc7dE6fG'
+    expect(applyMap('auth_token: "Zq8vB3nM1kL0pW9xYc7dE6fG"', map)).toContain('"__STR__9"')
   })
 })

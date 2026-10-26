@@ -287,3 +287,17 @@ test('a restore that puts back a second provider key beside one already written 
   expect(ran).toBe(false)
   expect(out.deny).toContain('Veilio refused this call')
 })
+
+test('an edit beside a regulated number the map holds runs', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: 'GB29NWBK60161331926819' }),
+  })
+  on('tool.call', () => edit.r)
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'iban = "__IBAN__1"',
+  })
+  expect(out.deny).toBeUndefined()
+})

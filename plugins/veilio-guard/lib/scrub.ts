@@ -76,12 +76,15 @@ type Matcher = {
   byName: Map<string, string>
   /** The kinds of placeholder each name has (`__PKG__`, `__VAR__`, …). */
   kinds: Map<string, Set<string>>
+  /** How many entries the map had when this was built. */
+  size: number
 }
 const compiled = new WeakMap<SymbolMap, Matcher>()
 
 function matcher(map: SymbolMap): Matcher {
   let c = compiled.get(map)
-  if (!c) {
+  // Rebuilt when entries were added to the same object (review of da4ff84).
+  if (!c || c.size !== Object.keys(map).length) {
     const byName = new Map<string, string>()
     const kinds = new Map<string, Set<string>>()
     for (const [placeholder, name] of Object.entries(map)) {
@@ -91,7 +94,12 @@ function matcher(map: SymbolMap): Matcher {
       kinds.set(name, (kinds.get(name) ?? new Set()).add(kind))
     }
     const names = [...byName.keys()].sort((a, b) => b.length - a.length)
-    c = { re: names.length ? new RegExp(names.map(escape).join('|'), 'g') : null, byName, kinds }
+    c = {
+      re: names.length ? new RegExp(names.map(escape).join('|'), 'g') : null,
+      byName,
+      kinds,
+      size: Object.keys(map).length,
+    }
     compiled.set(map, c)
   }
   return c
@@ -272,10 +280,18 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
  *  removed where its rule finds it and nowhere else: learned, it ate every
  *  `import postgres` after it (review of 99325ba). */
 function credentialLike(value: string): boolean {
-  if (value.length < 6) return false
-  const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((k) => k.test(value)).length
-  return kinds >= 2
+  // Real key material: eight characters or more, letters, and digits or a
+  // symbol. Underscores and hyphens join words and do not count, so
+  // `app_pass` and `my-secret` are not learned (review of da4ff84). A
+  // letters-and-digits password such as `root1234` is: it is a password, and
+  // a copy of it anywhere is removed.
+  if (value.length < 8 || !/[A-Za-z]/.test(value)) return false
+  return /[0-9]/.test(value) || /[^A-Za-z0-9_-]/.test(value)
 }
+
+// A placeholder or a redaction token, anywhere in a value: the map's own
+// grammar is never learned as a credential (review of da4ff84).
+const OWN_GRAMMAR = /__[A-Z][A-Z0-9_]*?__\d*/
 
 /** Where each destroyed finding stands in `text`: its start, the end of what
  *  the rule took, and the end of the key characters that run on after it (a
@@ -288,12 +304,17 @@ function destroyedSpans(
   if (found.length === 0) return []
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-  return found.map((f) => {
-    const start = (starts[f.line - 1] ?? 0) + f.column - 1
-    let end = start + f.length
-    while (end < text.length && KEY_CHAR.test(text[end]!)) end++
-    return { start, matched: start + f.length, end, type: f.type }
-  })
+  // In text order: the scanner reports by severity, and a span loop that
+  // skips what starts before its cursor would drop an earlier finding
+  // (review of da4ff84).
+  return found
+    .map((f) => {
+      const start = (starts[f.line - 1] ?? 0) + f.column - 1
+      let end = start + f.length
+      while (end < text.length && KEY_CHAR.test(text[end]!)) end++
+      return { start, matched: start + f.length, end, type: f.type }
+    })
+    .sort((a, b) => a.start - b.start)
 }
 
 export type ScanResult = ReturnType<typeof scanSecrets>
@@ -311,16 +332,10 @@ const HEURISTIC = new Set([
   'possible-credential',
 ])
 
-/** Whether `text` holds a provider-format key (any rule but those that
- *  judge by shape): a value no restoration may put back. */
-export function holdsProviderKey(text: string): boolean {
-  return providerKeys(text).length > 0
-}
-
 /** The provider-format keys in `text`, one entry per occurrence. */
 export function providerKeys(text: string): string[] {
   const found = detectSecrets(text).filter(
-    (f) => !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] !== 'report'
+    (f) => !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] === 'destroy'
   )
   if (found.length === 0) return []
   const starts = [0]
@@ -345,27 +360,14 @@ export function addsProviderKey(before: string, after: string): boolean {
   return false
 }
 
-const restorable = new WeakMap<SymbolMap, SymbolMap>()
-/** The map less the entries whose value is a provider-format key: those are
- *  quarantined, never restored, whatever session wrote them (security review
- *  of 2af9fca). */
-export function restorableMap(map: SymbolMap): SymbolMap {
-  let out = restorable.get(map)
-  if (!out) {
-    out = {}
-    for (const [placeholder, name] of Object.entries(map))
-      if (!holdsProviderKey(name)) out[placeholder] = name
-    restorable.set(map, out)
-  }
-  return out
-}
-
-const mapNames = new WeakMap<SymbolMap, ReadonlySet<string>>()
-/** The names a map holds, which are masked reversibly and never destroyed. */
+const mapNames = new WeakMap<SymbolMap, { size: number; set: ReadonlySet<string> }>()
+/** The names a map holds, which are masked reversibly and never destroyed.
+ *  Rebuilt when entries are added to the same object (review of da4ff84). */
 function namesOf(map: SymbolMap): ReadonlySet<string> {
-  let set = mapNames.get(map)
-  if (!set) mapNames.set(map, (set = new Set(Object.values(map))))
-  return set
+  const size = Object.keys(map).length
+  let c = mapNames.get(map)
+  if (!c || c.size !== size) mapNames.set(map, (c = { size, set: new Set(Object.values(map)) }))
+  return c.set
 }
 
 /** The values worth learning from a scan of `text`: what each rule took and
@@ -377,7 +379,7 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
     const core = text.slice(start, matched)
     if (names.has(core) && HEURISTIC.has(type)) continue
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
-      if (credentialLike(v)) out.push(v)
+      if (credentialLike(v) && !OWN_GRAMMAR.test(v)) out.push(v)
   }
   return out
 }

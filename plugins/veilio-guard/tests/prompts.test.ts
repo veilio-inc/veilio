@@ -1,7 +1,7 @@
 // Spec 033 US1: what the developer types, and what Claude Code adds by itself,
 // reach the model with known names as placeholders and secrets removed.
 import { expect, test } from 'claude-code/testing'
-import { CANARY, mapFile, project, recordedPrompt, ROOT, STRIPE } from './helpers.ts'
+import { CANARY, mapFile, project, recorded, recordedPrompt, ROOT, STRIPE } from './helpers.ts'
 import { MODEL_NOTE } from '../lib/ui.ts'
 
 const MAP = { __CLS__1: CANARY }
@@ -302,4 +302,53 @@ test('a copy of a masked block that is not a whole section is masked in full', a
     text: `# notes\nsee ${masked} for the switch`,
   })
   expect(out.text).not.toContain('"__VAR__1290"')
+})
+
+test('a block remembered before a credential was learned loses it when it comes back', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'the deploy key is Xk9mQ2vL7Q' }],
+  }))
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: 'password = "Xk9mQ2vL7Q"\n' },
+  }))
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  await $.tool.call({ tool: 'Bash', tool_use_id: 't_b', command: 'cat .netrc.example' })
+  const out: any = await $.prompt.attachment({
+    type: 'context_sections',
+    text: `# claudeMd\n${ctx.blocks[0].text}`,
+  })
+  expect(out.text).not.toContain('Xk9mQ2vL7Q')
+})
+
+test('one whole copy of a block does not let a mid-line copy through', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+  }))
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  const masked = ctx.blocks[0].text
+  const out: any = await $.prompt.attachment({
+    type: 'context_sections',
+    text: `# claudeMd\n${masked}\n\n# notes\nsee ${masked} for the switch`,
+  })
+  const copies = out.text.split('"__VAR__1290"').length - 1
+  expect(copies).toBe(1)
+})
+
+test('a placeholder in context already masked is never learned', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  const sent: any[] = []
+  on('prompt.submit', (_: any, e: any) => {
+    sent.push(e)
+    return { text: e.text }
+  })
+  const e0 = recordedPrompt('prompt.submit').e
+  await $.prompt.submit({ ...e0, text: 'first', context: ['client_secret: "__VAR__1290"'] })
+  await $.prompt.submit({ ...e0, text: 'flip __VAR__1290 off' })
+  expect(sent[1].text).toContain('__VAR__1290')
 })
