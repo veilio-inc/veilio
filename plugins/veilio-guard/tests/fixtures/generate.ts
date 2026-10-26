@@ -103,7 +103,25 @@ export function generate(seed: number): Case {
     } else if (kind === 12) {
       // One random segment after a path's start, or dotted random segments,
       // then bare.
+      // Random parts with vowels enough, and dashed keys (commit review of
+      // f9c46d4).
+      const vowelly = () =>
+        [0, 1, 2]
+          .map(
+            () =>
+              `${str(r, 'AEIOU', 1)}${str(r, 'bcdfg', 1)}${str(r, 'XYZQ', 1)}${str(r, 'aeiou', 1)}${str(r, 'BCDF', 1)}${str(r, 'aeiou', 1)}`
+          )
+          .join('/')
+      const dashed = () =>
+        [0, 1, 2, 3]
+          .map(
+            () =>
+              `${str(r, 'aeiou', 1)}${str(r, 'BCDFG', 1)}${str(r, 'aeiou', 1)}${str(r, 'bcdfg', 1)}${str(r, 'AEIOU', 1)}${Math.floor(r() * 10)}`
+          )
+          .join('-')
       const v = pick(r, [
+        `/${vowelly()}9`,
+        dashed(),
         `/${str(r, ALNUM, 15)}7`,
         `./${str(r, ALNUM, 14)}3`,
         [1, 2, 3, 4]

@@ -421,23 +421,29 @@ function vowelRatio(letters: string): number {
 
 /** Path-, URL- or version-shaped (review of d55d9e2): after an optional
  *  scheme (`https://`) or drive (`C:\`), two or more segments between
- *  `/ \ . : -`, each a number or letters with digits only at the end that
+ *  `/ \ . :` (one after a scheme or drive; `-` joins parts inside one), each a number or letters with digits only at the end that
  *  read as a word (a quarter vowels or more, or a short lower-case piece such
- *  as `usr` or `v2`), and at least one a word of four letters or more. One
+ *  as `usr` or `v2`; a part of six letters or more must not look random,
+ *  `EuXoBa`), and at least one a word of four letters or more. One
  *  random segment after `/` or `./`, and dotted random segments
  *  (`Kq7.Zw3.Xv9.Rt2`), are not paths: their entropy decides. */
 function pathShaped(value: string): boolean {
   const rest = value.replace(/^(?:[a-z][a-z0-9+.-]*:\/\/|[A-Za-z]:\\)/, '')
-  const segments = rest.split(/[/.:\\-]+/).filter(Boolean)
-  if (segments.length < 2) return false
+  // Segments are cut only at `/ . : \`: `-` alone never makes a path, or a
+  // dashed key would be one (commit review of f9c46d4). Inside a segment,
+  // `-` joins parts (`3-Beta`), each judged.
+  const segments = rest.split(/[/.:\\]+/).filter(Boolean)
+  if (segments.length < (rest === value ? 2 : 1)) return false
   let word = false
-  for (const seg of segments) {
-    if (/^[0-9]+$/.test(seg)) continue
-    const m = /^([A-Za-z]+)[0-9]*$/.exec(seg)
+  for (const part of segments.flatMap((seg) => seg.split('-')).filter(Boolean)) {
+    if (/^[0-9]+$/.test(part)) continue
+    const m = /^([A-Za-z]+)[0-9]*$/.exec(part)
     if (!m) return false
     const letters = m[1]!
     const wordy = vowelRatio(letters) >= 0.25
     if (!wordy && !/^[a-z]{1,3}$/.test(letters)) return false
+    // Enough vowels is not enough for a long part: `EuXoBa` is random.
+    if (letters.length >= 6 && randomLooking(part)) return false
     if (wordy && letters.length >= 4) word = true
   }
   return word

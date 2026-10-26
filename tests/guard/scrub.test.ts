@@ -693,6 +693,12 @@ describe('final review of 0ef312b..d55d9e2: reproduced leaks', () => {
       // beside one word.
       ['password = "/aBcDeFgHiJkLmNoP"', '/aBcDeFgHiJkLmNoP'],
       ['password = "Kqzx7.Wmrt3.Lpvn9.Release"', 'Kqzx7.Wmrt3.Lpvn9.Release'],
+      // Random segments with vowels enough, and a dashed key: no path either
+      // (commit review of f9c46d4).
+      ['password = "/Qaiv/EuXoBa/PiTaZuE9"', '/Qaiv/EuXoBa/PiTaZuE9'],
+      ['password = "Lorem.AeIoBu.UxEvAi7"', 'Lorem.AeIoBu.UxEvAi7'],
+      ['password = "aBecE1-iDebI4-kLemO3-pQusE4"', 'aBecE1-iDebI4-kLemO3-pQusE4'],
+      ['api_key = "aBc1-dEf2-gHi3-jKl4"', 'aBc1-dEf2-gHi3-jKl4'],
     ])
       expect(carried(text, v)).toBe(true)
     for (const v of [
