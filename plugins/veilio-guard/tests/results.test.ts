@@ -577,3 +577,13 @@ test('a secret seen once with a tail and once bare is removed in both places', a
   expect(JSON.stringify(out)).not.toContain('wJalrXUtn')
   expect(p.files[`${ROOT}/.veilio/map.json`] ?? '').not.toContain('wJalrXUtn')
 })
+
+test('a result with too many copies of a credential to remove is withheld, not sent', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const stdout = `password = "xk9mq2vlp7rz"\n${'xk9mq2vlp7rz '.repeat(150_000)}`
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toContain('Veilio withheld')
+  expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rz')
+})

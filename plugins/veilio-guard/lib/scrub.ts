@@ -293,6 +293,11 @@ export function destroyedValues(texts: readonly string[]): string[] {
   return [...values]
 }
 
+// Past these, removing every occurrence is not attempted: the caller's
+// failure path withholds the result or drops the prompt (fail closed).
+const MAX_SPANS = 100_000
+const MAX_VALUE = 16_384
+
 /** The credentials a session has destroyed, held in memory only, each with
  *  one token: the same secret reads as the same token everywhere, two
  *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
@@ -301,6 +306,10 @@ export class Destroyed {
   private tokens = new Map<string, string>()
   private next = 1001
   learn(values: readonly string[]): void {
+    // One too long to search for safely fails the text that holds it (the
+    // caller withholds it) and is not kept, so the session goes on.
+    if (values.some((v) => v.length > MAX_VALUE))
+      throw new Error('a destroyed credential too long to remove safely')
     for (const v of values)
       if (v !== '' && !this.tokens.has(v))
         this.tokens.set(v, `__REDACTED_CREDENTIAL_${this.next++}__`)
@@ -341,9 +350,18 @@ export function redactKnown(text: string, known: Destroyed): string {
     // The next occurrence can start one period on, where the value overlaps
     // itself (`Qx7!Qx7!` in `Qx7!Qx7!Qx7!`); one with no overlap, a whole
     // length on. Either way the search never goes back.
-    const step = periodOf(value)
-    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + step))
-      spans.push([i, i + value.length, value])
+    // A run that keeps repeating the value's period (`aaaa` in a megabyte of
+    // `a`) is one span: covered while the text continues the period, and the
+    // search goes on after it, never back.
+    const period = periodOf(value)
+    for (let i = text.indexOf(value); i !== -1;) {
+      let j = i + value.length
+      while (j < text.length && text[j] === text[j - period]) j++
+      spans.push([i, j, value])
+      if (spans.length > MAX_SPANS)
+        throw new Error('too many occurrences of a destroyed credential to remove them safely')
+      i = text.indexOf(value, j)
+    }
   }
   if (spans.length === 0) return text
   spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
