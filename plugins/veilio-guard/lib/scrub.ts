@@ -225,7 +225,30 @@ const REDACTION_TOKEN = new RegExp(`(${REDACTION_TOKENS.source})`)
 // What a rule left of a secret it only partly took, before the value's
 // closing quote (`__REDACTED_AWS_SECRET_1__3"`).
 const KEY_CHAR = /[A-Za-z0-9+/=_-]/
-const RESIDUE = new RegExp(`(${REDACTION_TOKENS.source})[A-Za-z0-9+/=_-]+(?=["'\`])`, 'g')
+const TOKENS = new RegExp(REDACTION_TOKENS.source, 'g')
+
+/** What a rule left of a secret it only partly took, between its token and
+ *  the value's closing quote (`__REDACTED_AWS_SECRET_1__3"`), removed. One
+ *  cursor over the text: a run of key characters is read once, never again
+ *  from inside it (security review of 839898f). */
+export function dropResidue(text: string): string {
+  if (!text.includes('__REDACTED_')) return text
+  let out = ''
+  let at = 0
+  let cursor = 0
+  for (const m of text.matchAll(TOKENS)) {
+    const end = m.index + m[0].length
+    if (end <= cursor) continue
+    let to = end
+    while (to < text.length && KEY_CHAR.test(text[to]!)) to++
+    cursor = to
+    if (to > end && /["'`]/.test(text[to] ?? '')) {
+      out += text.slice(at, end)
+      at = to
+    }
+  }
+  return out + text.slice(at)
+}
 
 /** `fn` on each piece of `text` between redaction tokens, never across one:
  *  a token's edges are word characters, so a name written against one would
@@ -239,7 +262,7 @@ function aroundTokens(text: string, fn: (part: string) => string): string {
 }
 
 function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
-  return aroundTokens(text.replace(RESIDUE, '$1'), (part) => replaceNames(part, map, ctx))
+  return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
 }
 
 /** The values a scan of `text` as written destroys, six characters or more:
@@ -249,12 +272,14 @@ function destroyedIn(text: string, scan: ReturnType<typeof scanSecrets>): string
   if (found.length === 0) return []
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-  return found.map((f) => {
+  return found.flatMap((f) => {
     const start = (starts[f.line - 1] ?? 0) + f.column - 1
-    // The whole extent: a rule may have taken only part of a longer key.
+    // What the rule took, and its whole extent: a rule may have taken only
+    // part of a longer key, and either may appear alone elsewhere.
     let end = start + f.length
     while (end < text.length && KEY_CHAR.test(text[end]!)) end++
-    return text.slice(start, end)
+    const matched = text.slice(start, start + f.length)
+    return end > start + f.length ? [matched, text.slice(start, end)] : [matched]
   })
 }
 
@@ -296,13 +321,30 @@ export class Destroyed {
  *  value; overlapping spans of different values are merged and take the
  *  longest one's token. Run on text as written, before any masking, so no
  *  repeat of a value can reach the map. */
+/** The shortest shift at which `value` matches itself (its length when it
+ *  never does), from the prefix function. */
+function periodOf(value: string): number {
+  const border = new Array<number>(value.length).fill(0)
+  for (let i = 1, k = 0; i < value.length; i++) {
+    while (k > 0 && value[i] !== value[k]) k = border[k - 1]!
+    if (value[i] === value[k]) k++
+    border[i] = k
+  }
+  return value.length - (border[value.length - 1] ?? 0)
+}
+
 export function redactKnown(text: string, known: Destroyed): string {
   const values = known.values
   if (values.length === 0) return text
   const spans: [number, number, string][] = []
-  for (const value of values)
-    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + value.length))
+  for (const value of values) {
+    // The next occurrence can start one period on, where the value overlaps
+    // itself (`Qx7!Qx7!` in `Qx7!Qx7!Qx7!`); one with no overlap, a whole
+    // length on. Either way the search never goes back.
+    const step = periodOf(value)
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + step))
       spans.push([i, i + value.length, value])
+  }
   if (spans.length === 0) return text
   spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
   const merged: [number, number, string][] = []
@@ -351,9 +393,10 @@ export function applyMap(
   // Every value this text destroys, with every one the session has, is
   // removed first under its one token; the scan then takes what is left.
   const known = options.known ?? new Destroyed()
-  known.learn(destroyedIn(text, scanSecrets(text, 'redact')))
+  const first = scanSecrets(text, 'redact')
+  known.learn(destroyedIn(text, first))
   const swept = redactKnown(text, known)
-  const scan = scanSecrets(swept, 'redact')
+  const scan = swept === text ? first : scanSecrets(swept, 'redact')
   let redacted = scan.code
   // A rule can take fewer characters than the secret had, leaving a residue
   // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the

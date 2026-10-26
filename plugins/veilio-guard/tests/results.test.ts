@@ -564,3 +564,16 @@ test('a key of over 300 characters repeated bare is removed whole, no tail left'
   expect(sent).not.toContain('Zq8vB3nM1kL0pW')
   expect(sent).not.toContain('abcdef')
 })
+
+test('a secret seen once with a tail and once bare is removed in both places', async ($, on) => {
+  const bash = recorded('Bash')
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  // The AWS rule takes 40 characters; the slot holds them with a tail, the
+  // log line holds the 40 alone, followed by a word boundary.
+  const core = 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY12'
+  const stdout = `aws_secret_access_key = "${core}=tail99"\nlog: ${core}. done\n`
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain('wJalrXUtn')
+  expect(p.files[`${ROOT}/.veilio/map.json`] ?? '').not.toContain('wJalrXUtn')
+})

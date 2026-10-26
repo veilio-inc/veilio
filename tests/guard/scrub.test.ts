@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   Destroyed,
+  dropResidue,
   redactKnown,
   applyMap,
   restoreArgs,
@@ -223,5 +224,32 @@ describe('redactKnown', () => {
     known.learn(['abcdef'])
     const tail = 'Zq8vB3nM1kL0pW'.repeat(15)
     expect(redactKnown(`x abcdef${tail} y`, known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
+  })
+})
+
+describe('residue after a token', () => {
+  it('a long run of tokens with no closing quote is read once', () => {
+    const text = `x = "${'__REDACTED_SECRET_1__'.repeat(50_000)}`
+    const started = performance.now()
+    const out = dropResidue(text)
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(out).toBe(text)
+  })
+
+  it('a megabyte of key characters after a token, with no quote, is left as it is', () => {
+    const text = `x = "__REDACTED_SECRET_1__${'A'.repeat(1_000_000)}`
+    expect(dropResidue(text)).toBe(text)
+  })
+
+  it('a quoted residue is still removed', () => {
+    expect(applyMap('a = "__REDACTED_SECRET_1__3x"', {})).toBe('a = "__REDACTED_SECRET_1__"')
+  })
+})
+
+describe('a value that overlaps itself', () => {
+  it('every occurrence is found, overlapping ones too', () => {
+    const known = new Destroyed()
+    known.learn(['Qx7!Qx7!'])
+    expect(redactKnown('pw Qx7!Qx7!Qx7! end', known)).toBe('pw __REDACTED_CREDENTIAL_1001__ end')
   })
 })
