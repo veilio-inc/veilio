@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseArgs } from '../src/args'
+import { parseArgs } from '../src/args.js'
 
 // `-f` is documented as `--force` in the README and in --help. Since 0.5.4 it
 // set `--team` instead, so `veilio maps pull <id> -f` asked for a team map and
