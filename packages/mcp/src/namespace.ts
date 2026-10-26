@@ -141,6 +141,13 @@ export function primeNamespace(home?: string, opts: PrimeOptions = {}): Promise<
       if (generation === primeGeneration && still) {
         current = resolved
         primedProjectId = resolvedId
+        // The fetch asked the server which project the variable names: that
+        // answer is a confirmation (a failed listing is not one).
+        if (
+          projectOverride(opts.env) !== null &&
+          (resolvedId !== null || resolved.found.status === 'refused')
+        )
+          confirmedAt = performance.now()
         settledFlag = true
       }
       return current
@@ -169,6 +176,10 @@ let primedProject: string | null = null
  * (`confirmProject`); the id says whether the answer changed.
  */
 let primedProjectId: string | null = null
+/** When the server last said which project the variable names (monotonic ms). */
+let confirmedAt: number | null = null
+/** How long a confirmation is trusted before the next masking call asks again. */
+export const CONFIRM_TTL_MS = 30_000
 /** Set by a team write through this server: the cache no longer matches. */
 let invalidated = false
 
@@ -258,8 +269,8 @@ function reloadForAnotherProject(): Promise<ResolvedNamespace> {
  * right project. Without the variable, and before the first prime, it asks
  * nothing: the stored choice is checked by `refreshNamespaceIfStale`.
  *
- * Run before a tool that reserves numbers (anonymize) and by the tools that
- * write to the team's maps. A listing that fails changes nothing: Cloud being
+ * Run before a tool that numbers or restores from the team namespace
+ * (anonymize, restore), at most once per CONFIRM_TTL_MS. A listing that fails changes nothing: Cloud being
  * down is not a reason to throw a good namespace away.
  */
 export async function confirmProject(): Promise<void> {
@@ -268,6 +279,8 @@ export async function confirmProject(): Promise<void> {
   const value = projectOverride(opts.env)
   if (value === null) return
   if (priming && !settledFlag) await priming
+  // Trusted for CONFIRM_TTL_MS, on a clock a changed system time cannot move.
+  if (confirmedAt !== null && performance.now() - confirmedAt < CONFIRM_TTL_MS) return
   const credential = readCredential(home)
   if (!credential) return
   let now: string | null
@@ -278,7 +291,10 @@ export async function confirmProject(): Promise<void> {
     return
   }
   const refusedAlready = current.found.status === 'refused'
-  if (now === null ? refusedAlready : now === primedProjectId) return
+  if (now === null ? refusedAlready : now === primedProjectId) {
+    confirmedAt = performance.now()
+    return
+  }
   await reloadForAnotherProject()
 }
 
@@ -304,6 +320,7 @@ export function resetNamespaceCache(): void {
   primed = false
   primedProject = null
   primedProjectId = null
+  confirmedAt = null
   invalidated = false
   primeGeneration++
 }

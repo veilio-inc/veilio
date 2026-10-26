@@ -66,6 +66,22 @@ describe('the team namespace is read once, not per call', () => {
     expect(paths()).toEqual(['GET /api/maps', 'GET /api/maps/team-envelopes'])
   })
 
+  it('with VEILIO_PROJECT set: twenty anonymize calls inside 30 s cost one projects request in all', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
+    try {
+      const env = { VEILIO_PROJECT: 'tools' }
+      const pinned = { ...ctx, env }
+      await primeNamespace(home, { env })
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(1_000)
+        await callToolAsync('anonymize_text', { text: `export class Thing${i} {}` }, pinned)
+      }
+      expect(paths().filter((p) => p === 'GET /api/projects')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a team write here reloads it once, then it is cached again', async () => {
     await primeNamespace(home)
     saveMap(resolveMapPath(null, cwd), { __CLS__2: 'Fresh' }, { force: true })

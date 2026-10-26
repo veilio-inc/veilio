@@ -159,9 +159,17 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
 
 describe('the namespace follows the project the variable names NOW, not the name it was read under', () => {
   const env = { VEILIO_PROJECT: 'tools' }
+  const TTL = 30_000
 
-  it('renamed, and another project given the old name: the next anonymize numbers from the new one', async () => {
-    await primeNamespace(home, { env })
+  // Only the monotonic clock is faked: the fake Cloud answers on real promises.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['performance'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function renameToolsAndGiveItsNameToANewProject(): Promise<void> {
     // In the web app, while this server runs: tools -> tools-old, and a NEW
     // project takes the name. The variable's value is unchanged.
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
@@ -173,26 +181,59 @@ describe('the namespace follows the project the variable names NOW, not the name
       project: 'p-tools-2',
       map_data: await sealTeam({ __CLS__5: 'Zeta' }),
     })
+  }
+
+  it('renamed, and another project given the old name: the first call after the TTL numbers from the new one', async () => {
+    await primeNamespace(home, { env })
+    await renameToolsAndGiveItsNameToANewProject()
+    // Inside the TTL the confirmation is trusted: the old answer stands.
+    vi.advanceTimersByTime(TTL - 1)
+    const inside = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class Zeta {}' },
+      ctxWith(env)
+    )
+    expect(inside.text).toContain('__CLS__6')
     // Zeta is __CLS__5 in the NEW project. Under the old project's namespace
     // (Gamma is __CLS__5) it would be numbered above it: __CLS__6.
+    vi.advanceTimersByTime(1)
     const r = await callToolAsync('anonymize_text', { text: 'export class Zeta {}' }, ctxWith(env))
     expect(r.isError ?? false, r.text).toBe(false)
     expect(r.text).toContain('__CLS__5')
     expect(r.text).not.toContain('__CLS__6')
     expect(r.text).toContain('Namespace: team')
-    // And the old project's names are not in it.
+    // And the old project's names are not in it: Gamma is no longer __CLS__5
+    // (the earlier call inside the TTL took __CLS__6 in the local map).
     const again = await callToolAsync(
       'anonymize_text',
       { text: 'export class Gamma {}' },
       ctxWith(env)
     )
-    expect(again.text).not.toMatch(/__CLS__5\b.*Gamma/)
-    expect(again.text).toContain('__CLS__6')
+    expect(again.text).not.toContain('__CLS__5')
   })
 
-  it('renamed, and nothing given the old name: refused, naming the variable', async () => {
+  it('restore_text goes through the same confirmation: never the other project’s team layer', async () => {
+    await primeNamespace(home, { env })
+    await renameToolsAndGiveItsNameToANewProject()
+    vi.advanceTimersByTime(TTL)
+    const r = await callToolAsync('restore_text', { text: 'new __CLS__5 here' }, ctxWith(env))
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toContain('new Zeta here')
+    expect(r.text).not.toContain('Gamma')
+  })
+
+  it('restore_text inside the TTL trusts the confirmation, as anonymize does', async () => {
+    await primeNamespace(home, { env })
+    await renameToolsAndGiveItsNameToANewProject()
+    vi.advanceTimersByTime(TTL - 1)
+    const r = await callToolAsync('restore_text', { text: 'new __CLS__5 here' }, ctxWith(env))
+    expect(r.text).toContain('new Gamma here')
+  })
+
+  it('renamed, and nothing given the old name: refused after the TTL, naming the variable', async () => {
     await primeNamespace(home, { env })
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
+    vi.advanceTimersByTime(TTL)
     const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
     expect(r.isError).toBe(true)
     expect(r.text).toContain('VEILIO_PROJECT is "tools"')
@@ -202,6 +243,7 @@ describe('the namespace follows the project the variable names NOW, not the name
   it('over the server’s own entry point the masking call is the checked one', async () => {
     await primeNamespace(home, { env })
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
+    vi.advanceTimersByTime(TTL)
     const call = {
       jsonrpc: '2.0',
       id: 7,
@@ -210,14 +252,14 @@ describe('the namespace follows the project the variable names NOW, not the name
     }
     const answer = respond(call, ctxWith(env))
     expect(answer).toBeInstanceOf(Promise)
-    const body = JSON.stringify(await answer)
-    expect(body).toContain('VEILIO_PROJECT is')
+    expect(JSON.stringify(await answer)).toContain('VEILIO_PROJECT is')
     // Without the variable the masking call stays synchronous, as before.
     expect(respond(call, ctxWith({}))).not.toBeInstanceOf(Promise)
   })
 
-  it('nothing changed: the check is one project listing, and no namespace reload', async () => {
+  it('after the TTL with nothing changed: one project listing, and no namespace reload', async () => {
     await primeNamespace(home, { env })
+    vi.advanceTimersByTime(TTL)
     cloud.requests = []
     const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
     expect(r.text).toContain('__CLS__5')

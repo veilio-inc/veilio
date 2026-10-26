@@ -42,13 +42,13 @@ are still real. Names written entirely in capitals are not masked either
 
 ## Tools
 
-| Tool | Purpose |
-|---|---|
-| `anonymize_file` | Read a file and return only its masked form. **Preferred.** |
-| `anonymize_text` | Mask text the agent already holds (a user paste). Not for file contents. |
-| `restore_text` | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). With `strict: true`, it returns an error naming them instead of the text. |
-| `scan_secrets` | Detect credentials without modifying anything, and without putting the values in context. |
-| `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names. |
+| Tool                 | Purpose                                                                                                                                                                                                                                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anonymize_file`     | Read a file and return only its masked form. **Preferred.**                                                                                                                                                                                                                                    |
+| `anonymize_text`     | Mask text the agent already holds (a user paste). Not for file contents.                                                                                                                                                                                                                       |
+| `restore_text`       | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). With `strict: true`, it returns an error naming them instead of the text. |
+| `scan_secrets`       | Detect credentials without modifying anything, and without putting the values in context.                                                                                                                                                                                                      |
+| `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names.                                                                                                                                                                                                                               |
 
 ### Map, team and project tools (signed in to Veilio Cloud)
 
@@ -57,16 +57,16 @@ always, in the Community Edition - the server offers the five tools above and
 nothing else. Each is the `veilio` CLI's own command, through the same code, so
 it refuses in the same words for the same reasons.
 
-| Tool | Purpose |
-|---|---|
-| `maps_list` | The maps in Cloud - personal, and the team's in the project in use - with id, scope, count, name and whose each is. |
-| `maps_pull` | Fetch a map into this project's local map. `force: true` to replace local entries it would drop. |
-| `maps_create` | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first. |
-| `maps_update` | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only. |
-| `maps_remove` | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name. |
-| `team_status` | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed. |
-| `projects_list` | The projects the team works in; `*` marks the one in use. |
-| `projects_use` | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too. |
+| Tool            | Purpose                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `maps_list`     | The maps in Cloud - personal, and the team's in the project in use - with id, scope, count, name and whose each is.            |
+| `maps_pull`     | Fetch a map into this project's local map. `force: true` to replace local entries it would drop.                               |
+| `maps_create`   | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first.      |
+| `maps_update`   | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only.                        |
+| `maps_remove`   | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name.                                   |
+| `team_status`   | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed. |
+| `projects_list` | The projects the team works in; `*` marks the one in use.                                                                      |
+| `projects_use`  | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too.                                                      |
 
 **One project per repository: `VEILIO_PROJECT`.** Set it in a repository's
 `.mcp.json` `env` (see [Install](#install)) and that repository's server works
@@ -104,9 +104,9 @@ Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troublesh
   "mcpServers": {
     "veilio": {
       "command": "npx",
-      "args": ["-y", "@veilio-inc/mcp", "--root", "."]
-    }
-  }
+      "args": ["-y", "@veilio-inc/mcp", "--root", "."],
+    },
+  },
 }
 ```
 
@@ -120,9 +120,9 @@ project with `env`. Use a name or an id; an empty value counts as unset:
     "veilio": {
       "command": "npx",
       "args": ["-y", "@veilio-inc/mcp", "--root", "."],
-      "env": { "VEILIO_PROJECT": "billing" }
-    }
-  }
+      "env": { "VEILIO_PROJECT": "billing" },
+    },
+  },
 }
 ```
 
@@ -159,7 +159,7 @@ would restore their placeholders wrong. An older self-hosted Cloud that still
 merges server-side is honoured as it is, with no key needed here.
 
 The `local` line says which of those it was — `local (the team key is locked on
-this machine - run \`veilio team unlock\`)` or `local (could not read the team's
+this machine - run \`veilio team unlock\`)`or`local (could not read the team's
 maps: …)` — so a fallback is never read as agreement.
 
 The account's custom rules are fetched at startup the same way and applied to
@@ -186,7 +186,7 @@ confident wrong identifier is worse than a token the reader can see is
 unresolved. They are also excluded from the "invented or altered" count, since
 they were left for a stated reason.
 
-When the team's maps *should* have been used and could not be — the key is
+When the team's maps _should_ have been used and could not be — the key is
 locked, or Cloud could not be read — the call comes back as an **error result**
 saying which, even if some placeholders did restore. An older self-hosted Cloud
 that merges the namespace server-side is used for anonymizing but never for

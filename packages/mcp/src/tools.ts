@@ -638,12 +638,14 @@ export async function callToolAsync(
 
 /**
  * Whether a call must be checked against the project VEILIO_PROJECT names now
- * before it runs: it reserves numbers from the team namespace (anonymize), and
- * the server's environment pins a project, whose name can move to another
+ * before it runs: it numbers or restores from the team namespace (anonymize,
+ * restore), and the server's environment pins a project, whose name can move to another
  * project meanwhile. Without the variable nothing is asked.
  */
 function needsProjectCheck(name: string, ctx: ToolContext): boolean {
-  return name.startsWith('anonymize_') && projectOverride(ctx.env) !== null
+  return (
+    (name.startsWith('anonymize_') || name === 'restore_text') && projectOverride(ctx.env) !== null
+  )
 }
 
 /** Whether a call answers asynchronously: a Cloud tool, or a masking tool
