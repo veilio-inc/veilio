@@ -1,5 +1,25 @@
 # @veilio-inc/mcp
 
+## 0.6.0
+
+### Minor Changes
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`d0fa195`](https://github.com/veilio-inc/veilio/commit/d0fa195596481e28e0a4229238ac2a79591f6ddb) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Map, team and project tools for a signed-in agent (spec 052): `maps_list`, `maps_pull`, `maps_create`, `maps_update`, `maps_remove`, `team_status`, `projects_list` and `projects_use`. Each runs the `veilio` CLI's own code and refuses in the same words.
+
+  - With no sign-in, as in the Community Edition, the server lists only its five offline tools, exactly as before.
+  - Removing a map, or an update that drops entries, is off unless the server is started with `VEILIO_MCP_DESTRUCTIVE=1`. Even then, a removal must repeat the map's exact name.
+  - Personal maps open with the key `veilio vault unlock` keeps. The server never asks for or receives a passphrase.
+  - No result contains a passphrase, a key, a wrapped key or an encrypted map. A clash names placeholders, never the real names behind them.
+  - The team namespace reloads when the project changes, or after a team map is written through the server.
+
+### Patch Changes
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`44e5820`](https://github.com/veilio-inc/veilio/commit/44e5820acaece18cff2e7d10ff0102aea5b6036d) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Every request to Veilio Cloud now names the program that sent it: `X-Veilio-Client: cli` with `User-Agent: veilio-cli/<version>` from the CLI, and `X-Veilio-Client: mcp` with `User-Agent: veilio-mcp/<version>` from the MCP server, which until now labelled its requests `cli`. Cloud logs both when it rate-limits a request. It is a self-report and never decides access.
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`f4b74fd`](https://github.com/veilio-inc/veilio/commit/f4b74fd96d69763b279cd8f88993cb527971f08e) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Fewer requests per command, so a scripted run or an agent no longer hits Cloud's maps rate limit. A team push or update now reads the listing once and the team's maps once, and gets the map being updated from that same read rather than downloading it again: three requests, down from five. A rate-limited answer (429) is no longer retried, because a retry only counts against the same limit. The MCP server reads the team namespace once per project, and again only after a team write or a change of project. Tests pin a request budget for each command against the built binary, over real HTTP.
+- Updated dependencies [[`44e5820`](https://github.com/veilio-inc/veilio/commit/44e5820acaece18cff2e7d10ff0102aea5b6036d), [`d0fa195`](https://github.com/veilio-inc/veilio/commit/d0fa195596481e28e0a4229238ac2a79591f6ddb), [`f4b74fd`](https://github.com/veilio-inc/veilio/commit/f4b74fd96d69763b279cd8f88993cb527971f08e), [`d5b2ecd`](https://github.com/veilio-inc/veilio/commit/d5b2ecd08d3d5b5e16b5691832d84f1fd8f61d0c)]:
+  - @veilio-inc/cli@0.6.0
+
 ## 0.5.2
 
 ### Patch Changes

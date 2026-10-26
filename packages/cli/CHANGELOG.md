@@ -1,5 +1,27 @@
 # @veilio-inc/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`d0fa195`](https://github.com/veilio-inc/veilio/commit/d0fa195596481e28e0a4229238ac2a79591f6ddb) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Maps everywhere, from the terminal (spec 052).
+
+  - `veilio maps update <id>` replaces a Cloud map's entries with the local map's, in place. The id, name and project stay the same, and there is still one map. It is refused, with the reason and the fix, when it would drop entries (unless `--allow-drop`), when a placeholder clashes with another of the team's maps, when the map is a teammate's, when the team owes a key change, or when the map changed in Cloud since it was read.
+  - `veilio projects` and `veilio projects use <name|id>` choose the project this sign-in works in. Team maps, pushes, updates and `scrub --team` then use only that project. The choice is kept with the sign-in, so the MCP server uses it too.
+  - `veilio vault unlock [--days N]` and `veilio vault lock` keep a personal-maps key on this machine: a key that opens personal maps and nothing else. The passphrase and the vault key are never kept. The first unlock creates the key and re-seals older personal maps under it. `logout` removes it.
+  - A refusal caused by a team map that cannot be opened now names that map.
+  - Every refusal names its reason and what resolves it. The words come from one table, which the MCP server shares.
+  - New: `@veilio-inc/cli/client`, the Cloud operations the MCP server's tools use.
+  - With no sign-in, `scrub`, `restore`, `scan` and `map` behave exactly as before, byte for byte.
+
+### Patch Changes
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`44e5820`](https://github.com/veilio-inc/veilio/commit/44e5820acaece18cff2e7d10ff0102aea5b6036d) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Every request to Veilio Cloud now names the program that sent it: `X-Veilio-Client: cli` with `User-Agent: veilio-cli/<version>` from the CLI, and `X-Veilio-Client: mcp` with `User-Agent: veilio-mcp/<version>` from the MCP server, which until now labelled its requests `cli`. Cloud logs both when it rate-limits a request. It is a self-report and never decides access.
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`f4b74fd`](https://github.com/veilio-inc/veilio/commit/f4b74fd96d69763b279cd8f88993cb527971f08e) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Fewer requests per command, so a scripted run or an agent no longer hits Cloud's maps rate limit. A team push or update now reads the listing once and the team's maps once, and gets the map being updated from that same read rather than downloading it again: three requests, down from five. A rate-limited answer (429) is no longer retried, because a retry only counts against the same limit. The MCP server reads the team namespace once per project, and again only after a team write or a change of project. Tests pin a request budget for each command against the built binary, over real HTTP.
+
+- [#156](https://github.com/veilio-inc/veilio/pull/156) [`d5b2ecd`](https://github.com/veilio-inc/veilio/commit/d5b2ecd08d3d5b5e16b5691832d84f1fd8f61d0c) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio team unlock` now sets up the team's first key when the team has none, as the web app does. A team of one starts with no key, and had no teammate to grant one, so a solo developer could never publish a team map from the terminal. The key is minted here and wrapped to the account's own public key, in the web app's format. The server decides whether this is the team's first key; if it refuses, because another member got there first, `team unlock` stands down and never makes a second key. A team of one is no longer told to ask a teammate. An account with no keypair yet is told to unlock its vault once in the web app. The CLI never takes the account's own public key on the server's word: it computes it from the private key it has just unwrapped, and refuses if the server's copy differs. After setting up the key it reads it back and checks it byte for byte.
+
 ## 0.5.4
 
 ### Patch Changes
