@@ -612,6 +612,11 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
     expect(applyMap(`password = "QXZRT_PLMKW_VBNHG"`, {})).not.toContain('QXZRT_PLMKW_VBNHG')
     expect(applyMap(`password = "ABCDEFGHIJKLMNOP_KEY"`, {})).not.toContain('ABCDEFGHIJKLMNOP')
     expect(applyMap(`password = "ABCDEFGHIJKLM_KEY"`, {})).not.toContain('ABCDEFGHIJKLM')
+    // Review of 968b3b2: digits only at a segment's end, and it must not look random.
+    expect(applyMap(`password = "X7K9A2_Q2LE4M8P"`, {})).not.toContain('X7K9A2_Q2LE4M8P')
+    expect(applyMap(`password = "XA_QE_ZI_PO_KU_VE"`, {})).not.toContain('XA_QE_ZI_PO_KU_VE')
+    expect(applyMap(`password = "AWS_REGION_2"`, {})).toContain('"AWS_REGION_2"')
+    expect(applyMap(`secret = "API_KEY2"`, {})).toContain('"API_KEY2"')
     // A bearer token shaped like a name is a token still. (The engine's bearer
     // rule needs twenty characters; `Bearer ABCDEF_GHIJKL` it does not find.)
     expect(applyMap(`Authorization: Bearer ABCDEF_GHIJKL_MNOPQR`, {})).not.toContain(

@@ -435,15 +435,23 @@ function pathShaped(value: string): boolean {
  *  decision 2). Narrowed by the review of f19df80: only for assignment-style
  *  findings, never a bearer, basic-auth or connection-string value; it must
  *  read as words, upper case with at least one `_` and every segment of at
- *  most twelve characters holding a vowel (`DATABASE_URL`,
- *  `STRIPE_SECRET_KEY`), which also rules out a run of sixteen letters or
- *  more. All caps alone (`QXZRTPLMKWVBNHGF`) is not a name. */
+ *  most twelve characters holding a vowel, digits only at its end or a
+ *  number alone (`DATABASE_URL`, `STRIPE_SECRET_KEY`, `API_KEY2`,
+ *  `AWS_REGION_2`), and the whole not looking random (review of 968b3b2).
+ *  The cap also rules out a run of sixteen letters. All caps alone
+ *  (`QXZRTPLMKWVBNHGF`) is not a name. */
 function referenceName(value: string, type: string): boolean {
   if (PUNCTUATED_RULES.has(type)) return false
   if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value)) return false
-  // The twelve-character cap also rules out every run of sixteen letters,
-  // high entropy or not.
-  return value.split('_').every((seg) => seg.length <= 12 && /[AEIOUY]/.test(seg))
+  return (
+    value
+      .split('_')
+      .every(
+        (seg) =>
+          /^[0-9]+$/.test(seg) ||
+          (/^[A-Z]+[0-9]*$/.test(seg) && seg.length <= 12 && /[AEIOUY]/.test(seg))
+      ) && !randomLooking(value)
+  )
 }
 
 /** A value with structural signal, the only kind the session learns and
