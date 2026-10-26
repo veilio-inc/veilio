@@ -1,7 +1,9 @@
 // An in-memory project for the plugin tests: the mods API calls the guard
 // makes ($.fs.*, $.session.cwd, $.ui.log/toast, $.command.register) answered
 // the way Claude Code would answer them, with every write recorded.
-import { RECORDED } from './fixtures/recorded.ts'
+import { RECORDED, type Fields, type RecordedRun, type ToolRecord } from './fixtures/recorded.ts'
+import type { ToolEvent } from '../lib/guard.ts'
+import type { TestOn } from './kit.ts'
 
 // Every hook test: a map grown any way but grow() throws (review of 5347c7c).
 ;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
@@ -37,7 +39,11 @@ export type Options = {
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
 
-export function project(on: any, files: Record<string, string> = {}, opts: Options = {}): Project {
+export function project(
+  on: TestOn,
+  files: Record<string, string> = {},
+  opts: Options = {}
+): Project {
   const p: Project = {
     files: { [`${ROOT}/.git/HEAD`]: 'ref: refs/heads/main\n', ...files },
     writes: [],
@@ -51,7 +57,7 @@ export function project(on: any, files: Record<string, string> = {}, opts: Optio
   }
   on('session.cwd', () => ({ value: ROOT }))
   let existsCalls = 0
-  on('fs.exists', (_: any, e: any) => {
+  on('fs.exists', (_, e) => {
     if (
       opts.inject &&
       abs(e.path) === opts.inject.path &&
@@ -61,52 +67,61 @@ export function project(on: any, files: Record<string, string> = {}, opts: Optio
     }
     return { value: exists(e.path) }
   })
-  on('fs.read', (_: any, e: any) => {
+  on('fs.read', (_, e) => {
     const a = abs(e.path)
     if (opts.failRead?.(a)) return { deny: 'EIO: the disk said no' }
-    return a in p.files ? { value: p.files[a] } : { deny: `ENOENT: ${a}` }
+    const text = p.files[a]
+    return text !== undefined ? { value: text } : { deny: `ENOENT: ${a}` }
   })
-  on('fs.write', (_: any, e: any) => {
+  on('fs.write', (_, e) => {
     const a = abs(e.path)
     if (opts.failWrite?.(a)) return { deny: 'EACCES: read-only file system' }
     p.files[a] = e.text
     p.writes.push({ path: a, text: e.text })
     return { value: undefined }
   })
-  on('fs.stat', (_: any, e: any) => {
+  on('fs.stat', (_, e) => {
     const a = abs(e.path)
     const link = opts.links?.[a] ?? opts.links?.[e.path]
     if (link) return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: true, realPath: link } }
     if (!exists(a)) return { deny: `ENOENT: ${a}` }
     return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false, realPath: a } }
   })
-  on('ui.log', (_: any, e: any) => {
+  on('ui.log', (_, e) => {
     p.logs.push(e.text)
     return { value: undefined }
   })
-  on('ui.toast', (_: any, e: any) => {
+  on('ui.toast', (_, e) => {
     p.toasts.push(e.text)
     return { value: undefined }
   })
   on('command.register', () => ({ value: { command: 'veilio' } }))
   // `git ls-files -z`, as a checkout of these files answers it: every file under
   // the root but git's own and Veilio's.
-  on('process.run', (_: any, e: any) => {
+  on('process.run', (_, e) => {
     if (opts.noGit || e.argv[0] !== 'git') return { deny: 'spawn git ENOENT' }
     const tracked = Object.keys(p.files)
       .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
       .map((f) => f.slice(ROOT.length + 1))
-    return { value: { exitCode: 0, stdout: tracked.map((f) => `${f}\0`).join(''), stderr: '' } }
+    return {
+      value: {
+        exitCode: 0,
+        stdout: tracked.map((f) => `${f}\0`).join(''),
+        stderr: '',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+      },
+    }
   })
   // A wait that never ends: in a test the work always beats the deadline, as on
   // a fast disk. The deadline paths are tested in tests/guard/index.test.ts.
   on('clock.sleep', () => new Promise(() => undefined))
-  on('clock.after', (_: any, e: any) => {
+  on('clock.after', (_, e) => {
     p.timers.push(e.ms)
     return { value: undefined }
   })
-  if (!opts.policy) on('settings.read', () => ({ value: {} }))
-  else on('settings.read', () => ({ value: opts.policy }))
+  const policy = opts.policy ?? {}
+  on('settings.read', () => ({ value: policy }))
   return p
 }
 
@@ -115,19 +130,56 @@ export function mapFile(map: Record<string, string>, extra: Record<string, unkno
 }
 
 /** A recorded tool call: the event Claude Code fired and what it resolved to. */
-export function recorded(tool: string, n = 0): { e: any; r: any } {
+export function recorded(tool: string, n = 0): { e: ToolEvent; r: RecordedRun } {
   const calls = RECORDED.filter((o) => o.kind === 'tool.call' && o.data.e.tool === tool)
-  if (!calls[n]) throw new Error(`no recorded ${tool} call #${n}`)
-  return calls[n].data as { e: any; r: any }
+  const data = calls[n]?.data
+  if (!data || !isRun(data.r)) throw new Error(`no recorded ${tool} call #${n}`)
+  return { e: { ...data.e, tool }, r: data.r }
 }
 
-export function recordedPrompt(kind: string, n = 0): any {
+/** A recorded tool call whose result is not a record (an error's text, an
+ *  MCP tool's content blocks): what it resolved to, unread. */
+export function recordedRaw(tool: string, n = 0): { e: ToolEvent; r: Fields } {
+  const calls = RECORDED.filter((o) => o.kind === 'tool.call' && o.data.e.tool === tool)
+  const data = calls[n]?.data
+  if (!data?.r) throw new Error(`no recorded ${tool} call #${n}`)
+  return { e: { ...data.e, tool }, r: data.r }
+}
+
+export function recordedPrompt(kind: string, n = 0): { e: Fields; r?: Fields } {
   const events = RECORDED.filter((o) => o.kind === kind)
   if (!events[n]) throw new Error(`no recorded ${kind} #${n}`)
   return events[n].data
 }
 
 /** The event to fire, without the keys the recording added. */
-export function eventOf(rec: { e: any }): any {
+export function eventOf(rec: { e: ToolEvent }): ToolEvent {
   return { ...rec.e }
+}
+
+export function isFields(v: unknown): v is Fields {
+  return !!v && typeof v === 'object' && !Array.isArray(v)
+}
+
+function isRun(v: unknown): v is RecordedRun {
+  return isFields(v) && isFields(v.result)
+}
+
+/** What a tool call resolved to, as the tests read it: a denial, or the
+ *  tool's result record and its text. */
+export type Outcome = { deny?: string; result?: unknown; text?: string; isError?: boolean }
+
+export function outcome(out: unknown): Outcome {
+  if (!isFields(out)) throw new Error(`not a tool call's outcome: ${JSON.stringify(out)}`)
+  const { deny, text, isError } = out
+  if (deny !== undefined && typeof deny !== 'string') throw new Error('deny is not text')
+  if (text !== undefined && typeof text !== 'string') throw new Error('text is not text')
+  return { deny, result: out.result, text, isError: isError === true }
+}
+
+/** A tool call's result record; throws when there is none. */
+export function res(out: unknown): ToolRecord {
+  const result = outcome(out).result
+  if (!isFields(result)) throw new Error(`no result record: ${JSON.stringify(out)}`)
+  return result
 }

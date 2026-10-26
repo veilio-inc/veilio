@@ -20,7 +20,9 @@ import {
   LISTING_TYPES,
   publicEntries,
   type AgentOffer,
+  commandRows,
 } from '../lib/listings.ts'
+import type { Host, Next, On, HookEvent } from '../lib/host.ts'
 
 type Options = { rawOnly?: string[]; mcpRestore?: string[]; publicMarketplaces?: string[] }
 
@@ -30,7 +32,7 @@ const START_MS = 6_000
 const SLICE_MS = 250
 const MASK_RESERVE_MS = 2_000
 
-function deadline(next: any, cap = Infinity): number {
+function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
   const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
   return Date.now() + Math.max(0, Math.min(cap, left))
 }
@@ -47,9 +49,9 @@ let publicMarketplaces: string[] = []
 
 // The public entries of a skill or agent listing, by the engine's word and
 // the plugin cache. Anything that fails leaves none: the listing is masked.
-async function listingEntries($: any, kind: 'skills' | 'agents'): Promise<string[]> {
+async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<string[]> {
   try {
-    const io = { read: (path: string) => $.fs.read(path) as Promise<string> }
+    const io = { read: (path: string) => $.fs.read(path) }
     const configDir = configDirOf({
       CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
       HOME: await $.env.get('HOME'),
@@ -57,7 +59,9 @@ async function listingEntries($: any, kind: 'skills' | 'agents'): Promise<string
     })
     const installed = await installedInCache(io, configDir, publicMarketplaces)
     const given =
-      kind === 'skills' ? { commands: await $.command.list() } : { offers: [...offers.values()] }
+      kind === 'skills'
+        ? { commands: commandRows(await $.command.list()) }
+        : { offers: [...offers.values()] }
     return await publicEntries(kind, given, installed, io)
   } catch {
     return []
@@ -66,16 +70,16 @@ async function listingEntries($: any, kind: 'skills' | 'agents'): Promise<string
 
 // The guard is loaded by whichever event comes first: the first prompt's
 // context can arrive before session.start has finished.
-async function ready($: any): Promise<Guard> {
+async function ready($: Host): Promise<Guard> {
   if (guard) return guard
   if (!loading) {
     const io: GuardIO = {
-      read: (path) => $.fs.read(path) as Promise<string>,
+      read: (path) => $.fs.read(path),
       write: (path, text) => $.fs.write(path, text),
       exists: (path) => $.fs.exists(path),
       realPath: (path) =>
         $.fs.stat(path, { resolve: true }).then(
-          (s: { realPath?: string }) => s.realPath,
+          (s) => s.realPath,
           () => undefined
         ),
       // Spec 050: the tracked files, so the index can mask a result by what it
@@ -84,13 +88,12 @@ async function ready($: any): Promise<Guard> {
       sleep: (ms) => $.clock.sleep(ms),
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
-          (r: { exitCode: number; stdout: string }) =>
-            r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null,
+          (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),
           () => null
         ),
     }
     const g = new Guard(io, config)
-    loading = $.session.cwd().then(async (cwd: string) => {
+    loading = $.session.cwd().then(async (cwd) => {
       await g.load(cwd)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
@@ -99,19 +102,22 @@ async function ready($: any): Promise<Guard> {
     })
     // A failed load fails this event closed (its .catch answers) and is tried
     // again on the next one, instead of wedging the session.
-    loading!.catch(() => {
+    loading.catch(() => {
       loading = null
     })
   }
-  return loading as Promise<Guard>
+  return loading
 }
 
 // Run by the organisation: managed settings list this plugin in
 // prependPlugins, so it runs before every mod a user installs, and a user's
 // own settings cannot switch it off (spec 033 US3).
-async function isManaged($: any): Promise<boolean> {
-  const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}))
-  const prepend = (policy as { prependPlugins?: unknown }).prependPlugins
+async function isManaged($: Host): Promise<boolean> {
+  const policy: unknown = await $.settings.read({ source: 'policy' }).catch(() => ({}))
+  const prepend =
+    policy && typeof policy === 'object'
+      ? (policy as { prependPlugins?: unknown }).prependPlugins
+      : undefined
   return (
     Array.isArray(prepend) &&
     prepend.some((id) => typeof id === 'string' && id.startsWith('veilio-guard@'))
@@ -122,7 +128,7 @@ function deepDisplay(g: Guard, value: unknown): unknown {
   return deepRewrite(value, (s) => g.displayText(s))
 }
 
-export function register(on: any, options: Options = {}) {
+export function register(on: On, options: Options = {}) {
   config = {
     rawOnly: Array.isArray(options.rawOnly) ? options.rawOnly : [],
     mcpRestore: Array.isArray(options.mcpRestore) ? options.mcpRestore : [],
@@ -131,7 +137,7 @@ export function register(on: any, options: Options = {}) {
     ? options.publicMarketplaces.filter((m): m is string => typeof m === 'string')
     : []
 
-  on('session.start', async ($: any, e: any, next: any) => {
+  on('session.start', async ($, e, next) => {
     const g = await ready($)
     // Spec 050: index the project while the session starts, then in short
     // slices between calls. A timer runs outside any hook's budget, so each
@@ -162,7 +168,7 @@ export function register(on: any, options: Options = {}) {
     return next(e)
   })
 
-  on('tool.call', async ($: any, e: ToolEvent, next: any) => {
+  on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
@@ -180,7 +186,7 @@ export function register(on: any, options: Options = {}) {
     return after
   }).catch(async () => ({ deny: WITHHELD_FAILED }))
 
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+  on('prompt.submit', async ($, e, next) => {
     const g = await ready($)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
@@ -192,17 +198,19 @@ export function register(on: any, options: Options = {}) {
       await g.indexProject(deadline(next)).catch(() => undefined)
     // A credential with its key in one is removed from the others too; each
     // text is scanned once.
-    const given: string[] = Array.isArray(e.context) ? e.context : []
+    const given: string[] = Array.isArray(e.context)
+      ? e.context.filter((c): c is string => typeof c === 'string')
+      : []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     const text = g.applyText(e.text, 'prompt', scan)
     const context = Array.isArray(e.context)
-      ? given.map((c: string, i: number) => g.applyContext(c, scans[i]))
+      ? given.map((c, i) => g.applyContext(c, scans[i]))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
 
-  on('prompt.attachment', async ($: any, e: any, next: any) => {
+  on('prompt.attachment', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
@@ -222,34 +230,34 @@ export function register(on: any, options: Options = {}) {
   }).catch(async () => ({ text: null }))
 
   // Recorded, never changed: the provenance of the agent listing's entries.
-  on('agent.offer', async ($: any, e: any, next: any) => {
-    if (typeof e?.agent === 'string')
+  on('agent.offer', async ($, e, next) => {
+    if (typeof e.agent === 'string')
       offers.set(e.agent, {
         agent: e.agent,
         description: e.description,
         source: e.source,
-        provider: e.provider ? { plugin: e.provider.plugin, tier: e.provider.tier } : undefined,
+        provider: { plugin: e.provider?.plugin, tier: e.provider?.tier },
       })
     return next(e)
   })
 
-  on('prompt.context', async ($: any, e: any, next: any) => {
+  on('prompt.context', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
-    const raw = r.blocks.map((b: { text: string }) => b.text)
+    const raw = r.blocks.map((b) => b.text)
     const scans = g.learnTogether(raw)
     // Remembered, so the copy Claude Code passes back as an attachment is
     // not judged a second time.
-    const blocks = r.blocks.map((b: { text: string }, i: number) => ({
+    const blocks = r.blocks.map((b, i) => ({
       ...b,
       text: g.remember(g.applyText(raw[i]!, 'result', scans[i])),
     }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 
-  on('skill.prompt', async ($: any, e: any, next: any) => {
+  on('skill.prompt', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off') return r
@@ -261,33 +269,30 @@ export function register(on: any, options: Options = {}) {
 
   // What the developer sees: the real names, drawn on this machine only. The
   // stored transcript keeps the placeholders.
-  on(
-    'ui.render',
-    { component: ['AssistantMessage', 'UserMessage'] },
-    async ($: any, e: any, next: any) => {
-      const g = guard
-      if (!g || g.state !== 'on' || typeof e.props?.text !== 'string') return next(e)
-      return next({ ...e, props: { ...e.props, text: g.displayText(e.props.text) } })
-    }
-  )
+  on('ui.render', { component: ['AssistantMessage', 'UserMessage'] }, async ($, e, next) => {
+    const g = guard
+    const text = e.props?.text
+    if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
+    return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
+  })
 
   // A row's input, and its result: an edit's diff, a command's output. Only
   // placeholders change, so the result still fits the tool's schema.
-  on('ui.render', { component: 'ToolUse' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const g = guard
     if (!g || g.state !== 'on' || !e.props) return next(e)
-    const props = { ...e.props, input: deepDisplay(g, e.props.input) }
+    const props: Record<string, unknown> = { ...e.props, input: deepDisplay(g, e.props.input) }
     if (e.props.output !== undefined) props.output = deepDisplay(g, e.props.output)
     return next({ ...e, props })
   })
 
-  on('ui.render', { component: 'ToolResult' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const g = guard
     if (!g || g.state !== 'on' || e.props?.output === undefined) return next(e)
     return next({ ...e, props: { ...e.props, output: deepDisplay(g, e.props.output) } })
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const g = guard
     const below = await next(e)
     if (!g) return below
@@ -300,7 +305,7 @@ export function register(on: any, options: Options = {}) {
     return below ? Box({ flexDirection: 'column', children: [line, below] }) : line
   })
 
-  on('command.run', { command: 'veilio' }, async ($: any, e: any) => {
+  on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)
     const managed = await isManaged($)
     const arg = String(e.args ?? '').trim()

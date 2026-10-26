@@ -54,9 +54,11 @@ export default [
       // their own `files` scoping and would otherwise widen what gets linted.
       ...tsPlugin.configs.recommended.rules,
 
-      // The three overrides from .eslintrc.json, unchanged.
+      // The three overrides from .eslintrc.json; no-explicit-any is now an error.
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      '@typescript-eslint/no-explicit-any': 'warn',
+      // An error, not a warning: an `any` turns the type checker off where it
+      // stands. Type what a value is, or read it as `unknown` and narrow it.
+      '@typescript-eslint/no-explicit-any': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },

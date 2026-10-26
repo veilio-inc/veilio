@@ -9,6 +9,9 @@ import { expect, test } from 'claude-code/testing'
 import { generate } from './fixtures/generate.ts'
 import { leaks } from './fixtures/oracle.ts'
 import { eventOf, mapFile, project, recorded, recordedPrompt, ROOT } from './helpers.ts'
+import type { ToolEvent } from '../lib/guard.ts'
+import type { Fields } from './fixtures/recorded.ts'
+import type { TestHost, TestOn } from './kit.ts'
 
 function check(seed: number, raw: string, sent: string, names: string[], kept: string[]): string[] {
   const out: string[] = leaks(raw, sent).map((l) => `seed ${seed}: ${l}`)
@@ -35,7 +38,7 @@ const ENTRY = [
 const PUBLIC = '- init: Initialize a new CLAUDE.md file with codebase documentation'
 
 function property(entry: (typeof ENTRY)[number]) {
-  return async ($: any, on: any) => {
+  return async ($: TestHost, on: TestOn) => {
     const bash = recorded('Bash')
     const grep = recorded('Grep')
     const read = recorded('Read')
@@ -48,14 +51,14 @@ function property(entry: (typeof ENTRY)[number]) {
     const map: Record<string, string> = {}
     for (const c of cases) Object.assign(map, c.map)
     project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) })
-    let next: (e: any) => any = () => ({})
-    on('tool.call', (_: any, e: any) => next(e))
-    const sent: any[] = []
-    on('prompt.submit', (_: any, e: any) => {
+    let next: (e: ToolEvent) => Fields = () => ({})
+    on('tool.call', (_, e) => next(e))
+    const sent: Fields[] = []
+    on('prompt.submit', (_, e) => {
       sent.push(e)
       return { text: e.text }
     })
-    on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+    on('prompt.attachment', (_, e) => ({ text: e.text }))
     on('command.list', () => ({
       value: [
         {
@@ -71,24 +74,33 @@ function property(entry: (typeof ENTRY)[number]) {
     on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: block }] }))
     for (const [k, c] of cases.entries()) {
       const seed = k + 1 + 1000 * ENTRY.indexOf(entry)
-      let out = ''
+      let out: string
       if (entry === 'prompt') {
-        const r: any = await $.prompt.submit({ ...recordedPrompt('prompt.submit').e, text: c.text })
-        out = r?.drop ? '' : (sent[sent.length - 1]?.text ?? '')
+        const r = await $.prompt.submit({ ...recordedPrompt('prompt.submit').e, text: c.text })
+        out = r?.drop ? '' : String(sent[sent.length - 1]?.text ?? '')
         if (r?.drop) failures.push(`seed ${seed}: prompt dropped`)
       } else if (entry === 'attachment') {
-        out = ((await $.prompt.attachment({ type: 'edited_text_file', text: c.text })) as any).text
+        out =
+          (
+            await $.prompt.attachment({
+              type: 'edited_text_file',
+              text: c.text,
+              origin: { kind: 'engine' },
+            })
+          ).text ?? ''
       } else if (entry === 'listing') {
         const text = `The following skills are available:\n\n${PUBLIC}\n- own: ${c.text}`
-        out = ((await $.prompt.attachment({ type: 'skill_listing', text })) as any).text
+        out =
+          (await $.prompt.attachment({ type: 'skill_listing', text, origin: { kind: 'engine' } }))
+            .text ?? ''
         if (!out.includes(`${PUBLIC}\n`)) failures.push(`seed ${seed}: public entry masked`)
       } else if (entry === 'context') {
         block = c.text
-        const r: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+        const r = await $.prompt.context(recordedPrompt('prompt.context').e)
         out = r.blocks[0]?.text ?? ''
       } else if (entry === 'bash') {
         next = () => ({ ...bash.r, result: { ...bash.r.result, stdout: c.text } })
-        const r: any = await $.tool.call(eventOf(bash))
+        const r = await $.tool.call(eventOf(bash))
         out = JSON.stringify(r)
       } else if (entry === 'grep') {
         const content = c.text
@@ -96,7 +108,7 @@ function property(entry: (typeof ENTRY)[number]) {
           .map((line, i) => `${ROOT}/notes.md:${i + 1}:${line}`)
           .join('\n')
         next = () => ({ ...grep.r, result: { ...grep.r.result, content } })
-        const r: any = await $.tool.call(eventOf(grep))
+        const r = await $.tool.call(eventOf(grep))
         out = JSON.stringify(r)
       } else if (entry === 'read') {
         next = () => ({
@@ -106,13 +118,13 @@ function property(entry: (typeof ENTRY)[number]) {
             file: { ...read.r.result.file, filePath: `${ROOT}/notes.md`, content: c.text },
           },
         })
-        const r: any = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/notes.md` })
+        const r = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/notes.md` })
         out = JSON.stringify(r)
       } else {
         // What the model writes back with the placeholders it was shown:
         // each comes back as its name, and nothing else changes.
-        const seen: any[] = []
-        next = (e: any) => (seen.push(e), edit.r)
+        const seen: Fields[] = []
+        next = (e) => (seen.push(e), edit.r)
         const shown = c.placeholders.map((p) => `${p} ok`).join('\n') || 'x'
         await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: shown })
         const got = String(seen[0]?.new_string ?? '')

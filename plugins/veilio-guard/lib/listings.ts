@@ -25,6 +25,20 @@ export type CommandRow = {
   plugin?: string | null
 }
 
+/** The rows of `$.command.list()` that have the shape the listing rule
+ *  reads; anything else is dropped, so it can only mask. */
+export function commandRows(value: unknown): CommandRow[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(
+    (r): r is CommandRow =>
+      !!r &&
+      typeof r === 'object' &&
+      typeof (r as CommandRow).name === 'string' &&
+      typeof (r as CommandRow).description === 'string' &&
+      typeof (r as CommandRow).source === 'string'
+  )
+}
+
 /** What `agent.offer` reports for one agent type. */
 export type AgentOffer = {
   agent: string

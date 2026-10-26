@@ -8,6 +8,7 @@
 // Shapes recorded from Claude Code 2.1.310 (research R7).
 import { expect, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, ROOT, STRIPE, type Options } from './helpers.ts'
+import type { TestHost, TestOn } from './kit.ts'
 
 const CONFIG = '/home/dev/.claude'
 const CACHE = `${CONFIG}/plugins/cache/claude-plugins-official`
@@ -74,26 +75,31 @@ const CACHED: Record<string, string> = {
 }
 
 type Skill = { name: string; description: string; source: string; plugin?: string | null }
-type Offer = { agent: string; description: string; source: string; provider: any }
+type Offer = {
+  agent: string
+  description: string
+  source: string
+  provider: { plugin: string; tier: string }
+}
 
 const ENGINE = { plugin: 'engine', tier: 'core' }
 
 function setUp(
-  on: any,
+  on: TestOn,
   skills: Skill[] | 'deny',
   opts: Options & { env?: Record<string, string | undefined>; files?: Record<string, string> } = {}
 ) {
   const files = { [`${ROOT}/.veilio/map.json`]: mapFile(MAP), ...CACHED, ...opts.files }
   const p = project(on, files, opts)
-  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  on('prompt.attachment', (_, e) => ({ text: e.text }))
   on('agent.offer', () => ({ isOffered: true }))
   on('command.list', () => (skills === 'deny' ? { deny: 'no commands' } : { value: skills }))
   const env = opts.env ?? { HOME: '/home/dev' }
-  on('env.get', (_: any, e: any) => ({ value: env[e.name] }))
+  on('env.get', (_, e) => ({ value: env[e.name] }))
   return p
 }
 
-async function offer($: any, offers: Offer[]) {
+async function offer($: TestHost, offers: Offer[]) {
   for (const o of offers) await $.agent.offer(o)
 }
 
@@ -103,8 +109,8 @@ const agentListing = (lines: string[]) =>
   lines.join('\n') +
   '\n\nWhen you launch multiple agents for independent work, send them in a single message.'
 
-async function attach($: any, type: string, text: string): Promise<string> {
-  const r: any = await $.prompt.attachment({ type, text, origin: { kind: 'engine' } })
+async function attach($: TestHost, type: string, text: string): Promise<string> {
+  const r = await $.prompt.attachment({ type, text, origin: { kind: 'engine' } })
   return r.text
 }
 
@@ -447,7 +453,7 @@ test('with no agent offers, the agent listing is masked', async ($, on) => {
 
 test('an agent offer still reaches the engine as it came', async ($, on) => {
   setUp(on, [])
-  const r: any = await ($ as any).agent.offer(builtinAgent)
+  const r = await $.agent.offer(builtinAgent)
   expect(r).toEqual({ isOffered: true })
 })
 
@@ -635,7 +641,7 @@ test(
   'a marketplace the user names but Claude Code does not know is masked',
   { options: { publicMarketplaces: ['acme-oss'] } },
   async ($, on) => {
-    const { 'acme-oss': _gone, ...rest } = known
+    const rest = Object.fromEntries(Object.entries(known).filter(([k]) => k !== 'acme-oss'))
     setUp(on, [acmeSkill], { files: { [KNOWN]: JSON.stringify(rest) } })
     const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
     expect(out).not.toContain(ACME_SKILL)
