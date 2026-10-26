@@ -26,7 +26,7 @@
       "type": "string",
       "multiple": true,
       "title": "Public plugin marketplaces (optional)",
-      "description": "Exact names of plugin marketplaces you know are public. Skill and agent names and descriptions from their plugins are sent as written. Official Anthropic marketplaces are public already; every other marketplace stays masked. No wildcards.",
+      "description": "Plugin marketplaces you know are public, each as name=source with the source Claude Code records for it (for example acme-oss=github:acme/oss-plugins). Their plugins' skill and agent names and descriptions are sent as written. Name and source must both match exactly; an entry with no source is ignored. The official Anthropic marketplace is public already.",
       "default": []
     }
   }

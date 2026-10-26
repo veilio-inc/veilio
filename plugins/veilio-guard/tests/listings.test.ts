@@ -6,7 +6,7 @@
 // provenance the guard cannot establish. Provenance comes from the engine
 // ($.command.list, agent.offer) and the plugin cache, never from the text.
 // Shapes recorded from Claude Code 2.1.310 (research R7).
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, ROOT, STRIPE, type Options } from './helpers.ts'
 import type { TestHost, TestOn } from './kit.ts'
 
@@ -87,15 +87,19 @@ const ENGINE = { plugin: 'engine', tier: 'core' }
 function setUp(
   on: TestOn,
   skills: Skill[] | 'deny',
-  opts: Options & { env?: Record<string, string | undefined>; files?: Record<string, string> } = {}
+  opts: Options & {
+    env?: Record<string, string | undefined> | 'deny'
+    files?: Record<string, string>
+    withdrawn?: string[]
+  } = {}
 ) {
   const files = { [`${ROOT}/.veilio/map.json`]: mapFile(MAP), ...CACHED, ...opts.files }
   const p = project(on, files, opts)
   on('prompt.attachment', (_, e) => ({ text: e.text }))
-  on('agent.offer', () => ({ isOffered: true }))
+  on('agent.offer', (_, e) => ({ isOffered: !opts.withdrawn?.includes(e.agent) }))
   on('command.list', () => (skills === 'deny' ? { deny: 'no commands' } : { value: skills }))
   const env = opts.env ?? { HOME: '/home/dev' }
-  on('env.get', (_, e) => ({ value: env[e.name] }))
+  on('env.get', (_, e) => (env === 'deny' ? { deny: 'no environment' } : { value: env[e.name] }))
   return p
 }
 
@@ -612,8 +616,8 @@ test("when the marketplaces' sources cannot be read, only built-ins pass", async
 })
 
 test(
-  'a marketplace the user names as public in the settings is readable',
-  { options: { publicMarketplaces: ['acme-oss'] } },
+  'a marketplace the user names as public with its source is readable',
+  { options: { publicMarketplaces: ['acme-oss=github:acme/oss-plugins'] } },
   async ($, on) => {
     setUp(on, [acmeSkill])
     const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
@@ -629,7 +633,17 @@ test('a marketplace the user has not named is masked', async ($, on) => {
 
 test(
   "the user's marketplace names match exactly: no prefix, no wildcard",
-  { options: { publicMarketplaces: ['acme', 'acme*', '*', 'acme-o?s', 'ACME-OSS'] } },
+  {
+    options: {
+      publicMarketplaces: [
+        'acme=github:acme/oss-plugins',
+        'acme*=github:acme/oss-plugins',
+        '*=github:acme/oss-plugins',
+        'acme-o?s=github:acme/oss-plugins',
+        'ACME-OSS=github:acme/oss-plugins',
+      ],
+    },
+  },
   async ($, on) => {
     setUp(on, [acmeSkill])
     const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
@@ -639,7 +653,7 @@ test(
 
 test(
   'a marketplace the user names but Claude Code does not know is masked',
-  { options: { publicMarketplaces: ['acme-oss'] } },
+  { options: { publicMarketplaces: ['acme-oss=github:acme/oss-plugins'] } },
   async ($, on) => {
     const rest = Object.fromEntries(Object.entries(known).filter(([k]) => k !== 'acme-oss'))
     setUp(on, [acmeSkill], { files: { [KNOWN]: JSON.stringify(rest) } })
@@ -669,4 +683,225 @@ test("a public marketplace's plugin installed outside the plugin cache is masked
     skillListing([`- superpowers:brainstorming: ${PLUGIN_SKILL}`])
   )
   expect(out).not.toContain(PLUGIN_SKILL)
+})
+
+// Code review of d705b14.
+
+// 1. A listing is never left out: reading its provenance has a deadline of
+// its own, and past it the listing goes fully masked.
+test('a listing whose provenance is slow to read arrives masked, within the deadline', async ($, on) => {
+  const many: Skill[] = []
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 150; i++) {
+    const description = `Skill ${i} for review skills.`
+    many.push({ name: `superpowers:s${i}`, description, source: 'plugin', plugin: 'superpowers' })
+    files[`${CACHE}/superpowers/7.0.0/skills/s${i}/SKILL.md`] =
+      `---\nname: s${i}\ndescription: ${description}\n---\n`
+  }
+  const clock = mock.clock(on)
+  setUp(on, many, {
+    files,
+    ownClock: true,
+    slowRead: (path) => (path.endsWith('SKILL.md') ? clock.sleep(1_000) : undefined),
+  })
+  let out: string | undefined
+  const pending = attach(
+    $,
+    'skill_listing',
+    skillListing(many.map((m) => `- ${m.name}: ${m.description}`))
+  ).then((t) => (out = t))
+  await clock.advance(400)
+  expect(typeof out).toBe('string')
+  expect(out).not.toContain('Skill 0 for review skills.')
+  expect(out).toContain('__VAR__3')
+  await clock.advance(200_000)
+  await pending
+})
+
+test('when reading the provenance fails, the listing is masked, never left out', async ($, on) => {
+  setUp(on, [builtinReview], { env: 'deny' })
+  const r = await $.prompt.attachment({
+    type: 'skill_listing',
+    text: skillListing([`- code-review: ${BUILTIN_REVIEW}`]),
+    origin: { kind: 'engine' },
+  })
+  expect(r.text).not.toBe(null)
+  expect(r.text).toContain('__FN__2')
+})
+
+// 1 and 10. What was read of the plugin cache is kept for the session, by
+// file and mtime: a second listing reads nothing again, and a file that
+// changed is read again.
+test('a second listing reads the plugin cache again only where a file changed', async ($, on) => {
+  const p = setUp(on, [pluginSkill])
+  const listing = skillListing([`- superpowers:brainstorming: ${PLUGIN_SKILL}`])
+  const skillFile = `${CACHE}/superpowers/7.0.0/skills/brainstorming/SKILL.md`
+  expect(await attach($, 'skill_listing', listing)).toContain(PLUGIN_SKILL)
+  const first = p.reads.filter((r) => r.startsWith(CONFIG)).length
+  expect(first).toBeGreaterThan(0)
+  expect(await attach($, 'skill_listing', listing)).toContain(PLUGIN_SKILL)
+  expect(p.reads.filter((r) => r.startsWith(CONFIG)).length).toBe(first)
+  // The plugin updates in place: same path, a new description, a new mtime.
+  p.files[skillFile] = `---\nname: brainstorming\ndescription: Something else.\n---\n`
+  p.mtimes[skillFile] = 2
+  expect(await attach($, 'skill_listing', listing)).not.toContain(PLUGIN_SKILL)
+})
+
+// 2. A marketplace the user names is pinned to its source, like the
+// official one; a bare name is ignored, and said once.
+test(
+  'a bare marketplace name in the settings is ignored, and said once',
+  { options: { publicMarketplaces: ['acme-oss'] } },
+  async ($, on) => {
+    const p = setUp(on, [acmeSkill])
+    const listing = skillListing([`- acme-lib:format: ${ACME_SKILL}`])
+    expect(await attach($, 'skill_listing', listing)).not.toContain(ACME_SKILL)
+    expect(await attach($, 'skill_listing', listing)).not.toContain(ACME_SKILL)
+    expect(p.logs.filter((l) => l.includes('acme-oss')).length).toBe(1)
+  }
+)
+
+test(
+  'a named marketplace recorded from another source is masked',
+  { options: { publicMarketplaces: ['acme-oss=github:acme/other-plugins'] } },
+  async ($, on) => {
+    setUp(on, [acmeSkill])
+    const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+    expect(out).not.toContain(ACME_SKILL)
+  }
+)
+
+test(
+  'a named source that only starts the recorded one is masked',
+  { options: { publicMarketplaces: ['acme-oss=github:acme/oss'] } },
+  async ($, on) => {
+    setUp(on, [acmeSkill])
+    const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+    expect(out).not.toContain(ACME_SKILL)
+  }
+)
+
+// 3. The description is compared with the frontmatter's value as YAML reads
+// it, not searched for in the file's text.
+test('a double-quoted description with escapes is read as YAML reads it', async ($, on) => {
+  const description = 'Says "hi" to review skills, with a \\ and a tab:\t.'
+  setUp(on, [{ name: 'superpowers:greet', description, source: 'plugin', plugin: 'superpowers' }], {
+    files: {
+      [`${CACHE}/superpowers/7.0.0/skills/greet/SKILL.md`]:
+        '---\nname: greet\ndescription: "Says \\"hi\\" to review skills, with a \\\\ and a tab:\\t."\n---\n',
+    },
+  })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:greet: ${description}`])
+  )
+  expect(out).toContain(`- superpowers:greet: ${description}`)
+})
+
+test('a single-quoted description with an escaped quote is read as YAML reads it', async ($, on) => {
+  const description = "It's for review skills."
+  setUp(on, [{ name: 'superpowers:quote', description, source: 'plugin', plugin: 'superpowers' }], {
+    files: {
+      [`${CACHE}/superpowers/7.0.0/skills/quote/SKILL.md`]:
+        "---\nname: quote\ndescription: 'It''s for review skills.'\n---\n",
+    },
+  })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:quote: ${description}`])
+  )
+  expect(out).toContain(`- superpowers:quote: ${description}`)
+})
+
+test("a description found only in the cached file's body is masked", async ($, on) => {
+  const description = 'Lists review skills.'
+  setUp(
+    on,
+    [{ name: 'superpowers:lister', description, source: 'plugin', plugin: 'superpowers' }],
+    {
+      files: {
+        [`${CACHE}/superpowers/7.0.0/skills/lister/SKILL.md`]: `---\nname: lister\ndescription: Something else.\n---\n${description}\n`,
+      },
+    }
+  )
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:lister: ${description}`])
+  )
+  expect(out).not.toContain(description)
+})
+
+// 4. Only offers the engine makes in this round count, and only once it has
+// made them.
+test('an agent offer the engine withdrew is not exempt', async ($, on) => {
+  setUp(on, [], { withdrawn: ['Explore'] })
+  await offer($, [builtinAgent])
+  const out = await attach(
+    $,
+    'agent_listing_delta',
+    agentListing([`- Explore: ${BUILTIN_AGENT} (Tools: *)`])
+  )
+  expect(out).not.toContain(BUILTIN_AGENT)
+})
+
+test('an agent offer from an earlier listing round is not exempt', async ($, on) => {
+  setUp(on, [])
+  await offer($, [builtinAgent])
+  const listing = agentListing([`- Explore: ${BUILTIN_AGENT} (Tools: *)`])
+  expect(await attach($, 'agent_listing_delta', listing)).toContain(BUILTIN_AGENT)
+  expect(await attach($, 'agent_listing_delta', listing)).not.toContain(BUILTIN_AGENT)
+})
+
+// 5. An attachment type is a listing only by its own name.
+test("an attachment type named like an object's own property is masked as before", async ($, on) => {
+  setUp(on, [builtinReview])
+  for (const type of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    await offer($, [builtinAgent])
+    const out = await attach(
+      $,
+      type,
+      `- Explore: ${BUILTIN_AGENT}\n- code-review: ${BUILTIN_REVIEW}`
+    )
+    expect(out).not.toContain(BUILTIN_AGENT)
+    expect(out).not.toContain(BUILTIN_REVIEW)
+  }
+})
+
+// 7. A public plugin entry with no description is listed by its name, as a
+// built-in is, once its file is in the cache.
+test('a public plugin skill with no description is listed by its name', async ($, on) => {
+  setUp(
+    on,
+    [
+      {
+        name: 'superpowers:requesting-code-review',
+        description: '',
+        source: 'plugin',
+        plugin: 'superpowers',
+      },
+    ],
+    {
+      files: {
+        [`${CACHE}/superpowers/7.0.0/skills/requesting-code-review/SKILL.md`]:
+          '---\nname: requesting-code-review\n---\nBody.\n',
+      },
+    }
+  )
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing(['- superpowers:requesting-code-review'])
+  )
+  expect(out).toContain('- superpowers:requesting-code-review')
+})
+
+test('a plugin skill with no description and no cached file stays masked', async ($, on) => {
+  setUp(on, [
+    { name: 'superpowers:code-review', description: '', source: 'plugin', plugin: 'superpowers' },
+  ])
+  const out = await attach($, 'skill_listing', skillListing(['- superpowers:code-review']))
+  expect(out).toContain('code-__FN__2')
 })

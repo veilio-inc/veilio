@@ -14,7 +14,10 @@ export interface Host {
     read(path: string): Promise<string>
     write(path: string, text: string): Promise<void>
     exists(path: string): Promise<boolean>
-    stat(path: string, options?: { resolve?: boolean }): Promise<{ realPath?: string }>
+    stat(
+      path: string,
+      options?: { resolve?: boolean }
+    ): Promise<{ realPath?: string; mtimeMs?: number }>
   }
   readonly clock: {
     sleep(ms: number): Promise<void>
@@ -67,7 +70,8 @@ export type ToolCallResult = {
 
 export type PromptSubmitInput = {
   readonly text: string
-  readonly context?: readonly string[]
+  /** Text blocks sent with the prompt; anything else fails it closed. */
+  readonly context?: unknown
   readonly [key: string]: unknown
 }
 export type PromptSubmitResult = { readonly drop?: string; readonly [key: string]: unknown }

@@ -19,6 +19,10 @@ export type Project = {
   toasts: string[]
   /** Timers the guard asked for ($.clock.after), recorded and never fired. */
   timers: number[]
+  /** Every path $.fs.read was asked for, in order. */
+  reads: string[]
+  /** What $.fs.stat answers as a file's mtimeMs (0 when not set). */
+  mtimes: Record<string, number>
 }
 
 export type Options = {
@@ -35,6 +39,11 @@ export type Options = {
   policy?: Record<string, unknown>
   /** `git ls-files` is refused, as in a project that is not a git checkout. */
   noGit?: boolean
+  /** Leave $.clock to the test (mock.clock): no never-ending sleep, no
+   *  recorded timers. */
+  ownClock?: boolean
+  /** Answer $.fs.read for a path only after this resolves: a slow disk. */
+  slowRead?: (path: string) => Promise<void> | undefined
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -50,6 +59,8 @@ export function project(
     logs: [],
     toasts: [],
     timers: [],
+    reads: [],
+    mtimes: {},
   }
   const exists = (path: string) => {
     const a = abs(path)
@@ -67,8 +78,10 @@ export function project(
     }
     return { value: exists(e.path) }
   })
-  on('fs.read', (_, e) => {
+  on('fs.read', async (_, e) => {
     const a = abs(e.path)
+    p.reads.push(a)
+    await opts.slowRead?.(a)
     if (opts.failRead?.(a)) return { deny: 'EIO: the disk said no' }
     const text = p.files[a]
     return text !== undefined ? { value: text } : { deny: `ENOENT: ${a}` }
@@ -85,7 +98,9 @@ export function project(
     const link = opts.links?.[a] ?? opts.links?.[e.path]
     if (link) return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: true, realPath: link } }
     if (!exists(a)) return { deny: `ENOENT: ${a}` }
-    return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false, realPath: a } }
+    return {
+      value: { kind: 'file', size: 1, mtimeMs: p.mtimes[a] ?? 0, isLink: false, realPath: a },
+    }
   })
   on('ui.log', (_, e) => {
     p.logs.push(e.text)
@@ -115,11 +130,13 @@ export function project(
   })
   // A wait that never ends: in a test the work always beats the deadline, as on
   // a fast disk. The deadline paths are tested in tests/guard/index.test.ts.
-  on('clock.sleep', () => new Promise(() => undefined))
-  on('clock.after', (_, e) => {
-    p.timers.push(e.ms)
-    return { value: undefined }
-  })
+  if (!opts.ownClock) {
+    on('clock.sleep', () => new Promise(() => undefined))
+    on('clock.after', (_, e) => {
+      p.timers.push(e.ms)
+      return { value: undefined }
+    })
+  }
   const policy = opts.policy ?? {}
   on('settings.read', () => ({ value: policy }))
   return p

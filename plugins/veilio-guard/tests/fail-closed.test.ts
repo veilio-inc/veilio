@@ -3,6 +3,7 @@
 // path as a throw (next.error.kind is 'timeout'); the kit cannot force one
 // without a ten-second busy loop, so COVERAGE.md states it without a test.
 import { expect, test } from 'claude-code/testing'
+import { PROMPT_FAILED } from '../lib/guard.ts'
 import { CANARY, eventOf, mapFile, project, recorded, ROOT, STRIPE, res } from './helpers.ts'
 import { COLD_FILES, DECLARED, GREP, TEST_RUN } from './fixtures/cold.ts'
 
@@ -51,6 +52,25 @@ test('a prompt the guard cannot check is not sent', async ($, on) => {
   })
   expect(sent).toBe(false)
   expect(out.drop).toContain('not sent')
+})
+
+// Code review of d705b14 (6): a context element that is not text cannot be
+// checked, so the prompt is not sent.
+test('a prompt whose context holds something other than text is not sent', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) })
+  let sent = false
+  on('prompt.submit', (_, e) => {
+    sent = true
+    return { text: e.text }
+  })
+  const out = await $.prompt.submit({
+    text: 'hello',
+    context: ['fine', 42 as unknown as string],
+    wait: false,
+    origin: { kind: 'user' },
+  })
+  expect(sent).toBe(false)
+  expect(out.drop).toBe(PROMPT_FAILED)
 })
 
 test('a reminder the guard cannot check is left out', async ($, on) => {

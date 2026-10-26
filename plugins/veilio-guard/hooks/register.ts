@@ -15,22 +15,27 @@ import {
 import { bandText, MODEL_NOTE, statusText } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
-  configDirOf,
-  installedInCache,
-  LISTING_TYPES,
-  publicEntries,
-  type AgentOffer,
   commandRows,
+  configDirOf,
+  ListingCache,
+  listingKind,
+  parsePublicMarketplaces,
+  publicEntries,
+  type PublicMarketplace,
 } from '../lib/listings.ts'
-import type { Host, Next, On, HookEvent } from '../lib/host.ts'
+import type { AgentOfferInput, Host, Next, On, HookEvent } from '../lib/host.ts'
 
-type Options = { rawOnly?: string[]; mcpRestore?: string[]; publicMarketplaces?: string[] }
+type Options = { rawOnly?: string[]; mcpRestore?: string[]; publicMarketplaces?: unknown[] }
 
 // Spec 050 T002: session.start has the 10 s HookBudget; 6 s of it indexes the
 // project. A tool result keeps 2 s of its budget for masking.
 const START_MS = 6_000
 const SLICE_MS = 250
 const MASK_RESERVE_MS = 2_000
+// Code review of d705b14: reading a listing's provenance has a deadline of
+// its own, well inside the hook's budget. Past it, or on any failure, the
+// listing goes fully masked; it is never left out.
+const LISTING_MS = 300
 
 function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
   const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
@@ -40,32 +45,50 @@ function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
 let guard: Guard | null = null
 let loading: Promise<Guard> | null = null
 let config: { rawOnly: string[]; mcpRestore: string[] } = { rawOnly: [], mcpRestore: [] }
-// Guard decision 1: what agent.offer reported for each agent type, the
-// provenance of the agent listing's entries (lib/listings.ts).
-const offers = new Map<string, AgentOffer>()
-// Marketplaces the user names as public in the plugin's own settings (never a
-// project's .veilio/guard.json), matched by exact name.
-let publicMarketplaces: string[] = []
+// Guard decision 1: the offers the engine made since the last agent listing,
+// each recorded once it is made: the provenance of the next listing's
+// entries (lib/listings.ts). A listing round takes them and starts afresh.
+const offers = new Map<string, AgentOfferInput>()
+// Marketplaces the user pins as public in the plugin's own settings (never a
+// project's .veilio/guard.json), each with its source; entries without one
+// are ignored, and said once.
+let pinned: PublicMarketplace[] = []
+let ignored: string[] = []
+let saidIgnored = false
+// What was read of the plugin cache, by file and mtime, for the session.
+const listingCache = new ListingCache()
 
 // The public entries of a skill or agent listing, by the engine's word and
-// the plugin cache. Anything that fails leaves none: the listing is masked.
+// the plugin cache, within LISTING_MS. Anything that fails or is late leaves
+// none: the listing is then masked as a whole.
 async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<string[]> {
-  try {
-    const io = { read: (path: string) => $.fs.read(path) }
-    const configDir = configDirOf({
-      CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
-      HOME: await $.env.get('HOME'),
-      USERPROFILE: await $.env.get('USERPROFILE'),
-    })
-    const installed = await installedInCache(io, configDir, publicMarketplaces)
-    const given =
-      kind === 'skills'
-        ? { commands: commandRows(await $.command.list()) }
-        : { offers: [...offers.values()] }
-    return await publicEntries(kind, given, installed, io)
-  } catch {
-    return []
+  const round = kind === 'agents' ? [...offers.values()] : []
+  if (kind === 'agents') offers.clear()
+  if (!saidIgnored && ignored.length > 0) {
+    saidIgnored = true
+    $.ui.log(
+      `Veilio ignored publicMarketplaces entries with no source: ${ignored.join(', ')}. ` +
+        'Write each as <name>=<source>, such as acme=github:acme/plugins.'
+    )
   }
+  const io = {
+    read: (path: string) => $.fs.read(path),
+    mtime: (path: string) => $.fs.stat(path).then((s) => s.mtimeMs),
+  }
+  const work = (async () => {
+    const [dir, home, profile, commands] = await Promise.all([
+      $.env.get('CLAUDE_CONFIG_DIR'),
+      $.env.get('HOME'),
+      $.env.get('USERPROFILE'),
+      kind === 'skills' ? $.command.list() : undefined,
+    ])
+    const configDir = configDirOf({ CLAUDE_CONFIG_DIR: dir, HOME: home, USERPROFILE: profile })
+    const installed = await listingCache.installedInCache(io, configDir, pinned)
+    const given = kind === 'skills' ? { commands: commandRows(commands) } : { offers: round }
+    return publicEntries(kind, given, installed, io, listingCache)
+  })().catch((): string[] => [])
+  const late = $.clock.sleep(LISTING_MS).then((): string[] => [])
+  return Promise.race([work, late]).catch((): string[] => [])
 }
 
 // The guard is loaded by whichever event comes first: the first prompt's
@@ -124,6 +147,10 @@ async function isManaged($: Host): Promise<boolean> {
   )
 }
 
+function isTexts(v: unknown): v is readonly string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === 'string')
+}
+
 function deepDisplay(g: Guard, value: unknown): unknown {
   return deepRewrite(value, (s) => g.displayText(s))
 }
@@ -133,9 +160,10 @@ export function register(on: On, options: Options = {}) {
     rawOnly: Array.isArray(options.rawOnly) ? options.rawOnly : [],
     mcpRestore: Array.isArray(options.mcpRestore) ? options.mcpRestore : [],
   }
-  publicMarketplaces = Array.isArray(options.publicMarketplaces)
-    ? options.publicMarketplaces.filter((m): m is string => typeof m === 'string')
-    : []
+  ;({ pinned, ignored } = parsePublicMarketplaces(
+    Array.isArray(options.publicMarketplaces) ? options.publicMarketplaces : []
+  ))
+  saidIgnored = false
 
   on('session.start', async ($, e, next) => {
     const g = await ready($)
@@ -198,14 +226,14 @@ export function register(on: On, options: Options = {}) {
       await g.indexProject(deadline(next)).catch(() => undefined)
     // A credential with its key in one is removed from the others too; each
     // text is scanned once.
-    const given: string[] = Array.isArray(e.context)
-      ? e.context.filter((c): c is string => typeof c === 'string')
-      : []
+    // Context the guard cannot read as text cannot be checked: the prompt is
+    // not sent (code review of d705b14).
+    const raw: unknown = e.context
+    if (raw !== undefined && !isTexts(raw)) throw new Error('a context entry is not text')
+    const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     const text = g.applyText(e.text, 'prompt', scan)
-    const context = Array.isArray(e.context)
-      ? given.map((c, i) => g.applyContext(c, scans[i]))
-      : undefined
+    const context = raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i])) : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
@@ -220,7 +248,7 @@ export function register(on: On, options: Options = {}) {
     // them with userEmail as session_context.
     const first = e.type === 'context_sections' || e.type === 'session_context'
     // Guard decision 1: a listing's public entries go as written.
-    const listing = LISTING_TYPES[e.type]
+    const listing = listingKind(e.type)
     const text = first
       ? g.applyContext(r.text)
       : listing
@@ -230,15 +258,13 @@ export function register(on: On, options: Options = {}) {
   }).catch(async () => ({ text: null }))
 
   // Recorded, never changed: the provenance of the agent listing's entries.
+  // Only once the engine has made the offer: one a hook beneath withdrew is
+  // not recorded, and drops an earlier one of the name.
   on('agent.offer', async ($, e, next) => {
-    if (typeof e.agent === 'string')
-      offers.set(e.agent, {
-        agent: e.agent,
-        description: e.description,
-        source: e.source,
-        provider: { plugin: e.provider?.plugin, tier: e.provider?.tier },
-      })
-    return next(e)
+    const r = await next(e)
+    if (r.isOffered === true) offers.set(e.agent, e)
+    else offers.delete(e.agent)
+    return r
   })
 
   on('prompt.context', async ($, e, next) => {

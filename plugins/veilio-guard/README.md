@@ -56,7 +56,7 @@ In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`):
 
 - `rawOnly`: more files Claude must never read. These are added to the built-in list; the built-in list can't be shortened.
 - `mcpRestore`: MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do.
-- `publicMarketplaces` (plugin settings only, not `guard.json`): exact names of plugin marketplaces you know are public. The skill and agent listings of their plugins are then sent as written. No wildcards; a marketplace Claude Code doesn't know stays masked.
+- `publicMarketplaces` (plugin settings only, not `guard.json`): plugin marketplaces you know are public, each as `<name>=<source>`, where the source is what Claude Code records for it in `~/.claude/plugins/known_marketplaces.json`, such as `acme-oss=github:acme/oss-plugins`. The skill and agent listings of their plugins are then sent as written. The name and the source must both match exactly. An entry with no source is ignored, and the guard says so once.
 
 ## For a team
 
