@@ -2,6 +2,8 @@
 // transcript keep the placeholders. And the band says what the guard is doing.
 import { expect, mock, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, ROOT } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
+import type { TestHost, TestOn } from './kit.ts'
 
 const SITE = (component: string, props: Record<string, unknown>) => ({
   plugin: 'veilio-guard',
@@ -13,14 +15,14 @@ const SITE = (component: string, props: Record<string, unknown>) => ({
 })
 
 // What Claude Code would draw: the props it was handed, as text.
-function drawn(on: any, seen: any[]) {
-  on('ui.render', (_: any, e: any) => {
+function drawn(on: TestOn, seen: Fields[]) {
+  on('ui.render', (_, e) => {
     seen.push(e)
     return { type: 'Text', props: {}, children: [String(e.props?.text ?? '')] }
   })
 }
 
-async function loaded($: any, on: any, files: Record<string, string>) {
+async function loaded($: TestHost, on: TestOn, files: Record<string, string>) {
   const p = project(on, files)
   on('session.start', () => ({ cwd: ROOT }))
   return p
@@ -28,7 +30,7 @@ async function loaded($: any, on: any, files: Record<string, string>) {
 
 test("Claude's reply is drawn with the real names", async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
-  const seen: any[] = []
+  const seen: Fields[] = []
   drawn(on, seen)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   const ui = await $.ui.mount(
@@ -39,7 +41,7 @@ test("Claude's reply is drawn with the real names", async ($, on) => {
 
 test('a tool row is drawn with the real names in its input', async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
-  const seen: any[] = []
+  const seen: Fields[] = []
   drawn(on, seen)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   await $.ui.mount(
@@ -55,7 +57,7 @@ test('a tool row is drawn with the real names in its input', async ($, on) => {
 
 test("an edit's diff is drawn with the real names", async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
-  const seen: any[] = []
+  const seen: Fields[] = []
   drawn(on, seen)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   await $.ui.mount(
@@ -82,7 +84,7 @@ test("an edit's diff is drawn with the real names", async ($, on) => {
 
 test("an unfolded tool row's result is drawn with the real names", async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
-  const seen: any[] = []
+  const seen: Fields[] = []
   drawn(on, seen)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   await $.ui.mount(
@@ -171,11 +173,11 @@ test('a headless reply keeps its placeholders: no route writes real names into a
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
   // The kit's store for rows (Claude Code 2.1.310 on); the oldest supported
   // kit, 2.1.288, has none, and there only the answer is checked.
-  const session = typeof (mock as any).session === 'function' ? (mock as any).session(on) : null
-  on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
+  const session = 'session' in mock && typeof mock.session === 'function' ? mock.session(on) : null
+  on('turn.complete', (_, e) => ({ text: e.answer }))
   await $.session.start({ surface: null, isInteractive: false, cwd: ROOT })
   const answer = 'The bug is in __CLS__1.'
-  const end: any = await $.turn.complete({
+  const end = await $.turn.complete({
     answer,
     durationMs: 1,
     isAborted: false,

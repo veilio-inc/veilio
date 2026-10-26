@@ -1,7 +1,8 @@
 // Spec 033 FR-004: files that must never reach the model are refused before
 // the tool runs, whatever spelling reaches them.
 import { expect, test } from 'claude-code/testing'
-import { mapFile, project, ROOT, STRIPE } from './helpers.ts'
+import { mapFile, project, ROOT, STRIPE, res } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
 
 const ENV = { [`${ROOT}/.env`]: `STRIPE_SECRET_KEY=${STRIPE}\n` }
 
@@ -23,7 +24,7 @@ for (const path of [
         },
       }
     })
-    const out: any = await $.tool.call({ tool: 'Read', file_path: path })
+    const out = await $.tool.call({ tool: 'Read', file_path: path })
     expect(ran).toBe(false)
     expect(out.deny).toContain('away from the model')
     expect(JSON.stringify(out)).not.toContain(STRIPE)
@@ -37,7 +38,7 @@ test('a shell command that names .env is refused', async ($, on) => {
     ran = true
     return { result: { stdout: STRIPE, stderr: '' } }
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Bash',
     command: 'cat .env | head -1',
     description: 'x',
@@ -53,7 +54,7 @@ test('a placeholder path that restores to a raw-only file is refused', async ($,
     ran = true
     return { result: 'x' }
   })
-  const out: any = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/__STR__1` })
+  const out = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/__STR__1` })
   expect(ran).toBe(false)
   // The refusal shows the placeholder, not the name it stands for.
   expect(out.deny).toContain('__STR__1')
@@ -70,7 +71,7 @@ test('a link to .env under another name is refused', async ($, on) => {
     ran = true
     return { result: 'x' }
   })
-  const out: any = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/notes.txt` })
+  const out = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/notes.txt` })
   expect(ran).toBe(false)
   expect(out.deny).toContain('away from the model')
 })
@@ -82,14 +83,14 @@ test("a project's own pattern is refused too", async ($, on) => {
     ran = true
     return { result: 'x' }
   })
-  const out: any = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/secrets/prod.yaml` })
+  const out = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/secrets/prod.yaml` })
   expect(ran).toBe(false)
   expect(out.deny).toContain('away from the model')
 })
 
 test('a search over the project drops the lines and files of raw-only files', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }) })
-  on('tool.call', (_: any, e: any) => {
+  on('tool.call', (_, e) => {
     if (e.tool === 'Glob')
       return {
         result: {
@@ -115,33 +116,33 @@ test('a search over the project drops the lines and files of raw-only files', as
       },
     }
   })
-  const content: any = await $.tool.call({
+  const content = await $.tool.call({
     tool: 'Grep',
     pattern: 'password',
     glob: '.env*',
     output_mode: 'content',
   })
-  const files: any = await $.tool.call({
+  const files = await $.tool.call({
     tool: 'Grep',
     pattern: 'password',
     output_mode: 'files_with_matches',
   })
-  const glob: any = await $.tool.call({ tool: 'Glob', pattern: '**/*' })
-  expect(content.result.content).toBe('src/a.ts:3:const password = read()')
+  const glob = await $.tool.call({ tool: 'Glob', pattern: '**/*' })
+  expect(res(content).content).toBe('src/a.ts:3:const password = read()')
   expect(JSON.stringify(content)).not.toContain('hunter2')
-  expect(files.result.filenames).toEqual(['src/a.ts'])
-  expect(glob.result.filenames).toEqual(['src/a.ts'])
+  expect(res(files).filenames).toEqual(['src/a.ts'])
+  expect(res(glob).filenames).toEqual(['src/a.ts'])
 })
 
 test('an MCP tool asked for a raw-only file is refused before it runs', async ($, on) => {
   project(on, {})
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: [{ type: 'text', text: 'ok' }] }
   })
-  const a: any = await $.tool.call({ tool: 'mcp__filesystem__read_file', path: `${ROOT}/.env` })
-  const b: any = await $.tool.call({
+  const a = await $.tool.call({ tool: 'mcp__filesystem__read_file', path: `${ROOT}/.env` })
+  const b = await $.tool.call({
     tool: 'mcp__filesystem__read_file',
     path: '.veilio/guard.json',
   })
@@ -158,17 +159,17 @@ test('an MCP tool asked for a raw-only file is refused before it runs', async ($
 
 test('prose that mentions a raw-only file is not a path: a subagent prompt or an issue body runs', async ($, on) => {
   project(on, {})
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: [{ type: 'text', text: 'ok' }] }
   })
-  const a: any = await $.tool.call({
+  const a = await $.tool.call({
     tool: 'Agent',
     prompt: 'look at config/.env.local please',
     description: 'x',
   })
-  const b: any = await $.tool.call({
+  const b = await $.tool.call({
     tool: 'mcp__github__create_issue',
     title: 't',
     body: 'the config/.env.production file is stale',

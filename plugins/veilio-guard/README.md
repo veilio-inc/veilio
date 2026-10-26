@@ -4,7 +4,7 @@ A Claude Code plugin that keeps your project's real identifiers and secrets away
 
 Claude Code reads files and runs commands itself, so code you would never paste into a chat reaches the model anyway. veilio-guard sits between Claude Code's tools and the model:
 
-- **What Claude reads** (files, command output, search results, MCP results, what you type, and the reminders and instruction files Claude Code adds) reaches the model with identifiers replaced by placeholders such as `__CLS__1`, and with credentials removed.
+- **What Claude reads** (files, command output, search results, MCP results, what you type, and the reminders and instruction files Claude Code adds) reaches the model with identifiers replaced by placeholders such as `__CLS__1`, and with credentials removed. One exception: the entries of Claude Code's skill and agent listings that come from Claude Code itself or from a plugin installed from the official Anthropic marketplace are public, and are sent as written. Your project's and your own skills and agents, and plugins from any other marketplace, are masked.
 - **What Claude writes** (edits, commands, searches) gets the real names back before it runs. An edit or shell command that names a placeholder the map doesn't know, or a removed credential, is refused, so a file never receives a token that means nothing.
 - **`.env`, private keys and `.veilio/`** are refused before Claude reads them.
 - **You see the real names** in Claude's replies, tool rows, diffs and command output, on your machine only. The session's transcript keeps the placeholders, with one exception COVERAGE.md describes: some Claude Code versions store CLAUDE.md as written.
@@ -56,6 +56,7 @@ In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`):
 
 - `rawOnly`: more files Claude must never read. These are added to the built-in list; the built-in list can't be shortened.
 - `mcpRestore`: MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do.
+- `publicMarketplaces` (plugin settings only, not `guard.json`): plugin marketplaces you know are public, each as `<name>=<source>`, where the source is what Claude Code records for it in `~/.claude/plugins/known_marketplaces.json`, such as `acme-oss=github:acme/oss-plugins`. The skill and agent listings of their plugins are then sent as written. The name and the source must both match exactly. An entry with no source is ignored, and the guard says so once.
 
 ## For a team
 

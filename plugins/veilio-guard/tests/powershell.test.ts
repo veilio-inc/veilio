@@ -6,6 +6,8 @@
 // checks Bash gets.
 import { expect, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, ROOT } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
+import type { TestOn } from './kit.ts'
 
 const SECRET = 'DB_PASSWORD=haslo123'
 const FILES = {
@@ -14,10 +16,10 @@ const FILES = {
   [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }),
 }
 
-function powershell(on: any) {
+function powershell(on: TestOn) {
   project(on, FILES)
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: { stdout: SECRET, stderr: '' } }
   })
@@ -27,7 +29,7 @@ function powershell(on: any) {
 test('PowerShell: a command that reads .env.local is refused before it runs', async ($, on) => {
   // The command from the Windows report, which ran and showed the password.
   const seen = powershell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'PowerShell',
     command: 'Get-Content .env.local',
     description: 'x',
@@ -48,7 +50,7 @@ for (const command of [
 ]) {
   test(`PowerShell: ${command} is refused before it runs`, async ($, on) => {
     const seen = powershell(on)
-    const out: any = await $.tool.call({ tool: 'PowerShell', command, description: 'x' })
+    const out = await $.tool.call({ tool: 'PowerShell', command, description: 'x' })
     expect(seen.length).toBe(0)
     expect(out.deny).toContain('away from the model')
     expect(JSON.stringify(out)).not.toContain('haslo123')
@@ -57,7 +59,7 @@ for (const command of [
 
 test('PowerShell: a known placeholder is restored before the command runs', async ($, on) => {
   const seen = powershell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'PowerShell',
     command: 'Add-Content -Path notes.md -Value "See also __CLS__1"',
     description: 'note',
@@ -68,7 +70,7 @@ test('PowerShell: a known placeholder is restored before the command runs', asyn
 
 test('PowerShell: a placeholder the map does not have is refused, so no file receives it', async ($, on) => {
   const seen = powershell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'PowerShell',
     command: 'Set-Content -Path notes.md -Value "__FN__9"',
     description: 'write',
@@ -80,7 +82,7 @@ test('PowerShell: a placeholder the map does not have is refused, so no file rec
 
 test('PowerShell: a redaction token is refused, so the real credential is not overwritten', async ($, on) => {
   const seen = powershell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'PowerShell',
     command: `'key = "__REDACTED_STRIPE_KEY_1__"' | Out-File src\\config.ts`,
     description: 'write',
@@ -92,7 +94,7 @@ test('PowerShell: a redaction token is refused, so the real credential is not ov
 test('PowerShell: an ordinary command runs, and its output is masked', async ($, on) => {
   project(on, FILES)
   on('tool.call', () => ({ result: { stdout: `class ${CANARY} {}`, stderr: '' } }))
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'PowerShell',
     command: 'Get-Content src\\ledger.ts',
     description: 'read',

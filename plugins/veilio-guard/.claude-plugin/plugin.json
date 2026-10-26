@@ -1,6 +1,6 @@
 {
   "name": "veilio-guard",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Keeps your real identifiers and secrets away from the model: every file, command output and prompt reaches Claude with placeholders, and edits are restored before they land.",
   "author": { "name": "Veilio", "url": "https://veilio.dev" },
   "homepage": "https://github.com/veilio-inc/veilio/tree/main/plugins/veilio-guard#readme",
@@ -20,6 +20,13 @@
       "multiple": true,
       "title": "MCP servers that get real names (optional)",
       "description": "MCP servers whose tool arguments are restored to real identifiers before the call. Leave empty to send them placeholders.",
+      "default": []
+    },
+    "publicMarketplaces": {
+      "type": "string",
+      "multiple": true,
+      "title": "Public plugin marketplaces (optional)",
+      "description": "Plugin marketplaces you know are public, each as name=source with the source Claude Code records for it (for example acme-oss=github:acme/oss-plugins). Their plugins' skill and agent names and descriptions are sent as written. Name and source must both match exactly; an entry with no source is ignored. The official Anthropic marketplace is public already.",
       "default": []
     }
   }

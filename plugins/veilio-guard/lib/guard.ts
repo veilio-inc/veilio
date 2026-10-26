@@ -47,6 +47,7 @@ import {
 import type { MaskContext, ScanResult } from './scrub.ts'
 import { restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
+import { wholeEntries } from './listings.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -89,6 +90,9 @@ export interface GuardConfig {
   rawOnly: readonly string[]
   mcpRestore: readonly string[]
 }
+
+/** A part of a text held as one mark while the rest is masked. */
+type HeldSpan = { at: number; length: number; key: string }
 
 export type GuardState = 'on' | 'off' | 'stopped'
 export type ToolEvent = Record<string, unknown> & { tool: string }
@@ -512,12 +516,11 @@ export class Guard {
         text.startsWith('\n\n', at + h.length) ||
         text.startsWith('\n#', at + h.length))
     // One forward pass: each held string's next copy is searched for again
-    // only once the pass has gone past it; a mark is short and fixed for each
-    // (held string, whole or not), and what goes back is worked out once for
-    // each (review of 6e14ec6).
+    // only once the pass has gone past it; a mark is fixed for each (held
+    // string, whole or not), and what goes back is worked out once for each
+    // (review of 6e14ec6).
     const nextAt = held.map((h) => text.indexOf(h))
-    const backs = new Map<string, { mark: string; back: () => string }>()
-    let marked = ''
+    const spans: HeldSpan[] = []
     let at = 0
     for (;;) {
       let k = -1
@@ -534,34 +537,67 @@ export class Guard {
       if (k === -1) break
       const h = held[k]!
       const pos = nextAt[k]!
-      const whole = isWhole(pos, h)
-      const key = `${k}:${whole ? 1 : 0}`
-      let entry = backs.get(key)
-      if (!entry) {
-        const mark = `\u0000${backs.size}\u0001`
-        entry = {
-          mark,
-          back: () =>
-            !whole
-              ? this.maskText(h)
-              : h === MODEL_NOTE
-                ? h
-                : applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
-                    scanned: true,
-                  }),
-        }
-        backs.set(key, entry)
-      }
-      marked += text.slice(at, pos) + entry.mark
+      spans.push({ at: pos, length: h.length, key: `${k}:${isWhole(pos, h) ? 1 : 0}` })
       at = pos + h.length
     }
-    marked += text.slice(at)
-    let out = this.maskText(marked)
-    for (const { mark, back } of backs.values()) out = out.split(mark).join(back())
     // The whole, read back, scanned once more: anything a hold let through
     // sends the text through full masking first; only if that too leaves a
     // credential does the text fail (review of 6e14ec6).
-    if (survivingSecrets(out, this.map).length > 0) return this.gate(this.maskText(text))
+    return this.holdAndMask(text, spans, (key) => {
+      const h = held[Number(key.slice(0, key.indexOf(':')))]!
+      if (!key.endsWith(':1')) return this.maskText(h)
+      if (h === MODEL_NOTE) return h
+      return applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
+        scanned: true,
+      })
+    })
+  }
+
+  /** A skill or agent listing (guard decision 1, spec 050 R7): each public
+   *  entry (lib/listings.ts) where it stands whole is held while the listing
+   *  is masked as a whole, then put back as written, less any credential
+   *  this session destroyed. Everything else is masked as any reminder is. */
+  applyListing(text: string, entries: readonly string[]): string {
+    if (entries.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
+      return this.applyText(text)
+    const spans = wholeEntries(text, entries).map(({ at, entry }) => ({
+      at,
+      length: entry.length,
+      key: entry,
+    }))
+    return this.holdAndMask(text, spans, (entry) => redactKnown(entry, this.destroyed))
+  }
+
+  /** Masks `text` as a whole with each span held as one opaque mark, and puts
+   *  back what `back` gives for the span's key: the one device applyContext
+   *  and applyListing share (code review of d705b14). A mark is not a word
+   *  character, so nothing written against it joins it, and a secret laid
+   *  across it is still one match. A text that already holds a mark's
+   *  characters, spans that overlap, a mark the masking altered, or a
+   *  credential left in the result: the whole text goes through full
+   *  masking instead, and fails if that too leaves one. */
+  private holdAndMask(
+    text: string,
+    spans: readonly HeldSpan[],
+    back: (key: string) => string
+  ): string {
+    const full = () => this.gate(this.maskText(text))
+    if (text.includes('\u0000') || text.includes('\u0001')) return full()
+    const marks = new Map<string, string>()
+    let marked = ''
+    let at = 0
+    for (const span of spans) {
+      if (span.at < at) return full()
+      let mark = marks.get(span.key)
+      if (!mark) marks.set(span.key, (mark = `\u0000${marks.size}\u0001`))
+      marked += text.slice(at, span.at) + mark
+      at = span.at + span.length
+    }
+    marked += text.slice(at)
+    let out = this.maskText(marked)
+    for (const [key, mark] of marks) out = out.split(mark).join(back(key))
+    if (out.includes('\u0000') || out.includes('\u0001')) return full()
+    if (survivingSecrets(out, this.map).length > 0) return full()
     return out
   }
 

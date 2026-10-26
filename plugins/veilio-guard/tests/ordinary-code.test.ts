@@ -5,7 +5,8 @@
 // were masked too, and one benchmark session stopped to ask for its prompt.
 import { expect, test } from 'claude-code/testing'
 import { COLD_FILES, GREP } from './fixtures/cold.ts'
-import { eventOf, mapFile, project, recordedPrompt, ROOT } from './helpers.ts'
+import { eventOf, mapFile, project, recordedPrompt, ROOT, res } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
 
 const POISONED = {
   __VAR__1009: 'const',
@@ -36,12 +37,12 @@ test('a TypeScript Read keeps the language, with a map that holds its keywords',
     },
     isReadOnly: true,
   }))
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Read',
     tool_use_id: 't_r',
     file_path: `${ROOT}/src/secrets.ts`,
   })
-  const seen: string = out.result.file.content
+  const seen: string = res(out).file.content
   // `value` is the project's own parameter, masked; the keywords stay.
   expect(seen).toMatch(/export function __FN__1\(__VAR__\d+: string\): boolean \{/)
   expect(seen).toMatch(/const __VAR__\d+ =/)
@@ -51,9 +52,9 @@ test('a TypeScript Read keeps the language, with a map that holds its keywords',
 test('a search over TypeScript keeps the keywords on every line', async ($, on) => {
   project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
   on('tool.call', () => GREP.r)
-  const out: any = await $.tool.call(eventOf(GREP))
-  expect(out.result.content).toContain('export function __FN__1(')
-  expect(out.result.content).not.toMatch(/__VAR__690|__FN__1006/)
+  const out = await $.tool.call(eventOf(GREP))
+  expect(res(out).content).toContain('export function __FN__1(')
+  expect(res(out).content).not.toMatch(/__VAR__690|__FN__1006/)
 })
 
 test('a test file reads with its third-party names, and the project name is masked', async ($, on) => {
@@ -76,20 +77,20 @@ test('a test file reads with its third-party names, and the project name is mask
   }))
   // As in a session: it starts, and the index runs to the end.
   await $.session.start({ surface: 'terminal', isInteractive: false, cwd: ROOT })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Read',
     tool_use_id: 't_t',
     file_path: `${ROOT}/tests/secrets.test.ts`,
   })
-  const seen: string = out.result.file.content
+  const seen: string = res(out).file.content
   expect(seen).toContain("import { describe, expect, it } from 'vitest'")
   expect(seen).not.toContain('luhnValid')
 })
 
 test('a typed command keeps the runner, its flag and the test directory', async ($, on) => {
   project(on, { ...COLD_FILES, [MAP]: mapFile({ ...POISONED, __PKG__77: 'tenant' }) })
-  const sent: any[] = []
-  on('prompt.submit', (_: any, e: any) => {
+  const sent: Fields[] = []
+  on('prompt.submit', (_, e) => {
     sent.push(e)
     return { text: e.text }
   })
@@ -119,12 +120,12 @@ test('while the index is incomplete, a name imported from a package is still mas
     },
     isReadOnly: true,
   }))
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Read',
     tool_use_id: 't_partial',
     file_path: `${ROOT}/tests/secrets.test.ts`,
   })
-  expect(out.result.file.content).not.toContain('expect,')
+  expect(res(out).file.content).not.toContain('expect,')
 })
 
 // Final review of b0dded9: claims that had no test of their own.
@@ -152,12 +153,12 @@ test('a word the project declares stays masked though a package it imports expor
     isReadOnly: true,
   }))
   await $.session.start({ surface: 'terminal', isInteractive: false, cwd: ROOT })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Read',
     tool_use_id: 't_own',
     file_path: `${ROOT}/tests/secrets.test.ts`,
   })
-  const seen: string = out.result.file.content
+  const seen: string = res(out).file.content
   expect(seen).toContain('describe')
   expect(seen).not.toMatch(/\bexpect\b/)
 })
@@ -177,13 +178,13 @@ test('a word that is a keyword in one language and a name in another is masked o
     text: '',
     isReadOnly: true,
   }))
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Grep',
     tool_use_id: 't_mix',
     pattern: 'new',
     output_mode: 'content',
   })
-  const [py, tsLine] = String(out.result.content).split('\n')
+  const [py, tsLine] = String(res(out).content).split('\n')
   expect(py).toContain('__VAR__1016 = ')
   expect(tsLine).toContain('= new Card()')
 })

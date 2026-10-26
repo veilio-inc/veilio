@@ -3,13 +3,15 @@
 // the tool never runs.
 import { expect, test } from 'claude-code/testing'
 import { CANARY, eventOf, mapFile, project, recorded, ROOT } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
+import type { TestHost, TestOn } from './kit.ts'
 
 const MAP = { __CLS__1: CANARY, __VAR__1: 'settledTotal', __VAR__3: 'closedTotal' }
 
 test('a shell command runs with the real names', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return {
       result: {
@@ -28,8 +30,8 @@ test('a shell command runs with the real names', async ($, on) => {
 test('an edit with known placeholders lands with the real names', async ($, on) => {
   const edit = recorded('Edit')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return edit.r
   })
@@ -50,7 +52,7 @@ test('an edit naming a placeholder the map does not have is refused, and the fil
     ran = true
     return edit.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: '__VAR__1',
     new_string: '__VAR__9',
@@ -69,7 +71,7 @@ test('an edit with a re-cased placeholder is refused too', async ($, on) => {
     ran = true
     return write.r
   })
-  const out: any = await $.tool.call({ ...eventOf(write), content: 'export const x = __var__1' })
+  const out = await $.tool.call({ ...eventOf(write), content: 'export const x = __var__1' })
   expect(ran).toBe(false)
   expect(out.deny).toContain('__var__1')
   expect(out.deny).toContain('exact spelling')
@@ -77,8 +79,8 @@ test('an edit with a re-cased placeholder is refused too', async ($, on) => {
 
 test('a search for a literal placeholder still runs: searches are lenient', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: { mode: 'content', numFiles: 0, filenames: [], content: '', numLines: 0 } }
   })
@@ -88,8 +90,8 @@ test('a search for a literal placeholder still runs: searches are lenient', asyn
 
 test('a web request never gets the real names', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: 'ok' }
   })
@@ -107,8 +109,8 @@ test('an MCP tool gets the real names only for a server the project names', asyn
     [`${ROOT}/.veilio/map.json`]: mapFile(MAP),
     [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['local_db'] }),
   })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return { result: [{ type: 'text', text: 'ok' }] }
   })
@@ -122,10 +124,10 @@ test('an MCP tool gets the real names only for a server the project names', asyn
 test("Claude Code's own refusal, which quotes the restored command, reaches the model masked", async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
   // The permission check refuses the call it was given - the restored one.
-  on('tool.call', (_: any, e: any) => ({
+  on('tool.call', (_, e) => ({
     deny: `Permission to use Bash with command ${e.command} was denied.`,
   }))
-  const out: any = await $.tool.call({ tool: 'Bash', command: 'rm -rf __CLS__1', description: 'x' })
+  const out = await $.tool.call({ tool: 'Bash', command: 'rm -rf __CLS__1', description: 'x' })
   expect(out.deny).toContain('rm -rf __CLS__1')
   expect(out.deny).not.toContain(CANARY)
 })
@@ -138,7 +140,7 @@ test('a write that would put a redaction token on disk is refused: the real key 
     ran = true
     return write.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(write),
     content: 'const key = "__REDACTED_STRIPE_KEY_1__"\n',
   })
@@ -149,12 +151,12 @@ test('a write that would put a redaction token on disk is refused: the real key 
 test('tokens a language owns, such as the DEV and FILE globals, are not placeholders: the edit runs', async ($, on) => {
   const edit = recorded('Edit')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return edit.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: 'if (__DEV__) log(__FILE__, __dirname)',
     new_string: 'if (__DEV__) __CLS__1.log(__FILE__, __dirname)',
@@ -166,10 +168,10 @@ test('tokens a language owns, such as the DEV and FILE globals, are not placehol
 // A shell command can write a file (sed -i, echo >), so the checks an edit gets
 // hold for it too. A placeholder the map does not have means nothing in the
 // real project, so refusing it refuses nothing Claude could use.
-function shell(on: any) {
+function shell(on: TestOn) {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return {
       result: {
@@ -186,7 +188,7 @@ function shell(on: any) {
 
 test('a shell command naming a placeholder the map does not have is refused before it runs', async ($, on) => {
   const seen = shell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Bash',
     command: "sed -i '' 's/__VAR__1/__FN__9/' src/ledger.ts",
     description: 'rename',
@@ -198,7 +200,7 @@ test('a shell command naming a placeholder the map does not have is refused befo
 
 test('a shell command with a re-cased placeholder is refused too', async ($, on) => {
   const seen = shell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Bash',
     command: "sed -i '' 's/x/__var__1/' src/ledger.ts",
     description: 'rename',
@@ -209,7 +211,7 @@ test('a shell command with a re-cased placeholder is refused too', async ($, on)
 
 test('a shell command that would write a redaction token is refused: the real key would be lost', async ($, on) => {
   const seen = shell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Bash',
     command: `echo 'const key = "__REDACTED_STRIPE_KEY_1__"' > src/config.ts`,
     description: 'write config',
@@ -220,7 +222,7 @@ test('a shell command that would write a redaction token is refused: the real ke
 
 test('a shell command with known placeholders and language tokens runs', async ($, on) => {
   const seen = shell(on)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     tool: 'Bash',
     command: "sed -i '' 's/__VAR__1/__VAR__3/' src/ledger.ts && grep -rn __DEV__ src",
     description: 'rename',
@@ -242,7 +244,7 @@ test('a map entry holding a provider-format key is never restored, in a fresh se
     ran = true
     return edit.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'id = "__STR__7"',
@@ -254,12 +256,12 @@ test('a map entry holding a provider-format key is never restored, in a fresh se
 test('an ordinary project name restores fine beside that check', async ($, on) => {
   const edit = recorded('Edit')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
-  const seen: any[] = []
-  on('tool.call', (_: any, e: any) => {
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
     seen.push(e)
     return edit.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: 'const __VAR__1 =',
     new_string: 'const __VAR__1 =',
@@ -279,7 +281,7 @@ test('a restore that puts back a second provider key beside one already written 
     ran = true
     return edit.r
   })
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: `a = "${written}"\nb = "AKIA__STR__7"`,
@@ -295,13 +297,13 @@ test('an edit beside a regulated number the map holds runs, and one that writes 
   })
   let ran = 0
   on('tool.call', () => (ran++, edit.r))
-  const beside: any = await $.tool.call({
+  const beside = await $.tool.call({
     ...eventOf(edit),
     old_string: 'const __VAR__1 =',
     new_string: 'const __VAR__1 = 2',
   })
   expect(beside.deny).toBeUndefined()
-  const back: any = await $.tool.call({
+  const back = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'iban = "__IBAN__1"',
@@ -313,12 +315,12 @@ test('an edit beside a regulated number the map holds runs, and one that writes 
 // Commit security review of f4e81cb: decided by the placeholder, not by
 // detecting the number again, so no spelling of it slips through.
 function writesBack(value: string) {
-  return async ($: any, on: any) => {
+  return async ($: TestHost, on: TestOn) => {
     const edit = recorded('Edit')
     project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: value }) })
     let ran = false
     on('tool.call', () => ((ran = true), edit.r))
-    const out: any = await $.tool.call({
+    const out = await $.tool.call({
       ...eventOf(edit),
       old_string: 'x',
       new_string: 'v = "__IBAN__1"',
@@ -343,12 +345,12 @@ test(
 
 // Review of 55ae576: judged by the keys restore() itself resolved.
 function refusedRestore(map: Record<string, string>, newString: string) {
-  return async ($: any, on: any) => {
+  return async ($: TestHost, on: TestOn) => {
     const edit = recorded('Edit')
     project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, ...map }) })
     let ran = false
     on('tool.call', () => ((ran = true), edit.r))
-    const out: any = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: newString })
+    const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: newString })
     expect(ran).toBe(false)
     expect(out.deny).toContain('Veilio refused this call')
   }
@@ -374,7 +376,7 @@ test('a name that merely contains a hand-marked value restores fine', async ($, 
     [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__9: 'AcmeLedger', __MANUAL__1: 'Acme' }),
   })
   on('tool.call', () => edit.r)
-  const out: any = await $.tool.call({
+  const out = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'new __VAR__9()',
@@ -392,13 +394,13 @@ test('each refusal names what it would have written back', async ($, on) => {
     }),
   })
   on('tool.call', () => edit.r)
-  const manual: any = await $.tool.call({
+  const manual = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: '__MANUAL__1',
   })
   expect(manual.deny).toContain('marked by hand')
-  const iban: any = await $.tool.call({
+  const iban = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: '__IBAN__1',
@@ -415,13 +417,13 @@ test('a hand-marked value only inside another word of the text is still refused 
   on('tool.call', () => (ran++, edit.r))
   // The name holding the mark restores; the mark itself, where the text
   // holds it only inside 'January', does not.
-  const ok: any = await $.tool.call({
+  const ok = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'new __VAR__9()',
   })
   expect(ok.deny).toBeUndefined()
-  const no: any = await $.tool.call({
+  const no = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'January __MANUAL__1',
@@ -435,7 +437,7 @@ test('a hand-marked value inside a word with a letter outside ASCII is still ref
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __MANUAL__1: 'Jan' }) })
   let ran = 0
   on('tool.call', () => (ran++, edit.r))
-  const no: any = await $.tool.call({
+  const no = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'Janów __MANUAL__1',

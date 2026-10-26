@@ -16,6 +16,11 @@
 //     --max-turns <n>   (default: 40)
 //     --out <dir>       results directory; an existing one is resumed
 //     --validate        check every task's planted bug, run no session
+//     --plugin <dir>    the guard to measure (default: this one), such as a
+//                       worktree of an earlier release, to compare the two
+//     --settings <file> settings every arm's session also loads (Claude
+//                       Code's --settings), such as enabledPlugins for
+//                       installed plugins: the bench loads none by default
 //
 // Spends model usage: one session per task, arm and rep. Needs Claude Code
 // signed in, and packages/cli built.
@@ -59,9 +64,13 @@ const { values: opt } = parseArgs({
     'max-turns': { type: 'string', default: '40' },
     out: { type: 'string' },
     validate: { type: 'boolean', default: false },
+    plugin: { type: 'string' },
+    settings: { type: 'string' },
   },
 })
 const REPO = resolve(opt.repo)
+const GUARD = opt.plugin ? resolve(opt.plugin) : PLUGIN
+const SETTINGS = opt.settings ? resolve(opt.settings) : null
 const TASKS_FILE = resolve(opt.tasks)
 const spec = JSON.parse(readFileSync(TASKS_FILE, 'utf8'))
 const only = opt.only?.split(',')
@@ -319,7 +328,8 @@ function session(task, arm, rep, outDir) {
       'stream-json',
       '--verbose',
     ]
-    if (arm !== 'plain') args.push('--plugin-dir', PLUGIN)
+    if (SETTINGS) args.push('--settings', SETTINGS)
+    if (arm !== 'plain') args.push('--plugin-dir', GUARD)
     const base = join(outDir, 'sessions', `${task.id}.${arm}.${rep}`)
     const streamFd = openSync(`${base}.jsonl`, 'w')
     const errFd = openSync(`${base}.err`, 'w')
@@ -433,9 +443,10 @@ if (!existsSync(join(outDir, 'meta.json')))
         claudeCode: version('claude --version'),
         node: process.version,
         plugin: {
-          commit: version('git rev-parse HEAD', PLUGIN),
-          dirty: Boolean(version('git status --porcelain -- .', PLUGIN)),
+          commit: version('git rev-parse HEAD', GUARD),
+          dirty: Boolean(version('git status --porcelain -- .', GUARD)),
         },
+        settings: SETTINGS ? JSON.parse(readFileSync(SETTINGS, 'utf8')) : null,
         repo: { name: REPO.split('/').pop(), commit: version('git rev-parse HEAD', REPO) },
         tasks: relative(process.cwd(), TASKS_FILE),
         taskIds: tasks.map((t) => t.id),

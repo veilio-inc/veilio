@@ -21,8 +21,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "lint": "eslint src e2e packages/*/src packages/*/tests tests plugins/veilio-guard/lib plugins/veilio-guard/hooks",
-    "lint:fix": "eslint src e2e packages/*/src packages/*/tests tests plugins/veilio-guard/lib plugins/veilio-guard/hooks --fix",
+    "lint": "eslint src e2e packages/*/src packages/*/tests tests plugins/veilio-guard/lib plugins/veilio-guard/hooks plugins/veilio-guard/tests",
+    "lint:fix": "eslint src e2e packages/*/src packages/*/tests tests plugins/veilio-guard/lib plugins/veilio-guard/hooks plugins/veilio-guard/tests --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/*/{src,tests}/**/*.ts\" \"tests/**/*.ts\" \"plugins/veilio-guard/{lib,hooks,tests}/**/*.ts\" scripts/sync-guard-engine.mjs",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"packages/*/{src,tests}/**/*.ts\" \"tests/**/*.ts\" \"plugins/veilio-guard/{lib,hooks,tests}/**/*.ts\" scripts/sync-guard-engine.mjs",
     "verify": "npm run lint && npm run format:check",
@@ -73,6 +73,7 @@
     "semantic-release": "25.0.9",
     "typescript": "^5.4.0",
     "vite": "^8.3.4",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "yaml": "^2.9.1"
   }
 }

@@ -463,13 +463,17 @@ describe('the context fallback', () => {
     }
     // A hold path that leaves a credential behind, as a bug in it would.
     class Leaky extends Guard {
-      override maskText(text: string, kind?: any, scan?: any): string {
+      override maskText(
+        text: string,
+        kind?: Parameters<InstanceType<typeof Guard>['maskText']>[1],
+        scan?: Parameters<InstanceType<typeof Guard>['maskText']>[2]
+      ): string {
         return text.includes('\u0000')
           ? `${super.maskText(text, kind, scan)} password = "Tr0ub4dor3xzQ"`
           : super.maskText(text, kind, scan)
       }
     }
-    const g = new Leaky(io as any, { rawOnly: [], mcpRestore: [] } as any)
+    const g = new Leaky(io, { rawOnly: [], mcpRestore: [] })
     const out = g.applyContext(`# veilioGuard\n${MODEL_NOTE}`)
     expect(out).not.toContain('Tr0ub4dor3xzQ')
     expect(out).toContain('guard is on')

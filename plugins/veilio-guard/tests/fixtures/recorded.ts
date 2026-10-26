@@ -3,7 +3,37 @@
 // the prompt events. Local paths, the account's email and session ids were
 // replaced. The fixture project is in ../live/project: src/ledger.ts holds the
 // canary class QuasarLedgerReconciler, and .env a fake Stripe key.
-export type Recorded = { kind: string; data: { e: any; r?: any } }
+/** A recorded event or result: its fields as Claude Code sent them. */
+export type Fields = { readonly [key: string]: unknown }
+export type RecordedFile = {
+  filePath: string
+  content: string
+  numLines?: number
+  startLine?: number
+  totalLines?: number
+}
+/** A tool's own result record. The fields the tests read are named; the
+ *  rest are unknown. */
+export type ToolRecord = Fields & {
+  type?: string
+  stdout?: string
+  stderr?: string
+  content?: string
+  mode?: string
+  status?: string
+  filenames?: string[]
+  numFiles?: number
+  replaceAll?: boolean
+  file?: RecordedFile
+}
+/** What Claude Code resolved a recorded tool call to. */
+export type RecordedRun = Fields & {
+  ref?: number
+  result: ToolRecord
+  text?: string
+  isReadOnly?: boolean
+}
+export type Recorded = { kind: string; data: { e: Fields; r?: Fields } }
 export const RECORDED: Recorded[] = [
   {
     kind: 'prompt.context',

@@ -3,7 +3,8 @@
 // path as a throw (next.error.kind is 'timeout'); the kit cannot force one
 // without a ten-second busy loop, so COVERAGE.md states it without a test.
 import { expect, test } from 'claude-code/testing'
-import { CANARY, eventOf, mapFile, project, recorded, ROOT, STRIPE } from './helpers.ts'
+import { PROMPT_FAILED } from '../lib/guard.ts'
+import { CANARY, eventOf, mapFile, project, recorded, ROOT, STRIPE, res } from './helpers.ts'
 import { COLD_FILES, DECLARED, GREP, TEST_RUN } from './fixtures/cold.ts'
 
 test('a scrub that throws after the tool ran withholds the result', async ($, on) => {
@@ -11,7 +12,7 @@ test('a scrub that throws after the tool ran withholds the result', async ($, on
   const read = recorded('Read')
   project(on, {}, { failWrite: (p) => p.endsWith('map.json') })
   on('tool.call', () => read.r)
-  const out: any = await $.tool.call(eventOf(read))
+  const out = await $.tool.call(eventOf(read))
   expect(out.deny).toContain('Veilio withheld this result: the guard failed')
   expect(JSON.stringify(out)).not.toContain(CANARY)
 })
@@ -28,7 +29,7 @@ test('a guard that cannot load refuses the call before it runs', async ($, on) =
     ran = true
     return read.r
   })
-  const out: any = await $.tool.call(eventOf(read))
+  const out = await $.tool.call(eventOf(read))
   expect(ran).toBe(false)
   expect(out.deny).toContain('Veilio withheld')
 })
@@ -40,11 +41,11 @@ test('a prompt the guard cannot check is not sent', async ($, on) => {
     { failRead: (p) => p.endsWith('map.json') }
   )
   let sent = false
-  on('prompt.submit', (_: any, e: any) => {
+  on('prompt.submit', (_, e) => {
     sent = true
     return { text: e.text }
   })
-  const out: any = await $.prompt.submit({
+  const out = await $.prompt.submit({
     text: `about ${CANARY}`,
     wait: false,
     origin: { kind: 'user' },
@@ -53,14 +54,33 @@ test('a prompt the guard cannot check is not sent', async ($, on) => {
   expect(out.drop).toContain('not sent')
 })
 
+// Code review of d705b14 (6): a context element that is not text cannot be
+// checked, so the prompt is not sent.
+test('a prompt whose context holds something other than text is not sent', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) })
+  let sent = false
+  on('prompt.submit', (_, e) => {
+    sent = true
+    return { text: e.text }
+  })
+  const out = await $.prompt.submit({
+    text: 'hello',
+    context: ['fine', 42 as unknown as string],
+    wait: false,
+    origin: { kind: 'user' },
+  })
+  expect(sent).toBe(false)
+  expect(out.drop).toBe(PROMPT_FAILED)
+})
+
 test('a reminder the guard cannot check is left out', async ($, on) => {
   project(
     on,
     { [`${ROOT}/.veilio/map.json`]: mapFile({}) },
     { failRead: (p) => p.endsWith('map.json') }
   )
-  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
-  const out: any = await $.prompt.attachment({ type: 'edited_text_file', text: CANARY })
+  on('prompt.attachment', (_, e) => ({ text: e.text }))
+  const out = await $.prompt.attachment({ type: 'edited_text_file', text: CANARY })
   expect(out.text).toBe(null)
 })
 
@@ -72,11 +92,11 @@ test('an unreadable map stops the guard: every call refused, prompts dropped, un
     ran = true
     return read.r
   })
-  on('prompt.submit', (_: any, e: any) => ({ text: e.text }))
-  const out: any = await $.tool.call(eventOf(read))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  const out = await $.tool.call(eventOf(read))
   expect(ran).toBe(false)
   expect(out.deny).toContain('map at .veilio/map.json could not be read')
-  const dropped: any = await $.prompt.submit({
+  const dropped = await $.prompt.submit({
     text: 'hello',
     wait: false,
     origin: { kind: 'user' },
@@ -87,7 +107,7 @@ test('an unreadable map stops the guard: every call refused, prompts dropped, un
 test('a map of an unknown version stops the guard rather than being read as empty', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: JSON.stringify({ version: 2, map: {} }) })
   on('tool.call', () => ({ result: 'x' }))
-  const out: any = await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  const out = await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
   expect(out.deny).toContain('version')
 })
 
@@ -106,15 +126,15 @@ test('fields a tool list does not name are scrubbed too: a Bash edit diff', asyn
     ...bash.r,
     result: { ...bash.r.result, bashEditDiff: `- class ${CANARY} {` },
   }))
-  const out: any = await $.tool.call(eventOf(bash))
-  expect(out.result.bashEditDiff).toBe('- class __CLS__1 {')
+  const out = await $.tool.call(eventOf(bash))
+  expect(res(out).bashEditDiff).toBe('- class __CLS__1 {')
 })
 
 test('a secret left where the guard does not rewrite (an enum field) is caught by the last scan', async ($, on) => {
   const bash = recorded('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) })
   on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, gitOperation: STRIPE } }))
-  const out: any = await $.tool.call(eventOf(bash))
+  const out = await $.tool.call(eventOf(bash))
   expect(out.deny).toContain('a secret remained after masking')
   expect(JSON.stringify(out)).not.toContain(STRIPE)
 })
@@ -132,19 +152,19 @@ test('another writer giving our placeholder a different name: masked again, neve
     }
   )
   on('tool.call', () => read.r)
-  const out: any = await $.tool.call(eventOf(read))
+  const out = await $.tool.call(eventOf(read))
   const saved = JSON.parse(p.files[mapPath]).map
   expect(saved.__CLS__1).toBe('OtherClass')
   const mine = Object.keys(saved).find((k) => saved[k] === CANARY)!
   expect(mine).toBe('__CLS__2')
-  expect(out.result.file.content).toContain('__CLS__2')
-  expect(out.result.file.content).not.toContain('__CLS__1')
+  expect(res(out).file.content).toContain('__CLS__2')
+  expect(res(out).file.content).not.toContain('__CLS__1')
 })
 
 test("a skill's text is not sent while the guard is stopped", async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
-  on('skill.prompt', (_: any, e: any) => ({ text: e.text }))
-  const out: any = await $.skill.prompt({ skill: 'review', text: `Review ${CANARY}.` })
+  on('skill.prompt', (_, e) => ({ text: e.text }))
+  const out = await $.skill.prompt({ skill: 'review', text: `Review ${CANARY}.` })
   expect(out.text).not.toContain(CANARY)
   expect(out.text).toContain('stopped')
 })
@@ -173,7 +193,7 @@ test('another writer dropping our entries: the next save puts them back', async 
 test('a result naming a source file the guard cannot index is withheld', async ($, on) => {
   project(on, { ...COLD_FILES }, { failRead: (p) => p.endsWith('/src/secrets.ts') })
   on('tool.call', () => TEST_RUN.r)
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(out.deny).toContain('Veilio withheld this result')
   expect(out.deny).toContain('could not read to check')
   // The reason reaches the model: it names no path, which can hold a project name.
@@ -184,7 +204,7 @@ test('a result naming a source file the guard cannot index is withheld', async (
 test('a search whose file cannot be indexed is withheld, not sent as found', async ($, on) => {
   project(on, { ...COLD_FILES }, { failRead: (p) => p.endsWith('/src/batch.ts') })
   on('tool.call', () => GREP.r)
-  const out: any = await $.tool.call(eventOf(GREP))
+  const out = await $.tool.call(eventOf(GREP))
   expect(out.deny).toContain('Veilio withheld this result')
   expect(JSON.stringify(out)).not.toContain('reconcileBatch')
 })
