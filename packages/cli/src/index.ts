@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { parseArgs, UsageError } from './args.js'
+import { needsAction, parseArgs, UsageError, type ParsedArgs } from './args.js'
 import { feedSecret, type SecretState } from './secret-input.js'
 import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
+import { commandHelp } from './flags.js'
 import {
   runLogin,
   runLogout,
@@ -37,24 +38,35 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     args = parseArgs(argv)
   } catch (err) {
     if (err instanceof UsageError) {
-      io.stderr(`veilio: ${err.message}\n\nRun "veilio --help" for usage.\n`)
+      const who = err.command ? `veilio ${err.command}` : 'veilio'
+      // A line of flags with no command gets the general help with the error,
+      // so the reader sees the commands those flags belong to.
+      const tail = err.showHelp ? `\n${HELP}` : `\nRun "veilio --help" for usage.\n`
+      io.stderr(`${who}: ${err.message}\n${tail}`)
       return EXIT_ERROR
     }
     throw err
   }
+  return run(args, io)
+}
 
+/**
+ * Run parsed arguments. Separate from \`main\` so a test can hand it \`args\`
+ * wrapped in a Proxy and see every field each command reads.
+ */
+export async function run(args: ParsedArgs, io: Io): Promise<number> {
   try {
     switch (args.command) {
       case 'help':
-        io.stdout(HELP)
+        io.stdout(args.helpTopic ? commandHelp(args.helpTopic) : HELP)
         return 0
       case 'version':
         io.stdout(`${VERSION}\n`)
         return 0
       case 'scrub':
-        return await runScrub(args, io, () => teamNamespaceForScrub(io.home))
+        return await runScrub(args, io, () => teamNamespaceForScrub(io.home, io.env))
       case 'restore':
-        return await runRestore(args, io, (missing) => teamLayerFor(io.home, missing))
+        return await runRestore(args, io, (missing) => teamLayerFor(io.home, missing, io.env))
       case 'scan':
         return await runScan(args, io)
       case 'map':
@@ -66,22 +78,24 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       case 'whoami':
         return runWhoami(io)
       case 'maps': {
-        const mapPath = resolveMapPath(args.mapPath, io.cwd)
+        // Resolved only by the actions that use the local map, so that
+        // \`--map\` is read exactly where the flag table gives it.
+        const mapPath = (): string => resolveMapPath(args.mapPath, io.cwd)
         switch (args.mapsAction) {
           case 'list':
             return await runMapsList(io)
           case 'pull':
-            return await runMapsPull(args.files[0] ?? null, mapPath, io, { force: args.force })
+            return await runMapsPull(args.files[0] ?? null, mapPath(), io, { force: args.force })
           case 'push':
-            return await runMapsPush(args.files[0] ?? null, mapPath, io, args.team)
+            return await runMapsPush(args.files[0] ?? null, mapPath(), io, args.team)
           case 'update':
-            return await runMapsUpdate(args.files[0] ?? null, mapPath, io, {
+            return await runMapsUpdate(args.files[0] ?? null, mapPath(), io, {
               allowDrop: args.allowDrop,
             })
           case 'rm':
             return await runMapsRm(args.files[0] ?? null, io)
           default:
-            io.stderr('veilio: maps needs an action — list, pull, push, update or rm.\n')
+            io.stderr(`veilio: ${needsAction('maps')}\n`)
             return EXIT_ERROR
         }
       }
@@ -92,7 +106,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
           case 'lock':
             return runTeamLock(io)
           default:
-            io.stderr('veilio: team needs an action — unlock or lock.\n')
+            io.stderr(`veilio: ${needsAction('team')}\n`)
             return EXIT_ERROR
         }
       }
@@ -103,7 +117,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
           case 'lock':
             return runVaultLock(io)
           default:
-            io.stderr('veilio: vault needs an action — unlock or lock.\n')
+            io.stderr(`veilio: ${needsAction('vault')}\n`)
             return EXIT_ERROR
         }
       }
@@ -112,7 +126,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
         return await runProjectsList(io)
       case 'rules':
         if (args.rulesAction === 'pull') return await runRulesPull(io)
-        io.stderr('veilio: rules needs an action — pull.\n')
+        io.stderr(`veilio: ${needsAction('rules')}\n`)
         return EXIT_ERROR
     }
   } catch (err) {

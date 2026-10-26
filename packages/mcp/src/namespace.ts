@@ -21,6 +21,22 @@ import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
+import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
+type PrimeOptions = { retryDelayMs?: number; env?: Env }
+
+/**
+ * The project the namespace is for, as a cache key: VEILIO_PROJECT's value
+ * when the server's environment sets it (spec 052 FR-012a), else the choice
+ * kept with the sign-in. With the variable set, a `projects use` in a
+ * terminal changes nothing here - the variable wins - so it must not throw
+ * away a namespace the variable pinned.
+ */
+function scopeKey(home: string | undefined, env: Env | undefined): string | null {
+  const override = projectOverride(env)
+  if (override !== null) return `env:${override}`
+  const stored = readCredential(home)?.project
+  return stored ? `stored:${stored}` : null
+}
 
 export type NamespaceSource = 'team' | 'local'
 
@@ -66,7 +82,12 @@ let priming: Promise<ResolvedNamespace> | null = null
 /** The CLI's resolver, shaped for this server (spec 028: one resolver for both). */
 async function fetchNamespace(
   home: string | undefined,
-  opts: { retryDelayMs?: number; deadlineMs?: number }
+  opts: {
+    retryDelayMs?: number
+    deadlineMs?: number
+    env?: Env
+    onProject?: (project: string | null) => void
+  }
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
   if (found.status !== 'team') return localFrom(found)
@@ -94,10 +115,7 @@ async function fetchNamespace(
  * their own request. `home` is injectable for tests; production leaves it
  * undefined and `readCredential` falls back to the real home directory.
  */
-export function primeNamespace(
-  home?: string,
-  opts: { retryDelayMs?: number } = {}
-): Promise<ResolvedNamespace> {
+export function primeNamespace(home?: string, opts: PrimeOptions = {}): Promise<ResolvedNamespace> {
   primedWith = { home, opts }
   primed = true
   lastAttemptAt = Date.now()
@@ -108,20 +126,32 @@ export function primeNamespace(
     // after the project changed holds the OLD project's maps, and assigning
     // it would put that project's placeholders into this one's work - the
     // cross-project leak FR-013 forbids (security review).
-    const project = readCredential(home)?.project ?? null
+    const project = scopeKey(home, opts.env)
     const generation = ++primeGeneration
     primedProject = project
     settledFlag = false
-    priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
-      (resolved) => {
-        const still = (readCredential(home)?.project ?? null) === project
-        if (generation === primeGeneration && still) {
-          current = resolved
-          settledFlag = true
-        }
-        return current
+    // The id the fetch resolved the project to: what the cache is FOR.
+    let resolvedId: string | null = null
+    priming = fetchNamespace(home, {
+      deadlineMs: STARTUP_DEADLINE_MS,
+      ...opts,
+      onProject: (id) => (resolvedId = id),
+    }).then((resolved) => {
+      const still = scopeKey(home, opts.env) === project
+      if (generation === primeGeneration && still) {
+        current = resolved
+        primedProjectId = resolvedId
+        // The fetch asked the server which project the variable names: that
+        // answer is a confirmation (a failed listing is not one).
+        if (
+          projectOverride(opts.env) !== null &&
+          (resolvedId !== null || resolved.found.status === 'refused')
+        )
+          confirmedAt = performance.now()
+        settledFlag = true
       }
-    )
+      return current
+    })
   }
   return priming
 }
@@ -134,11 +164,22 @@ const STARTUP_DEADLINE_MS = 10_000
 /** How often an 'unavailable' team is asked again, from a tool call. */
 const UNAVAILABLE_RECHECK_MS = 30_000
 
-let primedWith: { home?: string; opts: { retryDelayMs?: number } } = { opts: {} }
+let primedWith: { home?: string; opts: PrimeOptions } = { opts: {} }
 let lastAttemptAt = 0
 let primed = false
 /** The project the cached namespace is for (spec 052 FR-013). */
 let primedProject: string | null = null
+/**
+ * The project ID the cached namespace was read for. VEILIO_PROJECT's value is
+ * only a name, and a name can move: the project renamed, another one given the
+ * old name, the value unchanged. The value says when to ASK again
+ * (`confirmProject`); the id says whether the answer changed.
+ */
+let primedProjectId: string | null = null
+/** When the server last said which project the variable names (monotonic ms). */
+let confirmedAt: number | null = null
+/** How long a confirmation is trusted before the next masking call asks again. */
+export const CONFIRM_TTL_MS = 30_000
 /** Set by a team write through this server: the cache no longer matches. */
 let invalidated = false
 
@@ -167,19 +208,12 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
   if (primed) {
     // Checked FIRST, whatever is in flight: a fetch already running is for the
     // project it started with, and is dropped (security review).
-    const project = readCredential(primedWith.home)?.project ?? null
+    const project = scopeKey(primedWith.home, primedWith.opts.env)
     if (project !== primedProject) {
-      // The cached namespace is the OLD project's, and numbering with it -
-      // even for the one call that noticed - would put that project's
-      // placeholders into this one's store (FR-013). Until the new project's
-      // maps load there is no team namespace, and that is said.
-      current = localFrom({
-        status: 'unavailable',
-        reason: "the team's maps for the project now in use are still loading",
-      })
-      invalidated = false
-      priming = null
-      void primeNamespace(primedWith.home, primedWith.opts)
+      // The cached namespace is the OLD project's (FR-013): see
+      // reloadForAnotherProject. Until the new project's maps load there is no
+      // team namespace, and that is said.
+      void reloadForAnotherProject()
       return 'changed'
     }
     // The same project, changed by a write made here: reload when nothing is
@@ -192,6 +226,10 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
     }
   }
   const status = current.found.status
+  // 'refused' is not asked again here: it exists only with the variable set,
+  // the server's projects can change under it (one created, a shared name made
+  // unique), and `confirmProject` asks that on its own TTL - two paths asking
+  // the same question would pay for it twice.
   if (status !== 'locked' && status !== 'unavailable') return null
   if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
   const now = Date.now()
@@ -210,6 +248,75 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
   return status === 'locked' ? 'unlocked' : 'retrying'
 }
 let settledFlag = true
+
+/** Drop what is cached and load again, saying so: the old answer was for
+ *  another project, and numbering with it - even once - would put that
+ *  project's placeholders into this one's store (FR-013). */
+function reloadForAnotherProject(): Promise<ResolvedNamespace> {
+  current = localFrom({
+    status: 'unavailable',
+    reason: "the team's maps for the project now in use are still loading",
+  })
+  invalidated = false
+  priming = null
+  return primeNamespace(primedWith.home, primedWith.opts)
+}
+
+/** A masking call never waits longer than this on the confirming listing. */
+export const CONFIRM_DEADLINE_MS = 3_000
+/** The confirmation in flight: calls arriving meanwhile share it. */
+let confirming: Promise<void> | null = null
+
+/**
+ * With VEILIO_PROJECT set, ask the server which project the value names NOW
+ * (one project listing) and compare its ID with the one the cache was read
+ * for. A different id - or a value that names nothing any more - drops the
+ * cache and waits for the reload, so the call that follows numbers from the
+ * right project. Without the variable, and before the first prime, it asks
+ * nothing: the stored choice is checked by `refreshNamespaceIfStale`.
+ *
+ * Run before a tool that numbers or restores from the team namespace
+ * (anonymize, restore), at most once per CONFIRM_TTL_MS, and once however many
+ * calls arrive together. The listing has a short deadline, and one that fails
+ * or times out backs off for the TTL like one that answered: Cloud being down
+ * is not a reason to stall masking, or to throw a good namespace away.
+ */
+export function confirmProject(): Promise<void> {
+  if (!primed || projectOverride(primedWith.opts.env) === null) return Promise.resolve()
+  confirming ??= confirmOnce().finally(() => {
+    confirming = null
+  })
+  return confirming
+}
+
+async function confirmOnce(): Promise<void> {
+  const { home, opts } = primedWith
+  const value = projectOverride(opts.env)
+  if (value === null) return
+  if (priming && !settledFlag) await priming
+  // Trusted for CONFIRM_TTL_MS, on a clock a changed system time cannot move.
+  if (confirmedAt !== null && performance.now() - confirmedAt < CONFIRM_TTL_MS) return
+  const credential = readCredential(home)
+  if (!credential) return
+  const giveUp = new AbortController()
+  const timer = setTimeout(() => giveUp.abort(), CONFIRM_DEADLINE_MS)
+  let now: string | null
+  try {
+    const scoped = await resolveOverride(credential, value, giveUp.signal)
+    now = scoped.ok ? (scoped.value.project ?? null) : null
+  } catch {
+    confirmedAt = performance.now()
+    return
+  } finally {
+    clearTimeout(timer)
+  }
+  const refusedAlready = current.found.status === 'refused'
+  if (now === null ? refusedAlready : now === primedProjectId) {
+    confirmedAt = performance.now()
+    return
+  }
+  await reloadForAnotherProject()
+}
 
 /** Test support and callers that can wait: the in-flight (or last) resolution. */
 export function namespaceSettled(): Promise<ResolvedNamespace> {
@@ -232,6 +339,8 @@ export function resetNamespaceCache(): void {
   primedWith = { opts: {} }
   primed = false
   primedProject = null
+  primedProjectId = null
+  confirmedAt = null
   invalidated = false
   primeGeneration++
 }
@@ -247,5 +356,6 @@ export function namespaceLine(resolved: ResolvedNamespace): string {
     return 'Namespace: local (the team key is locked on this machine - run `veilio team unlock`)'
   if (found.status === 'unavailable')
     return `Namespace: local (could not read the team's maps: ${found.reason})`
+  if (found.status === 'refused') return `Namespace: none (${found.refusal.message})`
   return 'Namespace: local'
 }

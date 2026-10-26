@@ -126,7 +126,12 @@ export function readCredential(home: string = homedir()): Credential | null {
 export function writeCredential(credential: Credential, home: string = homedir()): void {
   const path = credentialPath(home)
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
+  // The known fields only. A command's in-memory credential carries the
+  // project VEILIO_PROJECT chose (spec 052 FR-012a); spread back into a write,
+  // its markers must not become a stored choice nobody made.
+  const { token, account, instance, project } = credential
+  const stored: Credential = { token, account, instance, ...(project ? { project } : {}) }
+  writeFileSync(path, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
 }
 

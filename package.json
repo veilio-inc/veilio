@@ -8,7 +8,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "private": true,
-  "//workspaces": "packages/engine is published by semantic-release on an engine-v tag; packages/cli and packages/mcp are published by Changesets. Two release tools, one per package set, and .changeset/config.json names the engine in `ignore` so they cannot both claim it.",
+  "//workspaces": "packages/engine is published by semantic-release on an engine-v tag; packages/cli and packages/mcp are published by Changesets. Two release tools, one per package set. .changeset/config.json leaves `ignore` empty; Changesets never releases the engine because the engine has no changeset and no version npm lacks (see .changeset/README.md).",
   "workspaces": [
     "packages/*"
   ],

@@ -30,6 +30,9 @@ import {
   teamStatus,
   updateCloudMap,
   useProject,
+  formatProjectsList,
+  overriddenSentence,
+  usedSentence,
   type ClientContext,
   type Outcome,
   type Refusal,
@@ -55,8 +58,9 @@ export function refusalResult(r: Refusal): ToolResult {
 }
 
 function client(ctx: ToolContext): ClientContext {
-  // No `passphrase`: never asked for here.
-  return { home: ctx.home }
+  // No `passphrase`: never asked for here. The server's own environment, so a
+  // repository's `.mcp.json` `env` pins VEILIO_PROJECT for it (FR-012a).
+  return { home: ctx.home, env: ctx.env }
 }
 
 function mapPathOf(ctx: ToolContext): string {
@@ -283,7 +287,7 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         [
           `Account: ${s.account} on ${s.instance}`,
           `Team: ${s.teamId ?? 'none - this account is not in a team'}`,
-          `Project: ${s.project ? `${s.project.name ?? 'name unknown'} (${s.project.id})` : 'none chosen - team maps of every project are used; `veilio projects use <name>` chooses one'}`,
+          `Project: ${s.project ? `${s.project.name ?? 'name unknown'} (${s.project.id})${s.project.from ? ` (from ${s.project.from})` : ''}` : 'none chosen - team maps of every project are used; `veilio projects use <name>` chooses one'}`,
           `Team key: ${s.teamKeyUntil ? `unlocked here until ${s.teamKeyUntil}` : 'locked here - run `veilio team unlock` in a terminal'}`,
           `Personal-maps key: ${s.personalKeyUntil ? `unlocked here until ${s.personalKeyUntil}` : 'locked here - run `veilio vault unlock` in a terminal'}`,
           `Key change owed: ${
@@ -304,24 +308,10 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
       'belongs to exactly one project.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async (_args, ctx) =>
-      answered(await listTeamProjects(client(ctx)), ({ projects, chosen }) =>
-        [
-          ...projects.map((p) => {
-            const marks = [
-              ...(p.inUse ? ['in use'] : []),
-              ...(p.isDefault ? ['default'] : []),
-              ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
-            ]
-            return `${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})`
-          }),
-          ...(chosen === null
-            ? [
-                '',
-                'No project is chosen, so team maps from every project are used. projects_use chooses one.',
-              ]
-            : []),
-        ].join('\n')
-      ),
+      answered(await listTeamProjects(client(ctx)), (listing) => {
+        const { lines, note } = formatProjectsList(listing, { surface: 'mcp' })
+        return (note ? [...lines, '', note] : lines).join('\n')
+      }),
   },
   {
     name: 'projects_use',
@@ -337,11 +327,14 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
     },
     handler: async (args, ctx) => {
       const used = await useProject(client(ctx), text(args, 'project'))
-      if (used.ok) invalidateNamespace()
+      // The server's variable overrides the choice just stored: the namespace
+      // it holds is for the variable's project and is not touched.
+      if (used.ok && used.value.overriddenBy === null) invalidateNamespace()
       return answered(
         used,
-        ({ id, name }) =>
-          `Now working in project ${name} (${id}). Team maps and masking with the team's names use this project only.`
+        (u) =>
+          usedSentence(u, { surface: 'mcp' }) +
+          (u.overriddenBy !== null ? `\n\nWARNING: ${overriddenSentence(u, 'server')}` : '')
       )
     },
   },

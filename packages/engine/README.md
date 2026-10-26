@@ -105,14 +105,89 @@ tokens, PEM private keys and connection-string passwords are redacted; emails
 and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
 
-Every finding also says what actually happened to the value, in `disposition`:
+Every finding also says what the scan did with the value, in `disposition`:
 `'destroy'` (redacted, unrecoverable), `'mask'` (masked reversibly — see below),
-or `'report'` (left exactly as written). `redacted` remains the coarse boolean a
-badge can read; `disposition` is the finer answer.
+or `'report'` (the scan left it in place). `redacted` remains the coarse boolean
+a badge can read; `disposition` is the finer answer.
 
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
-Under `'warn'` nothing is acted on: findings come back with `disposition:
-'report'` and the code unchanged.
+Under `'warn'` nothing is redacted: findings come back with `disposition:
+'report'` and each credential is left in the text as written. Under `'off'`
+nothing is reported either. **In no mode does a credential go into the symbol
+map**: identifier masking leaves every credential the rules find alone, and an
+entry an existing map holds for one is dropped. So nothing secret is written to
+a saved map or uploaded with it. (Earlier versions masked an identifier-shaped
+key reversibly, into the map, under `'warn'` and `'off'`.)
+
+### Passwords in a secret position
+
+Some slots can only hold a credential, so the value there is removed whatever
+its strength. A weak password (`postgres`, `hunter22`) is exactly what a person
+types into one:
+
+- password flags: `-p<pw>` (attached only) after a mysql or mariadb client,
+  where `-p <word>` is the database name; `-p <pw>` attached or not after a
+  mongo client or sshpass; `-P <pw>` for sqlcmd, bcp, osql, isql and ipmitool;
+  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=`, a
+  space, or as the next element of an argv array. In source, config and
+  scripts the value is always judged, including inside a string literal
+  (a command run from code). Only in a prose or help file (Markdown,
+  text, reStructuredText, AsciiDoc, man pages) or text with no path can it be
+  prose: there a help-text metavar (`PASSWORD`, `TEXT`, `VALUE`, `KEY` and a
+  few more, `[…]`, `<…>`) or `to`/`for`/`is` is not a password, and in a prose
+  file only a command line counts (a fenced code block, a `$ ` or `> `
+  prompt, a Dockerfile `RUN` or CI `run:` line, a line that starts with a
+  known command or a path, or quoted code). Any other all-caps value is a
+  password. Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
+  `docker run -p`) and flags with no value (`--password-stdin`,
+  `--password-file`, `--no-password`) are left alone. A command continued
+  with a trailing backslash is one command;
+- well-known password environment variables: `PGPASSWORD`, `MYSQL_PWD`,
+  `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MSSQL_SA_PASSWORD`,
+  `REDISCLI_AUTH`, `SSHPASS` and others, in shell, dotenv, compose and
+  PowerShell forms;
+- the password in URL userinfo (`scheme://user:password@host`, the user may be
+  empty), never the user or the host;
+- auth headers: `Authorization` / `Proxy-Authorization` with `Bearer` from 8
+  characters or `Basic` credentials of any length, `X-Api-Key` with a literal
+  value (one that starts at a code root such as an environment lookup,
+  `config.`, `settings.`, `secrets.`, `$` or `{{` is left alone; a JWT never
+  is), the same inside curl `-H`, and the password of curl
+  `-u user:pass`.
+
+The user half is a credential too when it is a token (`https://<token>@host`,
+curl `-u <token>:`, the user of `Basic` credentials): a user that holds a
+provider-format key, or passes the engine's high-entropy token test (24+ token
+characters), is redacted in every file. A user name stays, however long or
+mixed (`deploy_user_2024`, `Build-Agent01`, `x-access-token`).
+
+Obvious placeholders are neither redacted nor reported: `changeme`,
+`password`, `xxx…`, `***`, `<your-password>`, `<your password>`, `${VAR}`,
+`${VAR:?message}`, `${{ secrets.X }}`, `{{ x }}`, `$VAR`, `%VAR%`, `$(…)`,
+`REDACTED`, an empty value. A placeholder that spans spaces is taken whole. In
+`${VAR:-default}` (and `-`, `:=`, and Spring's `${VAR:default}`) the default
+is the value and is judged as one.
+
+**Redaction by context.** Pass the file the text came from as `path`
+(`anonymize(code, { path })`, `scanSecrets(code, policy, { path })`,
+`detectSecrets(code, { path })`), relative to the project. For an absolute
+path, also pass the project `root`: only folders inside it count, and without
+it only the file name does, so `/home/test/app/src/db.ts` is real source. In a
+test, fixture or example file
+(`isExamplePath`: `test/`, `tests/`, `__tests__/`, `fixtures/`, `examples/`,
+`*.test.*`, `*.spec.*`, `*_test.*`, `.env.example`, `.env.sample`, `*.example`
+and similar) a **weak** value in one of these positions is only reported, as a
+`possible-credential` finding that does not block: there it is a fixture, and
+destroying it would corrupt the test. A **strong** value (12+ characters of
+three character classes, or 20+ near-random characters) is redacted there as
+everywhere. A `user:password` pair (Basic, URL userinfo, curl `-u`) is judged
+half by half, never as the joined string: the password half alone decides,
+as for `PGPASSWORD`, and a token-shaped user is redacted on its own. The
+verdict holds where the generic `password = "..."` rule reads the same value,
+so a quoted weak value in a test file is report-only too. With no `path` the
+text is treated as real source and every value in these positions is
+redacted. The generic `password = "..."` rule keeps its own judgement
+elsewhere (a single lowercase word there is only reported, in any file).
 
 ## Regulated identifiers
 
@@ -179,9 +254,21 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 - `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
-  - `options.existingMap` — continue numbering from a previous session
+  - `options.path` — the file the code came from; a weak password in a secret
+    position is only reported in a test, fixture or example file (see above)
+  - `options.root` — the project root, for an absolute `path`
+  - `options.existingMap` — continue numbering from a previous session:
+    `anonymize(next, { existingMap: map })`
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
+  - an unknown key throws a TypeError that names it and lists the valid
+    options. It used to be ignored, or worse: an object of unknown keys was
+    taken as a positional map, so `{ style: 'plain' }` (an option removed
+    before 1.0.0) was stored in the map. `restore`, `scanSecrets` and
+    `detectSecrets` check their options the same way.
+  - `anonymize(code, existingMap)` — the positional map form is deprecated;
+    pass `{ existingMap }`. An object whose keys are all placeholders is still
+    read as a map. The form is removed in the next major version.
   - `comments` — `{ total, inline, characters, severity }`: how much comment
     prose left **unmasked**. Comments are prose and are deliberately not masked,
     which makes this the largest thing the engine does not do for you — reported
@@ -262,13 +349,17 @@ thrown on. It stays in the map and applies again where it is valid.
 - `measureCommentExposure(code, language?)` → `CommentExposure` — the same
   measurement `anonymize` returns, for text it did not produce (after a manual
   mark is undone, say)
-- `detectSecrets(code)` → `SecretFinding[]` — scan without modifying
-- `scanSecrets(code, policy?)` → `{ findings, code, regulated }` — `regulated`
+- `detectSecrets(code, options?)` → `SecretFinding[]` — scan without modifying
+- `scanSecrets(code, policy?, options?)` → `{ findings, code, regulated }` —
+  `options.path` and `options.root` as for `anonymize`; `regulated`
   holds the values handed to the masking pass; `anonymize` calls this first and
   masks them itself, so a caller doing its own masking is the only one that needs
   the field
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
+- `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
+- `credentialSpans(code, options?)` → `[start, end][]` of every credential the
+  rules find, whatever the policy; what `anonymize` keeps out of the map
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked

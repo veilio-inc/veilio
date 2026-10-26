@@ -10,6 +10,7 @@
 // is one-way: the token is never written to the map, so restore() cannot bring
 // the secret back. A developer who sees __REDACTED_AWS_KEY_1__ in their restored
 // code has been told, unmistakably, that a live key was in the payload.
+import { assertKnownOptions, optionKeys } from './options.js';
 // ─── Structural validators ───────────────────────────────────────────────────
 //
 // Every one of these is arithmetic over the value itself. Nothing here infers,
@@ -130,6 +131,226 @@ function looksLikePan(value) {
         /^6(?:011|5)/.test(digits) ||
         /^3(?:0[0-5]|[68])/.test(digits);
     return iin && luhnValid(digits);
+}
+/** Decode standard base64 without relying on `atob` (not in every runtime the
+ *  engine supports, and not in its ES2022 type surface). Null when the input
+ *  is not base64. */
+function decodeBase64(value) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const body = value.replace(/=+$/, '');
+    if (!/^[A-Za-z0-9+/]*$/.test(body) || body.length % 4 === 1)
+        return null;
+    let bits = 0;
+    let acc = 0;
+    let out = '';
+    for (const ch of body) {
+        acc = (acc << 6) | alphabet.indexOf(ch);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += String.fromCharCode((acc >> bits) & 0xff);
+        }
+    }
+    return out;
+}
+/** HTTP Basic credentials decode to `user:password` in printable text. A word
+ *  that happens to be base64 (`Authorization: Basic auth`) decodes to bytes. */
+function basicCredentials(value) {
+    const decoded = decodeBase64(value);
+    return decoded !== null && decoded.includes(':') && /^[\x20-\x7e]+$/.test(decoded);
+}
+/** Whether Basic credentials stay redacted in a test or example file. Half by
+ *  half, never the joined string (code review of #166, rulings 2 and 3): a
+ *  provider-format key anywhere in the decoded payload, a token-shaped user
+ *  half, or a strong password half. */
+function basicKept(value) {
+    const decoded = decodeBase64(value);
+    if (decoded === null || !decoded.includes(':'))
+        return isStrong(value);
+    const colon = decoded.indexOf(':');
+    return (holdsProviderKey(decoded) ||
+        isTokenShaped(decoded.slice(0, colon)) ||
+        isStrong(decoded.slice(colon + 1)));
+}
+/** The engine's high-entropy token test, as the catch-all rule below applies
+ *  it: 24 to 200 token characters, entropy over the assignment floor. */
+function isHighEntropyToken(value) {
+    return /^[A-Za-z0-9+/_-]{24,200}={0,2}$/.test(value) && shannonEntropy(value) >= ENTROPY_FLOOR;
+}
+/** A user half that is a token rather than a name: a high-entropy token.
+ *  Never `isStrong`: `Build-Agent01` is a name. A provider-format key as the
+ *  user is the other half of the ruling, and needs no test here: in a URL or
+ *  on a command line its own rule finds it in clear, and in Basic credentials
+ *  `basicKept` runs the provider rules over the decoded payload. */
+function isTokenShaped(value) {
+    return isHighEntropyToken(value);
+}
+/** A header value that is code, not a literal: it starts at a known code
+ *  root (an environment lookup, a config object, a template variable). A
+ *  dotted or bracketed literal is not code (`abc.def`), and a JWT - three
+ *  base64url parts, the first a JSON header - is always a credential (second
+ *  security review). */
+function isCodeExpression(value) {
+    if (/^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(value))
+        return false;
+    return /^(?:process\.env\.|os\.environ|os\.getenv\(|ENV\[|config\.|settings\.|secrets\.|import\.meta\.env\.|\$|\{\{)/.test(value);
+}
+/** `${NAME:-default}`, `${NAME-default}`, `${NAME:=default}`, and Spring's
+ *  `${NAME:default}`: the default is the value (finding 10). `${NAME}` and
+ *  `${NAME:?message}` stay placeholders. */
+const WITH_DEFAULT = /^\$\{[A-Za-z_][A-Za-z0-9_.]*(?::?[-=]|:(?![?+]))([^}]*)\}$/;
+// Values in a secret position: double-quoted, single-quoted, or bare. A bare
+// value ends at whitespace, a quote or a shell separator. A templating
+// placeholder that spans spaces (`${{ secrets.X }}`, `{{ x }}`,
+// `<your password>`, `${NAME:?a message}`) is matched whole first and captures nothing, so it is
+// skipped rather than cut in half at its first space (finding 4).
+const PH = '(?:\\$?\\{\\{[^}\\n]{0,200}\\}\\}|\\$\\{[^}\\s]*[ \\t][^}\\n]{0,200}\\}|<[^<>\\n]{1,100}>)';
+const DQ = '"([^"\\n]{0,256})"';
+const SQ = "'([^'\\n]{0,256})'";
+const BARE = '([^\\s"\'`;&|]{1,256})';
+// After a separating space a bare value that starts with `-` is the next flag.
+const BARE_ARG = '((?!-)[^\\s"\'`;&|]{1,256})';
+/** A command word: the name standing alone, then whitespace. */
+const command = (names) => `(?<![\\w.-])(?:${names})(?:\\.exe)?(?=[\\s"'])`;
+/** The rest of the command, bounded so a scan stays linear. A backslash at
+ *  the end of a line continues it (finding 8). A backtick ends it: in
+ *  Markdown it closes the inline code the command sits in. */
+const WINDOW = '(?:[^\\n;&|`\\\\]|\\\\\\r?\\n|\\\\[^\\n]){0,300}?';
+const SAME_LINE = `${WINDOW}[ \\t]`;
+/** A short flag on the command line, or as an element of an argv array
+ *  (`"-pVALUE"`, the value bare up to the closing quote). The argv form has
+ *  no quoted value of its own: the quote after the flag closes its element. */
+const flagOnLine = (flag, form) => `(?:${SAME_LINE}${form}|${WINDOW}["']${flag}${BARE})`;
+/** A short flag with its value attached only. */
+const attachedFlag = (flag) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`;
+/** A short flag with its value attached or after spaces. */
+const shortFlag = (flag) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE}|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`;
+// research R1. `-p` is the password only for these clients; for psql, ssh,
+// redis-cli and docker it is a port. For mysql and mariadb only the attached
+// form is: `-p shop` prompts for the password and opens database `shop`.
+const MYSQL_CLIENTS = 'mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlpump|mysqlbinlog|' +
+    'mariadb(?:-dump|-admin|-import|-check|-show)?';
+// These take `-p <password>` with a space as well.
+const SEPARATED_P_CLIENTS = 'mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport|sshpass';
+// `-P` is the password for these; for mysql it is the port.
+const DASH_CAP_P_TOOLS = 'sqlcmd|bcp|osql|isql|ipmitool';
+// research R2. Exact names; `*_FILE` variants hold paths and are not listed.
+const PASSWORD_ENV = 'PGPASSWORD|MYSQL_PWD|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MARIADB_ROOT_PASSWORD|' +
+    'MARIADB_PASSWORD|POSTGRES_PASSWORD|MONGO_INITDB_ROOT_PASSWORD|RABBITMQ_DEFAULT_PASS|' +
+    'MSSQL_SA_PASSWORD|SA_PASSWORD|SQLCMDPASSWORD|REDISCLI_AUTH|SSHPASS|ELASTIC_PASSWORD|' +
+    'KEYCLOAK_ADMIN_PASSWORD|KC_BOOTSTRAP_ADMIN_PASSWORD|RESTIC_PASSWORD|BORG_PASSPHRASE';
+/** Groups 1-6 of a `shortFlag`. */
+const FLAG_GROUPS = [1, 2, 3, 4, 5, 6];
+// research R12. Commands that take a `--password`, for telling a command line
+// from prose or help text (finding 5). A path (`./deploy.sh`, `bin/x`) counts
+// as a command too.
+const KNOWN_COMMANDS = 'mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlpump|mariadb[\\w-]*|' +
+    'mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport|psql|pg_dump|pg_dumpall|' +
+    'pg_restore|pg_basebackup|createdb|dropdb|redis-cli|sqlcmd|bcp|isql|osql|sqlplus|cqlsh|' +
+    'clickhouse-client|influx|cockroach|snowsql|ipmitool|sshpass|curl|wget|git|svn|docker|' +
+    'docker-compose|podman|nerdctl|buildah|skopeo|helm|kubectl|oc|az|aws|gcloud|npm|npx|yarn|' +
+    'pnpm|pip|pip3|twine|poetry|uv|gem|bundle|mvn|gradle|gradlew|dotnet|nuget|java|keytool|' +
+    'openssl|gpg|vault|consul|terraform|ansible|ansible-playbook|ansible-vault|rabbitmqctl|' +
+    'ldapsearch|ldapadd|ldapmodify|smbclient|lftp|sftp|rsync|zip|7z|jf|jfrog|gh|glab|heroku|' +
+    'flyctl|mc|rclone|restic|borg|op|bw|htpasswd|mosquitto_pub|mosquitto_sub|kcat|wp|php|' +
+    'python|python3|node|deno|bun|ruby|perl|bash|sh|zsh|pwsh|powershell|make';
+/** A line that is a shell command by its position: a prompt, a Dockerfile
+ *  RUN, a CI `run:` / `script:` / `command:` value. */
+const SHELL_LINE = /^\s*(?:(?:\$|>)\s|RUN\s|(?:-\s+)?(?:run|script|command|cmd|entrypoint|before_script|after_script)\s*:\s)/;
+/** A line that starts with a command: optional sudo/env, variable
+ *  assignments, then a known command or a path to one. */
+const COMMAND_LINE = new RegExp(`^\\s*(?:(?:sudo|exec|env|time|nohup)\\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*` +
+    `(?:(?:${KNOWN_COMMANDS})(?:\\.exe)?|\\.{0,2}/\\S+|~/\\S+|[\\w.-]+/[\\w./-]+)(?=\\s)`);
+/** Prose and help files: Markdown, text, reStructuredText, AsciiDoc, man
+ *  pages. Only there, and in text of unknown origin, can `--password` be
+ *  prose (second security review of #166). */
+const PROSE_FILE = /(?:\.(?:md|markdown|mdx|txt|text|rst|adoc|asciidoc|[1-9])|(?:^|\/)(?:readme|help|usage))$/i;
+/** The fenced code blocks of a Markdown text: from the line after an opening
+ *  fence to the start of the closing one. An unclosed fence runs to the end. */
+function fencesOf(code) {
+    const spans = [];
+    // \x60 is the backtick, spelled out so this file has no bare backtick
+    // outside a template (the purity test reads the source as code and strings).
+    const fence = /^[ \t]{0,3}(\x60{3,}|~{3,})/gm;
+    let open = null;
+    let m;
+    while ((m = fence.exec(code)) !== null) {
+        if (fence.lastIndex <= m.index)
+            fence.lastIndex = m.index + 1;
+        const marker = m[1][0];
+        if (open === null) {
+            const eol = code.indexOf('\n', m.index);
+            open = { at: eol < 0 ? code.length : eol + 1, marker };
+        }
+        else if (marker === open.marker) {
+            spans.push([open.at, m.index]);
+            open = null;
+        }
+    }
+    if (open !== null)
+        spans.push([open.at, code.length]);
+    return spans;
+}
+/** The start of the logical line holding `at`: lines that end in a backslash
+ *  continue into the next (finding 8). Bounded, so a scan stays linear. */
+function logicalLineStart(code, at) {
+    let start = code.lastIndexOf('\n', at - 1) + 1;
+    for (let hops = 0; hops < 50 && start > 0; hops++) {
+        let end = start - 1; // the newline
+        if (code[end - 1] === '\r')
+            end--;
+        if (code[end - 1] !== '\\')
+            break;
+        start = code.lastIndexOf('\n', end - 2) + 1;
+    }
+    return start;
+}
+/**
+ * Whether the value after `--password` at `at` is judged as a password.
+ *
+ * In source, config and scripts, always: the command may sit in a string
+ * literal or an argv array (a command run from code), and help text there
+ * is rare enough to redact. With no path, unless the value is prose-like. In a
+ * prose or help file, only on a command line - a fenced code block, a prompt,
+ * a CI shell key, a line that starts with a known command, or code in a
+ * string - and then unless the value is prose-like (second security review
+ * of #166, findings 1 and 3).
+ */
+function passwordFlagCounts(at, scan, value) {
+    if (scan.kind === 'source')
+        return true;
+    if (scan.kind === 'unknown')
+        return !proseValue(value);
+    if (inCommandContext(at, scan) || inStringOnLine(at, scan))
+        return !proseValue(value);
+    return false;
+}
+/** On a command line in a prose file: an argv element (the flag right after a
+ *  quote), a fenced code block, a prompt or CI shell key, or a line that
+ *  starts with a known command (finding 5). */
+function inCommandContext(at, scan) {
+    const before = scan.code[at - 1];
+    if (before === '"' || before === "'")
+        return true;
+    scan.fences ??= fencesOf(scan.code);
+    if (scan.fences.some(([start, end]) => at >= start && at < end))
+        return true;
+    const line = scan.code.slice(logicalLineStart(scan.code, at), at).slice(0, 300);
+    return SHELL_LINE.test(line) || COMMAND_LINE.test(line);
+}
+/** Inside a double-quoted string on its line: code quoted in prose. Single
+ *  quotes are not counted, as an apostrophe would open one. */
+function inStringOnLine(at, scan) {
+    const line = scan.code.slice(scan.code.lastIndexOf('\n', at - 1) + 1, at);
+    return (line.match(/"/g)?.length ?? 0) % 2 === 1;
+}
+/** A value that reads as help text or prose: one of a closed list of
+ *  metavars, a bracketed metavar, or `to` / `for` / `is` (finding 3). Any
+ *  other all-caps value (`HUNTER2X`) is a password. */
+function proseValue(value) {
+    return (/^(?:PASSWORD|PASS|PASSWD|PWD|TEXT|VALUE|SECRET|STRING|TOKEN|KEY)$/.test(value) ||
+        /^\[[^\]]*\]$/.test(value) ||
+        /^(?:to|for|is)$/.test(value));
 }
 // Patterns are written to be linear-time: no nested quantifiers over the same
 // character class, and bounded repetition wherever the input is attacker-shaped.
@@ -323,6 +544,8 @@ const PATTERNS = [
         label: 'HTTP Basic credentials',
         re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
         group: 1,
+        position: true,
+        keep: basicKept,
     },
     {
         type: 'jwt',
@@ -338,14 +561,161 @@ const PATTERNS = [
         label: 'Bearer / Authorization token',
         re: /(?:Authorization["'\s:=]{1,10})?\bBearer\s+([A-Za-z0-9._~+/-]{16,500}=*)/g,
         group: 1,
+        position: true,
+    },
+    // ─── Secret positions (spec 013) ──────────────────────────────────────────
+    //
+    // Slots that can only hold a credential, so the value is one whatever its
+    // strength: a weak password is exactly what a person types here. The lists
+    // and their sources are in research.md of spec 013. Every rule captures only
+    // the value, so only the secret is replaced - never the flag, the variable,
+    // the user or the host.
+    {
+        // In the header position a token is a token from 8 characters; on its own
+        // (the rule above) a short word after Bearer is usually prose.
+        type: 'bearer-token',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Bearer / Authorization token',
+        re: /(?<![\w-])(?:Proxy-)?Authorization["'\s:=]{1,10}Bearer[ \t]+([A-Za-z0-9._~+/-]{8,500}=*)/gi,
+        group: 1,
+        position: true,
+    },
+    {
+        type: 'basic-auth',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'HTTP Basic credentials',
+        re: /(?<![\w-])(?:Proxy-)?Authorization["'\s:=]{1,10}Basic[ \t]+([A-Za-z0-9+/]{4,400}={0,2})/gi,
+        group: 1,
+        position: true,
+        // `Authorization: Basic auth` is prose; real credentials decode to
+        // printable `user:password`.
+        validate: basicCredentials,
+        keep: basicKept,
+    },
+    {
+        // A raw header line or a curl -H argument takes a bare value; an entry in
+        // a header map only a quoted literal, because a bare value there is a
+        // variable. From 4 characters: no issued key is shorter, and a shorter
+        // value after the header name is prose. (Described rather than
+        // illustrated: an example header here would match this rule.)
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'API key header',
+        re: new RegExp(`(?<![\\w-])X-Api-Key(?:[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|([^\\s"'\`;,]{4,500}))|["'][ \\t]{0,3}:[ \\t]{0,3}(?:"([^"\\n]{4,500})"|'([^'\\n]{4,500})'))`, 'gi'),
+        groups: [1, 2, 3],
+        position: true,
+        // A member access or a call after the header name is code (finding 9).
+        validate: (value) => !isCodeExpression(value),
+    },
+    {
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command(MYSQL_CLIENTS)}${flagOnLine('-p', attachedFlag('-p'))}`, 'g'),
+        groups: [1, 2, 3, 4],
+        position: true,
+    },
+    {
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command(SEPARATED_P_CLIENTS)}${flagOnLine('-p', shortFlag('-p'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
+        position: true,
+    },
+    {
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command(DASH_CAP_P_TOOLS)}${flagOnLine('-P', shortFlag('-P'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
+        position: true,
+    },
+    {
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command('redis-cli')}${flagOnLine('-a', shortFlag('-a'))}`, 'g'),
+        groups: [...FLAG_GROUPS, 7],
+        position: true,
+    },
+    {
+        // Any command, but only on a command line (finding 5). The name must end
+        // at `=` or a space, so --password-stdin and --password-file are not it
+        // (nor --no-password, whose double dash comes before `no`).
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG})|["'][ \\t]*,[ \\t]*(?:${DQ}|${SQ}))`, 'g'),
+        // The argv array form (the flag and its value as two quoted elements)
+        // adds groups 7 and 8.
+        groups: [...FLAG_GROUPS, 7, 8],
+        position: true,
+        context: passwordFlagCounts,
+    },
+    {
+        // curl only: `-u 1000:1000` is a uid:gid for docker. The user is kept.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command('curl')}${SAME_LINE}(?:-u[ \\t]*|--user(?:[ \\t]+|=))(?:"[^":\\n]{0,128}:([^"\\n]{0,256})"|'[^':\\n]{0,128}:([^'\\n]{0,256})'|[^\\s"':]{1,128}:([^\\s"'\`;&|]{0,256}))`, 'g'),
+        groups: [1, 2, 3],
+        position: true,
+    },
+    {
+        // The user of curl -u, when it is a token (provider-shaped or a
+        // high-entropy token): redacted in every file. A name stays.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Token on a command line',
+        re: new RegExp(`${command('curl')}${SAME_LINE}(?:-u[ \\t]*|--user(?:[ \\t]+|=))["']?([^\\s"':]{1,256}):`, 'g'),
+        group: 1,
+        validate: isTokenShaped,
+    },
+    {
+        // Shell, dotenv, compose and PowerShell forms. After `=` a space ends a
+        // shell assignment (`PGPASSWORD= psql` sets it empty), so a bare value
+        // must follow at once; a quoted one may follow spaces (`$env:X = "v"`).
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password in an environment variable',
+        re: new RegExp(`(?<![\\w])(?:${PASSWORD_ENV})(?:["']?[ \\t]{0,3}=[ \\t]{0,3}(?:${PH}|${DQ}|${SQ})|=(?:${PH}|${BARE})|["']?[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|${DQ}|${SQ}|${BARE}))`, 'g'),
+        groups: [1, 2, 3, 4, 5, 6],
+        position: true,
     },
     {
         type: 'connection-string',
         disposition: 'destroy',
         severity: 'critical',
         label: 'Connection string password',
-        re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{1,128}:([^\s:@/]{1,256})@/gi,
+        // The user may be empty: `redis://:password@host` is the Redis form.
+        re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{0,128}:([^\s:@/]{1,256})@/gi,
         group: 1,
+        position: true,
+    },
+    {
+        // The user half of URL userinfo, when it is a token (`https://<token>@`,
+        // provider-shaped or a high-entropy token): redacted in every file. A
+        // name stays. The group is not the tail of the match, so its offset comes
+        // from the `d` flag.
+        type: 'connection-string',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'Token in URL userinfo',
+        re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/([^\s:@/]{1,256})(?::[^\s@/]{0,256})?@/dgi,
+        group: 1,
+        validate: isTokenShaped,
     },
     {
         type: 'password-assignment',
@@ -440,6 +810,14 @@ const PATTERNS = [
         validate: peselValid,
     },
 ];
+/** The provider-format rules: a named key shape, destroyed, not one of the
+ *  generic slot or catch-all rules. Copies without the global flag, so testing
+ *  a string never moves the table's own `lastIndex`. */
+let providerRules = null;
+function holdsProviderKey(text) {
+    providerRules ??= PATTERNS.filter((p) => p.disposition === 'destroy' && p.position !== true && !GENERIC_MATCHERS.has(p.type)).map((p) => new RegExp(p.re.source, p.re.flags.replace(/[gyd]/g, '')));
+    return providerRules.some((re) => re.test(text));
+}
 /**
  * The grade each rule carries, derived from the table above rather than
  * restated. A second hand-written copy is one that drifts.
@@ -527,18 +905,33 @@ function classifyValue(value, assignmentShaped) {
     // else is left: a residue next to a token is part of a longer secret, and a
     // symbol-map placeholder may stand for a project name inside a credential,
     // so both are judged as before (review of 9d3f6d0).
-    if (trimmed !== '' && trimmed.replace(REDACTION_TOKENS, '') === '')
+    // Nothing at all: `PGPASSWORD=`, `-p''`, `curl -u admin:`.
+    if (trimmed === '')
+        return 'placeholder';
+    if (trimmed.replace(REDACTION_TOKENS, '') === '')
         return 'placeholder';
     if (KNOWN_DUMMY.has(trimmed.toLowerCase()))
         return 'placeholder';
     // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
     // case-insensitively against the ORIGINAL — lowercasing first would stop
     // `$DB_PASSWORD` matching an upper-case-only shell-variable pattern.
-    if (/^\$\{[^}]*\}$|^\{\{[^}]*\}\}$|^%[sdv]$|^\$[a-z_][a-z0-9_]*$|^<[^>]*>$/i.test(trimmed)) {
+    if (/^\$\{\{[^}]*\}\}$|^\$\{[^}]*\}$|^\{\{[^}]*\}\}$|^%[sdv]$|^\$[a-z_][a-z0-9_]*$|^<[^>]*>$/i.test(trimmed)) {
         return 'placeholder';
     }
+    // Windows `%VAR%`, and a command substitution that reads the secret from
+    // somewhere else (`$(cat /run/secrets/pw)`, or a backtick form).
+    if (/^%[a-z_][a-z0-9_]*%$/i.test(trimmed) || /^\$\(|^`/.test(trimmed))
+        return 'placeholder';
     // A run of one repeated character conveys nothing.
     if (/^(.)\1{3,}$/.test(trimmed))
+        return 'placeholder';
+    // Masked-out samples: `xxx`, `***`, `xxxx-xxxx-xxxx`, `[REDACTED]`.
+    if (/^[x*•]{3,}(?:[-_ ][x*•]{3,})*$/i.test(trimmed))
+        return 'placeholder';
+    if (/^\[redacted\]$/i.test(trimmed))
+        return 'placeholder';
+    // An ellipsis stands for a value left out.
+    if (/^(?:…|\.{3})$/.test(trimmed))
         return 'placeholder';
     // Everything below is a guess about prose, and prose is only a plausible
     // reading where the value could have been an enum or a mode. A connection
@@ -575,6 +968,80 @@ export function shannonEntropy(value) {
 /** Below this, an assignment value is more likely a sentence or a path than a
  *  credential. Real tokens are near-uniform over their alphabet. */
 const ENTROPY_FLOOR = 2.6;
+/**
+ * Whether a value in a secret position is strong (spec 013, research R7):
+ * long and mixed, or long and near-uniform. Anything else is weak, and a weak
+ * value is only reported in a test, fixture or example file. Errs towards
+ * strong: a value just over the line is redacted in tests too.
+ */
+function isStrong(value) {
+    const entropy = shannonEntropy(value);
+    const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((c) => c.test(value)).length;
+    return ((value.length >= 12 && classes >= 3 && entropy >= 3) || (value.length >= 20 && entropy >= 3.3));
+}
+// research R6. Whole path segments and whole file-name shapes, so
+// `src/attestation.ts` or `latest/config.ts` is real source.
+const EXAMPLE_DIRS = new Set([
+    'test',
+    'tests',
+    '__tests__',
+    'spec',
+    'specs',
+    '__specs__',
+    'fixtures',
+    'fixture',
+    '__fixtures__',
+    'testdata',
+    'test-data',
+    'test_data',
+    '__mocks__',
+    'mocks',
+    'examples',
+    'example',
+    'samples',
+    'sample',
+    'e2e',
+]);
+// `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are taken by
+// the suffix shapes below.
+const EXAMPLE_FILES = new Set([
+    'conftest.py',
+    '.env.test',
+    '.env.testing',
+    '.env.ci',
+]);
+const EXAMPLE_FILE_SHAPE = /\.(?:test|spec)\.[^/]+$|_test\.[^/.]+$|^test_[^/]*\.py$|_spec\.rb$|\.(?:example|sample|template|dist|tpl)$/;
+/**
+ * Whether `path` names a test, fixture or example file (spec 013, decision 6).
+ * There a weak value in a secret position is a fixture, and destroying it
+ * would corrupt the test for no safety gain, so it is reported instead.
+ */
+export function isExamplePath(path, root) {
+    const parts = projectPart(path, root).toLowerCase().split('/').filter(Boolean);
+    const file = parts.pop();
+    if (file === undefined)
+        return false;
+    if (parts.some((dir) => EXAMPLE_DIRS.has(dir)))
+        return true;
+    return EXAMPLE_FILES.has(file) || EXAMPLE_FILE_SHAPE.test(file);
+}
+/**
+ * The part of `path` inside the project, `/`-separated (finding 6). A relative
+ * path is taken as relative to the project. An absolute one is cut at `root`;
+ * without a root, or outside it, only its file name counts: the engine reads
+ * no filesystem, so it cannot find the project's `.git`, and a folder above
+ * the project (`/home/test/...`) must never make real source a fixture.
+ */
+function projectPart(path, root) {
+    const p = path.replace(/\\/g, '/');
+    if (!/^(?:\/|[A-Za-z]:\/)/.test(p))
+        return p;
+    const base = root?.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (base !== undefined && base !== '' && p.toLowerCase().startsWith(`${base.toLowerCase()}/`)) {
+        return p.slice(base.length + 1);
+    }
+    return p.slice(p.lastIndexOf('/') + 1);
+}
 /** Show enough of the value to be recognisable, never enough to be usable. */
 export function previewSecret(value) {
     const clean = value.replace(/\s+/g, ' ').trim();
@@ -604,13 +1071,15 @@ function positionOf(starts, offset) {
     }
     return { line: lo + 1, column: offset - starts[lo] + 1 };
 }
-function collectMatches(code) {
+function collectMatches(code, scan) {
     const found = [];
     for (const pattern of PATTERNS) {
         // The only two patterns that read their value out of an assignment, and so
         // the only two where an ordinary configuration word is a plausible reading
-        // of what matched.
-        const assignmentShaped = pattern.type === 'password-assignment' || pattern.type === 'high-entropy-string';
+        // of what matched. A secret-position rule shares a type with them but not
+        // the doubt: nothing but a password sits after `-p` on a mysql line.
+        const assignmentShaped = pattern.position !== true &&
+            (pattern.type === 'password-assignment' || pattern.type === 'high-entropy-string');
         pattern.re.lastIndex = 0;
         let m;
         while ((m = pattern.re.exec(code)) !== null) {
@@ -621,17 +1090,32 @@ function collectMatches(code) {
                 pattern.re.lastIndex = m.index + 1;
             let start = m.index;
             let value = m[0];
-            if (pattern.group !== undefined) {
-                const captured = m[pattern.group];
-                if (captured === undefined)
+            const groups = pattern.groups ?? (pattern.group === undefined ? [] : [pattern.group]);
+            if (groups.length > 0) {
+                const group = groups.find((g) => m[g] !== undefined);
+                if (group === undefined)
                     continue;
-                // Locate the group inside the match. Groups here are always the trailing
-                // credential portion, so a lastIndexOf is exact.
-                const offset = m[0].lastIndexOf(captured);
+                const captured = m[group];
+                // Locate the group inside the match: from the `d` flag where the rule
+                // has it (a group that is not the tail of its match). Otherwise the
+                // group is the trailing credential portion (at most a closing quote or
+                // colon follows, which the value cannot contain), so a lastIndexOf is
+                // exact.
+                const at = m.indices?.[group]?.[0];
+                const offset = at !== undefined ? at - m.index : m[0].lastIndexOf(captured);
                 if (offset < 0)
                     continue;
                 start = m.index + offset;
                 value = captured;
+            }
+            if (pattern.context !== undefined && !pattern.context(m.index, scan, value))
+                continue;
+            // `${NAME:-default}`: the default is the value, and only it is replaced.
+            const withDefault = WITH_DEFAULT.exec(value);
+            if (withDefault !== null) {
+                const fallback = withDefault[1];
+                start += value.length - 1 - fallback.length;
+                value = fallback;
             }
             // Structural confirmation first. A rule carrying a validator is declaring
             // its regex to be only a candidate generator — a digit run is the most
@@ -650,14 +1134,29 @@ function collectMatches(code) {
             // lands in the same tier: surfaced, not acted on.
             if (assignmentShaped && shannonEntropy(value) < ENTROPY_FLOOR)
                 verdict = 'ambiguous';
+            // Decision 6: in a test, fixture or example file a weak value in a
+            // secret position is a fixture. It is reported, not destroyed; a strong
+            // one is destroyed there as everywhere.
+            const fixture = verdict === 'credential' &&
+                pattern.position === true &&
+                scan.example &&
+                !(pattern.keep ?? isStrong)(value);
+            if (fixture)
+                verdict = 'ambiguous';
             const ambiguous = verdict === 'ambiguous';
             found.push({
                 type: ambiguous ? 'possible-credential' : pattern.type,
                 severity: ambiguous ? 'medium' : pattern.severity,
-                label: ambiguous ? 'Possible hardcoded credential' : pattern.label,
+                label: fixture
+                    ? `${pattern.label} (weak, in a test or example file: reported only)`
+                    : ambiguous
+                        ? 'Possible hardcoded credential'
+                        : pattern.label,
                 start,
                 end: start + value.length,
                 value,
+                ...(fixture ? { fixture: true } : {}),
+                ...(assignmentShaped ? { generic: true } : {}),
             });
         }
         pattern.re.lastIndex = 0;
@@ -694,6 +1193,10 @@ function detectionPriority(type) {
         return 2;
     return 3;
 }
+/** A downgraded fixture ranks as the generic credential rule it came from. */
+function priorityOf(m) {
+    return m.fixture === true ? detectionPriority('password-assignment') : detectionPriority(m.type);
+}
 /** How much is at stake if this match LOSES an overlap: a destroyed value
  *  outranks a masked one, which outranks one that is only reported. */
 function dispositionRank(type) {
@@ -710,12 +1213,21 @@ function dispositionRank(type) {
  *  the card match and the password was written into the SymbolMap, and stopped
  *  blocking the paste. A value any rule reads as a credential is never masked:
  *  within the same disposition the old specificity order still decides. */
-function dropOverlaps(matches) {
+function dropOverlaps(all) {
+    // The context verdict first: a generic assignment match over a downgraded
+    // fixture is the same value read without its context, and must not turn a
+    // report back into a redaction. Only one that lies within the fixture: one
+    // that runs past it holds more than the fixture, and the normal order
+    // decides (second security review). A provider-format match still wins.
+    const fixtures = all.filter((m) => m.fixture === true);
+    const matches = fixtures.length === 0
+        ? all
+        : all.filter((m) => m.generic !== true || !fixtures.some((f) => f.start <= m.start && m.end <= f.end));
     const sorted = [...matches].sort((a, b) => {
         const byDisposition = dispositionRank(b.type) - dispositionRank(a.type);
         if (byDisposition !== 0)
             return byDisposition;
-        const byPriority = detectionPriority(b.type) - detectionPriority(a.type);
+        const byPriority = priorityOf(b) - priorityOf(a);
         if (byPriority !== 0)
             return byPriority;
         const byLength = b.end - b.start - (a.end - a.start);
@@ -837,9 +1349,35 @@ export const REDACTION_TOKENS = new RegExp(`__REDACTED_(?:${[...new Set(Object.v
     .filter((type) => SECRET_DISPOSITIONS[type] === 'mask')
     .map((type) => type.toUpperCase().replace(/[^A-Z0-9]/g, '_'))
     .join('|')})__`, 'g');
+const SCAN_OPTIONS = optionKeys({ path: true, root: true });
+function scanContext(code, options) {
+    const path = options.path;
+    return {
+        code,
+        example: path !== undefined && isExamplePath(path, options.root),
+        kind: path === undefined
+            ? 'unknown'
+            : PROSE_FILE.test(path.replace(/\\/g, '/'))
+                ? 'prose'
+                : 'source',
+    };
+}
+/**
+ * Where the credentials in `code` stand, whatever the policy: every value a
+ * rule would destroy, and every value it only reports as a possible
+ * credential. The masking pass leaves these alone, so a credential never
+ * reaches the symbol map in any `secrets` mode (founder decision 2026-10-26).
+ */
+export function credentialSpans(code, options = {}) {
+    assertKnownOptions('credentialSpans', options, SCAN_OPTIONS);
+    return dropOverlaps(collectMatches(code, scanContext(code, options)))
+        .filter((m) => m.type === 'possible-credential' || SECRET_DISPOSITIONS[m.type] === 'destroy')
+        .map((m) => [m.start, m.end]);
+}
 /** Detect credentials in `code` without modifying it. */
-export function detectSecrets(code) {
-    return scanSecrets(code, 'warn').findings;
+export function detectSecrets(code, options = {}) {
+    assertKnownOptions('detectSecrets', options, SCAN_OPTIONS);
+    return scan(code, 'warn', options).findings;
 }
 /**
  * Detect credentials and, under the `redact` policy, replace critical/high
@@ -850,10 +1388,15 @@ export function detectSecrets(code) {
  * never written to the SymbolMap, `restore()` leaves it in place — the redaction
  * is one-way by construction, not by convention.
  */
-export function scanSecrets(code, policy = 'redact') {
+export function scanSecrets(code, policy = 'redact', options = {}) {
+    assertKnownOptions('scanSecrets', options, SCAN_OPTIONS);
+    return scan(code, policy, options);
+}
+/** `scanSecrets` with its options already checked. */
+function scan(code, policy, options) {
     if (policy === 'off')
         return { findings: [], code, regulated: [] };
-    const matches = dropOverlaps(collectMatches(code));
+    const matches = dropOverlaps(collectMatches(code, scanContext(code, options)));
     if (matches.length === 0)
         return { findings: [], code, regulated: [] };
     const starts = lineIndex(code);

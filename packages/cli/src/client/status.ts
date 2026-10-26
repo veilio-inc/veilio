@@ -6,10 +6,10 @@
 // rest of that answer names teammates, and stays out of this one.
 
 import { getTeamKeyPending, listMaps, listProjects } from '../cloud.js'
-import { readCredential } from '../credential.js'
+import { readScopedCredential, refusalScope, PROJECT_ENV } from './project-scope.js'
 import { readTeamUnlock } from '../team-unlock.js'
 import { personalMapsKeyExpiry } from './personal-maps-key.js'
-import { refuse, refusalFromCloudError, type Outcome } from './wording.js'
+import { refusalFromCloudError, type Outcome } from './wording.js'
 import type { ClientContext } from './maps.js'
 
 export interface TeamStatus {
@@ -17,7 +17,7 @@ export interface TeamStatus {
   instance: string
   teamId: string | null
   /** The chosen project, with its name when the server could say it. */
-  project: { id: string; name: string | null } | null
+  project: { id: string; name: string | null; from?: typeof PROJECT_ENV } | null
   teamKeyUntil: string | null
   personalKeyUntil: string | null
   /** Since when a rotation is owed; null when none is; undefined when the
@@ -26,17 +26,25 @@ export interface TeamStatus {
 }
 
 export async function teamStatus(ctx: ClientContext): Promise<Outcome<TeamStatus>> {
-  const credential = readCredential(ctx.home)
-  if (!credential) return refuse('not_signed_in')
+  const scoped = await readScopedCredential(ctx)
+  if (!scoped.ok) return scoped
+  const credential = scoped.value
   let teamId: string | null
   try {
     teamId = (await listMaps(credential)).team?.id ?? null
   } catch (err) {
-    return { ok: false, refusal: refusalFromCloudError(err, { project: credential.project }) }
+    return { ok: false, refusal: refusalFromCloudError(err, refusalScope(credential)) }
   }
 
   let project: TeamStatus['project'] = null
-  if (credential.project) {
+  if (credential.projectFrom) {
+    // Named by the listing that resolved VEILIO_PROJECT: no second one.
+    project = {
+      id: credential.project!,
+      name: credential.projectName ?? null,
+      from: credential.projectFrom,
+    }
+  } else if (credential.project) {
     let name: string | null = null
     try {
       name =
