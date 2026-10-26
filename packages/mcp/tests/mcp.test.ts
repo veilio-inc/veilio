@@ -11,6 +11,9 @@ import {
 } from '../src/server.js'
 import { TOOLS, callTool, type ToolContext } from '../src/tools.js'
 import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 /**
  * The MCP result shapes these tests actually read.

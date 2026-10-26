@@ -8,6 +8,9 @@ import { EXIT_ERROR, EXIT_FINDINGS, type Io } from '../src/commands.js'
 import { saveMap, resolveMapPath } from '../src/store.js'
 import { RESTORE_CASES } from '../../engine/tests/fixtures/restore-cases.js'
 import { mapsFor, teamScenario } from './helpers/team-scenario.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 /**
  * `veilio restore` follows the one restore rule (spec 028): the team's maps,

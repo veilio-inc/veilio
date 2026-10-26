@@ -6,6 +6,9 @@ import { main } from '../src/index.js'
 import { EXIT_OK, type Io } from '../src/commands.js'
 import { loadMap, resolveMapPath, saveMap } from '../src/store.js'
 import { mapsFor, teamScenario } from './helpers/team-scenario.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 /**
  * `veilio scrub` numbers from the team's namespace when signed in (spec 030,

@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { readCredential, removeCredential, credentialPath } from '../src/credential.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 /**
  * The offline promise, enforced twice over.

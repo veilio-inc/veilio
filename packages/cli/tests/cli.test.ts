@@ -6,6 +6,9 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK } from '../src/commands.js'
 import type { Io } from '../src/commands.js'
 import { MapOverwriteError, saveMap } from '../src/store.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 let cwd: string
 
