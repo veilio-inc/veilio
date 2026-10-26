@@ -414,48 +414,83 @@ function randomLooking(value: string): boolean {
 // connection string's password. Their shape is no sign of a path.
 const PUNCTUATED_RULES = new Set(['bearer-token', 'basic-auth', 'connection-string'])
 
-/** Path-, URL- or version-shaped: starts like a path (`/`, `~/`, `./`, a
- *  drive letter) or a URL (`scheme://`), or is dotted or slashed segments
- *  that each read as a word, a name or a number (`v1.2.3-Beta.4`,
- *  `example.org/v2/Path`). Base64 and dotted tokens are not: their segments
- *  are random (review of 6b5d4b0). */
-function pathShaped(value: string): boolean {
-  if (/^(?:\/|~\/|\.\.?\/|[A-Za-z]:\\|[a-z][a-z0-9+.-]*:\/\/)/.test(value)) return true
-  if (!/[/.:\\]/.test(value)) return false
-  return value
-    .split(/[/.:\\-]+/)
-    .filter(Boolean)
-    .every(
-      (seg) => /^(?:[A-Za-z]+[0-9]*|[0-9]+)$/.test(seg) && (seg.length < 6 || !randomLooking(seg))
-    )
+/** The share of a run of letters that is vowels (`y` counts: `python`). */
+function vowelRatio(letters: string): number {
+  return letters.length === 0 ? 0 : (letters.match(/[aeiouy]/gi)?.length ?? 0) / letters.length
 }
+
+/** Path-, URL- or version-shaped (review of d55d9e2): after an optional
+ *  scheme (`https://`) or drive (`C:\`), two or more segments between
+ *  `/ \ . : -`, each a number or letters with digits only at the end that
+ *  read as a word (a quarter vowels or more, or a short lower-case piece such
+ *  as `usr` or `v2`), and at least one a word of four letters or more. One
+ *  random segment after `/` or `./`, and dotted random segments
+ *  (`Kq7.Zw3.Xv9.Rt2`), are not paths: their entropy decides. */
+function pathShaped(value: string): boolean {
+  const rest = value.replace(/^(?:[a-z][a-z0-9+.-]*:\/\/|[A-Za-z]:\\)/, '')
+  const segments = rest.split(/[/.:\\-]+/).filter(Boolean)
+  if (segments.length < 2) return false
+  let word = false
+  for (const seg of segments) {
+    if (/^[0-9]+$/.test(seg)) continue
+    const m = /^([A-Za-z]+)[0-9]*$/.exec(seg)
+    if (!m) return false
+    const letters = m[1]!
+    const wordy = vowelRatio(letters) >= 0.25
+    if (!wordy && !/^[a-z]{1,3}$/.test(letters)) return false
+    if (wordy && letters.length >= 4) word = true
+  }
+  return word
+}
+
+/** The words environment variable names are made of (founder decision 2,
+ *  review of d55d9e2). A value counts as a variable's name only if every
+ *  segment is one of these, optionally with digits after it, or a short
+ *  number; an unknown word means it is not a name and it is redacted, as
+ *  before decision 2. Fail closed: add a word here, never a shape rule. */
+export const ENV_NAME_WORDS: ReadonlySet<string> = new Set(
+  `
+  ACCESS ACCOUNT ADDR ADDRESS ADMIN AGENT ALLOWED ANALYTICS ANTHROPIC API APP APPLICATION
+  ARN AUDIENCE AUTH AUTHORITY AWS AZURE BACKEND BASE BEARER BUCKET BUILD CA CACHE CALLBACK
+  CDN CERT CHANNEL CI CLIENT CLOUD CLOUDFLARE CLUSTER CODE CONFIG CONN CONNECTION CONSUMER
+  CONTAINER CORS CREDENTIAL CREDENTIALS CRON CSRF DATA DATABASE DB DEBUG DEFAULT DEPLOY DEV
+  DIR DISCORD DNS DOCKER DOMAIN DSN ELASTIC EMAIL ENABLE ENABLED ENCRYPTION ENDPOINT ENV
+  ENVIRONMENT EXPIRES EXPIRY EXTERNAL FEATURE FILE FIREBASE FLAG FRONTEND FTP GATEWAY GCP
+  GCS GITHUB GITLAB GOOGLE GRAPHQL GROUP GRPC HASH HEROKU HMAC HOME HOOK HOST HOSTNAME HTTP
+  HTTPS ID IDENTITY INDEX INTERNAL ISSUER JWKS JWT KAFKA KEY KEYS LDAP LEVEL LICENSE LIMIT
+  LOCAL LOG LOGIN LOGS MAIL MAILGUN MASTER MAX MIN MODE MODEL MONGO MONGODB MYSQL NAME
+  NAMESPACE NETWORK NEXT NODE NPM OAUTH OPENAI ORG ORGANIZATION ORIGIN OUTPUT OWNER PASS
+  PASSPHRASE PASSWORD PATH PAYPAL PEM PG PORT POSTGRES POSTGRESQL PREFIX PRIMARY PRIVATE
+  PROD PRODUCTION PROJECT PROVIDER PROXY PUBLIC PUBLISHABLE PWD QUEUE RABBITMQ RATE READ
+  REDIRECT REDIS REFRESH REGION REGISTRY RELEASE REMOTE REPO REPOSITORY REST ROLE ROOT ROUTE
+  S3 SALT SANDBOX SCHEMA SCOPE SECRET SECRETS SECURE SENDGRID SENTRY SERVER SERVICE SESSION
+  SFTP SHARED SIGNING SITE SLACK SMTP SNS SOCKET SQS SSH SSL SSO STAGE STAGING STORAGE STORE
+  STRIPE SUPABASE TABLE TEAM TENANT TEST TIMEOUT TLS TOKEN TOPIC TRACE TWILIO UPLOAD URI URL
+  USER USERNAME VAULT VERCEL VERSION WEB WEBHOOK WRITE WS WSS ZONE
+  `
+    .split(/\s+/)
+    .filter(Boolean)
+)
 
 /** An environment variable's name used as a value (`'google-api-key':
  *  'GOOGLE_KEY'`): a reference, not a secret, left as written (founder
- *  decision 2). Narrowed by the review of f19df80: only for assignment-style
- *  findings, never a bearer, basic-auth or connection-string value; it must
- *  read as words, upper case with at least one `_` and every segment of at
- *  most twelve characters holding a vowel, digits only at its end or a
- *  number alone (`DATABASE_URL`, `STRIPE_SECRET_KEY`, `API_KEY2`,
- *  `AWS_REGION_2`), and the whole not looking random (review of 968b3b2).
- *  The cap also rules out a run of sixteen letters. All caps alone
- *  (`QXZRTPLMKWVBNHGF`) is not a name. */
+ *  decision 2). Only for assignment-style findings, never a bearer,
+ *  basic-auth or connection-string value; upper case with at least one `_`;
+ *  every segment a word of ENV_NAME_WORDS (digits after it allowed:
+ *  `KEY2`) or a number; at most one number, of four digits at most
+ *  (`AWS_REGION_2`, `PORT_8080`); mostly letters. Shape alone cannot tell
+ *  random letter blocks from words (`XQAE_ZPOW_KIVR_TUYM`), so an unknown
+ *  word means it is not a name (reviews of f19df80, 968b3b2 and d55d9e2). */
 function referenceName(value: string, type: string): boolean {
   if (PUNCTUATED_RULES.has(type)) return false
   if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value)) return false
   const segments = value.split('_')
-  // A number segment is a version or a port (PORT_8080, AWS_REGION_2), never a
-  // long run of digits, and there is at most one; a name is mostly letters.
   const numbers = segments.filter((seg) => /^[0-9]+$/.test(seg))
   if (numbers.length > 1 || numbers.some((seg) => seg.length > 4)) return false
   const letters = value.replace(/[^A-Z]/g, '').length
   if (letters * 2 < value.replace(/_/g, '').length) return false
-  return (
-    segments.every(
-      (seg) =>
-        /^[0-9]+$/.test(seg) ||
-        (/^[A-Z]+[0-9]*$/.test(seg) && seg.length <= 12 && /[AEIOUY]/.test(seg))
-    ) && !randomLooking(value)
+  return segments.every(
+    (seg) => /^[0-9]+$/.test(seg) || ENV_NAME_WORDS.has(seg.replace(/[0-9]+$/, ''))
   )
 }
 
@@ -481,10 +516,21 @@ export function highSignal(value: string, type = ''): boolean {
   // entropy; a bearer, basic-auth or connection-string value is, its
   // punctuation being the token's own (review of 6b5d4b0).
   if (!PUNCTUATED_RULES.has(type) && pathShaped(value)) return false
-  if (!randomLooking(value)) return false
   const core = value.replace(/[_\-/.:+=\\]/g, '')
-  if (/[A-Za-z]/.test(core) && /[0-9]/.test(core) && core.length >= 8 && shannonEntropy(core) >= 3)
-    return true
+  const random = randomLooking(value)
+  if (
+    /[A-Za-z]/.test(core) &&
+    /[0-9]/.test(core) &&
+    core.length >= 8 &&
+    shannonEntropy(core) >= 3
+  ) {
+    if (random) return true
+    // A long one whose letters have few vowels is random letters, not words,
+    // even with its digits at one end (`qzkvwpxmrtbn8274`; random base62 sits
+    // near 0.19, `Configuration2` at 0.46; review of d55d9e2).
+    if (core.length >= 12 && vowelRatio(core.replace(/[^A-Za-z]/g, '')) < 0.25) return true
+  }
+  if (!random) return false
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_-]/].filter((c) => c.test(value)).length
   if (core.length >= 10 && classes >= 3) return true
   return /^[A-Za-z]{16,}$/.test(core) && shannonEntropy(core) >= 3
@@ -495,7 +541,9 @@ export function highSignal(value: string, type = ''): boolean {
  *  value with structural signal; never the map's own grammar. */
 export function carriedForward(type: string, value: string): boolean {
   return (
-    (!HEURISTIC.has(type) || highSignal(value)) && value.length >= 6 && !OWN_GRAMMAR.test(value)
+    (!HEURISTIC.has(type) || highSignal(value, type)) &&
+    value.length >= 6 &&
+    !OWN_GRAMMAR.test(value)
   )
 }
 
@@ -587,13 +635,17 @@ const isRegulated = (f: Finding) => SECRET_DISPOSITIONS[f.type] === 'mask'
  *  one already written cannot cover for another, review of 5f11069) or a
  *  regulated number the scanner reads (belt and braces beside the keys
  *  restore() resolved). */
-export function restoreAdds(before: string, after: string): string | null {
+/** What a restoration would write back that Veilio keeps from it: the kind,
+ *  and for a regulated number which one. guard.ts holds the words. */
+export type Withheld = { kind: 'credential' | 'manual' | 'regulated'; label?: string }
+
+export function restoreAdds(before: string, after: string): Withheld | null {
   const b = detectSecrets(before)
   const a = detectSecrets(after)
   if (adds(findingValues(before, isProviderKey, b), findingValues(after, isProviderKey, a)))
-    return 'a credential Veilio removed'
+    return { kind: 'credential' }
   if (adds(findingValues(before, isRegulated, b), findingValues(after, isRegulated, a)))
-    return 'a regulated number Veilio masks'
+    return { kind: 'regulated' }
   return null
 }
 
@@ -602,7 +654,8 @@ function wholeTokenIn(text: string, value: string): boolean {
   for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
     const before = text[i - 1]
     const after = text[i + value.length]
-    if (!(before && /[A-Za-z0-9_]/.test(before)) && !(after && /[A-Za-z0-9_]/.test(after)))
+    // Any letter or digit, not only ASCII: `Jan` in `Janów` is inside a word.
+    if (!(before && /[\p{L}\p{N}_]/u.test(before)) && !(after && /[\p{L}\p{N}_]/u.test(after)))
       return true
   }
   return false
@@ -624,17 +677,17 @@ export function restoresNeverRestored(
   before: string,
   resolved: readonly string[],
   map: SymbolMap
-): string | null {
+): Withheld | null {
   for (const p of resolved) {
     const base = NEVER_RESTORED.find((b) => p.startsWith(b))
     // Skipped only when the arguments already hold the value as a whole
     // token, not inside another word (`Jan` in `January`, review of 0ef312b).
     if (!base || !Object.hasOwn(map, p) || wholeTokenIn(before, map[p]!)) continue
     return base === MANUAL_BASE
-      ? 'a value marked by hand'
+      ? { kind: 'manual' }
       : base === '__QUARANTINED__'
-        ? 'a credential Veilio removed'
-        : `a regulated number Veilio masks (${REGULATED_LABELS.get(base) ?? 'a regulated number'})`
+        ? { kind: 'credential' }
+        : { kind: 'regulated', label: REGULATED_LABELS.get(base) }
   }
   return null
 }

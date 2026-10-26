@@ -14,6 +14,7 @@ function rng(seed: number) {
 }
 
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+const CONSONANTS = 'bcdfghjklmnpqrstvwxz'
 const ALNUM = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const WORDS = ['Required', 'Configuration', 'Optional', 'Disabled', 'required', 'postgres']
 const IBANS = ['GB29NWBK60161331926819', 'DE89370400440532013000']
@@ -44,7 +45,7 @@ export function generate(seed: number): Case {
   const pieces: string[] = []
   const n = 2 + Math.floor(r() * 6)
   for (let i = 0; i < n; i++) {
-    const kind = Math.floor(r() * 9)
+    const kind = Math.floor(r() * 13)
     if (kind === 0) {
       const v = `AKIA${str(r, UPPER + '0123456789', 16)}`
       pieces.push(`key ${v}`)
@@ -52,13 +53,9 @@ export function generate(seed: number): Case {
       const v = `ghp_${str(r, ALNUM, 36)}`
       pieces.push(`token ${v}`)
     } else if (kind === 2) {
-      // Every digit once, then four more: enough entropy that the scanner
-      // destroys it rather than reporting a possible credential.
-      const digits = '0123456789'
-        .split('')
-        .sort(() => r() - 0.5)
-        .join('')
-      const v = `${digits}${str(r, '0123456789', 4)}`
+      // Random digits: some the scanner destroys, some too plain it only
+      // reports. The oracle follows its verdict (review of 0ef312b).
+      const v = str(r, '0123456789', 14)
       pieces.push(`secret = "${v}"`)
     } else if (kind === 3) {
       const v = `${str(r, ALNUM, 12)}7`
@@ -86,6 +83,38 @@ export function generate(seed: number): Case {
       pieces.push(`{ password: '${word}' }`)
       words.push(`see the ${word} field`)
       pieces.push(`see the ${word} field`)
+    } else if (kind === 9) {
+      // The final review's reproduced leaks (of d55d9e2): a dotted bearer
+      // token, then the same value bare.
+      const v = [5, 5, 5, 5].map((k) => str(r, ALNUM, k - 1) + Math.floor(r() * 10)).join('.')
+      pieces.push(`Authorization: Bearer ${v}`)
+      pieces.push(`retry with ${v}`)
+    } else if (kind === 10) {
+      // Random letters with few vowels and digits at one end, then bare.
+      const letters = str(r, CONSONANTS, 12)
+      const digits = str(r, '0123456789', 4)
+      const v = r() < 0.5 ? `${letters}${digits}` : `${digits}${letters.toUpperCase()}`
+      pieces.push(`password = "${v}"`)
+      pieces.push(`echo ${v}`)
+    } else if (kind === 11) {
+      // Random letter blocks shaped like a variable's name.
+      const v = [4, 4, 4, 4].map((k) => str(r, UPPER, k)).join('_')
+      pieces.push(`password = "${v}"`)
+    } else if (kind === 12) {
+      // One random segment after a path's start, or dotted random segments,
+      // then bare.
+      const v = pick(r, [
+        `/${str(r, ALNUM, 15)}7`,
+        `./${str(r, ALNUM, 14)}3`,
+        [1, 2, 3, 4]
+          .map(
+            () =>
+              `${str(r, CONSONANTS, 1).toUpperCase()}${str(r, CONSONANTS, 1)}${Math.floor(r() * 10)}`
+          )
+          .join('.'),
+      ])
+      pieces.push(`password = "${v}"`)
+      pieces.push(`cat ${v}`)
     } else {
       const name = `ledger${str(r, 'abcdefghij', 4)}`
       const p = `__VAR__${100 + i}`

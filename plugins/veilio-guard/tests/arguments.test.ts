@@ -429,3 +429,17 @@ test('a hand-marked value only inside another word of the text is still refused 
   expect(no.deny).toContain('marked by hand')
   expect(ran).toBe(1)
 })
+
+test('a hand-marked value inside a word with a letter outside ASCII is still refused on restore', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __MANUAL__1: 'Jan' }) })
+  let ran = 0
+  on('tool.call', () => (ran++, edit.r))
+  const no: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'Janów __MANUAL__1',
+  })
+  expect(no.deny).toContain('marked by hand')
+  expect(ran).toBe(0)
+})

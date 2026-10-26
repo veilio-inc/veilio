@@ -35,6 +35,7 @@ import {
   restoreAdds,
   grow,
   ownedMap,
+  type Withheld,
   redactKnown,
   restoresNeverRestored,
   maskShaped,
@@ -119,6 +120,16 @@ function parent(dir: string): string | null {
   const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   return i > 0 ? trimmed.slice(0, i) : null
 }
+
+// The words for each kind a restoration may not write back: one table, so a
+// refusal reads the same wherever it is made.
+const WITHHELD_TEXT: Record<Withheld['kind'], string> = {
+  credential: 'a credential Veilio removed',
+  manual: 'a value marked by hand',
+  regulated: 'a regulated number Veilio masks',
+}
+const withheldText = (w: Withheld) =>
+  w.label ? `${WITHHELD_TEXT[w.kind]} (${w.label})` : WITHHELD_TEXT[w.kind]
 
 export class Guard {
   state: GuardState = 'on'
@@ -612,7 +623,7 @@ export class Guard {
     }
 
     // What the call would write back that Veilio keeps from it, if anything.
-    let restoresWhat: string | null = null
+    let restoresWhat: Withheld | null = null
     let args: ToolEvent = e
     // A credential Veilio destroyed is never put back, whatever a placeholder
     // says it stands for (security review of 933156e).
@@ -624,7 +635,7 @@ export class Guard {
       after === before
         ? null
         : learned.some((v) => after.includes(v) && !before.includes(v))
-          ? 'a credential Veilio removed'
+          ? ({ kind: 'credential' } as const)
           : restoreAdds(before, after)
     const guarded = (s: string) => {
       const out = restoreOne(s)
@@ -642,7 +653,7 @@ export class Guard {
     }
     if (restoresWhat)
       return this.deny(
-        `a placeholder in it stands for ${restoresWhat}, which is never written back. Ask the user`
+        `a placeholder in it stands for ${withheldText(restoresWhat)}, which is never written back. Ask the user`
       )
 
     for (const field of policy.paths) {
@@ -705,7 +716,7 @@ export class Guard {
       }
       if (redacted.size > 0) {
         return this.deny(
-          `the call writes ${[...redacted].join(', ')}, a credential Veilio removed. Writing it would ` +
+          `the call writes ${[...redacted].join(', ')}, ${WITHHELD_TEXT.credential}. Writing it would ` +
             'replace the real value in the file. Leave that line as it is, or ask the user to change it'
         )
       }

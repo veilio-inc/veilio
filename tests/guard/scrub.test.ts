@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 // A map grown any way but grow() throws here (review of 5347c7c).
 ;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
 import {
+  ENV_NAME_WORDS,
+  carriedForward,
   ownedMap,
   highSignal,
   NEVER_RESTORED,
@@ -641,5 +643,65 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
       'RELEASE_SERVICE_2024_10'
     )
     expect(applyMap(`password = "KEY_2024"`, {})).not.toContain('KEY_2024')
+  })
+})
+
+describe('final review of 0ef312b..d55d9e2: reproduced leaks', () => {
+  const carried = (text: string, v: string) => {
+    const known = new Destroyed()
+    applyMap(text, {}, undefined, { known })
+    return known.values.includes(v) && !redactKnown(`bare ${v} again`, known).includes(v)
+  }
+  it('1: a dotted bearer, basic-auth or connection-string value is carried by its rule', () => {
+    expect(carriedForward('bearer-token', 'Kq7.Zw3.Xv9.Rt2.Pm5.Ln8')).toBe(true)
+    expect(
+      carried('Authorization: Bearer Kq7.Zw3.Xv9.Rt2.Pm5.Ln8', 'Kq7.Zw3.Xv9.Rt2.Pm5.Ln8')
+    ).toBe(true)
+    expect(carriedForward('connection-string', 'v1.2.3-Beta.4')).toBe(true)
+    expect(carriedForward('password-assignment', 'v1.2.3-Beta.4')).toBe(false)
+  })
+  it('2: a letters+digits value with few vowels is carried, words with a number are not', () => {
+    for (const [text, v] of [
+      ['password = "qzkvwpxmrtbn8274"', 'qzkvwpxmrtbn8274'],
+      ['api_key = "8274qzkvwpxmrtbn"', '8274qzkvwpxmrtbn'],
+      ['secret = "ZXKQWPMRTBVH2847"', 'ZXKQWPMRTBVH2847'],
+    ])
+      expect(carried(text, v)).toBe(true)
+    for (const v of ['Configuration2', 'requiredFields2', 'Version_2_Release', 'Hello_World_2026'])
+      expect(highSignal(v)).toBe(false)
+  })
+  it('3: an env-var name is made of known words; random letter blocks are redacted', () => {
+    for (const v of ['XQAE_ZPOW_KIVR_TUYM', 'KXEQ_ZUVW_PYOT_RAIM_QOEX'])
+      expect(applyMap(`password = "${v}"`, {})).not.toContain(v)
+    for (const v of [
+      'GOOGLE_KEY',
+      'DATABASE_URL',
+      'STRIPE_SECRET_KEY',
+      'AWS_REGION_2',
+      'PORT_8080',
+    ])
+      expect(applyMap(`password = "${v}"`, {})).toContain(`"${v}"`)
+    expect(ENV_NAME_WORDS.has('SECRET')).toBe(true)
+    expect(ENV_NAME_WORDS.size).toBeGreaterThanOrEqual(150)
+  })
+  it('5: one random segment after / or ./, or dotted random segments, are not paths', () => {
+    for (const [text, v] of [
+      ['password = "/Qm8x7Zr+Lk2Pw9aB3"', '/Qm8x7Zr+Lk2Pw9aB3'],
+      ['password = "./Kq9xZ2mW7pR4tY"', './Kq9xZ2mW7pR4tY'],
+      ['password = "Kq7.Zw3.Xv9.Rt2"', 'Kq7.Zw3.Xv9.Rt2'],
+      // One segment is no path, even a word-like one; nor random segments
+      // beside one word.
+      ['password = "/aBcDeFgHiJkLmNoP"', '/aBcDeFgHiJkLmNoP'],
+      ['password = "Kqzx7.Wmrt3.Lpvn9.Release"', 'Kqzx7.Wmrt3.Lpvn9.Release'],
+    ])
+      expect(carried(text, v)).toBe(true)
+    for (const v of [
+      '/usr/lib/python3.11',
+      'v1.2.3-Beta.4',
+      'https://example.org/v2/Path',
+      'C:\\Users\\Bob2',
+      '/run/secrets/Client2',
+    ])
+      expect(highSignal(v)).toBe(false)
   })
 })
