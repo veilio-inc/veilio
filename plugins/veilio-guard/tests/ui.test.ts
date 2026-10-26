@@ -169,7 +169,9 @@ test('the band appears once the guard has loaded, with no /veilio first', async 
 // The guard takes neither, and this holds that.
 test('a headless reply keeps its placeholders: no route writes real names into a stored or sent reply', async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
-  const session = mock.session(on)
+  // The kit's store for rows (Claude Code 2.1.310 on); the oldest supported
+  // kit, 2.1.288, has none, and there only the answer is checked.
+  const session = typeof (mock as any).session === 'function' ? (mock as any).session(on) : null
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
   await $.session.start({ surface: null, isInteractive: false, cwd: ROOT })
   const answer = 'The bug is in __CLS__1.'
@@ -181,6 +183,7 @@ test('a headless reply keeps its placeholders: no route writes real names into a
     reason: 'answer',
   })
   expect(end.text).toBe(answer)
+  if (!session) return
   await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: answer }] } })
   await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: answer }] } })
   const stored = JSON.stringify(session.appended())
