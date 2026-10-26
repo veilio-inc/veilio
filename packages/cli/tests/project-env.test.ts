@@ -6,7 +6,15 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { credentialPath, readCredential } from '../src/credential.js'
 import { STORE_DIR, STORE_FILE, saveMap } from '../src/store.js'
-import { FakeCloud, TEAMMATE, sealTeam, signIn, type Recorded } from './helpers/fake-cloud.js'
+import {
+  FakeCloud,
+  TEAMMATE,
+  sealPersonal,
+  sealTeam,
+  signIn,
+  type Recorded,
+} from './helpers/fake-cloud.js'
+import { formatProjectsList } from '../src/client/projects.js'
 import { runBinary, serveOverHttp } from './helpers/http-fake.js'
 import { CloudError } from '../src/cloud.js'
 import { refusalFromCloudError } from '../src/client/wording.js'
@@ -388,4 +396,162 @@ describe('two processes, one HOME, two values', () => {
       await close()
     }
   }, 30_000)
+})
+
+describe('the variable applies to team maps only: a personal map is never refused by it', () => {
+  const bad = { VEILIO_PROJECT: 'payroll' }
+  const projectListings = (): number =>
+    cloud.requests.filter((r) => r.path === '/api/projects').length
+
+  it('maps update of a personal map: done, and the variable is never resolved', async () => {
+    signIn(home, { pmk: true })
+    const row = cloud.add({ name: 'mine', map_data: await sealPersonal({ __CLS__1: 'A' }, 'pmk') })
+    saveMap(storePath(), { __CLS__1: 'A', __FN__2: 'b' }, { force: true })
+    const r = await run(['maps', 'update', row.id], bad)
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.err).not.toContain('VEILIO_PROJECT')
+    expect(projectListings()).toBe(0)
+  })
+
+  it('maps rm of a personal map: done, and the variable is never resolved', async () => {
+    signIn(home, { pmk: true })
+    const row = cloud.add({ name: 'mine', map_data: await sealPersonal({ __CLS__1: 'A' }, 'pmk') })
+    const r = await run(['maps', 'rm', row.id], bad)
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toBe(`Removed "mine" (${row.id})\n`)
+    expect(projectListings()).toBe(0)
+  })
+
+  it('maps pull of a personal map: done, and the variable is never resolved', async () => {
+    signIn(home, { pmk: true })
+    const row = cloud.add({ name: 'mine', map_data: await sealPersonal({ __CLS__1: 'A' }, 'pmk') })
+    const r = await run(['maps', 'pull', row.id], bad)
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(projectListings()).toBe(0)
+  })
+
+  it('maps update of a team map: the bad value is still refused, naming it', async () => {
+    signIn(home, { team: true })
+    saveMap(storePath(), { __CLS__5: 'Gamma', __FN__2: 'b' }, { force: true })
+    const r = await run(['maps', 'update', toolsMap], bad)
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain('VEILIO_PROJECT is "payroll"')
+    expect(cloud.writes()).toHaveLength(0)
+  })
+
+  it('maps rm of a team map: the bad value is still refused, and nothing is deleted', async () => {
+    signIn(home, { team: true })
+    const r = await run(['maps', 'rm', toolsMap], bad)
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain('VEILIO_PROJECT is "payroll"')
+    expect(cloud.writes()).toHaveLength(0)
+  })
+
+  it('maps rm of a team map in the variable’s project goes through', async () => {
+    signIn(home, { team: true })
+    const mine = cloud.add({
+      scope: 'team',
+      name: 'mine',
+      project: 'p-tools',
+      map_data: await sealTeam({ __CLS__6: 'Delta' }),
+    })
+    const r = await run(['maps', 'rm', mine.id], { VEILIO_PROJECT: 'tools' })
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toBe(`Removed "mine" (${mine.id})\n`)
+  })
+})
+
+describe('maps pull under the variable', () => {
+  it('a team map of the variable’s project is pulled', async () => {
+    signIn(home, { team: true })
+    const r = await run(['maps', 'pull', toolsMap], { VEILIO_PROJECT: 'tools' })
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(JSON.parse(readFileSync(storePath(), 'utf8'))).toMatchObject({
+      map: { __CLS__5: 'Gamma' },
+    })
+  })
+
+  it('a team map of ANOTHER project is refused, naming the variable, and nothing is written', async () => {
+    signIn(home, { team: true })
+    const r = await run(['maps', 'pull', billingMap], { VEILIO_PROJECT: 'tools' })
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain(`No map ${billingMap} in project tools (set by VEILIO_PROJECT).`)
+    expect(existsSync(storePath())).toBe(false)
+  })
+
+  it('a bad value is refused for a team map, as for every other command', async () => {
+    signIn(home, { team: true })
+    const r = await run(['maps', 'pull', toolsMap], { VEILIO_PROJECT: 'payroll' })
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain('VEILIO_PROJECT is "payroll"')
+    expect(existsSync(storePath())).toBe(false)
+  })
+
+  it('without the variable, a team map of any project is pulled, as before', async () => {
+    signIn(home, { team: true })
+    const r = await run(['maps', 'pull', billingMap])
+    expect(r.code, r.err).toBe(EXIT_OK)
+  })
+})
+
+describe('projects use and maps list under the variable say what is true', () => {
+  it('projects use: stdout does not claim to be working in the stored choice', async () => {
+    signIn(home, { project: 'p-tools' })
+    const r = await run(['projects', 'use', 'billing'], { VEILIO_PROJECT: 'tools' })
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).not.toContain('Now working in')
+    expect(r.out).toContain('Saved project billing (p-billing)')
+    expect(r.out).toContain('VEILIO_PROJECT (=tools) is in use here')
+  })
+
+  it('projects use without the variable still says it is now working there', async () => {
+    signIn(home)
+    const r = await run(['projects', 'use', 'billing'])
+    expect(r.out).toContain('Now working in project billing (p-billing)')
+  })
+
+  it('maps list: the hint says the variable chose the project', async () => {
+    signIn(home, { team: true, project: 'p-billing' })
+    const r = await run(['maps', 'list'], { VEILIO_PROJECT: 'tools' })
+    expect(r.err).toContain(
+      'team maps of project tools (from VEILIO_PROJECT) - VEILIO_PROJECT chose it'
+    )
+    expect(r.err).not.toContain('`veilio projects` to change')
+  })
+
+  it('maps list without the variable keeps its hint', async () => {
+    signIn(home, { team: true, project: 'p-billing' })
+    const r = await run(['maps', 'list'])
+    expect(r.err).toContain('team maps of project p-billing (`veilio projects` to change)')
+  })
+})
+
+describe('the projects list is rendered in one place', () => {
+  const rows = [
+    { id: 'p-a', name: 'a', maps: 1, inUse: true, isDefault: true },
+    { id: 'p-b', name: 'b', maps: null, inUse: false, isDefault: false },
+  ]
+
+  it('marks, the override variant, and the override sentence', () => {
+    const plain = formatProjectsList(
+      { projects: rows, chosen: 'p-a', override: null },
+      { surface: 'cli' }
+    )
+    expect(plain.lines).toEqual(['* p-a  a  (in use, default, 1 team map)', '  p-b  b  ()'])
+    expect(plain.note).toBeNull()
+    const pinned = formatProjectsList(
+      { projects: rows, chosen: 'p-b', override: { value: 'a', id: 'p-a' } },
+      { surface: 'cli' }
+    )
+    expect(pinned.lines[0]).toBe('* p-a  a  (in use, from VEILIO_PROJECT, default, 1 team map)')
+    expect(pinned.note).toContain('VEILIO_PROJECT is "a", so that project is in use here')
+  })
+
+  it('none chosen: the note names the surface’s own way to choose', () => {
+    const none = { projects: rows, chosen: null, override: null }
+    expect(formatProjectsList(none, { surface: 'cli' }).note).toContain(
+      'veilio projects use <name>'
+    )
+    expect(formatProjectsList(none, { surface: 'mcp' }).note).toContain('projects_use chooses one')
+  })
 })

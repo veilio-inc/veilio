@@ -9,3 +9,4 @@
 - `maps list`, `whoami` and `projects` say "(from VEILIO_PROJECT)" when the variable chose the project. `projects` marks it, and still lists when the value names none. `projects use` stores the choice and warns that the variable overrides it in this shell.
 - Signed out, nothing changes.
 - A map that is not in the variable's project is refused as "No map X in project P (set by VEILIO_PROJECT).", one clause.
+- The variable applies to team maps only: `maps update`, `maps rm` and `maps pull` of a personal map ignore it, even a bad value. `maps pull` of a team map outside the variable's project is refused, naming it. `projects use` under the variable says the choice was saved and the variable is in use, and `maps list` says the variable chose the project.

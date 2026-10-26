@@ -30,9 +30,9 @@ import {
   teamStatus,
   updateCloudMap,
   useProject,
-  PROJECT_ENV,
+  formatProjectsList,
   overriddenSentence,
-  overrideSentence,
+  usedSentence,
   type ClientContext,
   type Outcome,
   type Refusal,
@@ -308,26 +308,10 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
       'belongs to exactly one project.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async (_args, ctx) =>
-      answered(await listTeamProjects(client(ctx)), ({ projects, chosen, override }) =>
-        [
-          ...projects.map((p) => {
-            const marks = [
-              ...(p.inUse ? [override ? `in use, from ${PROJECT_ENV}` : 'in use'] : []),
-              ...(p.isDefault ? ['default'] : []),
-              ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
-            ]
-            return `${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})`
-          }),
-          ...(override
-            ? ['', overrideSentence(override, chosen)]
-            : chosen === null
-              ? [
-                  '',
-                  'No project is chosen, so team maps from every project are used. projects_use chooses one.',
-                ]
-              : []),
-        ].join('\n')
-      ),
+      answered(await listTeamProjects(client(ctx)), (listing) => {
+        const { lines, note } = formatProjectsList(listing, { surface: 'mcp' })
+        return (note ? [...lines, '', note] : lines).join('\n')
+      }),
   },
   {
     name: 'projects_use',
@@ -343,14 +327,14 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
     },
     handler: async (args, ctx) => {
       const used = await useProject(client(ctx), text(args, 'project'))
-      if (used.ok) invalidateNamespace()
+      // The server's variable overrides the choice just stored: the namespace
+      // it holds is for the variable's project and is not touched.
+      if (used.ok && used.value.overriddenBy === null) invalidateNamespace()
       return answered(
         used,
-        ({ id, name, overriddenBy }) =>
-          `Now working in project ${name} (${id}). Team maps and masking with the team's names use this project only.` +
-          (overriddenBy !== null
-            ? `\n\nWARNING: ${overriddenSentence({ name, overriddenBy }, 'server')}`
-            : '')
+        (u) =>
+          usedSentence(u, { surface: 'mcp' }) +
+          (u.overriddenBy !== null ? `\n\nWARNING: ${overriddenSentence(u, 'server')}` : '')
       )
     },
   },

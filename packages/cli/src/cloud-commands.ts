@@ -44,11 +44,15 @@ import { refusal, renderRefusal, type Refusal } from './client/wording.js'
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
-import { listTeamProjects, useProject } from './client/projects.js'
+import {
+  formatProjectsList,
+  listTeamProjects,
+  useProject,
+  usedSentence,
+} from './client/projects.js'
 import {
   PROJECT_ENV,
   overriddenSentence,
-  overrideSentence,
   projectOverride,
   type Env,
 } from './client/project-scope.js'
@@ -531,7 +535,7 @@ function notes(lines: readonly string[], io: Io): void {
 export async function runMapsList(io: Io): Promise<number> {
   const listed = await listCloudMaps(clientContext(io))
   if (!listed.ok) return refused(listed.refusal, io)
-  const { maps, project } = listed.value
+  const { maps, project, projectFromEnv } = listed.value
   if (maps.length === 0) {
     io.stdout('No maps in Cloud yet. `veilio maps push <name>` uploads the local one.\n')
     return EXIT_OK
@@ -546,7 +550,11 @@ export async function runMapsList(io: Io): Promise<number> {
   // Said on stderr so the listing itself stays parseable: which project's team
   // maps these are, or that no project was chosen.
   if (project)
-    io.stderr(`veilio: team maps of project ${project} (\`veilio projects\` to change)\n`)
+    io.stderr(
+      projectFromEnv
+        ? `veilio: team maps of project ${project} - ${PROJECT_ENV} chose it, so \`veilio projects use\` does not change it here\n`
+        : `veilio: team maps of project ${project} (\`veilio projects\` to change)\n`
+    )
   return EXIT_OK
 }
 
@@ -866,25 +874,9 @@ export function runTeamLock(io: Io): number {
 export async function runProjectsList(io: Io): Promise<number> {
   const listed = await listTeamProjects(clientContext(io))
   if (!listed.ok) return refused(listed.refusal, io)
-  const { projects, chosen, override } = listed.value
-  for (const p of projects) {
-    const marks = [
-      ...(p.inUse ? [override ? `in use, from ${PROJECT_ENV}` : 'in use'] : []),
-      ...(p.isDefault ? ['default'] : []),
-      ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
-    ]
-    io.stdout(`${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})\n`)
-  }
-  if (override) {
-    io.stderr(`veilio: ${overrideSentence(override, chosen)}\n`)
-  } else if (chosen === null) {
-    // Said, because "none" is a real state with a real consequence: team maps
-    // from every project the team works in are listed and masked with.
-    io.stderr(
-      'veilio: No project is chosen, so team maps from every project are listed and used, and a new ' +
-        'team map lands in the default. Run `veilio projects use <name>` to work in one.\n'
-    )
-  }
+  const { lines, note } = formatProjectsList(listed.value, { surface: 'cli' })
+  for (const line of lines) io.stdout(`${line}\n`)
+  if (note) io.stderr(`veilio: ${note}\n`)
   return EXIT_OK
 }
 
@@ -892,10 +884,7 @@ export async function runProjectsList(io: Io): Promise<number> {
 export async function runProjectsUse(ref: string | null, io: Io): Promise<number> {
   const used = await useProject(clientContext(io), ref)
   if (!used.ok) return refused(used.refusal, io)
-  io.stdout(
-    `Now working in project ${used.value.name} (${used.value.id}). Team maps, pushes, updates and ` +
-      '`scrub --team` use this project only; the MCP server picks it up on its next call.\n'
-  )
+  io.stdout(`${usedSentence(used.value, { surface: 'cli' })}\n`)
   if (used.value.overriddenBy !== null)
     io.stderr(`veilio: ${overriddenSentence(used.value, 'shell')}\n`)
   return EXIT_OK

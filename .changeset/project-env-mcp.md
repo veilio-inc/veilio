@@ -9,3 +9,4 @@
 - `projects_use` still stores a choice, and warns that the server's `VEILIO_PROJECT` overrides it.
 - Two servers in one HOME with different values scope independently.
 - The namespace is kept for the project's id, not for the value's spelling. If that project is renamed and another is given the old name while the server runs, the next `anonymize_*` or `restore_text` call after 30 s uses the new one (the check is one project listing, at most every 30 s, and only while the variable is set).
+- A masking call asks which project the variable names at most every 30 s, gives the listing 3 s, and masks from the cache when Cloud does not answer. `projects_use` leaves the namespace alone while the variable overrides it, and says the choice was saved, not that the server works in it.

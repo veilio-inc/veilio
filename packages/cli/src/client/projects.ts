@@ -17,7 +17,13 @@ import type { ClientContext } from './maps.js'
 // VEILIO_PROJECT, when it is set, as this listing resolves it (FR-012a). The
 // listing is the one command that does not refuse a value that matches
 // nothing: it is how somebody finds the value to set instead.
-import { matchProject, projectOverride, type ProjectOverride } from './project-scope.js'
+import {
+  PROJECT_ENV,
+  matchProject,
+  overrideSentence,
+  projectOverride,
+  type ProjectOverride,
+} from './project-scope.js'
 
 export interface ListedProject {
   id: string
@@ -73,6 +79,61 @@ export async function listTeamProjects(
       })),
     },
   }
+}
+
+/** What `listTeamProjects` found, as the CLI and the MCP server both print it. */
+export interface ProjectsListing {
+  projects: ListedProject[]
+  chosen: string | null
+  override: ProjectOverride | null
+}
+
+/**
+ * The listing as text, once for both surfaces: one line per project (the one
+ * in use marked `*`, and saying so when the variable chose it), and the note
+ * that follows - the variable's sentence, or that none is chosen. The only
+ * thing a surface supplies is how it names the way to choose one.
+ */
+export function formatProjectsList(
+  listing: ProjectsListing,
+  opts: { surface: 'cli' | 'mcp' }
+): { lines: string[]; note: string | null } {
+  const { projects, chosen, override } = listing
+  const lines = projects.map((p) => {
+    const marks = [
+      ...(p.inUse ? [override ? `in use, from ${PROJECT_ENV}` : 'in use'] : []),
+      ...(p.isDefault ? ['default'] : []),
+      ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
+    ]
+    return `${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})`
+  })
+  if (override) return { lines, note: overrideSentence(override, chosen) }
+  if (chosen !== null) return { lines, note: null }
+  return {
+    lines,
+    note:
+      opts.surface === 'cli'
+        ? 'No project is chosen, so team maps from every project are listed and used, and a new ' +
+          'team map lands in the default. Run `veilio projects use <name>` to work in one.'
+        : 'No project is chosen, so team maps from every project are used. projects_use chooses one.',
+  }
+}
+
+/** What `projects use` says on stdout: where the work happens now, or - when
+ *  the variable overrides the choice just stored - that it does not. */
+export function usedSentence(
+  used: { id: string; name: string; overriddenBy: string | null },
+  opts: { surface: 'cli' | 'mcp' }
+): string {
+  if (used.overriddenBy !== null)
+    return (
+      `Saved project ${used.name} (${used.id}) for this sign-in. ${PROJECT_ENV} (=${used.overriddenBy}) ` +
+      `is in use here, so ${opts.surface === 'cli' ? 'this shell' : 'this server'} keeps working in that project.`
+    )
+  return opts.surface === 'cli'
+    ? `Now working in project ${used.name} (${used.id}). Team maps, pushes, updates and ` +
+        '`scrub --team` use this project only; the MCP server picks it up on its next call.'
+    : `Now working in project ${used.name} (${used.id}). Team maps and masking with the team's names use this project only.`
 }
 
 /** Choose a project by its id or its name. A name two projects share is

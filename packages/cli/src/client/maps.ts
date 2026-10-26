@@ -56,6 +56,7 @@ import {
 import { vaultKeyFor } from './vault-key.js'
 import {
   projectLabel,
+  projectOverride,
   refusalScope,
   scopeCredential,
   type Env,
@@ -111,9 +112,15 @@ export interface ListedMap {
   updatedAt: string
 }
 
-export async function listCloudMaps(
-  ctx: ClientContext
-): Promise<Outcome<{ maps: ListedMap[]; teamId: string | null; project: string | null }>> {
+export async function listCloudMaps(ctx: ClientContext): Promise<
+  Outcome<{
+    maps: ListedMap[]
+    teamId: string | null
+    project: string | null
+    /** VEILIO_PROJECT chose `project`: `projects use` does not change it here. */
+    projectFromEnv: boolean
+  }>
+> {
   const stored = signedIn(ctx)
   if (!stored) return refuse('not_signed_in')
   const scoped = await scopeCredential(stored, ctx.env)
@@ -137,6 +144,7 @@ export async function listCloudMaps(
     maps: [...list.personalMaps.map(shape(true)), ...list.teamMaps.map(shape(false))],
     teamId: list.team?.id ?? null,
     project: projectLabel(credential),
+    projectFromEnv: credential.projectFrom !== undefined,
   })
 }
 
@@ -339,6 +347,25 @@ export async function pullCloudMap(
 
   let opened: Outcome<SymbolMap>
   if (team) {
+    // A team map belongs to one project: with VEILIO_PROJECT set it must be in
+    // that one, and a value that names nothing is refused as everywhere else.
+    // A personal map is never asked (FR-012a).
+    if (projectOverride(ctx.env) !== null) {
+      const scoped = await scopeCredential(credential, ctx.env)
+      if (!scoped.ok) return scoped
+      let listed: CloudMapList
+      try {
+        listed = await listMaps(scoped.value)
+      } catch (err) {
+        return cloudRefusal(err, scoped.value)
+      }
+      if (![...listed.personalMaps, ...listed.teamMaps].some((m) => m.id === remote.id))
+        return refuse('map_not_in_project', {
+          id: remote.id,
+          project: scoped.value.projectName ?? scoped.value.project,
+          override: true,
+        })
+    }
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
     opened = await openTeam(keys.value, remote.map_data, label)
@@ -621,6 +648,28 @@ export async function createCloudMap(
   return ok({ id: created.id, name, scope: 'personal', count, notes: [] })
 }
 
+/**
+ * The personal map `id`, as the account's own listing shows it - asked WITHOUT
+ * any project, so neither VEILIO_PROJECT nor a stored choice that has gone can
+ * stand between a person and their own personal map. Null when it is not a
+ * personal map (a team map, another project's, none) or the listing fails: the
+ * caller then scopes the credential and asks again, as for any team map.
+ */
+async function personalListing(
+  stored: Credential,
+  id: string
+): Promise<{ credential: Credential; list: CloudMapList } | null> {
+  const open: Credential = { ...stored }
+  delete open.project
+  try {
+    const list = await listMaps(open)
+    const mine = list.personalMaps.find((m) => m.id === id)
+    return mine && mine.scope === 'personal' ? { credential: open, list } : null
+  } catch {
+    return null
+  }
+}
+
 // ─── update ──────────────────────────────────────────────────────────────────
 
 export interface Updated {
@@ -655,17 +704,26 @@ export async function updateCloudMap(
   if (!id) return refuse('which_map')
   const local = loadMap(opts.mapPath)
   if (Object.keys(local).length === 0) return refuse('no_local_map', { path: opts.mapPath })
-  const scoped = await scopeCredential(stored, ctx.env)
-  if (!scoped.ok) return scoped
-  const credential = scoped.value
-
-  // Whose it is, before reading it: a teammate's map is refused without
-  // opening anything (FR-006, the same rule as removing it).
+  // VEILIO_PROJECT is a team map's question: a personal map belongs to no
+  // project, so with the variable set it is found first, and a value that
+  // names nothing never refuses it (FR-012a).
+  const personal = projectOverride(ctx.env) === null ? null : await personalListing(stored, id)
+  let credential: ScopedCredential
   let list: CloudMapList
-  try {
-    list = await listMaps(credential)
-  } catch (err) {
-    return cloudRefusal(err, credential)
+  if (personal) {
+    credential = personal.credential
+    list = personal.list
+  } else {
+    const scoped = await scopeCredential(stored, ctx.env)
+    if (!scoped.ok) return scoped
+    credential = scoped.value
+    // Whose it is, before reading it: a teammate's map is refused without
+    // opening anything (FR-006, the same rule as removing it).
+    try {
+      list = await listMaps(credential)
+    } catch (err) {
+      return cloudRefusal(err, credential)
+    }
   }
   const theirs = list.teamMaps.find((m) => m.id === id)
   if (theirs) return refuse('not_yours_update', { id, name: theirs.name })
@@ -843,20 +901,28 @@ export async function removeCloudMap(
   const stored = signedIn(ctx)
   if (!stored) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
-  const scoped = await scopeCredential(stored, ctx.env)
-  if (!scoped.ok) return scoped
-  const credential = scoped.value
-
-  // The name from the listing, not from the map: downloading a whole
-  // envelope to read one label was a round trip and a server-side decrypt
-  // for nothing (code review). Not listed - another project's team map, or
-  // the listing failing - leaves the id as all there is to report.
+  // A personal map belongs to no project: with VEILIO_PROJECT set it is found
+  // first, and a value that names nothing never refuses it (FR-012a).
+  const personal = projectOverride(ctx.env) === null ? null : await personalListing(stored, id)
+  let credential: ScopedCredential
   let name: string | null
-  try {
-    const list = await listMaps(credential)
-    name = [...list.personalMaps, ...list.teamMaps].find((m) => m.id === id)?.name || null
-  } catch {
-    name = null
+  if (personal) {
+    credential = personal.credential
+    name = personal.list.personalMaps.find((m) => m.id === id)?.name || null
+  } else {
+    const scoped = await scopeCredential(stored, ctx.env)
+    if (!scoped.ok) return scoped
+    credential = scoped.value
+    // The name from the listing, not from the map: downloading a whole
+    // envelope to read one label was a round trip and a server-side decrypt
+    // for nothing (code review). Not listed - another project's team map, or
+    // the listing failing - leaves the id as all there is to report.
+    try {
+      const list = await listMaps(credential)
+      name = [...list.personalMaps, ...list.teamMaps].find((m) => m.id === id)?.name || null
+    } catch {
+      name = null
+    }
   }
   if (opts.confirmName !== undefined) {
     if (name === null) return refuse('confirm_unknown', { id })

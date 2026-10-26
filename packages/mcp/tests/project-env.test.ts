@@ -11,6 +11,7 @@ import { callTool, callToolAsync, type ToolContext } from '../src/tools.js'
 import {
   namespaceSettled,
   primeNamespace,
+  CONFIRM_DEADLINE_MS,
   refreshNamespaceIfStale,
   resetNamespaceCache,
 } from '../src/namespace.js'
@@ -130,6 +131,22 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
     )
   })
 
+  it('projects_use under the variable stores the choice and leaves the namespace alone', async () => {
+    await primeNamespace(home, { env })
+    await callToolAsync('projects_use', { project: 'p-billing' }, ctxWith(env))
+    cloud.requests = []
+    expect(refreshNamespaceIfStale()).toBeNull()
+    await namespaceSettled()
+    expect(cloud.requests).toEqual([])
+  })
+
+  it('projects_use under the variable does not say it is working in the new project', async () => {
+    const r = await callToolAsync('projects_use', { project: 'p-billing' }, ctxWith(env))
+    expect(r.text).not.toContain('Now working in')
+    expect(r.text).toContain('Saved project billing (p-billing)')
+    expect(r.text).toContain('VEILIO_PROJECT (=tools) is in use here')
+  })
+
   it('anonymize_text numbers from the variable’s project: Gamma is tools’ __CLS__5', async () => {
     await primeNamespace(home, { env })
     const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
@@ -240,6 +257,83 @@ describe('the namespace follows the project the variable names NOW, not the name
     expect(r.text).not.toContain('__CLS__')
   })
 
+  it('Cloud unreachable: five masking calls cost one listing attempt, and mask from the cache', async () => {
+    await primeNamespace(home, { env })
+    vi.advanceTimersByTime(TTL)
+    const attempts = vi.fn(() => Promise.reject(new TypeError('fetch failed')))
+    vi.stubGlobal('fetch', attempts)
+    for (let i = 0; i < 5; i++) {
+      const r = await callToolAsync(
+        'anonymize_text',
+        { text: 'export class Gamma {}' },
+        ctxWith(env)
+      )
+      expect(r.isError ?? false, r.text).toBe(false)
+      expect(r.text).toContain('Namespace: team')
+      expect(r.text).toContain('__CLS__5')
+    }
+    // A failed listing backs off for the TTL like a good one.
+    expect(attempts).toHaveBeenCalledTimes(1)
+  })
+
+  it('Cloud hanging: the listing is given up on at the deadline, and the call masks from the cache', async () => {
+    // The deadline is a timer: this test fakes the timers as well.
+    vi.useRealTimers()
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
+    await primeNamespace(home, { env })
+    vi.advanceTimersByTime(TTL)
+    vi.stubGlobal(
+      'fetch',
+      (_url: unknown, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        )
+    )
+    let done = false
+    const call = callToolAsync(
+      'anonymize_text',
+      { text: 'export class Gamma {}' },
+      ctxWith(env)
+    ).then((r) => ((done = true), r))
+    await vi.advanceTimersByTimeAsync(CONFIRM_DEADLINE_MS - 1)
+    expect(done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const r = await call
+    expect(r.text).toContain('Namespace: team')
+    expect(r.text).toContain('__CLS__5')
+  })
+
+  it('five parallel calls after the TTL: one listing, and no reload when nothing changed', async () => {
+    await primeNamespace(home, { env })
+    vi.advanceTimersByTime(TTL)
+    cloud.requests = []
+    const all = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+      )
+    )
+    for (const r of all) expect(r.text).toContain('__CLS__5')
+    const paths = cloud.requests.map((x) => `${x.method} ${x.path}`)
+    expect(paths).toEqual(['GET /api/projects'])
+  })
+
+  it('five parallel calls after a rename: one confirming listing and one reload', async () => {
+    await primeNamespace(home, { env })
+    await renameToolsAndGiveItsNameToANewProject()
+    vi.advanceTimersByTime(TTL)
+    cloud.requests = []
+    const all = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        callToolAsync('anonymize_text', { text: 'export class Zeta {}' }, ctxWith(env))
+      )
+    )
+    for (const r of all) expect(r.isError ?? false, r.text).toBe(false)
+    const maps = cloud.requests.filter((x) => x.path === '/api/maps')
+    expect(maps).toHaveLength(1)
+    // The confirming listing, and the reload's own resolution of the value.
+    expect(cloud.requests.filter((x) => x.path === '/api/projects')).toHaveLength(2)
+  })
+
   it('over the server’s own entry point the masking call is the checked one', async () => {
     await primeNamespace(home, { env })
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
@@ -297,21 +391,28 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
     expect(existsSync(storePath())).toBe(false)
   })
 
-  it('asked again later: a project created meanwhile is then used', async () => {
-    await primeNamespace(home, { env: { VEILIO_PROJECT: 'web' } })
-    const webEnv = ctxWith({ VEILIO_PROJECT: 'web' })
-    expect(callTool('anonymize_text', { text: 'export class Gamma {}' }, webEnv).isError).toBe(true)
-    cloud.projects.push({ id: 'p-web', name: 'web' })
-    const now = Date.now()
-    const later = vi.spyOn(Date, 'now').mockReturnValue(now + 31_000)
+  it('asked again after the TTL: a project created meanwhile is then used', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
     try {
-      expect(refreshNamespaceIfStale()).toBe('retrying')
-      await namespaceSettled()
+      await primeNamespace(home, { env: { VEILIO_PROJECT: 'web' } })
+      const webEnv = ctxWith({ VEILIO_PROJECT: 'web' })
+      const first = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
+      expect(first.isError).toBe(true)
+      cloud.projects.push({ id: 'p-web', name: 'web' })
+      // Inside the TTL it is not asked again.
+      vi.advanceTimersByTime(29_999)
+      const inside = await callToolAsync(
+        'anonymize_text',
+        { text: 'export class Gamma {}' },
+        webEnv
+      )
+      expect(inside.isError).toBe(true)
+      vi.advanceTimersByTime(1)
+      const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
+      expect(r.isError ?? false, r.text).toBe(false)
     } finally {
-      later.mockRestore()
+      vi.useRealTimers()
     }
-    const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
-    expect(r.isError ?? false, r.text).toBe(false)
   })
 
   it('restore_text refuses too', async () => {

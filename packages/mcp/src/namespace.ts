@@ -226,10 +226,11 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
     }
   }
   const status = current.found.status
-  // 'refused' is asked again like 'unavailable': the variable cannot change in
-  // this process, but the server's projects can - one created, or a shared
-  // name made unique - and only the server's listing says which.
-  if (status !== 'locked' && status !== 'unavailable' && status !== 'refused') return null
+  // 'refused' is not asked again here: it exists only with the variable set,
+  // the server's projects can change under it (one created, a shared name made
+  // unique), and `confirmProject` asks that on its own TTL - two paths asking
+  // the same question would pay for it twice.
+  if (status !== 'locked' && status !== 'unavailable') return null
   if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
   const now = Date.now()
   const credential = status === 'locked' ? readCredential(primedWith.home) : null
@@ -261,6 +262,11 @@ function reloadForAnotherProject(): Promise<ResolvedNamespace> {
   return primeNamespace(primedWith.home, primedWith.opts)
 }
 
+/** A masking call never waits longer than this on the confirming listing. */
+export const CONFIRM_DEADLINE_MS = 3_000
+/** The confirmation in flight: calls arriving meanwhile share it. */
+let confirming: Promise<void> | null = null
+
 /**
  * With VEILIO_PROJECT set, ask the server which project the value names NOW
  * (one project listing) and compare its ID with the one the cache was read
@@ -270,11 +276,20 @@ function reloadForAnotherProject(): Promise<ResolvedNamespace> {
  * nothing: the stored choice is checked by `refreshNamespaceIfStale`.
  *
  * Run before a tool that numbers or restores from the team namespace
- * (anonymize, restore), at most once per CONFIRM_TTL_MS. A listing that fails changes nothing: Cloud being
- * down is not a reason to throw a good namespace away.
+ * (anonymize, restore), at most once per CONFIRM_TTL_MS, and once however many
+ * calls arrive together. The listing has a short deadline, and one that fails
+ * or times out backs off for the TTL like one that answered: Cloud being down
+ * is not a reason to stall masking, or to throw a good namespace away.
  */
-export async function confirmProject(): Promise<void> {
-  if (!primed) return
+export function confirmProject(): Promise<void> {
+  if (!primed || projectOverride(primedWith.opts.env) === null) return Promise.resolve()
+  confirming ??= confirmOnce().finally(() => {
+    confirming = null
+  })
+  return confirming
+}
+
+async function confirmOnce(): Promise<void> {
   const { home, opts } = primedWith
   const value = projectOverride(opts.env)
   if (value === null) return
@@ -283,12 +298,17 @@ export async function confirmProject(): Promise<void> {
   if (confirmedAt !== null && performance.now() - confirmedAt < CONFIRM_TTL_MS) return
   const credential = readCredential(home)
   if (!credential) return
+  const giveUp = new AbortController()
+  const timer = setTimeout(() => giveUp.abort(), CONFIRM_DEADLINE_MS)
   let now: string | null
   try {
-    const scoped = await resolveOverride(credential, value)
+    const scoped = await resolveOverride(credential, value, giveUp.signal)
     now = scoped.ok ? (scoped.value.project ?? null) : null
   } catch {
+    confirmedAt = performance.now()
     return
+  } finally {
+    clearTimeout(timer)
   }
   const refusedAlready = current.found.status === 'refused'
   if (now === null ? refusedAlready : now === primedProjectId) {
