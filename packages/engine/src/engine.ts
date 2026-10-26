@@ -793,7 +793,7 @@ function safeMatch(pattern: string, name: string): boolean {
 }
 
 function isAnonymizeOptions(o: AnonymizeOptions | SymbolMap): o is AnonymizeOptions {
-  return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o
+  return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o || 'path' in o
 }
 
 function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
@@ -838,7 +838,7 @@ export function anonymize(
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
   // becomes a reversible map value, which is worse than leaving it alone.
-  const scan = scanSecrets(code, opts.secrets ?? 'redact')
+  const scan = scanSecrets(code, opts.secrets ?? 'redact', { path: opts.path })
   const redacted = scan.code
 
   // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter

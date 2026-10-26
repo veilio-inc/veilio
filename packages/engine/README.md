@@ -114,6 +114,45 @@ Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
 Under `'warn'` nothing is acted on: findings come back with `disposition:
 'report'` and the code unchanged.
 
+### Passwords in a secret position
+
+Some slots can only hold a credential, so the value there is removed whatever
+its strength. A weak password (`postgres`, `hunter22`) is exactly what a person
+types into one:
+
+- password flags: `-p<pw>` / `-p <pw>` after a mysql, mariadb, mongo or
+  sshpass client; `-P <pw>` for sqlcmd, bcp, osql, isql and ipmitool;
+  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=` or a space.
+  Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`, `docker run -p`)
+  and flags with no value (`--password-stdin`, `--password-file`,
+  `--no-password`) are left alone;
+- well-known password environment variables: `PGPASSWORD`, `MYSQL_PWD`,
+  `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MSSQL_SA_PASSWORD`,
+  `REDISCLI_AUTH`, `SSHPASS` and others, in shell, dotenv, compose and
+  PowerShell forms;
+- the password in URL userinfo (`scheme://user:password@host`, the user may be
+  empty), never the user or the host;
+- auth headers: `Authorization` / `Proxy-Authorization` with `Bearer` from 8
+  characters or `Basic` credentials of any length, `X-Api-Key`, the same inside
+  curl `-H`, and the password of curl `-u user:pass`.
+
+Obvious placeholders are neither redacted nor reported: `changeme`,
+`password`, `xxx…`, `***`, `<your-password>`, `${VAR}`, `$VAR`, `%VAR%`,
+`$(…)`, `REDACTED`, an empty value.
+
+**Redaction by context.** Pass the file the text came from as `path`
+(`anonymize(code, { path })`, `scanSecrets(code, policy, { path })`,
+`detectSecrets(code, { path })`). In a test, fixture or example file
+(`isExamplePath`: `test/`, `tests/`, `__tests__/`, `fixtures/`, `examples/`,
+`*.test.*`, `*.spec.*`, `*_test.*`, `.env.example`, `.env.sample`, `*.example`
+and similar) a **weak** value in one of these positions is only reported, as a
+`possible-credential` finding that does not block: there it is a fixture, and
+destroying it would corrupt the test. A **strong** value (12+ characters of
+three character classes, or 20+ near-random characters) is redacted there as
+everywhere. With no `path` the text is treated as real source and every value
+in these positions is redacted. The generic `password = "..."` rule keeps its
+own judgement (a single lowercase word there is only reported, in any file).
+
 ## Regulated identifiers
 
 A bank account or card number is not a credential — it is material a regulation
@@ -179,6 +218,8 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 - `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
+  - `options.path` — the file the code came from; a weak password in a secret
+    position is only reported in a test, fixture or example file (see above)
   - `options.existingMap` — continue numbering from a previous session
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
@@ -262,13 +303,15 @@ thrown on. It stays in the map and applies again where it is valid.
 - `measureCommentExposure(code, language?)` → `CommentExposure` — the same
   measurement `anonymize` returns, for text it did not produce (after a manual
   mark is undone, say)
-- `detectSecrets(code)` → `SecretFinding[]` — scan without modifying
-- `scanSecrets(code, policy?)` → `{ findings, code, regulated }` — `regulated`
+- `detectSecrets(code, options?)` → `SecretFinding[]` — scan without modifying
+- `scanSecrets(code, policy?, options?)` → `{ findings, code, regulated }` —
+  `options.path` as for `anonymize`; `regulated`
   holds the values handed to the masking pass; `anonymize` calls this first and
   masks them itself, so a caller doing its own masking is the only one that needs
   the field
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
+- `isExamplePath(path)` → whether a path is a test, fixture or example file
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked

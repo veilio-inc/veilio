@@ -674,7 +674,7 @@ function safeMatch(pattern, name) {
     }
 }
 function isAnonymizeOptions(o) {
-    return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o;
+    return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o || 'path' in o;
 }
 function isSymbolMap(o) {
     for (const v of Object.values(o)) {
@@ -714,7 +714,7 @@ export function anonymize(code, options = {}) {
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.
-    const scan = scanSecrets(code, opts.secrets ?? 'redact');
+    const scan = scanSecrets(code, opts.secrets ?? 'redact', { path: opts.path });
     const redacted = scan.code;
     // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
     // at 3 for the __CLS__ base). Without this, a subsequent call with an

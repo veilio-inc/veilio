@@ -81,6 +81,12 @@ export declare const SECRET_SEVERITIES: Readonly<Record<SecretType, SecretSeveri
 export declare const SECRET_DISPOSITIONS: Readonly<Record<SecretType, Disposition>>;
 /** Shannon entropy in bits per character. */
 export declare function shannonEntropy(value: string): number;
+/**
+ * Whether `path` names a test, fixture or example file (spec 013, decision 6).
+ * There a weak value in a secret position is a fixture, and destroying it
+ * would corrupt the test for no safety gain, so it is reported instead.
+ */
+export declare function isExamplePath(path: string): boolean;
 /** Show enough of the value to be recognisable, never enough to be usable. */
 export declare function previewSecret(value: string): string;
 /** A `mask`-disposition value, handed to the masking pass to replace. */
@@ -145,8 +151,15 @@ export declare function blocksPaste(type: SecretType): boolean;
  *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
  *  whole and of a known kind. */
 export declare const REDACTION_TOKENS: RegExp;
+/** Where the scanned text comes from. */
+export interface ScanOptions {
+    /** The file the text was read from. In a test, fixture or example file
+     *  (`isExamplePath`) a weak value in a secret position is reported, not
+     *  redacted. Absent: the text is treated as real source. */
+    path?: string;
+}
 /** Detect credentials in `code` without modifying it. */
-export declare function detectSecrets(code: string): SecretFinding[];
+export declare function detectSecrets(code: string, options?: ScanOptions): SecretFinding[];
 /**
  * Detect credentials and, under the `redact` policy, replace critical/high
  * findings with `__REDACTED_<TYPE>_<n>__` tokens.
@@ -156,7 +169,7 @@ export declare function detectSecrets(code: string): SecretFinding[];
  * never written to the SymbolMap, `restore()` leaves it in place — the redaction
  * is one-way by construction, not by convention.
  */
-export declare function scanSecrets(code: string, policy?: SecretPolicy): SecretScan;
+export declare function scanSecrets(code: string, policy?: SecretPolicy, options?: ScanOptions): SecretScan;
 /** True when the scan found anything that should stop a user from pasting. */
 export declare function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean;
 /** Count findings by severity, for badges and audit records. */
