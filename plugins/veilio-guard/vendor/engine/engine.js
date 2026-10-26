@@ -1,8 +1,8 @@
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
-import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js';
+import { credentialSpans, detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
-import { assertKnownOptions, optionKeys, unknownKeys, unknownOptionError } from './options.js';
+import { assertKnownOptions, assertObject, optionKeys, unknownKeys, unknownOptionError, } from './options.js';
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
 // `anonymize` resolves the language from its options (auto-detecting by default).
@@ -681,8 +681,24 @@ const ANONYMIZE_OPTIONS = optionKeys({
     language: true,
     secrets: true,
     path: true,
+    root: true,
 });
 const RESTORE_OPTIONS = optionKeys({ strip: true });
+/** `map` without the entries whose real value is a credential on its own. */
+function withoutCredentials(map) {
+    let out = null;
+    for (const [placeholder, real] of Object.entries(map)) {
+        if (credentialSpans(real).length === 0)
+            continue;
+        out ??= { ...map };
+        delete out[placeholder];
+    }
+    return out ?? map;
+}
+/** Whether [start, end) overlaps any of `spans`. */
+function overlapsAny(spans, start, end) {
+    return spans.some(([a, b]) => start < b && a < end);
+}
 /**
  * Options, or the positional existing map, decided by the keys.
  *
@@ -695,6 +711,7 @@ const RESTORE_OPTIONS = optionKeys({ strip: true });
 function resolveAnonymizeOptions(options) {
     if (options === undefined || options === null)
         return {};
+    assertObject('anonymize', options);
     const keys = Object.keys(options);
     if (keys.length === 0)
         return {};
@@ -711,12 +728,15 @@ function resolveAnonymizeOptions(options) {
 export function anonymize(code, options = {}) {
     // Unknown keys throw; see resolveAnonymizeOptions.
     const opts = resolveAnonymizeOptions(options);
-    const existingMap = opts.existingMap ?? {};
+    // A credential never goes into the map, in any `secrets` mode (founder
+    // decision 2026-10-26): an entry an older map holds for one is dropped.
+    const existingMap = withoutCredentials(opts.existingMap ?? {});
+    const where = { path: opts.path, root: opts.root };
     const rules = opts.rules ?? [];
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.
-    const scan = scanSecrets(code, opts.secrets ?? 'redact', { path: opts.path });
+    const scan = scanSecrets(code, opts.secrets ?? 'redact', where);
     const redacted = scan.code;
     // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
     // at 3 for the __CLS__ base). Without this, a subsequent call with an
@@ -781,7 +801,23 @@ export function anonymize(code, options = {}) {
     // frames - is neither extracted nor substituted (traces.ts). Blanked rather
     // than cut, so offsets and lines still match `source`.
     const { verbatim, unextracted } = traceSpans(source);
-    const scannable = blankSpans(source, [...verbatim, ...unextracted]);
+    // Every credential left in the text - reported under `warn`, a fixture or a
+    // possible credential under `redact`, anything under `off` - is neither
+    // extracted nor substituted, so no part of it reaches the map. Found again
+    // in `source`, so the offsets are the ones substitution sees.
+    const secretSpans = credentialSpans(source, where);
+    // A name the existing map already holds may still be substituted inside one:
+    // that writes nothing new, and the guard relies on it for a plain word
+    // (`client_secret: "disabled"`) its map already masks.
+    const alreadyMapped = new Set(Object.values(existingMap));
+    // Values from the text as given too: under `redact` a destroyed credential
+    // is gone from `source`, and its value must not enter the map as a name
+    // written elsewhere either.
+    const secretValues = new Set([
+        ...secretSpans.map(([start, end]) => source.slice(start, end)),
+        ...credentialSpans(code, where).map(([start, end]) => code.slice(start, end)),
+    ]);
+    const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans);
     const identifiers = extractIdentifiers(scannable, language);
     const roleOf = classifyIdentifiers(scannable, language);
     // Split rules by type, sort by sort_order ASC (lower = earlier)
@@ -804,6 +840,11 @@ export function anonymize(code, options = {}) {
         }
         if (reverseExisting[name])
             continue; // already mapped
+        // A name that is itself a credential the rules found in this text is never
+        // written to the map, wherever else it stands (founder decision
+        // 2026-10-26). It is left as written.
+        if (secretValues.has(name))
+            continue;
         // 2. Replace: first match wins
         const matched = replacers.find((r) => safeMatch(r.pattern, name));
         if (matched) {
@@ -847,7 +888,9 @@ export function anonymize(code, options = {}) {
     // user's name and is masked like anywhere else.
     const extracted = new Set(identifiers);
     const knownInFrames = extractIdentifiers(unextracted.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => reverseExisting[n] && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n)));
-    const substitutable = [...identifiers, ...knownInFrames]
+    // Likewise inside a credential: only names the existing map already holds.
+    const knownInSecrets = extractIdentifiers(secretSpans.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => alreadyMapped.has(n) && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n)));
+    const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
         .sort((a, b) => b.length - a.length)
         .filter((n) => !whitelisted.has(n) && reverseExisting[n]);
     const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM);
@@ -863,7 +906,11 @@ export function anonymize(code, options = {}) {
         : (text, start) => {
             let out = pattern === null
                 ? text
-                : text.replace(pattern, (m, offset) => inSpan(verbatim, start + offset) ? m : (reverseExisting[m] ?? m));
+                : text.replace(pattern, (m, offset) => inSpan(verbatim, start + offset) ||
+                    (!alreadyMapped.has(m) &&
+                        overlapsAny(secretSpans, start + offset, start + offset + m.length))
+                    ? m
+                    : (reverseExisting[m] ?? m));
             for (const name of oversized) {
                 out = replaceWholeWord(out, name, reverseExisting[name]);
             }

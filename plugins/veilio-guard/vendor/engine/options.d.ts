@@ -8,3 +8,6 @@ export declare function unknownKeys(options: object, valid: readonly string[]): 
 export declare function unknownOptionError(fn: string, unknown: readonly string[], valid: readonly string[]): TypeError;
 /** Throw when `options` holds a key that is not in `valid`. */
 export declare function assertKnownOptions(fn: string, options: object | undefined, valid: readonly string[]): void;
+/** Throw unless `options` is a plain object: a string's characters would
+ *  otherwise be reported as unknown options '0', '1', and so on. */
+export declare function assertObject(fn: string, options: unknown): void;

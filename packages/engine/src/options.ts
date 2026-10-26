@@ -39,6 +39,15 @@ export function assertKnownOptions(
   valid: readonly string[]
 ): void {
   if (options === undefined || options === null) return
+  assertObject(fn, options)
   const unknown = unknownKeys(options, valid)
   if (unknown.length > 0) throw unknownOptionError(fn, unknown, valid)
+}
+
+/** Throw unless `options` is a plain object: a string's characters would
+ *  otherwise be reported as unknown options '0', '1', and so on. */
+export function assertObject(fn: string, options: unknown): void {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new TypeError(`${fn}: options must be an object`)
+  }
 }

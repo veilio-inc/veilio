@@ -201,4 +201,7 @@ export interface AnonymizeOptions {
    *  environment variable, URL userinfo, an auth header) is reported rather
    *  than redacted; a strong one is redacted everywhere. Absent: real source. */
   path?: string
+  /** The project root, for an absolute `path`: only folders inside it count
+   *  as test or example folders. */
+  root?: string
 }

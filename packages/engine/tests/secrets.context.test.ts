@@ -56,7 +56,6 @@ describe('password flags on a command line', () => {
     ['mysql -u root -p§ shop', 'hunter22'],
     ['mysql -uroot -p§', 'secret1'],
     ['mysqldump -h db -u app -p§ --all-databases', 'pass'],
-    ['mariadb -u root -p § shop', 'hunter22'],
     ['mysql -u root -p"§" shop', 'two words'],
     ["mysql -u root -p'§'", 'abc;def'],
     ['mongosh -u admin -p § --authenticationDatabase admin', 'mongo123'],
@@ -66,10 +65,10 @@ describe('password flags on a command line', () => {
     ['ipmitool -I lanplus -H 10.0.0.9 -U admin -P § chassis status', 'calvin'],
     ['redis-cli -h cache -a § ping', 'redispass'],
     ['psql --password=§ -h db', 'hunter22'],
-    ['some-tool --password § --verbose', 'hunter22'],
-    ['some-tool --pass=§', 'hunter22'],
+    ['$ some-tool --password § --verbose', 'hunter22'],
+    ['docker login --pass=§', 'hunter22'],
     ['openssl pkcs12 --passwd "§" -in x', 'with space'],
-    ['  run: deploy --password=§', 'ci-pass'],
+    ['  run: ./deploy.sh --password=§', 'ci-pass'],
   ]
   for (const [template, secret] of positives) {
     it(`redacts the password in ${template}`, () => {
@@ -81,6 +80,7 @@ describe('password flags on a command line', () => {
     'mysql -h db -P 3306 -u root -p',
     'mysql -h db -P3306 -u root',
     'Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`)',
+    'Run `mysql -h db` first, then read why a flag such as -prootpw is unsafe.',
     'mysql -u root -p\nshop',
     'psql -p 5432 -h db',
     'ssh -p 22 deploy@host',
@@ -296,9 +296,9 @@ describe('test, fixture and example paths', () => {
     'config/app.sample',
     'config.php.dist',
     'deploy/values.tpl',
-    'C:\\repo\\tests\\db.ts',
+    'repo\\tests\\db.ts',
     'TESTS/DB.TS',
-    '/abs/path/to/test/x.ts',
+    '/abs/path/to/x.test.ts',
   ]
   for (const path of testish) {
     it(`${path} is a test or example path`, () => {
@@ -335,7 +335,7 @@ describe('redaction by context (decision 6)', () => {
     { name: 'mysql -p', template: 'mysql -u root -p§ shop', weak: 'hunter22', strong: STRONG },
     { name: '-P tool', template: 'sqlcmd -U sa -P §', weak: 'Passw0rd', strong: STRONG },
     { name: 'redis-cli -a', template: 'redis-cli -a § ping', weak: 'redis', strong: STRONG },
-    { name: '--password', template: 'tool --password=§', weak: 'hunter22', strong: STRONG },
+    { name: '--password', template: './tool --password=§', weak: 'hunter22', strong: STRONG },
     { name: 'env', template: 'PGPASSWORD=§ psql', weak: 'postgres', strong: STRONG },
     { name: 'userinfo', template: 'postgres://app:§@db/app', weak: 'postgres', strong: STRONG },
     {
@@ -544,22 +544,30 @@ describe('the user half of a credential (security review)', () => {
     }
   })
 
-  it('a strong Basic user half with a trivial password is redacted in a fixture', () => {
-    expectRedacted('Authorization: Basic §', b64('Xk9#mQ2vL7pZ:x'), 'tests/x.test.ts')
+  it('a token-shaped Basic user with a trivial password is redacted in a fixture', () => {
+    expectRedacted('Authorization: Basic §', b64('a3f9c2e1b7d04f6e9a8b7c6d:x'), 'tests/x.test.ts')
   })
 
-  it('Basic is report-only in a fixture only when both halves and the whole are weak', () => {
+  it('Basic is judged half by half: a weak password and a plain user are report-only', () => {
+    // Code review, ruling 2: never the joined string. `deploy:pass1234` reads
+    // strong joined, and each half is weak.
     expectReportedOnly(`Authorization: Basic ${b64('u:pass')}`, 'tests/x.test.ts')
-    // Each half weak, the whole strong: redacted.
-    expectRedacted('Authorization: Basic §', b64('deploy:pass1234'), 'tests/x.test.ts')
+    expectReportedOnly(`Authorization: Basic ${b64('deploy:pass1234')}`, 'tests/x.test.ts')
+    // A strong-but-not-token user does not keep it redacted either.
+    expectReportedOnly(`Authorization: Basic ${b64('Xk9#mQ2vL7pZ:x')}`, 'tests/x.test.ts')
   })
 
-  it('curl -u: a strong user is redacted, and so is the trivial password beside it', () => {
-    for (const path of FIXTURES) {
-      const scan = scanSecrets('curl -u Xk9#mQ2vL7pZ:x https://api', 'redact', path ? { path } : {})
+  it('curl -u: a token-shaped user is redacted in every file; the password half decides itself', () => {
+    const user = 'a3f9c2e1b7d04f6e9a8b7c6d'
+    for (const path of [undefined, 'src/config.ts']) {
+      const scan = scanSecrets(`curl -u ${user}:x https://api`, 'redact', path ? { path } : {})
       expect(scan.code, String(path)).toMatch(
         new RegExp(`^curl -u ${TOKEN.source}:${TOKEN.source} https://api$`)
       )
+    }
+    for (const path of ['tests/x.test.ts', '.env.example']) {
+      const scan = scanSecrets(`curl -u ${user}:x https://api`, 'redact', { path })
+      expect(scan.code, path).toMatch(new RegExp(`^curl -u ${TOKEN.source}:x https://api$`))
     }
   })
 
@@ -568,8 +576,8 @@ describe('the user half of a credential (security review)', () => {
     expectReportedOnly('curl -u admin:admin https://api', 'tests/x.test.ts')
   })
 
-  it('curl -u: each half weak but the whole strong is redacted in a fixture, the user kept', () => {
-    expectRedacted('curl -u deploy:§ https://api', 'pass1234', 'tests/x.test.ts')
+  it('curl -u: each half weak is report-only in a fixture, whatever the joined string', () => {
+    expectReportedOnly('curl -u deploy:pass1234 https://api', 'tests/x.test.ts')
   })
 
   it('URL: a token as the user, with no password, is redacted in every context', () => {
@@ -592,15 +600,16 @@ describe('the user half of a credential (security review)', () => {
     }
   })
 
-  it('URL: x-access-token:<tok> keeps the user and redacts the token, in a fixture too', () => {
-    expectRedacted('https://x-access-token:§@github.com/org/repo', 'abc12345', 'tests/x.test.ts')
+  it('URL: x-access-token:<tok> keeps the user; the token is judged on its own', () => {
+    expectRedacted('https://x-access-token:§@github.com/org/repo', 'abc12345')
+    expectReportedOnly('https://x-access-token:abc12345@github.com/org/repo', 'tests/x.test.ts')
   })
 
-  it('URL: a strong user with a weak password is redacted whole, in a fixture too', () => {
+  it('URL: a token-shaped user is redacted in a fixture; a weak password beside it is reported', () => {
     const scan = scanSecrets('https://a3f9c2e1b7d04f6e9a8b7c6d:x@host/p', 'redact', {
       path: 'tests/x.test.ts',
     })
-    expect(scan.code).toMatch(new RegExp(`^https://${TOKEN.source}:${TOKEN.source}@host/p$`))
+    expect(scan.code).toMatch(new RegExp(`^https://${TOKEN.source}:x@host/p$`))
   })
 
   it('URL: a strong user that is also the password is redacted in both places', () => {

@@ -361,9 +361,11 @@ describe('integration — a credential can never round-trip', () => {
   it('honours secrets: off so existing callers can opt out', () => {
     const { anonymized, map } = anonymize(code, { secrets: 'off' })
     expect(anonymized).not.toContain('__REDACTED_')
-    // With the guard off the key is masked reversibly — the old behavior, and
-    // exactly why 'redact' is the default.
-    expect(Object.values(map)).toContain('sk_live_51H8xQ2ABCDEFGHIJKLMNOP')
+    // It used to be masked reversibly, into the map. A credential never goes
+    // into the map in any mode (founder decision 2026-10-26): with the guard
+    // off it is left in the text as written.
+    expect(Object.values(map)).not.toContain('sk_live_51H8xQ2ABCDEFGHIJKLMNOP')
+    expect(anonymized).toContain('sk_live_51H8xQ2ABCDEFGHIJKLMNOP')
   })
 
   it('honours secrets: warn — reports without altering the output', () => {

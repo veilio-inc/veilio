@@ -86,7 +86,7 @@ export declare function shannonEntropy(value: string): number;
  * There a weak value in a secret position is a fixture, and destroying it
  * would corrupt the test for no safety gain, so it is reported instead.
  */
-export declare function isExamplePath(path: string): boolean;
+export declare function isExamplePath(path: string, root?: string): boolean;
 /** Show enough of the value to be recognisable, never enough to be usable. */
 export declare function previewSecret(value: string): string;
 /** A `mask`-disposition value, handed to the masking pass to replace. */
@@ -157,7 +157,17 @@ export interface ScanOptions {
      *  (`isExamplePath`) a weak value in a secret position is reported, not
      *  redacted. Absent: the text is treated as real source. */
     path?: string;
+    /** The project root, for an absolute `path`: only folders inside it count
+     *  as test or example folders. */
+    root?: string;
 }
+/**
+ * Where the credentials in `code` stand, whatever the policy: every value a
+ * rule would destroy, and every value it only reports as a possible
+ * credential. The masking pass leaves these alone, so a credential never
+ * reaches the symbol map in any `secrets` mode (founder decision 2026-10-26).
+ */
+export declare function credentialSpans(code: string, options?: ScanOptions): [number, number][];
 /** Detect credentials in `code` without modifying it. */
 export declare function detectSecrets(code: string, options?: ScanOptions): SecretFinding[];
 /**

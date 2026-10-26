@@ -137,12 +137,15 @@ interface Pattern {
    * test, fixture or example file a WEAK value is only reported (decision 6).
    */
   position?: true
-  /** What to judge for strength, when it is not the matched value alone:
-   *  every reading of the credential the value belongs to (Basic: the decoded
-   *  user half, password half and whole; userinfo and curl -u: the user, the
-   *  password and the pair). The STRONGEST decides (security review: a key
-   *  carried as the user, `sk_live_…:`, read as weak by its password half). */
-  strengthOf?: (value: string, match: string) => string[]
+  /** Whether a value of this secret-position rule stays redacted in a test or
+   *  example file. Default: strong (research R7). A provider-format key needs
+   *  no test: its own rule matches the same span and wins the overlap. Basic
+   *  credentials are judged half by half (code review of #166): the password
+   *  half on its strength, the user half on being token-shaped. */
+  keep?: (value: string) => boolean
+  /** Where the rule may match at all, beyond its regex: `--password` only in a
+   *  command context (code review of #166, finding 5). */
+  context?: (at: number, scan: ScanContext) => boolean
   /**
    * Structural confirmation, run on the matched value before it is reported.
    *
@@ -303,30 +306,58 @@ function basicCredentials(value: string): boolean {
   return decoded !== null && decoded.includes(':') && /^[\x20-\x7e]+$/.test(decoded)
 }
 
-/** Basic credentials as they are judged for strength: both decoded halves
- *  and the decoded whole. */
-function basicReadings(value: string): string[] {
+/** Whether Basic credentials stay redacted in a test or example file. Half by
+ *  half, never the joined string (code review of #166, rulings 2 and 3): a
+ *  provider-format key anywhere in the decoded payload, a token-shaped user
+ *  half, or a strong password half. */
+function basicKept(value: string): boolean {
   const decoded = decodeBase64(value)
-  if (decoded === null || !decoded.includes(':')) return [value]
+  if (decoded === null || !decoded.includes(':')) return isStrong(value)
   const colon = decoded.indexOf(':')
-  return [decoded.slice(0, colon), decoded.slice(colon + 1), decoded]
+  return (
+    holdsProviderKey(decoded) ||
+    isTokenShaped(decoded.slice(0, colon)) ||
+    isStrong(decoded.slice(colon + 1))
+  )
 }
 
-/** A password after `user:` (URL userinfo, curl -u) as it is judged for
- *  strength: the password, the user before it, and the pair. */
-function userPasswordReadings(value: string, match: string): string[] {
-  const head = match.slice(0, match.lastIndexOf(value))
-  const user = /([^\s"'=:/]*):$/.exec(head)?.[1] ?? ''
-  return [value, user, `${user}:${value}`]
+/** The engine's high-entropy token test, as the catch-all rule below applies
+ *  it: 24 to 200 token characters, entropy over the assignment floor. */
+function isHighEntropyToken(value: string): boolean {
+  return /^[A-Za-z0-9+/_-]{24,200}={0,2}$/.test(value) && shannonEntropy(value) >= ENTROPY_FLOOR
 }
 
-/** Strong (research R7), or holding a provider-format key anywhere. */
-function strongOrProviderKey(value: string): boolean {
-  return isStrong(value) || holdsProviderKey(value)
+/** A user half that is a token rather than a name: a high-entropy token.
+ *  Never `isStrong`: `Build-Agent01` is a name. A provider-format key as the
+ *  user is the other half of the ruling, and needs no test here: in a URL or
+ *  on a command line its own rule finds it in clear, and in Basic credentials
+ *  `basicKept` runs the provider rules over the decoded payload. */
+function isTokenShaped(value: string): boolean {
+  return isHighEntropyToken(value)
 }
+
+/** A header value that is code, not a literal: a shell variable, a member
+ *  access, an index or a call (an environment lookup, `config.key`). */
+function isCodeExpression(value: string): boolean {
+  return (
+    value.startsWith('$') ||
+    /[[(]/.test(value) ||
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(value)
+  )
+}
+
+/** `${NAME:-default}`, `${NAME-default}`, `${NAME:=default}`, and Spring's
+ *  `${NAME:default}`: the default is the value (finding 10). `${NAME}` and
+ *  `${NAME:?message}` stay placeholders. */
+const WITH_DEFAULT = /^\$\{[A-Za-z_][A-Za-z0-9_.]*(?::?[-=]|:(?![?+]))([^}]*)\}$/
 
 // Values in a secret position: double-quoted, single-quoted, or bare. A bare
-// value ends at whitespace, a quote or a shell separator.
+// value ends at whitespace, a quote or a shell separator. A templating
+// placeholder that spans spaces (`${{ secrets.X }}`, `{{ x }}`,
+// `<your password>`, `${NAME:?a message}`) is matched whole first and captures nothing, so it is
+// skipped rather than cut in half at its first space (finding 4).
+const PH =
+  '(?:\\$?\\{\\{[^}\\n]{0,200}\\}\\}|\\$\\{[^}\\s]*[ \\t][^}\\n]{0,200}\\}|<[^<>\\n]{1,100}>)'
 const DQ = '"([^"\\n]{0,256})"'
 const SQ = "'([^'\\n]{0,256})'"
 const BARE = '([^\\s"\'`;&|]{1,256})'
@@ -334,19 +365,24 @@ const BARE = '([^\\s"\'`;&|]{1,256})'
 const BARE_ARG = '((?!-)[^\\s"\'`;&|]{1,256})'
 /** A command word: the name standing alone, then whitespace. */
 const command = (names: string) => `(?<![\\w.-])(?:${names})(?:\\.exe)?(?=\\s)`
-/** The rest of the command line, bounded so a scan stays linear. A backtick
- *  ends it too: in Markdown it closes the inline code the command sits in. */
-const SAME_LINE = '[^\\n;&|`]{0,300}?\\s'
+/** The rest of the command, bounded so a scan stays linear. A backslash at
+ *  the end of a line continues it (finding 8). A backtick ends it: in
+ *  Markdown it closes the inline code the command sits in. */
+const SAME_LINE = '(?:[^\\n;&|`\\\\]|\\\\\\r?\\n|\\\\[^\\n]){0,300}?[ \\t]'
+/** A short flag with its value attached only. */
+const attachedFlag = (flag: string) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`
 /** A short flag with its value attached or after spaces. */
 const shortFlag = (flag: string) =>
-  `${flag}(?:${DQ}|${SQ}|${BARE}|[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG}))`
+  `${flag}(?:${PH}|${DQ}|${SQ}|${BARE}|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`
 
 // research R1. `-p` is the password only for these clients; for psql, ssh,
-// redis-cli and docker it is a port.
-const DASH_P_CLIENTS =
+// redis-cli and docker it is a port. For mysql and mariadb only the attached
+// form is: `-p shop` prompts for the password and opens database `shop`.
+const MYSQL_CLIENTS =
   'mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlpump|mysqlbinlog|' +
-  'mariadb(?:-dump|-admin|-import|-check|-show)?|mongo|mongosh|mongodump|mongorestore|' +
-  'mongoexport|mongoimport|sshpass'
+  'mariadb(?:-dump|-admin|-import|-check|-show)?'
+// These take `-p <password>` with a space as well.
+const SEPARATED_P_CLIENTS = 'mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport|sshpass'
 // `-P` is the password for these; for mysql it is the port.
 const DASH_CAP_P_TOOLS = 'sqlcmd|bcp|osql|isql|ipmitool'
 // research R2. Exact names; `*_FILE` variants hold paths and are not listed.
@@ -357,6 +393,102 @@ const PASSWORD_ENV =
   'KEYCLOAK_ADMIN_PASSWORD|KC_BOOTSTRAP_ADMIN_PASSWORD|RESTIC_PASSWORD|BORG_PASSPHRASE'
 /** Groups 1-6 of a `shortFlag`. */
 const FLAG_GROUPS = [1, 2, 3, 4, 5, 6]
+
+// research R12. Commands that take a `--password`, for telling a command line
+// from prose or help text (finding 5). A path (`./deploy.sh`, `bin/x`) counts
+// as a command too.
+const KNOWN_COMMANDS =
+  'mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlpump|mariadb[\\w-]*|' +
+  'mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport|psql|pg_dump|pg_dumpall|' +
+  'pg_restore|pg_basebackup|createdb|dropdb|redis-cli|sqlcmd|bcp|isql|osql|sqlplus|cqlsh|' +
+  'clickhouse-client|influx|cockroach|snowsql|ipmitool|sshpass|curl|wget|git|svn|docker|' +
+  'docker-compose|podman|nerdctl|buildah|skopeo|helm|kubectl|oc|az|aws|gcloud|npm|npx|yarn|' +
+  'pnpm|pip|pip3|twine|poetry|uv|gem|bundle|mvn|gradle|gradlew|dotnet|nuget|java|keytool|' +
+  'openssl|gpg|vault|consul|terraform|ansible|ansible-playbook|ansible-vault|rabbitmqctl|' +
+  'ldapsearch|ldapadd|ldapmodify|smbclient|lftp|sftp|rsync|zip|7z|jf|jfrog|gh|glab|heroku|' +
+  'flyctl|mc|rclone|restic|borg|op|bw|htpasswd|mosquitto_pub|mosquitto_sub|kcat|wp|php|' +
+  'python|python3|node|deno|bun|ruby|perl|bash|sh|zsh|pwsh|powershell|make'
+/** A line that is a shell command by its position: a prompt, a Dockerfile
+ *  RUN, a CI `run:` / `script:` / `command:` value. */
+const SHELL_LINE =
+  /^\s*(?:(?:\$|>)\s|RUN\s|(?:-\s+)?(?:run|script|command|cmd|entrypoint|before_script|after_script)\s*:\s)/
+/** A line that starts with a command: optional sudo/env, variable
+ *  assignments, then a known command or a path to one. */
+const COMMAND_LINE = new RegExp(
+  `^\\s*(?:(?:sudo|exec|env|time|nohup)\\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*` +
+    `(?:(?:${KNOWN_COMMANDS})(?:\\.exe)?|\\.{0,2}/\\S+|~/\\S+|[\\w.-]+/[\\w./-]+)(?=\\s)`
+)
+/** Files in which every line is a command. */
+const SHELL_FILE = /(?:\.(?:sh|bash|zsh|ksh|fish|ps1|psm1|bat|cmd)|(?:^|\/)(?:makefile|justfile))$/i
+
+/** What a scan knows about its text beyond the characters. */
+interface ScanContext {
+  code: string
+  /** A test, fixture or example file (decision 6). */
+  example: boolean
+  /** A shell script: every line is a command. */
+  shellFile: boolean
+  /** Fenced code blocks (``` or ~~~), computed on first use. */
+  fences?: Span[]
+}
+type Span = readonly [number, number]
+
+/** The fenced code blocks of a Markdown text: from the line after an opening
+ *  fence to the start of the closing one. An unclosed fence runs to the end. */
+function fencesOf(code: string): Span[] {
+  const spans: Span[] = []
+  // \x60 is the backtick, spelled out so this file has no bare backtick
+  // outside a template (the purity test reads the source as code and strings).
+  const fence = /^[ \t]{0,3}(\x60{3,}|~{3,})/gm
+  let open: { at: number; marker: string } | null = null
+  let m: RegExpExecArray | null
+  while ((m = fence.exec(code)) !== null) {
+    if (fence.lastIndex <= m.index) fence.lastIndex = m.index + 1
+    const marker = m[1]![0]!
+    if (open === null) {
+      const eol = code.indexOf('\n', m.index)
+      open = { at: eol < 0 ? code.length : eol + 1, marker }
+    } else if (marker === open.marker) {
+      spans.push([open.at, m.index])
+      open = null
+    }
+  }
+  if (open !== null) spans.push([open.at, code.length])
+  return spans
+}
+
+/** The start of the logical line holding `at`: lines that end in a backslash
+ *  continue into the next (finding 8). Bounded, so a scan stays linear. */
+function logicalLineStart(code: string, at: number): number {
+  let start = code.lastIndexOf('\n', at - 1) + 1
+  for (let hops = 0; hops < 50 && start > 0; hops++) {
+    let end = start - 1 // the newline
+    if (code[end - 1] === '\r') end--
+    if (code[end - 1] !== '\\') break
+    start = code.lastIndexOf('\n', end - 2) + 1
+  }
+  return start
+}
+
+/** Whether `--password` at `at` is on a command line rather than in prose or
+ *  help text: a shell script, an argv element (the flag right after a quote), a fenced
+ *  code block, a prompt or CI shell key, or a line that starts with a known
+ *  command (finding 5). */
+function inCommandContext(at: number, scan: ScanContext): boolean {
+  if (scan.shellFile) return true
+  const before = scan.code[at - 1]
+  if (before === '"' || before === "'") return true
+  scan.fences ??= fencesOf(scan.code)
+  if (scan.fences.some(([start, end]) => at >= start && at < end)) return true
+  const line = scan.code.slice(logicalLineStart(scan.code, at), at).slice(0, 300)
+  return SHELL_LINE.test(line) || COMMAND_LINE.test(line)
+}
+
+/** A help-text metavar (`TEXT`, `PASSWORD`) or prose (`--password to ...`)
+ *  where a value would be. */
+function notAFlagValue(value: string): boolean {
+  return /^[A-Z][A-Z0-9_-]*$/.test(value) || /^(?:to|for|is)$/i.test(value)
+}
 
 // Patterns are written to be linear-time: no nested quantifiers over the same
 // character class, and bounded repetition wherever the input is attacker-shaped.
@@ -551,7 +683,7 @@ const PATTERNS: Pattern[] = [
     re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
     group: 1,
     position: true,
-    strengthOf: basicReadings,
+    keep: basicKept,
   },
   {
     type: 'jwt',
@@ -598,7 +730,7 @@ const PATTERNS: Pattern[] = [
     // `Authorization: Basic auth` is prose; real credentials decode to
     // printable `user:password`.
     validate: basicCredentials,
-    strengthOf: basicReadings,
+    keep: basicKept,
   },
   {
     // A raw header line or a curl -H argument takes a bare value; an entry in
@@ -610,7 +742,21 @@ const PATTERNS: Pattern[] = [
     disposition: 'destroy',
     severity: 'medium',
     label: 'API key header',
-    re: /(?<![\w-])X-Api-Key(?:[ \t]{0,3}:[ \t]{0,3}([^\s"'`;,]{4,500})|["'][ \t]{0,3}:[ \t]{0,3}(?:"([^"\n]{4,500})"|'([^'\n]{4,500})'))/gi,
+    re: new RegExp(
+      `(?<![\\w-])X-Api-Key(?:[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|([^\\s"'\`;,]{4,500}))|["'][ \\t]{0,3}:[ \\t]{0,3}(?:"([^"\\n]{4,500})"|'([^'\\n]{4,500})'))`,
+      'gi'
+    ),
+    groups: [1, 2, 3],
+    position: true,
+    // A member access or a call after the header name is code (finding 9).
+    validate: (value) => !isCodeExpression(value),
+  },
+  {
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Password on a command line',
+    re: new RegExp(`${command(MYSQL_CLIENTS)}${SAME_LINE}${attachedFlag('-p')}`, 'g'),
     groups: [1, 2, 3],
     position: true,
   },
@@ -619,7 +765,7 @@ const PATTERNS: Pattern[] = [
     disposition: 'destroy',
     severity: 'medium',
     label: 'Password on a command line',
-    re: new RegExp(`${command(DASH_P_CLIENTS)}${SAME_LINE}${shortFlag('-p')}`, 'g'),
+    re: new RegExp(`${command(SEPARATED_P_CLIENTS)}${SAME_LINE}${shortFlag('-p')}`, 'g'),
     groups: FLAG_GROUPS,
     position: true,
   },
@@ -642,19 +788,21 @@ const PATTERNS: Pattern[] = [
     position: true,
   },
   {
-    // Any command. The name must end at `=` or a space, so --password-stdin
-    // and --password-file are not it (nor --no-password, whose double dash
-    // comes before `no`).
+    // Any command, but only on a command line (finding 5). The name must end
+    // at `=` or a space, so --password-stdin and --password-file are not it
+    // (nor --no-password, whose double dash comes before `no`).
     type: 'password-assignment',
     disposition: 'destroy',
     severity: 'medium',
     label: 'Password on a command line',
     re: new RegExp(
-      `--(?:password|passwd|pass)(?:=(?:${DQ}|${SQ}|${BARE})|[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG}))`,
+      `--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`,
       'g'
     ),
     groups: FLAG_GROUPS,
     position: true,
+    context: inCommandContext,
+    validate: (value) => !notAFlagValue(value),
   },
   {
     // curl only: `-u 1000:1000` is a uid:gid for docker. The user is kept.
@@ -668,11 +816,10 @@ const PATTERNS: Pattern[] = [
     ),
     groups: [1, 2, 3],
     position: true,
-    strengthOf: userPasswordReadings,
   },
   {
-    // The user of curl -u, when it is a token: strong or provider-shaped, it
-    // is redacted in every context. A plain name stays.
+    // The user of curl -u, when it is a token (provider-shaped or a
+    // high-entropy token): redacted in every file. A name stays.
     type: 'password-assignment',
     disposition: 'destroy',
     severity: 'medium',
@@ -682,7 +829,7 @@ const PATTERNS: Pattern[] = [
       'g'
     ),
     group: 1,
-    validate: strongOrProviderKey,
+    validate: isTokenShaped,
   },
   {
     // Shell, dotenv, compose and PowerShell forms. After `=` a space ends a
@@ -693,7 +840,7 @@ const PATTERNS: Pattern[] = [
     severity: 'medium',
     label: 'Password in an environment variable',
     re: new RegExp(
-      `(?<![\\w])(?:${PASSWORD_ENV})(?:["']?[ \\t]{0,3}=[ \\t]{0,3}(?:${DQ}|${SQ})|=${BARE}|["']?[ \\t]{0,3}:[ \\t]{0,3}(?:${DQ}|${SQ}|${BARE}))`,
+      `(?<![\\w])(?:${PASSWORD_ENV})(?:["']?[ \\t]{0,3}=[ \\t]{0,3}(?:${PH}|${DQ}|${SQ})|=(?:${PH}|${BARE})|["']?[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|${DQ}|${SQ}|${BARE}))`,
       'g'
     ),
     groups: [1, 2, 3, 4, 5, 6],
@@ -708,11 +855,10 @@ const PATTERNS: Pattern[] = [
     re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{0,128}:([^\s:@/]{1,256})@/gi,
     group: 1,
     position: true,
-    strengthOf: userPasswordReadings,
   },
   {
-    // The user half of URL userinfo, when it is a token (`https://<token>@`):
-    // strong or provider-shaped, it is redacted in every context. A plain
+    // The user half of URL userinfo, when it is a token (`https://<token>@`,
+    // provider-shaped or a high-entropy token): redacted in every file. A
     // name stays. The group is not the tail of the match, so its offset comes
     // from the `d` flag.
     type: 'connection-string',
@@ -721,7 +867,7 @@ const PATTERNS: Pattern[] = [
     label: 'Token in URL userinfo',
     re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/([^\s:@/]{1,256})(?::[^\s@/]{0,256})?@/dgi,
     group: 1,
-    validate: strongOrProviderKey,
+    validate: isTokenShaped,
   },
   {
     type: 'password-assignment',
@@ -949,7 +1095,11 @@ function classifyValue(value: string, assignmentShaped: boolean): ValueVerdict {
   // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
   // case-insensitively against the ORIGINAL — lowercasing first would stop
   // `$DB_PASSWORD` matching an upper-case-only shell-variable pattern.
-  if (/^\$\{[^}]*\}$|^\{\{[^}]*\}\}$|^%[sdv]$|^\$[a-z_][a-z0-9_]*$|^<[^>]*>$/i.test(trimmed)) {
+  if (
+    /^\$\{\{[^}]*\}\}$|^\$\{[^}]*\}$|^\{\{[^}]*\}\}$|^%[sdv]$|^\$[a-z_][a-z0-9_]*$|^<[^>]*>$/i.test(
+      trimmed
+    )
+  ) {
     return 'placeholder'
   }
   // Windows `%VAR%`, and a command substitution that reads the secret from
@@ -1049,12 +1199,29 @@ const EXAMPLE_FILE_SHAPE =
  * There a weak value in a secret position is a fixture, and destroying it
  * would corrupt the test for no safety gain, so it is reported instead.
  */
-export function isExamplePath(path: string): boolean {
-  const parts = path.replace(/\\/g, '/').toLowerCase().split('/').filter(Boolean)
+export function isExamplePath(path: string, root?: string): boolean {
+  const parts = projectPart(path, root).toLowerCase().split('/').filter(Boolean)
   const file = parts.pop()
   if (file === undefined) return false
   if (parts.some((dir) => EXAMPLE_DIRS.has(dir))) return true
   return EXAMPLE_FILES.has(file) || EXAMPLE_FILE_SHAPE.test(file)
+}
+
+/**
+ * The part of `path` inside the project, `/`-separated (finding 6). A relative
+ * path is taken as relative to the project. An absolute one is cut at `root`;
+ * without a root, or outside it, only its file name counts: the engine reads
+ * no filesystem, so it cannot find the project's `.git`, and a folder above
+ * the project (`/home/test/...`) must never make real source a fixture.
+ */
+function projectPart(path: string, root: string | undefined): string {
+  const p = path.replace(/\\/g, '/')
+  if (!/^(?:\/|[A-Za-z]:\/)/.test(p)) return p
+  const base = root?.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (base !== undefined && base !== '' && p.toLowerCase().startsWith(`${base.toLowerCase()}/`)) {
+    return p.slice(base.length + 1)
+  }
+  return p.slice(p.lastIndexOf('/') + 1)
 }
 
 /** Show enough of the value to be recognisable, never enough to be usable. */
@@ -1078,6 +1245,10 @@ interface RawMatch {
    *  reading of the span, so it keeps a credential rule's specificity: an
    *  e-mail match over `password@host` must not take its place. */
   fixture?: boolean
+  /** Found by the generic assignment rules (`password = "..."`, the
+   *  high-entropy catch-all). A fixture over the same span wins over it, so a
+   *  quoted weak value in a test file is report-only too (finding 7). */
+  generic?: boolean
   /** Set by dropOverlaps when a `mask` match won over an AMBIGUOUS credential
    *  verdict for the same span. The value is destroyed instead of masked: see
    *  the comment there. */
@@ -1105,7 +1276,7 @@ function positionOf(starts: number[], offset: number): { line: number; column: n
   return { line: lo + 1, column: offset - starts[lo] + 1 }
 }
 
-function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
+function collectMatches(code: string, scan: ScanContext): RawMatch[] {
   const found: RawMatch[] = []
   for (const pattern of PATTERNS) {
     // The only two patterns that read their value out of an assignment, and so
@@ -1140,6 +1311,14 @@ function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
         start = m.index + offset
         value = captured
       }
+      if (pattern.context !== undefined && !pattern.context(m.index, scan)) continue
+      // `${NAME:-default}`: the default is the value, and only it is replaced.
+      const withDefault = WITH_DEFAULT.exec(value)
+      if (withDefault !== null) {
+        const fallback = withDefault[1]!
+        start += value.length - 1 - fallback.length
+        value = fallback
+      }
       // Structural confirmation first. A rule carrying a validator is declaring
       // its regex to be only a candidate generator — a digit run is the most
       // common shape in source code, and without the checksum this reports every
@@ -1160,8 +1339,8 @@ function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
       const fixture =
         verdict === 'credential' &&
         pattern.position === true &&
-        exampleContext &&
-        !(pattern.strengthOf ? pattern.strengthOf(value, m[0]) : [value]).some(strongOrProviderKey)
+        scan.example &&
+        !(pattern.keep ?? isStrong)(value)
       if (fixture) verdict = 'ambiguous'
       const ambiguous = verdict === 'ambiguous'
       found.push({
@@ -1176,6 +1355,7 @@ function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
         end: start + value.length,
         value,
         ...(fixture ? { fixture: true } : {}),
+        ...(assignmentShaped ? { generic: true } : {}),
       })
     }
     pattern.re.lastIndex = 0
@@ -1235,7 +1415,17 @@ function dispositionRank(type: SecretType): number {
  *  the card match and the password was written into the SymbolMap, and stopped
  *  blocking the paste. A value any rule reads as a credential is never masked:
  *  within the same disposition the old specificity order still decides. */
-function dropOverlaps(matches: RawMatch[]): RawMatch[] {
+function dropOverlaps(all: RawMatch[]): RawMatch[] {
+  // The context verdict first: a generic assignment match over a downgraded
+  // fixture is the same value read without its context, and must not turn a
+  // report back into a redaction. A provider-format match still wins below.
+  const fixtures = all.filter((m) => m.fixture === true)
+  const matches =
+    fixtures.length === 0
+      ? all
+      : all.filter(
+          (m) => m.generic !== true || !fixtures.some((f) => f.start < m.end && m.start < f.end)
+        )
   const sorted = [...matches].sort((a, b) => {
     const byDisposition = dispositionRank(b.type) - dispositionRank(a.type)
     if (byDisposition !== 0) return byDisposition
@@ -1407,14 +1597,39 @@ export interface ScanOptions {
    *  (`isExamplePath`) a weak value in a secret position is reported, not
    *  redacted. Absent: the text is treated as real source. */
   path?: string
+  /** The project root, for an absolute `path`: only folders inside it count
+   *  as test or example folders. */
+  root?: string
 }
 
-const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true })
+const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true })
+
+function scanContext(code: string, options: ScanOptions): ScanContext {
+  const path = options.path
+  return {
+    code,
+    example: path !== undefined && isExamplePath(path, options.root),
+    shellFile: path !== undefined && SHELL_FILE.test(path.replace(/\\/g, '/')),
+  }
+}
+
+/**
+ * Where the credentials in `code` stand, whatever the policy: every value a
+ * rule would destroy, and every value it only reports as a possible
+ * credential. The masking pass leaves these alone, so a credential never
+ * reaches the symbol map in any `secrets` mode (founder decision 2026-10-26).
+ */
+export function credentialSpans(code: string, options: ScanOptions = {}): [number, number][] {
+  assertKnownOptions('credentialSpans', options, SCAN_OPTIONS)
+  return dropOverlaps(collectMatches(code, scanContext(code, options)))
+    .filter((m) => m.type === 'possible-credential' || SECRET_DISPOSITIONS[m.type] === 'destroy')
+    .map((m) => [m.start, m.end])
+}
 
 /** Detect credentials in `code` without modifying it. */
 export function detectSecrets(code: string, options: ScanOptions = {}): SecretFinding[] {
   assertKnownOptions('detectSecrets', options, SCAN_OPTIONS)
-  return scanSecrets(code, 'warn', options).findings
+  return scan(code, 'warn', options).findings
 }
 
 /**
@@ -1432,10 +1647,14 @@ export function scanSecrets(
   options: ScanOptions = {}
 ): SecretScan {
   assertKnownOptions('scanSecrets', options, SCAN_OPTIONS)
+  return scan(code, policy, options)
+}
+
+/** `scanSecrets` with its options already checked. */
+function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretScan {
   if (policy === 'off') return { findings: [], code, regulated: [] }
 
-  const example = options.path !== undefined && isExamplePath(options.path)
-  const matches = dropOverlaps(collectMatches(code, example))
+  const matches = dropOverlaps(collectMatches(code, scanContext(code, options)))
   if (matches.length === 0) return { findings: [], code, regulated: [] }
 
   const starts = lineIndex(code)

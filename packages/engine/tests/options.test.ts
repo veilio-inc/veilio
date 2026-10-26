@@ -12,7 +12,7 @@ import type { AnonymizeOptions, RestoreOptions, SymbolMap } from '../src/types.j
 // options, anything else throws.
 
 const CODE = 'class PaymentService { charge(amount) { return amount } }'
-const VALID = 'existingMap, rules, manual, language, secrets, path'
+const VALID = 'existingMap, rules, manual, language, secrets, path, root'
 
 /** Call with an object the type system would refuse, as a JS caller can. */
 const loose = (o: object) => o as unknown as AnonymizeOptions
@@ -117,6 +117,7 @@ describe('anonymize still accepts what it accepted', () => {
     ['language', 'typescript'],
     ['secrets', 'warn'],
     ['path', 'src/payment.ts'],
+    ['root', '/repo'],
   ]
   for (const [key, value] of each) {
     it(`{ ${key} } alone is options`, () => {
@@ -154,14 +155,36 @@ describe('scanSecrets and detectSecrets refuse an option they do not know', () =
   it('throws on a misspelt path', () => {
     const bad = { file: 'tests/x.test.ts' } as unknown as { path?: string }
     expect(() => scanSecrets('x', 'redact', bad)).toThrow(
-      "scanSecrets: unknown option 'file'. Valid options: path."
+      "scanSecrets: unknown option 'file'. Valid options: path, root."
     )
     expect(() => detectSecrets('x', bad)).toThrow(
-      "detectSecrets: unknown option 'file'. Valid options: path."
+      "detectSecrets: unknown option 'file'. Valid options: path, root."
     )
   })
   it('accepts { path } and {}', () => {
     expect(() => scanSecrets('x', 'redact', { path: 'a.ts' })).not.toThrow()
     expect(() => detectSecrets('x', {})).not.toThrow()
+  })
+})
+
+describe('options that are not an object', () => {
+  // A string spread into Object.keys gave "unknown options '0', '1', …".
+  const bad = 'tests/x.test.ts' as unknown as object
+  it('scanSecrets, detectSecrets, anonymize and restore say so plainly', () => {
+    expect(() => scanSecrets('x', 'redact', bad as { path?: string })).toThrow(
+      new TypeError('scanSecrets: options must be an object')
+    )
+    expect(() => detectSecrets('x', bad as { path?: string })).toThrow(
+      new TypeError('detectSecrets: options must be an object')
+    )
+    expect(() => anonymize(CODE, bad as AnonymizeOptions)).toThrow(
+      new TypeError('anonymize: options must be an object')
+    )
+    expect(() => restore('x', {}, bad as RestoreOptions)).toThrow(
+      new TypeError('restore: options must be an object')
+    )
+    expect(() => scanSecrets('x', 'redact', [] as unknown as { path?: string })).toThrow(
+      new TypeError('scanSecrets: options must be an object')
+    )
   })
 })
