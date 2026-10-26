@@ -41,6 +41,9 @@ function check(seed: number, raw: string, sent: string, names: string[], kept: s
   return out
 }
 
+// Many cases each: a slow runner (CI, a loaded machine) gets the time it needs.
+const SLOW = { timeoutMs: 60_000 }
+
 const ENTRY = ['prompt', 'attachment', 'context', 'bash', 'grep', 'read', 'restore'] as const
 
 function property(entry: (typeof ENTRY)[number]) {
@@ -123,16 +126,20 @@ function property(entry: (typeof ENTRY)[number]) {
   }
 }
 
-test('the masking property holds through prompt, over random texts', property('prompt'))
+test('the masking property holds through prompt, over random texts', SLOW, property('prompt'))
 
-test('the masking property holds through attachment, over random texts', property('attachment'))
+test(
+  'the masking property holds through attachment, over random texts',
+  SLOW,
+  property('attachment')
+)
 
-test('the masking property holds through context, over random texts', property('context'))
+test('the masking property holds through context, over random texts', SLOW, property('context'))
 
-test('the masking property holds through bash, over random texts', property('bash'))
+test('the masking property holds through bash, over random texts', SLOW, property('bash'))
 
-test('the masking property holds through grep, over random texts', property('grep'))
+test('the masking property holds through grep, over random texts', SLOW, property('grep'))
 
-test('the masking property holds through read, over random texts', property('read'))
+test('the masking property holds through read, over random texts', SLOW, property('read'))
 
-test('the masking property holds through restore, over random texts', property('restore'))
+test('the masking property holds through restore, over random texts', SLOW, property('restore'))

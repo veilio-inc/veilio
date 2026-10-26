@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  NEVER_RESTORED,
+  restoresNeverRestored,
   grow,
   Destroyed,
   dropResidue,
@@ -171,7 +173,7 @@ describe('restoreArgs', () => {
   const map = { __CLS__1: 'QuasarLedgerReconciler', __VAR__1: 'settledTotal' }
 
   it('puts the real names back', () => {
-    expect(restoreArgs('grep -rn __CLS__1 src', map)).toEqual({
+    expect(restoreArgs('grep -rn __CLS__1 src', map)).toMatchObject({
       text: 'grep -rn QuasarLedgerReconciler src',
       unresolved: [],
       altered: [],
@@ -456,5 +458,19 @@ describe('the context fallback', () => {
     const out = g.applyContext(`# veilioGuard\n${MODEL_NOTE}`)
     expect(out).not.toContain('Tr0ub4dor3xzQ')
     expect(out).toContain('guard is on')
+  })
+})
+
+describe('the kinds never restored', () => {
+  it('are the same list for the last scan and for restores', () => {
+    for (const base of NEVER_RESTORED) {
+      const p = `${base}${base.endsWith('__') ? '' : '__'}7`
+      const map = { [p]: 'AKIAQ7RZ2XKM4PLB8WNE' }
+      // Kept masked by the last scan: read back, the key would be found…
+      expect(survivingSecrets(`id ${p} end`, map)).toEqual([])
+      expect(survivingSecrets('id AKIAQ7RZ2XKM4PLB8WNE end', map)).not.toEqual([])
+      // …and refused on restore.
+      expect(restoresNeverRestored('x', [p], map)).toBe(true)
+    }
   })
 })

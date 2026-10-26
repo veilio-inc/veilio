@@ -27,6 +27,16 @@ import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 
+/** The placeholder kinds whose values are masked on purpose and must never be
+ *  newly restored into a tool's arguments, nor read back by the last scan: a
+ *  regulated number, a value marked by hand, a quarantined name. One list for
+ *  both (review of 55ae576). */
+export const NEVER_RESTORED: readonly string[] = [
+  ...Object.values(REGULATED_BASES).filter((b): b is string => typeof b === 'string'),
+  MANUAL_BASE,
+  '__QUARANTINED__',
+]
+
 /** What masking knows about the text in hand (spec 050): its language, the
  *  project's languages, the names the project takes from outside and the names
  *  it declares, and whether the user typed it. */
@@ -367,17 +377,50 @@ export function providerKeys(text: string): string[] {
   })
 }
 
-/** Whether restoring `before` with `map` would write back a regulated
- *  number (an IBAN, a card, a PESEL) that `before` does not already hold as
- *  written. Decided by the placeholder's kind and the map's value compared
- *  as text, never by detecting the number again, so no spacing, separator or
- *  glued spelling of it slips through (security review of f4e81cb). */
-export function restoresRegulated(before: string, map: SymbolMap): boolean {
-  if (!before.includes('__')) return false
-  const bases = Object.values(REGULATED_BASES).filter((b): b is string => typeof b === 'string')
-  for (const [p] of before.matchAll(PLACEHOLDER_IN_TEXT)) {
-    if (!Object.hasOwn(map, p) || !bases.some((base) => p.startsWith(base))) continue
-    if (!before.includes(map[p]!)) return true
+/** Whether a restoration wrote back a value masked on purpose: judged by
+ *  the keys restore() itself resolved (its own matching rule, review of
+ *  55ae576), each of a never-restored kind whose value `before` does not
+ *  already hold as text. */
+export function restoresNeverRestored(
+  before: string,
+  resolved: readonly string[],
+  map: SymbolMap
+): boolean {
+  return resolved.some(
+    (p) =>
+      NEVER_RESTORED.some((base) => p.startsWith(base)) &&
+      Object.hasOwn(map, p) &&
+      !before.includes(map[p]!)
+  )
+}
+
+/** The same invariant by value, belt and braces: a regulated number the
+ *  scanner finds in `after` and not in `before`, or the value of a
+ *  never-restored entry that `after` holds and `before` does not. */
+export function addsMaskedValue(before: string, after: string, map: SymbolMap): boolean {
+  for (const [p, v] of Object.entries(map))
+    if (
+      NEVER_RESTORED.some((base) => p.startsWith(base)) &&
+      after.includes(v) &&
+      !before.includes(v)
+    )
+      return true
+  const values = (text: string) => {
+    const starts = [0]
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+    return detectSecrets(text)
+      .filter((f) => SECRET_DISPOSITIONS[f.type] === 'mask')
+      .map((f) => {
+        const start = (starts[f.line - 1] ?? 0) + f.column - 1
+        return text.slice(start, start + f.length)
+      })
+  }
+  const had = new Map<string, number>()
+  for (const v of values(before)) had.set(v, (had.get(v) ?? 0) + 1)
+  for (const v of values(after)) {
+    const n = had.get(v) ?? 0
+    if (n === 0) return true
+    had.set(v, n - 1)
   }
   return false
 }
@@ -686,9 +729,7 @@ function maskShapedPart(
 // (`__PAN__1`) or a value the author marked by hand (`__MANUAL__1`). They stay
 // masked when the last scan reads the rest back.
 // A quarantined name holds a destroyed credential: never read back either.
-const KEPT_MASKED = [...Object.values(REGULATED_BASES), MANUAL_BASE, '__QUARANTINED__'].filter(
-  (base): base is string => typeof base === 'string'
-)
+const KEPT_MASKED = NEVER_RESTORED
 
 // Every placeholder form the engine writes, legacy ones included (`__P1__`):
 // the same shape as its PLACEHOLDER_TOKEN, read whole.
@@ -731,7 +772,12 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
 export function restoreArgs(
   text: string,
   map: SymbolMap
-): { text: string; unresolved: string[]; altered: string[] } {
+): { text: string; unresolved: string[]; altered: string[]; resolved: string[] } {
   const r = restore(text, map, { strip: 'none' })
-  return { text: r.restored, unresolved: r.report.unresolved, altered: r.report.altered }
+  return {
+    text: r.restored,
+    unresolved: r.report.unresolved,
+    altered: r.report.altered,
+    resolved: r.report.resolved,
+  }
 }

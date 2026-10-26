@@ -35,7 +35,8 @@ import {
   addsProviderKey,
   grow,
   redactKnown,
-  restoresRegulated,
+  restoresNeverRestored,
+  addsMaskedValue,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
@@ -606,9 +607,11 @@ export class Guard {
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
+      if (restoresNeverRestored(s, r.resolved, this.stored.map)) restoresSecret = true
       return r.text
     }
 
+    let restoresSecret = false
     let args: ToolEvent = e
     // A credential Veilio destroyed is never put back, whatever a placeholder
     // says it stands for (security review of 933156e).
@@ -620,8 +623,7 @@ export class Guard {
       after !== before &&
       (learned.some((v) => after.includes(v) && !before.includes(v)) ||
         addsProviderKey(before, after) ||
-        restoresRegulated(before, this.stored.map))
-    let restoresSecret = false
+        addsMaskedValue(before, after, this.stored.map))
     const guarded = (s: string) => {
       const out = restoreOne(s)
       if (putsBack(s, out)) restoresSecret = true

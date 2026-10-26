@@ -340,3 +340,29 @@ test(
   'a restoration that writes back an IBAN glued to letters is refused',
   writesBack('refGB29NWBK60161331926819x')
 )
+
+// Review of 55ae576: judged by the keys restore() itself resolved.
+function refusedRestore(map: Record<string, string>, newString: string) {
+  return async ($: any, on: any) => {
+    const edit = recorded('Edit')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, ...map }) })
+    let ran = false
+    on('tool.call', () => ((ran = true), edit.r))
+    const out: any = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: newString })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+}
+
+test(
+  'a regulated placeholder glued to letters is refused on restore',
+  refusedRestore({ __IBAN__1: 'GB29NWBK60161331926819' }, 'v = "ref__IBAN__1x"')
+)
+test(
+  'a value marked by hand is refused on restore',
+  refusedRestore({ __MANUAL__1: 'Contoso Harbour Bank' }, 'bank = "__MANUAL__1"')
+)
+test(
+  'a quarantined placeholder is refused on restore',
+  refusedRestore({ __QUARANTINED__1: 'connectXk9mQ2vL7QPool' }, '__QUARANTINED__1()')
+)
