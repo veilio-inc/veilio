@@ -152,7 +152,8 @@ interface Pattern {
    * between detection and noise, so it is part of the rule rather than a filter
    * somebody remembers to apply.
    */
-  validate?: (value: string) => boolean
+  /** `group` is the capture group the value came from, when the rule has groups. */
+  validate?: (value: string, group?: number) => boolean
 }
 
 // ─── Structural validators ───────────────────────────────────────────────────
@@ -363,7 +364,7 @@ const DQ = '"([^"\\n]{0,256})"'
 const SQ = "'([^'\\n]{0,256})'"
 /** One character of a bare value, or a whole `${...}`. The alternatives start
  *  on different characters, so the repetition stays linear. */
-const BARE_UNIT = '(?:\\$\\{[^}\\n]{0,200}\\}|[^\\s"\'`;&|$]|\\$(?!\\{))'
+const BARE_UNIT = '(?:\\$\\{[^}\\n]{0,200}\\}|[^\\s"\'`;&|$]|\\$(?!\\{[^}\\n]{0,200}\\}))'
 const BARE = `((?:${BARE_UNIT}){1,256})`
 // After a separating space a bare value that starts with `-` is the next flag.
 const BARE_ARG = `((?!-)(?:${BARE_UNIT}){1,256})`
@@ -373,10 +374,14 @@ const command = (names: string) => `(?<![\\w.-])(?:${names})(?:\\.exe)?(?=[\\s"'
  *  the end of a line continues it (finding 8). */
 const WINDOW = '(?:[^\\n;&|\\\\]|\\\\\\r?\\n|\\\\[^\\n]){0,300}?'
 const SAME_LINE = `${WINDOW}[ \\t]`
+/** Between a command word and its flag inside an argv array, where black and
+ *  prettier put each element on its own line (1.12.1 review): quoted elements,
+ *  commas and whitespace only, bounded. */
+const ARGV_WINDOW = '["\']?(?:[\\s,[(]{1,20}["\'][^"\'\\n]{0,100}["\']){0,20}[\\s,[(]{1,20}'
 /** The argv-array form of a flag: `"-pVALUE"`, or with `separated` also the
  *  flag and its value as two elements, `"-p", "VALUE"` (round 3, finding 4). */
 const argvFlag = (flag: string, separated: boolean) =>
-  `${WINDOW}["']${flag}(?:${BARE}${separated ? `|["'][ \\t]*,[ \\t]*(?:${DQ}|${SQ})` : ''})`
+  `${ARGV_WINDOW}["']${flag}(?:${BARE}${separated ? `|["']\\s*,\\s*(?:${DQ}|${SQ})` : ''})`
 /** A short flag with its value attached only. */
 const attachedFlag = (flag: string) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`
 /** A short flag with its value attached or after spaces. */
@@ -742,14 +747,17 @@ const PATTERNS: Pattern[] = [
     severity: 'medium',
     label: 'Password on a command line',
     re: new RegExp(
-      `--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG})|["'][ \\t]*,[ \\t]*(?:${DQ}|${SQ}))`,
+      `--(?:password|passwd|pass)(?:=(?:${PH}|${DQ}|${SQ}|${BARE})|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG})|["']\\s*,\\s*(?:${DQ}|${SQ}))`,
       'g'
     ),
     // The argv array form (the flag and its value as two quoted elements)
     // adds groups 7 and 8.
     groups: [...FLAG_GROUPS, 7, 8],
     position: true,
-    validate: (value) => !proseValue(value),
+    // Only the bare value after a space (group 6) can be a metavar or a prose
+    // word; `--password=KEY` and a quoted value are always judged (1.12.1
+    // review).
+    validate: (value, group) => group !== 6 || !proseValue(value),
   },
   {
     // curl only: `-u 1000:1000` is a uid:gid for docker. The user is kept.
@@ -1244,10 +1252,12 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
       if (pattern.re.lastIndex <= m.index) pattern.re.lastIndex = m.index + 1
       let start = m.index
       let value = m[0]
+      let from: number | undefined
       const groups = pattern.groups ?? (pattern.group === undefined ? [] : [pattern.group])
       if (groups.length > 0) {
         const group = groups.find((g) => m![g] !== undefined)
         if (group === undefined) continue
+        from = group
         const captured = m[group]
         // Locate the group inside the match: from the `d` flag where the rule
         // has it (a group that is not the tail of its match). Otherwise the
@@ -1272,7 +1282,7 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
       // common shape in source code, and without the checksum this reports every
       // timestamp, version and port in the file. An unconfirmed candidate is not
       // a finding at all: it never reaches the panel, the policy, or the map.
-      if (pattern.validate !== undefined && !pattern.validate(value)) continue
+      if (pattern.validate !== undefined && !pattern.validate(value, from)) continue
       let verdict = classifyValue(value, assignmentShaped)
       if (verdict === 'placeholder') continue
       // Assignment-shaped findings also get an entropy check: `password: "the

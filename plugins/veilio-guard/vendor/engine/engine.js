@@ -408,7 +408,7 @@ export class ManualMaskError extends Error {
  *  secret, which is precisely what the one-way redaction path exists to stop.
  *  The credential has already been redacted irreversibly by the time we get
  *  here; there is nothing left for the user to usefully mark. */
-function applyManualMasks(code, requested, fromMap, map, reverseExisting, namedCounters, language) {
+function applyManualMasks(code, requested, credentials, fromMap, map, reverseExisting, namedCounters, language) {
     // Replayed means "came from the map and was not asked for again". Deduping the
     // two lists into one and testing membership in the map would exempt a term the
     // user is marking right now just because a prior session had marked it — the
@@ -420,7 +420,7 @@ function applyManualMasks(code, requested, fromMap, map, reverseExisting, namedC
         return code;
     const applicable = [];
     for (const term of wanted) {
-        if (hasBlockingSecrets(detectSecrets(term))) {
+        if (credentials.has(term) || hasBlockingSecrets(detectSecrets(term))) {
             throw new ManualMaskError(term, 'Refusing to mask a detected credential: a manual mask is reversible and is written to the map. Credentials are redacted one-way instead.');
         }
         // Marking a placeholder would map one placeholder to another, and restore
@@ -790,6 +790,29 @@ function urlHost(text, at, word) {
  */
 function spreadRedactions(text, tokens) {
     const hits = [];
+    // Placeholders already in the text (redaction tokens, __MANUAL__n, an old
+    // output's __VAR__n) are never split.
+    // Precomputed once, so the pass stays linear however many occurrences
+    // there are: which placeholder (if any) covers each character, and where
+    // the run of identifier characters around each character starts and ends.
+    const inToken = new Uint8Array(text.length);
+    for (const m of text.matchAll(new RegExp(PLACEHOLDER_SCAN))) {
+        inToken.fill(1, m.index, m.index + m[0].length);
+    }
+    // Running count of placeholder characters: a span holds one when the
+    // count rises across it, in constant time.
+    const tokenChars = new Int32Array(text.length + 1);
+    for (let i = 0; i < text.length; i++)
+        tokenChars[i + 1] = tokenChars[i] + inToken[i];
+    const runStart = new Int32Array(text.length + 1);
+    const runEnd = new Int32Array(text.length + 1);
+    for (let i = 0; i < text.length; i++) {
+        runStart[i] = i > 0 && IDENT_CHAR.test(text[i - 1]) ? runStart[i - 1] : i;
+    }
+    runEnd[text.length] = text.length;
+    for (let i = text.length - 1; i >= 0; i--) {
+        runEnd[i] = IDENT_CHAR.test(text[i]) ? runEnd[i + 1] : i;
+    }
     for (const value of tokens.keys()) {
         const lower = value.toLowerCase();
         const isDefault = DEFAULT_WORDS.has(lower);
@@ -801,12 +824,21 @@ function spreadRedactions(text, tokens) {
             }
             if (isDefault && nonSecretPosition(text, at, value))
                 continue;
-            hits.push({ start: at, end, value });
+            // A redaction never starts or ends inside a name: an occurrence that
+            // touches identifier characters takes the whole name, which is then
+            // redacted, not masked - a name holding a credential cannot be mapped
+            // without putting part of it in the map (1.12.1 review).
+            const start = runStart[at];
+            const stop = end > at && IDENT_CHAR.test(text[end - 1]) ? runEnd[end - 1] : end;
+            if (tokenChars[stop] - tokenChars[start] > 0)
+                continue;
+            hits.push({ start, end: stop, value: start === at && stop === end ? value : '' });
         }
     }
     if (hits.length === 0)
         return text;
-    hits.sort((x, y) => x.start - y.start || y.end - x.end);
+    // Longest first; on an equal span, the hit that is a whole credential.
+    hits.sort((x, y) => x.start - y.start || y.end - x.end || Number(y.value !== '') - Number(x.value !== ''));
     // Merged in one sweep, carrying each group's end, so a text of many
     // overlapping occurrences stays linear after the sort.
     const groups = [];
@@ -893,13 +925,19 @@ export function anonymize(code, options = {}) {
     // A credential never goes into the map, in any `secrets` mode (founder
     // decision 2026-10-26): an entry an older map holds for one is dropped.
     const givenMap = opts.existingMap ?? {};
-    const existingMap = withoutCredentials(givenMap, new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))));
+    const existingMap = withoutCredentials(givenMap, 
+    // An ambiguous word an older map already holds keeps its entry: it was
+    // mapped as a name, and the guard relies on it round-tripping.
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))));
     const rules = opts.rules ?? [];
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.
     const scan = scanSecrets(code, opts.secrets ?? 'redact', where);
-    const redacted = scan.code;
+    // Every other occurrence of a destroyed credential, BEFORE the manual and
+    // regulated passes: they must never see, or partly rewrite, a credential's
+    // later occurrence (1.12.1 review).
+    const redacted = spreadRedactions(scan.code, redactionTokensOf(scan));
     // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
     // at 3 for the __CLS__ base). Without this, a subsequent call with an
     // existingMap that already contains __CLS__1 would generate a fresh __CLS__1
@@ -950,7 +988,8 @@ export function anonymize(code, options = {}) {
     // rather than the terms — and a mark therefore wins over whatever role the
     // classifier would have given the same token. Terms already in the map are
     // re-applied so a mark made in an earlier pass survives the round trip.
-    const marked = applyManualMasks(redacted, opts.manual ?? [], manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
+    const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)));
+    const marked = applyManualMasks(redacted, opts.manual ?? [], credentialValues, manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
     // AFTER manual marks, on purpose — a value the author marked by hand is
     // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
     // the entire implementation of "a manual mark wins over automatic detection";
@@ -963,7 +1002,10 @@ export function anonymize(code, options = {}) {
     // swapping these two calls inverts the rule silently, which is why it has a
     // test of its own. Before extraction, for the same reason manual marks are:
     // the extractor then sees placeholders rather than the values.
-    const source = spreadRedactions(applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters), redactionTokensOf(scan));
+    // A regulated value that is also a destroyed credential is redacted, never
+    // masked reversibly (1.12.1 review).
+    const regulated = scan.regulated.filter((r) => !credentialValues.has(r.value));
+    const source = applyRegulatedMasks(marked, regulated, map, reverseExisting, namedCounters);
     // What Node wrote in a pasted stack trace - V8's message wording, its own
     // frames - is neither extracted nor substituted (traces.ts). Blanked rather
     // than cut, so offsets and lines still match `source`.
@@ -990,7 +1032,7 @@ export function anonymize(code, options = {}) {
     // is still never mapped. A name that only contains or is part of a
     // credential is masked and mapped like any other (coordinator ruling,
     // round 3).
-    const secretValues = new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)));
+    const secretValues = new Set(found.map((f) => code.slice(f.start, f.end)));
     const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans);
     const identifiers = extractIdentifiers(scannable, language);
     const roleOf = classifyIdentifiers(scannable, language);
@@ -1012,7 +1054,10 @@ export function anonymize(code, options = {}) {
         //    whatever a whitelist or an older map says. A destroyed one is already
         //    a token here (spreadRedactions); one left in the text by design, or a
         //    default word in a non-secret position, is left as written.
-        if (secretValues.has(name))
+        // A possible credential (an ambiguous word in a credential position) is
+        // never given a NEW entry; an entry the existing map already holds is
+        // still used (1.12.1 review: fail closed for what is new).
+        if (secretValues.has(name) && !alreadyMapped.has(name))
             continue;
         if (whitelist.some((r) => safeMatch(r.pattern, name))) {
             whitelisted.add(name);

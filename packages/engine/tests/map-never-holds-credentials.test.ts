@@ -199,11 +199,10 @@ describe('a name next to a credential', () => {
 })
 
 describe('a name equal to an ambiguous word', () => {
-  it('is masked and mapped like any name: the word is not a credential', () => {
+  it('is never given a new map entry: it may be a credential (1.12.1 review)', () => {
     const code = 'const disabled = true\nconst auth = { client_secret: "disabled" }\n'
     const result = anonymize(code)
-    expect(Object.values(result.map)).toContain('disabled')
-    expect(result.anonymized).toMatch(/^const __[A-Z]+__\d+ = true\n/)
+    expect(Object.values(result.map)).not.toContain('disabled')
   })
 })
 
