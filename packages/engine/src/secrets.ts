@@ -1691,13 +1691,13 @@ function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretS
 const tokensByScan = new WeakMap<SecretScan, ReadonlyMap<string, string>>()
 
 /**
- * The redaction token a scan wrote for `value`, if it destroyed it. A name in
- * the code that is exactly a destroyed credential is replaced by the same
- * token, so it is neither shown to the model nor written to the map
- * (coordinator ruling, round 3 of the review of #166).
+ * Every value a scan destroyed, with the token that replaced it. `anonymize`
+ * writes the same token over every other occurrence of the value (1.12.1
+ * security review), so a password used again is never shown to the model nor
+ * written to the map. Empty for a scan that destroyed nothing.
  */
-export function redactionTokenFor(scan: SecretScan, value: string): string | undefined {
-  return tokensByScan.get(scan)?.get(value)
+export function redactionTokensOf(scan: SecretScan): ReadonlyMap<string, string> {
+  return tokensByScan.get(scan) ?? new Map()
 }
 
 /** True when the scan found anything that should stop a user from pasting. */

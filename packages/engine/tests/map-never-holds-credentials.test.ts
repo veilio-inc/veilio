@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize, restore } from '../src/engine.js'
+import { scanSecrets } from '../src/secrets.js'
 import type { SymbolMap } from '../src/types.js'
 import type { SecretPolicy } from '../src/secrets.js'
 
@@ -206,48 +207,62 @@ describe('a name equal to an ambiguous word', () => {
   })
 })
 
-// 1.12.1 review: a weak password that is an ordinary word or a well-known
-// default is redacted where it stands, and nowhere else.
-describe('a credential that is an ordinary word is not propagated', () => {
-  const code =
-    'services:\n  db:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: postgres\n' +
-    '      DATABASE_URL: postgres://app:postgres@db/app\n'
-  it('redacts the password spans and keeps the image name and the scheme', () => {
-    const out = anonymize(code).anonymized
-    expect(out).toMatch(/POSTGRES_PASSWORD: __REDACTED_[A-Z_]+_\d+__\n/)
-    expect(out).toMatch(/ postgres:\/\/app:__REDACTED_[A-Z_]+_\d+__@/)
-    // The image key itself may be masked as a name; its value, postgres, stays.
-    expect(out).toMatch(/__[A-Z]+__\d+: postgres\n|image: postgres\n/)
-    expect(Object.values(anonymize(code).map)).not.toContain('postgres')
+// 1.12.1 security finding on f9ae1f8: a destroyed credential's redaction
+// spreads to every other occurrence in the text. The one exception is a
+// well-known default word in a position that is structurally not a secret: an
+// image name, a URL scheme, a URL user or user field, a compose service name.
+describe('a destroyed credential is redacted wherever else it appears', () => {
+  const TOKEN = /__REDACTED_[A-Z_]+_\d+__/
+  it('a short random password, used again in a string', () => {
+    const out = anonymize('PGPASSWORD=Xk9!p psql\nconst greeting = "Xk9!p"\n').anonymized
+    expect(out).not.toContain('Xk9!p')
+    expect(out.match(new RegExp(TOKEN.source, 'g'))).toHaveLength(2)
   })
-  for (const word of [
-    'root',
-    'admin',
-    'mysql',
-    'guest',
-    'password',
-    'postgres',
-    'secret',
-    'demo',
-  ]) {
-    it(`does not spread the default "${word}" to a name elsewhere`, () => {
-      const text = `const ${word} = 1\nconst url = "mysql://app:${word}@db/app"\n`
-      const scan = anonymize(text)
-      if (/^(?:password|secret)$/.test(word)) return // placeholders: nothing is redacted at all
-      expect(scan.anonymized, word).toMatch(/:\/\/app:__REDACTED_[A-Z_]+_\d+__@/)
-      expect(scan.anonymized, word).not.toMatch(/^const __REDACTED_/)
+  it('a lowercase passphrase, used again as an identifier', () => {
+    const result = anonymize('PGPASSWORD=sunshinedolphin psql\nconst sunshinedolphin = 1\n')
+    expect(result.anonymized).not.toContain('sunshinedolphin')
+    expect(result.anonymized).toMatch(/const __REDACTED_[A-Z_]+_\d+__ = 1\n/)
+    expect(Object.values(result.map)).not.toContain('sunshinedolphin')
+  })
+  it('a default word as a variable in code is redacted too', () => {
+    const out = anonymize('const postgres = require("pg")\nPGPASSWORD=postgres psql\n').anonymized
+    expect(out).not.toMatch(/\bpostgres\b/)
+  })
+  for (const word of ['root', 'admin', 'mysql', 'guest', 'demo', 'user']) {
+    it(`the default "${word}" used as a name elsewhere in code is redacted`, () => {
+      const out = anonymize(`const ${word} = 1\nconst url = "mysql://app:${word}@db/app"\n`)
+      expect(out.anonymized, word).toMatch(/^const __REDACTED_[A-Z_]+_\d+__ = 1\n/)
     })
   }
-  it('a long lowercase word is not spread either', () => {
-    const text = 'const services = 1\nconst url = "mysql://app:services@db/app"\n'
-    expect(anonymize(text).anonymized).not.toMatch(/^const __REDACTED_/)
+  const compose =
+    'services:\n  postgres:\n    image: postgres:16\n    depends_on:\n      - postgres\n' +
+    '    environment:\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: postgres\n' +
+    '      DATABASE_URL: postgres://postgres:postgres@db/app\n'
+  it('a default word stays in an image name, a URL scheme, a URL user, a user field and a service name', () => {
+    const out = scanSecrets(compose).code
+    const spread = anonymize(compose).anonymized
+    expect(spread).toMatch(/: postgres:16\n/) // image
+    expect(spread).toMatch(/ postgres:\/\/postgres:__REDACTED_[A-Z_]+_\d+__@/) // scheme, user
+    expect(spread).toMatch(/USER: postgres\n/) // user field
+    expect(spread).toMatch(/\n {2}postgres:\n/) // service name
+    expect(spread).toMatch(/- postgres\n/) // service reference
+    expect(spread).toMatch(/PASSWORD: __REDACTED_[A-Z_]+_\d+__\n/)
+    expect(out).toMatch(/PASSWORD: __REDACTED_[A-Z_]+_\d+__\n/)
   })
-  it('a value of 8+ characters that is not a word is spread', () => {
-    const text = 'const hunter22 = 1\nconst url = "mysql://app:hunter22@db/app"\n'
-    expect(anonymize(text).anonymized).toMatch(/^const __REDACTED_[A-Z_]+_\d+__ = 1\n/)
+  it('a password that is not a default word is redacted even in an image or user position', () => {
+    const code =
+      'POSTGRES_PASSWORD: Kx9prodpw\nimage: Kx9prodpw\nPOSTGRES_USER: Kx9prodpw\nurl: Kx9prodpw://h\n'
+    const out = anonymize(code).anonymized
+    expect(out).not.toContain('Kx9prodpw')
   })
-  it('a value under 8 characters is not spread', () => {
-    const text = 'const hunt22 = 1\nconst url = "mysql://app:hunt22@db/app"\n'
-    expect(anonymize(text).anonymized).not.toMatch(/^const __REDACTED_/)
+  it('a default word anywhere else beside it is redacted', () => {
+    const out = anonymize('POSTGRES_PASSWORD: postgres\ncommand: echo postgres\n').anonymized
+    expect(out).not.toMatch(/\bpostgres\b/)
+  })
+  it('a fixture left in a test file is not spread', () => {
+    const code = 'const postgres = 1\nconst url = "mysql://app:postgres@db/app"\n'
+    const out = anonymize(code, { path: 'tests/db.test.ts' }).anonymized
+    expect(out).toContain(':postgres@')
+    expect(out).toMatch(/^const postgres = 1\n/)
   })
 })

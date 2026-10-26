@@ -26,7 +26,7 @@ import {
   credentialSpans,
   detectSecrets,
   hasBlockingSecrets,
-  redactionTokenFor,
+  redactionTokensOf,
   scanSecrets,
 } from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
@@ -847,17 +847,44 @@ const DEFAULT_WORDS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Whether a destroyed credential's token is also written over a name equal to
- * it elsewhere in the text. Only for a value of 8 or more characters that is
- * not a well-known default and not a single lowercase word: a weak password
- * that is also an ordinary name (`POSTGRES_PASSWORD: postgres` beside
- * `image: postgres`) is redacted where it stands, and the name elsewhere is
- * left as written and never mapped (1.12.1 review). A run of lowercase letters
- * stands in for a dictionary, which the engine does not carry; a shorter value
- * is too likely to be a word to spread.
+ * Whether the occurrence of `word` at `at` stands where it cannot be a secret:
+ * an image name (`image: postgres`), a URL scheme (`postgres://`), a URL user
+ * (`://postgres:` or `://postgres@`), a user field (`user: postgres`,
+ * `POSTGRES_USER=postgres`), or a compose service name (a key on its own
+ * line, or an item of a list such as `depends_on`).
  */
-function spreads(value: string): boolean {
-  return value.length >= 8 && !DEFAULT_WORDS.has(value.toLowerCase()) && !/^[a-z]+$/.test(value)
+function nonSecretPosition(text: string, at: number, word: string): boolean {
+  const lineStart = text.lastIndexOf('\n', at - 1) + 1
+  const lineEnd = text.indexOf('\n', at)
+  const before = text.slice(Math.max(lineStart, at - 200), at)
+  const after = text.slice(at + word.length, at + word.length + 3)
+  const rest = text.slice(at + word.length, lineEnd < 0 ? text.length : lineEnd)
+  return (
+    /\bimage\s*:\s*["']?$/i.test(before) ||
+    after === '://' ||
+    (/:\/\/$/.test(before) && /^[:@]/.test(after)) ||
+    /(?:\b|_)user(?:name)?["']?\s*[:=]\s*["']?$/i.test(before) ||
+    (/^\s*(?:-\s*)?$/.test(before.slice(before.lastIndexOf('\n') + 1)) && /^:?\s*$/.test(rest))
+  )
+}
+
+/**
+ * The text with every other occurrence of a destroyed credential replaced by
+ * that credential's own redaction token, so a password used again - in a
+ * string, as a name - is never shown (1.12.1 security review). The one
+ * exception: a well-known default word in a position that is structurally not
+ * a secret (`nonSecretPosition`) stays as written.
+ */
+function spreadRedactions(text: string, tokens: ReadonlyMap<string, string>): string {
+  let out = text
+  for (const [value, token] of tokens) {
+    const isDefault = DEFAULT_WORDS.has(value.toLowerCase())
+    const re = new RegExp(`(?<![A-Za-z0-9_$])${escapeRegex(value)}(?![A-Za-z0-9_$])`, 'g')
+    out = out.replace(re, (m, offset: number, whole: string) =>
+      isDefault && nonSecretPosition(whole, offset, m) ? m : token
+    )
+  }
+  return out
 }
 
 /** Whether [start, end) overlaps any of `spans`. */
@@ -1013,7 +1040,10 @@ export function anonymize(
   // swapping these two calls inverts the rule silently, which is why it has a
   // test of its own. Before extraction, for the same reason manual marks are:
   // the extractor then sees placeholders rather than the values.
-  const source = applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters)
+  const source = spreadRedactions(
+    applyRegulatedMasks(marked, scan.regulated, map, reverseExisting, namedCounters),
+    redactionTokensOf(scan)
+  )
 
   // What Node wrote in a pasted stack trace - V8's message wording, its own
   // frames - is neither extracted nor substituted (traces.ts). Blanked rather
@@ -1044,7 +1074,6 @@ export function anonymize(
   const secretValues = new Set(
     found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))
   )
-  const redactedNames = new Map<string, string>()
   const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans)
   const identifiers = extractIdentifiers(scannable, language)
   const roleOf = classifyIdentifiers(scannable, language)
@@ -1065,14 +1094,11 @@ export function anonymize(
     //    or an earlier session already holds would otherwise stay masked for
     //    ever, whatever the rule says (found on staging, 2026-09-26). The map
     //    keeps its entry, so restore is unaffected; the text just keeps the name.
-    // 0. A name that is a credential found in this text: never mapped,
-    //    whatever a whitelist or an older map says; redacted with the
-    //    credential's token where the scan destroyed it.
-    if (secretValues.has(name)) {
-      const token = redactionTokenFor(scan, name)
-      if (token !== undefined && spreads(name)) redactedNames.set(name, token)
-      continue
-    }
+    // 0. A name that is a credential found in this text is never mapped,
+    //    whatever a whitelist or an older map says. A destroyed one is already
+    //    a token here (spreadRedactions); one left in the text by design, or a
+    //    default word in a non-secret position, is left as written.
+    if (secretValues.has(name)) continue
 
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {
       whitelisted.add(name)
@@ -1142,7 +1168,7 @@ export function anonymize(
   )
   const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
     .sort((a, b) => b.length - a.length)
-    .filter((n) => redactedNames.has(n) || (!whitelisted.has(n) && reverseExisting[n]))
+    .filter((n) => !whitelisted.has(n) && reverseExisting[n])
   const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
   const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
 
@@ -1169,14 +1195,10 @@ export function anonymize(
                   (!alreadyMapped.has(m) &&
                     overlapsAny(secretSpans, start + offset, start + offset + m.length))
                     ? m
-                    : (redactedNames.get(m) ?? reverseExisting[m] ?? m)
+                    : (reverseExisting[m] ?? m)
                 )
           for (const name of oversized) {
-            out = replaceWholeWord(
-              out,
-              name,
-              (redactedNames.get(name) ?? reverseExisting[name]) as string
-            )
+            out = replaceWholeWord(out, name, reverseExisting[name] as string)
           }
           return out
         }

@@ -190,12 +190,12 @@ export declare function detectSecrets(code: string, options?: ScanOptions): Secr
  */
 export declare function scanSecrets(code: string, policy?: SecretPolicy, options?: ScanOptions): SecretScan;
 /**
- * The redaction token a scan wrote for `value`, if it destroyed it. A name in
- * the code that is exactly a destroyed credential is replaced by the same
- * token, so it is neither shown to the model nor written to the map
- * (coordinator ruling, round 3 of the review of #166).
+ * Every value a scan destroyed, with the token that replaced it. `anonymize`
+ * writes the same token over every other occurrence of the value (1.12.1
+ * security review), so a password used again is never shown to the model nor
+ * written to the map. Empty for a scan that destroyed nothing.
  */
-export declare function redactionTokenFor(scan: SecretScan, value: string): string | undefined;
+export declare function redactionTokensOf(scan: SecretScan): ReadonlyMap<string, string>;
 /** True when the scan found anything that should stop a user from pasting. */
 export declare function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean;
 /** Count findings by severity, for badges and audit records. */

@@ -116,10 +116,12 @@ Under `'warn'` nothing is redacted: findings come back with `disposition:
 nothing is reported either. **In no mode does a credential go into the symbol
 map**: identifier masking leaves every credential the rules find alone. A name
 written exactly as a destroyed credential is replaced by that credential's
-redaction token, when the credential is 8 or more characters and is neither a
-single lowercase word nor a well-known default (`postgres`, `root`, `admin`,
-`mysql`, `guest`, …). A weak password that is also an ordinary name is redacted
-only where it stands: beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
+redaction token: every other occurrence of a destroyed credential is, in a
+string, as a name, anywhere. The one exception is a well-known default
+(`postgres`, `root`, `admin`, `mysql`, `sa`, `guest`, `test`, `user`,
+`password`, `changeme`, `secret`, `demo`) where it stands in a position that
+is not a secret: an image name, a URL scheme, a URL user, a user field, or a
+compose service name. Beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
 and a `postgres://` scheme stay, and are not mapped. Where the credential is left in the text by design (`warn`,
 `off`, a fixture), the equal name is left too and is not mapped. A name that only
 contains a credential, or is part of one, is masked and mapped like any other
@@ -370,8 +372,8 @@ thrown on. It stays in the map and applies again where it is valid.
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`
-- `redactionTokenFor(scan, value)` → the token a `scanSecrets` result wrote for
-  a value it destroyed, or `undefined`
+- `redactionTokensOf(scan)` → each value a `scanSecrets` result destroyed, with
+  the token that replaced it
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked
