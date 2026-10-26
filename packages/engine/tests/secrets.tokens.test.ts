@@ -117,3 +117,21 @@ describe('anything beside a token is still judged', () => {
     ).toEqual(['connection-string'])
   })
 })
+
+describe('a long run of redaction tokens', () => {
+  // A planted file of tokens froze the scan: the keyword rule's identifier
+  // part backtracked over the whole run for each keyword inside it.
+  const run = `x = "${'__REDACTED_SECRET_1__'.repeat(50_000)}`
+
+  it('is scanned in well under a second', () => {
+    const started = performance.now()
+    detectSecrets(run)
+    expect(performance.now() - started).toBeLessThan(1_000)
+  })
+
+  it('a real secret after it is still found', () => {
+    const text = `${run}"\napi_token = "aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v"\n`
+    expect(blocking(text)).not.toEqual([])
+    expect(scanSecrets(text, 'redact').code).not.toContain('aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v')
+  })
+})

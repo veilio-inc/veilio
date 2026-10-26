@@ -504,7 +504,11 @@ const PATTERNS: Pattern[] = [
     disposition: 'destroy',
     severity: 'medium',
     label: 'High-entropy credential',
-    re: /\b(?:[a-z0-9_]*(?:key|token|secret|credential|auth|pass)[a-z0-9_]*)\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
+    // The name is one run of word characters holding a keyword, checked by a
+    // lookahead, so the run is read once. Written as two stars around the
+    // keyword it backtracked over a long run for every keyword inside it: a
+    // file of 50,000 redaction tokens took 78 s (guard follow-up review).
+    re: /\b(?=[a-z0-9_]*?(?:key|token|secret|credential|auth|pass))[a-z0-9_]+\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
     group: 1,
   },
   {
