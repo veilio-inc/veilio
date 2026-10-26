@@ -1304,6 +1304,7 @@ function scan(code, policy, options) {
     // Replace back-to-front so earlier offsets stay valid.
     const replacements = [];
     const regulated = [];
+    const tokens = new Map();
     for (const m of matches) {
         const active = policy === 'redact';
         const willRedact = active && (m.forceDestroy === true || destroysValue(m.type));
@@ -1336,7 +1337,10 @@ function scan(code, policy, options) {
             const base = TYPE_TOKENS[m.type];
             const n = (counters[base] ?? 0) + 1;
             counters[base] = n;
-            replacements.push({ start: m.start, end: m.end, token: `__REDACTED_${base}_${n}__` });
+            const token = `__REDACTED_${base}_${n}__`;
+            replacements.push({ start: m.start, end: m.end, token });
+            if (!tokens.has(m.value))
+                tokens.set(m.value, token);
         }
     }
     let redacted = code;
@@ -1356,7 +1360,22 @@ function scan(code, policy, options) {
             return a.line - b.line;
         return a.column - b.column;
     });
-    return { findings, code: redacted, regulated };
+    const result = { findings, code: redacted, regulated };
+    tokensByScan.set(result, tokens);
+    return result;
+}
+/** Each destroyed value of a scan, with the token that replaced it. Held
+ *  beside the scan rather than on it, so a scan result never carries a
+ *  secret: only a caller that already has the text can ask for a value. */
+const tokensByScan = new WeakMap();
+/**
+ * The redaction token a scan wrote for `value`, if it destroyed it. A name in
+ * the code that is exactly a destroyed credential is replaced by the same
+ * token, so it is neither shown to the model nor written to the map
+ * (coordinator ruling, round 3 of the review of #166).
+ */
+export function redactionTokenFor(scan, value) {
+    return tokensByScan.get(scan)?.get(value);
 }
 /** True when the scan found anything that should stop a user from pasting. */
 export function hasBlockingSecrets(findings) {

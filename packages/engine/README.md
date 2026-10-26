@@ -114,8 +114,12 @@ Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
 Under `'warn'` nothing is redacted: findings come back with `disposition:
 'report'` and each credential is left in the text as written. Under `'off'`
 nothing is reported either. **In no mode does a credential go into the symbol
-map**: identifier masking leaves every credential the rules find alone, and does
-not map a name that is the credential or most of it. An entry an existing map
+map**: identifier masking leaves every credential the rules find alone. A name
+written exactly as a destroyed credential is replaced by that credential's
+redaction token. Where the credential is left in the text by design (`warn`,
+`off`, a fixture), the equal name is left too and is not mapped. A name that only
+contains a credential, or is part of one, is masked and mapped like any other
+name. An entry an existing map
 holds for a credential is dropped, whether it is one on its own or one found in
 the text, and its number is not reused. So nothing secret is written to
 a saved map or uploaded with it. (Earlier versions masked an identifier-shaped
@@ -361,6 +365,8 @@ thrown on. It stays in the map and applies again where it is valid.
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`
+- `redactionTokenFor(scan, value)` → the token a `scanSecrets` result wrote for
+  a value it destroyed, or `undefined`
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked
