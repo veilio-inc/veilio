@@ -31,6 +31,13 @@ export interface Credential {
   account: string
   /** Base URL it was issued by, so a self-hosted instance is addressable. */
   instance: string
+  /**
+   * The project chosen with `veilio projects use` (spec 052 FR-012). Kept with
+   * the sign-in, not in a project directory, so the MCP server started later
+   * for the same account works in the same project without being told - and a
+   * second sign-in, to another instance, has its own. Absent: none chosen.
+   */
+  project?: string
 }
 
 /**
@@ -69,6 +76,10 @@ function isCredential(value: unknown): value is Credential {
     c.account !== '' &&
     typeof c.instance === 'string' &&
     c.instance !== '' &&
+    // Absent is fine - every credential written before spec 052 has none. Any
+    // other value is a damaged file, read as signed out like every other kind
+    // of damage here: guessing would mean working in a project nobody chose.
+    (c.project === undefined || (typeof c.project === 'string' && c.project !== '')) &&
     // A credential naming an `http://` instance would put the bearer token on
     // the wire in the clear, on every request, for ever — and self-hosted LAN
     // setups are exactly where somebody writes one by hand. Refusing to read it

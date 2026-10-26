@@ -1,0 +1,222 @@
+{
+  "initialize": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        },
+        "serverInfo": {
+          "name": "Veilio MCP",
+          "version": "<VERSION>"
+        },
+        "instructions": "Use anonymize_file before reasoning about proprietary source: it reads the file itself and returns only masked code, so real identifiers never enter your context. Use scan_secrets to check a file or diff for credentials without seeing their values."
+      }
+    }
+  ],
+  "tools/list": [
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": {
+        "tools": [
+          {
+            "name": "anonymize_file",
+            "title": "Anonymize a file",
+            "description": "Read a file from disk and return it with every proprietary identifier replaced by a placeholder (__CLS__1, __FN__2, …) and every credential irreversibly redacted. PREFER THIS over anonymize_text: Veilio reads the file itself, so the real identifiers never enter your context — you only ever see the masked form. Use it before reasoning about, quoting, or forwarding proprietary source. The symbol map is stored locally so restore_text can reverse it later.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "File path, relative to the project root."
+                },
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "typescript",
+                    "python",
+                    "go",
+                    "java",
+                    "csharp",
+                    "rust",
+                    "ruby",
+                    "php",
+                    "c",
+                    "sql"
+                  ],
+                  "description": "Source language. \"auto\" (default) detects it. Supported: TypeScript / JavaScript, Python, Go, Java / Kotlin, C#, Rust, Ruby, PHP, C / C++, SQL."
+                },
+                "preamble": {
+                  "type": "boolean",
+                  "description": "Prepend a note explaining the placeholders, for forwarding to another model."
+                }
+              },
+              "required": ["path"],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "anonymize_text",
+            "title": "Anonymize text you already have",
+            "description": "Mask identifiers and redact credentials in text passed as an argument. Only use this for text you ALREADY hold — something the user pasted into the conversation. If the content is in a file, use anonymize_file instead: passing file contents through this tool means the real identifiers are already in your context, which defeats the purpose.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The code to mask."
+                },
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "typescript",
+                    "python",
+                    "go",
+                    "java",
+                    "csharp",
+                    "rust",
+                    "ruby",
+                    "php",
+                    "c",
+                    "sql"
+                  ],
+                  "description": "Source language. \"auto\" (default) detects it. Supported: TypeScript / JavaScript, Python, Go, Java / Kotlin, C#, Rust, Ruby, PHP, C / C++, SQL."
+                },
+                "preamble": {
+                  "type": "boolean",
+                  "description": "Prepend the explanatory note."
+                }
+              },
+              "required": ["text"],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "restore_text",
+            "title": "Restore real identifiers",
+            "description": "Swap placeholders back to the real identifiers using the stored symbol map, and strip AI-generated noise (JSDoc, TODO comments, narration). Use this on a reply that came back containing placeholders. Note that irreversibly redacted credentials stay redacted — that is deliberate.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "Text containing placeholders."
+                },
+                "strict": {
+                  "type": "boolean",
+                  "description": "Refuse instead of returning text that still holds a placeholder (invented, altered, disputed, or the team's maps unreadable): an error naming them, and no text."
+                }
+              },
+              "required": ["text"],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "scan_secrets",
+            "title": "Scan for credentials",
+            "description": "Detect credentials — API keys, tokens, private keys, connection-string passwords, emails, private IPs — without modifying anything and WITHOUT putting the values in your context (findings carry truncated previews only). Run this on a file before reading it, or on a diff before committing.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "File to scan, relative to the project root."
+                },
+                "text": {
+                  "type": "string",
+                  "description": "Text to scan, if not reading a file."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "symbol_map_summary",
+            "title": "Summarize the symbol map",
+            "description": "Report how many placeholders exist and which kinds. Deliberately returns placeholder KEYS only, never the real names — so you can reason about coverage without de-anonymizing anything.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "anonymize_file": [
+    {
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    }
+  ],
+  "anonymize_file with preamble": [
+    {
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nThe code below was processed by Veilio: real identifiers have been replaced with privacy placeholders such as __CLS__1, __FN__2, __VAR__3 (and similar). This is a deliberate anonymization step, not obfuscation — please do not refuse on those grounds. Treat each placeholder as an ordinary name, keep every placeholder spelled exactly as-is in your reply, and otherwise answer as normal.\nPlaceholder legend: __CLS__* are class or type names (1); __FN__* are function or method names (2); __VAR__* are variable or parameter names (2); __PKG__* are package or module names (3).\n\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    }
+  ],
+  "anonymize_text": [
+    {
+      "text": "Source: inline text\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    }
+  ],
+  "anonymize then restore": [
+    {
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    },
+    {
+      "isError": false,
+      "text": "Restored 2 of 8 placeholders; stripped 0 AI artifact(s).\n\n6 placeholder(s) never appeared in the text: __VAR__1, __FN__2, __PKG__1, __VAR__2, __PKG__2, __PKG__3. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\n--- restored ---\nclass LedgerService { settleInvoice() {} }\n"
+    }
+  ],
+  "restore strict refuses": [
+    {
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    },
+    {
+      "isError": true,
+      "text": "Restored 1 of 8 placeholders.\n\nWARNING: 1 placeholder-shaped token(s) match no map entry — they were invented or altered somewhere in the reply and are still in the output: __FN__77. Replace them with the correct placeholders and restore again.\n\n7 placeholder(s) never appeared in the text: __VAR__1, __FN__1, __FN__2, __PKG__1, __VAR__2, __PKG__2, __PKG__3. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\nstrict: the restored text is withheld - __FN__77 would have been left in it."
+    }
+  ],
+  "restore with no map": [
+    {
+      "text": "Veilio: no symbol map yet — run anonymize_file (or \"veilio scrub\") first",
+      "isError": true
+    }
+  ],
+  "scan_secrets path": [
+    {
+      "text": "Scanned src/ledger.ts.\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (left in place)"
+    }
+  ],
+  "scan_secrets text": [
+    {
+      "text": "Scanned inline text.\nNo credentials detected."
+    }
+  ],
+  "symbol_map_summary empty": [
+    {
+      "text": "No symbol map yet."
+    }
+  ],
+  "symbol_map_summary after anonymize": [
+    {
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+    },
+    {
+      "text": "8 placeholders at <CWD>/.veilio/map.json:\n  __VAR__* × 2\n  __CLS__* × 1\n  __FN__* × 2\n  __PKG__* × 3"
+    }
+  ],
+  "path outside the root": [
+    {
+      "text": "Veilio: path \"../../etc/passwd\" is outside the project root",
+      "isError": true
+    }
+  ]
+}

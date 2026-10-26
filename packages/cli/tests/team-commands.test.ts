@@ -248,15 +248,32 @@ describe('team unlock', () => {
     expect(existsSync(teamUnlockPath(home))).toBe(false)
   })
 
-  it('says a teammate still has to grant access', async () => {
+  it('says a team member still has to grant access, once the server says the team has a key', async () => {
+    // Holding no wrap now first tries to mint the team's first key (spec 052).
+    // The server refuses - the team has one, held by others - so this stands
+    // down and says who can grant it.
     signIn()
     const { bodies } = await realGrant()
-    serve({ ...bodies, '/api/teams/team-1/key': { wraps: [], granted: false } })
+    serve({
+      ...bodies,
+      '/api/teams/team-1/key': { wraps: [], granted: false },
+      '/api/auth/me': { user: { id: 'u-me', email: ACCOUNT } },
+      '/api/teams/team-1/key/pending': { version: 1, nextVersion: 2 },
+    })
+    const served = fetchMock.getMockImplementation() as (
+      url: string,
+      init?: RequestInit
+    ) => Promise<Response>
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(String(url)).pathname === '/api/teams/team-1/key/grant'
+        ? jsonResponse(403, { error: 'You do not hold that version of the team key' })
+        : served(url, init)
+    )
 
     const { code, err } = await run(['team', 'unlock'])
 
     expect(code).toBe(EXIT_ERROR)
-    expect(err).toContain('granted you the team key')
+    expect(err).toContain('granted this account the team key')
     expect(existsSync(teamUnlockPath(home))).toBe(false)
   })
 

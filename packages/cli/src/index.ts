@@ -10,8 +10,13 @@ import {
   runMapsPull,
   runMapsPush,
   runMapsRm,
+  runMapsUpdate,
   runTeamUnlock,
   runTeamLock,
+  runVaultUnlock,
+  runVaultLock,
+  runProjectsList,
+  runProjectsUse,
   runRulesPull,
   teamLayerFor,
   teamNamespaceForScrub,
@@ -69,17 +74,21 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return await runMapsPull(args.files[0] ?? null, mapPath, io, { force: args.force })
           case 'push':
             return await runMapsPush(args.files[0] ?? null, mapPath, io, args.team)
+          case 'update':
+            return await runMapsUpdate(args.files[0] ?? null, mapPath, io, {
+              allowDrop: args.allowDrop,
+            })
           case 'rm':
             return await runMapsRm(args.files[0] ?? null, io)
           default:
-            io.stderr('veilio: maps needs an action — list, pull, push or rm.\n')
+            io.stderr('veilio: maps needs an action — list, pull, push, update or rm.\n')
             return EXIT_ERROR
         }
       }
       case 'team': {
         switch (args.teamAction) {
           case 'unlock':
-            return await runTeamUnlock(io)
+            return await runTeamUnlock(io, args.days ?? undefined)
           case 'lock':
             return runTeamLock(io)
           default:
@@ -87,6 +96,20 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
             return EXIT_ERROR
         }
       }
+      case 'vault': {
+        switch (args.vaultAction) {
+          case 'unlock':
+            return await runVaultUnlock(io, args.days ?? undefined)
+          case 'lock':
+            return runVaultLock(io)
+          default:
+            io.stderr('veilio: vault needs an action — unlock or lock.\n')
+            return EXIT_ERROR
+        }
+      }
+      case 'projects':
+        if (args.projectsAction === 'use') return await runProjectsUse(args.files[0] ?? null, io)
+        return await runProjectsList(io)
       case 'rules':
         if (args.rulesAction === 'pull') return await runRulesPull(io)
         io.stderr('veilio: rules needs an action — pull.\n')

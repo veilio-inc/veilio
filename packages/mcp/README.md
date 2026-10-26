@@ -50,6 +50,38 @@ are still real. Names written entirely in capitals are not masked either
 | `scan_secrets` | Detect credentials without modifying anything, and without putting the values in context. |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names. |
 
+### Map, team and project tools (signed in to Veilio Cloud)
+
+Listed only once `veilio login` has signed this machine in; with no sign-in -
+always, in the Community Edition - the server offers the five tools above and
+nothing else. Each is the `veilio` CLI's own command, through the same code, so
+it refuses in the same words for the same reasons.
+
+| Tool | Purpose |
+|---|---|
+| `maps_list` | The maps in Cloud - personal, and the team's in the project in use - with id, scope, count, name and whose each is. |
+| `maps_pull` | Fetch a map into this project's local map. `force: true` to replace local entries it would drop. |
+| `maps_create` | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first. |
+| `maps_update` | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only. |
+| `maps_remove` | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name. |
+| `team_status` | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed. |
+| `projects_list` | The projects the team works in; `*` marks the one in use. |
+| `projects_use` | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too. |
+
+- **Destructive tools are off by default.** `maps_remove`, a `maps_update`
+  that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
+  that would overwrite local entries, are refused unless you start the
+  server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting the agent
+  cannot reach. Even then, a removal must repeat the map's exact name. Creating,
+  pulling, listing and updates that drop nothing always work.
+- **Personal maps need `veilio vault unlock`** in a terminal first. It keeps a
+  personal-maps key on this machine (7 days) that opens personal maps and
+  nothing else; the server never sees your passphrase. Team maps need
+  `veilio team unlock`, as before.
+- **No result carries a secret**: never a passphrase, a key, a wrapped key or a
+  map's encrypted body, and a clash names placeholders, never the names behind
+  them. Results name the map, its count and the outcome.
+
 Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troubleshooting: [docs/USING-THE-CLI-AND-MCP.md](../../docs/USING-THE-CLI-AND-MCP.md).
 
 ## Install

@@ -16,6 +16,8 @@
 // threading a Promise through 78 existing call sites for one network call that
 // happens once per process.
 
+// The namespace read is the MCP server's request too.
+import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
@@ -97,17 +99,35 @@ export function primeNamespace(
   opts: { retryDelayMs?: number } = {}
 ): Promise<ResolvedNamespace> {
   primedWith = { home, opts }
+  primed = true
   lastAttemptAt = Date.now()
   if (!priming) {
+    // The project is read when the fetch STARTS, and the fetch is for that
+    // project only. Its answer is kept only if it is still the newest fetch
+    // and the credential still names that project: a prime that finishes
+    // after the project changed holds the OLD project's maps, and assigning
+    // it would put that project's placeholders into this one's work - the
+    // cross-project leak FR-013 forbids (security review).
+    const project = readCredential(home)?.project ?? null
+    const generation = ++primeGeneration
+    primedProject = project
+    settledFlag = false
     priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
       (resolved) => {
-        current = resolved
-        return resolved
+        const still = (readCredential(home)?.project ?? null) === project
+        if (generation === primeGeneration && still) {
+          current = resolved
+          settledFlag = true
+        }
+        return current
       }
     )
   }
   return priming
 }
+
+/** Which fetch is the newest; an older one's answer is discarded. */
+let primeGeneration = 0
 
 /** A hung instance must not hold the agent's first tool call for 30 s. */
 const STARTUP_DEADLINE_MS = 10_000
@@ -116,6 +136,20 @@ const UNAVAILABLE_RECHECK_MS = 30_000
 
 let primedWith: { home?: string; opts: { retryDelayMs?: number } } = { opts: {} }
 let lastAttemptAt = 0
+let primed = false
+/** The project the cached namespace is for (spec 052 FR-013). */
+let primedProject: string | null = null
+/** Set by a team write through this server: the cache no longer matches. */
+let invalidated = false
+
+/**
+ * The team's maps just changed through this server - a team map created,
+ * updated or removed, or another project chosen - so the cached namespace is
+ * out of date. The next tool call starts loading it again.
+ */
+export function invalidateNamespace(): void {
+  invalidated = true
+}
 
 /**
  * The cache must not outlive the reason it was cached (review): `veilio team
@@ -125,7 +159,38 @@ let lastAttemptAt = 0
  * something new to fetch it starts the fetch and says 'loading'; the next call
  * sees the result. A settled `team` or `local` is kept for the process.
  */
-export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | null {
+export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' | null {
+  // Another project chosen - by `veilio projects use` in a terminal while this
+  // server runs, or by projects_use here - or a team write made here: the
+  // namespace cached for the old state must not go on numbering the new one
+  // (spec 052 edge case: the next call uses the new state).
+  if (primed) {
+    // Checked FIRST, whatever is in flight: a fetch already running is for the
+    // project it started with, and is dropped (security review).
+    const project = readCredential(primedWith.home)?.project ?? null
+    if (project !== primedProject) {
+      // The cached namespace is the OLD project's, and numbering with it -
+      // even for the one call that noticed - would put that project's
+      // placeholders into this one's store (FR-013). Until the new project's
+      // maps load there is no team namespace, and that is said.
+      current = localFrom({
+        status: 'unavailable',
+        reason: "the team's maps for the project now in use are still loading",
+      })
+      invalidated = false
+      priming = null
+      void primeNamespace(primedWith.home, primedWith.opts)
+      return 'changed'
+    }
+    // The same project, changed by a write made here: reload when nothing is
+    // already loading, keeping the current (same-project) namespace meanwhile.
+    if (invalidated && (!priming || settledFlag)) {
+      invalidated = false
+      priming = null
+      void primeNamespace(primedWith.home, primedWith.opts)
+      return 'changed'
+    }
+  }
   const status = current.found.status
   if (status !== 'locked' && status !== 'unavailable') return null
   if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
@@ -141,10 +206,7 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | null {
       : now - lastAttemptAt >= UNAVAILABLE_RECHECK_MS
   if (!due) return null
   priming = null
-  settledFlag = false
-  void primeNamespace(primedWith.home, primedWith.opts).then(() => {
-    settledFlag = true
-  })
+  void primeNamespace(primedWith.home, primedWith.opts)
   return status === 'locked' ? 'unlocked' : 'retrying'
 }
 let settledFlag = true
@@ -168,6 +230,10 @@ export function resetNamespaceCache(): void {
   settledFlag = true
   lastAttemptAt = 0
   primedWith = { opts: {} }
+  primed = false
+  primedProject = null
+  invalidated = false
+  primeGeneration++
 }
 
 /**
