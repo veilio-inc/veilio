@@ -10,7 +10,7 @@
 //  - new map entries are written to .veilio/map.json before the text that uses
 //    them is returned, so a placeholder the model sees can always be restored;
 //  - the secret re-scan is the last thing before a result is returned.
-import { deepRewrite, rewriteFields } from './fields.ts'
+import { deepRewrite, deepRewritePaths, rewriteFields } from './fields.ts'
 import {
   mergeAdditions,
   parseMapFile,
@@ -30,14 +30,22 @@ import {
 } from './policy.ts'
 import {
   applyMap,
+  Destroyed,
+  destroyedValues,
+  restoreAdds,
+  grow,
+  ownedMap,
+  redactKnown,
+  restoresNeverRestored,
   maskShaped,
   NO_CONTEXT,
   restoreArgs,
   scrubSource,
   survivingSecrets,
 } from './scrub.ts'
-import type { MaskContext } from './scrub.ts'
-import { restore } from '../vendor/engine/index.js'
+import type { MaskContext, ScanResult } from './scrub.ts'
+import { restore, scanSecrets } from '../vendor/engine/index.js'
+import { MODEL_NOTE } from './ui.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -120,12 +128,15 @@ export class Guard {
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
   counts = { withheld: 0, denied: 0 }
+  /** Credentials destroyed this session, in memory only: removed from
+   *  everything masked after, under one token each (review of 8aed5e8). */
+  readonly destroyed = new Destroyed()
   /** The project's source files, indexed so a result is masked by what it
    *  contains (spec 050). Created when the guard loads. */
   index: ProjectIndex | null = null
   private writes: Promise<unknown> = Promise.resolve()
   private indexing: Promise<unknown> = Promise.resolve()
-  private unsaved: SymbolMap = {}
+  private unsaved: SymbolMap = ownedMap()
   private batch: string[] = []
 
   constructor(
@@ -141,8 +152,24 @@ export class Guard {
     return join(this.root, '.veilio', 'guard.json')
   }
 
+  /** Names that hold a credential Veilio destroyed, each with a placeholder
+   *  of its own: masked this session, never saved, never restored (review of
+   *  7b930ad). */
+  private quarantine: SymbolMap = {}
+  private quarantineNext = 0
+  private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
+
+  /** What masking reads: the saved map and this session's quarantine. */
   get map(): SymbolMap {
-    return this.stored.map
+    const size = Object.keys(this.quarantine).length
+    if (size === 0) return this.stored.map
+    if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size) {
+      for (const key of Object.keys(this.quarantine))
+        if (Object.hasOwn(this.stored.map, key))
+          throw new Error('a quarantined placeholder is also a saved one')
+      this.merged = { base: this.stored.map, size, map: { ...this.stored.map, ...this.quarantine } }
+    }
+    return this.merged.map
   }
 
   /** The project root: the nearest directory with .veilio or .git, as the CLI finds it. */
@@ -170,7 +197,7 @@ export class Guard {
       },
       async (rel, text, language) => {
         const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
-        Object.assign(this.unsaved, additions)
+        grow(this.unsaved, additions)
         this.batch.push(rel)
       },
       (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
@@ -217,12 +244,24 @@ export class Guard {
     // only means fewer names are exempt, so the batch goes on without it.
     await bounded(this.index.start(), deadline, this.clock)
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      this.unsaved = {}
+      this.unsaved = ownedMap()
       this.batch = []
       const missed = await work()
       if (Object.keys(this.unsaved).length === 0) return missed
-      const saved = await this.save(this.unsaved)
-      this.unsaved = {}
+      let saved: 'saved' | 'conflict'
+      let quarantined: number
+      try {
+        ;({ status: saved, quarantined } = await this.save(this.unsaved))
+      } catch (err) {
+        // Not left marked as indexed: their names were never saved.
+        for (const rel of this.batch) this.index.forget(rel)
+        throw err
+      } finally {
+        this.unsaved = ownedMap()
+      }
+      // Files whose names went to the quarantine are indexed again later, so
+      // nothing of theirs is taken as saved.
+      if (quarantined > 0) for (const rel of this.batch) this.index.forget(rel)
       if (saved === 'saved') return missed
       // Another program changed the map: this batch's numbers may clash with
       // its, so the batch is indexed again from the map as it is now.
@@ -393,8 +432,126 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
-    return applyMap(text, this.map, this.context('unknown', kind))
+  applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
+    return this.gate(this.maskText(text, kind, scan))
+  }
+
+  /** Masks without the last gate: for a caller that has a fallback. */
+  maskText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
+    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
+  }
+
+  /** The same last gate as a tool's result: a credential still here fails the
+   *  text (the hook drops the prompt or leaves the text out). */
+  private gate(out: string): string {
+    if (survivingSecrets(out, this.map).length > 0)
+      throw new Error('a credential remained after masking')
+    return out
+  }
+
+  /** Texts that reach the model together (a prompt and its context, the
+   *  first message's blocks): each is scanned once, a credential any of them
+   *  holds with its key is learned for all of them, and each scan is handed
+   *  back for its own text's masking (review of 99325ba). */
+  learnTogether(texts: readonly string[]): ScanResult[] {
+    const scans = texts.map((t) => scanSecrets(t, 'redact'))
+    const values = new Set<string>()
+    texts.forEach((t, i) => {
+      for (const v of destroyedValues([t], this.map, scans[i])) values.add(v)
+    })
+    this.destroyed.learn([...values])
+    return scans
+  }
+
+  /** Text this guard masked for the first message's context, so that the
+   *  copy Claude Code passes back as an attachment is not judged a second
+   *  time: masked text scanned again reads a placeholder as key material
+   *  (review of 99325ba). Bounded: the newest are kept. */
+  private produced: string[] = []
+  remember(text: string): string {
+    if (text.length > 0 && !this.produced.includes(text)) {
+      this.produced.push(text)
+      if (this.produced.length > 64) this.produced.shift()
+    }
+    return text
+  }
+
+  /** The context Claude Code sends with the first message (the blocks
+   *  prompt.context answered, as an attachment or a prompt's context): masked
+   *  as a whole, secret scan included, with the guard's own note and the
+   *  blocks it already masked each held as one opaque mark and put back
+   *  after, the blocks with any name learned since. The note is a constant
+   *  with no project information; masked word by word it cost ~110 tokens on
+   *  every request (guard follow-up d08). A mark is not a word character, so
+   *  nothing written against it joins it, and a secret laid across it is
+   *  still one match (review of d18b5c5). A text that already holds a mark's
+   *  characters gets no exemption. */
+  applyContext(text: string, scan?: ScanResult): string {
+    // Every copy is held as one opaque mark while the text is masked, so a
+    // secret laid across one is still one match. Only a copy that is a whole
+    // section (a body that is the held text, or starts with it before a
+    // blank line) goes back as written; any other copy goes back masked like
+    // the text around it (security review of 933156e).
+    const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
+    if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
+      return this.applyText(text, 'result', scan)
+    const isWhole = (at: number, h: string) =>
+      (at === 0 || text[at - 1] === '\n') &&
+      (at + h.length === text.length ||
+        text.startsWith('\n\n', at + h.length) ||
+        text.startsWith('\n#', at + h.length))
+    // One forward pass: each held string's next copy is searched for again
+    // only once the pass has gone past it; a mark is short and fixed for each
+    // (held string, whole or not), and what goes back is worked out once for
+    // each (review of 6e14ec6).
+    const nextAt = held.map((h) => text.indexOf(h))
+    const backs = new Map<string, { mark: string; back: () => string }>()
+    let marked = ''
+    let at = 0
+    for (;;) {
+      let k = -1
+      for (let i = 0; i < held.length; i++) {
+        if (nextAt[i]! !== -1 && nextAt[i]! < at) nextAt[i] = text.indexOf(held[i]!, at)
+        if (nextAt[i]! === -1) continue
+        if (
+          k === -1 ||
+          nextAt[i]! < nextAt[k]! ||
+          (nextAt[i] === nextAt[k] && held[i]!.length > held[k]!.length)
+        )
+          k = i
+      }
+      if (k === -1) break
+      const h = held[k]!
+      const pos = nextAt[k]!
+      const whole = isWhole(pos, h)
+      const key = `${k}:${whole ? 1 : 0}`
+      let entry = backs.get(key)
+      if (!entry) {
+        const mark = `\u0000${backs.size}\u0001`
+        entry = {
+          mark,
+          back: () =>
+            !whole
+              ? this.maskText(h)
+              : h === MODEL_NOTE
+                ? h
+                : applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
+                    scanned: true,
+                  }),
+        }
+        backs.set(key, entry)
+      }
+      marked += text.slice(at, pos) + entry.mark
+      at = pos + h.length
+    }
+    marked += text.slice(at)
+    let out = this.maskText(marked)
+    for (const { mark, back } of backs.values()) out = out.split(mark).join(back())
+    // The whole, read back, scanned once more: anything a hold let through
+    // sends the text through full masking first; only if that too leaves a
+    // credential does the text fail (review of 6e14ec6).
+    if (survivingSecrets(out, this.map).length > 0) return this.gate(this.maskText(text))
+    return out
   }
 
   /** What masking knows about a text of `language` (spec 050). */
@@ -444,24 +601,49 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
-      const r = restoreArgs(s, this.map)
+      // Only saved entries are restored: a quarantined name never is.
+      const r = restoreArgs(s, this.stored.map)
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
+      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.stored.map)
       return r.text
     }
 
+    // What the call would write back that Veilio keeps from it, if anything.
+    let restoresWhat: string | null = null
     let args: ToolEvent = e
+    // A credential Veilio destroyed is never put back, whatever a placeholder
+    // says it stands for (security review of 933156e).
+    const learned = this.destroyed.values
+    // Decided from what the restoration puts back, not only from what this
+    // session learned: a provider-format key that was not in the arguments as
+    // written is refused (security review of 2af9fca).
+    const putsBack = (before: string, after: string) =>
+      after === before
+        ? null
+        : learned.some((v) => after.includes(v) && !before.includes(v))
+          ? 'a credential Veilio removed'
+          : restoreAdds(before, after)
+    const guarded = (s: string) => {
+      const out = restoreOne(s)
+      restoresWhat ??= putsBack(s, out)
+      return out
+    }
     if (policy.restore.includes('*')) {
       const own: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(e)) if (!RESERVED.has(k)) own[k] = v
-      args = { ...e, ...(deepRewrite(own, restoreOne) as Record<string, unknown>) }
+      args = { ...e, ...(deepRewrite(own, guarded) as Record<string, unknown>) }
     } else if (policy.restore.length > 0) {
-      const r = rewriteFields(e, policy.restore, restoreOne)
+      const r = rewriteFields(e, policy.restore, guarded)
       if (!r.ok) return this.deny(`its arguments are not in the expected form (${r.reason})`)
       args = r.value as ToolEvent
     }
+    if (restoresWhat)
+      return this.deny(
+        `a placeholder in it stands for ${restoresWhat}, which is never written back. Ask the user`
+      )
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
@@ -566,15 +748,19 @@ export class Guard {
       if (unchecked) return this.withhold(unchecked)
     }
     const ctx = this.context('unknown')
-    const shaped = maskShaped(applyMap(raw, this.map, ctx), this.map, ctx)
+    const shaped = maskShaped(
+      applyMap(raw, this.map, ctx, { known: this.destroyed }),
+      this.map,
+      ctx
+    )
     if (
       Object.keys(shaped.additions).length > 0 &&
-      (await this.save(shaped.additions)) === 'conflict'
+      (await this.save(shaped.additions)).status === 'conflict'
     )
       return this.withhold(
         'another program changed .veilio/map.json while Veilio was writing to it'
       )
-    const left = survivingSecrets(shaped.text)
+    const left = survivingSecrets(shaped.text, { ...this.map, ...shaped.additions })
     if (left.length > 0)
       return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
     return { deny: shaped.text }
@@ -599,21 +785,48 @@ export class Guard {
     })
     const unchecked = await this.indexNamed(args, texts, deadline)
     if (unchecked) return this.withhold(unchecked)
+    // What any scan of this result destroys is removed from all of it, as
+    // written, before anything is masked: no repeat of a credential on
+    // another line, in another field or in a source's literal can reach the
+    // map or the model (security reviews of 75fe4c0 and fe5078c). Learned
+    // from what the model would be sent, after raw-only lines are dropped
+    // (review of 99325ba). Enum fields are left for the last scan, which
+    // withholds the result.
+    const strip = (s: string) => redactKnown(s, this.destroyed)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
-      return this.maskMessage(raw, args, deadline, true)
+      this.destroyed.learn(destroyedValues([raw], this.map))
+      return this.maskMessage(strip(raw), args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
+    const sent: string[] = []
+    deepRewrite(outcome.result, (s) => {
+      sent.push(s)
+      return s
+    })
+    this.destroyed.learn(destroyedValues(sent, this.map))
+    if (this.destroyed.values.length > 0)
+      outcome = {
+        ...outcome,
+        result:
+          policy.kind === 'text'
+            ? strip(outcome.result as string)
+            : deepRewrite(
+                outcome.result,
+                strip,
+                new Set(policy.kind === 'fields' ? policy.keep : [])
+              ),
+      }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const working: SymbolMap = { ...this.map }
-      const additions: SymbolMap = {}
+      const working: SymbolMap = ownedMap(this.map)
+      const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
       const ctx = this.context(this.resultLanguage(tool, args, filePath))
       // A Grep result mixes files: each line is masked in its own file's language.
@@ -624,7 +837,18 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line))))
               .join('\n')
           : fn(s, ctx)
-      const apply = (s: string) => perLine(s, (t, c) => applyMap(t, working, c))
+      // Swept already, above: each string is scanned once here.
+      const apply = (s: string) =>
+        perLine(s, (t, c) => applyMap(t, working, c, { known: this.destroyed, swept: true }))
+      // A listed field, already scanned for credentials as written, only has
+      // the names the map has learned since replaced in the pass over every
+      // string; every other field is masked in full. Told apart by where the
+      // string stands, never by what it says (review of 99325ba).
+      const listed = new Set(policy.kind === 'fields' ? policy.fields.map((f) => f.path) : [])
+      const again = (s: string, path: string) =>
+        listed.has(path)
+          ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true }))
+          : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
       else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {
@@ -632,8 +856,8 @@ export class Guard {
           const r = rewriteFields(value, [field.path], (s) => {
             if (field.mode === 'apply') return apply(s)
             const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
-            Object.assign(working, scrubbed.additions)
-            Object.assign(additions, scrubbed.additions)
+            grow(working, scrubbed.additions)
+            grow(additions, scrubbed.additions)
             return scrubbed.text
           })
           if (!r.ok)
@@ -645,7 +869,7 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, apply, new Set(policy.keep))
+        value = deepRewritePaths(value, again, new Set(policy.keep))
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
@@ -657,20 +881,20 @@ export class Guard {
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
           const shaped = maskShaped(t, working, c)
-          Object.assign(working, shaped.additions)
-          Object.assign(additions, shaped.additions)
+          grow(working, shaped.additions)
+          grow(additions, shaped.additions)
           return shaped.text
         })
       })
 
       if (Object.keys(additions).length > 0) {
-        const saved = await this.save(additions)
+        const { status: saved } = await this.save(additions)
         if (saved === 'conflict') continue
       }
 
       const left: string[] = []
       deepRewrite(value, (s) => {
-        left.push(...survivingSecrets(s))
+        left.push(...survivingSecrets(s, working))
         return s
       })
       if (left.length > 0)
@@ -706,8 +930,34 @@ export class Guard {
     return out
   }
 
-  /** Adds entries to the map file: read what is there now, merge, write. */
-  private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
+  /** Adds entries to the map file: read what is there now, merge, write.
+   *  Says how many names went to the quarantine instead
+   *  (review of 6e14ec6: returned, not shared through guard state). */
+  private save(
+    additions: SymbolMap
+  ): Promise<{ status: 'saved' | 'conflict'; quarantined: number }> {
+    // No credential Veilio destroyed is ever minted into the map (security
+    // review of 933156e).
+    // The entry that holds one goes to the in-memory quarantine; the rest
+    // are saved (reviews of da4ff84 and 7b930ad).
+    const learned = this.destroyed.values
+    let quarantined = 0
+    if (learned.length > 0) {
+      const kept: SymbolMap = {}
+      for (const [placeholder, name] of Object.entries(additions)) {
+        if (learned.some((v) => name.includes(v))) {
+          // A namespace of its own, which no saved entry can share (review
+          // of 58d3dae). Minted before any text holds the engine's number:
+          // only indexing raw files sends a name here.
+          const own = `__QUARANTINED__${++this.quarantineNext}`
+          void placeholder
+          this.quarantine[own] = name
+          this.destroyed.hold(name, own)
+          quarantined++
+        } else kept[placeholder] = name
+      }
+      additions = kept
+    }
     const run = this.writes.then(async () => {
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
@@ -724,13 +974,13 @@ export class Guard {
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })
       if (conflicts.length > 0) {
         this.stored = onDisk
-        return 'conflict' as const
+        return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
       await this.io.write(this.mapPath, serialiseMapFile(next))
       if (!existed) await this.ensureIgnored()
       this.stored = next
-      return 'saved' as const
+      return { status: 'saved' as const, quarantined }
     })
     // A failed write must not wedge every later one.
     this.writes = run.catch(() => undefined)

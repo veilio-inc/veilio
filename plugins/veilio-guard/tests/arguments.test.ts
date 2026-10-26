@@ -230,3 +230,202 @@ test('a shell command with known placeholders and language tokens runs', async (
     "sed -i '' 's/settledTotal/closedTotal/' src/ledger.ts && grep -rn __DEV__ src"
   )
 })
+
+// Security review of 2af9fca: a placeholder for a provider-format key is
+// never restored, even in a fresh session that learned nothing yet.
+test('a map entry holding a provider-format key is never restored, in a fresh session', async ($, on) => {
+  const edit = recorded('Edit')
+  const key = 'AKIA' + 'Q7RZ2XKM4PLB8WNE'
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__7: key }) })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'id = "__STR__7"',
+  })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('Veilio refused this call')
+})
+
+test('an ordinary project name restores fine beside that check', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'const __VAR__1 =',
+    new_string: 'const __VAR__1 =',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen[0].new_string).toBe('const settledTotal =')
+})
+
+test('a restore that puts back a second provider key beside one already written is refused', async ($, on) => {
+  const edit = recorded('Edit')
+  const written = 'AKIA' + 'ZZ7RZ2XKM4PLB8WN'
+  // The map holds the key's tail, not a key by itself: only the restored
+  // text holds the second key.
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__7: 'Q7RZ2XKM4PLB8WNE' }) })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: `a = "${written}"\nb = "AKIA__STR__7"`,
+  })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('Veilio refused this call')
+})
+
+test('an edit beside a regulated number the map holds runs, and one that writes it back is refused', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: 'GB29NWBK60161331926819' }),
+  })
+  let ran = 0
+  on('tool.call', () => (ran++, edit.r))
+  const beside: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'const __VAR__1 =',
+    new_string: 'const __VAR__1 = 2',
+  })
+  expect(beside.deny).toBeUndefined()
+  const back: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'iban = "__IBAN__1"',
+  })
+  expect(back.deny).toContain('Veilio refused this call')
+  expect(ran).toBe(1)
+})
+
+// Commit security review of f4e81cb: decided by the placeholder, not by
+// detecting the number again, so no spelling of it slips through.
+function writesBack(value: string) {
+  return async ($: any, on: any) => {
+    const edit = recorded('Edit')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: value }) })
+    let ran = false
+    on('tool.call', () => ((ran = true), edit.r))
+    const out: any = await $.tool.call({
+      ...eventOf(edit),
+      old_string: 'x',
+      new_string: 'v = "__IBAN__1"',
+    })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+}
+
+test(
+  'a restoration that writes back a spaced IBAN is refused',
+  writesBack('GB29 NWBK 6016 1331 9268 19')
+)
+test(
+  'a restoration that writes back a dashed card number is refused',
+  writesBack('4539-1488-0343-6467')
+)
+test(
+  'a restoration that writes back an IBAN glued to letters is refused',
+  writesBack('refGB29NWBK60161331926819x')
+)
+
+// Review of 55ae576: judged by the keys restore() itself resolved.
+function refusedRestore(map: Record<string, string>, newString: string) {
+  return async ($: any, on: any) => {
+    const edit = recorded('Edit')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, ...map }) })
+    let ran = false
+    on('tool.call', () => ((ran = true), edit.r))
+    const out: any = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: newString })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+}
+
+test(
+  'a regulated placeholder glued to letters is refused on restore',
+  refusedRestore({ __IBAN__1: 'GB29NWBK60161331926819' }, 'v = "ref__IBAN__1x"')
+)
+test(
+  'a value marked by hand is refused on restore',
+  refusedRestore({ __MANUAL__1: 'Contoso Harbour Bank' }, 'bank = "__MANUAL__1"')
+)
+test(
+  'a quarantined placeholder is refused on restore',
+  refusedRestore({ __QUARANTINED__1: 'connectXk9mQ2vL7QPool' }, '__QUARANTINED__1()')
+)
+
+// Review of 5347c7c: judged by what restore() resolved, worded by kind.
+test('a name that merely contains a hand-marked value restores fine', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__9: 'AcmeLedger', __MANUAL__1: 'Acme' }),
+  })
+  on('tool.call', () => edit.r)
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'new __VAR__9()',
+  })
+  expect(out.deny).toBeUndefined()
+})
+
+test('each refusal names what it would have written back', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      ...MAP,
+      __MANUAL__1: 'Contoso Harbour Bank',
+      __IBAN__1: 'GB29NWBK60161331926819',
+    }),
+  })
+  on('tool.call', () => edit.r)
+  const manual: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: '__MANUAL__1',
+  })
+  expect(manual.deny).toContain('marked by hand')
+  const iban: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: '__IBAN__1',
+  })
+  expect(iban.deny).toContain('regulated number')
+})
+
+test('a hand-marked value only inside another word of the text is still refused on restore', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__9: 'AcmeLedger', __MANUAL__1: 'Jan' }),
+  })
+  let ran = 0
+  on('tool.call', () => (ran++, edit.r))
+  // The name holding the mark restores; the mark itself, where the text
+  // holds it only inside 'January', does not.
+  const ok: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'new __VAR__9()',
+  })
+  expect(ok.deny).toBeUndefined()
+  const no: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'January __MANUAL__1',
+  })
+  expect(no.deny).toContain('marked by hand')
+  expect(ran).toBe(1)
+})

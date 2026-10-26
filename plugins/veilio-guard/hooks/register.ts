@@ -155,9 +155,13 @@ export function register(on: any, options: Options = {}) {
     const state = g.index?.state
     if (state === 'new' || state === 'indexing')
       await g.indexProject(deadline(next)).catch(() => undefined)
-    const text = g.applyText(e.text, 'prompt')
+    // A credential with its key in one is removed from the others too; each
+    // text is scanned once.
+    const given: string[] = Array.isArray(e.context) ? e.context : []
+    const [scan, ...scans] = g.learnTogether([e.text, ...given])
+    const text = g.applyText(e.text, 'prompt', scan)
     const context = Array.isArray(e.context)
-      ? e.context.map((c: string) => g.applyText(c))
+      ? given.map((c: string, i: number) => g.applyContext(c, scans[i]))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
@@ -168,7 +172,12 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
     if (g.state === 'stopped') return { text: null }
-    return { ...r, text: g.applyText(r.text) }
+    // Only the first message's context carries the guard's note: on 2.1.310
+    // the plugins' blocks come as context_sections, and earlier builds sent
+    // them with userEmail as session_context.
+    const first = e.type === 'context_sections' || e.type === 'session_context'
+    const text = first ? g.applyContext(r.text) : g.applyText(r.text)
+    return { ...r, text }
   }).catch(async () => ({ text: null }))
 
   on('prompt.context', async ($: any, e: any, next: any) => {
@@ -176,7 +185,14 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
-    const blocks = r.blocks.map((b: { text: string }) => ({ ...b, text: g.applyText(b.text) }))
+    const raw = r.blocks.map((b: { text: string }) => b.text)
+    const scans = g.learnTogether(raw)
+    // Remembered, so the copy Claude Code passes back as an attachment is
+    // not judged a second time.
+    const blocks = r.blocks.map((b: { text: string }, i: number) => ({
+      ...b,
+      text: g.remember(g.applyText(raw[i]!, 'result', scans[i])),
+    }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 

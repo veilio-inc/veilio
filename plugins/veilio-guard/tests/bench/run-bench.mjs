@@ -87,6 +87,23 @@ const TOOLS = [
   'Bash(cat:*)',
   'Bash(grep:*)',
 ].join(',')
+// The CLI runs signed out, in a HOME of its own. Signed in, every `veilio
+// scrub` asks Veilio Cloud for the team's maps and reserves placeholder
+// numbers: one request per file, hundreds per run, on whichever account the
+// developer is signed in to (a staging account's rate limit was exhausted
+// that way). The bench measures the local guard; it never touches Cloud.
+// Claude Code itself needs the developer's HOME for its own sign-in, and the
+// guard plugin running inside it makes no network request and does not read
+// ~/.veilio.
+const CLI_HOME = mkdtempSync(join(tmpdir(), 'veilio-bench-home-'))
+const CLI_ENV = { ...process.env, HOME: CLI_HOME, USERPROFILE: CLI_HOME }
+function refuseSignedIn() {
+  if (!existsSync(CLI)) return
+  const who = spawnSync('node', [CLI, 'whoami'], { env: CLI_ENV, encoding: 'utf8' })
+  if (!/Not signed in/.test(`${who.stdout}${who.stderr}`))
+    throw new Error('the CLI the bench runs is signed in to Veilio Cloud: refusing to run')
+}
+
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|go|py|java|kt|cs|rb|php|rs|swift|c|cc|cpp|h|hpp)$/
 
 function sh(cmd, cwd, timeout = 300_000) {
@@ -100,8 +117,8 @@ function must(cmd, cwd) {
 }
 
 // Argument arrays, for anything that takes a path: no quoting to get wrong.
-function call(file, args, cwd) {
-  const r = spawnSync(file, args, { cwd, encoding: 'utf8', maxBuffer: 64 << 20 })
+function call(file, args, cwd, env = process.env) {
+  const r = spawnSync(file, args, { cwd, env, encoding: 'utf8', maxBuffer: 64 << 20 })
   if (r.status !== 0) throw new Error(`${file} ${args.join(' ')} failed:\n${r.stdout}${r.stderr}`)
   return r.stdout
 }
@@ -112,7 +129,10 @@ function cleanup(dir) {
   rmSync(dir, { recursive: true, force: true })
   temps.delete(dir)
 }
+temps.add(CLI_HOME)
 process.on('exit', () => [...temps].forEach(cleanup))
+// After the temp HOME is registered, so a refusal still removes it.
+refuseSignedIn()
 process.on('SIGINT', () => process.exit(130))
 
 // A clone with no history: `git log -p` would show the planted bug, and the
@@ -186,7 +206,7 @@ function buildMap(repo) {
     const files = call('git', ['ls-files', '-z'], clean.repo)
       .split('\0')
       .filter((f) => SOURCE.test(f))
-    for (const f of files) call('node', [CLI, 'scrub', '-q', f], clean.repo)
+    for (const f of files) call('node', [CLI, 'scrub', '-q', f], clean.repo, CLI_ENV)
     LANGUAGES = [...new Set(files.map((f) => languageOfPath(f)).filter(Boolean))]
     const map = mkdtempSync(join(tmpdir(), 'veilio-bench-map-'))
     temps.add(map)
@@ -423,6 +443,8 @@ if (!existsSync(join(outDir, 'meta.json')))
         reps: REPS,
         maxTurns: MAX_TURNS,
         tools: TOOLS,
+        // The warm map was built by a signed-out CLI: no Cloud request.
+        cli: 'signed out, own HOME',
       },
       null,
       2

@@ -504,7 +504,11 @@ const PATTERNS: Pattern[] = [
     disposition: 'destroy',
     severity: 'medium',
     label: 'High-entropy credential',
-    re: /\b(?:[a-z0-9_]*(?:key|token|secret|credential|auth|pass)[a-z0-9_]*)\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
+    // The name is one run of word characters holding a keyword, checked by a
+    // lookahead, so the run is read once. Written as two stars around the
+    // keyword it backtracked over a long run for every keyword inside it: a
+    // file of 50,000 redaction tokens took 78 s (guard follow-up review).
+    re: /\b(?=[a-z0-9_]*?(?:key|token|secret|credential|auth|pass))[a-z0-9_]+\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
     group: 1,
   },
   {
@@ -668,6 +672,15 @@ type ValueVerdict = 'placeholder' | 'ambiguous' | 'credential'
 
 function classifyValue(value: string, assignmentShaped: boolean): ValueVerdict {
   const trimmed = value.trim()
+  // A value that is nothing but redaction tokens carries no secret: it is what
+  // a redaction already left (guard follow-up d03a). The guard scans a result
+  // it redacted once more before sending it, and read the token as a
+  // credential, withholding every result from a file of sample credentials.
+  // Only whole tokens of this module's own kinds count, and only when nothing
+  // else is left: a residue next to a token is part of a longer secret, and a
+  // symbol-map placeholder may stand for a project name inside a credential,
+  // so both are judged as before (review of 9d3f6d0).
+  if (trimmed !== '' && trimmed.replace(REDACTION_TOKENS, '') === '') return 'placeholder'
   if (KNOWN_DUMMY.has(trimmed.toLowerCase())) return 'placeholder'
   // Templating placeholders: ${VAR}, {{var}}, %s, $VAR, <VALUE>. Matched
   // case-insensitively against the ORIGINAL — lowercasing first would stop
@@ -1012,6 +1025,19 @@ const TYPE_TOKENS: Record<SecretType, string> = {
   pesel: 'PESEL',
 }
 
+/** The redaction tokens scanSecrets writes (`__REDACTED_CREDENTIAL_1__`), and
+ *  the one the guard writes for a masked-kind number it cannot mask
+ *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
+ *  whole and of a known kind. */
+export const REDACTION_TOKENS = new RegExp(
+  `__REDACTED_(?:${[...new Set(Object.values(TYPE_TOKENS))].join('|')})_\\d+__|__REDACTED_(?:${(
+    Object.keys(SECRET_DISPOSITIONS) as SecretType[]
+  )
+    .filter((type) => SECRET_DISPOSITIONS[type] === 'mask')
+    .map((type) => type.toUpperCase().replace(/[^A-Z0-9]/g, '_'))
+    .join('|')})__`,
+  'g'
+)
 /** Detect credentials in `code` without modifying it. */
 export function detectSecrets(code: string): SecretFinding[] {
   return scanSecrets(code, 'warn').findings

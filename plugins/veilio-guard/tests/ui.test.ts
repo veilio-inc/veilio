@@ -1,6 +1,6 @@
 // Spec 033 R7: the developer reads the real names; the model and the stored
 // transcript keep the placeholders. And the band says what the guard is doing.
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import { CANARY, mapFile, project, ROOT } from './helpers.ts'
 
 const SITE = (component: string, props: Record<string, unknown>) => ({
@@ -159,4 +159,34 @@ test('the band appears once the guard has loaded, with no /veilio first', async 
   expect(
     await ui.find({ type: 'Text', text: /^Veilio guard on · 1 name in the map/ })
   ).toBeDefined()
+})
+
+// Guard follow-up d03b: a headless run (`claude -p`, the Agent SDK) draws
+// nothing, so its reply keeps the placeholders. The host's other routes would
+// write real names where they must not go: a `turn.complete` answer is stored
+// in the transcript on disk as a notice (and never replaces the printed
+// result), and a `session.append` rewrite is what the next request sends.
+// The guard takes neither, and this holds that.
+test('a headless reply keeps its placeholders: no route writes real names into a stored or sent reply', async ($, on) => {
+  await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  // The kit's store for rows (Claude Code 2.1.310 on); the oldest supported
+  // kit, 2.1.288, has none, and there only the answer is checked.
+  const session = typeof (mock as any).session === 'function' ? (mock as any).session(on) : null
+  on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: ROOT })
+  const answer = 'The bug is in __CLS__1.'
+  const end: any = await $.turn.complete({
+    answer,
+    durationMs: 1,
+    isAborted: false,
+    turnId: 't1',
+    reason: 'answer',
+  })
+  expect(end.text).toBe(answer)
+  if (!session) return
+  await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: answer }] } })
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: answer }] } })
+  const stored = JSON.stringify(session.appended())
+  expect(stored).toContain('__CLS__1')
+  expect(stored).not.toContain(CANARY)
 })

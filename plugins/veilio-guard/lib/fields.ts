@@ -69,27 +69,38 @@ export function deepRewrite(
   fn: Rewrite,
   keep: ReadonlySet<string> = NONE
 ): unknown {
-  return rewriteDeep(value, fn, keep, true)
+  return deepRewritePaths(value, (s) => fn(s), keep)
 }
 
-// `keep` holds at the record's top level, and in the blocks of a root list (an
-// MCP result's `type`), never deeper: a nested `type` can carry a name.
-function rewriteDeep(
+const NONE: ReadonlySet<string> = new Set()
+
+/** As deepRewrite, with each string's place in the record in the field-list
+ *  syntax (`file.content`, `filenames[]`, `[].text`), so a caller can tell a
+ *  listed field from any other by where it stands, not by what it says. */
+export function deepRewritePaths(
   value: unknown,
-  fn: Rewrite,
-  keep: ReadonlySet<string>,
-  top: boolean
+  fn: (text: string, path: string) => string,
+  keep: ReadonlySet<string> = NONE
 ): unknown {
-  if (typeof value === 'string') return fn(value)
-  if (Array.isArray(value)) return value.map((v) => rewriteDeep(v, fn, keep, top))
+  return pathsDeep(value, fn, keep, true, '')
+}
+
+function pathsDeep(
+  value: unknown,
+  fn: (text: string, path: string) => string,
+  keep: ReadonlySet<string>,
+  top: boolean,
+  path: string
+): unknown {
+  if (typeof value === 'string') return fn(value, path)
+  if (Array.isArray(value)) return value.map((v) => pathsDeep(v, fn, keep, top, `${path}[]`))
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value)) {
-      out[k] = top && keep.has(k) ? v : rewriteDeep(v, fn, keep, false)
+      const at = path === '' ? k : `${path}.${k}`
+      out[k] = top && keep.has(k) ? v : pathsDeep(v, fn, keep, false, at)
     }
     return out
   }
   return value
 }
-
-const NONE: ReadonlySet<string> = new Set()

@@ -219,3 +219,40 @@ test('a path found only by stripping its directories is not trusted before the i
   const out: any = await $.tool.call(eventOf(run))
   expect(out.deny).toContain('Veilio withheld this result')
 })
+
+// Review of da4ff84: a name that holds a credential the session destroyed is
+// left out of the map, and the rest of the batch is saved.
+test('indexing a file whose name holds a destroyed credential saves the other names', async ($, on) => {
+  const files = {
+    ...COLD_FILES,
+    [`${ROOT}/src/pool.ts`]:
+      'export function connectXk9mQ2vL7QPool() {}\nexport function ledgerHarvestTotal() {}\n',
+  }
+  const p = project(on, files)
+  on('tool.call', (_: any, e: any) =>
+    e.tool === 'Bash'
+      ? { ...TEST_RUN.r, result: { ...TEST_RUN.r.result, stdout: 'password = "Xk9mQ2vL7Q"\n' } }
+      : {
+          ...GREP.r,
+          result: {
+            ...GREP.r.result,
+            content: [
+              'src/pool.ts:1:export function connectXk9mQ2vL7QPool() {}',
+              'src/pool.ts:2:export function ledgerHarvestTotal() {}',
+            ].join('\n'),
+          },
+        }
+  )
+  await $.tool.call({ ...eventOf(TEST_RUN), command: 'cat .netrc.example' })
+  const out: any = await $.tool.call(eventOf(GREP))
+  expect(out.deny).toBeUndefined()
+  expect(saved(p)).toContain('ledgerHarvestTotal')
+  expect(saved(p).join(' ')).not.toContain('Xk9mQ2vL7Q')
+  // Masked as one name in the result, by a placeholder kept in memory only.
+  const shown: string = out.result.content
+  expect(shown).not.toContain('Xk9mQ2vL7Q')
+  expect(shown).not.toContain('connect')
+  // A placeholder of its own namespace, which no saved entry can ever share.
+  expect(shown).toMatch(/export function __QUARANTINED__\d+\(\) \{\}/)
+  expect(p.files[MAP]).not.toContain('__QUARANTINED__')
+})
