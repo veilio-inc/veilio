@@ -411,7 +411,9 @@ describe('weak passwords are never exempt by position', () => {
 
 describe('the URL host is the part after the last @ of the authority', () => {
   it('a default word between two @ is not taken for the host', () => {
-    const out = anonymize('PGPASSWORD=postgres psql\nURL=https://u:postgres@x@db:5432/a\n').anonymized
+    const out = anonymize(
+      'PGPASSWORD=postgres psql\nURL=https://u:postgres@x@db:5432/a\n'
+    ).anonymized
     expect(out).not.toMatch(/u:postgres@/)
   })
   it('a default word inside the userinfo before the last @ is not the host', () => {
