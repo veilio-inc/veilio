@@ -230,6 +230,14 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.existingMap` — continue numbering from a previous session
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
+  - an unknown key throws a `TypeError` that names it and lists the valid
+    options. It used to be ignored, or worse: an object of unknown keys was
+    taken as a positional map, so `{ style: 'plain' }` (an option removed
+    before 1.0.0) was stored in the map. `restore`, `scanSecrets` and
+    `detectSecrets` check their options the same way.
+  - `anonymize(code, existingMap)` — the positional map form is deprecated;
+    pass `{ existingMap }`. An object whose keys are all placeholders is still
+    read as a map. The form is removed in the next major version.
   - `comments` — `{ total, inline, characters, severity }`: how much comment
     prose left **unmasked**. Comments are prose and are deliberately not masked,
     which makes this the largest thing the engine does not do for you — reported

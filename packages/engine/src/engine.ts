@@ -26,6 +26,7 @@ import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
+import { assertKnownOptions, optionKeys, unknownKeys, unknownOptionError } from './options.js'
 
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -792,15 +793,39 @@ function safeMatch(pattern: string, name: string): boolean {
   }
 }
 
-function isAnonymizeOptions(o: AnonymizeOptions | SymbolMap): o is AnonymizeOptions {
-  return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o || 'path' in o
-}
+const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
+  existingMap: true,
+  rules: true,
+  manual: true,
+  language: true,
+  secrets: true,
+  path: true,
+})
+const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 
-function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
-  for (const v of Object.values(o)) {
-    if (typeof v !== 'string') return false
-  }
-  return true
+/**
+ * Options, or the positional existing map, decided by the keys.
+ *
+ * It used to be a guess: an object naming none of four option keys and holding
+ * only strings was a map. So a removed option (`{ style: 'plain' }`) or a typo
+ * (`{ secret: 'off' }`) was stored in the map without a word, and reached Cloud
+ * with it. Now an object whose keys are all placeholders is a map, one whose
+ * keys are all option names is options, and anything else throws.
+ */
+function resolveAnonymizeOptions(
+  options: AnonymizeOptions | SymbolMap | undefined | null
+): AnonymizeOptions {
+  if (options === undefined || options === null) return {}
+  const keys = Object.keys(options)
+  if (keys.length === 0) return {}
+  if (keys.every(isPlaceholder)) return { existingMap: options as SymbolMap }
+  const unknown = unknownKeys(options, ANONYMIZE_OPTIONS)
+  if (unknown.length === 0) return options as AnonymizeOptions
+  const stray = unknown.filter((key) => !isPlaceholder(key))
+  if (stray.length > 0) throw unknownOptionError('anonymize', stray, ANONYMIZE_OPTIONS)
+  throw new TypeError(
+    `anonymize: options cannot also hold map placeholders (${unknown.map((k) => `'${k}'`).join(', ')}). Pass the map as { existingMap }.`
+  )
 }
 
 /**
@@ -820,18 +845,18 @@ function isSymbolMap(o: AnonymizeOptions | SymbolMap): o is SymbolMap {
  * `__REDACTED_*__` tokens that are never written to the map — so `restore()`
  * cannot bring a live key back, and a synced map can never carry one.
  */
+export function anonymize(code: string, options?: AnonymizeOptions): AnonymizeResult
+/**
+ * @deprecated Pass the map as `{ existingMap }`. The positional map form is
+ * kept for compatibility and is removed in the next major version.
+ */
+export function anonymize(code: string, existingMap: SymbolMap): AnonymizeResult
 export function anonymize(
   code: string,
   options: AnonymizeOptions | SymbolMap = {}
 ): AnonymizeResult {
-  // Option-key check FIRST: an options object whose values are all strings
-  // (e.g. { language: 'go' }) would otherwise be misread as a SymbolMap by the
-  // positional-map check below.
-  const opts: AnonymizeOptions = isAnonymizeOptions(options)
-    ? options
-    : isSymbolMap(options)
-      ? { existingMap: options }
-      : options
+  // Unknown keys throw; see resolveAnonymizeOptions.
+  const opts = resolveAnonymizeOptions(options)
   const existingMap = opts.existingMap ?? {}
   const rules = opts.rules ?? []
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
@@ -1093,6 +1118,7 @@ export function restore(
   map: SymbolMap,
   options: RestoreOptions = {}
 ): RestoreResult {
+  assertKnownOptions('restore', options, RESTORE_OPTIONS)
   const strippedItems: StrippedItem[] = []
   const wanted = resolveStripSet(options.strip)
   let result = aiResponse

@@ -95,7 +95,12 @@ export declare function extractIdentifiers(code: string, language?: Language): s
  * `__REDACTED_*__` tokens that are never written to the map — so `restore()`
  * cannot bring a live key back, and a synced map can never carry one.
  */
-export declare function anonymize(code: string, options?: AnonymizeOptions | SymbolMap): AnonymizeResult;
+export declare function anonymize(code: string, options?: AnonymizeOptions): AnonymizeResult;
+/**
+ * @deprecated Pass the map as `{ existingMap }`. The positional map form is
+ * kept for compatibility and is removed in the next major version.
+ */
+export declare function anonymize(code: string, existingMap: SymbolMap): AnonymizeResult;
 /** Every category `restore` knows how to remove. */
 export declare const STRIPPABLE_TYPES: readonly StrippedItemType[];
 /**

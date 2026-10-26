@@ -2,6 +2,7 @@ import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeL
 import { detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
+import { assertKnownOptions, optionKeys, unknownKeys, unknownOptionError } from './options.js';
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
 // `anonymize` resolves the language from its options (auto-detecting by default).
@@ -673,42 +674,43 @@ function safeMatch(pattern, name) {
         return false;
     }
 }
-function isAnonymizeOptions(o) {
-    return 'existingMap' in o || 'rules' in o || 'language' in o || 'secrets' in o || 'path' in o;
-}
-function isSymbolMap(o) {
-    for (const v of Object.values(o)) {
-        if (typeof v !== 'string')
-            return false;
-    }
-    return true;
-}
+const ANONYMIZE_OPTIONS = optionKeys({
+    existingMap: true,
+    rules: true,
+    manual: true,
+    language: true,
+    secrets: true,
+    path: true,
+});
+const RESTORE_OPTIONS = optionKeys({ strip: true });
 /**
- * Anonymize source code, replacing real identifiers with role-typed
- * placeholders (__CLS__1, __FN__2, ...). Pass an existing map to continue
- * numbering from a previous session.
+ * Options, or the positional existing map, decided by the keys.
  *
- * Custom rules:
- * - Whitelist rules (type='whitelist'): identifiers matching the pattern are
- *   left alone, no placeholder assigned.
- * - Replace rules (type='replace'): identifiers matching the pattern get a
- *   named placeholder (e.g., __APIKEY__1, __APIKEY__2) instead of a role base.
- * Precedence: whitelist → replace (first match by sort_order) → default.
- *
- * Credentials are handled before identifier masking. Under the default
- * `secrets: 'redact'` policy, critical/high findings are replaced with
- * `__REDACTED_*__` tokens that are never written to the map — so `restore()`
- * cannot bring a live key back, and a synced map can never carry one.
+ * It used to be a guess: an object naming none of four option keys and holding
+ * only strings was a map. So a removed option (`{ style: 'plain' }`) or a typo
+ * (`{ secret: 'off' }`) was stored in the map without a word, and reached Cloud
+ * with it. Now an object whose keys are all placeholders is a map, one whose
+ * keys are all option names is options, and anything else throws.
  */
+function resolveAnonymizeOptions(options) {
+    if (options === undefined || options === null)
+        return {};
+    const keys = Object.keys(options);
+    if (keys.length === 0)
+        return {};
+    if (keys.every(isPlaceholder))
+        return { existingMap: options };
+    const unknown = unknownKeys(options, ANONYMIZE_OPTIONS);
+    if (unknown.length === 0)
+        return options;
+    const stray = unknown.filter((key) => !isPlaceholder(key));
+    if (stray.length > 0)
+        throw unknownOptionError('anonymize', stray, ANONYMIZE_OPTIONS);
+    throw new TypeError(`anonymize: options cannot also hold map placeholders (${unknown.map((k) => `'${k}'`).join(', ')}). Pass the map as { existingMap }.`);
+}
 export function anonymize(code, options = {}) {
-    // Option-key check FIRST: an options object whose values are all strings
-    // (e.g. { language: 'go' }) would otherwise be misread as a SymbolMap by the
-    // positional-map check below.
-    const opts = isAnonymizeOptions(options)
-        ? options
-        : isSymbolMap(options)
-            ? { existingMap: options }
-            : options;
+    // Unknown keys throw; see resolveAnonymizeOptions.
+    const opts = resolveAnonymizeOptions(options);
     const existingMap = opts.existingMap ?? {};
     const rules = opts.rules ?? [];
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
@@ -925,6 +927,7 @@ function resolveStripSet(option) {
  * destroying requested work, not cleaning up after it.
  */
 export function restore(aiResponse, map, options = {}) {
+    assertKnownOptions('restore', options, RESTORE_OPTIONS);
     const strippedItems = [];
     const wanted = resolveStripSet(options.strip);
     let result = aiResponse;

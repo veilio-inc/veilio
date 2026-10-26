@@ -11,6 +11,8 @@
 // the secret back. A developer who sees __REDACTED_AWS_KEY_1__ in their restored
 // code has been told, unmistakably, that a live key was in the payload.
 
+import { assertKnownOptions, optionKeys } from './options.js'
+
 export type SecretSeverity = 'critical' | 'high' | 'medium' | 'low'
 
 export type SecretType =
@@ -1407,8 +1409,11 @@ export interface ScanOptions {
   path?: string
 }
 
+const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true })
+
 /** Detect credentials in `code` without modifying it. */
 export function detectSecrets(code: string, options: ScanOptions = {}): SecretFinding[] {
+  assertKnownOptions('detectSecrets', options, SCAN_OPTIONS)
   return scanSecrets(code, 'warn', options).findings
 }
 
@@ -1426,6 +1431,7 @@ export function scanSecrets(
   policy: SecretPolicy = 'redact',
   options: ScanOptions = {}
 ): SecretScan {
+  assertKnownOptions('scanSecrets', options, SCAN_OPTIONS)
   if (policy === 'off') return { findings: [], code, regulated: [] }
 
   const example = options.path !== undefined && isExamplePath(options.path)

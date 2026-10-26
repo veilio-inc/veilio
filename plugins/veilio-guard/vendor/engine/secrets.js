@@ -10,6 +10,7 @@
 // is one-way: the token is never written to the map, so restore() cannot bring
 // the secret back. A developer who sees __REDACTED_AWS_KEY_1__ in their restored
 // code has been told, unmistakably, that a live key was in the payload.
+import { assertKnownOptions, optionKeys } from './options.js';
 // ─── Structural validators ───────────────────────────────────────────────────
 //
 // Every one of these is arithmetic over the value itself. Nothing here infers,
@@ -1152,8 +1153,10 @@ export const REDACTION_TOKENS = new RegExp(`__REDACTED_(?:${[...new Set(Object.v
     .filter((type) => SECRET_DISPOSITIONS[type] === 'mask')
     .map((type) => type.toUpperCase().replace(/[^A-Z0-9]/g, '_'))
     .join('|')})__`, 'g');
+const SCAN_OPTIONS = optionKeys({ path: true });
 /** Detect credentials in `code` without modifying it. */
 export function detectSecrets(code, options = {}) {
+    assertKnownOptions('detectSecrets', options, SCAN_OPTIONS);
     return scanSecrets(code, 'warn', options).findings;
 }
 /**
@@ -1166,6 +1169,7 @@ export function detectSecrets(code, options = {}) {
  * is one-way by construction, not by convention.
  */
 export function scanSecrets(code, policy = 'redact', options = {}) {
+    assertKnownOptions('scanSecrets', options, SCAN_OPTIONS);
     if (policy === 'off')
         return { findings: [], code, regulated: [] };
     const example = options.path !== undefined && isExamplePath(options.path);
