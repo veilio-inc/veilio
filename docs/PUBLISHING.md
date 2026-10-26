@@ -1,5 +1,10 @@
 # Publishing `@veilio-inc/cli`, then `@veilio-inc/mcp`
 
+> **Status (2026-10-26):** both packages are published (0.6.0) and release
+> through Changesets on every merge of the version PR. Sections 0 to 2 are the
+> record of the one-time first publish, kept for a new package. "What the
+> pipeline actually does" and "If it goes wrong" describe releases today.
+
 Order is not a preference. `@veilio-inc/mcp` depends on `@veilio-inc/cli`, so the
 CLI has to exist on npm before the MCP server can resolve. Changesets orders by
 dependency and would publish both in one run, but the first release is worth doing
@@ -10,8 +15,9 @@ published (it is).
 
 For the engine's own release path — semantic-release, `engine-v*` tags,
 `publish-engine.yml` — see [`.changeset/README.md`](../.changeset/README.md) for
-why the two live side by side, and `.releaserc.js` for the configuration. Nothing
-in this document touches the engine.
+why the two live side by side, and `.releaserc.js` for the configuration. The
+one engine step a person does by hand is the sync PR after each release:
+[After an engine release](#after-an-engine-release), at the end of this page.
 
 ---
 
@@ -23,8 +29,9 @@ same terms `packages/engine` ships under, and the only terms compatible with the
 `npx @veilio-inc/cli` usage that `packages/cli/action.yml` advertises. Their
 `repository`, `homepage` and `bugs` fields already point here.
 
-**Not settled: `private: true`.** Both manifests still carry it, and
-`changeset publish` skips a private package without saying anything. Removing that
+**Settled since: `private: true`.** Both manifests carried it before the first
+publish, and `changeset publish` skips a private package without saying
+anything. Removing that
 field is the whole arming step, and it arms the **next** Version Packages merge
 rather than the commit that removes it.
 
@@ -198,8 +205,11 @@ Same shape as 1.3–1.5, selecting `@veilio-inc/mcp`: hand-publish once with
 
 ```bash
 npm view @veilio-inc/mcp version
-npx --yes @veilio-inc/mcp@latest --help 2>&1 | head
 ```
+
+The server has no `--help`: started without input, it waits for a client on
+stdin. Use the `initialize` request from 2.2 against the installed package to
+check it answers.
 
 Then wire it into a real client. In Claude Code:
 
@@ -224,7 +234,7 @@ push to main
        ├─ npm ci                                  → postinstall builds the engine
        ├─ build:packages → typecheck → test       → all three packages
        ├─ npm pack --dry-run per tool             → allowlist + "dist is not empty"
-       └─ changesets/action@v1
+       └─ changesets/action@v2
             ├─ changesets present, no version PR open → opens the version PR
             └─ version PR just merged                → npm run release → changeset publish
 ```
@@ -233,9 +243,10 @@ push to main
 own `prepublishOnly`: clean, typecheck, test, build. A failing test stops that
 package's publish.
 
-**The action is held at v1 deliberately.** v2 requires Changesets CLI v3 and
-renames every input. A Dependabot PR raising it should be closed, not merged —
-this workflow only runs on push to `main`, so CI cannot catch the break.
+**The action is pinned to v2.1.2 by commit.** v2 needs Changesets CLI v3, which
+the root `devDependencies` pin, and `tests/release-config.test.ts` fails when
+the two majors disagree. This workflow only runs on push to `main`, so that
+test is the only check a pull request gets.
 
 ---
 
@@ -265,9 +276,42 @@ tools from a runtime they do not claim.
 
 ---
 
-## Still to decide before the first flip
+## Decided before the first flip
 
-- **Version.** Both are `0.1.0`. `0.x` says the interface can still move, which is
+- **Version (settled).** Both started at `0.1.0`. `0.x` says the interface can still move, which is
   honest for a first release; `1.0.0` says it will not.
 - **README.** Both ship in the tarball and become the npm landing page. Read them
   as a stranger would, before a stranger does.
+
+---
+
+## After an engine release
+
+semantic-release publishes the engine, tags `engine-v<version>` and writes a
+GitHub Release. It commits nothing to `main`, since that would mean pushing to
+a protected branch (`.releaserc.js` says why). So two files in the repository
+are behind npm until a person moves them. Do it **the same day** as the release,
+in one pull request:
+
+1. **`packages/engine/package.json`:** set `version` to the version just
+   published (`npm view @veilio-inc/engine version`).
+2. **`packages/engine/CHANGELOG.md`:** copy that version's notes, word for
+   word, from its GitHub Release
+   (`gh release view engine-v<version> -R veilio-inc/veilio`). Put them directly
+   under the `# Changelog` title, where semantic-release puts them in the
+   tarball. Write only what the release says.
+3. **`packages/cli` and `packages/mcp`:** if they should require the new
+   engine, widen their `@veilio-inc/engine` range in the same PR, and add a
+   patch changeset for each.
+
+Two checks make sure this happens:
+
+- The CI step "Engine version matches what is published" fails on `main` while
+  `packages/engine/package.json` is behind npm.
+- `tests/engine-changelog.test.ts` fails while the CHANGELOG's newest entry is
+  not that version, or the entry appears twice.
+
+So one sync PR turns both green. The CHANGELOG matters beyond the repository:
+the next release packs this file into its tarball with its own notes on top,
+so a missed sync becomes a gap on npm. That is how the 1.3.0 to 1.10.1 notes
+were missing from npm until 2026-10-26.

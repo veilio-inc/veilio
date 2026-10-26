@@ -60,10 +60,10 @@ npx @veilio-inc/mcp   # or add to your agent's MCP config
 ```
 
 `scrub`, `restore`, `scan` and `map` need no account and make no network call.
-The Cloud commands (`login`, `whoami`, `maps list|pull|push`, `team unlock|lock`,
-`rules pull`) and the MCP team namespace are released — they arrived in CLI and
-MCP `0.3.0`. This file is not the authority on what the registry has;
-`npm view @veilio-inc/cli version` is.
+The Cloud commands (`login`, `whoami`, `maps`, `team`, `vault`, `projects`,
+`rules pull`), the MCP server's map, team and project tools, and its team
+namespace are released. This file is not the authority on what the registry
+has; `npm view @veilio-inc/cli version` is.
 
 **Start here:** [docs/USING-THE-CLI-AND-MCP.md](docs/USING-THE-CLI-AND-MCP.md) —
 install, what works without an account, and MCP setup for Claude Code, Claude
@@ -133,9 +133,10 @@ or an existing nginx / IIS / CDN you'd rather drop files into.
 
 Veilio has **no backend and no server-side code**: the engine runs entirely in
 the browser, so "hosting" it is just serving static files. The Docker image above
-is nothing more than this bundle plus a ~140-line static file server
-([`docker/serve.go`](./docker/serve.go)) on an otherwise empty image — no distro,
-no shell, no package manager. That is why it is 10 MB.
+is nothing more than this bundle plus a small standard-library static file
+server ([`docker/serve.go`](./docker/serve.go)) on an otherwise empty image — no
+distro, no shell, no package manager. That is why it is about 12 MB, half of it
+the server binary.
 
 Download the latest `veilio-v*.tar.gz` from [Releases](https://github.com/veilio-inc/veilio/releases), extract, and serve `dist/` with any static web server.
 

@@ -105,14 +105,18 @@ tokens, PEM private keys and connection-string passwords are redacted; emails
 and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
 
-Every finding also says what actually happened to the value, in `disposition`:
+Every finding also says what the scan did with the value, in `disposition`:
 `'destroy'` (redacted, unrecoverable), `'mask'` (masked reversibly — see below),
-or `'report'` (left exactly as written). `redacted` remains the coarse boolean a
-badge can read; `disposition` is the finer answer.
+or `'report'` (the scan left it in place). `redacted` remains the coarse boolean
+a badge can read; `disposition` is the finer answer.
 
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
-Under `'warn'` nothing is acted on: findings come back with `disposition:
-'report'` and the code unchanged.
+Under `'warn'` the scan acts on nothing: findings come back with `disposition:
+'report'`, and `scanSecrets` returns the code unchanged. `anonymize` then masks
+the code as usual, so a credential inside a string or written as a name is
+masked like any other value — reversibly, which means **it is written to the
+map**. `'off'` does the same without reporting. Use either only on code you
+know holds no live credential.
 
 ## Regulated identifiers
 
@@ -179,7 +183,8 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 - `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
-  - `options.existingMap` — continue numbering from a previous session
+  - `options.existingMap` — continue numbering from a previous session:
+    `anonymize(next, { existingMap: map })`
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
   - `comments` — `{ total, inline, characters, severity }`: how much comment

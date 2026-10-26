@@ -48,7 +48,7 @@ Or run either without installing: `npx -y @veilio-inc/cli --help`.
 veilio scrub src/billing.ts | pbcopy     # anonymize; the map goes to .veilio/map.json
 pbpaste | veilio restore                 # put the real names back into the AI's answer
 pbpaste | veilio restore --strict > f.ts # the same, but write nothing if a placeholder would be left
-git diff --cached | veilio scan          # credentials only; exits 1 on findings
+git diff --cached | veilio scan          # credentials only; exits 1 on a credential
 veilio map                               # show the current symbol map (--clear to wipe it)
 ```
 
@@ -61,8 +61,9 @@ veilio map                               # show the current symbol map (--clear 
   irreversibly).
 
 Exit codes: `0` clean, `1` findings (use it to stop a commit or a CI job): a
-credential from `scan`, or a placeholder `restore --strict` would have left;
-`2` usage or I/O error.
+credential from `scan` (with `--strict`, any finding, emails and private IPs
+included), or a placeholder `restore --strict` would have left; `2` usage or
+I/O error.
 
 `restore` names every placeholder it could not put back, on stderr: one no map
 explains, one whose shape the AI changed (`__fn__1` for `__FN__1`), one your
@@ -78,8 +79,8 @@ veilio login                  # email, password - and the authentication code if
 veilio whoami                 # who is signed in (no network request)
 veilio maps list              # your maps and your team's, with ids
 veilio maps pull <id>         # bring one into .veilio/map.json
-veilio maps push <name>       # upload the local map as a new personal map
-veilio maps push --team <name> # publish it as the team's map instead
+veilio maps push [name]       # upload the local map as a new personal map
+veilio maps push --team [name] # publish it as the team's map instead
 veilio maps update <id>       # replace a Cloud map's entries with the local map's, in place
 veilio maps rm <id>           # remove a map from Cloud
 veilio projects               # your team's projects; * marks the one in use
