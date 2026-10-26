@@ -68,6 +68,18 @@ it refuses in the same words for the same reasons.
 | `projects_list` | The projects the team works in; `*` marks the one in use. |
 | `projects_use` | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too. |
 
+**One project per repository: `VEILIO_PROJECT`.** Set it in a repository's
+`.mcp.json` `env` (see [Install](#install)) and that repository's server works
+in that project for every tool call: the map tools, `team_status`,
+`projects_list`, and the team namespace `anonymize_*` and `restore_text` number
+from. It wins over the choice stored with the sign-in, so an agent in
+repository A never masks against repository B's names, even though both share
+one sign-in. A value that names no project your team works in, or a name two
+projects share, makes those tools return an error naming it. The masking tools
+refuse rather than mask from the local map. Results that name the project say
+"(from VEILIO_PROJECT)". `projects_use` still stores a choice, and warns that
+the server's variable overrides it.
+
 - **Destructive tools are off by default.** `maps_remove`, a `maps_update`
   that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
   that would overwrite local entries, are refused unless you start the
@@ -93,6 +105,22 @@ Setup for Claude Code, Claude Desktop, Xcode, Cursor and VS Code, plus troublesh
     "veilio": {
       "command": "npx",
       "args": ["-y", "@veilio-inc/mcp", "--root", "."]
+    }
+  }
+}
+```
+
+Signed in to a team that works in several projects, pin this repository's
+project with `env`. Use a name or an id; an empty value counts as unset:
+
+```jsonc
+// Claude Code — .mcp.json in the billing repository
+{
+  "mcpServers": {
+    "veilio": {
+      "command": "npx",
+      "args": ["-y", "@veilio-inc/mcp", "--root", "."],
+      "env": { "VEILIO_PROJECT": "billing" }
     }
   }
 }

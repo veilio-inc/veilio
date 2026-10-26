@@ -53,6 +53,11 @@ export interface Io {
   prompt?: (label: string) => Promise<string>
   /** Read a line without echoing it. Only the cloud commands use it. */
   password?: (label: string) => Promise<string>
+  /**
+   * Where `VEILIO_PROJECT` is read from (spec 052 FR-012a). Undefined: this
+   * process's environment. Injectable so tests never depend on the shell's.
+   */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 /** Exit codes are the contract for CI and pre-commit hooks:
@@ -110,6 +115,10 @@ export async function runScrub(
   const found: Awaited<ReturnType<TeamNamespaceSource>> = teamSource
     ? await teamSource()
     : { team: null, note: null, reserve: null }
+  if (found.refused) {
+    io.stderr(found.refused)
+    return EXIT_ERROR
+  }
 
   // `--team`: take new numbers out of the team's SHARED allocation rather than
   // from a floor computed here, because this map is going to be published.
@@ -295,11 +304,18 @@ export type TeamNamespaceSource = () => Promise<{
    * because the alternative is pretending the number is safe.
    */
   reserve?: Reserve | null
+  /**
+   * The command is refused, in these words (a whole `veilio: ...` line):
+   * VEILIO_PROJECT names no project the team works in (spec 052 FR-012a).
+   * Nothing is masked - numbering from the local map instead is the quiet
+   * fallback the variable rules out.
+   */
+  refused?: string
 }>
 
 export type TeamLayerSource = (
   missing: readonly string[]
-) => Promise<{ team: TeamLayer | null; note: string | null }>
+) => Promise<{ team: TeamLayer | null; note: string | null; refused?: string }>
 
 export async function runRestore(
   args: ParsedArgs,
@@ -322,6 +338,10 @@ export async function runRestore(
   let teamNote: string | null = null
   if (hasPlaceholders && teamLayer) {
     const found = await teamLayer(unexplained)
+    if (found.refused) {
+      io.stderr(found.refused)
+      return EXIT_ERROR
+    }
     team = found.team
     teamNote = found.note
   }
@@ -515,7 +535,8 @@ COMMANDS
                        in use. A team map belongs to exactly one project.
   projects use <name>  Work in that project: team maps, pushes, updates and
                        scrub --team use it only. Kept with the sign-in, so the
-                       MCP server uses it too.
+                       MCP server uses it too. VEILIO_PROJECT=<name|id>
+                       overrides it for one shell, CI job or MCP server.
   rules pull           Fetch this account's custom rules (personal and team).
                        \`scrub\` then applies them offline, as the web app does.
 

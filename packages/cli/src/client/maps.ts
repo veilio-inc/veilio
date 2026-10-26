@@ -54,6 +54,13 @@ import {
   unwrapPersonalMapsKey,
 } from './personal-maps-key.js'
 import { vaultKeyFor } from './vault-key.js'
+import {
+  projectLabel,
+  refusalScope,
+  scopeCredential,
+  type Env,
+  type ScopedCredential,
+} from './project-scope.js'
 import { refuse, refusalFromCloudError, type Outcome, type Refusal } from './wording.js'
 
 export interface ClientContext {
@@ -65,6 +72,11 @@ export interface ClientContext {
    * opens personal maps with the personal-maps key or not at all (FR-011).
    */
   passphrase?: () => Promise<string>
+  /**
+   * Where `VEILIO_PROJECT` is read from (FR-012a). Undefined: this process's
+   * environment. The MCP server passes its own; tests pass theirs.
+   */
+  env?: Env
 }
 
 const DEFAULT_NAME = 'from the terminal'
@@ -77,8 +89,8 @@ function signedIn(ctx: ClientContext): Credential | null {
   return readCredential(ctx.home)
 }
 
-function cloudRefusal(err: unknown, credential: Credential): { ok: false; refusal: Refusal } {
-  return { ok: false, refusal: refusalFromCloudError(err, { project: credential.project }) }
+function cloudRefusal(err: unknown, credential: ScopedCredential): { ok: false; refusal: Refusal } {
+  return { ok: false, refusal: refusalFromCloudError(err, refusalScope(credential)) }
 }
 
 /** Five placeholders, then a count. Placeholders only - never what they mean. */
@@ -102,8 +114,11 @@ export interface ListedMap {
 export async function listCloudMaps(
   ctx: ClientContext
 ): Promise<Outcome<{ maps: ListedMap[]; teamId: string | null; project: string | null }>> {
-  const credential = signedIn(ctx)
-  if (!credential) return refuse('not_signed_in')
+  const stored = signedIn(ctx)
+  if (!stored) return refuse('not_signed_in')
+  const scoped = await scopeCredential(stored, ctx.env)
+  if (!scoped.ok) return scoped
+  const credential = scoped.value
   let list: CloudMapList
   try {
     list = await listMaps(credential)
@@ -121,7 +136,7 @@ export async function listCloudMaps(
   return ok({
     maps: [...list.personalMaps.map(shape(true)), ...list.teamMaps.map(shape(false))],
     teamId: list.team?.id ?? null,
-    project: credential.project ?? null,
+    project: projectLabel(credential),
   })
 }
 
@@ -416,16 +431,21 @@ type TeamFound = Extract<Awaited<ReturnType<typeof resolveTeamNamespace>>, { sta
  *  check exists to prevent. */
 async function teamForWrite(
   ctx: ClientContext,
-  credential: Credential,
+  credential: ScopedCredential,
   list: CloudMapList,
   excludeMapId?: string
 ): Promise<Outcome<TeamFound>> {
-  const found = await resolveTeamNamespace(ctx.home, { excludeMapId, list })
+  // The credential this command already scoped: resolving VEILIO_PROJECT a
+  // second time would be a second listing for the same answer.
+  const found = await resolveTeamNamespace(ctx.home, { excludeMapId, list, credential })
+  if (found.status === 'refused') return { ok: false, refusal: found.refusal }
   if (found.status === 'local') return refuse('not_in_team')
   if (found.status === 'locked') return refuse('team_key_mismatch')
   if (found.status === 'unavailable') {
-    if (/project not found/i.test(found.reason))
-      return refuse('project_gone', { project: credential.project ?? 'the default' })
+    if (/project not found/i.test(found.reason)) {
+      const scope = refusalScope(credential)
+      return refuse('project_gone', { ...scope, project: scope.project ?? 'the default' })
+    }
     return refuse('team_maps_unreadable', { detail: found.reason })
   }
   return ok(found)
@@ -515,10 +535,18 @@ export async function createCloudMap(
   ctx: ClientContext,
   opts: { name: string | null; scope: 'personal' | 'team'; mapPath: string }
 ): Promise<Outcome<Created>> {
-  const credential = signedIn(ctx)
-  if (!credential) return refuse('not_signed_in')
+  const stored = signedIn(ctx)
+  if (!stored) return refuse('not_signed_in')
   const map = loadMap(opts.mapPath)
   if (Object.keys(map).length === 0) return refuse('no_local_map', { path: opts.mapPath })
+  // A team map lands in a project; a personal map has none, so only a team
+  // push resolves VEILIO_PROJECT (and pays for the listing that takes).
+  let credential: ScopedCredential = stored
+  if (opts.scope === 'team') {
+    const scoped = await scopeCredential(stored, ctx.env)
+    if (!scoped.ok) return scoped
+    credential = scoped.value
+  }
   const name = opts.name ?? DEFAULT_NAME
   const count = Object.keys(map).length
 
@@ -623,11 +651,14 @@ export async function updateCloudMap(
   id: string | null,
   opts: { mapPath: string; allowDrop?: boolean }
 ): Promise<Outcome<Updated>> {
-  const credential = signedIn(ctx)
-  if (!credential) return refuse('not_signed_in')
+  const stored = signedIn(ctx)
+  if (!stored) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
   const local = loadMap(opts.mapPath)
   if (Object.keys(local).length === 0) return refuse('no_local_map', { path: opts.mapPath })
+  const scoped = await scopeCredential(stored, ctx.env)
+  if (!scoped.ok) return scoped
+  const credential = scoped.value
 
   // Whose it is, before reading it: a teammate's map is refused without
   // opening anything (FR-006, the same rule as removing it).
@@ -643,7 +674,11 @@ export async function updateCloudMap(
     // With a project chosen the listing is that project's, so "not here" may
     // well mean "in another project": said, with the way to switch.
     if (credential.project) {
-      return refuse('map_not_in_project', { id, project: await projectName(credential) })
+      return refuse('map_not_in_project', {
+        id,
+        project: await projectName(credential),
+        ...(credential.projectFrom ? { override: true } : {}),
+      })
     }
     return refuse('map_not_found', { id })
   }
@@ -773,7 +808,9 @@ async function fetchEnvelope(
 }
 
 /** The chosen project's name, or its id when the server cannot say. */
-async function projectName(credential: Credential): Promise<string> {
+async function projectName(credential: ScopedCredential): Promise<string> {
+  // VEILIO_PROJECT was resolved from a listing already: no second one.
+  if (credential.projectFrom) return projectLabel(credential)!
   try {
     const found = (await listProjects(credential)).projects.find((p) => p.id === credential.project)
     return found?.name ?? credential.project!
@@ -803,9 +840,12 @@ export async function removeCloudMap(
   id: string | null,
   opts: { confirmName?: string } = {}
 ): Promise<Outcome<{ id: string; name: string | null }>> {
-  const credential = signedIn(ctx)
-  if (!credential) return refuse('not_signed_in')
+  const stored = signedIn(ctx)
+  if (!stored) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
+  const scoped = await scopeCredential(stored, ctx.env)
+  if (!scoped.ok) return scoped
+  const credential = scoped.value
 
   // The name from the listing, not from the map: downloading a whole
   // envelope to read one label was a round trip and a server-side decrypt

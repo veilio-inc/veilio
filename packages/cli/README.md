@@ -88,6 +88,23 @@ chooses the one this sign-in works in: listing, pushing, updating and
 `scrub --team` then use that project's team maps only, and the MCP server uses
 the same choice. With none chosen, team maps of every project are used.
 
+**`VEILIO_PROJECT`.** Set to a project's name or id, it overrides the stored
+choice for that process only, and is never written down. That is what a CI job
+needs: a runner starts clean, with no `projects use` behind it.
+
+```sh
+VEILIO_PROJECT=billing veilio scrub src/ledger.ts
+```
+
+The order is `VEILIO_PROJECT`, then the stored choice, then none. An empty
+value counts as unset. A value that names no project your team works in, or a
+name two projects share, is refused, naming the value: nothing falls back to
+the stored choice or the default, and `scrub` and `restore` refuse rather than
+number from the local map. Lines that name the project say so, as in "team maps
+of project billing (from VEILIO_PROJECT)". `veilio projects` marks the one the
+variable picked, and `veilio projects use` still stores a choice, but warns that
+the variable overrides it in that shell. Signed out, it changes nothing.
+
 **The personal-maps key.** `veilio vault unlock` asks for the vault passphrase
 once and keeps, on this machine, only a key that opens personal maps - not the
 passphrase, not the vault key, which also unlocks your team keys. The first time,

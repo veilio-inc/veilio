@@ -14,13 +14,24 @@ import { listProjects } from '../cloud.js'
 import { readCredential, writeCredential } from '../credential.js'
 import { refuse, refusalFromCloudError, type Outcome } from './wording.js'
 import type { ClientContext } from './maps.js'
+import { matchProject, projectOverride } from './project-scope.js'
+
+/**
+ * VEILIO_PROJECT, when it is set, as this listing resolves it (FR-012a). The
+ * listing is the one command that does not refuse a value that matches
+ * nothing: it is how somebody finds the value to set instead.
+ */
+export type ProjectOverride =
+  | { value: string; id: string }
+  | { value: string; id: null; reason: 'not_found' }
+  | { value: string; id: null; reason: 'ambiguous'; count: number }
 
 export interface ListedProject {
   id: string
   name: string
   /** The team's own maps in it. */
   maps: number | null
-  /** The one this sign-in chose. */
+  /** The one in use: VEILIO_PROJECT's when it is set, else the one chosen. */
   inUse: boolean
   /** Where a new team map lands when none is chosen. */
   isDefault: boolean
@@ -28,7 +39,9 @@ export interface ListedProject {
 
 export async function listTeamProjects(
   ctx: ClientContext
-): Promise<Outcome<{ projects: ListedProject[]; chosen: string | null }>> {
+): Promise<
+  Outcome<{ projects: ListedProject[]; chosen: string | null; override: ProjectOverride | null }>
+> {
   const credential = readCredential(ctx.home)
   if (!credential) return refuse('not_signed_in')
   let answer: Awaited<ReturnType<typeof listProjects>>
@@ -40,15 +53,29 @@ export async function listTeamProjects(
   const rows = Array.isArray(answer?.projects) ? answer.projects : []
   if (rows.length === 0) return refuse('no_projects')
   const fallback = answer.defaultProjectId ?? rows[0]!.id
+  // Resolved against THIS listing - the server's answer, just read - so the
+  // mark costs no second request.
+  const value = projectOverride(ctx.env)
+  let override: ProjectOverride | null = null
+  if (value !== null) {
+    const found = matchProject(rows, value)
+    override = found.ok
+      ? { value, id: found.project.id }
+      : found.reason === 'ambiguous'
+        ? { value, id: null, reason: 'ambiguous', count: found.count }
+        : { value, id: null, reason: 'not_found' }
+  }
+  const inUse = override ? override.id : (credential.project ?? null)
   return {
     ok: true,
     value: {
       chosen: credential.project ?? null,
+      override,
       projects: rows.map((p) => ({
         id: p.id,
         name: p.name,
         maps: typeof p.maps === 'number' ? p.maps : null,
-        inUse: p.id === credential.project,
+        inUse: p.id === inUse,
         isDefault: p.id === fallback,
       })),
     },
@@ -60,7 +87,7 @@ export async function listTeamProjects(
 export async function useProject(
   ctx: ClientContext,
   ref: string | null
-): Promise<Outcome<{ id: string; name: string }>> {
+): Promise<Outcome<{ id: string; name: string; overriddenBy: string | null }>> {
   const credential = readCredential(ctx.home)
   if (!credential) return refuse('not_signed_in')
   if (!ref) return refuse('which_project')
@@ -68,13 +95,18 @@ export async function useProject(
   // project that is gone never stops somebody choosing another.
   const listed = await listTeamProjects(ctx)
   if (!listed.ok) return listed
-  const projects = listed.value.projects
-  const byId = projects.find((p) => p.id === ref)
-  const byName = projects.filter((p) => p.name === ref)
-  if (!byId && byName.length > 1)
-    return refuse('project_ambiguous', { project: ref, count: byName.length })
-  const chosen = byId ?? byName[0]
-  if (!chosen) return refuse('project_not_found', { project: ref })
+  const found = matchProject(listed.value.projects, ref)
+  if (!found.ok) {
+    return found.reason === 'ambiguous'
+      ? refuse('project_ambiguous', { project: ref, count: found.count })
+      : refuse('project_not_found', { project: ref })
+  }
+  const chosen = found.project
   writeCredential({ ...credential, project: chosen.id }, ctx.home)
-  return { ok: true, value: { id: chosen.id, name: chosen.name } }
+  // Stored all the same - it is what applies once the variable is unset - but
+  // whoever chose it must hear that this shell goes on using the variable's.
+  return {
+    ok: true,
+    value: { id: chosen.id, name: chosen.name, overriddenBy: listed.value.override?.value ?? null },
+  }
 }

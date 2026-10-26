@@ -21,6 +21,24 @@ import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
+import { projectOverride } from '@veilio-inc/cli/client'
+
+type Env = Readonly<Record<string, string | undefined>>
+type PrimeOptions = { retryDelayMs?: number; env?: Env }
+
+/**
+ * The project the namespace is for, as a cache key: VEILIO_PROJECT's value
+ * when the server's environment sets it (spec 052 FR-012a), else the choice
+ * kept with the sign-in. With the variable set, a `projects use` in a
+ * terminal changes nothing here - the variable wins - so it must not throw
+ * away a namespace the variable pinned.
+ */
+function scopeKey(home: string | undefined, env: Env | undefined): string | null {
+  const override = projectOverride(env)
+  if (override !== null) return `env:${override}`
+  const stored = readCredential(home)?.project
+  return stored ? `stored:${stored}` : null
+}
 
 export type NamespaceSource = 'team' | 'local'
 
@@ -66,7 +84,7 @@ let priming: Promise<ResolvedNamespace> | null = null
 /** The CLI's resolver, shaped for this server (spec 028: one resolver for both). */
 async function fetchNamespace(
   home: string | undefined,
-  opts: { retryDelayMs?: number; deadlineMs?: number }
+  opts: { retryDelayMs?: number; deadlineMs?: number; env?: Env }
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
   if (found.status !== 'team') return localFrom(found)
@@ -94,10 +112,7 @@ async function fetchNamespace(
  * their own request. `home` is injectable for tests; production leaves it
  * undefined and `readCredential` falls back to the real home directory.
  */
-export function primeNamespace(
-  home?: string,
-  opts: { retryDelayMs?: number } = {}
-): Promise<ResolvedNamespace> {
+export function primeNamespace(home?: string, opts: PrimeOptions = {}): Promise<ResolvedNamespace> {
   primedWith = { home, opts }
   primed = true
   lastAttemptAt = Date.now()
@@ -108,13 +123,13 @@ export function primeNamespace(
     // after the project changed holds the OLD project's maps, and assigning
     // it would put that project's placeholders into this one's work - the
     // cross-project leak FR-013 forbids (security review).
-    const project = readCredential(home)?.project ?? null
+    const project = scopeKey(home, opts.env)
     const generation = ++primeGeneration
     primedProject = project
     settledFlag = false
     priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
       (resolved) => {
-        const still = (readCredential(home)?.project ?? null) === project
+        const still = scopeKey(home, opts.env) === project
         if (generation === primeGeneration && still) {
           current = resolved
           settledFlag = true
@@ -134,7 +149,7 @@ const STARTUP_DEADLINE_MS = 10_000
 /** How often an 'unavailable' team is asked again, from a tool call. */
 const UNAVAILABLE_RECHECK_MS = 30_000
 
-let primedWith: { home?: string; opts: { retryDelayMs?: number } } = { opts: {} }
+let primedWith: { home?: string; opts: PrimeOptions } = { opts: {} }
 let lastAttemptAt = 0
 let primed = false
 /** The project the cached namespace is for (spec 052 FR-013). */
@@ -167,7 +182,7 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
   if (primed) {
     // Checked FIRST, whatever is in flight: a fetch already running is for the
     // project it started with, and is dropped (security review).
-    const project = readCredential(primedWith.home)?.project ?? null
+    const project = scopeKey(primedWith.home, primedWith.opts.env)
     if (project !== primedProject) {
       // The cached namespace is the OLD project's, and numbering with it -
       // even for the one call that noticed - would put that project's
@@ -247,5 +262,6 @@ export function namespaceLine(resolved: ResolvedNamespace): string {
     return 'Namespace: local (the team key is locked on this machine - run `veilio team unlock`)'
   if (found.status === 'unavailable')
     return `Namespace: local (could not read the team's maps: ${found.reason})`
+  if (found.status === 'refused') return `Namespace: none (${found.refusal.message})`
   return 'Namespace: local'
 }

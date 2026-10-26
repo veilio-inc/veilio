@@ -45,6 +45,13 @@ import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
 import { listTeamProjects, useProject } from './client/projects.js'
+import {
+  PROJECT_ENV,
+  overriddenSentence,
+  overrideSentence,
+  projectOverride,
+  type Env,
+} from './client/project-scope.js'
 import { personalMapsKeyPath, removePersonalMapsKey } from './client/personal-maps-key.js'
 import { VERSION } from './version.js'
 
@@ -419,9 +426,16 @@ export function runWhoami(io: Io): number {
     io.stdout('Not signed in. Run `veilio login` to connect a Veilio Cloud account.\n')
     return EXIT_OK
   }
+  // Still no request: the variable is reported as set, not resolved - which
+  // project it names is `veilio projects`'s question, and needs the network.
+  const override = projectOverride(io.env)
   io.stdout(
     `${credential.account} on ${credential.instance}` +
-      (credential.project ? `, project ${credential.project}` : '') +
+      (override
+        ? `, project ${override} (from ${PROJECT_ENV})`
+        : credential.project
+          ? `, project ${credential.project}`
+          : '') +
       '\n'
   )
   return EXIT_OK
@@ -492,6 +506,7 @@ function clientContext(io: Io): ClientContext {
   return {
     home: io.home,
     passphrase: io.password ? () => io.password!('Vault passphrase: ') : undefined,
+    env: io.env,
   }
 }
 
@@ -851,16 +866,18 @@ export function runTeamLock(io: Io): number {
 export async function runProjectsList(io: Io): Promise<number> {
   const listed = await listTeamProjects(clientContext(io))
   if (!listed.ok) return refused(listed.refusal, io)
-  const { projects, chosen } = listed.value
+  const { projects, chosen, override } = listed.value
   for (const p of projects) {
     const marks = [
-      ...(p.inUse ? ['in use'] : []),
+      ...(p.inUse ? [override ? `in use, from ${PROJECT_ENV}` : 'in use'] : []),
       ...(p.isDefault ? ['default'] : []),
       ...(p.maps !== null ? [`${p.maps} team map${p.maps === 1 ? '' : 's'}`] : []),
     ]
     io.stdout(`${p.inUse ? '*' : ' '} ${p.id}  ${p.name}  (${marks.join(', ')})\n`)
   }
-  if (chosen === null) {
+  if (override) {
+    io.stderr(`veilio: ${overrideSentence(override, chosen)}\n`)
+  } else if (chosen === null) {
     // Said, because "none" is a real state with a real consequence: team maps
     // from every project the team works in are listed and masked with.
     io.stderr(
@@ -879,6 +896,8 @@ export async function runProjectsUse(ref: string | null, io: Io): Promise<number
     `Now working in project ${used.value.name} (${used.value.id}). Team maps, pushes, updates and ` +
       '`scrub --team` use this project only; the MCP server picks it up on its next call.\n'
   )
+  if (used.value.overriddenBy !== null)
+    io.stderr(`veilio: ${overriddenSentence(used.value, 'shell')}\n`)
   return EXIT_OK
 }
 
@@ -941,11 +960,14 @@ export function runVaultLock(io: Io): number {
  */
 export async function teamLayerFor(
   home: string | undefined,
-  missing: readonly string[]
-): Promise<{ team: TeamLayer | null; note: string | null }> {
+  missing: readonly string[],
+  env?: Env
+): Promise<{ team: TeamLayer | null; note: string | null; refused?: string }> {
   // Signed out, the resolver answers 'local' without a request. At most 5 s: a
   // hung instance must not stall a `... | veilio restore > file` pipeline.
-  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS })
+  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS, env })
+  if (found.status === 'refused')
+    return { team: null, note: null, refused: renderRefusal(found.refusal) }
   if (found.status === 'team' && found.conflictDetection)
     return { team: found.analysis, note: null }
   return { team: null, note: teamLayerNote(found, missing) }
@@ -956,9 +978,12 @@ const RESTORE_CLOUD_WAIT_MS = 5000
 /** What `veilio scrub` numbers from (spec 030): the team's namespace, or this
  *  project's map with the reason. Signed out or in no team: no request, no note. */
 export async function teamNamespaceForScrub(
-  home: string | undefined
+  home: string | undefined,
+  env?: Env
 ): Promise<Awaited<ReturnType<TeamNamespaceSource>>> {
-  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS })
+  const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS, env })
+  if (found.status === 'refused')
+    return { team: null, note: null, refused: renderRefusal(found.refusal) }
   if (found.status === 'team') {
     const credential = readCredential(home)
     const teamId = found.teamId

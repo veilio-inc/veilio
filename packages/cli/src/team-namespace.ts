@@ -30,6 +30,8 @@ import {
   type CloudMapSummary,
 } from './cloud.js'
 import { readTeamUnlock } from './team-unlock.js'
+import { scopeCredential, type Env } from './client/project-scope.js'
+import type { Refusal } from './client/wording.js'
 
 export type TeamNamespaceResult =
   /**
@@ -72,6 +74,13 @@ export type TeamNamespaceResult =
   | { status: 'locked' }
   /** In a team, and the maps could not be read. `reason` says why. */
   | { status: 'unavailable'; reason: string }
+  /**
+   * VEILIO_PROJECT names no project the team works in, or a name two share
+   * (spec 052 FR-012a). Not 'unavailable': numbering from the local map with a
+   * note is the fallback the variable rules out, because somebody typed it.
+   * The caller refuses the command, in these words.
+   */
+  | { status: 'refused'; refusal: Refusal }
 
 /**
  * Worth one more try: the network, or the server. Not a 401/402/403 - a lapsed
@@ -115,11 +124,35 @@ export async function resolveTeamNamespace(
      * request for the same answer, on every team push and update.
      */
     list?: CloudMapList
+    /**
+     * The credential this command already scoped (VEILIO_PROJECT resolved).
+     * Absent: read from `home` and scoped here, against `env`.
+     */
+    credential?: Credential
+    /** Where VEILIO_PROJECT is read from. Undefined: this process's. */
+    env?: Env
   } = {}
 ): Promise<TeamNamespaceResult> {
-  const credential = readCredential(home)
+  const stored = opts.credential ?? readCredential(home)
   // Not signed in: no request - a signed-out terminal has nothing to ask Cloud.
-  if (!credential) return { status: 'local' }
+  if (!stored) return { status: 'local' }
+  let credential: Credential = stored
+  if (!opts.credential) {
+    const scoped = await scopeCredential(stored, opts.env)
+    if (!scoped.ok) {
+      // A value the server's listing does not have is refused. A listing that
+      // failed (the network, the session) is the same 'unavailable' as a
+      // namespace read that failed - no project was used either way.
+      const code = scoped.refusal.code
+      if (code === 'project_env_not_found' || code === 'project_env_ambiguous')
+        return { status: 'refused', refusal: scoped.refusal }
+      // The same answers `noTeamToSpeakOf` reads as no team at all.
+      if (['session_rejected', 'unentitled', 'suspended', 'forbidden'].includes(code))
+        return { status: 'local' }
+      return { status: 'unavailable', reason: scoped.refusal.message }
+    }
+    credential = scoped.value
+  }
 
   const giveUp = new AbortController()
   const timer =

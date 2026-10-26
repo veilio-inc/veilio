@@ -82,6 +82,12 @@ export interface ToolContext {
    * person's choice, never a tool argument's.
    */
   destructive?: boolean
+  /**
+   * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
+   * repository's `.mcp.json` `env`, it pins that repository's project for
+   * every tool call. Undefined: this process's environment.
+   */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 export interface ToolResult {
@@ -275,6 +281,10 @@ function runAnonymize(
   const localMap = loadMap(mapPath)
   const refreshing = refreshNamespaceIfStale()
   const resolved = getNamespace()
+  // VEILIO_PROJECT names no project the team works in (FR-012a): refused,
+  // before anything is masked or stored. Masking from the local map instead
+  // is the quiet fallback the variable exists to rule out.
+  if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
   const { namespace, highest, conflicts } = resolved
   // A file is masked in its extension's language unless one is asked for, and
   // keeps the names it takes from a public package as written - the rule
@@ -443,6 +453,7 @@ export const TOOLS: ToolDefinition[] = [
       // then this project's map on top where it is in the team's numbering.
       const refreshing = refreshNamespaceIfStale()
       const resolved = getNamespace()
+      if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
       const team =
         resolved.source === 'team' && resolved.conflictDetection
           ? {

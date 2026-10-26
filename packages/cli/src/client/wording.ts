@@ -63,6 +63,8 @@ export const REFUSAL_CODES = [
   'project_not_found',
   'project_ambiguous',
   'project_gone',
+  'project_env_not_found',
+  'project_env_ambiguous',
   'no_projects',
   'destructive_off',
   'confirm_name',
@@ -90,6 +92,8 @@ export interface WordingParams {
   /** A short, already-joined list - placeholders, map names, ids. */
   list?: string
   project?: string
+  /** The project came from VEILIO_PROJECT rather than the stored choice. */
+  override?: boolean
 }
 
 export interface Refusal {
@@ -135,7 +139,9 @@ export const WORDING: Record<RefusalCode, Words> = {
   }),
   map_not_in_project: (p) => ({
     message: `No map ${p.id} in project ${p.project} (the project in use).`,
-    resolve: '`veilio projects use <other>` to work in another one.',
+    resolve: p.override
+      ? 'Set VEILIO_PROJECT to another project, or unset it: `veilio projects` lists them.'
+      : '`veilio projects use <other>` to work in another one.',
   }),
   not_yours_remove: (p) => ({
     message: `${label(p)} belongs to someone else on your team, so it is theirs to remove.`,
@@ -304,9 +310,26 @@ export const WORDING: Record<RefusalCode, Words> = {
     message: `${p.count} projects are called "${p.project}", so nothing was changed.`,
     resolve: 'Choose one by its id: `veilio projects` lists them.',
   }),
-  project_gone: (p) => ({
-    message: `the project chosen for this sign-in (${p.project}) is not one your team works in any more, so nothing was done. No other project was used instead.`,
-    resolve: 'Run `veilio projects`, then `veilio projects use <name>`.',
+  project_gone: (p) =>
+    p.override
+      ? {
+          message: `the project VEILIO_PROJECT names (${p.project}) is not one your team works in any more, so nothing was done. No other project was used instead.`,
+          resolve: 'Run `veilio projects`, then set VEILIO_PROJECT to one of them, or unset it.',
+        }
+      : {
+          message: `the project chosen for this sign-in (${p.project}) is not one your team works in any more, so nothing was done. No other project was used instead.`,
+          resolve: 'Run `veilio projects`, then `veilio projects use <name>`.',
+        },
+  // Somebody typed it, so it is never quietly replaced by the stored choice
+  // or the default (FR-012a): the value is named, and so is where it came from.
+  project_env_not_found: (p) => ({
+    message: `VEILIO_PROJECT is "${p.project}", which is not a project your team works in, so nothing was done. No other project was used instead.`,
+    resolve:
+      'Run `veilio projects` for the ones it does, then set VEILIO_PROJECT to one of them, or unset it.',
+  }),
+  project_env_ambiguous: (p) => ({
+    message: `VEILIO_PROJECT is "${p.project}", and ${p.count} projects are called that, so nothing was done. No other project was used instead.`,
+    resolve: "Set VEILIO_PROJECT to the project's id: `veilio projects` lists them.",
   }),
   no_projects: () => ({
     message: "this account's team works in no project yet, so there is none to choose.",
@@ -387,12 +410,18 @@ export function renderRefusal(r: Refusal): string {
  * must be said as such, never as "the instance reported an error", or nobody
  * thinks to choose another (spec 052 edge case: the chosen project removed).
  */
-export function refusalFromCloudError(err: unknown, ctx: { project?: string } = {}): Refusal {
+export function refusalFromCloudError(
+  err: unknown,
+  ctx: { project?: string; override?: boolean } = {}
+): Refusal {
   if (!(err instanceof CloudError)) {
     return refusal('server', { detail: err instanceof Error ? err.message : String(err) })
   }
   if (err.status === 404 && /project not found/i.test(err.message)) {
-    return refusal('project_gone', { project: ctx.project ?? 'the default' })
+    return refusal('project_gone', {
+      project: ctx.project ?? 'the default',
+      ...(ctx.override ? { override: true } : {}),
+    })
   }
   switch (err.kind) {
     case 'unauthenticated':
