@@ -189,6 +189,13 @@ export declare function detectSecrets(code: string, options?: ScanOptions): Secr
  * is one-way by construction, not by convention.
  */
 export declare function scanSecrets(code: string, policy?: SecretPolicy, options?: ScanOptions): SecretScan;
+/**
+ * The redaction token a scan wrote for `value`, if it destroyed it. A name in
+ * the code that is exactly a destroyed credential is replaced by the same
+ * token, so it is neither shown to the model nor written to the map
+ * (coordinator ruling, round 3 of the review of #166).
+ */
+export declare function redactionTokenFor(scan: SecretScan, value: string): string | undefined;
 /** True when the scan found anything that should stop a user from pasting. */
 export declare function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean;
 /** Count findings by severity, for badges and audit records. */

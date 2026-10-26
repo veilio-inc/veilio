@@ -155,25 +155,53 @@ describe('an old map that already holds a credential found in the text', () => {
   })
 })
 
-describe('a name that is most of a credential', () => {
-  it('acmeCorp_2024 is not mapped when the password is acmeCorp_2024!', () => {
+// Coordinator ruling (security finding on the fragment rule): a name is
+// hidden from the model, never left unmasked because it resembles a
+// credential. The map is the user's own and encrypted; the model is the party
+// we protect against.
+describe('a name next to a credential', () => {
+  it('acmeCorp_2024 beside the password acmeCorp_2024! is masked and mapped like any name', () => {
     const code = "const acmeCorp_2024 = 1\nPGPASSWORD='acmeCorp_2024!' psql\n"
+    const result = anonymize(code)
+    expect(Object.values(result.map)).toContain('acmeCorp_2024')
+    expect(Object.values(result.map)).not.toContain('acmeCorp_2024!')
+    expect(result.anonymized).not.toContain('acmeCorp_2024')
+  })
+  it('a part of a credential is masked and mapped like any name, in every mode', () => {
+    const code = 'const secret = 1\nconst admin = 2\nPGPASSWORD=admin-secret-pw1 psql\n'
     for (const secrets of MODES) {
       const result = anonymize(code, { secrets })
-      expect(Object.values(result.map), secrets).not.toContain('acmeCorp_2024')
+      expect(Object.values(result.map), secrets).toContain('secret')
+      expect(Object.values(result.map), secrets).toContain('admin')
+      expect(result.anonymized, secrets).toMatch(/^const __[A-Z]+__\d+ = 1\n/)
     }
   })
-  it('a part of 6+ characters is not mapped, even when it is under half the credential', () => {
-    const code = 'const secret = 1\nPGPASSWORD=my-secret-passphrase-9 psql\n'
-    expect(Object.values(anonymize(code, { secrets: 'warn' }).map)).not.toContain('secret')
+  it('a name equal to a credential is replaced by the credential’s own redaction token', () => {
+    const code = 'const hunter22 = 1\nconst url = "postgres://app:hunter22@db/app"\n'
+    const result = anonymize(code)
+    expect(result.anonymized).not.toContain('hunter22')
+    expect(Object.values(result.map)).not.toContain('hunter22')
+    const tokens = result.anonymized.match(/__REDACTED_[A-Z_]+_\d+__/g) ?? []
+    expect(tokens).toHaveLength(2)
+    expect(new Set(tokens).size).toBe(1)
   })
-  it('a shorter part that is half the credential or more is not mapped', () => {
-    const code = 'const admin = 1\nPGPASSWORD=admin-pw1 psql\n'
-    expect(Object.values(anonymize(code, { secrets: 'warn' }).map)).not.toContain('admin')
+  it('a name equal to a credential left in the text by design is left too, and never mapped', () => {
+    // Under warn and off, and for a fixture in a test file, the credential is
+    // sent as written; the equal name shows nothing more, and is not destroyed.
+    const code = 'const hunter22 = 1\nconst url = "postgres://app:hunter22@db/app"\n'
+    for (const options of [{ secrets: 'warn' }, { secrets: 'off' }, { path: 'tests/db.test.ts' }]) {
+      const result = anonymize(code, options as object)
+      expect(result.anonymized, JSON.stringify(options)).toMatch(/^const hunter22 = 1\n/)
+      expect(Object.values(result.map)).not.toContain('hunter22')
+    }
   })
-  it('a short common part of a long credential is still a name', () => {
-    const code = 'const pass = 1\nPGPASSWORD=my-secret-passphrase-9 psql\n'
-    const result = anonymize(code, { secrets: 'warn' })
-    expect(Object.values(result.map)).toContain('pass')
+})
+
+describe('a name equal to an ambiguous word', () => {
+  it('is masked and mapped like any name: the word is not a credential', () => {
+    const code = 'const disabled = true\nconst auth = { client_secret: "disabled" }\n'
+    const result = anonymize(code)
+    expect(Object.values(result.map)).toContain('disabled')
+    expect(result.anonymized).toMatch(/^const __[A-Z]+__\d+ = true\n/)
   })
 })

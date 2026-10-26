@@ -22,7 +22,13 @@ import {
   type Language,
   type LanguageOption,
 } from './languages.js'
-import { credentialSpans, detectSecrets, hasBlockingSecrets, scanSecrets } from './secrets.js'
+import {
+  credentialSpans,
+  detectSecrets,
+  hasBlockingSecrets,
+  redactionTokenFor,
+  scanSecrets,
+} from './secrets.js'
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
@@ -823,14 +829,6 @@ function withoutCredentials(map: SymbolMap, found: ReadonlySet<string>): SymbolM
   return out ?? map
 }
 
-/** Whether `name` is, or is most of, one of `values`: equal, or inside one and
- *  either 6+ characters or at least half its length (round 3, finding 8). */
-function partOfAny(name: string, values: readonly string[]): boolean {
-  return values.some(
-    (v) => v === name || (v.includes(name) && (name.length >= 6 || name.length * 2 >= v.length))
-  )
-}
-
 /** Whether [start, end) overlaps any of `spans`. */
 function overlapsAny(spans: readonly (readonly [number, number])[], start: number, end: number) {
   return spans.some(([a, b]) => start < b && a < end)
@@ -1002,12 +1000,20 @@ export function anonymize(
   // Values from the text as given too: under `redact` a destroyed credential
   // is gone from `source`, and its value must not enter the map as a name
   // written elsewhere either.
-  const secretValues = [
-    ...new Set([
-      ...secretSpans.map(([start, end]) => source.slice(start, end)),
-      ...found.map((f) => code.slice(f.start, f.end)),
-    ]),
-  ]
+  // Credentials found in the text as given (an ambiguous single word is not
+  // one). A name exactly equal to one the scan destroyed is replaced by that
+  // credential's own redaction token: neither shown to the model nor written
+  // to the map. Where the credential is left in the text by design (`warn`,
+  // `off`, a fixture in a test file) the equal name is left as written too -
+  // it shows the model nothing the credential beside it does not, and
+  // destroying it would corrupt code the user asked not to change - and it
+  // is still never mapped. A name that only contains or is part of a
+  // credential is masked and mapped like any other (coordinator ruling,
+  // round 3).
+  const secretValues = new Set(
+    found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))
+  )
+  const redactedNames = new Map<string, string>()
   const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans)
   const identifiers = extractIdentifiers(scannable, language)
   const roleOf = classifyIdentifiers(scannable, language)
@@ -1028,17 +1034,21 @@ export function anonymize(
     //    or an earlier session already holds would otherwise stay masked for
     //    ever, whatever the rule says (found on staging, 2026-09-26). The map
     //    keeps its entry, so restore is unaffected; the text just keeps the name.
+    // 0. A name that is a credential found in this text: never mapped,
+    //    whatever a whitelist or an older map says; redacted with the
+    //    credential's token where the scan destroyed it.
+    if (secretValues.has(name)) {
+      const token = redactionTokenFor(scan, name)
+      if (token !== undefined) redactedNames.set(name, token)
+      continue
+    }
+
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {
       whitelisted.add(name)
       continue
     }
 
     if (reverseExisting[name]) continue // already mapped
-
-    // A name that is itself a credential the rules found in this text is never
-    // written to the map, wherever else it stands (founder decision
-    // 2026-10-26). It is left as written.
-    if (partOfAny(name, secretValues)) continue
 
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))
@@ -1101,7 +1111,7 @@ export function anonymize(
   )
   const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
     .sort((a, b) => b.length - a.length)
-    .filter((n) => !whitelisted.has(n) && reverseExisting[n])
+    .filter((n) => redactedNames.has(n) || (!whitelisted.has(n) && reverseExisting[n]))
   const oversized = substitutable.filter((n) => n.length >= MAX_REGEX_ATOM)
   const inAlternation = substitutable.filter((n) => n.length < MAX_REGEX_ATOM)
 
@@ -1128,10 +1138,14 @@ export function anonymize(
                   (!alreadyMapped.has(m) &&
                     overlapsAny(secretSpans, start + offset, start + offset + m.length))
                     ? m
-                    : (reverseExisting[m] ?? m)
+                    : (redactedNames.get(m) ?? reverseExisting[m] ?? m)
                 )
           for (const name of oversized) {
-            out = replaceWholeWord(out, name, reverseExisting[name] as string)
+            out = replaceWholeWord(
+              out,
+              name,
+              (redactedNames.get(name) ?? reverseExisting[name]) as string
+            )
           }
           return out
         }
