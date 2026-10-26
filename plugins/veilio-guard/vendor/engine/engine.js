@@ -420,7 +420,7 @@ function applyManualMasks(code, requested, credentials, fromMap, map, reverseExi
         return code;
     const applicable = [];
     for (const term of wanted) {
-        if (credentials.has(term) || hasBlockingSecrets(detectSecrets(term))) {
+        if ((credentials.has(term) && !replayed.has(term)) || hasBlockingSecrets(detectSecrets(term))) {
             throw new ManualMaskError(term, 'Refusing to mask a detected credential: a manual mask is reversible and is written to the map. Credentials are redacted one-way instead.');
         }
         // Marking a placeholder would map one placeholder to another, and restore
@@ -833,7 +833,7 @@ function spreadRedactions(text, tokens, known) {
             // touches identifier characters takes the whole name, which is then
             // redacted, not masked - a name holding a credential cannot be mapped
             // without putting part of it in the map (1.12.1 review).
-            const start = runStart[at];
+            const start = IDENT_CHAR.test(text[at]) ? runStart[at] : at;
             const stop = end > at && IDENT_CHAR.test(text[end - 1]) ? runEnd[end - 1] : end;
             if (tokenChars[stop] - tokenChars[start] > 0)
                 continue;
@@ -998,7 +998,10 @@ export function anonymize(code, options = {}) {
     // classifier would have given the same token. Terms already in the map are
     // re-applied so a mark made in an earlier pass survives the round trip.
     const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)));
-    const marked = applyManualMasks(redacted, opts.manual ?? [], credentialValues, manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
+    const marked = applyManualMasks(redacted, opts.manual ?? [], 
+    // Refused only for a credential this call destroys: one left in place by
+    // policy, a fixture or a possible credential may still be marked.
+    new Set(destroyed.keys()), manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
     // AFTER manual marks, on purpose — a value the author marked by hand is
     // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
     // the entire implementation of "a manual mark wins over automatic detection";

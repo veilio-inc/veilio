@@ -381,7 +381,7 @@ const ARGV_WINDOW = '["\']?(?:[\\s,[(]{1,20}["\'][^"\'\\n]{0,100}["\']){0,20}[\\
 /** The argv-array form of a flag: `"-pVALUE"`, or with `separated` also the
  *  flag and its value as two elements, `"-p", "VALUE"` (round 3, finding 4). */
 const argvFlag = (flag: string, separated: boolean) =>
-  `${ARGV_WINDOW}["']${flag}(?:${BARE}${separated ? `|["']\\s*,\\s*(?:${DQ}|${SQ})` : ''})`
+  `(?:${WINDOW}|${ARGV_WINDOW})["']${flag}(?:${BARE}${separated ? `|["']\\s*,\\s*(?:${DQ}|${SQ})` : ''})`
 /** A short flag with its value attached only. */
 const attachedFlag = (flag: string) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`
 /** A short flag with its value attached or after spaces. */

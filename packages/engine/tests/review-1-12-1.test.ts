@@ -84,4 +84,38 @@ describe('1.12.1 review', () => {
     const r = anonymize('PGPASSWORD=KXQPRODPWZ psql\nconst x = __REDACTED_KXQPRODPWZ_7__\n')
     expect(r.anonymized).not.toContain('KXQPRODPWZ')
   })
+
+  it('6b: a mysql -pSECRET argv element after other arguments is still caught (1.12.0 behaviour)', () => {
+    const r = anonymize('execFile("mysql", ["-u", user, "-pZq8vLm2xT"])', { path: 'a.js' })
+    expect(r.anonymized).not.toContain('Zq8vLm2xT')
+    expect(Object.values(r.map).join('|')).not.toContain('Zq8vLm2xT')
+  })
+
+  it('5b: a manual mark replayed from the map, or on a possible credential, still masks', () => {
+    const code = 'const auth = { client_secret: "disabled" }\nconst x = "disabled"'
+    expect(() => anonymize(code, { existingMap: { __MANUAL__1: 'disabled' } })).not.toThrow()
+    expect(() =>
+      anonymize('const x = "acmeCorp9x"', { manual: ['acmeCorp9x'], secrets: 'off' })
+    ).not.toThrow()
+    // A weak fixture in a test file is found but kept, so it may be marked.
+    expect(() =>
+      anonymize('PGPASSWORD=Summer24 psql\nconst s = "Summer24"', {
+        path: 'tests/a.test.js',
+        manual: ['Summer24'],
+      })
+    ).not.toThrow()
+  })
+
+  it('4c: a forced-destroyed regulated value is not left in the map', () => {
+    const r = anonymize('const c = { secret: "44051401359" }\nconst id = "44051401359"', {
+      path: 'a.js',
+    })
+    expect(Object.values(r.map)).not.toContain('44051401359')
+  })
+
+  it('2b: a credential starting with punctuation does not swallow the name before it', () => {
+    const r = anonymize('PGPASSWORD="!Zq8vLm2xTq" psql\nconst s = "foo!Zq8vLm2xTq"\n')
+    expect(r.anonymized).not.toContain('Zq8vLm2xTq')
+    expect(Object.values(r.map).join('|') + r.anonymized).toMatch(/foo/)
+  })
 })

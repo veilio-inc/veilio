@@ -521,7 +521,7 @@ function applyManualMasks(
 
   const applicable: string[] = []
   for (const term of wanted) {
-    if (credentials.has(term) || hasBlockingSecrets(detectSecrets(term))) {
+    if ((credentials.has(term) && !replayed.has(term)) || hasBlockingSecrets(detectSecrets(term))) {
       throw new ManualMaskError(
         term,
         'Refusing to mask a detected credential: a manual mask is reversible and is written to the map. Credentials are redacted one-way instead.'
@@ -972,7 +972,7 @@ function spreadRedactions(
       // touches identifier characters takes the whole name, which is then
       // redacted, not masked - a name holding a credential cannot be mapped
       // without putting part of it in the map (1.12.1 review).
-      const start = runStart[at]
+      const start = IDENT_CHAR.test(text[at]) ? runStart[at] : at
       const stop = end > at && IDENT_CHAR.test(text[end - 1]) ? runEnd[end - 1] : end
       if (tokenChars[stop] - tokenChars[start] > 0) continue
       hits.push({ start, end: stop, value: start === at && stop === end ? value : '' })
@@ -1176,7 +1176,9 @@ export function anonymize(
   const marked = applyManualMasks(
     redacted,
     opts.manual ?? [],
-    credentialValues,
+    // Refused only for a credential this call destroys: one left in place by
+    // policy, a fixture or a possible credential may still be marked.
+    new Set(destroyed.keys()),
     manualTermsIn(existingMap),
     map,
     reverseExisting,
