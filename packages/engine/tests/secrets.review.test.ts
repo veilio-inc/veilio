@@ -466,3 +466,41 @@ describe('round 3, 7: a placeholder is only a placeholder when it is the whole v
     it(`${template} with ${secret}`, () => redacted(template, secret))
   }
 })
+
+describe('1.12.1 review: the prose words after --password', () => {
+  for (const word of [
+    'to',
+    'for',
+    'is',
+    'in',
+    'and',
+    'or',
+    'on',
+    'with',
+    'when',
+    'if',
+    'as',
+    'of',
+    'the',
+    'a',
+    'an',
+    'that',
+    'this',
+    'from',
+  ]) {
+    it(`--password ${word} … is prose`, () => {
+      nothing(`Pass --password ${word} the tool.`, 'README.md')
+      nothing(`Pass --password ${word} the tool.`)
+    })
+  }
+  it('the CHANGELOG line is left alone, a real value is not', () => {
+    nothing(
+      '* **engine:** --password in source and string literals is judged',
+      'packages/engine/CHANGELOG.md'
+    )
+    // hunter2 itself is a long-standing known dummy (a placeholder), so the
+    // real-value case uses hunter22.
+    redacted('$ deploy --password §', 'hunter22', 'README.md')
+    redacted('$ deploy --password §', 'hunter22')
+  })
+})

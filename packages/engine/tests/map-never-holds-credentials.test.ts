@@ -205,3 +205,49 @@ describe('a name equal to an ambiguous word', () => {
     expect(result.anonymized).toMatch(/^const __[A-Z]+__\d+ = true\n/)
   })
 })
+
+// 1.12.1 review: a weak password that is an ordinary word or a well-known
+// default is redacted where it stands, and nowhere else.
+describe('a credential that is an ordinary word is not propagated', () => {
+  const code =
+    'services:\n  db:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: postgres\n' +
+    '      DATABASE_URL: postgres://app:postgres@db/app\n'
+  it('redacts the password spans and keeps the image name and the scheme', () => {
+    const out = anonymize(code).anonymized
+    expect(out).toMatch(/POSTGRES_PASSWORD: __REDACTED_[A-Z_]+_\d+__\n/)
+    expect(out).toMatch(/ postgres:\/\/app:__REDACTED_[A-Z_]+_\d+__@/)
+    // The image key itself may be masked as a name; its value, postgres, stays.
+    expect(out).toMatch(/__[A-Z]+__\d+: postgres\n|image: postgres\n/)
+    expect(Object.values(anonymize(code).map)).not.toContain('postgres')
+  })
+  for (const word of [
+    'root',
+    'admin',
+    'mysql',
+    'guest',
+    'password',
+    'postgres',
+    'secret',
+    'demo',
+  ]) {
+    it(`does not spread the default "${word}" to a name elsewhere`, () => {
+      const text = `const ${word} = 1\nconst url = "mysql://app:${word}@db/app"\n`
+      const scan = anonymize(text)
+      if (/^(?:password|secret)$/.test(word)) return // placeholders: nothing is redacted at all
+      expect(scan.anonymized, word).toMatch(/:\/\/app:__REDACTED_[A-Z_]+_\d+__@/)
+      expect(scan.anonymized, word).not.toMatch(/^const __REDACTED_/)
+    })
+  }
+  it('a long lowercase word is not spread either', () => {
+    const text = 'const services = 1\nconst url = "mysql://app:services@db/app"\n'
+    expect(anonymize(text).anonymized).not.toMatch(/^const __REDACTED_/)
+  })
+  it('a value of 8+ characters that is not a word is spread', () => {
+    const text = 'const hunter22 = 1\nconst url = "mysql://app:hunter22@db/app"\n'
+    expect(anonymize(text).anonymized).toMatch(/^const __REDACTED_[A-Z_]+_\d+__ = 1\n/)
+  })
+  it('a value under 8 characters is not spread', () => {
+    const text = 'const hunt22 = 1\nconst url = "mysql://app:hunt22@db/app"\n'
+    expect(anonymize(text).anonymized).not.toMatch(/^const __REDACTED_/)
+  })
+})

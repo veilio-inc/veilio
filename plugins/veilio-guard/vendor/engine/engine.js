@@ -697,6 +697,35 @@ function withoutCredentials(map, found) {
     }
     return out ?? map;
 }
+// Well-known default passwords that are also ordinary names in the same files
+// (an image, a scheme, a user, a database). 1.12.1 review.
+const DEFAULT_WORDS = new Set([
+    'postgres',
+    'root',
+    'admin',
+    'mysql',
+    'sa',
+    'guest',
+    'test',
+    'user',
+    'password',
+    'changeme',
+    'secret',
+    'demo',
+]);
+/**
+ * Whether a destroyed credential's token is also written over a name equal to
+ * it elsewhere in the text. Only for a value of 8 or more characters that is
+ * not a well-known default and not a single lowercase word: a weak password
+ * that is also an ordinary name (`POSTGRES_PASSWORD: postgres` beside
+ * `image: postgres`) is redacted where it stands, and the name elsewhere is
+ * left as written and never mapped (1.12.1 review). A run of lowercase letters
+ * stands in for a dictionary, which the engine does not carry; a shorter value
+ * is too likely to be a word to spread.
+ */
+function spreads(value) {
+    return value.length >= 8 && !DEFAULT_WORDS.has(value.toLowerCase()) && !/^[a-z]+$/.test(value);
+}
 /** Whether [start, end) overlaps any of `spans`. */
 function overlapsAny(spans, start, end) {
     return spans.some(([a, b]) => start < b && a < end);
@@ -857,7 +886,7 @@ export function anonymize(code, options = {}) {
         //    credential's token where the scan destroyed it.
         if (secretValues.has(name)) {
             const token = redactionTokenFor(scan, name);
-            if (token !== undefined)
+            if (token !== undefined && spreads(name))
                 redactedNames.set(name, token);
             continue;
         }

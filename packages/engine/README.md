@@ -116,7 +116,11 @@ Under `'warn'` nothing is redacted: findings come back with `disposition:
 nothing is reported either. **In no mode does a credential go into the symbol
 map**: identifier masking leaves every credential the rules find alone. A name
 written exactly as a destroyed credential is replaced by that credential's
-redaction token. Where the credential is left in the text by design (`warn`,
+redaction token, when the credential is 8 or more characters and is neither a
+single lowercase word nor a well-known default (`postgres`, `root`, `admin`,
+`mysql`, `guest`, …). A weak password that is also an ordinary name is redacted
+only where it stands: beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
+and a `postgres://` scheme stay, and are not mapped. Where the credential is left in the text by design (`warn`,
 `off`, a fixture), the equal name is left too and is not mapped. A name that only
 contains a credential, or is part of one, is masked and mapped like any other
 name. An entry an existing map
@@ -139,8 +143,9 @@ types into one:
   value as one element or two (mysql's `-p` only as one). The same rule holds
   in every file and with no path: the value after `--password` is a password
   unless it is a help-text metavar (`PASSWORD`, `PASS`, `PASSWD`, `PWD`,
-  `TEXT`, `VALUE`, `SECRET`, `STRING`, `TOKEN`, `KEY`, `[…]`, `<…>`) or the
-  word `to`, `for` or `is`. So `--password TEXT` in help text is left alone
+  `TEXT`, `VALUE`, `SECRET`, `STRING`, `TOKEN`, `KEY`, `[…]`, `<…>`) or a
+  common prose word (`to`, `for`, `is`, `in`, `and`, `or`, `on`, `with`,
+  `when`, `if`, `as`, `of`, `the`, `a`, `an`, `that`, `this`, `from`). So `--password TEXT` in help text is left alone
   and `--password hunter2` in a README is redacted. Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
   `docker run -p`) and flags with no value (`--password-stdin`,
   `--password-file`, `--no-password`) are left alone. A command continued

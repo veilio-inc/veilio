@@ -412,14 +412,15 @@ interface ScanContext {
 /**
  * A value after `--password` that reads as help text or prose, in any file and
  * with no path (code review of #166, round 3): one of a closed list of
- * metavars, a bracketed metavar, or `to` / `for` / `is`. Any other value is a
- * password - `--password hunter2` in a README too.
+ * metavars, a bracketed metavar, or a common prose word (`to`, `in`, `the`, …;
+ * 1.12.1 review). Any other value is a password - `--password hunter2` in a
+ * README too.
  */
 function proseValue(value: string): boolean {
   return (
     /^(?:PASSWORD|PASS|PASSWD|PWD|TEXT|VALUE|SECRET|STRING|TOKEN|KEY)$/.test(value) ||
     /^\[[^\]]*\]$/.test(value) ||
-    /^(?:to|for|is)$/.test(value)
+    /^(?:to|for|is|in|and|or|on|with|when|if|as|of|the|a|an|that|this|from)$/.test(value)
   )
 }
 
