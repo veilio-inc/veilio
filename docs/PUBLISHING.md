@@ -15,8 +15,9 @@ published (it is).
 
 For the engine's own release path — semantic-release, `engine-v*` tags,
 `publish-engine.yml` — see [`.changeset/README.md`](../.changeset/README.md) for
-why the two live side by side, and `.releaserc.js` for the configuration. Nothing
-in this document touches the engine.
+why the two live side by side, and `.releaserc.js` for the configuration. The
+one engine step a person does by hand is the sync PR after each release:
+[After an engine release](#after-an-engine-release), at the end of this page.
 
 ---
 
@@ -281,3 +282,36 @@ tools from a runtime they do not claim.
   honest for a first release; `1.0.0` says it will not.
 - **README.** Both ship in the tarball and become the npm landing page. Read them
   as a stranger would, before a stranger does.
+
+---
+
+## After an engine release
+
+semantic-release publishes the engine, tags `engine-v<version>` and writes a
+GitHub Release. It commits nothing to `main`, since that would mean pushing to
+a protected branch (`.releaserc.js` says why). So two files in the repository
+are behind npm until a person moves them. Do it **the same day** as the release,
+in one pull request:
+
+1. **`packages/engine/package.json`:** set `version` to the version just
+   published (`npm view @veilio-inc/engine version`).
+2. **`packages/engine/CHANGELOG.md`:** copy that version's notes, word for
+   word, from its GitHub Release
+   (`gh release view engine-v<version> -R veilio-inc/veilio`). Put them directly
+   under the `# Changelog` title, where semantic-release puts them in the
+   tarball. Write only what the release says.
+3. **`packages/cli` and `packages/mcp`:** if they should require the new
+   engine, widen their `@veilio-inc/engine` range in the same PR, and add a
+   patch changeset for each.
+
+Two checks make sure this happens:
+
+- The CI step "Engine version matches what is published" fails on `main` while
+  `packages/engine/package.json` is behind npm.
+- `tests/engine-changelog.test.ts` fails while the CHANGELOG's newest entry is
+  not that version, or the entry appears twice.
+
+So one sync PR turns both green. The CHANGELOG matters beyond the repository:
+the next release packs this file into its tarball with its own notes on top,
+so a missed sync becomes a gap on npm. That is how the 1.3.0 to 1.10.1 notes
+were missing from npm until 2026-10-26.
