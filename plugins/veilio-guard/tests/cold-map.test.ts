@@ -5,7 +5,9 @@
 // never used Read, and every test run and search went out as written.
 import { expect, test } from 'claude-code/testing'
 import { COLD_FILES, DECLARED, GREP, TEST_RUN } from './fixtures/cold.ts'
-import { eventOf, mapFile, project, ROOT, STRIPE } from './helpers.ts'
+import { eventOf, mapFile, project, ROOT, STRIPE, res } from './helpers.ts'
+import type { Fields } from './fixtures/recorded.ts'
+import type { TestHost, TestOn } from './kit.ts'
 
 const MAP = `${ROOT}/.veilio/map.json`
 const leaked = (out: unknown) => {
@@ -18,26 +20,26 @@ const saved = (p: { files: Record<string, string> }) =>
 test('the first call is a test run: its stack trace reaches the model masked', async ($, on) => {
   const p = project(on, { ...COLD_FILES })
   on('tool.call', () => TEST_RUN.r)
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(leaked(out)).toEqual([])
   // Still a test run's output: the runner's own words are as written.
-  expect(out.result.stdout).toContain('AssertionError: expected false to be true')
+  expect(res(out).stdout).toContain('AssertionError: expected false to be true')
   expect(saved(p)).toEqual(expect.arrayContaining(DECLARED))
 })
 
 test('the first call is a search: every matching line reaches the model masked', async ($, on) => {
   const p = project(on, { ...COLD_FILES })
   on('tool.call', () => GREP.r)
-  const out: any = await $.tool.call(eventOf(GREP))
+  const out = await $.tool.call(eventOf(GREP))
   expect(leaked(out)).toEqual([])
   expect(saved(p)).toEqual(expect.arrayContaining(['luhnValid', 'reconcileBatch']))
 })
 
 test('an edit written with a placeholder from a search lands with the real name', async ($, on) => {
   const p = project(on, { ...COLD_FILES })
-  const seen: any[] = []
+  const seen: Fields[] = []
   // One stub for both calls: the kit takes no new hook once the test called $.
-  on('tool.call', (_: any, e: any) => {
+  on('tool.call', (_, e) => {
     if (e.tool === 'Grep') return GREP.r
     seen.push(e)
     return { result: { filePath: e.file_path, oldString: e.old_string, newString: e.new_string } }
@@ -63,16 +65,16 @@ test('a project with a map: a name the map does not hold yet is masked and added
     [MAP]: mapFile({ __FN__1: 'luhnValid' }),
   })
   on('tool.call', () => TEST_RUN.r)
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(leaked(out)).toEqual([])
-  expect(out.result.stdout).toContain('__FN__1')
+  expect(res(out).stdout).toContain('__FN__1')
   expect(saved(p)).toEqual(expect.arrayContaining(['luhnValid', 'settle', 'reconcileBatch']))
 })
 
 test('not a git checkout: the files a result names are still masked before it goes', async ($, on) => {
   project(on, { ...COLD_FILES }, { noGit: true })
   on('tool.call', () => TEST_RUN.r)
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(leaked(out)).toEqual([])
 })
 
@@ -91,9 +93,9 @@ test('a name from a file the index cannot reach is masked when shaped like one',
   }
   const p = project(on, { ...COLD_FILES })
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
-  expect(out.result.stdout).toContain('AssertionError: expected 1 to be 2')
+  expect(res(out).stdout).toContain('AssertionError: expected 1 to be 2')
   expect(saved(p)).toContain('renderInvoiceTotals')
 })
 
@@ -104,11 +106,11 @@ const shellWith = (stdout: string, id: string) => ({
   r: { ...TEST_RUN.r, result: { ...TEST_RUN.r.result, stdout } },
 })
 
-const lowercaseNameIsMasked = (stdout: string) => async ($: any, on: any) => {
+const lowercaseNameIsMasked = (stdout: string) => async ($: TestHost, on: TestOn) => {
   project(on, { ...COLD_FILES })
   const run = shellWith(stdout, 'toolu_form')
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 }
 test(
@@ -140,14 +142,14 @@ test('a path the guard cannot resolve makes it finish the index before the resul
   project(on, files)
   const run = shellWith(' ❯ reconcile src/my dir/ledger.ts:1:17', 'toolu_space')
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(JSON.stringify(out)).not.toMatch(/\breconcile\b/)
 })
 
 test('a denial that names a project function is masked like a result', async ($, on) => {
   project(on, { ...COLD_FILES })
   on('tool.call', () => ({ deny: 'cannot run settle: src/secrets.ts is locked' }))
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(out.deny).not.toMatch(/\bsettle\b/)
 })
 
@@ -158,9 +160,9 @@ test('in a record, a one-word value that is not an enum is still shape-masked', 
     result: { type: 'text', name: 'renderInvoiceTotals' },
     isReadOnly: true,
   }))
-  const out: any = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec' })
+  const out = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec' })
   expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
-  expect(out.result.type).toBe('text')
+  expect(res(out).type).toBe('text')
 })
 
 // Security review of f03f45c.
@@ -175,16 +177,16 @@ test('an enum-like key deeper in a record, or holding a sentence, is still maske
     },
     isReadOnly: true,
   }))
-  const out: any = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec2' })
+  const out = await $.tool.call({ tool: 'mcp__acme__lookup', tool_use_id: 'toolu_rec2' })
   expect(JSON.stringify(out)).not.toContain('renderInvoiceTotals')
   expect(JSON.stringify(out)).not.toContain('computeLedgerBalance')
-  expect(out.result.type).toBe('text')
+  expect(res(out).type).toBe('text')
 })
 
 test('a denial that still holds a credential after masking is withheld', async ($, on) => {
   project(on, { ...COLD_FILES })
   on('tool.call', () => ({ deny: `refused: STRIPE_SECRET_KEY=${STRIPE}` }))
-  const out: any = await $.tool.call(eventOf(TEST_RUN))
+  const out = await $.tool.call(eventOf(TEST_RUN))
   expect(JSON.stringify(out)).not.toContain(STRIPE)
 })
 
@@ -197,7 +199,7 @@ test('a diff names its files as a/ and b/: they are found and indexed', async ($
     'toolu_diff'
   )
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 })
 
@@ -205,7 +207,7 @@ test('with no listing, a source path the guard cannot find withholds the result'
   project(on, { ...COLD_FILES }, { noGit: true })
   const run = shellWith(' ❯ settle lib/elsewhere/ledger.ts:3:1', 'toolu_nolist')
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(out.deny).toContain('Veilio withheld this result')
   expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
 })
@@ -216,7 +218,7 @@ test('a path found only by stripping its directories is not trusted before the i
   project(on, { ...COLD_FILES }, { noGit: true })
   const run = shellWith(' ❯ settle vendor/acme/src/secrets.ts:3:1', 'toolu_strip')
   on('tool.call', () => run.r)
-  const out: any = await $.tool.call(eventOf(run))
+  const out = await $.tool.call(eventOf(run))
   expect(out.deny).toContain('Veilio withheld this result')
 })
 
@@ -229,7 +231,7 @@ test('indexing a file whose name holds a destroyed credential saves the other na
       'export function connectXk9mQ2vL7QPool() {}\nexport function ledgerHarvestTotal() {}\n',
   }
   const p = project(on, files)
-  on('tool.call', (_: any, e: any) =>
+  on('tool.call', (_, e) =>
     e.tool === 'Bash'
       ? { ...TEST_RUN.r, result: { ...TEST_RUN.r.result, stdout: 'password = "Xk9mQ2vL7Q"\n' } }
       : {
@@ -244,12 +246,12 @@ test('indexing a file whose name holds a destroyed credential saves the other na
         }
   )
   await $.tool.call({ ...eventOf(TEST_RUN), command: 'cat .netrc.example' })
-  const out: any = await $.tool.call(eventOf(GREP))
+  const out = await $.tool.call(eventOf(GREP))
   expect(out.deny).toBeUndefined()
   expect(saved(p)).toContain('ledgerHarvestTotal')
   expect(saved(p).join(' ')).not.toContain('Xk9mQ2vL7Q')
   // Masked as one name in the result, by a placeholder kept in memory only.
-  const shown: string = out.result.content
+  const shown: string = res(out).content
   expect(shown).not.toContain('Xk9mQ2vL7Q')
   expect(shown).not.toContain('connect')
   // A placeholder of its own namespace, which no saved entry can ever share.

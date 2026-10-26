@@ -89,14 +89,17 @@ export function projectShape(cwd: string, inputs: { name: string | null }[]): Pr
       return []
     }
   }
-  const json = (path: string): any => {
+  // A JSON file's top-level object, or undefined: what it holds is narrowed
+  // where it is read.
+  const json = (path: string): Record<string, unknown> | undefined => {
     try {
-      return JSON.parse(
+      const value: unknown = JSON.parse(
         readFileSync(path, 'utf8')
           .replace(/\/\*[\s\S]*?\*\//g, '')
           .replace(/^\s*\/\/.*$/gm, '')
           .replace(/,(\s*[}\]])/g, '$1')
       )
+      return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
     } catch {
       return undefined
     }
@@ -111,11 +114,16 @@ export function projectShape(cwd: string, inputs: { name: string | null }[]): Pr
     const name = json(join(cwd, dir, 'package.json'))?.name
     if (typeof name === 'string') workspaces.push(name)
   }
-  const tsconfig = json(join(cwd, 'tsconfig.json'))?.compilerOptions
+  const options = json(join(cwd, 'tsconfig.json'))?.compilerOptions
+  const tsconfig =
+    options && typeof options === 'object'
+      ? (options as { baseUrl?: unknown; paths?: unknown })
+      : undefined
   const baseDirs = new Set(top)
   if (typeof tsconfig?.baseUrl === 'string')
     for (const d of dirs(join(cwd, tsconfig.baseUrl))) baseDirs.add(d)
-  const pathAliases = Object.keys(tsconfig?.paths ?? {})
+  const paths = tsconfig?.paths
+  const pathAliases = Object.keys(paths && typeof paths === 'object' ? paths : {})
     .map((k) => k.replace(/\*.*$/, ''))
     .filter(Boolean)
   const pythonModules = new Set(top)

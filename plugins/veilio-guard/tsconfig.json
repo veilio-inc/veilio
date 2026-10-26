@@ -1,8 +1,8 @@
 {
-  // Type-checks the guard's pure modules (lib/) in CI, where Claude Code's
-  // generated mod types (.claude-plugin/types, written on load and ignored by
-  // git) do not exist. Claude Code itself loads hooks/ and runs tests/, and
-  // `claude plugin validate` and `claude plugin test` check those.
+  // Type-checks the guard's modules (lib/) and its hooks (hooks/) in CI, where
+  // Claude Code's generated mod types (.claude-plugin/types, written on load
+  // and ignored by git) do not exist: the hooks are typed by lib/host.ts.
+  // Claude Code runs tests/, and `claude plugin test` checks those.
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023", "dom"],
@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["lib"]
+  "include": ["lib", "hooks"]
 }

@@ -14,16 +14,30 @@ import {
 } from '../lib/guard.ts'
 import { bandText, MODEL_NOTE, statusText } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
+import {
+  commandRows,
+  configDirOf,
+  ListingCache,
+  listingKind,
+  parsePublicMarketplaces,
+  publicEntries,
+  type PublicMarketplace,
+} from '../lib/listings.ts'
+import type { AgentOfferInput, Host, Next, On, HookEvent } from '../lib/host.ts'
 
-type Options = { rawOnly?: string[]; mcpRestore?: string[] }
+type Options = { rawOnly?: string[]; mcpRestore?: string[]; publicMarketplaces?: unknown[] }
 
 // Spec 050 T002: session.start has the 10 s HookBudget; 6 s of it indexes the
 // project. A tool result keeps 2 s of its budget for masking.
 const START_MS = 6_000
 const SLICE_MS = 250
 const MASK_RESERVE_MS = 2_000
+// Code review of d705b14: reading a listing's provenance has a deadline of
+// its own, well inside the hook's budget. Past it, or on any failure, the
+// listing goes fully masked; it is never left out.
+const LISTING_MS = 300
 
-function deadline(next: any, cap = Infinity): number {
+function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
   const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
   return Date.now() + Math.max(0, Math.min(cap, left))
 }
@@ -31,19 +45,64 @@ function deadline(next: any, cap = Infinity): number {
 let guard: Guard | null = null
 let loading: Promise<Guard> | null = null
 let config: { rawOnly: string[]; mcpRestore: string[] } = { rawOnly: [], mcpRestore: [] }
+// Guard decision 1: the offers the engine made since the last agent listing,
+// each recorded once it is made: the provenance of the next listing's
+// entries (lib/listings.ts). A listing round takes them and starts afresh.
+const offers = new Map<string, AgentOfferInput>()
+// Marketplaces the user pins as public in the plugin's own settings (never a
+// project's .veilio/guard.json), each with its source; entries without one
+// are ignored, and said once.
+let pinned: PublicMarketplace[] = []
+let ignored: string[] = []
+let saidIgnored = false
+// What was read of the plugin cache, by file and mtime, for the session.
+const listingCache = new ListingCache()
+
+// The public entries of a skill or agent listing, by the engine's word and
+// the plugin cache, within LISTING_MS. Anything that fails or is late leaves
+// none: the listing is then masked as a whole.
+async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<string[]> {
+  const round = kind === 'agents' ? [...offers.values()] : []
+  if (kind === 'agents') offers.clear()
+  if (!saidIgnored && ignored.length > 0) {
+    saidIgnored = true
+    $.ui.log(
+      `Veilio ignored publicMarketplaces entries with no source: ${ignored.join(', ')}. ` +
+        'Write each as <name>=<source>, such as acme=github:acme/plugins.'
+    )
+  }
+  const io = {
+    read: (path: string) => $.fs.read(path),
+    mtime: (path: string) => $.fs.stat(path).then((s) => s.mtimeMs),
+  }
+  const work = (async () => {
+    const [dir, home, profile, commands] = await Promise.all([
+      $.env.get('CLAUDE_CONFIG_DIR'),
+      $.env.get('HOME'),
+      $.env.get('USERPROFILE'),
+      kind === 'skills' ? $.command.list() : undefined,
+    ])
+    const configDir = configDirOf({ CLAUDE_CONFIG_DIR: dir, HOME: home, USERPROFILE: profile })
+    const installed = await listingCache.installedInCache(io, configDir, pinned)
+    const given = kind === 'skills' ? { commands: commandRows(commands) } : { offers: round }
+    return publicEntries(kind, given, installed, io, listingCache)
+  })().catch((): string[] => [])
+  const late = $.clock.sleep(LISTING_MS).then((): string[] => [])
+  return Promise.race([work, late]).catch((): string[] => [])
+}
 
 // The guard is loaded by whichever event comes first: the first prompt's
 // context can arrive before session.start has finished.
-async function ready($: any): Promise<Guard> {
+async function ready($: Host): Promise<Guard> {
   if (guard) return guard
   if (!loading) {
     const io: GuardIO = {
-      read: (path) => $.fs.read(path) as Promise<string>,
+      read: (path) => $.fs.read(path),
       write: (path, text) => $.fs.write(path, text),
       exists: (path) => $.fs.exists(path),
       realPath: (path) =>
         $.fs.stat(path, { resolve: true }).then(
-          (s: { realPath?: string }) => s.realPath,
+          (s) => s.realPath,
           () => undefined
         ),
       // Spec 050: the tracked files, so the index can mask a result by what it
@@ -52,13 +111,12 @@ async function ready($: any): Promise<Guard> {
       sleep: (ms) => $.clock.sleep(ms),
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
-          (r: { exitCode: number; stdout: string }) =>
-            r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null,
+          (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),
           () => null
         ),
     }
     const g = new Guard(io, config)
-    loading = $.session.cwd().then(async (cwd: string) => {
+    loading = $.session.cwd().then(async (cwd) => {
       await g.load(cwd)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
@@ -67,36 +125,47 @@ async function ready($: any): Promise<Guard> {
     })
     // A failed load fails this event closed (its .catch answers) and is tried
     // again on the next one, instead of wedging the session.
-    loading!.catch(() => {
+    loading.catch(() => {
       loading = null
     })
   }
-  return loading as Promise<Guard>
+  return loading
 }
 
 // Run by the organisation: managed settings list this plugin in
 // prependPlugins, so it runs before every mod a user installs, and a user's
 // own settings cannot switch it off (spec 033 US3).
-async function isManaged($: any): Promise<boolean> {
-  const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}))
-  const prepend = (policy as { prependPlugins?: unknown }).prependPlugins
+async function isManaged($: Host): Promise<boolean> {
+  const policy: unknown = await $.settings.read({ source: 'policy' }).catch(() => ({}))
+  const prepend =
+    policy && typeof policy === 'object'
+      ? (policy as { prependPlugins?: unknown }).prependPlugins
+      : undefined
   return (
     Array.isArray(prepend) &&
     prepend.some((id) => typeof id === 'string' && id.startsWith('veilio-guard@'))
   )
 }
 
+function isTexts(v: unknown): v is readonly string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === 'string')
+}
+
 function deepDisplay(g: Guard, value: unknown): unknown {
   return deepRewrite(value, (s) => g.displayText(s))
 }
 
-export function register(on: any, options: Options = {}) {
+export function register(on: On, options: Options = {}) {
   config = {
     rawOnly: Array.isArray(options.rawOnly) ? options.rawOnly : [],
     mcpRestore: Array.isArray(options.mcpRestore) ? options.mcpRestore : [],
   }
+  ;({ pinned, ignored } = parsePublicMarketplaces(
+    Array.isArray(options.publicMarketplaces) ? options.publicMarketplaces : []
+  ))
+  saidIgnored = false
 
-  on('session.start', async ($: any, e: any, next: any) => {
+  on('session.start', async ($, e, next) => {
     const g = await ready($)
     // Spec 050: index the project while the session starts, then in short
     // slices between calls. A timer runs outside any hook's budget, so each
@@ -127,7 +196,7 @@ export function register(on: any, options: Options = {}) {
     return next(e)
   })
 
-  on('tool.call', async ($: any, e: ToolEvent, next: any) => {
+  on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
@@ -145,7 +214,7 @@ export function register(on: any, options: Options = {}) {
     return after
   }).catch(async () => ({ deny: WITHHELD_FAILED }))
 
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+  on('prompt.submit', async ($, e, next) => {
     const g = await ready($)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
@@ -157,17 +226,19 @@ export function register(on: any, options: Options = {}) {
       await g.indexProject(deadline(next)).catch(() => undefined)
     // A credential with its key in one is removed from the others too; each
     // text is scanned once.
-    const given: string[] = Array.isArray(e.context) ? e.context : []
+    // Context the guard cannot read as text cannot be checked: the prompt is
+    // not sent (code review of d705b14).
+    const raw: unknown = e.context
+    if (raw !== undefined && !isTexts(raw)) throw new Error('a context entry is not text')
+    const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     const text = g.applyText(e.text, 'prompt', scan)
-    const context = Array.isArray(e.context)
-      ? given.map((c: string, i: number) => g.applyContext(c, scans[i]))
-      : undefined
+    const context = raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i])) : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
 
-  on('prompt.attachment', async ($: any, e: any, next: any) => {
+  on('prompt.attachment', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
@@ -176,27 +247,43 @@ export function register(on: any, options: Options = {}) {
     // the plugins' blocks come as context_sections, and earlier builds sent
     // them with userEmail as session_context.
     const first = e.type === 'context_sections' || e.type === 'session_context'
-    const text = first ? g.applyContext(r.text) : g.applyText(r.text)
+    // Guard decision 1: a listing's public entries go as written.
+    const listing = listingKind(e.type)
+    const text = first
+      ? g.applyContext(r.text)
+      : listing
+        ? g.applyListing(r.text, await listingEntries($, listing))
+        : g.applyText(r.text)
     return { ...r, text }
   }).catch(async () => ({ text: null }))
 
-  on('prompt.context', async ($: any, e: any, next: any) => {
+  // Recorded, never changed: the provenance of the agent listing's entries.
+  // Only once the engine has made the offer: one a hook beneath withdrew is
+  // not recorded, and drops an earlier one of the name.
+  on('agent.offer', async ($, e, next) => {
+    const r = await next(e)
+    if (r.isOffered === true) offers.set(e.agent, e)
+    else offers.delete(e.agent)
+    return r
+  })
+
+  on('prompt.context', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
-    const raw = r.blocks.map((b: { text: string }) => b.text)
+    const raw = r.blocks.map((b) => b.text)
     const scans = g.learnTogether(raw)
     // Remembered, so the copy Claude Code passes back as an attachment is
     // not judged a second time.
-    const blocks = r.blocks.map((b: { text: string }, i: number) => ({
+    const blocks = r.blocks.map((b, i) => ({
       ...b,
       text: g.remember(g.applyText(raw[i]!, 'result', scans[i])),
     }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 
-  on('skill.prompt', async ($: any, e: any, next: any) => {
+  on('skill.prompt', async ($, e, next) => {
     const g = await ready($)
     const r = await next(e)
     if (g.state === 'off') return r
@@ -208,33 +295,30 @@ export function register(on: any, options: Options = {}) {
 
   // What the developer sees: the real names, drawn on this machine only. The
   // stored transcript keeps the placeholders.
-  on(
-    'ui.render',
-    { component: ['AssistantMessage', 'UserMessage'] },
-    async ($: any, e: any, next: any) => {
-      const g = guard
-      if (!g || g.state !== 'on' || typeof e.props?.text !== 'string') return next(e)
-      return next({ ...e, props: { ...e.props, text: g.displayText(e.props.text) } })
-    }
-  )
+  on('ui.render', { component: ['AssistantMessage', 'UserMessage'] }, async ($, e, next) => {
+    const g = guard
+    const text = e.props?.text
+    if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
+    return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
+  })
 
   // A row's input, and its result: an edit's diff, a command's output. Only
   // placeholders change, so the result still fits the tool's schema.
-  on('ui.render', { component: 'ToolUse' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const g = guard
     if (!g || g.state !== 'on' || !e.props) return next(e)
-    const props = { ...e.props, input: deepDisplay(g, e.props.input) }
+    const props: Record<string, unknown> = { ...e.props, input: deepDisplay(g, e.props.input) }
     if (e.props.output !== undefined) props.output = deepDisplay(g, e.props.output)
     return next({ ...e, props })
   })
 
-  on('ui.render', { component: 'ToolResult' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const g = guard
     if (!g || g.state !== 'on' || e.props?.output === undefined) return next(e)
     return next({ ...e, props: { ...e.props, output: deepDisplay(g, e.props.output) } })
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const g = guard
     const below = await next(e)
     if (!g) return below
@@ -247,7 +331,7 @@ export function register(on: any, options: Options = {}) {
     return below ? Box({ flexDirection: 'column', children: [line, below] }) : line
   })
 
-  on('command.run', { command: 'veilio' }, async ($: any, e: any) => {
+  on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)
     const managed = await isManaged($)
     const arg = String(e.args ?? '').trim()

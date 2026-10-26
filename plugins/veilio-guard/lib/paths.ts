@@ -23,6 +23,20 @@ export const DEFAULT_RAW_ONLY: readonly string[] = [
   '.npmrc',
   '.netrc',
   '.pgpass',
+  // Credential stores and keystores.
+  '.git-credentials',
+  '.htpasswd',
+  '*.jks',
+  '*.keystore',
+  '*.p8',
+  'kubeconfig',
+  '.docker/config.json',
+  // Cloud and cluster credentials, where their tools keep them.
+  '.kube/config',
+  '.kube/**',
+  '.aws/credentials',
+  '.azure/**',
+  '.config/gcloud/**',
 ]
 
 // Matched ignoring case: NTFS and APFS, the default file systems on Windows and

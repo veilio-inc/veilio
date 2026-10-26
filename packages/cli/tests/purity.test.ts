@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import type { Io } from '../src/commands.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
 
 // 005-c1 FR-003 / SC-003. The CLI makes the same privacy claim the web app
 // does, and a claim that is only written down is a claim nobody has checked.

@@ -237,5 +237,6 @@ to restore it — but they are not handed to a teammate as the team's meaning.
 - **stdout is protocol only.** Diagnostics go to stderr; a stray write to stdout corrupts the stream.
 - **Tool errors, not protocol errors.** Failures come back as `isError` content so the model can correct itself, rather than aborting the call.
 - **Redaction is one-way.** Credentials never enter the symbol map, so `restore_text` cannot bring them back.
+- **Every file is judged strictly.** `anonymize_file` and `scan_secrets` read every file as real source, test, fixture and example files included: a weak password in a secret position (`PGPASSWORD=Summer24`, a password flag, the password in a URL, an auth header) is redacted wherever it is. The CLI and the Claude Code guard do the same. A committed fixture cannot be told from a copy of `.env` in `tests/` safely enough to leave its passwords in place, so no Veilio client tries.
 
 The symbol map is shared with the `veilio` CLI, so you can mask in an agent and restore from a terminal, or the reverse.
