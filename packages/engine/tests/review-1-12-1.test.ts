@@ -97,13 +97,21 @@ describe('1.12.1 review', () => {
     expect(() =>
       anonymize('const x = "acmeCorp9x"', { manual: ['acmeCorp9x'], secrets: 'off' })
     ).not.toThrow()
-    // A weak fixture in a test file is found but kept, so it may be marked.
-    expect(() =>
-      anonymize('PGPASSWORD=Summer24 psql\nconst s = "Summer24"', {
-        path: 'tests/a.test.js',
-        manual: ['Summer24'],
-      })
-    ).not.toThrow()
+  })
+
+  it('5c: a credential left in place by warn, off or a fixture cannot be marked into the map', () => {
+    for (const opts of [
+      { secrets: 'warn' as const },
+      { secrets: 'off' as const },
+      { path: 'tests/a.test.js' },
+    ]) {
+      expect(() =>
+        anonymize('PGPASSWORD=Summer24 psql\nconst s = "Summer24"', {
+          ...opts,
+          manual: ['Summer24'],
+        })
+      ).toThrow()
+    }
   })
 
   it('4c: a forced-destroyed regulated value is not left in the map', () => {

@@ -999,9 +999,11 @@ export function anonymize(code, options = {}) {
     // re-applied so a mark made in an earlier pass survives the round trip.
     const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)));
     const marked = applyManualMasks(redacted, opts.manual ?? [], 
-    // Refused only for a credential this call destroys: one left in place by
-    // policy, a fixture or a possible credential may still be marked.
-    new Set(destroyed.keys()), manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
+    // Refused for every credential found that is not merely possible,
+    // whatever the policy: a manual mark is written to the map, and a
+    // credential never is (founder decision 2026-10-26). Only an ambiguous
+    // word may be marked.
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))), manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
     // AFTER manual marks, on purpose — a value the author marked by hand is
     // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
     // the entire implementation of "a manual mark wins over automatic detection";

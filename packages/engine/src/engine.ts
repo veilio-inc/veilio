@@ -1176,9 +1176,11 @@ export function anonymize(
   const marked = applyManualMasks(
     redacted,
     opts.manual ?? [],
-    // Refused only for a credential this call destroys: one left in place by
-    // policy, a fixture or a possible credential may still be marked.
-    new Set(destroyed.keys()),
+    // Refused for every credential found that is not merely possible,
+    // whatever the policy: a manual mark is written to the map, and a
+    // credential never is (founder decision 2026-10-26). Only an ambiguous
+    // word may be marked.
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))),
     manualTermsIn(existingMap),
     map,
     reverseExisting,
