@@ -66,4 +66,17 @@ describe('1.12.1 review', () => {
     })
     expect(r.anonymized).toContain('__VAR__12024')
   })
+
+  it('9c: a name that only looks like a placeholder is redacted whole when it holds a credential', () => {
+    const r = anonymize('PGPASSWORD=2024 psql\nconst x = __VAR__12024\n')
+    expect(r.anonymized).not.toContain('2024')
+  })
+
+  it('4b: a PESEL that is also a credential left in place is neither shown nor mapped', () => {
+    const r = anonymize('PGPASSWORD=44051401359\nconst id = "44051401359"', {
+      path: 'tests/a.test.js',
+    })
+    expect(r.anonymized).not.toContain('44051401359')
+    expect(Object.values(r.map)).not.toContain('44051401359')
+  })
 })
