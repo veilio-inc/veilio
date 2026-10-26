@@ -93,3 +93,34 @@ function rewriteDeep(
 }
 
 const NONE: ReadonlySet<string> = new Set()
+
+/** As deepRewrite, with each string's place in the record in the field-list
+ *  syntax (`file.content`, `filenames[]`, `[].text`), so a caller can tell a
+ *  listed field from any other by where it stands, not by what it says. */
+export function deepRewritePaths(
+  value: unknown,
+  fn: (text: string, path: string) => string,
+  keep: ReadonlySet<string> = NONE
+): unknown {
+  return pathsDeep(value, fn, keep, true, '')
+}
+
+function pathsDeep(
+  value: unknown,
+  fn: (text: string, path: string) => string,
+  keep: ReadonlySet<string>,
+  top: boolean,
+  path: string
+): unknown {
+  if (typeof value === 'string') return fn(value, path)
+  if (Array.isArray(value)) return value.map((v) => pathsDeep(v, fn, keep, top, `${path}[]`))
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value)) {
+      const at = path === '' ? k : `${path}.${k}`
+      out[k] = top && keep.has(k) ? v : pathsDeep(v, fn, keep, false, at)
+    }
+    return out
+  }
+  return value
+}

@@ -98,16 +98,11 @@ const TOOLS = [
 const CLI_HOME = mkdtempSync(join(tmpdir(), 'veilio-bench-home-'))
 const CLI_ENV = { ...process.env, HOME: CLI_HOME, USERPROFILE: CLI_HOME }
 function refuseSignedIn() {
-  if (existsSync(join(CLI_ENV.HOME, '.veilio', 'credential.json')))
-    throw new Error(
-      `the CLI's HOME (${CLI_ENV.HOME}) holds a Veilio Cloud credential: refusing to run`
-    )
   if (!existsSync(CLI)) return
   const who = spawnSync('node', [CLI, 'whoami'], { env: CLI_ENV, encoding: 'utf8' })
   if (!/Not signed in/.test(`${who.stdout}${who.stderr}`))
     throw new Error('the CLI the bench runs is signed in to Veilio Cloud: refusing to run')
 }
-refuseSignedIn()
 
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|go|py|java|kt|cs|rb|php|rs|swift|c|cc|cpp|h|hpp)$/
 
@@ -136,6 +131,8 @@ function cleanup(dir) {
 }
 temps.add(CLI_HOME)
 process.on('exit', () => [...temps].forEach(cleanup))
+// After the temp HOME is registered, so a refusal still removes it.
+refuseSignedIn()
 process.on('SIGINT', () => process.exit(130))
 
 // A clone with no history: `git log -p` would show the planted bug, and the

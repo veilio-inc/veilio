@@ -253,3 +253,20 @@ test('a credential in a context block masked earlier is removed from the typed p
   })
   expect(JSON.stringify(sent)).not.toContain('xk9mq2vlp7rz')
 })
+
+test('the first message context masked once is not judged again when it comes back as an attachment', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+  }))
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  const masked = ctx.blocks[0].text
+  expect(masked).toBe('client_secret: "__VAR__1290"')
+  const out: any = await $.prompt.attachment({
+    type: 'context_sections',
+    text: `# claudeMd\n${masked}`,
+  })
+  expect(out.text).toContain('"__VAR__1290"')
+  expect(out.text).not.toContain('__REDACTED_')
+})

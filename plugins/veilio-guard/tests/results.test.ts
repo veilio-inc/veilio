@@ -323,7 +323,7 @@ test('a project name written against a redacted key is still masked', async ($, 
   expect(JSON.stringify(out)).not.toContain('MIIEowIBAAKCAQEA')
 })
 
-test('a regulated number in a credential slot is destroyed as written, and the result is sent', async ($, on) => {
+test('a regulated number the map holds stays its placeholder in a credential slot, as in a Read', async ($, on) => {
   const bash = recorded('Bash')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __IBAN__1: 'GB82WEST12345698765432' }),
@@ -331,10 +331,10 @@ test('a regulated number in a credential slot is destroyed as written, and the r
   const stdout = 'api_key = "GB82WEST12345698765432"\n'
   on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
   const out: any = await $.tool.call(eventOf(bash))
-  // As written it is a credential, and that finding stands (security review of a162a37).
+  // A value the map already masks reversibly is never destroyed (review of 99325ba).
   expect(out.deny).toBeUndefined()
   expect(JSON.stringify(out)).not.toContain('GB82WEST12345698765432')
-  expect(out.result.stdout).toContain('__REDACTED_')
+  expect(out.result.stdout).toContain('"__IBAN__1"')
 })
 
 // Security review of a162a37: credentials are found in the text as written,
@@ -524,9 +524,9 @@ test('one secret gets one token everywhere, and two secrets two tokens', async (
   expect(a).not.toBe(b)
 })
 
-test('a source Read: an identifier holding a secret is one placeholder everywhere, and the map holds no secret', async ($, on) => {
+test('a source Read: an identifier holding a secret is one placeholder everywhere, and the model never sees the secret', async ($, on) => {
   const read = recorded('Read')
-  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
   const content =
     'const password = "Hunt3r2xyzQ"\nexport function connectHunt3r2xyzQPool() {}\nconnectHunt3r2xyzQPool()\n'
   on('tool.call', () => ({
@@ -538,7 +538,6 @@ test('a source Read: an identifier holding a secret is one placeholder everywher
   const decl = /export function (\S+)\(\)/.exec(seen)?.[1]
   expect(decl).toBeDefined()
   expect(seen).toContain(`\n${decl}()`)
-  expect(p.files[`${ROOT}/.veilio/map.json`] ?? '').not.toContain('Hunt3r2xyzQ')
   expect(JSON.stringify(out)).not.toContain('Hunt3r2xyzQ')
 })
 
@@ -586,4 +585,79 @@ test('a result with too many copies of a credential to remove is withheld, not s
   const out: any = await $.tool.call(eventOf(bash))
   expect(out.deny).toContain('Veilio withheld')
   expect(JSON.stringify(out)).not.toContain('xk9mq2vlp7rz')
+})
+
+// Phase-end review of 99325ba.
+test('a docker-compose password that is a dictionary word does not eat the code that names it', async ($, on) => {
+  const bash = recorded('Bash')
+  const read = recorded('Read')
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const compose = 'DATABASE_URL=postgres://postgres:postgres@localhost:5432/app\n'
+  const source = "import postgres from 'postgres'\nconst postgresClient = postgres(url)\n"
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    if (e.tool === 'Bash') return { ...bash.r, result: { ...bash.r.result, stdout: compose } }
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: { ...read.r.result, file: { ...read.r.result.file, content: source } },
+      }
+    return edit.r
+  })
+  const first: any = await $.tool.call(eventOf(bash))
+  expect(first.result.stdout).not.toContain(':postgres@')
+  const r: any = await $.tool.call(eventOf(read))
+  const shown: string = r.result.file.content
+  expect(shown).not.toContain('__REDACTED_')
+  // An edit built from what the model was shown runs.
+  const line = shown.split('\n')[1]!
+  const e: any = await $.tool.call({ ...eventOf(edit), old_string: line, new_string: line })
+  expect(e.deny).toBeUndefined()
+  expect(seen.some((x) => x.tool === 'Edit')).toBe(true)
+})
+
+test('a value the map holds reversibly stays its placeholder in a credential slot', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      ...SEEDED,
+      __STR__41: 'acme_billing_session_token_v2',
+    }),
+  })
+  const stdout = "session_token = 'acme_billing_session_token_v2'\n"
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.result.stdout).toContain("'__STR__41'")
+  expect(out.result.stdout).not.toContain('__REDACTED_')
+})
+
+test('a raw-only file dropped from a search teaches the guard nothing', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/.env:1:API_KEY="Zq8vB3nM1kL0pW9x"`,
+    `${ROOT}/notes.md:3:the fixture id Zq8vB3nM1kL0pW9x is public`,
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 2 } }))
+  const out: any = await $.tool.call(eventOf(grep))
+  expect(out.result.content).not.toContain('.env')
+  expect(out.result.content).not.toContain('__REDACTED_')
+})
+
+test('a field the guard has no row for is scanned in full, whatever its text', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  // Its text equals the listed field's: told apart by where it stands. A
+  // plain-word password is removed only by a scan of its own field.
+  const url = 'postgres://postgres:postgres@db.internal:5432/app'
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: url, returnCodeInterpretation: url },
+  }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.deny).toBeUndefined()
+  expect(out.result.returnCodeInterpretation).not.toContain(':postgres@')
+  expect(out.result.stdout).not.toContain(':postgres@')
 })

@@ -10,7 +10,7 @@
 //  - new map entries are written to .veilio/map.json before the text that uses
 //    them is returned, so a placeholder the model sees can always be restored;
 //  - the secret re-scan is the last thing before a result is returned.
-import { deepRewrite, rewriteFields } from './fields.ts'
+import { deepRewrite, deepRewritePaths, rewriteFields } from './fields.ts'
 import {
   mergeAdditions,
   parseMapFile,
@@ -39,13 +39,9 @@ import {
   scrubSource,
   survivingSecrets,
 } from './scrub.ts'
-import type { MaskContext } from './scrub.ts'
-import { restore } from '../vendor/engine/index.js'
+import type { MaskContext, ScanResult } from './scrub.ts'
+import { restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
-
-/** Stands for the guard's note while a context text is masked: no word
- *  character, nothing a name or a placeholder is made of. */
-const NOTE_MARK = '\u0000\u0001\u0000'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -404,30 +400,63 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string, kind: MaskContext['kind'] = 'result'): string {
-    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed })
+  applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
+    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
   }
 
   /** Texts that reach the model together (a prompt and its context, the
-   *  first message's blocks): a credential any of them holds with its key is
-   *  removed from all of them, then each is masked. */
-  applyTogether(texts: readonly string[], one: (text: string) => string): string[] {
-    this.destroyed.learn(destroyedValues(texts))
-    return texts.map(one)
+   *  first message's blocks): each is scanned once, a credential any of them
+   *  holds with its key is learned for all of them, and each scan is handed
+   *  back for its own text's masking (review of 99325ba). */
+  learnTogether(texts: readonly string[]): ScanResult[] {
+    const scans = texts.map((t) => scanSecrets(t, 'redact'))
+    const values = new Set<string>()
+    texts.forEach((t, i) => {
+      for (const v of destroyedValues([t], this.map, scans[i])) values.add(v)
+    })
+    this.destroyed.learn([...values])
+    return scans
+  }
+
+  /** Text this guard masked for the first message's context, so that the
+   *  copy Claude Code passes back as an attachment is not judged a second
+   *  time: masked text scanned again reads a placeholder as key material
+   *  (review of 99325ba). Bounded: the newest are kept. */
+  private produced: string[] = []
+  remember(text: string): string {
+    if (text.length > 0 && !this.produced.includes(text)) {
+      this.produced.push(text)
+      if (this.produced.length > 64) this.produced.shift()
+    }
+    return text
   }
 
   /** The context Claude Code sends with the first message (the blocks
    *  prompt.context answered, as an attachment or a prompt's context): masked
-   *  as a whole, secret scan included, with the guard's own note held as one
-   *  opaque mark and put back after. The note is a constant with no project
-   *  information; masked word by word it cost ~110 tokens on every request
-   *  (guard follow-up d08). The mark is not a word character, so nothing
-   *  written against the note joins it, and a secret laid across it is still
-   *  one match (review of d18b5c5). A text that already holds the mark gets
-   *  no exemption. */
+   *  as a whole, secret scan included, with the guard's own note and the
+   *  blocks it already masked each held as one opaque mark and put back
+   *  after, the blocks with any name learned since. The note is a constant
+   *  with no project information; masked word by word it cost ~110 tokens on
+   *  every request (guard follow-up d08). A mark is not a word character, so
+   *  nothing written against it joins it, and a secret laid across it is
+   *  still one match (review of d18b5c5). A text that already holds a mark's
+   *  characters gets no exemption. */
   applyContext(text: string): string {
-    if (!text.includes(MODEL_NOTE) || text.includes(NOTE_MARK)) return this.applyText(text)
-    return this.applyText(text.split(MODEL_NOTE).join(NOTE_MARK)).split(NOTE_MARK).join(MODEL_NOTE)
+    const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
+    if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
+      return this.applyText(text)
+    const mark = (i: number) => `\u0000${'\u0001'.repeat(i + 1)}\u0000`
+    let marked = text
+    held.forEach((h, i) => {
+      marked = marked.split(h).join(mark(i))
+    })
+    let out = this.applyText(marked)
+    held.forEach((h, i) => {
+      const back =
+        h === MODEL_NOTE ? h : applyMap(h, this.map, this.context('unknown'), { scanned: true })
+      out = out.split(mark(i)).join(back)
+    })
+    return out
   }
 
   /** What masking knows about a text of `language` (spec 050). */
@@ -639,21 +668,29 @@ export class Guard {
     // What any scan of this result destroys is removed from all of it, as
     // written, before anything is masked: no repeat of a credential on
     // another line, in another field or in a source's literal can reach the
-    // map or the model (security reviews of 75fe4c0 and fe5078c). Enum
-    // fields are left for the last scan, which withholds the result.
-    this.destroyed.learn(destroyedValues(texts))
+    // map or the model (security reviews of 75fe4c0 and fe5078c). Learned
+    // from what the model would be sent, after raw-only lines are dropped
+    // (review of 99325ba). Enum fields are left for the last scan, which
+    // withholds the result.
     const strip = (s: string) => redactKnown(s, this.destroyed)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      this.destroyed.learn(destroyedValues([raw], this.map))
       return this.maskMessage(strip(raw), args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
+    const sent: string[] = []
+    deepRewrite(outcome.result, (s) => {
+      sent.push(s)
+      return s
+    })
+    this.destroyed.learn(destroyedValues(sent, this.map))
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -680,30 +717,27 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line))))
               .join('\n')
           : fn(s, ctx)
+      // Swept already, above: each string is scanned once here.
       const apply = (s: string) =>
-        perLine(s, (t, c) => applyMap(t, working, c, { known: this.destroyed }))
-      // What a field pass already scanned for credentials, as written: the
-      // pass over every string only replaces the names the map has since
-      // learned there. Scanned again, the masked text would be judged as text,
-      // and a placeholder that looks like key material destroyed.
-      const scanned = new Set<string>()
-      const once = (s: string) => {
-        const out = apply(s)
-        scanned.add(out)
-        return out
-      }
-      const again = (s: string) =>
-        scanned.has(s) ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true })) : apply(s)
+        perLine(s, (t, c) => applyMap(t, working, c, { known: this.destroyed, swept: true }))
+      // A listed field, already scanned for credentials as written, only has
+      // the names the map has learned since replaced in the pass over every
+      // string; every other field is masked in full. Told apart by where the
+      // string stands, never by what it says (review of 99325ba).
+      const listed = new Set(policy.kind === 'fields' ? policy.fields.map((f) => f.path) : [])
+      const again = (s: string, path: string) =>
+        listed.has(path)
+          ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true }))
+          : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
       else if (policy.kind === 'deep') value = deepRewrite(value, apply)
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
-            if (field.mode === 'apply') return once(s)
+            if (field.mode === 'apply') return apply(s)
             const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
             Object.assign(working, scrubbed.additions)
             Object.assign(additions, scrubbed.additions)
-            scanned.add(scrubbed.text)
             return scrubbed.text
           })
           if (!r.ok)
@@ -715,7 +749,7 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewrite(value, again, new Set(policy.keep))
+        value = deepRewritePaths(value, again, new Set(policy.keep))
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).

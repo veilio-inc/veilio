@@ -155,12 +155,13 @@ export function register(on: any, options: Options = {}) {
     const state = g.index?.state
     if (state === 'new' || state === 'indexing')
       await g.indexProject(deadline(next)).catch(() => undefined)
-    // A credential with its key in one is removed from the others too.
+    // A credential with its key in one is removed from the others too; each
+    // text is scanned once.
     const given: string[] = Array.isArray(e.context) ? e.context : []
-    const [typed, ...rest] = g.applyTogether([e.text, ...given], (t) => t)
-    const text = g.applyText(typed!, 'prompt')
+    const [scan] = g.learnTogether([e.text, ...given])
+    const text = g.applyText(e.text, 'prompt', scan)
     const context = Array.isArray(e.context)
-      ? rest.map((c: string) => g.applyContext(c))
+      ? given.map((c: string) => g.applyContext(c))
       : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
@@ -184,11 +185,14 @@ export function register(on: any, options: Options = {}) {
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
-    const texts = g.applyTogether(
-      r.blocks.map((b: { text: string }) => b.text),
-      (t) => g.applyText(t)
-    )
-    const blocks = r.blocks.map((b: { text: string }, i: number) => ({ ...b, text: texts[i] }))
+    const raw = r.blocks.map((b: { text: string }) => b.text)
+    const scans = g.learnTogether(raw)
+    // Remembered, so the copy Claude Code passes back as an attachment is
+    // not judged a second time.
+    const blocks = r.blocks.map((b: { text: string }, i: number) => ({
+      ...b,
+      text: g.remember(g.applyText(raw[i]!, 'result', scans[i])),
+    }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 

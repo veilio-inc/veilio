@@ -131,9 +131,10 @@ describe('survivingSecrets', () => {
   })
 
   it('reads back every placeholder form the map holds, legacy ones included', () => {
-    const map = { __P1__: 'Zx9kQ2mLpWq7Rt5vYb3nHc8d', __S12__: 'Tr0ub4dor3xzQ' }
-    expect(survivingSecrets('token: "__P1__"', map)).not.toEqual([])
-    expect(survivingSecrets('password = "__S12__"', map)).not.toEqual([])
+    const map = { __P1__: 'Zx9kQ2mLpW', __S12__: 'Tr0ub4dor' }
+    // Each placeholder stands for part of a credential written around it.
+    expect(survivingSecrets('token: "__P1__q7Rt5vYb3nHc8dWw2Xx1"', map)).not.toEqual([])
+    expect(survivingSecrets('password = "__S12__3xzQ"', map)).not.toEqual([])
   })
 
   it('reads a placeholder whole: one key is not read inside a longer one', () => {
@@ -193,7 +194,7 @@ describe('restoreArgs', () => {
 describe('redactKnown', () => {
   it('a 1 MB base64 blob holding a secret thousands of times is redacted fast and whole', () => {
     const secret = 'xk9mq2'
-    const chunk = `${secret}AbCdEfGh0123456789+/`
+    const chunk = `${secret} AbCdEfGh0123456789+/ `
     const blob = chunk.repeat(Math.ceil(1_000_000 / chunk.length))
     const started = performance.now()
     const known = new Destroyed()
@@ -201,6 +202,17 @@ describe('redactKnown', () => {
     const out = redactKnown(blob, known)
     expect(performance.now() - started).toBeLessThan(10_000)
     expect(out).not.toContain(secret)
+  })
+
+  it('the rest of a key a rule only partly took goes with it, in its slot and bare', () => {
+    const core = 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY12'
+    const key = `${core}${'Zq8vB3nM1kL0pW-_'.repeat(14)}`
+    const known = new Destroyed()
+    const out = applyMap(`aws_secret_access_key = "${key}"\nlog: ${key} done\n`, {}, undefined, {
+      known,
+    })
+    expect(out).not.toContain('Zq8vB3nM1kL0pW')
+    expect(out).not.toContain('wJalrXUtn')
   })
 
   it('a value that repeats inside itself is found once per occurrence, fast', () => {
@@ -211,19 +223,6 @@ describe('redactKnown', () => {
     const out = redactKnown(blob, known)
     expect(performance.now() - started).toBeLessThan(10_000)
     expect(out).not.toContain('a'.repeat(20))
-  })
-
-  it('the run-on takes dashes and underscores, as a key does', () => {
-    const known = new Destroyed()
-    known.learn(['abcdef'])
-    expect(redactKnown('x abcdef-12_ y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
-  })
-
-  it('a run-on after a value is taken whole, however long', () => {
-    const known = new Destroyed()
-    known.learn(['abcdef'])
-    const tail = 'Zq8vB3nM1kL0pW'.repeat(15)
-    expect(redactKnown(`x abcdef${tail} y`, known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
   })
 })
 
@@ -308,5 +307,49 @@ describe('a batch with one value too long', () => {
       'x __REDACTED_CREDENTIAL_1002__ __REDACTED_CREDENTIAL_1003__ y'
     )
     expect(redactKnown(`a ${'k'.repeat(16_384)} b`, known)).not.toContain('kkkk')
+  })
+})
+
+describe('what the session learns', () => {
+  it('a password that is one plain word is not learned', () => {
+    const known = new Destroyed()
+    applyMap('postgres://postgres:postgres@localhost:5432/app', {}, undefined, { known })
+    expect(known.values).toEqual([])
+  })
+
+  it('a value the map holds is never learned', () => {
+    const known = new Destroyed()
+    applyMap(
+      "session_token = 'acme_billing_session_token_v2'",
+      { __STR__1: 'acme_billing_session_token_v2' },
+      undefined,
+      { known }
+    )
+    expect(known.values).toEqual([])
+  })
+
+  it('a learned value is removed as a whole word, never from inside one', () => {
+    const known = new Destroyed()
+    known.learn(['Xk9mQ2vL7'])
+    expect(redactKnown('a Xk9mQ2vL7 b getXk9mQ2vL7Report c', known)).toBe(
+      'a __REDACTED_CREDENTIAL_1001__ b getXk9mQ2vL7Report c'
+    )
+  })
+
+  it('two secrets side by side are two tokens', () => {
+    const known = new Destroyed()
+    known.learn(['Qx7!', 'Rz8!'])
+    expect(redactKnown('x Qx7!Rz8! y', known)).toBe(
+      'x __REDACTED_CREDENTIAL_1001____REDACTED_CREDENTIAL_1002__ y'
+    )
+  })
+
+  it('the last scan reads placeholders back without building a regex per map', () => {
+    const map: Record<string, string> = {}
+    for (let i = 1; i <= 20_000; i++) map[`__VAR__${i}`] = `name${i}`
+    const started = performance.now()
+    // A fresh copy per call, as afterTool and maskMessage pass one.
+    for (let i = 0; i < 200; i++) survivingSecrets(`x = __VAR__${i} y`, { ...map })
+    expect(performance.now() - started).toBeLessThan(3_000)
   })
 })

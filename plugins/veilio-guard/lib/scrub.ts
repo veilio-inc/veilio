@@ -265,31 +265,72 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
   return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
 }
 
-/** The values a scan of `text` as written destroys, six characters or more:
- *  fewer, removed everywhere, would take ordinary words with them. */
-function destroyedIn(text: string, scan: ReturnType<typeof scanSecrets>): string[] {
-  const found = scan.findings.filter((f) => f.redacted && f.length >= 6)
+/** A credential's value worth removing wherever it appears again: six
+ *  characters or more and key material by its own look, at least two kinds of
+ *  character (letters and digits, two cases, a symbol). A plain word such as
+ *  `postgres`, a structural rule's finding in a docker-compose URL, is
+ *  removed where its rule finds it and nowhere else: learned, it ate every
+ *  `import postgres` after it (review of 99325ba). */
+function credentialLike(value: string): boolean {
+  if (value.length < 6) return false
+  const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((k) => k.test(value)).length
+  return kinds >= 2
+}
+
+/** Where each destroyed finding stands in `text`: its start, the end of what
+ *  the rule took, and the end of the key characters that run on after it (a
+ *  rule may take only part of a longer key). */
+function destroyedSpans(
+  text: string,
+  scan: ReturnType<typeof scanSecrets>
+): { start: number; matched: number; end: number }[] {
+  const found = scan.findings.filter((f) => f.redacted)
   if (found.length === 0) return []
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-  return found.flatMap((f) => {
+  return found.map((f) => {
     const start = (starts[f.line - 1] ?? 0) + f.column - 1
-    // What the rule took, and its whole extent: a rule may have taken only
-    // part of a longer key, and either may appear alone elsewhere.
     let end = start + f.length
     while (end < text.length && KEY_CHAR.test(text[end]!)) end++
-    const matched = text.slice(start, start + f.length)
-    return end > start + f.length ? [matched, text.slice(start, end)] : [matched]
+    return { start, matched: start + f.length, end }
   })
+}
+
+export type ScanResult = ReturnType<typeof scanSecrets>
+
+const mapNames = new WeakMap<SymbolMap, ReadonlySet<string>>()
+/** The names a map holds, which are masked reversibly and never destroyed. */
+function namesOf(map: SymbolMap): ReadonlySet<string> {
+  let set = mapNames.get(map)
+  if (!set) mapNames.set(map, (set = new Set(Object.values(map))))
+  return set
+}
+
+/** The values worth learning from a scan of `text`: what each rule took and
+ *  its whole extent, when credential-like and not a name the map holds. */
+function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: SymbolMap): string[] {
+  const names = namesOf(map)
+  const out: string[] = []
+  for (const { start, matched, end } of destroyedSpans(text, scan)) {
+    const core = text.slice(start, matched)
+    if (names.has(core)) continue
+    for (const v of end > matched ? [core, text.slice(start, end)] : [core])
+      if (credentialLike(v)) out.push(v)
+  }
+  return out
 }
 
 /** Every value the scans of a whole result destroy, so that a secret found in
  *  one string of it (a Grep line, a field) is removed from all of them
  *  (security review of 75fe4c0). */
-export function destroyedValues(texts: readonly string[]): string[] {
+export function destroyedValues(
+  texts: readonly string[],
+  map: SymbolMap = {},
+  scan?: ScanResult
+): string[] {
   const values = new Set<string>()
   for (const text of texts)
-    for (const value of destroyedIn(text, scanSecrets(text, 'redact'))) values.add(value)
+    for (const value of learnable(text, scan ?? scanSecrets(text, 'redact'), map)) values.add(value)
   return [...values]
 }
 
@@ -298,42 +339,6 @@ export function destroyedValues(texts: readonly string[]): string[] {
 const MAX_SPANS = 100_000
 const MAX_VALUE = 16_384
 
-/** The credentials a session has destroyed, held in memory only, each with
- *  one token: the same secret reads as the same token everywhere, two
- *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
- *  from the tokens a single scan writes. */
-export class Destroyed {
-  private tokens = new Map<string, string>()
-  private next = 1001
-  learn(values: readonly string[]): void {
-    // Every value is kept, one too long to search for by its bounded prefix;
-    // then a too-long one fails the text that holds it (the caller withholds
-    // it). The others are never dropped (review of 600a53c).
-    let tooLong = false
-    for (const value of values) {
-      const v = value.length > MAX_VALUE ? value.slice(0, MAX_VALUE) : value
-      if (v.length < value.length) tooLong = true
-      if (v !== '' && !this.tokens.has(v))
-        this.tokens.set(v, `__REDACTED_CREDENTIAL_${this.next++}__`)
-    }
-    if (tooLong) throw new Error('a destroyed credential too long to remove safely')
-  }
-  get values(): string[] {
-    return [...this.tokens.keys()]
-  }
-  tokenFor(value: string): string {
-    return this.tokens.get(value) ?? '__REDACTED_CREDENTIAL__'
-  }
-}
-
-/** `text` with every occurrence of every value removed, with all the key
- *  characters that run on after it: a rule matches a credential in its
- *  context, the same value elsewhere, bare, is the same secret, and a rule
- *  that took only part of a secret leaves the rest beside its value. The
- *  occurrences of one value do not overlap, so the search is one pass per
- *  value; overlapping spans of different values are merged and take the
- *  longest one's token. Run on text as written, before any masking, so no
- *  repeat of a value can reach the map. */
 /** The shortest shift at which `value` matches itself (its length when it
  *  never does), from the prefix function. */
 function periodOf(value: string): number {
@@ -346,24 +351,73 @@ function periodOf(value: string): number {
   return value.length - (border[value.length - 1] ?? 0)
 }
 
+/** The credentials a session has destroyed, held in memory only, each with
+ *  one token: the same secret reads as the same token everywhere, two
+ *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
+ *  from the tokens a single scan writes. Only credential-like values are
+ *  swept from later texts; every destroyed value has a token. */
+export class Destroyed {
+  private tokens = new Map<string, string>()
+  private sweep = new Map<string, number>()
+  private list: string[] | null = []
+  private next = 1001
+  learn(values: readonly string[]): void {
+    // Every value is kept, one too long to search for by its bounded prefix;
+    // then a too-long one fails the text that holds it (the caller withholds
+    // it). The others are never dropped (review of 600a53c).
+    let tooLong = false
+    for (const value of values) {
+      const v = value.length > MAX_VALUE ? value.slice(0, MAX_VALUE) : value
+      if (v.length < value.length) tooLong = true
+      if (v === '' || this.sweep.has(v)) continue
+      this.tokenFor(v)
+      this.sweep.set(v, periodOf(v))
+      this.list = null
+    }
+    if (tooLong) throw new Error('a destroyed credential too long to remove safely')
+  }
+  /** The values swept from later texts, with each one's period. */
+  get values(): string[] {
+    return (this.list ??= [...this.sweep.keys()])
+  }
+  periodOf(value: string): number {
+    return this.sweep.get(value) ?? periodOf(value)
+  }
+  tokenFor(value: string): string {
+    let token = this.tokens.get(value)
+    if (!token) this.tokens.set(value, (token = `__REDACTED_CREDENTIAL_${this.next++}__`))
+    return token
+  }
+}
+
+const WORD_CHAR = /[A-Za-z0-9_$]/
+
+/** `text` with every occurrence of every learned value removed where it
+ *  stands as a whole word: never from inside a longer word, which is a name
+ *  the masking judges, and never with anything after it (review of
+ *  99325ba). A run that keeps repeating a value's period is one span, and the
+ *  search never goes back; spans of different values that overlap are merged
+ *  and take the longest one's token, spans that only touch stay two. Run on
+ *  text as written, before any masking, so no repeat reaches the map. */
 export function redactKnown(text: string, known: Destroyed): string {
   const values = known.values
   if (values.length === 0) return text
   const spans: [number, number, string][] = []
   for (const value of values) {
-    // The next occurrence can start one period on, where the value overlaps
-    // itself (`Qx7!Qx7!` in `Qx7!Qx7!Qx7!`); one with no overlap, a whole
-    // length on. Either way the search never goes back.
-    // A run that keeps repeating the value's period (`aaaa` in a megabyte of
-    // `a`) is one span: covered while the text continues the period, and the
-    // search goes on after it, never back.
-    const period = periodOf(value)
+    const period = known.periodOf(value)
+    const wordStart = WORD_CHAR.test(value[0]!)
+    const wordEnd = WORD_CHAR.test(value[value.length - 1]!)
     for (let i = text.indexOf(value); i !== -1;) {
       let j = i + value.length
       while (j < text.length && text[j] === text[j - period]) j++
-      spans.push([i, j, value])
-      if (spans.length > MAX_SPANS)
-        throw new Error('too many occurrences of a destroyed credential to remove them safely')
+      const whole =
+        !(wordStart && i > 0 && WORD_CHAR.test(text[i - 1]!)) &&
+        !(wordEnd && j < text.length && WORD_CHAR.test(text[j]!))
+      if (whole) {
+        spans.push([i, j, value])
+        if (spans.length > MAX_SPANS)
+          throw new Error('too many occurrences of a destroyed credential to remove them safely')
+      }
       // A value that repeats at more than one shift can start again inside
       // the run and cross its end: the search resumes where that is still
       // possible, at least one period on (review of 600a53c).
@@ -373,25 +427,12 @@ export function redactKnown(text: string, known: Destroyed): string {
   if (spans.length === 0) return text
   spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
   const merged: [number, number, string][] = []
-  const add = (start: number, end: number, value: string) => {
+  for (const [start, end, value] of spans) {
     const last = merged[merged.length - 1]
-    if (last && start <= last[1]) {
+    if (last && start < last[1]) {
       last[1] = Math.max(last[1], end)
       if (value.length > last[2].length) last[2] = value
     } else merged.push([start, end, value])
-  }
-  for (const [start, end, value] of spans) add(start, end, value)
-  // Each merged span takes every key character that runs on after it,
-  // however many: a capped run-on leaves the tail of a long key (security
-  // review of 69d4619). The cost is bounded instead: the run-on of a span
-  // starts where the last one stopped, so the text is read once.
-  const once = merged.splice(0)
-  let reach = 0
-  for (const [start, end, value] of once) {
-    let to = Math.max(end, reach)
-    while (to < text.length && KEY_CHAR.test(text[to]!)) to++
-    reach = to
-    add(start, to, value)
   }
   let result = ''
   let at = 0
@@ -406,31 +447,33 @@ export function applyMap(
   text: string,
   map: SymbolMap,
   ctx: MaskContext = NO_CONTEXT,
-  options: { scanned?: boolean; known?: Destroyed } = {}
+  options: { scanned?: boolean; known?: Destroyed; scan?: ScanResult; swept?: boolean } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
   // once, a Read's source the engine masked): only the names the map has
   // since learned are replaced.
   if (options.scanned) return replaceAround(text, map, ctx)
-  // Credentials are found in the text as written, before any name is
-  // replaced, and nothing the map holds overrides what the scan finds
-  // (security review of a162a37).
-  // Every value this text destroys, with every one the session has, is
-  // removed first under its one token; the scan then takes what is left.
   const known = options.known ?? new Destroyed()
-  const first = scanSecrets(text, 'redact')
-  known.learn(destroyedIn(text, first))
-  const swept = redactKnown(text, known)
-  const scan = swept === text ? first : scanSecrets(swept, 'redact')
-  let redacted = scan.code
-  // A rule can take fewer characters than the secret had, leaving a residue
-  // beside its token (`__REDACTED_AWS_SECRET_1__3`). Scanning again takes the
-  // token and the residue together. Only after a pass that redacted something.
-  for (let pass = 0; pass < 3 && (swept !== text || redacted !== swept); pass++) {
-    const again = scanSecrets(redacted, 'redact').code
-    if (again === redacted) break
-    redacted = again
+  // Credentials are found in the text as written, before any name is
+  // replaced (security review of a162a37). Each finding is removed where it
+  // stands, with the key characters that run on after it, under its value's
+  // one token; a value the map holds is a name masked reversibly, kept for
+  // its placeholder and never learned (review of 99325ba).
+  const scan = options.scan ?? scanSecrets(text, 'redact')
+  known.learn(learnable(text, scan, map))
+  const names = namesOf(map)
+  let redacted = ''
+  let at = 0
+  for (const { start, matched, end } of destroyedSpans(text, scan)) {
+    if (start < at) continue
+    const core = text.slice(start, matched)
+    if (names.has(core)) continue
+    redacted += text.slice(at, start) + known.tokenFor(core)
+    at = end
   }
+  redacted += text.slice(at)
+  // Every credential the session has destroyed, wherever it stands as a word.
+  if (!options.swept) redacted = redactKnown(redacted, known)
   let out = replaceAround(redacted, map, ctx)
   // A regulated number (an IBAN, a card, a PESEL) the map does not have yet:
   // output adds no entries, so it is removed, irreversibly.
@@ -541,29 +584,18 @@ const KEPT_MASKED = [...Object.values(REGULATED_BASES), MANUAL_BASE].filter(
   (base): base is string => typeof base === 'string'
 )
 
-type ReadBack = { re: RegExp | null; names: Map<string, string> }
-const readBacks = new WeakMap<SymbolMap, ReadBack>()
+// Every placeholder form the engine writes, legacy ones included (`__P1__`):
+// the same shape as its PLACEHOLDER_TOKEN, read whole.
+const PLACEHOLDER_IN_TEXT = /__[A-Z][A-Z0-9_]*?__\d*/g
 
 /** The text with the map's placeholders put back, in memory only, for the
- *  secret scan; those kept masked on purpose stay. Built once per map, exact
- *  keys longest first, so every placeholder form the map holds is read. */
+ *  secret scan; those kept masked on purpose stay. One pass with lookups: no
+ *  pattern is built per map (review of 99325ba). */
 function readBack(text: string, map: SymbolMap): string {
   if (!text.includes('__')) return text
-  let r = readBacks.get(map)
-  if (!r) {
-    const names = new Map<string, string>()
-    for (const [placeholder, name] of Object.entries(map))
-      if (!KEPT_MASKED.some((base) => placeholder.startsWith(base))) names.set(placeholder, name)
-    const keys = [...names.keys()].sort((x, y) => y.length - x.length)
-    r = {
-      re: keys.length ? new RegExp(`(?:${keys.map(escape).join('|')})(?![0-9])`, 'g') : null,
-      names,
-    }
-    readBacks.set(map, r)
-  }
-  if (!r.re) return text
-  const { names } = r
-  return text.replace(r.re, (p) => names.get(p) ?? p)
+  return text.replace(PLACEHOLDER_IN_TEXT, (p) =>
+    Object.hasOwn(map, p) && !KEPT_MASKED.some((base) => p.startsWith(base)) ? map[p]! : p
+  )
 }
 
 /** Credentials still in text the guard is about to hand the model, judged on
@@ -574,8 +606,19 @@ function readBack(text: string, map: SymbolMap): string {
  *  here, never sent. Redaction tokens stay, and are not credentials (guard
  *  follow-up d03a). */
 export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
-  return detectSecrets(readBack(text, map))
-    .filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
+  const real = readBack(text, map)
+  const found = detectSecrets(real).filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
+  if (found.length === 0) return []
+  // A value that is one of the map's names is masked reversibly, not a
+  // credential left behind (review of 99325ba).
+  const names = namesOf(map)
+  const starts = [0]
+  for (let i = 0; i < real.length; i++) if (real[i] === '\n') starts.push(i + 1)
+  return found
+    .filter((f) => {
+      const start = (starts[f.line - 1] ?? 0) + f.column - 1
+      return !names.has(real.slice(start, start + f.length))
+    })
     .map((f) => f.type)
 }
 
