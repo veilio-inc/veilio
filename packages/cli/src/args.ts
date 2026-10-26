@@ -313,13 +313,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '--keep-docs':
         parsed.keepDocs = true
         break
-      case '-f':
       case '--team':
         parsed.team = true
         break
       case '--device':
         parsed.device = true
         break
+      case '-f':
       case '--force':
         parsed.force = true
         break
