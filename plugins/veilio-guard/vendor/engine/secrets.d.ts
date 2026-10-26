@@ -167,7 +167,16 @@ export interface ScanOptions {
  * credential. The masking pass leaves these alone, so a credential never
  * reaches the symbol map in any `secrets` mode (founder decision 2026-10-26).
  */
-export declare function credentialSpans(code: string, options?: ScanOptions): [number, number][];
+export declare function credentialSpans(code: string, options?: ScanOptions): CredentialSpan[];
+/** Where a credential stands in a text (`credentialSpans`). */
+export interface CredentialSpan {
+    start: number;
+    end: number;
+    /** The prose reading is as likely: a single word after `password =`
+     *  (`client_secret: "disabled"`). Not a fixture, which is a credential in a
+     *  test file reported rather than destroyed. */
+    ambiguous: boolean;
+}
 /** Detect credentials in `code` without modifying it. */
 export declare function detectSecrets(code: string, options?: ScanOptions): SecretFinding[];
 /**
