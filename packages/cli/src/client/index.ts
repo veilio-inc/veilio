@@ -1,0 +1,17 @@
+// `@veilio-inc/cli/client`: the Cloud operations the CLI's commands and the MCP
+// server's map tools share (spec 052 §3). One implementation of every rule and
+// one table of words for every refusal, so the two clients cannot drift apart.
+// Nothing here prints; every operation answers an `Outcome`.
+
+export { setClientIdentity, clientIdentity, type ClientIdentity } from '../cloud.js'
+export * from './wording.js'
+export * from './maps.js'
+export * from './keys.js'
+export * from './projects.js'
+export * from './status.js'
+export {
+  personalMapsKeyExpiry,
+  personalMapsKeyPath,
+  readPersonalMapsKey,
+  removePersonalMapsKey,
+} from './personal-maps-key.js'

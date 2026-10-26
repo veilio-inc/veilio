@@ -530,16 +530,24 @@ describe('maps push --team', () => {
 
 describe('maps rm', () => {
   it('removes a map and confirms it by name, with its id (T032)', async () => {
+    // The name comes from the listing (spec 052 review), not from the map.
     fetchMock.mockImplementation(async (_url: string | URL, init?: RequestInit) =>
       init?.method === 'DELETE'
         ? new Response(null, { status: 204 })
         : json(200, {
-            id: 'abc',
-            name: 'billing',
-            scope: 'team',
-            identifier_count: 3,
-            created_at: 'x',
-            map_data: '{}',
+            personalMaps: [
+              {
+                id: 'abc',
+                name: 'billing',
+                scope: 'team',
+                identifier_count: 3,
+                created_at: 'x',
+                updated_at: 'x',
+              },
+            ],
+            teamMaps: [],
+            team: { id: TEAM_ID },
+            plan: 'team',
           })
     )
 

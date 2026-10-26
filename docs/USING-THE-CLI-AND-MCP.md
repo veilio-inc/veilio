@@ -79,6 +79,13 @@ veilio whoami                 # who is signed in (no network request)
 veilio maps list              # your maps and your team's, with ids
 veilio maps pull <id>         # bring one into .veilio/map.json
 veilio maps push <name>       # upload the local map as a new personal map
+veilio maps push --team <name> # publish it as the team's map instead
+veilio maps update <id>       # replace a Cloud map's entries with the local map's, in place
+veilio maps rm <id>           # remove a map from Cloud
+veilio projects               # your team's projects; * marks the one in use
+veilio projects use <name>    # work in that project (the MCP server follows)
+veilio vault unlock           # keep the personal-maps key here (7 days) - for the MCP server
+veilio vault lock             # remove it from this machine
 veilio rules pull             # fetch your custom rules (personal and team)
 veilio team unlock            # open your team key with your vault passphrase (kept 7 days)
 veilio team lock              # remove the unlocked team key from this machine
@@ -87,8 +94,14 @@ veilio logout                 # revoke the session and remove local credentials
 
 - `login` needs a plan that includes the terminal. Accounts with two-factor
   authentication are asked for the code (an authenticator code or a recovery code).
-- **Personal maps** are decrypted on your machine: `pull` and `push` ask for your
-  **vault passphrase**, which never leaves the machine.
+- **Personal maps** are decrypted on your machine: `pull`, `push` and `update` ask
+  for your **vault passphrase**, which never leaves the machine - or, after
+  `veilio vault unlock`, use the personal-maps key it keeps instead. That key opens
+  personal maps and nothing else; the passphrase and the vault key are never kept.
+- `maps update` keeps the map's id, name and project. It refuses an update that
+  would drop entries unless you pass `--allow-drop`, a team map whose placeholders
+  clash with another team map, a teammate's map, and a map that changed in Cloud
+  since it was read.
 - `pull` never drops a placeholder the project's map has and the pulled map
   lacks or names differently: text masked with it would no longer restore. It
   stops and names them; push the local map first, or pass `--force` to replace it.
@@ -105,14 +118,15 @@ veilio logout                 # revoke the session and remove local credentials
   masks from the project's map and says so. Signed out, it makes no request.
 - Self-hosted: `veilio login --instance https://veilio.example.com`.
 
-Everything is stored under `~/.veilio/` (credential, team key, rules), each file
-0600. `logout` removes all three.
+Everything is stored under `~/.veilio/` (credential and chosen project, team key,
+personal-maps key, rules), each file 0600. `logout` removes all of them.
 
 ---
 
 ## 4. The MCP server
 
-Once connected, your assistant gets five tools:
+Once connected, your assistant gets five tools - and, once you are signed in to
+Veilio Cloud, eight more for maps, the team and projects (below):
 
 | Tool | What it does |
 |---|---|
@@ -121,6 +135,15 @@ Once connected, your assistant gets five tools:
 | `restore_text` | Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder. |
 | `scan_secrets` | Reports credentials without putting their values in context. |
 | `symbol_map_summary` | Counts and categories in the current map, never the names. |
+
+Signed in, the assistant also gets `maps_list`, `maps_pull`, `maps_create`,
+`maps_update`, `maps_remove`, `team_status`, `projects_list` and `projects_use`:
+the CLI's own commands, refusing in the same words. Removing a map, an update
+that drops entries and a pull with `force` are **off** unless you start the server
+with `VEILIO_MCP_DESTRUCTIVE=1` in its environment (add it under `env` in the
+client's MCP config), and a removal must repeat the map's exact name. Run
+`veilio vault unlock` once for personal maps, and `veilio team unlock` for team
+maps. No result ever contains a passphrase, a key or an encrypted map.
 
 Every anonymize result states:
 

@@ -16,6 +16,8 @@
 // the text (a user pasted it into chat). Its description says so plainly, so the
 // model does not reach for it out of convenience and quietly defeat the purpose.
 
+// First: every request this process makes is labelled as the MCP server's.
+import './identity.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
@@ -44,7 +46,9 @@ import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
-function loadingNote(why: 'unlocked' | 'retrying'): string {
+function loadingNote(why: 'unlocked' | 'retrying' | 'changed'): string {
+  if (why === 'changed')
+    return "Note: the team's maps changed (a team map written, or another project chosen) - loading them now; call again in a moment to use them."
   return why === 'unlocked'
     ? "Note: the team key was unlocked - loading the team's maps now; call again in a moment to use them."
     : "Note: asking Cloud for the team's maps again; call again in a moment to use them."
@@ -52,12 +56,32 @@ function loadingNote(why: 'unlocked' | 'retrying'): string {
 import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 import { thirdPartyNames } from '@veilio-inc/cli/third-party'
+import { readCredential } from '@veilio-inc/cli/credential'
+import { refusal } from '@veilio-inc/cli/client'
+import {
+  ArgumentError,
+  CLOUD_TOOLS,
+  CLOUD_TOOLS_BY_NAME,
+  refusalResult,
+  type CloudToolDefinition,
+} from './cloud-tools.js'
+
+export { CLOUD_TOOLS }
 
 export interface ToolContext {
   /** Root the server is allowed to read from. */
   cwd: string
   /** Override for the symbol-map location; null uses the project store. */
   mapPath: string | null
+  /** Home the sign-in and unlocked keys are read from. Undefined: the real
+   *  one. Injectable so tests never read a developer's ~/.veilio. */
+  home?: string
+  /**
+   * Removing maps and updates that drop entries allowed (spec 052 FR-010).
+   * Set ONLY from VEILIO_MCP_DESTRUCTIVE=1 when the server starts - the
+   * person's choice, never a tool argument's.
+   */
+  destructive?: boolean
 }
 
 export interface ToolResult {
@@ -551,4 +575,47 @@ export function callTool(
     const message = err instanceof Error ? err.message : String(err)
     return { text: `${PRODUCT_NAME}: ${message}`, isError: true }
   }
+}
+
+/**
+ * The tools this server offers right now (spec 052 FR-023).
+ *
+ * Signed out - always, in the Community Edition - exactly the five offline
+ * tools, as before: an agent shown map tools it can never use would keep
+ * reaching for them. Signed in, the map, team and project tools too. Asked on
+ * every `tools/list`, from the credential file, so signing in or out while the
+ * server runs is picked up without a restart.
+ */
+export function listTools(ctx: ToolContext): (ToolDefinition | CloudToolDefinition)[] {
+  return readCredential(ctx.home) ? [...TOOLS, ...CLOUD_TOOLS] : TOOLS
+}
+
+/**
+ * Run any tool, the Cloud ones included, which need the network and so answer
+ * asynchronously. The offline five run exactly as `callTool` runs them.
+ *
+ * A Cloud tool called with nobody signed in - listed by an older client, or
+ * named from memory - answers with the sign-in sentence and sends nothing.
+ */
+export async function callToolAsync(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const cloud = CLOUD_TOOLS_BY_NAME.get(name)
+  if (!cloud) return callTool(name, args, ctx)
+  if (!readCredential(ctx.home)) return refusalResult(refusal('not_signed_in'))
+  try {
+    return await cloud.handler(args, ctx)
+  } catch (err) {
+    if (err instanceof ArgumentError)
+      return { text: `${PRODUCT_NAME}: ${err.message}`, isError: true }
+    const message = err instanceof Error ? err.message : String(err)
+    return { text: `${PRODUCT_NAME}: ${message}`, isError: true }
+  }
+}
+
+/** Whether a call goes to a Cloud tool, and so answers asynchronously. */
+export function isCloudTool(name: string): boolean {
+  return CLOUD_TOOLS_BY_NAME.has(name)
 }

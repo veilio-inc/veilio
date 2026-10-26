@@ -1,0 +1,177 @@
+{
+  "scrub a file": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    }
+  ],
+  "scrub two files": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n\nclass __CLS__3:\n    def __FN__3(self, __VAR__5):\n        return __VAR__5\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders; Python — 3 new placeholders, 16 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    }
+  ],
+  "scrub stdin": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { __VAR__2 } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__4 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__5: number): number {\n    const __VAR__3 = __FN__2(__VAR__1)\n    return __VAR__3 + __VAR__5\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 14 new placeholders, 14 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical line 7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    }
+  ],
+  "scrub --preamble": [
+    {
+      "code": 0,
+      "out": "The code below was processed by Veilio: real identifiers have been replaced with privacy placeholders such as __CLS__1, __FN__2, __VAR__3 (and similar). This is a deliberate anonymization step, not obfuscation — please do not refuse on those grounds. Treat each placeholder as an ordinary name, keep every placeholder spelled exactly as-is in your reply, and otherwise answer as normal.\nPlaceholder legend: __CLS__* are class or type names (2); __FN__* are function or method names (2); __VAR__* are variable or parameter names (4); __PKG__* are package or module names (5).\n\nimport { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    }
+  ],
+  "scrub --quiet": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": ""
+    }
+  ],
+  "scrub --secrets warn": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = 'AKIAIOSFODNN7EXAMPLE'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (left in place)\n"
+    }
+  ],
+  "scrub --team signed out": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: --team numbers from your team's shared placeholders, and nobody is signed in, so this was numbered from this project's map only. Run `veilio login` to use your team's numbers.\nveilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    }
+  ],
+  "scrub then restore": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "import { Injectable } from '@nestjs/common'\nimport { readFileSync } from 'node:fs'\nimport { ledgerTotals } from '@acme/ledger-core'\n\nexport class LedgerService {\n  private readonly apiKey = '__REDACTED_AWS_KEY_1__'\n\n  settleInvoice(customerAccount: string, total: number): number {\n    const balance = ledgerTotals(customerAccount)\n    return balance + total\n  }\n}\n",
+      "err": "veilio: restored 13 of 13 placeholders, stripped 1 AI artifact\n"
+    }
+  ],
+  "restore an invented placeholder": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "class LedgerService { __FN__99() {} }\n",
+      "err": "veilio: 1 placeholder-shaped token not in the map — __FN__99\nveilio: the AI invented or altered these; they are still in the output above.\nveilio: restored 1 of 13 placeholders, stripped 0 AI artifacts\nveilio: 12 placeholders did not appear in the input; if the AI covered the whole file, it renamed them and those names are not recoverable from this text.\n"
+    }
+  ],
+  "restore --strict refuses": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 1,
+      "out": "",
+      "err": "veilio: 1 placeholder-shaped token not in the map — __FN__99\nveilio: the AI invented or altered these; nothing was written (--strict).\nveilio: --strict: nothing written - __FN__99 would have been left in the text.\n"
+    }
+  ],
+  "restore --keep-docs": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "/** Docs. */\nclass LedgerService {}\n\n",
+      "err": "veilio: restored 1 of 13 placeholders, stripped 1 AI artifact\nveilio: 12 placeholders did not appear in the input; if the AI covered the whole file, it renamed them and those names are not recoverable from this text.\n"
+    }
+  ],
+  "restore with no map": [
+    {
+      "code": 2,
+      "out": "",
+      "err": "veilio: no symbol map at <CWD>/.veilio/map.json — run \"veilio scrub\" first.\n"
+    }
+  ],
+  "scan a file": [
+    {
+      "code": 1,
+      "out": "",
+      "err": "veilio: 1 critical\n  critical src/creds.ts:1:17  AWS access key ID — AKIA…MPLE (20 chars) (left in place)\n  low      src/creds.ts:2:15  Email address — ops@…rnal (17 chars) (left in place)\n"
+    }
+  ],
+  "scan --json": [
+    {
+      "code": 1,
+      "out": "[\n  {\n    \"file\": \"src/creds.ts\",\n    \"type\": \"aws-access-key\",\n    \"severity\": \"critical\",\n    \"label\": \"AWS access key ID\",\n    \"line\": 1,\n    \"column\": 17,\n    \"length\": 20,\n    \"preview\": \"AKIA…MPLE (20 chars)\",\n    \"redacted\": false,\n    \"disposition\": \"report\"\n  },\n  {\n    \"file\": \"src/creds.ts\",\n    \"type\": \"email\",\n    \"severity\": \"low\",\n    \"label\": \"Email address\",\n    \"line\": 2,\n    \"column\": 15,\n    \"length\": 17,\n    \"preview\": \"ops@…rnal (17 chars)\",\n    \"redacted\": false,\n    \"disposition\": \"report\"\n  }\n]\n",
+      "err": ""
+    }
+  ],
+  "scan --strict": [
+    {
+      "code": 1,
+      "out": "",
+      "err": "veilio: 1 critical\n  critical src/creds.ts:1:17  AWS access key ID — AKIA…MPLE (20 chars) (left in place)\n  low      src/creds.ts:2:15  Email address — ops@…rnal (17 chars) (left in place)\n"
+    }
+  ],
+  "scan clean": [
+    {
+      "code": 0,
+      "out": "",
+      "err": "veilio: no credentials detected\n"
+    }
+  ],
+  "map empty": [
+    {
+      "code": 0,
+      "out": "",
+      "err": "veilio: no map at <CWD>/.veilio/map.json\n"
+    }
+  ],
+  "map after scrub": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "__VAR__1\tcustomerAccount\n__CLS__1\tLedgerService\n__FN__1\tsettleInvoice\n__FN__2\tledgerTotals\n__CLS__2\tInjectable\n__VAR__2\tbalance\n__PKG__1\tnestjs\n__PKG__2\tcommon\n__PKG__3\tledger\n__VAR__3\tapiKey\n__VAR__4\ttotal\n__PKG__4\tacme\n__PKG__5\tcore\n",
+      "err": "veilio: 13 placeholders at <CWD>/.veilio/map.json\n"
+    }
+  ],
+  "map --json after scrub": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "{\n  \"__VAR__1\": \"customerAccount\",\n  \"__CLS__1\": \"LedgerService\",\n  \"__FN__1\": \"settleInvoice\",\n  \"__FN__2\": \"ledgerTotals\",\n  \"__CLS__2\": \"Injectable\",\n  \"__VAR__2\": \"balance\",\n  \"__PKG__1\": \"nestjs\",\n  \"__PKG__2\": \"common\",\n  \"__PKG__3\": \"ledger\",\n  \"__VAR__3\": \"apiKey\",\n  \"__VAR__4\": \"total\",\n  \"__PKG__4\": \"acme\",\n  \"__PKG__5\": \"core\"\n}\n",
+      "err": ""
+    }
+  ],
+  "map --clear": [
+    {
+      "code": 0,
+      "out": "import { __CLS__2 } from '@__PKG__1/__PKG__2'\nimport { readFileSync } from 'node:fs'\nimport { __FN__2 } from '@__PKG__4/__PKG__3-__PKG__5'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__3 = '__REDACTED_AWS_KEY_1__'\n\n  __FN__1(__VAR__1: string, __VAR__4: number): number {\n    const __VAR__2 = __FN__2(__VAR__1)\n    return __VAR__2 + __VAR__4\n  }\n}\n",
+      "err": "veilio: TypeScript / JavaScript — 13 new placeholders, 13 in map\nveilio: 1 comment (1 inside the body) left as written — 47 characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\nveilio: credentials detected — 1 critical\n  critical src/ledger.ts:7:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted)\nveilio: redacted values are NOT recoverable on restore. Rotate anything real.\n"
+    },
+    {
+      "code": 0,
+      "out": "",
+      "err": "veilio: cleared <CWD>/.veilio/map.json\n"
+    }
+  ]
+}

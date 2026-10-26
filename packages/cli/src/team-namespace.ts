@@ -51,6 +51,20 @@ export type TeamNamespaceResult =
        * nothing to reserve against and the caller falls back to a local floor.
        */
       teamId: string | null
+      /**
+       * Team maps that did not open with the held keys, by id and name, so a
+       * refusal or a note can say WHICH (spec 052 FR-018). An unnamed "a map
+       * could not be read" blocked every team push on staging and nobody could
+       * tell what to remove (2026-10-25). Empty on an older instance.
+       */
+      unreadable: { id: string; name: string | null }[]
+      /**
+       * The map named by `excludeMapId`, as read in the same request - so an
+       * update need not download it a second time (spec 052: the staging
+       * journey met the rate limit at about eight listings per command).
+       * `map: null` when it did not open; absent when it was not among them.
+       */
+      excluded?: { map: Record<string, string> | null }
     }
   /** Nothing to read: signed out, or not in a team. The local namespace is right. */
   | { status: 'local' }
@@ -65,6 +79,10 @@ export type TeamNamespaceResult =
  * failure either (review): there is no team to speak of.
  */
 function transient(err: unknown): boolean {
+  // A chosen project that is gone does not come back in a second either. And
+  // a rate limit is the one answer a retry makes worse: the second request
+  // counts against the same limit (staging journey, 2026-10-26).
+  if (err instanceof CloudError && (err.status === 404 || err.status === 429)) return false
   return err instanceof CloudError && (err.kind === 'unreachable' || err.kind === 'server')
 }
 
@@ -86,6 +104,17 @@ export async function resolveTeamNamespace(
     retryDelayMs?: number
     /** Give up after this long in total (the CLI's pipeline cap). */
     deadlineMs?: number
+    /**
+     * Leave this map out of the namespace: the map being UPDATED (spec 052
+     * FR-003). Checked against itself, every entry it changes would read as
+     * a clash with its own old value.
+     */
+    excludeMapId?: string
+    /**
+     * A listing this command already holds. Read again here it was a second
+     * request for the same answer, on every team push and update.
+     */
+    list?: CloudMapList
   } = {}
 ): Promise<TeamNamespaceResult> {
   const credential = readCredential(home)
@@ -101,7 +130,7 @@ export async function resolveTeamNamespace(
   })
   try {
     try {
-      return await attempt(credential, home, giveUp.signal)
+      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
@@ -110,7 +139,7 @@ export async function resolveTeamNamespace(
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
     try {
-      return await attempt(credential, home, giveUp.signal)
+      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
@@ -129,9 +158,11 @@ function describe(err: unknown): string {
 async function attempt(
   credential: Credential,
   home: string | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  excludeMapId: string | undefined,
+  given: CloudMapList | undefined
 ): Promise<TeamNamespaceResult> {
-  const list = await listMaps(credential, signal)
+  const list = given ?? (await listMaps(credential, signal))
 
   // An older self-hosted Cloud may still merge server-side; that answer needs no
   // key. It carries no aliases or conflicts - it predates both.
@@ -141,6 +172,7 @@ async function attempt(
       analysis: { namespace: list.teamNamespace, aliases: {}, conflicts: {}, highest: {} },
       conflictDetection: false,
       teamId: null,
+      unreadable: [],
     }
   }
 
@@ -149,17 +181,43 @@ async function attempt(
   const keys = await heldTeamKeys(credential, home, teamId)
   if (keys.length === 0) return { status: 'locked' }
 
-  const entries = await readTeamEntries(credential, keys, teamScopedMaps(list), signal)
-  // Every map unreadable is not a team namespace, it is a failed one.
-  if (entries.every((e) => e.map === null) && entries.length > 0) {
-    return { status: 'unavailable', reason: 'none of the team maps opened with the unlocked key' }
+  const scoped = teamScopedMaps(list)
+  const read = await readTeamEntries(credential, keys, scoped, signal)
+  const names = new Map(scoped.map((m) => [m.id, m.name]))
+  const kept = read.entries.filter((e) => e.id !== excludeMapId)
+  const excludedEntry = read.entries.find((e) => e.id === excludeMapId)
+  const unreadable = [
+    ...new Set([...read.unreadable, ...kept.filter((e) => e.map === null).map((e) => e.id)]),
+  ]
+    .filter((id) => id !== excludeMapId)
+    .map((id) => ({ id, name: names.get(id) ?? null }))
+  const entries: TeamMapEntry[] = kept.map(({ createdAt, map }) => ({ createdAt, map }))
+  // Every map unreadable is not a team namespace, it is a failed one - and
+  // that includes every map being one the SERVER could not read, which never
+  // reaches `entries` at all (code review): an empty namespace there would be
+  // a blind publish passed off as a checked one.
+  const noneRead = entries.length > 0 ? entries.every((e) => e.map === null) : unreadable.length > 0
+  if (noneRead) {
+    return {
+      status: 'unavailable',
+      reason: `none of the team maps opened with the unlocked key: ${describeMaps(unreadable)}`,
+    }
   }
   return {
     status: 'team',
     analysis: analyzeTeamNamespace(entries),
     conflictDetection: true,
     teamId,
+    unreadable,
+    ...(excludedEntry ? { excluded: { map: excludedEntry.map } } : {}),
   }
+}
+
+/** `"billing" (m-1), m-2` - the names a person recognises, beside the ids they
+ *  would type to remove one. Five at most, then a count. */
+export function describeMaps(maps: readonly { id: string; name: string | null }[]): string {
+  const shown = maps.slice(0, 5).map((m) => (m.name ? `"${m.name}" (${m.id})` : m.id))
+  return shown.join(', ') + (maps.length > 5 ? ` and ${maps.length - 5} more` : '')
 }
 
 /** A member's OWN team maps arrive under personalMaps - the listing splits by
@@ -205,43 +263,58 @@ async function readTeamEntries(
   keys: readonly { version: number; key: CryptoKeyLike }[],
   teamScoped: readonly CloudMapSummary[],
   signal: AbortSignal
-): Promise<TeamMapEntry[]> {
+): Promise<{ entries: IdentifiedEntry[]; unreadable: string[] }> {
   let bulk: Awaited<ReturnType<typeof getTeamEnvelopes>>
   try {
     bulk = await getTeamEnvelopes(credential, signal)
   } catch (err) {
-    if (err instanceof CloudError && err.status === 404) {
-      return Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys, signal)))
+    // A 404 about the PROJECT is not an old instance: it is the chosen project
+    // gone, and falling back to per-map reads would hide that.
+    if (err instanceof CloudError && err.status === 404 && !/project/i.test(err.message)) {
+      return {
+        entries: await Promise.all(teamScoped.map((m) => openTeamMap(credential, m, keys, signal))),
+        unreadable: [],
+      }
     }
     throw err
   }
-  return Promise.all(
-    bulk.maps.map(async (row): Promise<TeamMapEntry> => {
+  const entries = await Promise.all(
+    bulk.maps.map(async (row): Promise<IdentifiedEntry> => {
       try {
         const envelope = JSON.parse(row.map_data) as TeamMapEnvelope
-        return { createdAt: row.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
+        return {
+          id: row.id,
+          createdAt: row.created_at,
+          map: await decryptTeamMapWithAny(keys, envelope),
+        }
       } catch {
-        // A version this member was never granted: skipped, not fatal.
-        return { createdAt: row.created_at, map: null }
+        // A version this member was never granted: skipped, not fatal - but
+        // named, by the caller, wherever it matters (FR-018).
+        return { id: row.id, createdAt: row.created_at, map: null }
       }
     })
   )
+  // The server could not peel its own layer off these: also unreadable.
+  return { entries, unreadable: Array.isArray(bulk.unreadable) ? bulk.unreadable : [] }
 }
+
+type IdentifiedEntry = TeamMapEntry & { id: string }
 
 async function openTeamMap(
   credential: Credential,
   summary: CloudMapSummary,
   keys: readonly { version: number; key: CryptoKeyLike }[],
   signal: AbortSignal
-): Promise<TeamMapEntry> {
+): Promise<IdentifiedEntry> {
+  const id = summary.id
   try {
     const full = await getMap(credential, summary.id, signal)
     if (typeof full.map_data !== 'string')
-      return { createdAt: summary.created_at, map: full.map_data }
+      return { id, createdAt: summary.created_at, map: full.map_data }
     const envelope = JSON.parse(full.map_data) as TeamMapEnvelope
-    return { createdAt: summary.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
+    return { id, createdAt: summary.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
   } catch {
-    return { createdAt: summary.created_at, map: null }
+    return { id, createdAt: summary.created_at, map: null }
   }
 }
 

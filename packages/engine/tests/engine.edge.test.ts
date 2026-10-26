@@ -264,20 +264,40 @@ export class LedgerEntryProcessor%N% {
   }
 }
 `
-    let code = ''
-    let i = 0
-    while (code.length < 500_000) code += unit.replaceAll('%N%', String(i++))
+    const blob = (size: number): string => {
+      let code = ''
+      let i = 0
+      while (code.length < size) code += unit.replaceAll('%N%', String(i++))
+      return code
+    }
+    /** The faster of two runs: scheduling noise only ever adds time. */
+    const time = (code: string): number => {
+      let best = Infinity
+      for (let run = 0; run < 2; run++) {
+        const t0 = performance.now()
+        const { anonymized, map } = anonymize(code)
+        const { restored } = restore(anonymized, map)
+        best = Math.min(best, performance.now() - t0)
+        expect(restored).toBe(code)
+      }
+      return best
+    }
 
-    const t0 = performance.now()
-    const { anonymized, map } = anonymize(code)
-    const { restored } = restore(anonymized, map)
-    const elapsed = performance.now() - t0
-
-    expect(restored).toBe(code)
-    // Generous vs the ~180ms typical, tight enough to catch a return to
-    // quadratic substitution (which was >3s for this input).
-    expect(elapsed).toBeLessThan(1500)
-  })
+    // Warm the JIT first: a cold first run made the small input look slow and
+    // the ratio look fine, or the reverse, depending on order.
+    time(blob(50_000))
+    const small = time(blob(100_000))
+    const large = time(blob(500_000))
+    // A RATIO, not a wall-clock budget. The absolute limit (1500 ms) failed 3
+    // runs in 10 on a loaded machine - the test measured the machine, not the
+    // algorithm. Five times the input measured 8-11x the time here (the map
+    // grows with it, so a little above linear), against about 25x for the old
+    // per-identifier loop, which is quadratic. 18 separates the two.
+    expect(large / small).toBeLessThan(18)
+    // And a ceiling no linear run comes near (~180 ms typical; quadratic was >3 s).
+    expect(large).toBeLessThan(8000)
+    // Five large runs under a parallel suite; the default 5 s is for one.
+  }, 60_000)
 
   it('anonymizes a ~50KB code blob in under 500ms', () => {
     // Generate ~50KB of synthetic code with many unique identifiers
