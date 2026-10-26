@@ -288,6 +288,42 @@ describe('a destroyed credential is redacted wherever else it appears', () => {
     expect(scanSecrets(code).code).toContain('"postgresql"')
     expect(result.anonymized).not.toMatch(/__REDACTED_[A-Z_]+_\d+__(?:Client|ql)/)
   })
+  describe('credentials that touch in the text', () => {
+    const tokenAt = (out: string, key: string) =>
+      new RegExp(`${key}=(__REDACTED_[A-Z_]+_\\d+__)`).exec(out)?.[1]
+    const line = (out: string) => /const s = "([^"]*)"/.exec(out)?.[1]
+    it('overlapping: one generic token covers both, no character left', () => {
+      const code = 'PGPASSWORD=abcXYZ1 a\nMYSQL_PWD=XYZ1def2 b\nconst s = "abcXYZ1def2"\n'
+      const out = anonymize(code).anonymized
+      const covered = line(out)!
+      expect(covered).toMatch(/^__REDACTED_CREDENTIAL_\d+__$/)
+      expect(covered).not.toBe(tokenAt(out, 'PGPASSWORD'))
+      expect(covered).not.toBe(tokenAt(out, 'MYSQL_PWD'))
+    })
+    it('nested: the token of the longer credential', () => {
+      const code = 'PGPASSWORD=Kx9prod a\nMYSQL_PWD=Kx9prodpw9 b\nconst s = "Kx9prodpw9"\n'
+      const out = anonymize(code).anonymized
+      expect(line(out)).toBe(tokenAt(out, 'MYSQL_PWD'))
+    })
+    it('adjacent: one generic token covers both', () => {
+      const code = 'PGPASSWORD=abc12 a\nMYSQL_PWD=xyz34 b\nconst s = "abc12xyz34"\n'
+      const out = anonymize(code).anonymized
+      const covered = line(out)!
+      expect(covered).toMatch(/^__REDACTED_CREDENTIAL_\d+__$/)
+      expect(covered).not.toBe(tokenAt(out, 'PGPASSWORD'))
+    })
+    it('separate: each keeps its own token', () => {
+      const code = 'PGPASSWORD=abc12 a\nMYSQL_PWD=xyz34 b\nconst s = "abc12, xyz34"\n'
+      const out = anonymize(code).anonymized
+      expect(line(out)).toBe(`${tokenAt(out, 'PGPASSWORD')}, ${tokenAt(out, 'MYSQL_PWD')}`)
+    })
+    it('the generic token is new: it repeats no token already in the text', () => {
+      const code =
+        'x = "__REDACTED_CREDENTIAL_7__"\nPGPASSWORD=abcXYZ1 a\nMYSQL_PWD=XYZ1def2 b\nconst s = "abcXYZ1def2"\n'
+      const out = anonymize(code).anonymized
+      expect(line(out)).toBe('__REDACTED_CREDENTIAL_8__')
+    })
+  })
   it('a default word anywhere else beside it is redacted', () => {
     const out = anonymize('POSTGRES_PASSWORD: postgres\ncommand: echo postgres\n').anonymized
     expect(out).not.toMatch(/\bpostgres\b/)
@@ -297,5 +333,15 @@ describe('a destroyed credential is redacted wherever else it appears', () => {
     const out = anonymize(code, { path: 'tests/db.test.ts' }).anonymized
     expect(out).toContain(':postgres@')
     expect(out).toMatch(/^const postgres = 1\n/)
+  })
+})
+
+describe('spreading stays linear', () => {
+  it('many overlapping occurrences of one credential', () => {
+    const code = `PGPASSWORD=abab psql\nconst s = "${'ab'.repeat(100_000)}"\n`
+    const t = performance.now()
+    const out = anonymize(code).anonymized
+    expect(performance.now() - t).toBeLessThan(5000)
+    expect(out).not.toMatch(/abab/)
   })
 })

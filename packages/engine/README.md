@@ -119,8 +119,10 @@ written exactly as a destroyed credential is replaced by that credential's
 redaction token: every other occurrence of a destroyed credential is, in a
 string, a URL, as a name, anywhere. A credential of 4 or more characters is
 replaced wherever it stands, inside a longer name or a URL too; a shorter one
-only as a whole word. All are replaced in one pass, longest first, so one
-credential inside another is never cut. The one exception is a well-known default
+only as a whole word. Every occurrence of every credential is found on its
+own, and occurrences that overlap or touch are replaced as one span: by the
+covering credential's token, or by a new generic token where several meet, so
+no character of any of them is left. The one exception is a well-known default
 (`postgres`, `root`, `admin`, `mysql`, `sa`, `guest`, `test`, `user`,
 `password`, `changeme`, `secret`, `demo`), replaced only as a whole word, and
 left as written where it stands in a position that

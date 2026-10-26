@@ -870,31 +870,83 @@ function nonSecretPosition(text: string, at: number, word: string): boolean {
 
 /**
  * The text with every other occurrence of a destroyed credential replaced by
- * that credential's own redaction token, so a password used again - in a
- * string, a URL, inside a longer name - is never shown (1.12.1 security
- * reviews).
+ * a redaction token, so a password used again - in a string, a URL, inside a
+ * longer name - is never shown (1.12.1 security reviews).
  *
- * One pass with one alternation, longest value first, so a shorter credential
- * can never cut into a longer one that contains it. A value of 4 or more
- * characters is replaced wherever it stands; a shorter one, and a well-known
- * default word, only as a whole word - and a default word in a position that
- * is structurally not a secret (`nonSecretPosition`) stays as written.
+ * Every occurrence of every value is found on its own, so credentials that
+ * overlap or nest are all seen. A value of 4 or more characters counts
+ * wherever it stands; a shorter one, and a well-known default word, only as a
+ * whole word - and a default word in a position that is structurally not a
+ * secret (`nonSecretPosition`) stays as written. Overlapping and adjacent
+ * occurrences are merged, and each merged span is replaced once: by the
+ * token of the credential that covers it whole, or, where several distinct
+ * credentials meet, by a new generic token that stands for none of them. No
+ * character of any of them is left between two tokens.
  */
 function spreadRedactions(text: string, tokens: ReadonlyMap<string, string>): string {
-  if (tokens.size === 0) return text
-  const values = [...tokens.keys()].sort((a, b) => b.length - a.length)
-  const alternatives = values.map((value) =>
-    value.length >= 4 && !DEFAULT_WORDS.has(value.toLowerCase())
-      ? escapeRegex(value)
-      : `(?<![A-Za-z0-9_$])${escapeRegex(value)}(?![A-Za-z0-9_$])`
-  )
-  return text.replace(
-    new RegExp(alternatives.join('|'), 'g'),
-    (m, offset: number, whole: string) =>
-      DEFAULT_WORDS.has(m.toLowerCase()) && nonSecretPosition(whole, offset, m)
-        ? m
-        : (tokens.get(m) as string)
-  )
+  type Hit = { start: number; end: number; value: string }
+  const hits: Hit[] = []
+  for (const value of tokens.keys()) {
+    const isDefault = DEFAULT_WORDS.has(value.toLowerCase())
+    const wholeWord = value.length < 4 || isDefault
+    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1)) {
+      const end = at + value.length
+      if (wholeWord && (IDENT_CHAR.test(text[at - 1] ?? '') || IDENT_CHAR.test(text[end] ?? ''))) {
+        continue
+      }
+      if (isDefault && nonSecretPosition(text, at, value)) continue
+      hits.push({ start: at, end, value })
+    }
+  }
+  if (hits.length === 0) return text
+  hits.sort((x, y) => x.start - y.start || y.end - x.end)
+  // Merged in one sweep, carrying each group's end, so a text of many
+  // overlapping occurrences stays linear after the sort.
+  const groups: { start: number; end: number; whole?: Hit }[] = []
+  for (const hit of hits) {
+    const last = groups[groups.length - 1]
+    if (last !== undefined && hit.start <= last.end) {
+      if (hit.end > last.end) {
+        last.end = hit.end
+        last.whole = undefined
+      }
+    } else {
+      // Sorted by start, then longest first: the first hit of a group is the
+      // only one that can cover it whole.
+      groups.push({ start: hit.start, end: hit.end, whole: hit })
+    }
+  }
+  let generic = highestRedaction(text, 'CREDENTIAL')
+  const genericFor = new Map<string, string>()
+  let out = ''
+  let at = 0
+  for (const group of groups) {
+    let token = group.whole !== undefined ? tokens.get(group.whole.value) : undefined
+    if (token === undefined) {
+      const span = text.slice(group.start, group.end)
+      token = genericFor.get(span)
+      if (token === undefined) {
+        token = `__REDACTED_CREDENTIAL_${++generic}__`
+        genericFor.set(span, token)
+      }
+    }
+    out += text.slice(at, group.start) + token
+    at = group.end
+  }
+  return out + text.slice(at)
+}
+
+/** A character of an identifier, for whole-word matching. */
+const IDENT_CHAR = /[A-Za-z0-9_$]/
+
+/** The highest n of the `__REDACTED_<base>_n__` tokens in `text`, so a new
+ *  token never repeats one already there. */
+function highestRedaction(text: string, base: string): number {
+  let highest = 0
+  for (const m of text.matchAll(new RegExp(`__REDACTED_${base}_(\\d+)__`, 'g'))) {
+    highest = Math.max(highest, Number(m[1]))
+  }
+  return highest
 }
 
 /** Whether [start, end) overlaps any of `spans`. */
