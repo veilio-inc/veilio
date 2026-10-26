@@ -791,7 +791,8 @@ function urlHost(text, at, word) {
 function spreadRedactions(text, tokens, known) {
     const hits = [];
     // Placeholders already in the text are never split - but only real ones: a
-    // redaction token this engine minted, or a key of the map given. Anything
+    // redaction token this call minted, or a key of the map given (never one
+    // recognised by its shape alone). Anything
     // else that merely looks like a placeholder is an ordinary name and is
     // redacted whole when it holds a credential (fail closed; 1.12.1 review).
     // Precomputed once, so the pass stays linear however many occurrences
@@ -799,7 +800,7 @@ function spreadRedactions(text, tokens, known) {
     // the run of identifier characters around each character starts and ends.
     const inToken = new Uint8Array(text.length);
     for (const m of text.matchAll(new RegExp(PLACEHOLDER_SCAN))) {
-        if (!known.has(m[0]) && !/^__REDACTED_[A-Z_]+_\d+__$/.test(m[0]))
+        if (!known.has(m[0]))
             continue;
         inToken.fill(1, m.index, m.index + m[0].length);
     }
@@ -942,7 +943,10 @@ export function anonymize(code, options = {}) {
     // regulated passes: they must never see, or partly rewrite, a credential's
     // later occurrence (1.12.1 review).
     const destroyed = redactionTokensOf(scan);
-    const redacted = spreadRedactions(scan.code, destroyed, new Set(Object.keys(existingMap)));
+    // The placeholders a spread may leave whole: keys of the map given, and the
+    // redaction tokens this call's scan minted.
+    const trusted = new Set([...Object.keys(existingMap), ...destroyed.values()]);
+    const redacted = spreadRedactions(scan.code, destroyed, trusted);
     // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
     // at 3 for the __CLS__ base). Without this, a subsequent call with an
     // existingMap that already contains __CLS__1 would generate a fresh __CLS__1
@@ -1016,9 +1020,7 @@ export function anonymize(code, options = {}) {
     const keptCredentials = new Map(scan.regulated
         .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
         .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`]));
-    const source = applyRegulatedMasks(keptCredentials.size > 0
-        ? spreadRedactions(marked, keptCredentials, new Set(Object.keys(existingMap)))
-        : marked, regulated, map, reverseExisting, namedCounters);
+    const source = applyRegulatedMasks(keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked, regulated, map, reverseExisting, namedCounters);
     // What Node wrote in a pasted stack trace - V8's message wording, its own
     // frames - is neither extracted nor substituted (traces.ts). Blanked rather
     // than cut, so offsets and lines still match `source`.

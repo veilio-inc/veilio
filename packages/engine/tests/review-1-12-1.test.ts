@@ -79,4 +79,9 @@ describe('1.12.1 review', () => {
     expect(r.anonymized).not.toContain('44051401359')
     expect(Object.values(r.map)).not.toContain('44051401359')
   })
+
+  it('9d: a token-shaped name the call did not mint is not trusted', () => {
+    const r = anonymize('PGPASSWORD=Kx9prodpw psql\nconst x = __REDACTED_Kx9prodpw_1__\n')
+    expect(r.anonymized).not.toContain('Kx9prodpw')
+  })
 })

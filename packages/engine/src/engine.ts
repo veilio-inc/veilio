@@ -933,7 +933,8 @@ function spreadRedactions(
   type Hit = { start: number; end: number; value: string }
   const hits: Hit[] = []
   // Placeholders already in the text are never split - but only real ones: a
-  // redaction token this engine minted, or a key of the map given. Anything
+  // redaction token this call minted, or a key of the map given (never one
+  // recognised by its shape alone). Anything
   // else that merely looks like a placeholder is an ordinary name and is
   // redacted whole when it holds a credential (fail closed; 1.12.1 review).
   // Precomputed once, so the pass stays linear however many occurrences
@@ -941,7 +942,7 @@ function spreadRedactions(
   // the run of identifier characters around each character starts and ends.
   const inToken = new Uint8Array(text.length)
   for (const m of text.matchAll(new RegExp(PLACEHOLDER_SCAN))) {
-    if (!known.has(m[0]) && !/^__REDACTED_[A-Z_]+_\d+__$/.test(m[0])) continue
+    if (!known.has(m[0])) continue
     inToken.fill(1, m.index, m.index + m[0].length)
   }
   // Running count of placeholder characters: a span holds one when the
@@ -1113,7 +1114,10 @@ export function anonymize(
   // regulated passes: they must never see, or partly rewrite, a credential's
   // later occurrence (1.12.1 review).
   const destroyed = redactionTokensOf(scan)
-  const redacted = spreadRedactions(scan.code, destroyed, new Set(Object.keys(existingMap)))
+  // The placeholders a spread may leave whole: keys of the map given, and the
+  // redaction tokens this call's scan minted.
+  const trusted = new Set([...Object.keys(existingMap), ...destroyed.values()])
+  const redacted = spreadRedactions(scan.code, destroyed, trusted)
 
   // Seed namedCounters from pre-existing placeholders (e.g. __CLS__3 → counter
   // at 3 for the __CLS__ base). Without this, a subsequent call with an
@@ -1206,9 +1210,7 @@ export function anonymize(
       .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`] as const)
   )
   const source = applyRegulatedMasks(
-    keptCredentials.size > 0
-      ? spreadRedactions(marked, keptCredentials, new Set(Object.keys(existingMap)))
-      : marked,
+    keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked,
     regulated,
     map,
     reverseExisting,
