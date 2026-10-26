@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import { credentialPath, readCredential } from '@veilio-inc/cli/credential'
 import { contextFromArgv } from '../src/index.js'
+import { respond } from '../src/server.js'
 import { callTool, callToolAsync, type ToolContext } from '../src/tools.js'
 import {
   namespaceSettled,
@@ -137,6 +138,15 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
     expect(r.text).toContain('Namespace: team')
   })
 
+  it('maps_update of a map outside the variable’s project: one clause, the same as the CLI', async () => {
+    saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
+    const r = await callToolAsync('maps_update', { id: billingMap }, ctxWith(env))
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain(`No map ${billingMap} in project tools (set by VEILIO_PROJECT).`)
+    expect(r.text).not.toContain('the project in use')
+    expect(r.text).not.toContain('(from VEILIO_PROJECT)')
+  })
+
   it('a stored choice changed meanwhile does not unpin it: the namespace is kept', async () => {
     await primeNamespace(home, { env })
     // `veilio projects use tools` in a terminal, while this server runs.
@@ -144,6 +154,74 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
     expect(refreshNamespaceIfStale()).toBeNull()
     const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
     expect(r.text).toContain('__CLS__5')
+  })
+})
+
+describe('the namespace follows the project the variable names NOW, not the name it was read under', () => {
+  const env = { VEILIO_PROJECT: 'tools' }
+
+  it('renamed, and another project given the old name: the next anonymize numbers from the new one', async () => {
+    await primeNamespace(home, { env })
+    // In the web app, while this server runs: tools -> tools-old, and a NEW
+    // project takes the name. The variable's value is unchanged.
+    cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
+    cloud.projects.push({ id: 'p-tools-2', name: 'tools' })
+    cloud.add({
+      scope: 'team',
+      owner: TEAMMATE,
+      name: 'new-tools-names',
+      project: 'p-tools-2',
+      map_data: await sealTeam({ __CLS__5: 'Zeta' }),
+    })
+    // Zeta is __CLS__5 in the NEW project. Under the old project's namespace
+    // (Gamma is __CLS__5) it would be numbered above it: __CLS__6.
+    const r = await callToolAsync('anonymize_text', { text: 'export class Zeta {}' }, ctxWith(env))
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toContain('__CLS__5')
+    expect(r.text).not.toContain('__CLS__6')
+    expect(r.text).toContain('Namespace: team')
+    // And the old project's names are not in it.
+    const again = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class Gamma {}' },
+      ctxWith(env)
+    )
+    expect(again.text).not.toMatch(/__CLS__5\b.*Gamma/)
+    expect(again.text).toContain('__CLS__6')
+  })
+
+  it('renamed, and nothing given the old name: refused, naming the variable', async () => {
+    await primeNamespace(home, { env })
+    cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
+    const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('VEILIO_PROJECT is "tools"')
+    expect(r.text).not.toContain('__CLS__')
+  })
+
+  it('over the server’s own entry point the masking call is the checked one', async () => {
+    await primeNamespace(home, { env })
+    cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
+    const call = {
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'anonymize_text', arguments: { text: 'export class Gamma {}' } },
+    }
+    const answer = respond(call, ctxWith(env))
+    expect(answer).toBeInstanceOf(Promise)
+    const body = JSON.stringify(await answer)
+    expect(body).toContain('VEILIO_PROJECT is')
+    // Without the variable the masking call stays synchronous, as before.
+    expect(respond(call, ctxWith({}))).not.toBeInstanceOf(Promise)
+  })
+
+  it('nothing changed: the check is one project listing, and no namespace reload', async () => {
+    await primeNamespace(home, { env })
+    cloud.requests = []
+    const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    expect(r.text).toContain('__CLS__5')
+    expect(cloud.requests.map((x) => `${x.method} ${x.path}`)).toEqual(['GET /api/projects'])
   })
 })
 

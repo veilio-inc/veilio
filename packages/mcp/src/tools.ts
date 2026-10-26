@@ -41,7 +41,12 @@ import {
   type LanguageOption,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
-import { getNamespace, namespaceLine, refreshNamespaceIfStale } from './namespace.js'
+import {
+  confirmProject,
+  getNamespace,
+  namespaceLine,
+  refreshNamespaceIfStale,
+} from './namespace.js'
 import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
@@ -57,7 +62,7 @@ import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 import { thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
-import { refusal } from '@veilio-inc/cli/client'
+import { projectOverride, refusal } from '@veilio-inc/cli/client'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -614,7 +619,12 @@ export async function callToolAsync(
   ctx: ToolContext
 ): Promise<ToolResult> {
   const cloud = CLOUD_TOOLS_BY_NAME.get(name)
-  if (!cloud) return callTool(name, args, ctx)
+  if (!cloud) {
+    // A tool that numbers placeholders from the team namespace asks first
+    // which project VEILIO_PROJECT names now (see confirmProject).
+    if (needsProjectCheck(name, ctx)) await confirmProject()
+    return callTool(name, args, ctx)
+  }
   if (!readCredential(ctx.home)) return refusalResult(refusal('not_signed_in'))
   try {
     return await cloud.handler(args, ctx)
@@ -626,7 +636,18 @@ export async function callToolAsync(
   }
 }
 
-/** Whether a call goes to a Cloud tool, and so answers asynchronously. */
-export function isCloudTool(name: string): boolean {
-  return CLOUD_TOOLS_BY_NAME.has(name)
+/**
+ * Whether a call must be checked against the project VEILIO_PROJECT names now
+ * before it runs: it reserves numbers from the team namespace (anonymize), and
+ * the server's environment pins a project, whose name can move to another
+ * project meanwhile. Without the variable nothing is asked.
+ */
+function needsProjectCheck(name: string, ctx: ToolContext): boolean {
+  return name.startsWith('anonymize_') && projectOverride(ctx.env) !== null
+}
+
+/** Whether a call answers asynchronously: a Cloud tool, or a masking tool
+ *  that first confirms the project the variable names. */
+export function isCloudTool(name: string, ctx?: ToolContext): boolean {
+  return CLOUD_TOOLS_BY_NAME.has(name) || (ctx !== undefined && needsProjectCheck(name, ctx))
 }

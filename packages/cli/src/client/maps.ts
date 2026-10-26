@@ -438,7 +438,6 @@ async function teamForWrite(
   // The credential this command already scoped: resolving VEILIO_PROJECT a
   // second time would be a second listing for the same answer.
   const found = await resolveTeamNamespace(ctx.home, { excludeMapId, list, credential })
-  if (found.status === 'refused') return { ok: false, refusal: found.refusal }
   if (found.status === 'local') return refuse('not_in_team')
   if (found.status === 'locked') return refuse('team_key_mismatch')
   if (found.status === 'unavailable') {
@@ -810,7 +809,8 @@ async function fetchEnvelope(
 /** The chosen project's name, or its id when the server cannot say. */
 async function projectName(credential: ScopedCredential): Promise<string> {
   // VEILIO_PROJECT was resolved from a listing already: no second one.
-  if (credential.projectFrom) return projectLabel(credential)!
+  // Bare: the refusal's own wording says the variable chose it.
+  if (credential.projectFrom) return credential.projectName ?? credential.project!
   try {
     const found = (await listProjects(credential)).projects.find((p) => p.id === credential.project)
     return found?.name ?? credential.project!

@@ -21,7 +21,7 @@ import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
-import { projectOverride, type Env } from '@veilio-inc/cli/client'
+import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
 
 /**
@@ -82,7 +82,12 @@ let priming: Promise<ResolvedNamespace> | null = null
 /** The CLI's resolver, shaped for this server (spec 028: one resolver for both). */
 async function fetchNamespace(
   home: string | undefined,
-  opts: { retryDelayMs?: number; deadlineMs?: number; env?: Env }
+  opts: {
+    retryDelayMs?: number
+    deadlineMs?: number
+    env?: Env
+    onProject?: (project: string | null) => void
+  }
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
   if (found.status !== 'team') return localFrom(found)
@@ -125,16 +130,21 @@ export function primeNamespace(home?: string, opts: PrimeOptions = {}): Promise<
     const generation = ++primeGeneration
     primedProject = project
     settledFlag = false
-    priming = fetchNamespace(home, { deadlineMs: STARTUP_DEADLINE_MS, ...opts }).then(
-      (resolved) => {
-        const still = scopeKey(home, opts.env) === project
-        if (generation === primeGeneration && still) {
-          current = resolved
-          settledFlag = true
-        }
-        return current
+    // The id the fetch resolved the project to: what the cache is FOR.
+    let resolvedId: string | null = null
+    priming = fetchNamespace(home, {
+      deadlineMs: STARTUP_DEADLINE_MS,
+      ...opts,
+      onProject: (id) => (resolvedId = id),
+    }).then((resolved) => {
+      const still = scopeKey(home, opts.env) === project
+      if (generation === primeGeneration && still) {
+        current = resolved
+        primedProjectId = resolvedId
+        settledFlag = true
       }
-    )
+      return current
+    })
   }
   return priming
 }
@@ -152,6 +162,13 @@ let lastAttemptAt = 0
 let primed = false
 /** The project the cached namespace is for (spec 052 FR-013). */
 let primedProject: string | null = null
+/**
+ * The project ID the cached namespace was read for. VEILIO_PROJECT's value is
+ * only a name, and a name can move: the project renamed, another one given the
+ * old name, the value unchanged. The value says when to ASK again
+ * (`confirmProject`); the id says whether the answer changed.
+ */
+let primedProjectId: string | null = null
 /** Set by a team write through this server: the cache no longer matches. */
 let invalidated = false
 
@@ -182,17 +199,10 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
     // project it started with, and is dropped (security review).
     const project = scopeKey(primedWith.home, primedWith.opts.env)
     if (project !== primedProject) {
-      // The cached namespace is the OLD project's, and numbering with it -
-      // even for the one call that noticed - would put that project's
-      // placeholders into this one's store (FR-013). Until the new project's
-      // maps load there is no team namespace, and that is said.
-      current = localFrom({
-        status: 'unavailable',
-        reason: "the team's maps for the project now in use are still loading",
-      })
-      invalidated = false
-      priming = null
-      void primeNamespace(primedWith.home, primedWith.opts)
+      // The cached namespace is the OLD project's (FR-013): see
+      // reloadForAnotherProject. Until the new project's maps load there is no
+      // team namespace, and that is said.
+      void reloadForAnotherProject()
       return 'changed'
     }
     // The same project, changed by a write made here: reload when nothing is
@@ -227,6 +237,51 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
 }
 let settledFlag = true
 
+/** Drop what is cached and load again, saying so: the old answer was for
+ *  another project, and numbering with it - even once - would put that
+ *  project's placeholders into this one's store (FR-013). */
+function reloadForAnotherProject(): Promise<ResolvedNamespace> {
+  current = localFrom({
+    status: 'unavailable',
+    reason: "the team's maps for the project now in use are still loading",
+  })
+  invalidated = false
+  priming = null
+  return primeNamespace(primedWith.home, primedWith.opts)
+}
+
+/**
+ * With VEILIO_PROJECT set, ask the server which project the value names NOW
+ * (one project listing) and compare its ID with the one the cache was read
+ * for. A different id - or a value that names nothing any more - drops the
+ * cache and waits for the reload, so the call that follows numbers from the
+ * right project. Without the variable, and before the first prime, it asks
+ * nothing: the stored choice is checked by `refreshNamespaceIfStale`.
+ *
+ * Run before a tool that reserves numbers (anonymize) and by the tools that
+ * write to the team's maps. A listing that fails changes nothing: Cloud being
+ * down is not a reason to throw a good namespace away.
+ */
+export async function confirmProject(): Promise<void> {
+  if (!primed) return
+  const { home, opts } = primedWith
+  const value = projectOverride(opts.env)
+  if (value === null) return
+  if (priming && !settledFlag) await priming
+  const credential = readCredential(home)
+  if (!credential) return
+  let now: string | null
+  try {
+    const scoped = await resolveOverride(credential, value)
+    now = scoped.ok ? (scoped.value.project ?? null) : null
+  } catch {
+    return
+  }
+  const refusedAlready = current.found.status === 'refused'
+  if (now === null ? refusedAlready : now === primedProjectId) return
+  await reloadForAnotherProject()
+}
+
 /** Test support and callers that can wait: the in-flight (or last) resolution. */
 export function namespaceSettled(): Promise<ResolvedNamespace> {
   return priming ?? Promise.resolve(current)
@@ -248,6 +303,7 @@ export function resetNamespaceCache(): void {
   primedWith = { opts: {} }
   primed = false
   primedProject = null
+  primedProjectId = null
   invalidated = false
   primeGeneration++
 }

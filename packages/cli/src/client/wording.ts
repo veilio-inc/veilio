@@ -138,7 +138,9 @@ export const WORDING: Record<RefusalCode, Words> = {
     resolve: 'Run `veilio maps list` for the ids.',
   }),
   map_not_in_project: (p) => ({
-    message: `No map ${p.id} in project ${p.project} (the project in use).`,
+    message: `No map ${p.id} in project ${p.project} (${
+      p.override ? 'set by VEILIO_PROJECT' : 'the project in use'
+    }).`,
     resolve: p.override
       ? 'Set VEILIO_PROJECT to another project, or unset it: `veilio projects` lists them.'
       : '`veilio projects use <other>` to work in another one.',

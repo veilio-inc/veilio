@@ -316,7 +316,10 @@ describe('the wording says when the variable chose the project', () => {
     saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
     const r = await run(['maps', 'update', mine], { VEILIO_PROJECT: 'tools' })
     expect(r.code).toBe(EXIT_ERROR)
-    expect(r.err).toContain(`No map ${mine} in project tools (from VEILIO_PROJECT)`)
+    // One clause, not "(from VEILIO_PROJECT) (the project in use)".
+    expect(r.err).toContain(`No map ${mine} in project tools (set by VEILIO_PROJECT).`)
+    expect(r.err).not.toContain('the project in use')
+    expect(r.err).not.toContain('(from VEILIO_PROJECT)')
     expect(r.err).toContain('Set VEILIO_PROJECT to another project, or unset it')
     expect(cloud.writes()).toHaveLength(0)
   })

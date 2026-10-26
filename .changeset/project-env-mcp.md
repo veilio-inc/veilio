@@ -8,3 +8,4 @@
 - A value naming no project your team works in, or a name two projects share, makes those tools return an error naming it. The masking tools refuse rather than mask from the local map.
 - `projects_use` still stores a choice, and warns that the server's `VEILIO_PROJECT` overrides it.
 - Two servers in one HOME with different values scope independently.
+- The namespace is kept for the project's id, not for the value's spelling. If that project is renamed and another is given the old name while the server runs, the next `anonymize_*` call numbers from the new one (one project listing per masking call while the variable is set).

@@ -8,3 +8,4 @@
 - A value naming no project your team works in, or a name two projects share, is refused, naming the value and `VEILIO_PROJECT`. Nothing falls back to the stored choice or the default, and no request carries another project. `scrub` and `restore` refuse too, rather than number from the local map.
 - `maps list`, `whoami` and `projects` say "(from VEILIO_PROJECT)" when the variable chose the project. `projects` marks it, and still lists when the value names none. `projects use` stores the choice and warns that the variable overrides it in this shell.
 - Signed out, nothing changes.
+- A map that is not in the variable's project is refused as "No map X in project P (set by VEILIO_PROJECT).", one clause.
