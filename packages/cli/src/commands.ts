@@ -501,14 +501,16 @@ COMMANDS
   scrub [files...]     Mask identifiers and redact credentials. Reads stdin when
                        no file is given. Writes the symbol map to ${STORE_DIR}/map.json.
   restore [files...]   Swap placeholders back and strip AI-generated noise.
-  scan [files...]      Detect credentials only; never rewrites. Exits 1 when it
-                       finds something — use it in a pre-commit hook or CI.
+  scan [files...]      Detect credentials only; never rewrites. Exits 1 on a
+                       credential (with --strict, on any finding) — use it in
+                       a pre-commit hook or CI.
   map                  Show the current symbol map (--clear to wipe it).
 
   Everything above works offline, with no account. The commands below connect a
   Veilio Cloud subscription and are the only ones that touch the network.
 
-  login                Sign in to Veilio Cloud (--instance for self-hosted).
+  login                Sign in to Veilio Cloud (--instance for self-hosted,
+                       --device to approve in a browser).
   logout               Revoke the session and forget the credential.
   whoami               Show the signed-in account. Answers from disk; makes no
                        request, so it works with the instance down.
@@ -554,6 +556,8 @@ OPTIONS
       --days <n>          vault unlock, team unlock: keep the key n days (1-30)
       --allow-drop        maps update: allow dropping entries the Cloud map has
   -q, --quiet             Suppress the all-clear summary (findings always show)
+      --device            login: approve the sign-in in a browser instead of
+                          typing a password here
       --instance <url>    login: the Veilio instance to sign in to. Defaults to
                           the public Cloud; https required (localhost excepted)
   -h, --help              Show this help

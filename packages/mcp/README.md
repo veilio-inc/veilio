@@ -137,9 +137,12 @@ result from this server states which namespace produced its placeholders:
 
 - **`team`** — resolved against the team's shared dictionary, read at startup,
   so every teammate's agent produces the same placeholder for the same
-  identifier. Reused for the life of the process, with one exception: run
-  `veilio team unlock` after the server started and the next call says it is
-  loading the team's maps rather than making you restart the agent.
+  identifier. Kept for the life of the process, and read again when it no
+  longer matches: after `veilio team unlock` is run while the server is up
+  (the next call says it is loading the team's maps), after a team map is
+  created or updated, or any map removed, through this server, after `projects_use`
+  changes the project, and, with `VEILIO_PROJECT` set, when the project that
+  name points to changes (checked at most every 30 seconds).
 - **`local`** — resolved locally: not signed in, no team key unlocked on this
   machine, offline, or the plan doesn't include shared dictionaries. This is the
   normal, fully-functional state for anyone not on a paid team — the server never
@@ -230,7 +233,7 @@ to restore it — but they are not handed to a teammate as the team's meaning.
 
 ## Design properties
 
-- **Zero runtime dependencies.** JSON-RPC framing is implemented directly. Pulling a transitive tree into the component that reads your source would undercut the product's own claim.
+- **No third-party runtime dependencies.** The only two are `@veilio-inc/engine` and `@veilio-inc/cli`, both from this repository. JSON-RPC framing is implemented directly. Pulling a transitive tree into the component that reads your source would undercut the product's own claim.
 - **stdout is protocol only.** Diagnostics go to stderr; a stray write to stdout corrupts the stream.
 - **Tool errors, not protocol errors.** Failures come back as `isError` content so the model can correct itself, rather than aborting the call.
 - **Redaction is one-way.** Credentials never enter the symbol map, so `restore_text` cannot bring them back.

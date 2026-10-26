@@ -31,7 +31,7 @@ signed-in `scrub` offline, `veilio logout` first.
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file.                                                                                                                                   |
 | `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
-| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on findings.                                                                                                                                           |
+| `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on a credential; with `--strict`, on any finding.                                                                                                      |
 | `map`                | Show the symbol map (`--clear` to wipe it).                                                                                                                                                             |
 
 ## Cloud sync (Individual plan and above)
@@ -160,8 +160,8 @@ with the real names:
   own map, not against a team namespace of four hundred entries.
 
 The map commands are clients of `GET /api/maps`, `GET /api/maps/:id`,
-`POST /api/maps` and `PATCH /api/maps/:id` — the exact same routes the browser uses, behind the exact
-same entitlement check. There is no CLI-shaped API and nothing here can reach
+`POST /api/maps`, `PATCH /api/maps/:id` and `DELETE /api/maps/:id` — the exact
+same routes the browser uses, behind the exact same entitlement check. There is no CLI-shaped API and nothing here can reach
 a plan feature the web app couldn't.
 
 ## Options
@@ -285,17 +285,11 @@ contain the credential it is reporting.
 
 ### Pre-commit
 
-Via the [pre-commit framework](https://pre-commit.com):
+The [pre-commit framework](https://pre-commit.com) is not supported yet. This
+repository has no `.pre-commit-hooks.yaml`, so there is no `veilio-scan` hook
+to name, and no `v*` tag to pin it to.
 
-```yaml
-repos:
-  - repo: https://github.com/veilio-inc/veilio
-    rev: v0.1.0
-    hooks:
-      - id: veilio-scan
-```
-
-Or a plain git hook:
+Use a plain git hook:
 
 ```bash
 cp packages/cli/hooks/pre-commit .git/hooks/pre-commit

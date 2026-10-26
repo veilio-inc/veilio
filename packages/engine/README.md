@@ -105,10 +105,10 @@ tokens, PEM private keys and connection-string passwords are redacted; emails
 and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
 
-Every finding also says what actually happened to the value, in `disposition`:
+Every finding also says what the scan did with the value, in `disposition`:
 `'destroy'` (redacted, unrecoverable), `'mask'` (masked reversibly — see below),
-or `'report'` (left exactly as written). `redacted` remains the coarse boolean a
-badge can read; `disposition` is the finer answer.
+or `'report'` (the scan left it in place). `redacted` remains the coarse boolean
+a badge can read; `disposition` is the finer answer.
 
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
 Under `'warn'` nothing is redacted: findings come back with `disposition:
@@ -226,8 +226,7 @@ Three rules bound what the reversibility can cost:
   is not that.
 
 Under `'warn'` and `'off'` these values are left in place like any other finding
-— masking them is part of acting on a scan, not part of reporting one. (They
-are not credentials, so they may still be masked as ordinary identifiers.)
+— masking them is part of acting on a scan, not part of reporting one.
 
 ## Privacy & security properties
 
@@ -252,10 +251,11 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
-  - `options.existingMap` — continue numbering from a previous session
+  - `options.existingMap` — continue numbering from a previous session:
+    `anonymize(next, { existingMap: map })`
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
-  - an unknown key throws a `TypeError` that names it and lists the valid
+  - an unknown key throws a TypeError that names it and lists the valid
     options. It used to be ignored, or worse: an object of unknown keys was
     taken as a positional map, so `{ style: 'plain' }` (an option removed
     before 1.0.0) was stored in the map. `restore`, `scanSecrets` and

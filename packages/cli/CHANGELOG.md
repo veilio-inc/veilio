@@ -1,5 +1,22 @@
 # @veilio-inc/cli
 
+## 0.6.1
+
+### Patch Changes
+
+- [#165](https://github.com/veilio-inc/veilio/pull/165) [`008b374`](https://github.com/veilio-inc/veilio/commit/008b3747cb03a3939e5a751936a6d33fb69b024b) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `-f` is `--force` again, as the README and `--help` say. Since 0.5.4 it set `--team` instead, so `veilio maps pull <id> -f` asked for a team map and forced nothing.
+
+- [#162](https://github.com/veilio-inc/veilio/pull/162) [`d8413e3`](https://github.com/veilio-inc/veilio/commit/d8413e3848da6ccd7bc115d52b14df0c1dfc7ed5) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Requires `@veilio-inc/engine` 1.11.0 or later, the engine these packages are tested with.
+
+- [#161](https://github.com/veilio-inc/veilio/pull/161) [`678afe2`](https://github.com/veilio-inc/veilio/commit/678afe26a1042fafc7735187ad43aebd6c1f9f3c) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `VEILIO_PROJECT=<name|id>` overrides the project chosen with `veilio projects use`, for that process only. A CI runner starts clean, so a pipeline can now pick its project without a stored choice.
+
+  - The order is `VEILIO_PROJECT`, then the stored choice, then none. An empty value counts as unset. The value is resolved through Cloud's own project listing and is never written down.
+  - A value naming no project your team works in, or a name two projects share, is refused, naming the value and `VEILIO_PROJECT`. Nothing falls back to the stored choice or the default, and no request carries another project. `scrub` and `restore` refuse too, rather than number from the local map.
+  - `maps list`, `whoami` and `projects` say "(from VEILIO_PROJECT)" when the variable chose the project. `projects` marks it, and still lists when the value names none. `projects use` stores the choice and warns that the variable overrides it in this shell.
+  - Signed out, nothing changes.
+  - A map that is not in the variable's project is refused as "No map X in project P (set by VEILIO_PROJECT).", one clause.
+  - The variable applies to team maps only: `maps update`, `maps rm` and `maps pull` of a personal map ignore it, even a bad value. `maps pull` of a team map outside the variable's project is refused, naming it. `projects use` under the variable says the choice was saved and the variable is in use, and `maps list` says the variable chose the project.
+
 ## 0.6.0
 
 ### Minor Changes

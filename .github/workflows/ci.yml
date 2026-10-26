@@ -91,6 +91,8 @@ jobs:
           echo "it is stale, the range check in tests/package-graph.test.ts compares two old"
           echo "numbers and passes. Set the version to ${PUBLISHED} and widen the"
           echo "@veilio-inc/engine range in packages/cli and packages/mcp in the same commit."
+          echo "Copy the engine-v${PUBLISHED} release notes into packages/engine/CHANGELOG.md too;"
+          echo "tests/engine-changelog.test.ts checks it. See docs/PUBLISHING.md, After an engine release."
 
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             echo "::warning::Engine version is out of sync (npm ${PUBLISHED}, repo ${LOCAL}). This predates your branch — not failing your PR."
