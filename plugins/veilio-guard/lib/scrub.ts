@@ -410,6 +410,33 @@ function randomLooking(value: string): boolean {
   return interleaved || (letters > 0 && short / letters >= 1 / 3)
 }
 
+// Rules whose values carry their own punctuation: a dotted bearer token, a
+// connection string's password. Their shape is no sign of a path.
+const PUNCTUATED_RULES = new Set(['bearer-token', 'basic-auth', 'connection-string'])
+
+/** Path-, URL- or version-shaped: starts like a path (`/`, `~/`, `./`, a
+ *  drive letter) or a URL (`scheme://`), or is dotted or slashed segments
+ *  that each read as a word, a name or a number (`v1.2.3-Beta.4`,
+ *  `example.org/v2/Path`). Base64 and dotted tokens are not: their segments
+ *  are random (review of 6b5d4b0). */
+function pathShaped(value: string): boolean {
+  if (/^(?:\/|~\/|\.\.?\/|[A-Za-z]:\\|[a-z][a-z0-9+.-]*:\/\/)/.test(value)) return true
+  if (!/[/.:\\]/.test(value)) return false
+  return value
+    .split(/[/.:\\-]+/)
+    .filter(Boolean)
+    .every(
+      (seg) => /^(?:[A-Za-z]+[0-9]*|[0-9]+)$/.test(seg) && (seg.length < 6 || !randomLooking(seg))
+    )
+}
+
+/** An environment variable's name, or another all-caps reference, used as a
+ *  value (`'google-api-key': 'GOOGLE_KEY'`): a reference, not a secret, left
+ *  as written (founder decision 2). One that looks random is not a name. */
+function referenceName(value: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(value) && /[A-Z]{2}/.test(value) && !randomLooking(value)
+}
+
 /** A value with structural signal, the only kind the session learns and
  *  sweeps everywhere (research R4, founder decision #5). Never one holding
  *  whitespace or the punctuation of paths, URLs and versions (`/ \ . :`),
@@ -426,9 +453,14 @@ function randomLooking(value: string): boolean {
  *  learned. A provider-format key is learned by its rule, whatever it looks
  *  like. A low-entropy value is not carried forward (reviews of 5347c7c and
  *  0ef312b). */
-export function highSignal(value: string): boolean {
-  if (/[\s/\\.:]/.test(value) || !randomLooking(value)) return false
-  const core = value.replace(/[_-]/g, '')
+export function highSignal(value: string, type = ''): boolean {
+  if (/\s/.test(value)) return false
+  // A path, URL or version is never a credential to carry, whatever its
+  // entropy; a bearer, basic-auth or connection-string value is, its
+  // punctuation being the token's own (review of 6b5d4b0).
+  if (!PUNCTUATED_RULES.has(type) && pathShaped(value)) return false
+  if (!randomLooking(value)) return false
+  const core = value.replace(/[_\-/.:+=\\]/g, '')
   if (/[A-Za-z]/.test(core) && /[0-9]/.test(core) && core.length >= 8 && shannonEntropy(core) >= 3)
     return true
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_-]/].filter((c) => c.test(value)).length
@@ -771,7 +803,7 @@ export function applyMap(
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     if (start < at) continue
     const core = text.slice(start, matched)
-    if (names.has(core) && HEURISTIC.has(type)) continue
+    if (HEURISTIC.has(type) && (names.has(core) || referenceName(core))) continue
     redacted += text.slice(at, start) + known.tokenFor(core)
     at = end
   }
@@ -919,7 +951,8 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
   return found
     .filter((f) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1
-      return !HEURISTIC.has(f.type) || !names.has(real.slice(start, start + f.length))
+      const v = real.slice(start, start + f.length)
+      return !HEURISTIC.has(f.type) || !(names.has(v) || referenceName(v))
     })
     .map((f) => f.type)
 }

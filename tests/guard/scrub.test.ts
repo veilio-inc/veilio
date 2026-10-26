@@ -570,3 +570,41 @@ describe('owned maps (review of 0ef312b)', () => {
     expect(map.__CLS__2).toBe('Beta')
   })
 })
+
+describe('punctuated tokens and references (review of 6b5d4b0, founder decision 2)', () => {
+  const learned = (text: string, v: string) => {
+    const known = new Destroyed()
+    applyMap(text, {}, undefined, { known })
+    return known.values.includes(v)
+  }
+  it('a base64 secret with / and + is learned and swept', () => {
+    const v = 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY'
+    expect(learned(`aws_secret = "${v}"`, v)).toBe(true)
+  })
+  it('a three-part dotted bearer token is learned and swept', () => {
+    const v = 'aB3dE5fG.hI9jK1lM.nO5pQ7rS'
+    expect(learned(`Authorization: Bearer ${v}`, v)).toBe(true)
+    const known = new Destroyed()
+    applyMap(`Authorization: Bearer ${v}`, {}, undefined, { known })
+    expect(redactKnown(`curl -H x${v}y`, known)).not.toContain('hI9jK1lM')
+  })
+  it('the path, URL and version shapes still are not', () => {
+    for (const v of [
+      '/usr/lib/python3.11',
+      'https://example.org/v2/Path',
+      'v1.2.3-Beta.4',
+      'C:\\Users\\Bob2',
+      '/run/secrets/Client2',
+    ])
+      expect(highSignal(v)).toBe(false)
+  })
+  it('an environment variable name used as a value is left as written', () => {
+    expect(applyMap(`const kinds = { 'google-api-key': 'GOOGLE_KEY' }`, {})).toContain(
+      "'GOOGLE_KEY'"
+    )
+    expect(applyMap(`password = "AWS_SECRET_ACCESS_KEY"`, {})).toContain('"AWS_SECRET_ACCESS_KEY"')
+    expect(survivingSecrets(`password = "AWS_SECRET_ACCESS_KEY"`)).toEqual([])
+    // An all-caps value that looks random is a credential still.
+    expect(applyMap(`password = "X7K9Q2LM4PZ8"`, {})).not.toContain('X7K9Q2LM4PZ8')
+  })
+})
