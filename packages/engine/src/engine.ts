@@ -829,9 +829,9 @@ function withoutCredentials(map: SymbolMap, found: ReadonlySet<string>): SymbolM
   return out ?? map
 }
 
-// Well-known default and common weak passwords that are also ordinary names
-// or words in the same files (an image, a scheme, a user, a database).
-// 1.12.1 review.
+// Well-known default names that are also ordinary names in the same files (an
+// image, a scheme, a host, a user, a database). Only these get the
+// non-secret-position exemption. 1.12.1 review.
 const DEFAULT_WORDS: ReadonlySet<string> = new Set([
   'postgres',
   'root',
@@ -845,8 +845,13 @@ const DEFAULT_WORDS: ReadonlySet<string> = new Set([
   'changeme',
   'secret',
   'demo',
-  // Common weak passwords: word boundaries keep `passport` and `compass`
-  // whole (review of #172). Lower case: the lookup lower-cases the value.
+])
+
+// Common weak passwords. They are only matched as whole words, so `passport`
+// and `compass` stay whole, but no position exempts them: wherever one stands
+// as a word it is redacted (review of #172). Lower case: the lookup
+// lower-cases the value.
+const WEAK_PASSWORDS: ReadonlySet<string> = new Set([
   'pass',
   'pwd',
   'passw0rd',
@@ -865,7 +870,8 @@ const DEFAULT_WORDS: ReadonlySet<string> = new Set([
 /**
  * Whether the occurrence of `word` at `at` stands where it cannot be a secret:
  * an image name (`image: postgres`), a URL scheme (`postgres://`), a URL user
- * (`://postgres:` or `://postgres@`), a URL host (`@postgres:5432`), a user field (`user: postgres`,
+ * (`://postgres:` or `://postgres@`), a URL host (`@postgres:5432`, see
+ * `urlHost`), a user field (`user: postgres`,
  * `POSTGRES_USER=postgres`), or a compose service name (a key on its own
  * line, or an item of a list such as `depends_on`).
  */
@@ -879,10 +885,28 @@ function nonSecretPosition(text: string, at: number, word: string): boolean {
     /\bimage\s*:\s*["']?$/i.test(before) ||
     after === '://' ||
     (/:\/\/$/.test(before) && /^[:@]/.test(after)) ||
-    (/:\/\/[^\s/@]*@$/.test(before) && /^(?::\d|\/|[?#"'\s]|$)/.test(after)) ||
+    urlHost(text, at, word) ||
     /(?:\b|_)user(?:name)?["']?\s*[:=]\s*["']?$/i.test(before) ||
     (/^\s*(?:-\s*)?$/.test(before.slice(before.lastIndexOf('\n') + 1)) && /^:?\s*$/.test(rest))
   )
+}
+
+/**
+ * Whether `word` at `at` is the host of a URL: the authority after `://` is
+ * read up to its first `/`, whitespace or quote, and the host is what follows
+ * the LAST `@` in it - so `://u:pw@x@postgres` is read the way a URL parser
+ * reads it, never by a nearby `@`.
+ */
+function urlHost(text: string, at: number, word: string): boolean {
+  const scheme = text.lastIndexOf('://', at)
+  if (scheme < 0) return false
+  const from = scheme + 3
+  const stop = text.slice(from).search(/[/\s"'?#]/)
+  const authority = text.slice(from, stop < 0 ? text.length : from + stop)
+  if (at < from || at + word.length > from + authority.length) return false
+  const hostStart = from + authority.lastIndexOf('@') + 1
+  const hostEnd = hostStart + authority.slice(hostStart - from).search(/:|$/)
+  return at === hostStart && at + word.length === hostEnd
 }
 
 /**
@@ -904,8 +928,9 @@ function spreadRedactions(text: string, tokens: ReadonlyMap<string, string>): st
   type Hit = { start: number; end: number; value: string }
   const hits: Hit[] = []
   for (const value of tokens.keys()) {
-    const isDefault = DEFAULT_WORDS.has(value.toLowerCase())
-    const wholeWord = value.length < 4 || isDefault
+    const lower = value.toLowerCase()
+    const isDefault = DEFAULT_WORDS.has(lower)
+    const wholeWord = value.length < 4 || isDefault || WEAK_PASSWORDS.has(lower)
     for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1)) {
       const end = at + value.length
       if (wholeWord && (IDENT_CHAR.test(text[at - 1] ?? '') || IDENT_CHAR.test(text[end] ?? ''))) {

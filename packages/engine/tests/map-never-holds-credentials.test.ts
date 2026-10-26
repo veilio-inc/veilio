@@ -393,3 +393,33 @@ describe('a URL host is a non-secret position for a default word', () => {
     expect(out).not.toContain('Kx9prodpw')
   })
 })
+
+// Security review of #172: a weak password gets no position exemption, and a
+// URL host is read the way a URL parser reads it.
+describe('weak passwords are never exempt by position', () => {
+  for (const [label, code] of [
+    ['a key on its own line', 'PGPASSWORD=qwerty psql\nservices:\n  qwerty:\n'],
+    ['a list item', 'PGPASSWORD=qwerty psql\ndepends_on:\n  - qwerty\n'],
+    ['an image', 'PGPASSWORD=qwerty psql\nimage: qwerty\n'],
+    ['a URL host', 'PGPASSWORD=qwerty psql\nURL=https://u@qwerty:5432/x\n'],
+  ] as const) {
+    it(`qwerty as ${label} is redacted`, () => {
+      expect(anonymize(code).anonymized).not.toMatch(/\bqwerty\b/)
+    })
+  }
+})
+
+describe('the URL host is the part after the last @ of the authority', () => {
+  it('a default word between two @ is not taken for the host', () => {
+    const out = anonymize('PGPASSWORD=postgres psql\nURL=https://u:postgres@x@db:5432/a\n').anonymized
+    expect(out).not.toMatch(/u:postgres@/)
+  })
+  it('a default word inside the userinfo before the last @ is not the host', () => {
+    const out = anonymize('PGPASSWORD=postgres psql\nURL=https://u@postgres:pw@db/x\n').anonymized
+    expect(out).not.toMatch(/u@postgres:/)
+  })
+  it('a default word after the last @ is the host and stays', () => {
+    const out = anonymize('PGPASSWORD=postgres psql\nURL=https://u:pw@postgres:5432/a\n').anonymized
+    expect(out).toContain('@postgres:5432/a')
+  })
+})
