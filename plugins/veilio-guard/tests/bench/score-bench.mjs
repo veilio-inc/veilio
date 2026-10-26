@@ -56,6 +56,11 @@ out.push(
   `${meta.date.slice(0, 10)} · model \`${meta.model}\` · Claude Code ${meta.claudeCode} · plugin ${meta.plugin.commit?.slice(0, 7)}${meta.plugin.dirty ? ' (uncommitted changes)' : ''} · repo ${meta.repo.commit?.slice(0, 7)} · ${tasks.length} tasks × up to ${reps} reps, ${runs.length} sessions · max ${meta.maxTurns} turns`,
   ''
 )
+if (meta.settings?.enabledPlugins)
+  out.push(
+    `Every arm also loaded these installed plugins: ${Object.keys(meta.settings.enabledPlugins).join(', ')}.`,
+    ''
+  )
 out.push(
   'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has.',
   ''
