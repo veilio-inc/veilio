@@ -22,14 +22,13 @@ import {
   restore,
   restoreLayers,
   type SecretFinding,
-  STORE_DIR,
   STRIPPABLE_TYPES,
   summarizeSecrets,
   type TeamLayer,
   withAiPreamble,
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
-import { optionsHelp } from './flags.js'
+import { allCommandsHelp, optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -498,50 +497,7 @@ USAGE
   ${BIN_NAME} <command> [files...] [options]
 
 COMMANDS
-  scrub --team         Number new placeholders from the team's allocation.
-  scrub [files...]     Mask identifiers and redact credentials. Reads stdin when
-                       no file is given. Writes the symbol map to ${STORE_DIR}/map.json.
-  restore [files...]   Swap placeholders back and strip AI-generated noise.
-  scan [files...]      Detect credentials only; never rewrites. Exits 1 on a
-                       credential (with --strict, on any finding) — use it in
-                       a pre-commit hook or CI.
-  map                  Show the current symbol map (--clear to wipe it).
-
-  Everything above works offline, with no account. The commands below connect a
-  Veilio Cloud subscription and are the only ones that touch the network.
-
-  login                Sign in to Veilio Cloud (--instance for self-hosted,
-                       --device to approve in a browser).
-  logout               Revoke the session and forget the credential.
-  whoami               Show the signed-in account. Answers from disk; makes no
-                       request, so it works with the instance down.
-  maps list            List the maps this account holds in Cloud.
-  maps pull <id>       Fetch one into the local store. A personal map is
-                       decrypted here — the passphrase never leaves the machine.
-                       A team map opens with the key from \`team unlock\`.
-  maps push [name]     Encrypt the local map and upload it as a new map.
-  maps push --team     Publish it as the TEAM's shared map instead.
-  maps update <id>     Replace a Cloud map's entries with the local map's, in
-                       place: same id, name and project. Refuses to drop
-                       entries unless --allow-drop is given.
-  maps rm <id>         Remove a map from Cloud.
-  team unlock          Open this account's team keys with the vault passphrase
-                       and keep them on this machine (7 days), so team maps -
-                       and the MCP server's shared namespace - work unattended.
-  team lock            Remove the unlocked team keys from this machine.
-  vault unlock         Unlock the personal-maps key with the vault passphrase
-                       and keep only that key here (7 days), so personal maps -
-                       and the MCP server's map tools - work without a
-                       passphrase. Re-seals older personal maps under it.
-  vault lock           Remove the personal-maps key from this machine.
-  projects             List the projects your team works in; * marks the one
-                       in use. A team map belongs to exactly one project.
-  projects use <name>  Work in that project: team maps, pushes, updates and
-                       scrub --team use it only. Kept with the sign-in, so the
-                       MCP server uses it too. VEILIO_PROJECT=<name|id>
-                       overrides it for one shell, CI job or MCP server.
-  rules pull           Fetch this account's custom rules (personal and team).
-                       \`scrub\` then applies them offline, as the web app does.
+${allCommandsHelp()}
 
 OPTIONS
 ${optionsHelp()}

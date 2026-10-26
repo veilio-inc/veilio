@@ -1,7 +1,11 @@
 ---
-'@veilio-inc/cli': patch
+'@veilio-inc/cli': minor
 ---
 
-Each command now refuses a flag that is not its own, instead of ignoring it. Given `--days 3`, `scrub` used to run, and `--days` did nothing. Now it exits 2 with `unknown option --days. Options for scrub: …`, naming the options `scrub` does take. A script that passed a flag to a command that never used it will now stop at that flag. Remove the flag, or move it to the command it belongs to. `--help` and `--version` still work with any command. `--instance` belongs to `login` only, which is the only command that reads it.
+**Breaking:** a flag a command doesn't use now stops with exit 2; it used to be ignored. Given `--days 3`, `scrub` used to run, and `--days` did nothing. Now it stops with `--days is not an option for scrub. Options for scrub: …`, naming the options `scrub` does take. A script that passed a flag to a command that never read it stops at that flag. Remove the flag, or move it to the command it belongs to.
 
-`veilio --help` lists, under each option, the commands it belongs to. One table in the CLI drives both that list and the check, so the two cannot disagree.
+- An unknown flag on a command uses the same wording: `unknown option --dayz. Options for scrub: …`. A line with no command keeps the general `unknown flag` form.
+- `--help` or `-h` anywhere on the line wins. It prints that command's help and exits 0, even after a flag the command does not take. A group with no action (`maps --help`) shows all its actions.
+- Flags may come before the command, and are checked against it: `-q` before `scrub` is the same as `-q` after it. A line of flags with no command prints the general help and exits 2, unless the flags are only `--help` or `--version`.
+- `--instance` belongs to `login`, the only command that reads it. `--help` and `--version` work with any command.
+- `veilio --help` lists, under each option, the commands it belongs to, and keeps the notes on `--days` (7 days by default), `--device` (required for an SSO-bound account) and `--team` (for a map you intend to publish). One table in the CLI drives the commands, the parser check and the help, so they cannot disagree.
