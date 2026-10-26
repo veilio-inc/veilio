@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.1](https://github.com/veilio-inc/veilio/compare/engine-v1.12.0...engine-v1.12.1) (2026-10-26)
+
+### Fixes
+
+* **engine:** a destroyed credential is redacted wherever else it appears, except a default word in a non-secret position ([a0a79f2](https://github.com/veilio-inc/veilio/commit/a0a79f2050c8467c66004215c2f148573af4b3eb))
+* **engine:** a manual mark is refused on every credential found, whatever the policy ([7388918](https://github.com/veilio-inc/veilio/commit/738891868d66e7e0f544cadee584afb70f0aa8ad))
+* **engine:** a name beside a credential is masked and mapped as usual; a name equal to a destroyed credential gets its redaction token ([f8e7293](https://github.com/veilio-inc/veilio/commit/f8e7293134eade6ce61611f053a162a0adfc1a70))
+* **engine:** a redaction never splits a name or a placeholder, and runs before manual and regulated masks ([cf68dc3](https://github.com/veilio-inc/veilio/commit/cf68dc3beec72d6e30b41ac1c207a29c5dc9b2cf))
+* **engine:** a weak password is never exempt by position, and a URL host is read after the last @ ([aef4054](https://github.com/veilio-inc/veilio/commit/aef4054726226ed8f169c5b6edf8eec0ad450e7e))
+* **engine:** argv arrays keep 1.12.0's coverage, manual marks are refused only on destroyed credentials ([9ec44b1](https://github.com/veilio-inc/veilio/commit/9ec44b12ba6bfc89aba41cfac0ae42ad8857a647))
+* **engine:** common prose words after --password are not passwords; a default-word password is redacted only where it stands ([f9ae1f8](https://github.com/veilio-inc/veilio/commit/f9ae1f86114656e12628e70e0c08554673514dcc))
+* **engine:** common weak passwords keep word boundaries, and a URL host named like a default word stays ([0368c04](https://github.com/veilio-inc/veilio/commit/0368c04ab0e36daaadddb424a2604fd165401c49))
+* **engine:** one --password rule in every file; credentials found in the text are dropped from an old map, and their numbers are not reused ([37b4609](https://github.com/veilio-inc/veilio/commit/37b46099d16f43ab4f0835c907b24194906b3a63))
+* **engine:** only real placeholders are spared, and a regulated value that is a credential is never mapped ([b83d0a7](https://github.com/veilio-inc/veilio/commit/b83d0a7243461f2c277b688bf3d9bee4b89d95a5))
+* **engine:** only tokens this call minted, and map keys, are spared by the spread ([77dd5ef](https://github.com/veilio-inc/veilio/commit/77dd5ef8c211ebd11958b14f036a08ffd426b16e))
+* **engine:** spread redactions by merging every occurrence, so overlapping credentials leave no fragment ([9d42a24](https://github.com/veilio-inc/veilio/commit/9d42a24c66f8344b9db48d326b4259fb79afdcec))
+* **engine:** spread redactions in one longest-first pass, and inside longer names and URLs ([07cea83](https://github.com/veilio-inc/veilio/commit/07cea83d746acac563143a7a22a782b6386b347e))
+
 ## [1.12.0](https://github.com/veilio-inc/veilio/compare/engine-v1.11.0...engine-v1.12.0) (2026-10-26)
 
 ### Features
