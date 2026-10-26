@@ -309,3 +309,34 @@ test('an edit beside a regulated number the map holds runs, and one that writes 
   expect(back.deny).toContain('Veilio refused this call')
   expect(ran).toBe(1)
 })
+
+// Commit security review of f4e81cb: decided by the placeholder, not by
+// detecting the number again, so no spelling of it slips through.
+function writesBack(value: string) {
+  return async ($: any, on: any) => {
+    const edit = recorded('Edit')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: value }) })
+    let ran = false
+    on('tool.call', () => ((ran = true), edit.r))
+    const out: any = await $.tool.call({
+      ...eventOf(edit),
+      old_string: 'x',
+      new_string: 'v = "__IBAN__1"',
+    })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+}
+
+test(
+  'a restoration that writes back a spaced IBAN is refused',
+  writesBack('GB29 NWBK 6016 1331 9268 19')
+)
+test(
+  'a restoration that writes back a dashed card number is refused',
+  writesBack('4539-1488-0343-6467')
+)
+test(
+  'a restoration that writes back an IBAN glued to letters is refused',
+  writesBack('refGB29NWBK60161331926819x')
+)

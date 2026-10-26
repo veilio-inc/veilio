@@ -367,27 +367,17 @@ export function providerKeys(text: string): string[] {
   })
 }
 
-/** Whether a restoration puts back a regulated number (an IBAN, a card, a
- *  PESEL) that was not in the arguments as written, by value: those are
- *  masked reversibly for reading, never written back by the model (review
- *  of 6e14ec6). */
-export function addsMaskedValue(before: string, after: string): boolean {
-  const values = (text: string) => {
-    const starts = [0]
-    for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
-    return detectSecrets(text)
-      .filter((f) => SECRET_DISPOSITIONS[f.type] === 'mask')
-      .map((f) => {
-        const start = (starts[f.line - 1] ?? 0) + f.column - 1
-        return text.slice(start, start + f.length)
-      })
-  }
-  const had = new Map<string, number>()
-  for (const v of values(before)) had.set(v, (had.get(v) ?? 0) + 1)
-  for (const v of values(after)) {
-    const n = had.get(v) ?? 0
-    if (n === 0) return true
-    had.set(v, n - 1)
+/** Whether restoring `before` with `map` would write back a regulated
+ *  number (an IBAN, a card, a PESEL) that `before` does not already hold as
+ *  written. Decided by the placeholder's kind and the map's value compared
+ *  as text, never by detecting the number again, so no spacing, separator or
+ *  glued spelling of it slips through (security review of f4e81cb). */
+export function restoresRegulated(before: string, map: SymbolMap): boolean {
+  if (!before.includes('__')) return false
+  const bases = Object.values(REGULATED_BASES).filter((b): b is string => typeof b === 'string')
+  for (const [p] of before.matchAll(PLACEHOLDER_IN_TEXT)) {
+    if (!Object.hasOwn(map, p) || !bases.some((base) => p.startsWith(base))) continue
+    if (!before.includes(map[p]!)) return true
   }
   return false
 }
