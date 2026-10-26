@@ -314,9 +314,35 @@ const HEURISTIC = new Set([
 /** Whether `text` holds a provider-format key (any rule but those that
  *  judge by shape): a value no restoration may put back. */
 export function holdsProviderKey(text: string): boolean {
-  return detectSecrets(text).some(
+  return providerKeys(text).length > 0
+}
+
+/** The provider-format keys in `text`, one entry per occurrence. */
+export function providerKeys(text: string): string[] {
+  const found = detectSecrets(text).filter(
     (f) => !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] !== 'report'
   )
+  if (found.length === 0) return []
+  const starts = [0]
+  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+  return found.map((f) => {
+    const start = (starts[f.line - 1] ?? 0) + f.column - 1
+    return text.slice(start, start + f.length)
+  })
+}
+
+/** Whether `after` holds a provider-format key `before` does not, or more
+ *  copies of one: compared by value, so a key already written cannot cover
+ *  for a different one a restoration puts back (review of 5f11069). */
+export function addsProviderKey(before: string, after: string): boolean {
+  const had = new Map<string, number>()
+  for (const k of providerKeys(before)) had.set(k, (had.get(k) ?? 0) + 1)
+  for (const k of providerKeys(after)) {
+    const n = had.get(k) ?? 0
+    if (n === 0) return true
+    had.set(k, n - 1)
+  }
+  return false
 }
 
 const restorable = new WeakMap<SymbolMap, SymbolMap>()

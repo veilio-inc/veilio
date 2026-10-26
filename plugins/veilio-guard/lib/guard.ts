@@ -32,7 +32,7 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
-  holdsProviderKey,
+  addsProviderKey,
   restorableMap,
   redactKnown,
   maskShaped,
@@ -549,7 +549,7 @@ export class Guard {
     const putsBack = (before: string, after: string) =>
       after !== before &&
       (learned.some((v) => after.includes(v) && !before.includes(v)) ||
-        (holdsProviderKey(after) && !holdsProviderKey(before)))
+        addsProviderKey(before, after))
     let restoresSecret = false
     const guarded = (s: string) => {
       const out = restoreOne(s)

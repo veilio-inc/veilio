@@ -267,3 +267,23 @@ test('an ordinary project name restores fine beside that check', async ($, on) =
   expect(out.deny).toBeUndefined()
   expect(seen[0].new_string).toBe('const settledTotal =')
 })
+
+test('a restore that puts back a second provider key beside one already written is refused', async ($, on) => {
+  const edit = recorded('Edit')
+  const written = 'AKIA' + 'ZZ7RZ2XKM4PLB8WN'
+  // The map holds the key's tail, not a key by itself: only the restored
+  // text holds the second key.
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__7: 'Q7RZ2XKM4PLB8WNE' }) })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: `a = "${written}"\nb = "AKIA__STR__7"`,
+  })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('Veilio refused this call')
+})
