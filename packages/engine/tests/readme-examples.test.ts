@@ -196,7 +196,10 @@ describe('the TypeScript examples in the public docs', () => {
     '%s compiles against the current engine',
     (_label, example) => {
       expect(check(example.code), `${example.doc} line ${example.line}`).toEqual([])
-    }
+    },
+    // The first case builds the program, which takes over a second locally
+    // and longer on a CI runner, so it gets more than vitest's 5 s default.
+    30_000
   )
 
   it('fails an example that uses an option the engine does not have', () => {
