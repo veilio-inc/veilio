@@ -338,8 +338,8 @@ describe('what the session learns', () => {
 
   it('two secrets side by side are two tokens', () => {
     const known = new Destroyed()
-    known.learn(['Qx7!', 'Rz8!'])
-    expect(redactKnown('x Qx7!Rz8! y', known)).toBe(
+    known.learn(['Qx7mK2pL9!', 'Rz8vB3nM1!'])
+    expect(redactKnown('x Qx7mK2pL9!Rz8vB3nM1! y', known)).toBe(
       'x __REDACTED_CREDENTIAL_1001____REDACTED_CREDENTIAL_1002__ y'
     )
   })
@@ -365,29 +365,39 @@ describe('what the session learns', () => {
   })
 })
 
-describe('the learn bar, by example (review of da4ff84)', () => {
-  const learned = (pw: string) => {
+describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
+  const learnedFrom = (text: string) => {
     const known = new Destroyed()
-    applyMap(`password = "${pw}"`, {}, undefined, { known })
-    return known.values.includes(pw)
+    applyMap(text, {}, undefined, { known })
+    return known
   }
-  it('underscores and hyphens do not make a word key material', () => {
-    expect(learned('app_pass')).toBe(false)
-    expect(learned('my-secret')).toBe(false)
-    // Strong enough to be destroyed where they stand, and still no key material.
-    expect(learned('Kestrel_Harbor_Lantern')).toBe(false)
-    expect(learned('Quartz-Meadow-Falcon')).toBe(false)
+  it('a low-entropy password is learned and removed as a token in a later text', () => {
+    const known = learnedFrom('password = "my-secret-pass"')
+    expect(known.values).toContain('my-secret-pass')
+    expect(redactKnown('use my-secret-pass, not my-secret-passport', known)).toBe(
+      'use __REDACTED_CREDENTIAL_1001__, not my-secret-passport'
+    )
   })
-  it('a plain word is not learned', () => {
-    expect(learned('postgres')).toBe(false)
-  })
-  it('letters and digits are: root1234 is a password, removed wherever it appears', () => {
-    expect(learned('root1234')).toBe(true)
-  })
-  it('a placeholder or a token is never learned', () => {
+  it('a learned app_pass leaves app_password alone', () => {
     const known = new Destroyed()
-    applyMap('client_secret = "__VAR__1290x7"', {}, undefined, { known })
-    expect(known.values).toEqual([])
+    known.learn(['app_pass'])
+    expect(redactKnown('app_pass and app_password', known)).toBe(
+      '__REDACTED_CREDENTIAL_1001__ and app_password'
+    )
+  })
+  it('a known default is not learned: postgres, root1234', () => {
+    expect(learnedFrom('postgres://postgres:postgres@db/x').values).toEqual([])
+    expect(learnedFrom('password = "root1234"').values).toEqual([])
+  })
+  it('a high-entropy value is removed inside a longer word', () => {
+    const known = learnedFrom('password = "Xk9mQ2vL7Zp"')
+    expect(redactKnown('xXk9mQ2vL7Zp', known)).toBe('x__REDACTED_CREDENTIAL_1001__')
+  })
+  it('a value made only of placeholders is never learned; one written against a placeholder is', () => {
+    expect(learnedFrom('client_secret = "__VAR__1290__STR__3"').values).toEqual([])
+    expect(learnedFrom('client_secret = "realsecret__VAR__1"').values).toContain(
+      'realsecret__VAR__1'
+    )
   })
 })
 

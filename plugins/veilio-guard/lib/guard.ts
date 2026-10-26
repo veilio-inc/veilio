@@ -149,8 +149,21 @@ export class Guard {
     return join(this.root, '.veilio', 'guard.json')
   }
 
+  /** Names that hold a credential Veilio destroyed, each with a placeholder
+   *  of its own: masked this session, never saved, never restored (review of
+   *  7b930ad). */
+  private quarantine: SymbolMap = {}
+  /** How many names the last save sent to the quarantine. */
+  private quarantined = 0
+  private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
+
+  /** What masking reads: the saved map and this session's quarantine. */
   get map(): SymbolMap {
-    return this.stored.map
+    const size = Object.keys(this.quarantine).length
+    if (size === 0) return this.stored.map
+    if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size)
+      this.merged = { base: this.stored.map, size, map: { ...this.stored.map, ...this.quarantine } }
+    return this.merged.map
   }
 
   /** The project root: the nearest directory with .veilio or .git, as the CLI finds it. */
@@ -239,6 +252,9 @@ export class Guard {
       } finally {
         this.unsaved = {}
       }
+      // Files whose names went to the quarantine are indexed again later, so
+      // nothing of theirs is taken as saved.
+      if (this.quarantined > 0) for (const rel of this.batch) this.index.forget(rel)
       if (saved === 'saved') return missed
       // Another program changed the map: this batch's numbers may clash with
       // its, so the batch is indexed again from the map as it is now.
@@ -563,7 +579,8 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
-      const r = restoreArgs(s, this.map)
+      // Only saved entries are restored: a quarantined name never is.
+      const r = restoreArgs(s, this.stored.map)
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
@@ -889,14 +906,21 @@ export class Guard {
   private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
     // No credential Veilio destroyed is ever minted into the map (security
     // review of 933156e).
-    // Only the entry that holds one is left out; the rest are saved (review
-    // of da4ff84). Its placeholder then resolves to nothing, so no edit can
-    // put it back.
+    // The entry that holds one goes to the in-memory quarantine; the rest
+    // are saved (reviews of da4ff84 and 7b930ad).
     const learned = this.destroyed.values
-    if (learned.length > 0)
-      additions = Object.fromEntries(
-        Object.entries(additions).filter(([, name]) => !learned.some((v) => name.includes(v)))
-      )
+    this.quarantined = 0
+    if (learned.length > 0) {
+      const kept: SymbolMap = {}
+      for (const [placeholder, name] of Object.entries(additions)) {
+        if (learned.some((v) => name.includes(v))) {
+          this.quarantine[placeholder] = name
+          this.destroyed.hold(name, placeholder)
+          this.quarantined++
+        } else kept[placeholder] = name
+      }
+      additions = kept
+    }
     const run = this.writes.then(async () => {
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)

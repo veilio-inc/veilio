@@ -21,6 +21,7 @@ import {
   restore,
   scanSecrets,
   SECRET_DISPOSITIONS,
+  shannonEntropy,
 } from '../vendor/engine/index.js'
 import type { Language, LanguageOption } from '../vendor/engine/index.js'
 
@@ -279,19 +280,31 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
  *  `postgres`, a structural rule's finding in a docker-compose URL, is
  *  removed where its rule finds it and nowhere else: learned, it ate every
  *  `import postgres` after it (review of 99325ba). */
+// Defaults everyone knows, never secrets of the project: learned, a session
+// would remove `postgres` from every `import postgres` after a docker-compose
+// URL. Still destroyed where a rule finds them; only not swept elsewhere.
+const DEFAULTS =
+  /^(?:postgres|postgresql|mysql|mariadb|redis|mongo|mongodb|root|toor|admin|administrator|superuser|sa|password|passwd|pass|changeme|secret|example|test|testing|guest|user|demo|default|qwerty|letmein|welcome|dev|local|localhost)[0-9]{0,6}$/i
+
+/** Worth learning: every value a credential rule took, six characters or
+ *  more, but a known default (review of 7b930ad). */
 function credentialLike(value: string): boolean {
-  // Real key material: eight characters or more, letters, and digits or a
-  // symbol. Underscores and hyphens join words and do not count, so
-  // `app_pass` and `my-secret` are not learned (review of da4ff84). A
-  // letters-and-digits password such as `root1234` is: it is a password, and
-  // a copy of it anywhere is removed.
-  if (value.length < 8 || !/[A-Za-z]/.test(value)) return false
-  return /[0-9]/.test(value) || /[^A-Za-z0-9_-]/.test(value)
+  return value.length >= 6 && !DEFAULTS.test(value)
 }
 
-// A placeholder or a redaction token, anywhere in a value: the map's own
-// grammar is never learned as a credential (review of da4ff84).
-const OWN_GRAMMAR = /__[A-Z][A-Z0-9_]*?__\d*/
+/** High-entropy key material is removed wherever it appears, inside a longer
+ *  word too; a lower-entropy password only as a whole token, where `_` and
+ *  `-` join words, so `app_pass` never touches `app_password`. */
+export function highEntropy(value: string): boolean {
+  return (
+    value.length >= 8 && /[A-Za-z]/.test(value) && /[0-9]/.test(value) && shannonEntropy(value) >= 3
+  )
+}
+
+// A value made only of placeholders or redaction tokens: the map's own
+// grammar is never learned as a credential (anchored: a real secret written
+// against a placeholder is still learned).
+const OWN_GRAMMAR = /^(?:__[A-Z][A-Z0-9_]*?__\d*)+$/
 
 /** Where each destroyed finding stands in `text`: its start, the end of what
  *  the rule took, and the end of the key characters that run on after it (a
@@ -422,7 +435,7 @@ function periodOf(value: string): number {
  *  swept from later texts; every destroyed value has a token. */
 export class Destroyed {
   private tokens = new Map<string, string>()
-  private sweep = new Map<string, number>()
+  private sweep = new Map<string, { period: number; inside: boolean }>()
   private list: string[] | null = []
   private next = 1001
   learn(values: readonly string[]): void {
@@ -435,17 +448,31 @@ export class Destroyed {
       if (v.length < value.length) tooLong = true
       if (v === '' || this.sweep.has(v)) continue
       this.tokenFor(v)
-      this.sweep.set(v, periodOf(v))
+      this.sweep.set(v, { period: periodOf(v), inside: highEntropy(v) })
       this.list = null
     }
     if (tooLong) throw new Error('a destroyed credential too long to remove safely')
   }
+  /** A name that holds one of these credentials, with the placeholder it is
+   *  masked by this session: replaced whole before the credential inside it is
+   *  swept, so the identifier reads as one name (review of 7b930ad). */
+  hold(name: string, placeholder: string): void {
+    if (this.tokens.get(name) === placeholder) return
+    this.tokens.set(name, placeholder)
+    this.sweep.set(name, { period: periodOf(name), inside: false })
+    this.list = null
+  }
   /** The values swept from later texts, with each one's period. */
   get values(): string[] {
-    return (this.list ??= [...this.sweep.keys()])
+    // Longest first, so a held name wins over the credential inside it.
+    return (this.list ??= [...this.sweep.keys()].sort((a, b) => b.length - a.length))
   }
   periodOf(value: string): number {
-    return this.sweep.get(value) ?? periodOf(value)
+    return this.sweep.get(value)?.period ?? periodOf(value)
+  }
+  /** Removed inside longer words too (high-entropy), or only as a token. */
+  inside(value: string): boolean {
+    return this.sweep.get(value)?.inside ?? true
   }
   tokenFor(value: string): string {
     let token = this.tokens.get(value)
@@ -463,16 +490,22 @@ export class Destroyed {
  *  different values that overlap are merged and take the longest one's
  *  token, spans that only touch stay two. Run on text as written, before any
  *  masking, so no repeat reaches the map. */
+// What a whole token is bounded by: `_` and `-` join words here.
+const TOKEN_CHAR = /[A-Za-z0-9_$-]/
+
 export function redactKnown(text: string, known: Destroyed): string {
   const values = known.values
   if (values.length === 0) return text
   const spans: [number, number, string][] = []
   for (const value of values) {
     const period = known.periodOf(value)
+    const inside = known.inside(value)
     for (let i = text.indexOf(value); i !== -1;) {
       let j = i + value.length
       while (j < text.length && text[j] === text[j - period]) j++
-      spans.push([i, j, value])
+      const token =
+        !(i > 0 && TOKEN_CHAR.test(text[i - 1]!)) && !(j < text.length && TOKEN_CHAR.test(text[j]!))
+      if (inside || token) spans.push([i, j, value])
       if (spans.length > MAX_SPANS)
         throw new Error('too many occurrences of a destroyed credential to remove them safely')
       // A value that repeats at more than one shift can start again inside

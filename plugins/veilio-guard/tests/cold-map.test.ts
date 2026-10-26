@@ -236,7 +236,10 @@ test('indexing a file whose name holds a destroyed credential saves the other na
           ...GREP.r,
           result: {
             ...GREP.r.result,
-            content: 'src/pool.ts:2:export function ledgerHarvestTotal() {}',
+            content: [
+              'src/pool.ts:1:export function connectXk9mQ2vL7QPool() {}',
+              'src/pool.ts:2:export function ledgerHarvestTotal() {}',
+            ].join('\n'),
           },
         }
   )
@@ -245,4 +248,9 @@ test('indexing a file whose name holds a destroyed credential saves the other na
   expect(out.deny).toBeUndefined()
   expect(saved(p)).toContain('ledgerHarvestTotal')
   expect(saved(p).join(' ')).not.toContain('Xk9mQ2vL7Q')
+  // Masked as one name in the result, by a placeholder kept in memory only.
+  const shown: string = out.result.content
+  expect(shown).not.toContain('Xk9mQ2vL7Q')
+  expect(shown).not.toContain('connect')
+  expect(shown).toMatch(/export function __FN__\d+\(\) \{\}/)
 })
