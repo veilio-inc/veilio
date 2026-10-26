@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parseArgs } from '../src/args.js'
+import { FLAGS } from '../src/flags.js'
 import {
   fencedBlocks,
   inlineCode,
@@ -52,63 +53,26 @@ function helpCommands(): { single: Set<string>; double: Set<string> } {
   return { single, double }
 }
 
-/** The help's sections, each entry with its wrapped lines joined. */
-function helpEntries(section: 'COMMANDS' | 'OPTIONS'): string[] {
-  const body = new RegExp(`\\n${section}\\n([\\s\\S]*?)\\n[A-Z][A-Z ]+\\n`).exec(HELP)
-  if (!body) throw new Error(`veilio --help has no ${section} section`)
-  const entries: string[] = []
-  for (const line of body[1].split('\n')) {
-    // An entry starts at column 2, or at column 6 for a flag with no short
-    // form (`      --json`). A wrapped line is indented further.
-    if (/^ {2}\S/.test(line) || (section === 'OPTIONS' && /^ {2,6}-/.test(line)))
-      entries.push(line.trim())
-    else if (/^ {4,}\S/.test(line) && entries.length > 0)
-      entries[entries.length - 1] += ' ' + line.trim()
-  }
-  return entries
+/** Whether `--help` prints a flag, as a whole token: `-f` is never found
+ *  inside `--force`. */
+function inHelp(flag: string): boolean {
+  return HELP.split(/[\s,()]+/).includes(flag)
 }
 
 /**
- * Which commands each flag in `--help` belongs to. `null` means every command.
+ * Which commands each flag belongs to. `null` means every command.
  *
- * The parser takes any flag with any command and ignores what does not apply,
- * so `veilio scrub --days 3` runs and the `--days` does nothing. The help is
- * the only place that says where a flag belongs. In OPTIONS it is a prefix
- * such as `login:` or `vault unlock, team unlock:`, a `restore:` later in the
- * text, or a list in brackets (`(scan, map)`). In COMMANDS it is a flag named
- * on a command's own line (`map … (--clear to wipe it)`, `scrub --team`). An
- * OPTIONS flag with no scope works with any command.
- *
- * Flags are read as tokens from the flag column and from the COMMANDS lines,
- * so `-f` is never found inside `--force`.
+ * Read from the CLI's flag table (src/flags.ts). The parser refuses a flag on
+ * a command the table does not give it, and `--help` prints the table, so a
+ * doc that writes `veilio scrub --days 3` fails here, as it fails for the
+ * reader.
  */
 function flagScopes(): Map<string, Set<string> | null> {
-  const { single, double } = helpCommands()
-  const isCommand = (c: string): boolean => single.has(c) || double.has(c)
   const scopes = new Map<string, Set<string> | null>()
-  for (const entry of helpEntries('OPTIONS')) {
-    const [column, ...rest] = entry.split(/ {2,}/)
-    const description = rest.join(' ')
-    const flags = [...column.matchAll(/(?<![\w-])(--?[a-z][\w-]*)/g)].map((m) => m[1])
-    const scope = new Set<string>()
-    for (const m of description.matchAll(
-      /(?:^|[.;] )([a-z]+(?: [a-z]+)?(?:, [a-z]+(?: [a-z]+)?)*):/g
-    ))
-      for (const c of m[1].split(', ')) if (isCommand(c)) scope.add(c)
-    for (const m of description.matchAll(/\(([a-z]+(?:, [a-z]+)+)\)/g))
-      for (const c of m[1].split(', ')) if (isCommand(c)) scope.add(c)
-    for (const f of flags) scopes.set(f, scope.size > 0 ? scope : null)
-  }
-  for (const entry of helpEntries('COMMANDS')) {
-    const words = entry.split(/\s+/)
-    const command = double.has(`${words[0]} ${words[1]}`) ? `${words[0]} ${words[1]}` : words[0]
-    for (const m of entry.matchAll(/(?<![\w-])(--[a-z][\w-]*)/g)) {
-      const known = scopes.get(m[1])
-      if (known === null) continue
-      const scope = known ?? new Set<string>()
-      scope.add(command)
-      scopes.set(m[1], scope)
-    }
+  for (const flag of FLAGS) {
+    const scope = flag.commands === 'all' ? null : new Set<string>(flag.commands)
+    scopes.set(flag.long, scope)
+    if (flag.short) scopes.set(flag.short, scope)
   }
   return scopes
 }
@@ -236,12 +200,12 @@ describe('veilio commands and flags in the public docs', () => {
       for (const word of inv.words) {
         const flag = /^(--?[a-z][\w-]*)/.exec(word)?.[1]
         if (!flag) continue
-        if (!scopes.has(flag)) {
+        if (!scopes.has(flag) || !inHelp(flag)) {
           wrong.push(`${inv.doc}: "${inv.text}" (${flag} is not in --help)`)
           continue
         }
         const scope = scopes.get(flag)
-        if (scope && !(command && (scope.has(command) || scope.has(command.split(' ')[0]))))
+        if (scope && !(command && scope.has(command)))
           wrong.push(
             `${inv.doc}: "${inv.text}" (--help gives ${flag} to ${[...scope].join(', ')}, not ${command ?? 'no command'})`
           )
@@ -253,17 +217,14 @@ describe('veilio commands and flags in the public docs', () => {
     ).toEqual([])
   })
 
-  it('reads where each flag belongs from --help', () => {
-    // A guard on flagScopes: if the help changed shape and every flag came out
-    // global, the check above would pass on anything.
+  it('reads where each flag belongs from the flag table', () => {
+    // A guard on flagScopes: if every flag came out global, the check above
+    // would pass on anything.
     const scopes = flagScopes()
-    expect(scopes.get('--days')).toEqual(new Set(['vault unlock', 'team unlock']))
+    expect(scopes.get('--days')).toEqual(new Set(['team unlock', 'vault unlock']))
     expect(scopes.get('--keep-docs')).toEqual(new Set(['restore']))
-    expect(scopes.get('--strict')).toEqual(new Set(['scan', 'restore']))
-    expect(scopes.get('--json')).toEqual(new Set(['scan', 'map']))
-    expect(scopes.get('--clear')).toEqual(new Set(['map']))
-    expect(scopes.get('--language')).toBeNull()
-    expect(scopes.get('-f')).toBeNull()
+    expect(scopes.get('-f')).toEqual(new Set(['scrub', 'maps pull']))
+    expect(scopes.get('--help')).toBeNull()
   })
 
   it('lists in --help every flag the parser accepts', () => {

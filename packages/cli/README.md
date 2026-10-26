@@ -169,30 +169,54 @@ a plan feature the web app couldn't.
 ```
 -l, --language <lang>   auto (default), typescript, python, go, java, csharp,
                         rust, ruby, php, c, sql
+                        For: scrub
 -s, --secrets <policy>  redact (default) | warn | off
+                        For: scrub
 -p, --preamble          Prepend the downstream-AI note and placeholder legend
+                        For: scrub
 -m, --map <path>        Use a specific map file
-    --json              Machine-readable output (scan, map)
+                        For: scrub, restore, map, maps pull, maps push, maps
+                        update
+    --json              Machine-readable output
+                        For: scan, map
     --strict            scan: also fail on advisory findings. restore: write
                         nothing and exit 1 if a placeholder would be left
-    --keep-docs         restore: keep JSDoc blocks the model wrote
+                        For: scan, restore
+    --keep-docs         Keep JSDoc blocks the model wrote
+                        For: restore
+    --clear             Wipe the symbol map
+                        For: map
 -f, --force             Allow a map write that would drop existing entries
-    --days <n>          vault unlock, team unlock: keep the key for n days
-                        (1 to 30; 7 by default)
-    --allow-drop        maps update: allow dropping entries the Cloud map has
-                        and the local map does not
-    --device            login: sign in through a browser instead of typing a
-                        password here. Required for an SSO-bound account, and
-                        used automatically when the instance asks for a CAPTCHA
+                        For: scrub, maps pull
     --team              scrub: number new placeholders out of the team's
                         shared allocation, for a map you intend to publish.
                         maps push: publish as the team's shared map
+                        For: scrub, maps push
+    --days <n>          Keep the key for n days (1 to 30; 7 by default)
+                        For: team unlock, vault unlock
+    --allow-drop        Allow dropping entries the Cloud map has and the local
+                        map does not
+                        For: maps update
 -q, --quiet             Suppress the all-clear summary (findings always show)
-    --instance <url>    login: the Veilio instance to sign in to. Defaults to
-                        the public Cloud; https required (localhost excepted)
+                        For: scrub, restore, scan
+    --device            Sign in through a browser instead of typing a password
+                        here. Required for an SSO-bound account, and used
+                        automatically when the instance asks for a CAPTCHA
+                        For: login
+    --instance <url>    The Veilio instance to sign in to. Defaults to the
+                        public Cloud; https required (localhost excepted)
+                        For: login
 -h, --help              Show this help
 -v, --version           Show the version
 ```
+
+Each command takes only the options listed for it. A flag on a command it
+does not belong to is refused with exit code 2, and the error lists the
+options that command does take. Given `--days 3`, `scrub` stops with
+`--days is not an option for scrub. Options for scrub: …`. Flags may come
+before the command and are checked against it. `--help` anywhere on the line
+shows that command's help and exits 0; `--help` and `--version` work with any
+command.
 
 `restore --strict` is for pipelines that write the restored text somewhere: if a
 placeholder would be left in it — one the AI invented, one whose shape it changed

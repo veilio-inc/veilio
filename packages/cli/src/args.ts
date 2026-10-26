@@ -4,22 +4,24 @@
 
 import { LANGUAGES, type Language, type LanguageOption } from '@veilio-inc/engine'
 import type { SecretPolicy } from '@veilio-inc/engine'
+import {
+  COMMAND_SPECS,
+  COMMAND_WORDS,
+  actionList,
+  actionsOf,
+  belongsTo,
+  flagFor,
+  flagsOf,
+  runsBare,
+  spell,
+  type ActionOf,
+  type CommandKey,
+  type CommandWord,
+} from './flags.js'
 
-export type Command =
-  | 'scrub'
-  | 'restore'
-  | 'scan'
-  | 'map'
-  | 'login'
-  | 'logout'
-  | 'whoami'
-  | 'maps'
-  | 'team'
-  | 'vault'
-  | 'projects'
-  | 'rules'
-  | 'help'
-  | 'version'
+/** A top-level command word (from the command table), or what a flag asks
+ *  for when no command does work: `help` or `version`. */
+export type Command = CommandWord | 'help' | 'version'
 
 export interface ParsedArgs {
   command: Command
@@ -69,7 +71,7 @@ export interface ParsedArgs {
    * reads like they are the same thing. `maps <verb>` keeps the cloud surface
    * visibly separate from the offline one.
    */
-  mapsAction: 'list' | 'pull' | 'push' | 'update' | 'rm' | null
+  mapsAction: ActionOf<'maps'> | null
   /**
    * `maps update --allow-drop`: let an update remove entries the Cloud map
    * holds and the local map does not (spec 052 FR-005). Its own flag rather
@@ -85,20 +87,20 @@ export interface ParsedArgs {
    * not say what it unlocks, and what it unlocks is specifically the team's
    * keys rather than the account or the local store.
    */
-  teamAction: 'unlock' | 'lock' | null
+  teamAction: ActionOf<'team'> | null
   /**
    * `vault unlock` / `vault lock` (spec 052): the personal-maps key, kept on
    * this machine so personal maps open without a passphrase - for the MCP
    * server above all. `vault`, not `team`: it is the account's own key.
    */
-  vaultAction: 'unlock' | 'lock' | null
+  vaultAction: ActionOf<'vault'> | null
   /** `vault unlock --days N`, `team unlock --days N`: how long the unlock
    *  lasts. Null: the default, 7 days. */
   days: number | null
   /** `projects` (or `projects list`) and `projects use <name|id>`. */
-  projectsAction: 'list' | 'use' | null
+  projectsAction: ActionOf<'projects'> | null
   /** `rules pull`. */
-  rulesAction: 'pull' | null
+  rulesAction: ActionOf<'rules'> | null
 
   /**
    * Base URL of the Veilio instance to sign in to. Null means the public Cloud.
@@ -108,43 +110,66 @@ export interface ParsedArgs {
    * host while still holding the first one's token.
    */
   instance: string | null
+
+  /**
+   * What `--help` was asked about: a command key (`maps pull`), a group with no
+   * action (`maps`), or null for the general help. Set only when `command` is
+   * `help`.
+   */
+  helpTopic: string | null
 }
 
-export class UsageError extends Error {}
+export class UsageError extends Error {
+  /** The command the error is about, when there is one: the CLI then prints
+   *  `veilio scrub: …` rather than `veilio: …`. */
+  readonly command: string | undefined
+  /** Print the general help with the error: a line of flags and no command. */
+  readonly showHelp: boolean
 
-const COMMANDS = new Set<Command>([
-  'scrub',
-  'restore',
-  'scan',
-  'map',
-  'login',
-  'logout',
-  'whoami',
-  'maps',
-  'team',
-  'vault',
-  'projects',
-  'rules',
-  'help',
-  'version',
-])
+  constructor(message: string, command?: string, showHelp = false) {
+    super(message)
+    this.command = command
+    this.showHelp = showHelp
+  }
+}
+
+/** The one wording for a flag a command does not take, known or not: it
+ *  names the command and lists the options it does take. */
+function refusedFlag(spelling: string, command: CommandKey, known: boolean): UsageError {
+  const options = flagsOf(command)
+  const what = known
+    ? `${spelling} is not an option for ${command}.`
+    : `unknown option ${spelling}.`
+  return new UsageError(
+    `${what} Options for ${command}: ${options.map(spell).join(', ')}.`,
+    command
+  )
+}
+
+const COMMANDS = new Set<string>(COMMAND_WORDS)
+
+/** Where each group keeps its action in ParsedArgs. */
+const ACTION_FIELD = {
+  maps: 'mapsAction',
+  team: 'teamAction',
+  vault: 'vaultAction',
+  projects: 'projectsAction',
+  rules: 'rulesAction',
+} as const satisfies Record<string, keyof ParsedArgs>
 
 /**
- * The commands that reach the network. Named here so the split is one list
- * rather than a condition repeated at each call site — and so that adding a
- * command without deciding which side of the line it falls on is a compile
- * error rather than an accident.
+ * The commands that reach the network, from the command table. Adding a
+ * command to the table means deciding which side of the line it is on.
  */
-export const CLOUD_COMMANDS = new Set<Command>([
-  'login',
-  'logout',
-  'whoami',
-  'maps',
-  'team',
-  'vault',
-  'projects',
-  'rules',
-])
+export const CLOUD_COMMANDS = new Set<Command>(
+  COMMAND_SPECS.filter((c) => c.cloud).map((c) => c.key.split(' ')[0] as Command)
+)
+
+/** `maps needs an action — list, pull, push, update or rm.` */
+export function needsAction(word: string): string {
+  return `${word} needs an action — ${actionList(word)}.`
+}
+
 const SECRET_POLICIES = new Set<SecretPolicy>(['redact', 'warn', 'off'])
 const LANGUAGE_VALUES = new Set<string>([...LANGUAGES, 'auto'])
 
@@ -179,87 +204,91 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     projectsAction: null,
     days: null,
     rulesAction: null,
+    helpTopic: null,
   }
 
   if (argv.length === 0) return parsed
 
-  let i = 0
-  const first = argv[0]
-  if (!first.startsWith('-')) {
-    if (!COMMANDS.has(first as Command)) {
-      throw new UsageError(`unknown command "${first}"`)
+  // The command is the first word that is neither a flag nor a flag's value,
+  // wherever it sits: `veilio -q scrub a.ts` and `veilio --json scan x` are
+  // read as `scrub -q a.ts` and `scan --json x`, and checked the same way.
+  const taken = new Set<number>()
+  let commandAt = -1
+  for (let j = 0; j < argv.length; j++) {
+    const arg = argv[j]
+    if (arg.startsWith('-') && arg !== '-') {
+      if (flagFor(arg)?.value !== undefined) j++
+      continue
     }
-    parsed.command = first as Command
-    i = 1
+    commandAt = j
+    break
+  }
 
-    // `maps` takes a verb. Read here rather than as a positional later, so that
-    // `veilio maps pull abc` does not treat `pull` as a file to anonymize.
-    if (parsed.command === 'maps') {
-      const verb = argv[1]
-      if (verb !== undefined && !verb.startsWith('-')) {
-        if (
-          verb !== 'list' &&
-          verb !== 'pull' &&
-          verb !== 'push' &&
-          verb !== 'update' &&
-          verb !== 'rm'
-        ) {
-          throw new UsageError(
-            `unknown maps action "${verb}" — expected list, pull, push, update or rm`
-          )
-        }
-        parsed.mapsAction = verb
-        i = 2
-      }
+  const wantsHelp = argv.some((a) => a === '--help' || a === '-h')
+  const word = commandAt === -1 ? null : argv[commandAt]
+
+  // `--help` anywhere on the line wins, before anything else can refuse it:
+  // `veilio scrub --days 3 -h` shows scrub's help, not an error.
+  if (wantsHelp) {
+    parsed.command = 'help'
+    if (word !== null && COMMANDS.has(word)) {
+      const verb = argv[commandAt + 1]
+      parsed.helpTopic =
+        verb !== undefined && actionsOf(word).includes(verb) ? `${word} ${verb}` : word
     }
+    return parsed
+  }
 
-    if (parsed.command === 'team') {
-      const verb = argv[1]
-      if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'unlock' && verb !== 'lock') {
-          throw new UsageError(`unknown team action "${verb}" — expected unlock or lock`)
-        }
-        parsed.teamAction = verb
-        i = 2
-      }
-    }
+  let key: CommandKey | null = null
+  if (word !== null) {
+    if (!COMMANDS.has(word)) throw new UsageError(`unknown command "${word}"`)
+    parsed.command = word as Command
+    taken.add(commandAt)
 
-    if (parsed.command === 'vault') {
-      const verb = argv[1]
+    // A group takes a verb. Read here rather than as a positional later, so
+    // that `veilio maps pull abc` does not treat `pull` as a file.
+    const actions = actionsOf(word)
+    if (actions.length > 0) {
+      const verb = argv[commandAt + 1]
       if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'unlock' && verb !== 'lock') {
-          throw new UsageError(`unknown vault action "${verb}" — expected unlock or lock`)
+        if (!actions.includes(verb)) {
+          throw new UsageError(`unknown ${word} action "${verb}" — expected ${actionList(word)}`)
         }
-        parsed.vaultAction = verb
-        i = 2
+        const field = ACTION_FIELD[word as keyof typeof ACTION_FIELD]
+        ;(parsed as unknown as Record<string, unknown>)[field] = verb
+        taken.add(commandAt + 1)
+        key = `${word} ${verb}` as CommandKey
+      } else if (runsBare(word)) {
+        key = word as CommandKey
+      } else {
+        // `veilio maps` alone has nothing to run, whatever flags follow.
+        throw new UsageError(needsAction(word))
       }
-    }
-
-    if (parsed.command === 'projects') {
-      const verb = argv[1]
-      if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'list' && verb !== 'use') {
-          throw new UsageError(`unknown projects action "${verb}" — expected list or use`)
-        }
-        parsed.projectsAction = verb
-        i = 2
-      }
-    }
-
-    if (parsed.command === 'rules') {
-      const verb = argv[1]
-      if (verb !== undefined && !verb.startsWith('-')) {
-        if (verb !== 'pull') {
-          throw new UsageError(`unknown rules action "${verb}" — expected pull`)
-        }
-        parsed.rulesAction = verb
-        i = 2
-      }
+    } else {
+      key = word as CommandKey
     }
   }
 
-  for (; i < argv.length; i++) {
+  // A line of flags and no command. --help and --version answer on their
+  // own; any other known flag has no command to belong to.
+  let commandless: string | null = null
+
+  for (let i = 0; i < argv.length; i++) {
+    if (taken.has(i)) continue
     const arg = argv[i]
+    if (arg.startsWith('-') && arg !== '-') {
+      const flag = flagFor(arg)
+      if (key !== null && !flag) {
+        throw refusedFlag(arg, key, false)
+      } else if (key !== null && flag && !belongsTo(flag, key)) {
+        // A flag that exists but is not this command's is refused, not
+        // ignored. `veilio scrub --days 3` used to run with `--days` doing
+        // nothing.
+        throw refusedFlag(arg, key, true)
+      } else if (key === null && flag && flag.commands !== 'all') {
+        commandless ??= arg
+      }
+    }
     switch (arg) {
       case '-h':
       case '--help':
@@ -363,5 +392,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
+  if (commandless !== null) {
+    throw new UsageError(`${commandless} needs a command`, undefined, true)
+  }
   return parsed
 }
