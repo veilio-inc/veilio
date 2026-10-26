@@ -57,6 +57,14 @@ describe('the engine CHANGELOG', () => {
     expect(headings).toHaveLength(1)
   })
 
+  it('starts with a version entry, so a note cannot end up between releases', () => {
+    // semantic-release adds each release directly under `# Changelog`. A note
+    // placed above the entries would be pushed down between two releases, so
+    // notes go at the end of the file.
+    const first = changelog.split('\n').find((l) => l.startsWith('## '))
+    expect(first && topChangelogVersion(first), `first heading: ${first}`).toBe(version)
+  })
+
   it('reads the newest version, skipping a heading that names none', () => {
     // The parser is checked on its own, so that a format change cannot make
     // it return null on a real file and the test above pass for the wrong

@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import ts from 'typescript'
-import { publicDocs, readDoc } from './fixtures/public-docs.js'
+import { engineExports, optionKeys, publicDocs, readDoc } from './fixtures/public-docs.js'
 
 /**
  * The README's API list against the types it describes.
@@ -19,32 +18,16 @@ import { publicDocs, readDoc } from './fixtures/public-docs.js'
  * because the README is prose next to code that changed. Both are visible to a
  * string comparison, which is all this is.
  *
- * Types are read from the source rather than imported: a TypeScript interface
+ * Types are read by the TypeScript checker rather than imported: an interface
  * leaves nothing behind at runtime to enumerate.
  */
-const TYPES = readFileSync(join(import.meta.dirname, '..', 'src', 'types.ts'), 'utf8')
 const README = readFileSync(join(import.meta.dirname, '..', 'README.md'), 'utf8')
 
-/** The top-level property names of one exported interface.
- *
- *  Brace-depth aware, so a nested object type contributes its own keys to
- *  nothing — only the interface's own surface is compared. */
+/** The property names of one exported engine type, sorted. Read by the
+ *  type checker (shared with the other docs tests), so an inherited or
+ *  intersected property counts as the compiler counts it. */
 function interfaceKeys(name: string): string[] {
-  const start = TYPES.indexOf(`export interface ${name} {`)
-  if (start === -1) throw new Error(`no exported interface ${name} in types.ts`)
-  const keys: string[] = []
-  let depth = 0
-  for (const line of TYPES.slice(start).split('\n').slice(1)) {
-    const opens = (line.match(/\{/g) ?? []).length
-    const closes = (line.match(/\}/g) ?? []).length
-    if (depth === 0 && closes > opens) break
-    if (depth === 0) {
-      const m = /^ {2}(\w+)\??:/.exec(line)
-      if (m) keys.push(m[1])
-    }
-    depth += opens - closes
-  }
-  return keys.sort()
+  return [...optionKeys(name)].sort()
 }
 
 /** Every `options.<name>` the README names. */
@@ -65,10 +48,10 @@ function documentedResult(fn: string): string[] {
 }
 
 describe('the README API list and the engine types', () => {
-  const optionKeys = [...interfaceKeys('AnonymizeOptions'), ...interfaceKeys('RestoreOptions')]
+  const accepted = [...interfaceKeys('AnonymizeOptions'), ...interfaceKeys('RestoreOptions')]
 
   it('documents every option the engine accepts', () => {
-    const undocumented = optionKeys.filter((k) => !documentedOptions().includes(k))
+    const undocumented = accepted.filter((k) => !documentedOptions().includes(k))
     expect(
       undocumented,
       `these options exist and the README never names them: ${undocumented.join(', ')}`
@@ -79,7 +62,7 @@ describe('the README API list and the engine types', () => {
     // The `options.style` failure. A promise a caller can act on is worse than
     // an omission: the code compiles against the README and silently does
     // something else.
-    const invented = documentedOptions().filter((k) => !optionKeys.includes(k))
+    const invented = documentedOptions().filter((k) => !accepted.includes(k))
     expect(
       invented,
       `the README documents options that are in no options type: ${invented.join(', ')}`
@@ -104,21 +87,6 @@ describe('the README API list and the engine types', () => {
  * src/index.ts, so type-only exports (`SymbolMap`, `VeilioFile`) count too. A
  * runtime `Object.keys(import(...))` would not see them.
  */
-function engineExports(): Set<string> {
-  const index = join(import.meta.dirname, '..', 'src', 'index.ts')
-  const program = ts.createProgram([index], {
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    target: ts.ScriptTarget.ES2022,
-    strict: true,
-    noEmit: true,
-  })
-  const checker = program.getTypeChecker()
-  const source = program.getSourceFile(index)
-  const moduleSymbol = source && checker.getSymbolAtLocation(source)
-  if (!moduleSymbol) throw new Error('could not read the exports of src/index.ts')
-  return new Set(checker.getExportsOfModule(moduleSymbol).map((s) => s.name))
-}
 
 /** The `## API` section, up to the next top-level heading. */
 function apiSection(): string {
@@ -187,11 +155,11 @@ describe('options named in any public doc', () => {
   // The engine README is checked above. The ROADMAP, the guides and the other
   // READMEs mention options too (`options.manual`), and a stale one there
   // misleads a reader just as much.
-  const optionKeys = [...interfaceKeys('AnonymizeOptions'), ...interfaceKeys('RestoreOptions')]
+  const accepted = [...interfaceKeys('AnonymizeOptions'), ...interfaceKeys('RestoreOptions')]
 
   it.each(publicDocs())('%s names only options the engine accepts', (doc) => {
     const named = [...readDoc(doc).matchAll(/`options\.(\w+)`/g)].map((m) => m[1])
-    const invented = [...new Set(named)].filter((k) => !optionKeys.includes(k))
+    const invented = [...new Set(named)].filter((k) => !accepted.includes(k))
     expect(
       invented,
       `${doc} names options that are in no options type: ${invented.join(', ')}`

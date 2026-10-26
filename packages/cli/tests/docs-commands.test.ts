@@ -52,8 +52,65 @@ function helpCommands(): { single: Set<string>; double: Set<string> } {
   return { single, double }
 }
 
-function inHelp(flag: string): boolean {
-  return new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(HELP)
+/** The help's sections, each entry with its wrapped lines joined. */
+function helpEntries(section: 'COMMANDS' | 'OPTIONS'): string[] {
+  const body = new RegExp(`\\n${section}\\n([\\s\\S]*?)\\n[A-Z][A-Z ]+\\n`).exec(HELP)
+  if (!body) throw new Error(`veilio --help has no ${section} section`)
+  const entries: string[] = []
+  for (const line of body[1].split('\n')) {
+    // An entry starts at column 2, or at column 6 for a flag with no short
+    // form (`      --json`). A wrapped line is indented further.
+    if (/^ {2}\S/.test(line) || (section === 'OPTIONS' && /^ {2,6}-/.test(line)))
+      entries.push(line.trim())
+    else if (/^ {4,}\S/.test(line) && entries.length > 0)
+      entries[entries.length - 1] += ' ' + line.trim()
+  }
+  return entries
+}
+
+/**
+ * Which commands each flag in `--help` belongs to. `null` means every command.
+ *
+ * The parser takes any flag with any command and ignores what does not apply,
+ * so `veilio scrub --days 3` runs and the `--days` does nothing. The help is
+ * the only place that says where a flag belongs. In OPTIONS it is a prefix
+ * such as `login:` or `vault unlock, team unlock:`, a `restore:` later in the
+ * text, or a list in brackets (`(scan, map)`). In COMMANDS it is a flag named
+ * on a command's own line (`map … (--clear to wipe it)`, `scrub --team`). An
+ * OPTIONS flag with no scope works with any command.
+ *
+ * Flags are read as tokens from the flag column and from the COMMANDS lines,
+ * so `-f` is never found inside `--force`.
+ */
+function flagScopes(): Map<string, Set<string> | null> {
+  const { single, double } = helpCommands()
+  const isCommand = (c: string): boolean => single.has(c) || double.has(c)
+  const scopes = new Map<string, Set<string> | null>()
+  for (const entry of helpEntries('OPTIONS')) {
+    const [column, ...rest] = entry.split(/ {2,}/)
+    const description = rest.join(' ')
+    const flags = [...column.matchAll(/(?<![\w-])(--?[a-z][\w-]*)/g)].map((m) => m[1])
+    const scope = new Set<string>()
+    for (const m of description.matchAll(
+      /(?:^|[.;] )([a-z]+(?: [a-z]+)?(?:, [a-z]+(?: [a-z]+)?)*):/g
+    ))
+      for (const c of m[1].split(', ')) if (isCommand(c)) scope.add(c)
+    for (const m of description.matchAll(/\(([a-z]+(?:, [a-z]+)+)\)/g))
+      for (const c of m[1].split(', ')) if (isCommand(c)) scope.add(c)
+    for (const f of flags) scopes.set(f, scope.size > 0 ? scope : null)
+  }
+  for (const entry of helpEntries('COMMANDS')) {
+    const words = entry.split(/\s+/)
+    const command = double.has(`${words[0]} ${words[1]}`) ? `${words[0]} ${words[1]}` : words[0]
+    for (const m of entry.matchAll(/(?<![\w-])(--[a-z][\w-]*)/g)) {
+      const known = scopes.get(m[1])
+      if (known === null) continue
+      const scope = known ?? new Set<string>()
+      scope.add(command)
+      scopes.set(m[1], scope)
+    }
+  }
+  return scopes
 }
 
 interface Invocation {
@@ -67,7 +124,8 @@ interface Invocation {
  * and inline code. Prose is left out, because the word "veilio" in a sentence
  * is the product, not the command.
  *
- * `veilio` counts only as a whole word. So `veilio-mcp`, `/veilio` (the guard's
+ * `veilio` counts only as a whole word, and so do the `npx` and `npm exec`
+ * forms of `@veilio-inc/cli`. So `veilio-mcp`, `/veilio` (the guard's
  * slash command), `.veilio/`, `veilio-inc/veilio` and `veilio.dev` are not
  * matched. An invocation ends at a pipe, `;`, `&&`, `||`, a redirect or a
  * comment, so the flags of the next program (`git diff --cached`) are never
@@ -97,7 +155,13 @@ function invocations(): Invocation[] {
           // `veilio` must be the program: first on the segment, after any
           // `NAME=value` assignments. In `claude mcp add veilio -- …` it is an
           // argument to another program.
-          const m = /^\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*veilio(?![\w.@/-])((?:\s+\S+)*)/.exec(segment)
+          // `npx @veilio-inc/cli …`, `npx -y @veilio-inc/cli@0.6.0 …` and
+          // `npm exec [--yes] @veilio-inc/cli [--] …` run the same binary.
+          const m = new RegExp(
+            String.raw`^\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*` +
+              String.raw`(?:veilio(?![\w.@/-])|(?:npx|npm\s+exec)(?:\s+(?:-y|--yes))*\s+@veilio-inc/cli(?:@\S+)?(?:\s+--(?=\s|$))?)` +
+              String.raw`((?:\s+\S+)*)`
+          ).exec(segment)
           if (!m) continue
           found.push({ doc, text: segment.trim(), words: m[1].trim().split(/\s+/).filter(Boolean) })
         }
@@ -119,7 +183,12 @@ describe('veilio commands and flags in the public docs', () => {
     const all = invocations()
     expect(all.length).toBeGreaterThan(80)
     expect(all.map((i) => i.text)).toEqual(
-      expect.arrayContaining(['veilio scrub src/billing.ts', 'veilio maps update <id>'])
+      expect.arrayContaining([
+        'veilio scrub src/billing.ts',
+        'veilio maps update <id>',
+        'npx @veilio-inc/cli scrub src/billing.ts',
+        'npx -y @veilio-inc/cli --help',
+      ])
     )
   })
 
@@ -152,17 +221,49 @@ describe('veilio commands and flags in the public docs', () => {
     ).toEqual([])
   })
 
-  it('names only flags that veilio --help lists', () => {
+  it('names only flags that veilio --help lists, with a command they belong to', () => {
+    const { double } = helpCommands()
+    const scopes = flagScopes()
     const wrong: string[] = []
     for (const inv of invocations()) {
+      const [first, second] = inv.words
+      const command =
+        first === undefined || first.startsWith('-')
+          ? null
+          : double.has(`${first} ${second}`)
+            ? `${first} ${second}`
+            : first
       for (const word of inv.words) {
         const flag = /^(--?[a-z][\w-]*)/.exec(word)?.[1]
-        if (flag && !inHelp(flag)) wrong.push(`${inv.doc}: "${inv.text}" (${flag})`)
+        if (!flag) continue
+        if (!scopes.has(flag)) {
+          wrong.push(`${inv.doc}: "${inv.text}" (${flag} is not in --help)`)
+          continue
+        }
+        const scope = scopes.get(flag)
+        if (scope && !(command && (scope.has(command) || scope.has(command.split(' ')[0]))))
+          wrong.push(
+            `${inv.doc}: "${inv.text}" (--help gives ${flag} to ${[...scope].join(', ')}, not ${command ?? 'no command'})`
+          )
       }
     }
-    expect(wrong, `the docs name flags veilio --help does not list:\n${wrong.join('\n')}`).toEqual(
-      []
-    )
+    expect(
+      wrong,
+      `the docs use flags veilio --help does not give them:\n${wrong.join('\n')}`
+    ).toEqual([])
+  })
+
+  it('reads where each flag belongs from --help', () => {
+    // A guard on flagScopes: if the help changed shape and every flag came out
+    // global, the check above would pass on anything.
+    const scopes = flagScopes()
+    expect(scopes.get('--days')).toEqual(new Set(['vault unlock', 'team unlock']))
+    expect(scopes.get('--keep-docs')).toEqual(new Set(['restore']))
+    expect(scopes.get('--strict')).toEqual(new Set(['scan', 'restore']))
+    expect(scopes.get('--json')).toEqual(new Set(['scan', 'map']))
+    expect(scopes.get('--clear')).toEqual(new Set(['map']))
+    expect(scopes.get('--language')).toBeNull()
+    expect(scopes.get('-f')).toBeNull()
   })
 
   it('lists in --help every flag the parser accepts', () => {
@@ -170,7 +271,8 @@ describe('veilio commands and flags in the public docs', () => {
     // for a release with no line in it.
     const source = readDoc('packages/cli/src/args.ts')
     const parsed = [...source.matchAll(/case '(--?[a-z][\w-]*)':/g)].map((m) => m[1])
-    const hidden = parsed.filter((f) => !inHelp(f))
+    const scopes = flagScopes()
+    const hidden = parsed.filter((f) => !scopes.has(f))
     expect(
       hidden,
       `the parser accepts these and --help never names them: ${hidden.join(', ')}`

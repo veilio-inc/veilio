@@ -1,15 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import ts from 'typescript'
-import { fencedBlocks, publicDocs, readDoc } from './fixtures/public-docs.js'
+import {
+  COMPILER_OPTIONS,
+  ENGINE_INDEX,
+  cachedHost,
+  engineExports,
+  fencedBlocks,
+  optionKeys,
+  publicDocs,
+  readDoc,
+} from './fixtures/public-docs.js'
 
 /**
  * Every TypeScript and JavaScript example in the public docs, compiled against
  * the engine as it is now.
  *
- * A reader copies these. `anonymize(code, { style: 'plain' })` compiled in the
- * README's head for eleven published versions after the option was gone, and
- * nothing checked it, because a README is text. The compiler can check it if
+ * A reader copies these. `anonymize(code, { style: 'plain' })` stayed in the
+ * README for eleven published versions after the option was removed, and
+ * nothing checked it, because a README is text. The compiler can check it once
  * it is handed the block.
  *
  * Examples are fragments, so two things are added before compiling:
@@ -18,84 +27,96 @@ import { fencedBlocks, publicDocs, readDoc } from './fixtures/public-docs.js'
  *   README imports `anonymize` once, at the top, and the later blocks assume
  *   it;
  * - `declare const x: any` for a lowercase name the block uses and never
- *   defines (`aiReply`, `goSource`), which stands for the reader's own data.
+ *   defines (`aiReply`, `goSource`). It stands for the reader's own data.
  *
  * A name that is called (`name(`) or capitalised gets no declaration. If the
  * engine stops exporting a function an example calls, the example fails here.
- * Without this rule, the fragment handling would hide exactly the failure this
+ * Without this rule, the fragment handling would hide the very failure this
  * test exists for.
  */
-const ENGINE_INDEX = join(import.meta.dirname, '..', 'src', 'index.ts')
 const LANGS = ['ts', 'typescript', 'js', 'javascript'] as const
 const VIRTUAL = join(import.meta.dirname, '__readme_example__.ts')
 
 const OPTIONS: ts.CompilerOptions = {
-  module: ts.ModuleKind.NodeNext,
-  moduleResolution: ts.ModuleResolutionKind.NodeNext,
-  target: ts.ScriptTarget.ES2022,
-  lib: ['lib.es2022.d.ts'],
-  strict: true,
-  noEmit: true,
-  skipLibCheck: true,
+  ...COMPILER_OPTIONS,
   // Examples bind results they then only describe in a comment.
   noUnusedLocals: false,
-  paths: { '@veilio-inc/engine': [ENGINE_INDEX] },
 }
 
-// One host for every compile, so the engine source and the lib files are parsed
-// once rather than once per example per round.
-const sourceCache = new Map<string, ts.SourceFile | undefined>()
-const baseHost = ts.createCompilerHost(OPTIONS)
 let previous: ts.Program | undefined
 
 function compile(code: string): { program: ts.Program; diagnostics: ts.Diagnostic[] } {
-  const host: ts.CompilerHost = {
-    ...baseHost,
-    fileExists: (f) => f === VIRTUAL || baseHost.fileExists(f),
-    readFile: (f) => (f === VIRTUAL ? code : baseHost.readFile(f)),
-    getSourceFile: (f, lang, onError, create) => {
-      if (f === VIRTUAL) return ts.createSourceFile(f, code, lang, true, ts.ScriptKind.TS)
-      if (!sourceCache.has(f)) sourceCache.set(f, baseHost.getSourceFile(f, lang, onError, create))
-      return sourceCache.get(f)
-    },
-  }
+  const host = cachedHost(new Map([[VIRTUAL, code]]))
   const program = ts.createProgram([VIRTUAL], OPTIONS, host, previous)
   previous = program
   const diagnostics = ts.getPreEmitDiagnostics(program).filter((d) => d.file?.fileName === VIRTUAL)
   return { program, diagnostics }
 }
 
+/** An exported engine type, as the example's own checker sees it. */
+function engineType(program: ts.Program, name: string): ts.Type {
+  const checker = program.getTypeChecker()
+  const index = program.getSourceFile(ENGINE_INDEX)
+  const moduleSymbol = index && checker.getSymbolAtLocation(index)
+  const symbol =
+    moduleSymbol && checker.getExportsOfModule(moduleSymbol).find((s) => s.name === name)
+  if (!symbol) throw new Error(`@veilio-inc/engine does not export ${name}`)
+  return checker.getDeclaredTypeOfSymbol(symbol)
+}
+
+/** Where each function takes its options, and the type they must be. */
+const OPTION_ARGUMENTS: Record<string, { at: number; type: string }> = {
+  anonymize: { at: 1, type: 'AnonymizeOptions' },
+  restore: { at: 2, type: 'RestoreOptions' },
+}
+
 /**
- * `anonymize(code, { style: 'plain' })` type-checks. The second parameter is
- * `AnonymizeOptions | SymbolMap`, and a SymbolMap is any record of strings, so
- * an unknown key with a string value is accepted as a positional map, and the
- * engine stores it in the map. The compiler cannot see the failure that started
- * this test. So the option objects an example passes are checked by name: the
- * second argument of `anonymize` and the third of `restore` must use only real
- * option keys.
+ * The option arguments an example passes, checked by the type checker.
+ *
+ * The compiler alone cannot catch `anonymize(code, { style: 'plain' })`. The
+ * second parameter is `AnonymizeOptions | SymbolMap`, and a SymbolMap is any
+ * record of strings, so an unknown key with a string value is accepted as a
+ * positional map, and the engine stores it in the map. So each options
+ * argument is judged by its type, as the checker resolves it:
+ *
+ * - `any`, or a type with a string index signature (`SymbolMap`, a `Record`),
+ *   is a map passed positionally. The docs write `{ existingMap }` instead.
+ * - Any other type must have only real option keys among its properties.
+ *   Because this reads the type and not the syntax, a quoted key
+ *   (`{ 'style': … }`), a computed key, a spread (`{ ...{ style: … } }`) and
+ *   a variable holding options are all judged the same way. A variable typed
+ *   `AnonymizeOptions` passes, because its properties are the options.
  */
-function unknownOptionKeys(program: ts.Program): string[] {
+function badOptionArguments(program: ts.Program): string[] {
   const source = program.getSourceFile(VIRTUAL)
   if (!source) return []
-  const keys: Record<string, { at: number; allowed: readonly string[] }> = {
-    anonymize: { at: 1, allowed: optionKeys('AnonymizeOptions') },
-    restore: { at: 2, allowed: optionKeys('RestoreOptions') },
-  }
+  const checker = program.getTypeChecker()
   const found: string[] = []
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      const rule = keys[node.expression.text]
+      const fn = node.expression.text
+      const rule = OPTION_ARGUMENTS[fn]
       const arg = rule && node.arguments[rule.at]
-      // A map passed where the options go is the positional form. It still
-      // works, and it is the reason a bad option key passes silently, so the
-      // docs show `{ existingMap }` instead.
-      if (arg && node.expression.text === 'anonymize' && !ts.isObjectLiteralExpression(arg))
-        found.push('anonymize() is given a map positionally; write { existingMap: map }')
-      if (arg && ts.isObjectLiteralExpression(arg)) {
-        for (const prop of arg.properties) {
-          const name = prop.name && ts.isIdentifier(prop.name) ? prop.name.text : undefined
-          if (name && !rule.allowed.includes(name))
-            found.push(`${node.expression.text}() has no option "${name}"`)
+      if (rule && arg) {
+        const argType = checker.getTypeAtLocation(arg)
+        const isAny = (argType.flags & ts.TypeFlags.Any) !== 0
+        if (isAny || argType.getStringIndexType()) {
+          found.push(
+            fn === 'anonymize'
+              ? 'anonymize() is given a map positionally; write { existingMap: map }'
+              : `${fn}() is given a map where its options go`
+          )
+        } else {
+          const allowed = new Set(optionKeys(rule.type))
+          for (const prop of argType.getProperties())
+            if (!allowed.has(prop.name)) found.push(`${fn}() has no option "${prop.name}"`)
+          // What is left is the compiler's question: whether the values have
+          // the right types. It answers that in the diagnostics.
+          if (
+            found.length === 0 &&
+            !checker.isTypeAssignableTo(argType, engineType(program, rule.type))
+          )
+            found.push(`${fn}() is given options that are not ${rule.type}`)
         }
       }
     }
@@ -103,36 +124,6 @@ function unknownOptionKeys(program: ts.Program): string[] {
   }
   visit(source)
   return found
-}
-
-const optionKeysCache = new Map<string, string[]>()
-function optionKeys(typeName: string): string[] {
-  const cached = optionKeysCache.get(typeName)
-  if (cached) return cached
-  const program = ts.createProgram([ENGINE_INDEX], OPTIONS, baseHost)
-  const checker = program.getTypeChecker()
-  const source = program.getSourceFile(ENGINE_INDEX)
-  const symbol = source && checker.getSymbolAtLocation(source)
-  const exported = symbol && checker.getExportsOfModule(symbol).find((s) => s.name === typeName)
-  if (!exported) throw new Error(`@veilio-inc/engine does not export ${typeName}`)
-  const keys = checker
-    .getDeclaredTypeOfSymbol(exported)
-    .getProperties()
-    .map((p) => p.name)
-  optionKeysCache.set(typeName, keys)
-  return keys
-}
-
-let exportsCache: Set<string> | undefined
-function engineExports(): Set<string> {
-  if (exportsCache) return exportsCache
-  const program = ts.createProgram([ENGINE_INDEX], OPTIONS, baseHost)
-  const checker = program.getTypeChecker()
-  const source = program.getSourceFile(ENGINE_INDEX)
-  const symbol = source && checker.getSymbolAtLocation(source)
-  if (!symbol) throw new Error('could not read the exports of src/index.ts')
-  exportsCache = new Set(checker.getExportsOfModule(symbol).map((s) => s.name))
-  return exportsCache
 }
 
 const CANNOT_FIND_NAME = new Set([2304, 2552])
@@ -175,7 +166,7 @@ function check(block: string): string[] {
             : 0
         return `line ${line}: TS${d.code} ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`
       })
-      return [...typeErrors, ...unknownOptionKeys(program)]
+      return [...typeErrors, ...badOptionArguments(program)]
     }
   }
   throw new Error('the example did not settle after four rounds')
@@ -201,23 +192,60 @@ describe('the TypeScript examples in the public docs', () => {
     // and longer on a CI runner, so it gets more than vitest's 5 s default.
     30_000
   )
+})
 
-  it('fails an example that uses an option the engine does not have', () => {
-    // The check itself, on the failure that started this: if the fragment
-    // handling ever swallowed this error, every example above would pass
-    // whatever it said.
-    const errors = check(`anonymize(source, { style: 'plain' })`)
-    expect(errors).toEqual(['anonymize() has no option "style"'])
+describe('the example check itself', () => {
+  // If the fragment handling or the option check ever swallowed these, every
+  // example above would pass whatever it said.
+  it('fails an option the engine does not have', () => {
+    expect(check(`anonymize(source, { style: 'plain' })`)).toEqual([
+      'anonymize() has no option "style"',
+    ])
   })
 
-  it('fails an example that passes a map where the options go', () => {
-    expect(check(`anonymize(source, previousMap)`)).toEqual([
+  it('fails it with a quoted key, a computed key or a spread', () => {
+    const style = ['anonymize() has no option "style"']
+    expect(check(`anonymize(source, { 'style': 'plain' })`)).toEqual(style)
+    expect(check(`anonymize(source, { ['style']: 'plain' })`)).toEqual(style)
+    expect(check(`anonymize(source, { ...{ style: 'plain' } })`)).toEqual(style)
+    expect(check(`anonymize(source, { language: 'go', ...{ style: 'plain' } })`)).toEqual(style)
+  })
+
+  it('fails a computed key it cannot name', () => {
+    // `{ [k]: … }` with `k: string` has an index signature: a map, as far as
+    // the engine can tell.
+    expect(check(`declare const k: string\nanonymize(source, { [k]: 'plain' })`)).toEqual([
       'anonymize() is given a map positionally; write { existingMap: map }',
     ])
+  })
+
+  it('fails an unknown option of restore', () => {
+    expect(check(`restore(text, map, { strip: 'all', keep: true })`)).toContain(
+      'restore() has no option "keep"'
+    )
+  })
+
+  it('passes options held in a variable typed as the options', () => {
+    expect(
+      check(`const opts: AnonymizeOptions = { language: 'go' }\nanonymize(source, opts)`)
+    ).toEqual([])
+    expect(check(`const opts = { language: 'go' } as const\nanonymize(source, opts)`)).toEqual([])
+  })
+
+  it('fails options held in a variable that carry an unknown key', () => {
+    expect(
+      check(`const opts = { language: 'go', style: 'plain' } as const\nanonymize(source, opts)`)
+    ).toEqual(['anonymize() has no option "style"'])
+  })
+
+  it('fails a map passed where the options go', () => {
+    const positional = ['anonymize() is given a map positionally; write { existingMap: map }']
+    expect(check(`anonymize(source, previousMap)`)).toEqual(positional)
+    expect(check(`const m: SymbolMap = {}\nanonymize(source, m)`)).toEqual(positional)
     expect(check(`anonymize(source, { existingMap: previousMap })`)).toEqual([])
   })
 
-  it('fails an example that calls a function the engine does not export', () => {
+  it('fails a call to a function the engine does not export', () => {
     expect(check(`const r = anonymizeLegacy(source)`).join('\n')).toMatch(/anonymizeLegacy/)
   })
 })

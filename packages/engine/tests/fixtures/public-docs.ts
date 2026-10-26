@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 
 /**
  * The public docs, as one list that the engine, CLI and MCP contract tests all
@@ -68,4 +69,78 @@ export function fencedBlocks(text: string, langs?: readonly string[]): FencedBlo
 export function inlineCode(text: string): string[] {
   const prose = text.replace(/^\s*```[\s\S]*?^\s*```\s*$/gm, '')
   return [...prose.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])
+}
+
+/*
+ * The engine's public surface, read by the TypeScript checker.
+ *
+ * One host with a source-file cache, and one program over src/index.ts, shared
+ * by every test that asks what the engine exports. The engine source and the
+ * lib files are parsed once per test file. A program for a README example is
+ * built on the same host, so it reuses those parsed files and parses only the
+ * example.
+ */
+export const ENGINE_INDEX = join(REPO_ROOT, 'packages', 'engine', 'src', 'index.ts')
+
+export const COMPILER_OPTIONS: ts.CompilerOptions = {
+  module: ts.ModuleKind.NodeNext,
+  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  target: ts.ScriptTarget.ES2022,
+  lib: ['lib.es2022.d.ts'],
+  strict: true,
+  noEmit: true,
+  skipLibCheck: true,
+  paths: { '@veilio-inc/engine': [ENGINE_INDEX] },
+}
+
+const sourceCache = new Map<string, ts.SourceFile | undefined>()
+const baseHost = ts.createCompilerHost(COMPILER_OPTIONS)
+
+/** The shared host. `extra` adds in-memory files (a README example), which
+ *  are parsed fresh each time; every other file comes from the cache. */
+export function cachedHost(extra: ReadonlyMap<string, string> = new Map()): ts.CompilerHost {
+  return {
+    ...baseHost,
+    fileExists: (f) => extra.has(f) || baseHost.fileExists(f),
+    readFile: (f) => extra.get(f) ?? baseHost.readFile(f),
+    getSourceFile: (f, lang, onError, create) => {
+      const text = extra.get(f)
+      if (text !== undefined) return ts.createSourceFile(f, text, lang, true, ts.ScriptKind.TS)
+      if (!sourceCache.has(f)) sourceCache.set(f, baseHost.getSourceFile(f, lang, onError, create))
+      return sourceCache.get(f)
+    },
+  }
+}
+
+let engine: { program: ts.Program; exports: Map<string, ts.Symbol> } | undefined
+
+function engineSurface(): { program: ts.Program; exports: Map<string, ts.Symbol> } {
+  if (engine) return engine
+  const program = ts.createProgram([ENGINE_INDEX], COMPILER_OPTIONS, cachedHost())
+  const checker = program.getTypeChecker()
+  const source = program.getSourceFile(ENGINE_INDEX)
+  const moduleSymbol = source && checker.getSymbolAtLocation(source)
+  if (!moduleSymbol) throw new Error('could not read the exports of src/index.ts')
+  engine = {
+    program,
+    exports: new Map(checker.getExportsOfModule(moduleSymbol).map((s) => [s.name, s])),
+  }
+  return engine
+}
+
+/** Every name `@veilio-inc/engine` exports, values and types alike. */
+export function engineExports(): Set<string> {
+  return new Set(engineSurface().exports.keys())
+}
+
+/** The property names of an exported engine type (`AnonymizeOptions`). */
+export function optionKeys(typeName: string): string[] {
+  const { program, exports } = engineSurface()
+  const symbol = exports.get(typeName)
+  if (!symbol) throw new Error(`@veilio-inc/engine does not export ${typeName}`)
+  return program
+    .getTypeChecker()
+    .getDeclaredTypeOfSymbol(symbol)
+    .getProperties()
+    .map((p) => p.name)
 }

@@ -69,12 +69,29 @@ describe('MCP tools named in the public docs', () => {
         for (const m of block.code.matchAll(/tools\/call (\w+) (\{[^\n]*\})/g)) {
           calls++
           const [, tool, json] = m
+          const line = block.line + 1 + block.code.slice(0, m.index).split('\n').length - 1
+          const where = `${doc}:${line}`
           if (!NAMES.has(tool)) {
-            wrong.push(`${doc}: no tool ${tool}`)
+            wrong.push(`${where}: no tool ${tool}`)
             continue
           }
-          for (const key of Object.keys(JSON.parse(json) as object))
-            if (!ARGS.get(tool)?.has(key)) wrong.push(`${doc}: ${tool} has no argument "${key}"`)
+          // A malformed example is a doc bug too. It is reported with its
+          // place, not thrown as a bare SyntaxError that names no file.
+          let args: unknown
+          try {
+            args = JSON.parse(json)
+          } catch (err) {
+            wrong.push(
+              `${where}: the ${tool} arguments are not valid JSON (${(err as Error).message})`
+            )
+            continue
+          }
+          if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+            wrong.push(`${where}: the ${tool} arguments are not a JSON object`)
+            continue
+          }
+          for (const key of Object.keys(args))
+            if (!ARGS.get(tool)?.has(key)) wrong.push(`${where}: ${tool} has no argument "${key}"`)
         }
       }
     }
@@ -87,11 +104,12 @@ describe('MCP tools named in the public docs', () => {
     // arguments are the backticked camelCase words in it, or a word followed
     // by `:`, checked against that tool's input schema.
     const wrong: string[] = []
-    let rows = 0
+    const rows = new Set<string>()
     for (const line of readDoc('packages/mcp/README.md').split('\n')) {
       const row = /^\| `([a-z_]+)` +\|(.*)\|\s*$/.exec(line)
-      if (!row || !NAMES.has(row[1])) continue
-      rows++
+      if (!row) continue
+      rows.add(row[1])
+      if (!NAMES.has(row[1])) continue
       const args = ARGS.get(row[1]) ?? new Set()
       for (const m of row[2].matchAll(/`([a-z][A-Za-z]*)(?::[^`]*)?`/g)) {
         const word = m[1]
@@ -99,24 +117,35 @@ describe('MCP tools named in the public docs', () => {
         if (looksLikeArg && !args.has(word)) wrong.push(`${row[1]} has no argument "${word}"`)
       }
     }
-    expect(rows).toBe(NAMES.size)
+    // The tables list exactly the tools the server defines: none missing, none
+    // extra. A row count could match with one tool swapped for another.
+    expect([...rows].sort()).toEqual([...NAMES].sort())
     expect(wrong).toEqual([])
   })
 })
 
 describe('MCP server flags named in the public docs', () => {
-  /** Flags written after the package or binary name, up to the end of the
-   *  command (a closing bracket, quote or line end). */
+  /**
+   * Flags written after the package or binary name.
+   *
+   * In a shell line, they run to the end of the line. In a JSON `args` array
+   * (`"@veilio-inc/mcp", "--root", "."`), they run to the closing `]`, however
+   * many lines the array takes. A client config is often written one argument
+   * per line.
+   */
   function documentedFlags(): { doc: string; flag: string }[] {
     const found: { doc: string; flag: string }[] = []
+    const launcher = /(")?(?:@veilio-inc\/mcp(?:@[\w.]+)?|veilio-mcp|mcp\/dist\/index\.js)\b/g
     for (const doc of publicDocs()) {
       const text = readDoc(doc)
-      const code = [...fencedBlocks(text).map((b) => b.code), ...inlineCode(text)].join('\n')
-      for (const m of code.matchAll(
-        /(?:@veilio-inc\/mcp(?:@\w+)?|veilio-mcp|mcp\/dist\/index\.js)"?,?([^\n\]]*)/g
-      )) {
-        for (const f of m[1].matchAll(/(?<![\w-])"?(--?[a-z][\w-]*)/g))
-          found.push({ doc, flag: f[1] })
+      for (const code of [...fencedBlocks(text).map((b) => b.code), ...inlineCode(text)]) {
+        for (const m of code.matchAll(launcher)) {
+          const after = code.slice((m.index ?? 0) + m[0].length)
+          const end = m[1] ? after.indexOf(']') : after.indexOf('\n')
+          const rest = end === -1 ? after : after.slice(0, end)
+          for (const f of rest.matchAll(/(?<![\w-])"?(--?[a-z][\w-]*)/g))
+            found.push({ doc, flag: f[1] })
+        }
       }
     }
     return found

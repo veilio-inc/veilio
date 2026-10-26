@@ -1,28 +1,5 @@
 # Changelog
 
-## Record of what this file left out (written 2026-10-26)
-
-### Removed before 1.0.0: `options.style`
-
-`anonymize(code, { style })` took `'roles'` (role-typed placeholders such as
-`__CLS__1`) or `'plain'` (the old `__P<n>__` numbering). It was removed in
-[a5c494b](https://github.com/veilio-inc/veilio/commit/a5c494b0f992974779b9369c81d9dda6eff81cf9)
-on 2026-07-29, before 1.0.0. Every version names its placeholders by role.
-
-This file never recorded the removal. The README kept listing the option in
-every published version from 1.0.0 to 1.7.0, and 1.8.0 was the first without
-it. In those versions, `{ style: 'plain' }` was not refused. Its value is a
-string, so the engine read the object as an existing symbol map, and the key
-was stored in the map.
-
-### Versions 1.3.0 to 1.11.0
-
-The release tool stopped committing this file on 2026-09-02 (2f1fa5b), so the
-copy in the repository skipped from 1.2.0 onwards. The entries for 1.3.0 to
-1.11.0 below were copied on 2026-10-26, word for word, from the GitHub Release
-semantic-release made for each `engine-v*` tag. Each version's notes were
-recovered; none is reconstructed or guessed.
-
 ## [1.11.0](https://github.com/veilio-inc/veilio/compare/engine-v1.10.1...engine-v1.11.0) (2026-10-26)
 
 ### Features
@@ -212,3 +189,29 @@ Pure, local transform: **no network, no telemetry, no environment reads, zero
 runtime dependencies.** Enforced by `tests/purity.test.ts` in CI, not promised in
 a README — for a package that reads your source code, the supply chain is the
 product.
+
+## Notes on this file (written 2026-10-26)
+
+These notes sit at the end on purpose. The release tool adds each new version
+directly under the title, so a note at the top would end up between entries.
+
+### Removed before 1.0.0: `options.style`
+
+`anonymize(code, { style })` took `'roles'` (role-typed placeholders such as
+`__CLS__1`) or `'plain'` (the old `__P<n>__` numbering). It was removed in
+[a5c494b](https://github.com/veilio-inc/veilio/commit/a5c494b0f992974779b9369c81d9dda6eff81cf9)
+on 2026-07-29, before 1.0.0. Every version names its placeholders by role.
+
+This file never recorded the removal. The README kept listing the option in
+every published version from 1.0.0 to 1.7.0, and 1.8.0 was the first without
+it. In those versions, `{ style: 'plain' }` was not refused. Its value is a
+string, so the engine read the object as an existing symbol map, and the key
+was stored in the map.
+
+### Versions 1.3.0 to 1.11.0
+
+The release tool stopped committing this file on 2026-09-02 (2f1fa5b), so the
+copy in the repository skipped from 1.2.0 onwards. The entries for 1.3.0 to
+1.11.0 above were copied on 2026-10-26, word for word, from the GitHub Release
+semantic-release made for each `engine-v*` tag. Each version's notes were
+recovered; none is reconstructed or guessed.
