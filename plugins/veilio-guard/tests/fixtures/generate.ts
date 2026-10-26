@@ -32,10 +32,6 @@ export type Case = {
   map: Record<string, string>
   names: string[]
   placeholders: string[]
-  /** What must not reach the model: each secret value where the generator
-   *  placed it (the value alone, once placed only at its own site), or a
-   *  weak value with its quotes, at its site (review of 5347c7c). */
-  forbidden: string[]
 }
 
 /** One random text: pieces in random order, on one line or several. */
@@ -45,18 +41,16 @@ export function generate(seed: number): Case {
   const names: string[] = []
   const placeholders: string[] = []
   const words: string[] = []
-  const forbidden: string[] = []
   const pieces: string[] = []
-  const put = (secret: string, piece: string) => (forbidden.push(secret), pieces.push(piece))
   const n = 2 + Math.floor(r() * 6)
   for (let i = 0; i < n; i++) {
     const kind = Math.floor(r() * 9)
     if (kind === 0) {
       const v = `AKIA${str(r, UPPER + '0123456789', 16)}`
-      put(v, `key ${v}`)
+      pieces.push(`key ${v}`)
     } else if (kind === 1) {
       const v = `ghp_${str(r, ALNUM, 36)}`
-      put(v, `token ${v}`)
+      pieces.push(`token ${v}`)
     } else if (kind === 2) {
       // Every digit once, then four more: enough entropy that the scanner
       // destroys it rather than reporting a possible credential.
@@ -65,16 +59,16 @@ export function generate(seed: number): Case {
         .sort(() => r() - 0.5)
         .join('')
       const v = `${digits}${str(r, '0123456789', 4)}`
-      put(v, `secret = "${v}"`)
+      pieces.push(`secret = "${v}"`)
     } else if (kind === 3) {
       const v = `${str(r, ALNUM, 12)}7`
-      put(v, `password = "${v}"`)
+      pieces.push(`password = "${v}"`)
     } else if (kind === 4) {
       const v = `${str(r, ALNUM, 10)}9`
-      put(v, `postgres://app:${v}@db${i}.internal:5432/x`)
+      pieces.push(`postgres://app:${v}@db${i}.internal:5432/x`)
     } else if (kind === 5) {
       const v = pick(r, IBANS)
-      put(v, `iban ${v}`)
+      pieces.push(`iban ${v}`)
     } else if (kind === 6) {
       // A high-entropy password, then the same value glued to a flag, inside
       // a word and run into another key (review of 6e14ec6).
@@ -83,16 +77,13 @@ export function generate(seed: number): Case {
         `${str(r, UPPER, 1)}${str(r, 'abcdefghijklmnopqrstuvwxyz', 1)}${Math.floor(r() * 10)}${str(r, ALNUM, n)}`
       const v = strong(7)
       const v2 = strong(9)
-      put(v, `password = "${v}"`)
-      put(v2, `api_key = "${v2}"`)
+      pieces.push(`password = "${v}"`)
+      pieces.push(`api_key = "${v2}"`)
       pieces.push(pick(r, [`mysql -u app -p${v}`, `x${v}y`, `${v}${v2}`, `--token=${v}`]))
     } else if (kind === 7) {
       // A schema's ordinary word as a value: the word elsewhere is code.
       const word = pick(r, WORDS)
       pieces.push(`{ password: '${word}' }`)
-      // The scanner reads a lowercase word there as a mode, not a password,
-      // and leaves it; a capitalised one is destroyed at its site.
-      if (/[A-Z]/.test(word)) forbidden.push(`'${word}'`)
       words.push(`see the ${word} field`)
       pieces.push(`see the ${word} field`)
     } else {
@@ -105,5 +96,5 @@ export function generate(seed: number): Case {
     }
   }
   const sep = () => pick(r, ['\n', ' ; ', '\n\n', ', '])
-  return { text: pieces.join(sep()), map, names: [...names, ...words], placeholders, forbidden }
+  return { text: pieces.join(sep()), map, names: [...names, ...words], placeholders }
 }

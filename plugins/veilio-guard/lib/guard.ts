@@ -34,6 +34,7 @@ import {
   destroyedValues,
   restoreAdds,
   grow,
+  ownedMap,
   redactKnown,
   restoresNeverRestored,
   maskShaped,
@@ -135,7 +136,7 @@ export class Guard {
   index: ProjectIndex | null = null
   private writes: Promise<unknown> = Promise.resolve()
   private indexing: Promise<unknown> = Promise.resolve()
-  private unsaved: SymbolMap = {}
+  private unsaved: SymbolMap = ownedMap()
   private batch: string[] = []
 
   constructor(
@@ -243,7 +244,7 @@ export class Guard {
     // only means fewer names are exempt, so the batch goes on without it.
     await bounded(this.index.start(), deadline, this.clock)
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      this.unsaved = {}
+      this.unsaved = ownedMap()
       this.batch = []
       const missed = await work()
       if (Object.keys(this.unsaved).length === 0) return missed
@@ -256,7 +257,7 @@ export class Guard {
         for (const rel of this.batch) this.index.forget(rel)
         throw err
       } finally {
-        this.unsaved = {}
+        this.unsaved = ownedMap()
       }
       // Files whose names went to the quarantine are indexed again later, so
       // nothing of theirs is taken as saved.
@@ -611,7 +612,7 @@ export class Guard {
     }
 
     // What the call would write back that Veilio keeps from it, if anything.
-    let restoresWhat: 'credential' | 'regulated' | 'manual' | null = null
+    let restoresWhat: string | null = null
     let args: ToolEvent = e
     // A credential Veilio destroyed is never put back, whatever a placeholder
     // says it stands for (security review of 933156e).
@@ -623,7 +624,7 @@ export class Guard {
       after === before
         ? null
         : learned.some((v) => after.includes(v) && !before.includes(v))
-          ? 'credential'
+          ? 'a credential Veilio removed'
           : restoreAdds(before, after)
     const guarded = (s: string) => {
       const out = restoreOne(s)
@@ -641,13 +642,7 @@ export class Guard {
     }
     if (restoresWhat)
       return this.deny(
-        `a placeholder in it stands for ${
-          restoresWhat === 'regulated'
-            ? 'a regulated number Veilio masks (an IBAN, a card or a PESEL)'
-            : restoresWhat === 'manual'
-              ? 'a value marked by hand'
-              : 'a credential Veilio removed'
-        }, which is never written back. Ask the user`
+        `a placeholder in it stands for ${restoresWhat}, which is never written back. Ask the user`
       )
 
     for (const field of policy.paths) {
@@ -830,8 +825,8 @@ export class Guard {
       }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const working: SymbolMap = { ...this.map }
-      const additions: SymbolMap = {}
+      const working: SymbolMap = ownedMap(this.map)
+      const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
       const ctx = this.context(this.resultLanguage(tool, args, filePath))
       // A Grep result mixes files: each line is masked in its own file's language.

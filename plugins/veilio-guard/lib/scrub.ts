@@ -89,8 +89,8 @@ type Matcher = {
   kinds: Map<string, Set<string>>
   /** The map's version when this was built. */
   version: number
-  /** How many entries it had then, checked only under strict maps. */
-  keys: number
+  /** Its fingerprint then, kept only under strict maps. */
+  fingerprint: string
 }
 // How many times each map object has grown in place, so caches built from it
 // know when they are stale without counting its keys on every call (review of
@@ -98,19 +98,63 @@ type Matcher = {
 const versions = new WeakMap<SymbolMap, number>()
 const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
 
-// Tests set this so that a map grown any other way than grow() throws at the
-// next cache read, instead of masking with a stale cache (review of 5347c7c).
+/** A cheap fingerprint of a map's content: its size and a sum of its
+ *  entries' hashes. grow() keeps it current; a change made any other way,
+ *  even one that keeps the count, no longer matches (review of 0ef312b). */
+function entryHash(key: string, value: string): number {
+  let h = 2166136261
+  const text = `${key}\u0000${value}`
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619)
+  return h >>> 0
+}
+function fingerprintOf(map: SymbolMap): string {
+  let sum = 0
+  let size = 0
+  for (const [k, v] of Object.entries(map)) {
+    sum = (sum + entryHash(k, v)) >>> 0
+    size++
+  }
+  return `${size}:${sum}`
+}
+
+// Tests set this so that a map changed any other way than grow() throws at
+// the next cache read, instead of masking with a stale cache (reviews of
+// 5347c7c and 0ef312b). It recomputes the fingerprint, so only tests pay.
 const strictMaps = () =>
   (globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps === true
-function checkGrown(map: SymbolMap, keys: number): void {
-  if (strictMaps() && Object.keys(map).length !== keys)
-    throw new Error('a map grew without grow(): its caches would be stale')
+function checkGrown(map: SymbolMap, fingerprint: string): void {
+  if (strictMaps() && fingerprintOf(map) !== fingerprint)
+    throw new Error('a map changed without grow(): its caches would be stale')
+}
+
+let growing = false
+
+/** A map whose only mutator is grow(): any other write throws, so no cache
+ *  built from it can go stale (review of 0ef312b). */
+export function ownedMap(init: SymbolMap = {}): SymbolMap {
+  const refuse = () => {
+    if (!growing) throw new Error('a map is changed only through grow()')
+    return true
+  }
+  return new Proxy(
+    { ...init },
+    {
+      set: (target, key, value) => (refuse(), Reflect.set(target, key, value)),
+      defineProperty: (target, key, d) => (refuse(), Reflect.defineProperty(target, key, d)),
+      deleteProperty: (target, key) => (refuse(), Reflect.deleteProperty(target, key)),
+    }
+  )
 }
 
 /** Adds entries to a map object, telling the caches it changed. */
 export function grow(map: SymbolMap, additions: SymbolMap): void {
   if (Object.keys(additions).length === 0) return
-  Object.assign(map, additions)
+  growing = true
+  try {
+    Object.assign(map, additions)
+  } finally {
+    growing = false
+  }
   versions.set(map, versionOf(map) + 1)
 }
 
@@ -119,7 +163,7 @@ const compiled = new WeakMap<SymbolMap, Matcher>()
 function matcher(map: SymbolMap): Matcher {
   let c = compiled.get(map)
   // Rebuilt when the same object grew (reviews of da4ff84 and 6e14ec6).
-  if (c && c.version === versionOf(map)) checkGrown(map, c.keys)
+  if (c && c.version === versionOf(map)) checkGrown(map, c.fingerprint)
   if (!c || c.version !== versionOf(map)) {
     const byName = new Map<string, string>()
     const kinds = new Map<string, Set<string>>()
@@ -135,7 +179,7 @@ function matcher(map: SymbolMap): Matcher {
       byName,
       kinds,
       version: versionOf(map),
-      keys: Object.keys(map).length,
+      fingerprint: strictMaps() ? fingerprintOf(map) : '',
     }
     compiled.set(map, c)
   }
@@ -310,39 +354,95 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
   return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
 }
 
-/** A value with structural signal, the only kind the session learns and
- *  sweeps everywhere (research R4, founder decision #5). Never one that holds
- *  whitespace. `_` and `-` separate parts of a token and count for nothing.
- *  Any of:
- *  - high-entropy key material: eight characters or more, letters and
- *    digits, 3 bits or more of entropy per character;
- *  - a mixed-class string: ten characters or more with three of lower case,
- *    upper case, digits and symbols (not `_ - / . :`, which paths and URLs
- *    are made of);
- *  - a letters-only token: sixteen letters or more, 3 bits or more of
- *    entropy, and cut by its case into short pieces at least a third of the
- *    time, where words and identifiers (`requiredFieldsConfiguration`,
- *    `snake_case_identifier_name`) cut into long ones.
- *  A provider-format key is learned by its rule, whatever it looks like. A
- *  low-entropy value is redacted where its rule finds it and is not carried
- *  forward (review of 5347c7c). */
-export function highSignal(value: string): boolean {
-  if (/\s/.test(value)) return false
-  const core = value.replace(/[_-]/g, '')
-  if (/[A-Za-z]/.test(core) && /[0-9]/.test(core) && core.length >= 8)
-    if (shannonEntropy(core) >= 3) return true
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_\-/.:]/].filter((c) =>
-    c.test(value)
-  ).length
-  if (core.length >= 10 && classes >= 3) return true
-  if (/^[A-Za-z]{16,}$/.test(core) && shannonEntropy(core) >= 3) {
-    const pieces = value
-      .split(/[_-]+/)
-      .flatMap((part) => part.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) ?? [])
-    const short = pieces.filter((p) => p.length <= 2).length
-    return pieces.length > 0 && short / pieces.length >= 1 / 3
+// Short words that camelCase identifiers are made of: a piece this short is
+// no sign of randomness when it is one of these.
+const SHORT_WORDS = new Set(
+  'a an as at be by do go id if in io is it me my no of ok on or so to up us we db ui ux os'.split(
+    ' '
+  )
+)
+
+/** The pieces a value is cut into by case, by `_` and `-`, and by letters
+ *  meeting digits, each segment between separators apart: `getXOrY` is
+ *  `get X Or Y`, `S3cretpw` is `S 3 cretpw`. */
+function piecesOf(value: string): { segment: string[] }[] {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((seg) => ({
+      segment: seg.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+|[^A-Za-z0-9]+/g) ?? [],
+    }))
+}
+
+/** Whether a value's pieces look random rather than like words: at least a
+ *  third of its letter pieces are short (two letters or fewer) and not
+ *  short words, a single capital between two words counting as part of the
+ *  words (`getXOrYFromAToB`); or, where it has digits, a digit run sits
+ *  between letters inside one segment (`S3cretpw`, `xQ7zW2`), where an
+ *  identifier puts its numbers at a piece's end (`Configuration2`,
+ *  `Hello_World_2026`, `Version_2_Release`). */
+function randomLooking(value: string): boolean {
+  let letters = 0
+  let short = 0
+  let interleaved = false
+  for (const { segment } of piecesOf(value)) {
+    segment.forEach((p, i) => {
+      if (/^[0-9]+$/.test(p)) {
+        if (
+          i > 0 &&
+          i < segment.length - 1 &&
+          /[A-Za-z]/.test(segment[i - 1]!) &&
+          /[A-Za-z]/.test(segment[i + 1]!)
+        )
+          interleaved = true
+        return
+      }
+      if (!/^[A-Za-z]+$/.test(p)) return
+      letters++
+      const between =
+        p.length === 1 &&
+        /^[A-Z]$/.test(p) &&
+        /^[A-Z]?[a-z]{2,}$/.test(segment[i - 1] ?? '') &&
+        /^[A-Z][a-z]+$/.test(segment[i + 1] ?? '')
+      if (p.length <= 2 && !between && !SHORT_WORDS.has(p.toLowerCase())) short++
+    })
   }
-  return false
+  return interleaved || (letters > 0 && short / letters >= 1 / 3)
+}
+
+/** A value with structural signal, the only kind the session learns and
+ *  sweeps everywhere (research R4, founder decision #5). Never one holding
+ *  whitespace or the punctuation of paths, URLs and versions (`/ \ . :`),
+ *  whatever its entropy. `_` and `-` separate a token's parts. Otherwise it
+ *  must look random, not like words or an identifier (randomLooking), and be
+ *  one of:
+ *  - letters and digits: eight characters or more, 3 bits or more of
+ *    entropy per character (`S3cretpw`, `xQ7zW2vR9tY4pLmN`);
+ *  - a mixed-class string: ten characters or more with three of lower case,
+ *    upper case, digits and other symbols;
+ *  - letters only: sixteen letters or more, 3 bits or more of entropy (a
+ *    bearer token).
+ *  `Welcome2024`, a word and a year, is an identifier by this rule and is not
+ *  learned. A provider-format key is learned by its rule, whatever it looks
+ *  like. A low-entropy value is not carried forward (reviews of 5347c7c and
+ *  0ef312b). */
+export function highSignal(value: string): boolean {
+  if (/[\s/\\.:]/.test(value) || !randomLooking(value)) return false
+  const core = value.replace(/[_-]/g, '')
+  if (/[A-Za-z]/.test(core) && /[0-9]/.test(core) && core.length >= 8 && shannonEntropy(core) >= 3)
+    return true
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_-]/].filter((c) => c.test(value)).length
+  if (core.length >= 10 && classes >= 3) return true
+  return /^[A-Za-z]{16,}$/.test(core) && shannonEntropy(core) >= 3
+}
+
+/** Whether a value a rule of `type` destroyed is learned for the session
+ *  and removed from everything masked after: a provider-format key, or a
+ *  value with structural signal; never the map's own grammar. */
+export function carriedForward(type: string, value: string): boolean {
+  return (
+    (!HEURISTIC.has(type) || highSignal(value)) && value.length >= 6 && !OWN_GRAMMAR.test(value)
+  )
 }
 
 // A value made only of placeholders or redaction tokens: the map's own
@@ -379,7 +479,7 @@ export type ScanResult = ReturnType<typeof scanSecrets>
 // their findings defer to a value the map already masks reversibly. A
 // provider-format finding (an AWS or GitHub key, a private key block, a JWT)
 // always wins (security review of 933156e).
-export const HEURISTIC: ReadonlySet<string> = new Set([
+const HEURISTIC: ReadonlySet<string> = new Set([
   'password-assignment',
   'high-entropy-string',
   'connection-string',
@@ -391,14 +491,14 @@ export const HEURISTIC: ReadonlySet<string> = new Set([
 type Finding = ReturnType<typeof detectSecrets>[number]
 
 /** Where each line of `text` starts, for a finding's line and column. */
-export function lineStarts(text: string): number[] {
+function lineStarts(text: string): number[] {
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
   return starts
 }
 
 /** The text of each finding the predicate keeps, one entry per occurrence. */
-export function findingValues(
+function findingValues(
   text: string,
   keep: (f: Finding) => boolean,
   findings: readonly Finding[] = detectSecrets(text)
@@ -428,25 +528,39 @@ const isProviderKey = (f: Finding) =>
   !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] === 'destroy'
 const isRegulated = (f: Finding) => SECRET_DISPOSITIONS[f.type] === 'mask'
 
-/** The provider-format keys in `text`, one entry per occurrence. */
-export function providerKeys(text: string): string[] {
-  return findingValues(text, isProviderKey)
-}
-
 /** What a restoration writes back that the arguments as written did not
  *  hold, from one scan of each: a provider-format key (compared by value, so
  *  one already written cannot cover for another, review of 5f11069) or a
  *  regulated number the scanner reads (belt and braces beside the keys
  *  restore() resolved). */
-export function restoreAdds(before: string, after: string): 'credential' | 'regulated' | null {
+export function restoreAdds(before: string, after: string): string | null {
   const b = detectSecrets(before)
   const a = detectSecrets(after)
   if (adds(findingValues(before, isProviderKey, b), findingValues(after, isProviderKey, a)))
-    return 'credential'
+    return 'a credential Veilio removed'
   if (adds(findingValues(before, isRegulated, b), findingValues(after, isRegulated, a)))
-    return 'regulated'
+    return 'a regulated number Veilio masks'
   return null
 }
+
+function wholeTokenIn(text: string, value: string): boolean {
+  if (value === '') return false
+  for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
+    const before = text[i - 1]
+    const after = text[i + value.length]
+    if (!(before && /[A-Za-z0-9_]/.test(before)) && !(after && /[A-Za-z0-9_]/.test(after)))
+      return true
+  }
+  return false
+}
+
+// One label per regulated base, from the engine's own table: `__PAN__` is a
+// payment card (review of 0ef312b).
+const REGULATED_LABELS = new Map(
+  Object.entries(REGULATED_BASES)
+    .filter((e): e is [string, string] => typeof e[1] === 'string')
+    .map(([type, base]) => [base, type.replace(/-/g, ' ')])
+)
 
 /** Whether a restoration wrote back a value masked on purpose, judged by the
  *  keys restore() itself resolved (its own matching rule, review of 55ae576),
@@ -456,29 +570,39 @@ export function restoresNeverRestored(
   before: string,
   resolved: readonly string[],
   map: SymbolMap
-): 'regulated' | 'manual' | 'credential' | null {
+): string | null {
   for (const p of resolved) {
     const base = NEVER_RESTORED.find((b) => p.startsWith(b))
-    if (!base || !Object.hasOwn(map, p) || before.includes(map[p]!)) continue
-    return base === MANUAL_BASE ? 'manual' : base === '__QUARANTINED__' ? 'credential' : 'regulated'
+    // Skipped only when the arguments already hold the value as a whole
+    // token, not inside another word (`Jan` in `January`, review of 0ef312b).
+    if (!base || !Object.hasOwn(map, p) || wholeTokenIn(before, map[p]!)) continue
+    return base === MANUAL_BASE
+      ? 'a value marked by hand'
+      : base === '__QUARANTINED__'
+        ? 'a credential Veilio removed'
+        : `a regulated number Veilio masks (${REGULATED_LABELS.get(base) ?? 'a regulated number'})`
   }
   return null
 }
 
 const mapNames = new WeakMap<
   SymbolMap,
-  { version: number; keys: number; set: ReadonlySet<string> }
+  { version: number; fingerprint: string; set: ReadonlySet<string> }
 >()
 /** The names a map holds, which are masked reversibly and never destroyed.
  *  Rebuilt when the same object grows (reviews of da4ff84 and 6e14ec6). */
 function namesOf(map: SymbolMap): ReadonlySet<string> {
   const version = versionOf(map)
   let c = mapNames.get(map)
-  if (c && c.version === version) checkGrown(map, c.keys)
+  if (c && c.version === version) checkGrown(map, c.fingerprint)
   if (!c || c.version !== version)
     mapNames.set(
       map,
-      (c = { version, keys: Object.keys(map).length, set: new Set(Object.values(map)) })
+      (c = {
+        version,
+        fingerprint: strictMaps() ? fingerprintOf(map) : '',
+        set: new Set(Object.values(map)),
+      })
     )
   return c.set
 }
@@ -492,8 +616,7 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
     const core = text.slice(start, matched)
     if (names.has(core) && HEURISTIC.has(type)) continue
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
-      if ((!HEURISTIC.has(type) || highSignal(v)) && v.length >= 6 && !OWN_GRAMMAR.test(v))
-        out.push(v)
+      if (carriedForward(type, v)) out.push(v)
   }
   return out
 }

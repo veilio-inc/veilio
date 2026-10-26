@@ -405,3 +405,27 @@ test('each refusal names what it would have written back', async ($, on) => {
   })
   expect(iban.deny).toContain('regulated number')
 })
+
+test('a hand-marked value only inside another word of the text is still refused on restore', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__9: 'AcmeLedger', __MANUAL__1: 'Jan' }),
+  })
+  let ran = 0
+  on('tool.call', () => (ran++, edit.r))
+  // The name holding the mark restores; the mark itself, where the text
+  // holds it only inside 'January', does not.
+  const ok: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'new __VAR__9()',
+  })
+  expect(ok.deny).toBeUndefined()
+  const no: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'January __MANUAL__1',
+  })
+  expect(no.deny).toContain('marked by hand')
+  expect(ran).toBe(1)
+})

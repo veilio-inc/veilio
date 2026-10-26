@@ -1,21 +1,17 @@
-// The masking property through every entry point of the guard (review of
-// da4ff84): whatever mix of credentials, regulated numbers, map placeholders
-// and ordinary names a text holds, no value the scanner flags on the raw text
-// reaches the model, and ordinary names and the map's placeholders reach it
-// unchanged. Seeded random texts (fixtures/generate.ts), 1,200 cases.
+// The masking property through every entry point of the guard (reviews of
+// da4ff84 and 0ef312b): whatever mix of credentials, regulated numbers, map
+// placeholders and ordinary names a text holds, every value the engine
+// destroys or masks is gone where it was found, one the guard carries forward
+// is gone everywhere (fixtures/oracle.ts, from the engine's own verdicts),
+// and ordinary names and the map's placeholders reach the model unchanged.
+// Seeded random texts (fixtures/generate.ts), 175 per entry point.
 import { expect, test } from 'claude-code/testing'
 import { generate } from './fixtures/generate.ts'
+import { leaks } from './fixtures/oracle.ts'
 import { eventOf, mapFile, project, recorded, recordedPrompt, ROOT } from './helpers.ts'
 
-function check(
-  seed: number,
-  forbidden: string[],
-  sent: string,
-  names: string[],
-  kept: string[]
-): string[] {
-  const out: string[] = []
-  for (const v of forbidden) if (sent.includes(v)) out.push(`seed ${seed}: ${v} survived`)
+function check(seed: number, raw: string, sent: string, names: string[], kept: string[]): string[] {
+  const out: string[] = leaks(raw, sent).map((l) => `seed ${seed}: ${l}`)
   for (const n of [...names, ...kept]) if (!sent.includes(n)) out.push(`seed ${seed}: ${n} lost`)
   return out
 }
@@ -98,7 +94,7 @@ function property(entry: (typeof ENTRY)[number]) {
       }
       // Names and placeholders reach the model unchanged (a placeholder stays,
       // as it is no name of its own), and nothing the scanner flags does.
-      failures.push(...check(seed, c.forbidden, out, c.names, c.placeholders))
+      failures.push(...check(seed, c.text, out, c.names, c.placeholders))
       if (failures.length > 5) break
     }
     expect(failures).toEqual([])

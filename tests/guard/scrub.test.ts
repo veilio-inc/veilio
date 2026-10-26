@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 // A map grown any way but grow() throws here (review of 5347c7c).
 ;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
 import {
+  ownedMap,
   highSignal,
   NEVER_RESTORED,
   restoresNeverRestored,
@@ -388,9 +389,10 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'root1234',
       'app_pass',
       'my-secret-pass',
+      'Welcome2024',
     ])
       expect(learnedFrom(`password = "${plain}"`).values).toEqual([])
-    for (const strong of ['S3cretpw!', 'Welcome2024', 'Xk9mQ2vL7Zp'])
+    for (const strong of ['S3cretpw!', 'Xk9mQ2vL7Zp'])
       expect(learnedFrom(`password = "${strong}"`).values).toContain(strong)
   })
 
@@ -412,8 +414,8 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
   })
   it('a value made only of placeholders is never learned; one written against a placeholder is', () => {
     expect(learnedFrom('client_secret = "__VAR__1290__STR__3"').values).toEqual([])
-    expect(learnedFrom('client_secret = "realsecret__VAR__1"').values).toContain(
-      'realsecret__VAR__1'
+    expect(learnedFrom('client_secret = "xQ7zW2vR9t__VAR__1"').values).toContain(
+      'xQ7zW2vR9t__VAR__1'
     )
   })
 })
@@ -520,5 +522,51 @@ describe('strict maps', () => {
     applyMap('Alpha', map)
     map.__CLS__2 = 'Beta'
     expect(() => applyMap('Beta', map)).toThrow(/grow\(\)/)
+  })
+})
+
+describe('structural signal, the second pass (review of 0ef312b)', () => {
+  it('paths, URLs, versions and Windows paths never have it', () => {
+    for (const v of [
+      '/usr/lib/python3.11',
+      'https://example.org/v2/Path',
+      'v1.2.3-Beta.4',
+      'C:\\Users\\Bob2',
+      '/run/secrets/Client2',
+    ])
+      expect(highSignal(v)).toBe(false)
+  })
+  it('identifiers with a digit do not have it', () => {
+    for (const v of ['Hello_World_2026', 'requiredFields2', 'Configuration2', 'Version_2_Release'])
+      expect(highSignal(v)).toBe(false)
+  })
+  it('random-looking keys with digits do', () => {
+    for (const v of ['xQ7zW2vR9tY4pLmN', 'S3cretpw!', 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY'])
+      expect(highSignal(v)).toBe(true)
+  })
+  it('a word with a year after it is an identifier: Welcome2024 lands outside', () => {
+    expect(highSignal('Welcome2024')).toBe(false)
+  })
+  it('one-letter camelCase pieces between words are part of the words', () => {
+    expect(highSignal('getXOrYFromAToBNowPlease')).toBe(false)
+    expect(highSignal('getXFromYToZWithQNow')).toBe(false)
+    expect(highSignal('xQzWvRtYpLmNbKjHgFdSaBcDeF')).toBe(true)
+  })
+})
+
+describe('owned maps (review of 0ef312b)', () => {
+  it('a change that keeps the count is caught under strict maps', () => {
+    const map: Record<string, string> = { __CLS__1: 'Alpha' }
+    applyMap('Alpha', map)
+    map.__CLS__1 = 'Gamma'
+    expect(() => applyMap('Gamma', map)).toThrow(/grow\(\)/)
+  })
+  it('an owned map takes no write but through grow()', () => {
+    const map = ownedMap({ __CLS__1: 'Alpha' })
+    expect(() => {
+      map.__CLS__2 = 'Beta'
+    }).toThrow(/grow\(\)/)
+    grow(map, { __CLS__2: 'Beta' })
+    expect(map.__CLS__2).toBe('Beta')
   })
 })
