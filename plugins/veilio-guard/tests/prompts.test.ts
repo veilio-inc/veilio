@@ -352,3 +352,18 @@ test('a placeholder in context already masked is never learned', async ($, on) =
   await $.prompt.submit({ ...e0, text: 'flip __VAR__1290 off' })
   expect(sent[1].text).toContain('__VAR__1290')
 })
+
+test('a context with thousands of copies of a masked block is held in one pass', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+  }))
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  const masked = ctx.blocks[0].text
+  const text = `# claudeMd\n${masked}\n\n# notes\n${`see ${masked} then `.repeat(20_000)}`
+  const started = Date.now()
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(Date.now() - started).toBeLessThan(2_000)
+  expect(out.text.startsWith(`# claudeMd\n${masked}`)).toBe(true)
+})

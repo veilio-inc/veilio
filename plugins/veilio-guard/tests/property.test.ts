@@ -6,8 +6,20 @@
 import { expect, test } from 'claude-code/testing'
 import { scanSecrets, SECRET_DISPOSITIONS } from '../vendor/engine/index.js'
 import { generate } from './fixtures/generate.ts'
+import { highSignal } from '../lib/scrub.ts'
 import { eventOf, mapFile, project, recorded, recordedPrompt, ROOT } from './helpers.ts'
 
+const HEURISTIC = new Set([
+  'password-assignment',
+  'high-entropy-string',
+  'connection-string',
+  'basic-auth',
+  'bearer-token',
+  'possible-credential',
+])
+
+// As tests/guard/property.test.ts: a provider-format or high-signal value must
+// be gone everywhere; a low-entropy one where its rule found it (research R4).
 function flagged(text: string): string[] {
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
@@ -15,7 +27,10 @@ function flagged(text: string): string[] {
     .findings.filter((f: any) => SECRET_DISPOSITIONS[f.type] !== 'report')
     .map((f: any) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1
-      return text.slice(start, start + f.length)
+      const v = text.slice(start, start + f.length)
+      return !HEURISTIC.has(f.type) || highSignal(v)
+        ? v
+        : text.slice(Math.max(0, start - 10), start + f.length)
     })
 }
 

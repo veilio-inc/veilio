@@ -288,16 +288,24 @@ test('a restore that puts back a second provider key beside one already written 
   expect(out.deny).toContain('Veilio refused this call')
 })
 
-test('an edit beside a regulated number the map holds runs', async ($, on) => {
+test('an edit beside a regulated number the map holds runs, and one that writes it back is refused', async ($, on) => {
   const edit = recorded('Edit')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __IBAN__1: 'GB29NWBK60161331926819' }),
   })
-  on('tool.call', () => edit.r)
-  const out: any = await $.tool.call({
+  let ran = 0
+  on('tool.call', () => (ran++, edit.r))
+  const beside: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'const __VAR__1 =',
+    new_string: 'const __VAR__1 = 2',
+  })
+  expect(beside.deny).toBeUndefined()
+  const back: any = await $.tool.call({
     ...eventOf(edit),
     old_string: 'x',
     new_string: 'iban = "__IBAN__1"',
   })
-  expect(out.deny).toBeUndefined()
+  expect(back.deny).toContain('Veilio refused this call')
+  expect(ran).toBe(1)
 })

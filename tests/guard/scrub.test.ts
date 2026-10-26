@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  grow,
   Destroyed,
   dropResidue,
   redactKnown,
@@ -371,41 +372,34 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     applyMap(text, {}, undefined, { known })
     return known
   }
-  it('a short low-entropy password is learned and removed as a token in a later text', () => {
-    const known = learnedFrom('password = "my-secretpw"')
-    expect(known.values).toContain('my-secretpw')
-    expect(redactKnown('use my-secretpw, not my-secretpwd', known)).toBe(
-      'use __REDACTED_CREDENTIAL_1001__, not my-secretpwd'
+
+  it('only values with structural signal are learned (research R4)', () => {
+    for (const plain of [
+      'required',
+      'Required',
+      'Configuration',
+      'postgres',
+      'root1234',
+      'app_pass',
+      'my-secret-pass',
+    ])
+      expect(learnedFrom(`password = "${plain}"`).values).toEqual([])
+    for (const strong of ['S3cretpw!', 'Welcome2024', 'Xk9mQ2vL7Zp'])
+      expect(learnedFrom(`password = "${strong}"`).values).toContain(strong)
+  })
+
+  it('a learned value glued to a flag, run into another or inside a word is removed', () => {
+    const known = learnedFrom('password = "S3cretpw!"\napi_key = "Zq8vB3nM1kL0"')
+    expect(redactKnown('mysql -pS3cretpw! xS3cretpw!y S3cretpw!Zq8vB3nM1kL0', known)).not.toMatch(
+      /S3cretpw|Zq8vB3nM1kL0/
     )
   })
 
-  it('a long low-entropy password is removed inside a longer word too', () => {
+  it('a weak password seen bare away from its assignment is not swept: the documented limit', () => {
     const known = learnedFrom('password = "my-secret-pass"')
-    expect(redactKnown('my-secret-passport', known)).toBe('__REDACTED_CREDENTIAL_1001__port')
-  })
-  it('a learned app_pass leaves app_password alone', () => {
-    const known = new Destroyed()
-    known.learn(['app_pass'])
-    expect(redactKnown('app_pass and app_password', known)).toBe(
-      '__REDACTED_CREDENTIAL_1001__ and app_password'
-    )
-  })
-  it('only a bare default is not learned: postgres; root1234 and Welcome2024 are', () => {
-    expect(learnedFrom('postgres://postgres:postgres@db/x').values).toEqual([])
-    const known = learnedFrom('password = "root1234"\npasswd = "Welcome2024"')
-    expect(known.values).toEqual(expect.arrayContaining(['root1234', 'Welcome2024']))
-    expect(redactKnown('login root1234 / Welcome2024 here', known)).not.toMatch(
-      /root1234|Welcome2024/
-    )
+    expect(redactKnown('echo my-secret-pass', known)).toBe('echo my-secret-pass')
   })
 
-  it('a long password is removed inside a longer word, whatever its entropy', () => {
-    const known = new Destroyed()
-    known.learn(['hunterpasswordlong', 'app_pass'])
-    expect(redactKnown('xhunterpasswordlong and app_password', known)).toBe(
-      'x__REDACTED_CREDENTIAL_1001__ and app_password'
-    )
-  })
   it('a high-entropy value is removed inside a longer word', () => {
     const known = learnedFrom('password = "Xk9mQ2vL7Zp"')
     expect(redactKnown('xXk9mQ2vL7Zp', known)).toBe('x__REDACTED_CREDENTIAL_1001__')
@@ -422,7 +416,45 @@ describe('a map that grows in place', () => {
   it('its new names defer to the map at once', () => {
     const map: Record<string, string> = { __CLS__1: 'X' }
     applyMap('a', map)
-    map.__STR__9 = 'Zq8vB3nM1kL0pW9xYc7dE6fG'
+    grow(map, { __STR__9: 'Zq8vB3nM1kL0pW9xYc7dE6fG' })
     expect(applyMap('auth_token: "Zq8vB3nM1kL0pW9xYc7dE6fG"', map)).toContain('"__STR__9"')
+  })
+})
+
+describe('a large map', () => {
+  it('20,000 entries: masking many short texts never recounts the map', () => {
+    const map: Record<string, string> = {}
+    for (let i = 1; i <= 20_000; i++) map[`__VAR__${i}`] = `name${i}x`
+    applyMap('warm', map)
+    const started = performance.now()
+    for (let i = 0; i < 3_000; i++) applyMap(`call name${(i % 20_000) + 1}x now`, map)
+    expect(performance.now() - started).toBeLessThan(4_000)
+  })
+})
+
+describe('the context fallback', () => {
+  it('a hold that leaves a credential falls back to full masking before failing', async () => {
+    const { Guard } = await import('../../plugins/veilio-guard/lib/guard.ts')
+    const { MODEL_NOTE } = await import('../../plugins/veilio-guard/lib/ui.ts')
+    const io = {
+      read: async () => '',
+      write: async () => undefined,
+      exists: async () => false,
+      realPath: async () => undefined,
+      sleep: async () => undefined,
+      list: async () => null,
+    }
+    // A hold path that leaves a credential behind, as a bug in it would.
+    class Leaky extends Guard {
+      override maskText(text: string, kind?: any, scan?: any): string {
+        return text.includes('\u0000')
+          ? `${super.maskText(text, kind, scan)} password = "Tr0ub4dor3xzQ"`
+          : super.maskText(text, kind, scan)
+      }
+    }
+    const g = new Leaky(io as any, { rawOnly: [], mcpRestore: [] } as any)
+    const out = g.applyContext(`# veilioGuard\n${MODEL_NOTE}`)
+    expect(out).not.toContain('Tr0ub4dor3xzQ')
+    expect(out).toContain('guard is on')
   })
 })

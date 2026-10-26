@@ -32,7 +32,9 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  addsMaskedValue,
   addsProviderKey,
+  grow,
   redactKnown,
   maskShaped,
   NO_CONTEXT,
@@ -153,8 +155,6 @@ export class Guard {
    *  of its own: masked this session, never saved, never restored (review of
    *  7b930ad). */
   private quarantine: SymbolMap = {}
-  /** How many names the last save sent to the quarantine. */
-  private quarantined = 0
   private quarantineNext = 0
   private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
 
@@ -196,7 +196,7 @@ export class Guard {
       },
       async (rel, text, language) => {
         const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
-        Object.assign(this.unsaved, additions)
+        grow(this.unsaved, additions)
         this.batch.push(rel)
       },
       (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
@@ -248,8 +248,9 @@ export class Guard {
       const missed = await work()
       if (Object.keys(this.unsaved).length === 0) return missed
       let saved: 'saved' | 'conflict'
+      let quarantined: number
       try {
-        saved = await this.save(this.unsaved)
+        ;({ status: saved, quarantined } = await this.save(this.unsaved))
       } catch (err) {
         // Not left marked as indexed: their names were never saved.
         for (const rel of this.batch) this.index.forget(rel)
@@ -259,7 +260,7 @@ export class Guard {
       }
       // Files whose names went to the quarantine are indexed again later, so
       // nothing of theirs is taken as saved.
-      if (this.quarantined > 0) for (const rel of this.batch) this.index.forget(rel)
+      if (quarantined > 0) for (const rel of this.batch) this.index.forget(rel)
       if (saved === 'saved') return missed
       // Another program changed the map: this batch's numbers may clash with
       // its, so the batch is indexed again from the map as it is now.
@@ -431,12 +432,17 @@ export class Guard {
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
   applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    const out = applyMap(text, this.map, this.context('unknown', kind), {
-      known: this.destroyed,
-      scan,
-    })
-    // The same last gate as a tool's result: a credential still here fails
-    // the text (the hook drops the prompt or leaves the text out).
+    return this.gate(this.maskText(text, kind, scan))
+  }
+
+  /** Masks without the last gate: for a caller that has a fallback. */
+  maskText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
+    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
+  }
+
+  /** The same last gate as a tool's result: a credential still here fails the
+   *  text (the hook drops the prompt or leaves the text out). */
+  private gate(out: string): string {
     if (survivingSecrets(out, this.map).length > 0)
       throw new Error('a credential remained after masking')
     return out
@@ -488,52 +494,62 @@ export class Guard {
     const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
     if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
       return this.applyText(text, 'result', scan)
-    // Whole or not, decided for each copy where it stands.
-    const isWhole = (at: number, h: string) => {
-      const before = at === 0 || text[at - 1] === '\n'
-      const after = text.slice(at + h.length)
-      return before && (after === '' || after.startsWith('\n\n') || after.startsWith('\n#'))
-    }
-    const marks: { mark: string; back: () => string }[] = []
+    const isWhole = (at: number, h: string) =>
+      (at === 0 || text[at - 1] === '\n') &&
+      (at + h.length === text.length ||
+        text.startsWith('\n\n', at + h.length) ||
+        text.startsWith('\n#', at + h.length))
+    // One forward pass: each held string's next copy is searched for again
+    // only once the pass has gone past it; a mark is short and fixed for each
+    // (held string, whole or not), and what goes back is worked out once for
+    // each (review of 6e14ec6).
+    const nextAt = held.map((h) => text.indexOf(h))
+    const backs = new Map<string, { mark: string; back: () => string }>()
     let marked = ''
     let at = 0
-    while (at < text.length) {
-      let next = -1
-      let hit = ''
-      for (const h of held) {
-        const i = text.indexOf(h, at)
-        if (i !== -1 && (next === -1 || i < next || (i === next && h.length > hit.length))) {
-          next = i
-          hit = h
-        }
+    for (;;) {
+      let k = -1
+      for (let i = 0; i < held.length; i++) {
+        if (nextAt[i]! !== -1 && nextAt[i]! < at) nextAt[i] = text.indexOf(held[i]!, at)
+        if (nextAt[i]! === -1) continue
+        if (
+          k === -1 ||
+          nextAt[i]! < nextAt[k]! ||
+          (nextAt[i] === nextAt[k] && held[i]!.length > held[k]!.length)
+        )
+          k = i
       }
-      if (next === -1) break
-      const whole = isWhole(next, hit)
-      const mark = `\u0000${'\u0001'.repeat(marks.length + 1)}\u0000`
-      // What goes back: a whole section as written (the note) or with the
-      // names and credentials learned since (a masked block); any other copy
-      // masked like the text around it (review of da4ff84).
-      const h = hit
-      marks.push({
-        mark,
-        back: () =>
-          !whole
-            ? this.applyText(h)
-            : h === MODEL_NOTE
-              ? h
-              : applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
-                  scanned: true,
-                }),
-      })
-      marked += text.slice(at, next) + mark
-      at = next + hit.length
+      if (k === -1) break
+      const h = held[k]!
+      const pos = nextAt[k]!
+      const whole = isWhole(pos, h)
+      const key = `${k}:${whole ? 1 : 0}`
+      let entry = backs.get(key)
+      if (!entry) {
+        const mark = `\u0000${backs.size}\u0001`
+        entry = {
+          mark,
+          back: () =>
+            !whole
+              ? this.maskText(h)
+              : h === MODEL_NOTE
+                ? h
+                : applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
+                    scanned: true,
+                  }),
+        }
+        backs.set(key, entry)
+      }
+      marked += text.slice(at, pos) + entry.mark
+      at = pos + h.length
     }
     marked += text.slice(at)
-    let out = this.applyText(marked)
-    for (const { mark, back } of marks) out = out.split(mark).join(back())
+    let out = this.maskText(marked)
+    for (const { mark, back } of backs.values()) out = out.split(mark).join(back())
     // The whole, read back, scanned once more: anything a hold let through
-    // sends the text through full masking instead.
-    if (survivingSecrets(out, this.map).length > 0) return this.applyText(text)
+    // sends the text through full masking first; only if that too leaves a
+    // credential does the text fail (review of 6e14ec6).
+    if (survivingSecrets(out, this.map).length > 0) return this.gate(this.maskText(text))
     return out
   }
 
@@ -603,7 +619,8 @@ export class Guard {
     const putsBack = (before: string, after: string) =>
       after !== before &&
       (learned.some((v) => after.includes(v) && !before.includes(v)) ||
-        addsProviderKey(before, after))
+        addsProviderKey(before, after) ||
+        addsMaskedValue(before, after))
     let restoresSecret = false
     const guarded = (s: string) => {
       const out = restoreOne(s)
@@ -732,7 +749,7 @@ export class Guard {
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
-      (await this.save(shaped.additions)) === 'conflict'
+      (await this.save(shaped.additions)).status === 'conflict'
     )
       return this.withhold(
         'another program changed .veilio/map.json while Veilio was writing to it'
@@ -833,8 +850,8 @@ export class Guard {
           const r = rewriteFields(value, [field.path], (s) => {
             if (field.mode === 'apply') return apply(s)
             const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
-            Object.assign(working, scrubbed.additions)
-            Object.assign(additions, scrubbed.additions)
+            grow(working, scrubbed.additions)
+            grow(additions, scrubbed.additions)
             return scrubbed.text
           })
           if (!r.ok)
@@ -858,14 +875,14 @@ export class Guard {
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
           const shaped = maskShaped(t, working, c)
-          Object.assign(working, shaped.additions)
-          Object.assign(additions, shaped.additions)
+          grow(working, shaped.additions)
+          grow(additions, shaped.additions)
           return shaped.text
         })
       })
 
       if (Object.keys(additions).length > 0) {
-        const saved = await this.save(additions)
+        const { status: saved } = await this.save(additions)
         if (saved === 'conflict') continue
       }
 
@@ -908,13 +925,17 @@ export class Guard {
   }
 
   /** Adds entries to the map file: read what is there now, merge, write. */
-  private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
+  /** Saves the additions; says how many names went to the quarantine instead
+   *  (review of 6e14ec6: returned, not shared through guard state). */
+  private save(
+    additions: SymbolMap
+  ): Promise<{ status: 'saved' | 'conflict'; quarantined: number }> {
     // No credential Veilio destroyed is ever minted into the map (security
     // review of 933156e).
     // The entry that holds one goes to the in-memory quarantine; the rest
     // are saved (reviews of da4ff84 and 7b930ad).
     const learned = this.destroyed.values
-    this.quarantined = 0
+    let quarantined = 0
     if (learned.length > 0) {
       const kept: SymbolMap = {}
       for (const [placeholder, name] of Object.entries(additions)) {
@@ -926,7 +947,7 @@ export class Guard {
           void placeholder
           this.quarantine[own] = name
           this.destroyed.hold(name, own)
-          this.quarantined++
+          quarantined++
         } else kept[placeholder] = name
       }
       additions = kept
@@ -947,13 +968,13 @@ export class Guard {
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })
       if (conflicts.length > 0) {
         this.stored = onDisk
-        return 'conflict' as const
+        return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
       await this.io.write(this.mapPath, serialiseMapFile(next))
       if (!existed) await this.ensureIgnored()
       this.stored = next
-      return 'saved' as const
+      return { status: 'saved' as const, quarantined }
     })
     // A failed write must not wedge every later one.
     this.writes = run.catch(() => undefined)

@@ -10,20 +10,41 @@ import { join, resolve } from 'node:path'
 // GUARD_ROOT runs the same property against another checkout of the plugin.
 const PLUGIN = process.env.GUARD_ROOT ?? resolve(import.meta.dirname, '../../plugins/veilio-guard')
 const { applyMap, Destroyed, survivingSecrets } = await import(join(PLUGIN, 'lib/scrub.ts'))
+// What must be gone is the spec's (research R4), judged by this tree's rule
+// whichever checkout is under test.
+const { highSignal } = await import(
+  resolve(import.meta.dirname, '../../plugins/veilio-guard/lib/scrub.ts')
+)
 const { scanSecrets, SECRET_DISPOSITIONS } = await import(join(PLUGIN, 'vendor/engine/index.js'))
 const { generate } = await import(
   resolve(import.meta.dirname, '../../plugins/veilio-guard/tests/fixtures/generate.ts')
 )
 
-/** Every value the scanner flags on the raw text that it would act on. */
-export function flagged(text: string): string[] {
+const HEURISTIC = new Set([
+  'password-assignment',
+  'high-entropy-string',
+  'connection-string',
+  'basic-auth',
+  'bearer-token',
+  'possible-credential',
+])
+
+/** What must not reach the model, for each value the scanner flags on the
+ *  raw text: the value itself anywhere, when a provider-format rule found it
+ *  or it has structural signal; otherwise the value where its rule found it,
+ *  with what stood before it (research R4: a low-entropy value is redacted
+ *  in place and not carried forward). */
+export function forbidden(text: string): string[] {
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
   return scanSecrets(text, 'warn')
     .findings.filter((f: any) => SECRET_DISPOSITIONS[f.type] !== 'report')
     .map((f: any) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1
-      return text.slice(start, start + f.length)
+      const v = text.slice(start, start + f.length)
+      return !HEURISTIC.has(f.type) || highSignal(v)
+        ? v
+        : text.slice(Math.max(0, start - 10), start + f.length)
     })
 }
 
@@ -34,7 +55,7 @@ describe('masking, as a property', () => {
       const c = generate(seed)
       const known = new Destroyed()
       const out: string = applyMap(c.text, c.map, undefined, { known })
-      for (const v of flagged(c.text))
+      for (const v of forbidden(c.text))
         if (out.includes(v)) failures.push(`seed ${seed}: ${JSON.stringify(v)} survived`)
       for (const name of c.names)
         if (!out.includes(name)) failures.push(`seed ${seed}: name ${name} lost`)

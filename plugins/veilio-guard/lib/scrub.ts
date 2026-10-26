@@ -77,15 +77,28 @@ type Matcher = {
   byName: Map<string, string>
   /** The kinds of placeholder each name has (`__PKG__`, `__VAR__`, …). */
   kinds: Map<string, Set<string>>
-  /** How many entries the map had when this was built. */
-  size: number
+  /** The map's version when this was built. */
+  version: number
 }
+// How many times each map object has grown in place, so caches built from it
+// know when they are stale without counting its keys on every call (review of
+// 6e14ec6). Grow a map only through grow().
+const versions = new WeakMap<SymbolMap, number>()
+const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
+
+/** Adds entries to a map object, telling the caches it changed. */
+export function grow(map: SymbolMap, additions: SymbolMap): void {
+  if (Object.keys(additions).length === 0) return
+  Object.assign(map, additions)
+  versions.set(map, versionOf(map) + 1)
+}
+
 const compiled = new WeakMap<SymbolMap, Matcher>()
 
 function matcher(map: SymbolMap): Matcher {
   let c = compiled.get(map)
-  // Rebuilt when entries were added to the same object (review of da4ff84).
-  if (!c || c.size !== Object.keys(map).length) {
+  // Rebuilt when the same object grew (reviews of da4ff84 and 6e14ec6).
+  if (!c || c.version !== versionOf(map)) {
     const byName = new Map<string, string>()
     const kinds = new Map<string, Set<string>>()
     for (const [placeholder, name] of Object.entries(map)) {
@@ -99,7 +112,7 @@ function matcher(map: SymbolMap): Matcher {
       re: names.length ? new RegExp(names.map(escape).join('|'), 'g') : null,
       byName,
       kinds,
-      size: Object.keys(map).length,
+      version: versionOf(map),
     }
     compiled.set(map, c)
   }
@@ -280,26 +293,20 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
  *  `postgres`, a structural rule's finding in a docker-compose URL, is
  *  removed where its rule finds it and nowhere else: learned, it ate every
  *  `import postgres` after it (review of 99325ba). */
-// Defaults everyone knows, exactly as they stand: learned, a session would
-// remove `postgres` from every `import postgres` after a docker-compose URL.
-// With anything added (`admin2024`, `Welcome1`) it is a password and is
-// learned (review of 58d3dae). Still destroyed where a rule finds them.
-const DEFAULTS =
-  /^(?:postgres|postgresql|mysql|mariadb|redis|mongo|mongodb|root|toor|admin|administrator|superuser|sa|password|passwd|pass|changeme|secret|example|test|testing|guest|user|demo|default|qwerty|letmein|welcome|dev|local|localhost)$/i
-
-/** Worth learning: every value a credential rule took, six characters or
- *  more, but a bare known default (reviews of 7b930ad and 58d3dae). */
-function credentialLike(value: string): boolean {
-  return value.length >= 6 && !DEFAULTS.test(value)
-}
-
-/** High-entropy key material is removed wherever it appears, inside a longer
- *  word too; a lower-entropy password only as a whole token, where `_` and
- *  `-` join words, so `app_pass` never touches `app_password`. */
-export function highEntropy(value: string): boolean {
-  return (
-    value.length >= 8 && /[A-Za-z]/.test(value) && /[0-9]/.test(value) && shannonEntropy(value) >= 3
-  )
+/** A value with structural signal, the only kind the session learns and
+ *  sweeps everywhere (research R4, founder decision #5): high-entropy key
+ *  material (eight characters or more, letters and digits, 3 bits or more of
+ *  entropy per character), or a mixed-class string (ten characters or more
+ *  with three of lower case, upper case, digits and symbols other than `_`
+ *  and `-`). A dictionary word (`required`, `Configuration`, `postgres`) meets
+ *  neither. A provider-format key is learned by its rule, whatever it looks
+ *  like. A low-entropy value is redacted where its rule finds it and is not
+ *  carried forward. */
+export function highSignal(value: string): boolean {
+  if (/[A-Za-z]/.test(value) && /[0-9]/.test(value) && value.length >= 8)
+    if (shannonEntropy(value) >= 3) return true
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9_-]/].filter((c) => c.test(value)).length
+  return value.length >= 10 && classes >= 3
 }
 
 // A value made only of placeholders or redaction tokens: the map's own
@@ -360,6 +367,31 @@ export function providerKeys(text: string): string[] {
   })
 }
 
+/** Whether a restoration puts back a regulated number (an IBAN, a card, a
+ *  PESEL) that was not in the arguments as written, by value: those are
+ *  masked reversibly for reading, never written back by the model (review
+ *  of 6e14ec6). */
+export function addsMaskedValue(before: string, after: string): boolean {
+  const values = (text: string) => {
+    const starts = [0]
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1)
+    return detectSecrets(text)
+      .filter((f) => SECRET_DISPOSITIONS[f.type] === 'mask')
+      .map((f) => {
+        const start = (starts[f.line - 1] ?? 0) + f.column - 1
+        return text.slice(start, start + f.length)
+      })
+  }
+  const had = new Map<string, number>()
+  for (const v of values(before)) had.set(v, (had.get(v) ?? 0) + 1)
+  for (const v of values(after)) {
+    const n = had.get(v) ?? 0
+    if (n === 0) return true
+    had.set(v, n - 1)
+  }
+  return false
+}
+
 /** Whether `after` holds a provider-format key `before` does not, or more
  *  copies of one: compared by value, so a key already written cannot cover
  *  for a different one a restoration puts back (review of 5f11069). */
@@ -374,13 +406,14 @@ export function addsProviderKey(before: string, after: string): boolean {
   return false
 }
 
-const mapNames = new WeakMap<SymbolMap, { size: number; set: ReadonlySet<string> }>()
+const mapNames = new WeakMap<SymbolMap, { version: number; set: ReadonlySet<string> }>()
 /** The names a map holds, which are masked reversibly and never destroyed.
- *  Rebuilt when entries are added to the same object (review of da4ff84). */
+ *  Rebuilt when the same object grows (reviews of da4ff84 and 6e14ec6). */
 function namesOf(map: SymbolMap): ReadonlySet<string> {
-  const size = Object.keys(map).length
+  const version = versionOf(map)
   let c = mapNames.get(map)
-  if (!c || c.size !== size) mapNames.set(map, (c = { size, set: new Set(Object.values(map)) }))
+  if (!c || c.version !== version)
+    mapNames.set(map, (c = { version, set: new Set(Object.values(map)) }))
   return c.set
 }
 
@@ -393,7 +426,8 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
     const core = text.slice(start, matched)
     if (names.has(core) && HEURISTIC.has(type)) continue
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
-      if (credentialLike(v) && !OWN_GRAMMAR.test(v)) out.push(v)
+      if ((!HEURISTIC.has(type) || highSignal(v)) && v.length >= 6 && !OWN_GRAMMAR.test(v))
+        out.push(v)
   }
   return out
 }
@@ -436,7 +470,7 @@ function periodOf(value: string): number {
  *  swept from later texts; every destroyed value has a token. */
 export class Destroyed {
   private tokens = new Map<string, string>()
-  private sweep = new Map<string, { period: number; inside: boolean }>()
+  private sweep = new Map<string, number>()
   private list: string[] | null = []
   private next = 1001
   learn(values: readonly string[]): void {
@@ -449,9 +483,7 @@ export class Destroyed {
       if (v.length < value.length) tooLong = true
       if (v === '' || this.sweep.has(v)) continue
       this.tokenFor(v)
-      // Inside longer words too when high-entropy or twelve characters or
-      // more: a long password must not hide in a word (review of 58d3dae).
-      this.sweep.set(v, { period: periodOf(v), inside: highEntropy(v) || v.length >= 12 })
+      this.sweep.set(v, periodOf(v))
       this.list = null
     }
     if (tooLong) throw new Error('a destroyed credential too long to remove safely')
@@ -462,7 +494,7 @@ export class Destroyed {
   hold(name: string, placeholder: string): void {
     if (this.tokens.get(name) === placeholder) return
     this.tokens.set(name, placeholder)
-    this.sweep.set(name, { period: periodOf(name), inside: false })
+    this.sweep.set(name, periodOf(name))
     this.list = null
   }
   /** The values swept from later texts, with each one's period. */
@@ -471,11 +503,7 @@ export class Destroyed {
     return (this.list ??= [...this.sweep.keys()].sort((a, b) => b.length - a.length))
   }
   periodOf(value: string): number {
-    return this.sweep.get(value)?.period ?? periodOf(value)
-  }
-  /** Removed inside longer words too (high-entropy), or only as a token. */
-  inside(value: string): boolean {
-    return this.sweep.get(value)?.inside ?? true
+    return this.sweep.get(value) ?? periodOf(value)
   }
   tokenFor(value: string): string {
     let token = this.tokens.get(value)
@@ -493,22 +521,16 @@ export class Destroyed {
  *  different values that overlap are merged and take the longest one's
  *  token, spans that only touch stay two. Run on text as written, before any
  *  masking, so no repeat reaches the map. */
-// What a whole token is bounded by: `_` and `-` join words here.
-const TOKEN_CHAR = /[A-Za-z0-9_$-]/
-
 export function redactKnown(text: string, known: Destroyed): string {
   const values = known.values
   if (values.length === 0) return text
   const spans: [number, number, string][] = []
   for (const value of values) {
     const period = known.periodOf(value)
-    const inside = known.inside(value)
     for (let i = text.indexOf(value); i !== -1;) {
       let j = i + value.length
       while (j < text.length && text[j] === text[j - period]) j++
-      const token =
-        !(i > 0 && TOKEN_CHAR.test(text[i - 1]!)) && !(j < text.length && TOKEN_CHAR.test(text[j]!))
-      if (inside || token) spans.push([i, j, value])
+      spans.push([i, j, value])
       if (spans.length > MAX_SPANS)
         throw new Error('too many occurrences of a destroyed credential to remove them safely')
       // A value that repeats at more than one shift can start again inside
@@ -673,7 +695,8 @@ function maskShapedPart(
 // Placeholders that stand for a value masked on purpose: a regulated number
 // (`__PAN__1`) or a value the author marked by hand (`__MANUAL__1`). They stay
 // masked when the last scan reads the rest back.
-const KEPT_MASKED = [...Object.values(REGULATED_BASES), MANUAL_BASE].filter(
+// A quarantined name holds a destroyed credential: never read back either.
+const KEPT_MASKED = [...Object.values(REGULATED_BASES), MANUAL_BASE, '__QUARANTINED__'].filter(
   (base): base is string => typeof base === 'string'
 )
 
