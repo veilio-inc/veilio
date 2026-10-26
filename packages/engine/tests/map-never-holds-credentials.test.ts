@@ -345,3 +345,51 @@ describe('spreading stays linear', () => {
     expect(out).not.toMatch(/abab/)
   })
 })
+
+// Cost fixes before the review of #172.
+describe('common weak passwords are default words', () => {
+  for (const word of [
+    'pass',
+    'pwd',
+    'qwerty',
+    'letmein',
+    'welcome',
+    'abc123',
+    '123456',
+    'passw0rd',
+    'password1',
+  ]) {
+    it(`"${word}" is redacted where it stands and as a whole word elsewhere, never inside a longer name`, () => {
+      const code = `PGPASSWORD=${word} psql\nconst x${word}y = 1\nconst ${/^\d/.test(word) ? 'n' : ''}${word} = 2\n`
+      const result = anonymize(code)
+      expect(result.anonymized, word).toMatch(/^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__ /)
+      // The longer name is masked and mapped whole, not cut by the spread.
+      expect(Object.values(result.map), word).toContain(`x${word}y`)
+    })
+  }
+  it('pass inside passport and compass is left alone; --password pass is redacted', () => {
+    const code = 'PGPASSWORD=pass psql\nconst passport = compass\n$ deploy --password pass\n'
+    const scanned = scanSecrets(code).code
+    expect(scanned).toMatch(/^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__ psql\n/)
+    expect(scanned).toMatch(/--password __REDACTED_[A-Z_]+_\d+__\n$/)
+    const result = anonymize(code)
+    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['passport', 'compass']))
+  })
+  it('P@ssw0rd keeps its word boundaries', () => {
+    const code = 'PGPASSWORD=P@ssw0rd psql\nconst note = "xP@ssw0rdx"\n'
+    const note = /= "([^"]*)"\n$/.exec(anonymize(code).anonymized)?.[1]
+    expect(note).toBeDefined()
+    expect(note).not.toMatch(/__REDACTED_/)
+  })
+})
+
+describe('a URL host is a non-secret position for a default word', () => {
+  it('postgres://app:postgres@postgres:5432/db keeps the scheme and the host', () => {
+    const out = anonymize('DATABASE_URL=postgres://app:postgres@postgres:5432/db\n').anonymized
+    expect(out).toMatch(/postgres:\/\/app:__REDACTED_[A-Z_]+_\d+__@postgres:5432\/db/)
+  })
+  it('a non-default password as the host is still redacted', () => {
+    const out = anonymize('DATABASE_URL=postgres://app:Kx9prodpw@Kx9prodpw:5432/db\n').anonymized
+    expect(out).not.toContain('Kx9prodpw')
+  })
+})

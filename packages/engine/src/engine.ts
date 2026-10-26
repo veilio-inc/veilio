@@ -829,8 +829,9 @@ function withoutCredentials(map: SymbolMap, found: ReadonlySet<string>): SymbolM
   return out ?? map
 }
 
-// Well-known default passwords that are also ordinary names in the same files
-// (an image, a scheme, a user, a database). 1.12.1 review.
+// Well-known default and common weak passwords that are also ordinary names
+// or words in the same files (an image, a scheme, a user, a database).
+// 1.12.1 review.
 const DEFAULT_WORDS: ReadonlySet<string> = new Set([
   'postgres',
   'root',
@@ -844,12 +845,27 @@ const DEFAULT_WORDS: ReadonlySet<string> = new Set([
   'changeme',
   'secret',
   'demo',
+  // Common weak passwords: word boundaries keep `passport` and `compass`
+  // whole (review of #172). Lower case: the lookup lower-cases the value.
+  'pass',
+  'pwd',
+  'passw0rd',
+  'password1',
+  '1234',
+  '12345',
+  '123456',
+  '12345678',
+  'qwerty',
+  'letmein',
+  'welcome',
+  'abc123',
+  'p@ssw0rd',
 ])
 
 /**
  * Whether the occurrence of `word` at `at` stands where it cannot be a secret:
  * an image name (`image: postgres`), a URL scheme (`postgres://`), a URL user
- * (`://postgres:` or `://postgres@`), a user field (`user: postgres`,
+ * (`://postgres:` or `://postgres@`), a URL host (`@postgres:5432`), a user field (`user: postgres`,
  * `POSTGRES_USER=postgres`), or a compose service name (a key on its own
  * line, or an item of a list such as `depends_on`).
  */
@@ -863,6 +879,7 @@ function nonSecretPosition(text: string, at: number, word: string): boolean {
     /\bimage\s*:\s*["']?$/i.test(before) ||
     after === '://' ||
     (/:\/\/$/.test(before) && /^[:@]/.test(after)) ||
+    (/:\/\/[^\s/@]*@$/.test(before) && /^(?::\d|\/|[?#"'\s]|$)/.test(after)) ||
     /(?:\b|_)user(?:name)?["']?\s*[:=]\s*["']?$/i.test(before) ||
     (/^\s*(?:-\s*)?$/.test(before.slice(before.lastIndexOf('\n') + 1)) && /^:?\s*$/.test(rest))
   )

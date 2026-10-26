@@ -124,10 +124,12 @@ own, and occurrences that overlap or touch are replaced as one span: by the
 covering credential's token, or by a new generic token where several meet, so
 no character of any of them is left. The one exception is a well-known default
 (`postgres`, `root`, `admin`, `mysql`, `sa`, `guest`, `test`, `user`,
-`password`, `changeme`, `secret`, `demo`), replaced only as a whole word, and
+`password`, `changeme`, `secret`, `demo`) or common weak password (`pass`,
+`pwd`, `passw0rd`, `password1`, `1234` to `12345678`, `qwerty`, `letmein`,
+`welcome`, `abc123`, `P@ssw0rd`), replaced only as a whole word, and
 left as written where it stands in a position that
-is not a secret: an image name, a URL scheme, a URL user, a user field, or a
-compose service name. Beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
+is not a secret: an image name, a URL scheme, a URL user, a URL host, a user
+field, or a compose service name. Beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
 and a `postgres://` scheme stay, and are not mapped. Where the credential is left in the text by design (`warn`,
 `off`, a fixture), the equal name is left too and is not mapped. A name that only
 contains a credential, or is part of one, is masked and mapped like any other
