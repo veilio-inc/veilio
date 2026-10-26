@@ -328,11 +328,11 @@ describe('what the session learns', () => {
     expect(known.values).toEqual([])
   })
 
-  it('a learned value is removed as a whole word, never from inside one', () => {
+  it('a learned value is removed wherever it appears, inside a longer word too', () => {
     const known = new Destroyed()
     known.learn(['Xk9mQ2vL7'])
-    expect(redactKnown('a Xk9mQ2vL7 b getXk9mQ2vL7Report c', known)).toBe(
-      'a __REDACTED_CREDENTIAL_1001__ b getXk9mQ2vL7Report c'
+    expect(redactKnown('a xXk9mQ2vL7 Xk9mQ2vL7y b', known)).toBe(
+      'a x__REDACTED_CREDENTIAL_1001__ __REDACTED_CREDENTIAL_1001__y b'
     )
   })
 

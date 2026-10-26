@@ -283,7 +283,7 @@ function credentialLike(value: string): boolean {
 function destroyedSpans(
   text: string,
   scan: ReturnType<typeof scanSecrets>
-): { start: number; matched: number; end: number }[] {
+): { start: number; matched: number; end: number; type: string }[] {
   const found = scan.findings.filter((f) => f.redacted)
   if (found.length === 0) return []
   const starts = [0]
@@ -292,11 +292,24 @@ function destroyedSpans(
     const start = (starts[f.line - 1] ?? 0) + f.column - 1
     let end = start + f.length
     while (end < text.length && KEY_CHAR.test(text[end]!)) end++
-    return { start, matched: start + f.length, end }
+    return { start, matched: start + f.length, end, type: f.type }
   })
 }
 
 export type ScanResult = ReturnType<typeof scanSecrets>
+
+// Rules that judge by shape and context rather than a provider's format: only
+// their findings defer to a value the map already masks reversibly. A
+// provider-format finding (an AWS or GitHub key, a private key block, a JWT)
+// always wins (security review of 933156e).
+const HEURISTIC = new Set([
+  'password-assignment',
+  'high-entropy-string',
+  'connection-string',
+  'basic-auth',
+  'bearer-token',
+  'possible-credential',
+])
 
 const mapNames = new WeakMap<SymbolMap, ReadonlySet<string>>()
 /** The names a map holds, which are masked reversibly and never destroyed. */
@@ -311,9 +324,9 @@ function namesOf(map: SymbolMap): ReadonlySet<string> {
 function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: SymbolMap): string[] {
   const names = namesOf(map)
   const out: string[] = []
-  for (const { start, matched, end } of destroyedSpans(text, scan)) {
+  for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     const core = text.slice(start, matched)
-    if (names.has(core)) continue
+    if (names.has(core) && HEURISTIC.has(type)) continue
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
       if (credentialLike(v)) out.push(v)
   }
@@ -390,34 +403,27 @@ export class Destroyed {
   }
 }
 
-const WORD_CHAR = /[A-Za-z0-9_$]/
-
-/** `text` with every occurrence of every learned value removed where it
- *  stands as a whole word: never from inside a longer word, which is a name
- *  the masking judges, and never with anything after it (review of
- *  99325ba). A run that keeps repeating a value's period is one span, and the
- *  search never goes back; spans of different values that overlap are merged
- *  and take the longest one's token, spans that only touch stay two. Run on
- *  text as written, before any masking, so no repeat reaches the map. */
+/** `text` with every occurrence of every learned value removed, inside a
+ *  longer word too: a learned value is key material by its own look, and a
+ *  copy of it anywhere is the secret (security review of 933156e). Nothing
+ *  after it is taken: the value was learned with its whole extent, and a
+ *  following identifier is not part of it. A run that keeps repeating a
+ *  value's period is one span, and the search never goes back; spans of
+ *  different values that overlap are merged and take the longest one's
+ *  token, spans that only touch stay two. Run on text as written, before any
+ *  masking, so no repeat reaches the map. */
 export function redactKnown(text: string, known: Destroyed): string {
   const values = known.values
   if (values.length === 0) return text
   const spans: [number, number, string][] = []
   for (const value of values) {
     const period = known.periodOf(value)
-    const wordStart = WORD_CHAR.test(value[0]!)
-    const wordEnd = WORD_CHAR.test(value[value.length - 1]!)
     for (let i = text.indexOf(value); i !== -1;) {
       let j = i + value.length
       while (j < text.length && text[j] === text[j - period]) j++
-      const whole =
-        !(wordStart && i > 0 && WORD_CHAR.test(text[i - 1]!)) &&
-        !(wordEnd && j < text.length && WORD_CHAR.test(text[j]!))
-      if (whole) {
-        spans.push([i, j, value])
-        if (spans.length > MAX_SPANS)
-          throw new Error('too many occurrences of a destroyed credential to remove them safely')
-      }
+      spans.push([i, j, value])
+      if (spans.length > MAX_SPANS)
+        throw new Error('too many occurrences of a destroyed credential to remove them safely')
       // A value that repeats at more than one shift can start again inside
       // the run and cross its end: the search resumes where that is still
       // possible, at least one period on (review of 600a53c).
@@ -464,10 +470,10 @@ export function applyMap(
   const names = namesOf(map)
   let redacted = ''
   let at = 0
-  for (const { start, matched, end } of destroyedSpans(text, scan)) {
+  for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     if (start < at) continue
     const core = text.slice(start, matched)
-    if (names.has(core)) continue
+    if (names.has(core) && HEURISTIC.has(type)) continue
     redacted += text.slice(at, start) + known.tokenFor(core)
     at = end
   }
@@ -617,7 +623,7 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
   return found
     .filter((f) => {
       const start = (starts[f.line - 1] ?? 0) + f.column - 1
-      return !names.has(real.slice(start, start + f.length))
+      return !HEURISTIC.has(f.type) || !names.has(real.slice(start, start + f.length))
     })
     .map((f) => f.type)
 }

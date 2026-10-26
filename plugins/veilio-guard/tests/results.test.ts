@@ -661,3 +661,38 @@ test('a field the guard has no row for is scanned in full, whatever its text', a
   expect(out.result.returnCodeInterpretation).not.toContain(':postgres@')
   expect(out.result.stdout).not.toContain(':postgres@')
 })
+
+// Security review of 933156e: a provider-format key always wins over the map.
+const GH = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
+test('a provider-format key the map holds is still destroyed, and never restored', async ($, on) => {
+  const bash = recorded('Bash')
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__9: GH }) })
+  let edited = false
+  on('tool.call', (_: any, e: any) => {
+    if (e.tool === 'Edit') {
+      edited = true
+      return edit.r
+    }
+    return { ...bash.r, result: { ...bash.r.result, stdout: `token: ${GH}\n` } }
+  })
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(out)).not.toContain(GH)
+  expect(out.result.stdout).not.toContain('__STR__9')
+  const e: any = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: '__STR__9' })
+  expect(e.deny).toContain('Veilio refused this call')
+  expect(edited).toBe(false)
+})
+
+test('a heuristic finding still defers to a value the map holds', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__9: 'Zq8vB3nM1kL0pW9xYc7dE6fG' }),
+  })
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: 'auth_token: "Zq8vB3nM1kL0pW9xYc7dE6fG"\n' },
+  }))
+  const out: any = await $.tool.call(eventOf(bash))
+  expect(out.result.stdout).toContain('"__STR__9"')
+})

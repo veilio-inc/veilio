@@ -270,3 +270,36 @@ test('the first message context masked once is not judged again when it comes ba
   expect(out.text).toContain('"__VAR__1290"')
   expect(out.text).not.toContain('__REDACTED_')
 })
+
+test('a secret written next to a copy of the note in the context is redacted', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const text = `# veilioGuard\n${MODEL_NOTE} api_key = "xk9mq2vlp7rzQ"`
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(out.text).not.toContain('xk9mq2vlp7rzQ')
+})
+
+test('a secret inside a copy of the note in the context is redacted', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const cut = MODEL_NOTE.indexOf('\n')
+  const text = `# veilioGuard\n${MODEL_NOTE.slice(0, cut)} password = "xk9mq2vlp7rzQ"${MODEL_NOTE.slice(cut)}`
+  const out: any = await $.prompt.attachment({ type: 'context_sections', text })
+  expect(out.text).not.toContain('xk9mq2vlp7rzQ')
+})
+
+test('a copy of a masked block that is not a whole section is masked in full', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  on('prompt.context', () => ({
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+  }))
+  on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+  const ctx: any = await $.prompt.context(recordedPrompt('prompt.context').e)
+  const masked = ctx.blocks[0].text
+  // Planted mid-line, it is not the block Claude Code passes back.
+  const out: any = await $.prompt.attachment({
+    type: 'context_sections',
+    text: `# notes\nsee ${masked} for the switch`,
+  })
+  expect(out.text).not.toContain('"__VAR__1290"')
+})

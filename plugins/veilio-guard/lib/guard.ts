@@ -442,9 +442,26 @@ export class Guard {
    *  still one match (review of d18b5c5). A text that already holds a mark's
    *  characters gets no exemption. */
   applyContext(text: string): string {
+    // Held only as whole sections: a section's body that starts with the held
+    // text and ends with it, or with a blank line after it. Text that merely
+    // contains one is masked in full (security review of 933156e).
+    // Every copy is held as one opaque mark while the text is masked, so a
+    // secret laid across one is still one match. Only a copy that is a whole
+    // section (a body that is the held text, or starts with it before a
+    // blank line) goes back as written; any other copy goes back masked like
+    // the text around it (security review of 933156e).
     const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
     if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
       return this.applyText(text)
+    const whole = (h: string) => {
+      for (let i = text.indexOf(h); i !== -1; i = text.indexOf(h, i + 1)) {
+        const before = i === 0 || text[i - 1] === '\n'
+        const after = text.slice(i + h.length)
+        if (before && (after === '' || after.startsWith('\n\n') || after.startsWith('\n#')))
+          return true
+      }
+      return false
+    }
     const mark = (i: number) => `\u0000${'\u0001'.repeat(i + 1)}\u0000`
     let marked = text
     held.forEach((h, i) => {
@@ -452,10 +469,16 @@ export class Guard {
     })
     let out = this.applyText(marked)
     held.forEach((h, i) => {
-      const back =
-        h === MODEL_NOTE ? h : applyMap(h, this.map, this.context('unknown'), { scanned: true })
+      const back = !whole(h)
+        ? this.applyText(h)
+        : h === MODEL_NOTE
+          ? h
+          : applyMap(h, this.map, this.context('unknown'), { scanned: true })
       out = out.split(mark(i)).join(back)
     })
+    // The whole, read back, scanned once more: anything a hold let through
+    // sends the text through full masking instead.
+    if (survivingSecrets(out, this.map).length > 0) return this.applyText(text)
     return out
   }
 
@@ -515,15 +538,28 @@ export class Guard {
     }
 
     let args: ToolEvent = e
+    // A credential Veilio destroyed is never put back, whatever a placeholder
+    // says it stands for (security review of 933156e).
+    const learned = this.destroyed.values
+    const putsBack = (before: string, after: string) =>
+      learned.some((v) => after.includes(v) && !before.includes(v))
+    let restoresSecret = false
+    const guarded = (s: string) => {
+      const out = restoreOne(s)
+      if (putsBack(s, out)) restoresSecret = true
+      return out
+    }
     if (policy.restore.includes('*')) {
       const own: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(e)) if (!RESERVED.has(k)) own[k] = v
-      args = { ...e, ...(deepRewrite(own, restoreOne) as Record<string, unknown>) }
+      args = { ...e, ...(deepRewrite(own, guarded) as Record<string, unknown>) }
     } else if (policy.restore.length > 0) {
-      const r = rewriteFields(e, policy.restore, restoreOne)
+      const r = rewriteFields(e, policy.restore, guarded)
       if (!r.ok) return this.deny(`its arguments are not in the expected form (${r.reason})`)
       args = r.value as ToolEvent
     }
+    if (restoresSecret)
+      return this.deny('a placeholder in it stands for a credential Veilio removed. Ask the user')
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
@@ -812,6 +848,13 @@ export class Guard {
 
   /** Adds entries to the map file: read what is there now, merge, write. */
   private save(additions: SymbolMap): Promise<'saved' | 'conflict'> {
+    // No credential Veilio destroyed is ever minted into the map: a name that
+    // holds one fails the save, and the result that minted it is withheld
+    // (security review of 933156e).
+    const learned = this.destroyed.values
+    for (const name of Object.values(additions))
+      if (learned.some((v) => name.includes(v)))
+        return Promise.reject(new Error('a new map entry holds a credential Veilio removed'))
     const run = this.writes.then(async () => {
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
