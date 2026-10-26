@@ -82,10 +82,16 @@ describe('argument handling', () => {
     expect(r.err).toContain('unknown command')
   })
 
-  it('rejects an unknown flag', async () => {
+  it('rejects an unknown flag, naming the command and its options', async () => {
     const r = await run(['scrub', '--turbo'])
     expect(r.code).toBe(EXIT_ERROR)
-    expect(r.err).toContain('unknown flag')
+    expect(r.err).toContain('veilio scrub: unknown option --turbo. Options for scrub:')
+  })
+
+  it('rejects an unknown flag with no command in the general form', async () => {
+    const r = await run(['--turbo'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain('unknown flag "--turbo"')
   })
 
   it('rejects an unknown language', async () => {
