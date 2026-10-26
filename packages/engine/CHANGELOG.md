@@ -1,5 +1,27 @@
 # Changelog
 
+## Record of what this file left out (written 2026-10-26)
+
+### Removed before 1.0.0: `options.style`
+
+`anonymize(code, { style })` took `'roles'` (role-typed placeholders such as
+`__CLS__1`) or `'plain'` (the old `__P<n>__` numbering). It was removed in
+[a5c494b](https://github.com/veilio-inc/veilio/commit/a5c494b0f992974779b9369c81d9dda6eff81cf9)
+on 2026-07-29, before 1.0.0. Every version names its placeholders by role.
+
+This file never recorded the removal. The README kept listing the option in
+every published version from 1.0.0 to 1.7.0, and 1.8.0 was the first without
+it. In those versions, `{ style: 'plain' }` was not refused. Its value is a
+string, so the engine read the object as an existing symbol map, and the key
+was stored in the map.
+
+### Versions 1.3.0 to 1.10.1
+
+Their release notes are on GitHub Releases, under the `engine-v*` tags:
+<https://github.com/veilio-inc/veilio/releases>. The release tool writes each
+version's notes into the published package, but it no longer commits this
+file, so the copy in the repository skips from 1.2.0 to the latest release.
+
 ## [1.2.0](https://github.com/veilio-inc/veilio/compare/engine-v1.1.0...engine-v1.2.0) (2026-08-15)
 
 ### Features

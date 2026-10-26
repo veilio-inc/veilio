@@ -1,6 +1,6 @@
 # Roadmap — Veilio Community Edition
 
-_Last updated 2026-10-21._
+_Last updated 2026-10-26._
 
 This is the public roadmap for the Community Edition and the anonymizer engine:
 what the engine gets wrong today, what we intend to do about it, and what we have
@@ -24,10 +24,10 @@ Listed because a roadmap whose first section is aspirational is not worth much.
   `linux/arm64`, and is public.
 - CE and Cloud consume **the same** engine build, rather than two copies that
   drift.
-- The engine is at **1.7.0**: regulated identifiers round-trip, detection
+- The engine is at **1.11.0**: regulated identifiers round-trip, detection
   findings are graded by blast radius, a file says when its language was not
   recognised, and every result reports how much comment prose left unmasked.
-- **`@veilio-inc/cli` and `@veilio-inc/mcp` are published** (both 0.3.2). They
+- **`@veilio-inc/cli` and `@veilio-inc/mcp` are published** (both 0.6.0). They
   share one symbol map with each other, and neither makes a network call on any
   local path — each ships a test that trips if one is ever introduced.
 - Maps saved in the browser are **encrypted at rest**, and the plaintext copies
@@ -53,7 +53,7 @@ The first ninety seconds: find the repo, run the thing.
 The image was 77.4 MB, of which 76.8 MB was the `nginx:1.27-alpine` base. The
 site is 1.1 MB, so the distro was roughly 99% of what anyone pulled.
 `alpine-slim` took it to 21.7 MB. Then nginx went too: the image is now a
-~140-line standard-library static server ([`docker/serve.go`](./docker/serve.go))
+small standard-library static server ([`docker/serve.go`](./docker/serve.go))
 on `scratch` — **10.4 MB**, of which 5.8 MB is the Go binary and 1.5 MB the site
 plus its pre-built gzip sidecars.
 
@@ -244,13 +244,15 @@ editors and agents rather than a browser tab.
 | C2  | An MCP server taking file paths, not blobs | **done**         |
 | C3  | Writing a shared map, not only reading one | **done**         |
 
-**C1 — done.** `@veilio-inc/cli` (0.3.2). `scrub`, `restore`, `scan` and `map`
+**C1 — done.** `@veilio-inc/cli` (0.6.0). `scrub`, `restore`, `scan` and `map`
 work offline with no account: transformed code on stdout, everything else on
 stderr, so it composes in a pipe and in a pre-commit hook. `scan` exits 1 on a
-finding, which is what makes it usable as a gate.
+credential (with `--strict`, on any finding), which is what makes it usable as
+a gate.
 
-**C2 — done.** `@veilio-inc/mcp` (0.3.2), with zero runtime dependencies —
-JSON-RPC framing is implemented directly, because pulling a transitive tree into
+**C2 — done.** `@veilio-inc/mcp` (0.6.0), with no third-party runtime
+dependencies — only the engine and the CLI, both from this repository. JSON-RPC
+framing is implemented directly, because pulling a transitive tree into
 the component that reads your source would undercut the argument the product
 makes. The primary tools take a **file path**: the server reads the file in its
 own process and the agent learns `__CLS__1.__FN__2()` rather than
@@ -325,12 +327,16 @@ makes it *disputed*, and restore then refuses it for every member until
 somebody deletes a map: one person's push, a cost paid by everyone, with
 nothing erroring at the time.
 
-**Deliberately not shipped: write tools for the MCP server.** An agent
-creating shared maps unattended, under a key sitting on disk for seven days, is
-a different security posture and not a missing feature. It is the same argument
-this project already makes about reading team maps in CI. An agent that reserved
-numbers it then discarded would also consume the team's allocation on every tool
-call, which is why the reserved path is a separate entry point rather than a
+**Write tools for the MCP server shipped later, in 0.6.0, behind a switch.**
+This entry first said they would not ship: an agent creating shared maps
+unattended, under a key sitting on disk for seven days, is a different security
+posture and not a missing feature. MCP 0.6.0 adds `maps_create`, `maps_update`
+and `maps_remove` (spec 052). Removing a map, an update that drops entries and
+a pull with `force` are refused unless the person starts the server with
+`VEILIO_MCP_DESTRUCTIVE=1`, which no tool call can set. Holding them back was
+the same argument this project already makes about reading team maps in CI. The
+MCP still never reserves numbers: an agent that reserved numbers it then
+discarded would consume the team's allocation on every tool call, which is why the reserved path is a separate entry point rather than a
 flag on the function both clients share.
 
 **The sequencing argument in this entry was only half kept, and that is worth
