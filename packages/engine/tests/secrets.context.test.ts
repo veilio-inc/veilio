@@ -80,7 +80,6 @@ describe('password flags on a command line', () => {
     'mysql -h db -P 3306 -u root -p',
     'mysql -h db -P3306 -u root',
     'Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`)',
-    'Run `mysql -h db` first, then read why a flag such as -prootpw is unsafe.',
     'mysql -u root -p\nshop',
     'psql -p 5432 -h db',
     'ssh -p 22 deploy@host',

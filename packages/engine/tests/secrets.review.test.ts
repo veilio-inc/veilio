@@ -179,12 +179,18 @@ describe('5. --password counts only in a command context', () => {
       scanSecrets('```sh\n~~~\ndeploy --password hunter22\n```\n', 'redact', { path: 'README.md' })
         .code
     ).toMatch(new RegExp(`deploy --password ${TOKEN.source}\\n`))
-    // After the fence closes it is prose again.
-    nothing('```sh\nls\n```\ndeploy --password hunter22\n', 'README.md')
+    // Round 3 ruling: one rule everywhere, so outside a fence it is judged too.
+    expect(
+      scanSecrets('```sh\nls\n```\ndeploy --password hunter22\n', 'redact', { path: 'README.md' })
+        .code
+    ).toMatch(TOKEN)
   })
-  it('in a shell script file, every line is a command', () => {
-    redacted('deploy --password §', 'hunter22', 'scripts/deploy.sh')
-    nothing('deploy --password hunter22', 'docs/deploy.md')
+  it('one rule in every file: a script, a README, and no path', () => {
+    // Code review of #166, round 3: the prose/source distinction is gone.
+    for (const path of ['scripts/deploy.sh', 'docs/deploy.md', 'src/a.ts', undefined]) {
+      redacted('deploy --password §', 'hunter22', path)
+      nothing('  --password TEXT  The database password.', path)
+    }
   })
 })
 
@@ -317,8 +323,8 @@ describe('second review, 1: the prose exemption applies only to prose', () => {
       redacted(t, secret)
     })
   }
-  it('in source a metavar-looking value is judged as a password', () => {
-    redacted('run("deploy --password §")', 'TEXT', 'src/cli.ts')
+  it('a metavar is help text in every file; any other all-caps value is a password', () => {
+    nothing('parser.add_argument("--password TEXT")', 'src/cli.py')
     redacted('deploy --password §', 'HUNTER2X', 'scripts/deploy.sh')
   })
   it('with no path, a bare command is a password unless the value is prose-like', () => {
@@ -382,9 +388,9 @@ describe('second review, 3: only a closed list of metavars', () => {
       nothing(`  --password ${metavar}  The password.`)
     })
   }
-  it('to/for/is are prose only in prose', () => {
+  it('to/for/is are prose in every file', () => {
     nothing('Pass --password to the tool.', 'README.md')
-    redacted('run("deploy --password §")', 'to', 'src/a.ts')
+    nothing('// pass --password for the admin', 'src/a.ts')
   })
 })
 
@@ -416,5 +422,85 @@ describe('second review, 4: a header value is code only from a known code root',
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
     redacted('X-Api-Key: §', jwt)
     redacted('Authorization: Bearer §', 'abcd.efgh.ijkl')
+  })
+})
+
+// Scoped review of 3efda33 and 65b1014 (round 3).
+describe('round 3, 2: a ${...} with a space has its default judged', () => {
+  for (const template of [
+    'PGPASSWORD=${PG_PASS:-§} psql',
+    'PGPASSWORD=${PG_PASS-§} psql',
+    '$ deploy --password ${DEPLOY_PW:§}',
+  ]) {
+    it(template, () => redacted(template, 'two words2x'.replace('2x', ' 24x')))
+  }
+  it('a ${...} with a space and no default is a placeholder', () => {
+    nothing('PGPASSWORD=${PG_PASS:?set it first} psql')
+    nothing('mongosh -p ${MONGO_PASS:?missing value}')
+  })
+})
+
+describe('round 3, 4: argv arrays, flag and value as separate elements', () => {
+  for (const template of [
+    'spawn("sshpass", ["-p", "§", "ssh", "host"])',
+    "subprocess.run(['redis-cli', '-a', '§', 'ping'])",
+    'exec(["sqlcmd", "-S", "db", "-U", "sa", "-P", "§"])',
+    'cmd = ["mongosh", "-u", "admin", "-p", "§"]',
+    'args: ["--password", "§"]',
+    "args: ['--pass', '§']",
+  ]) {
+    it(template, () => redacted(template, 'hunter22', 'src/a.ts'))
+  }
+  it('mysql -p as its own element is still not a password', () => {
+    nothing('spawn("mysql", ["-u", "root", "-p", "shop"])', 'src/a.ts')
+  })
+})
+
+describe('round 3, 7: a placeholder is only a placeholder when it is the whole value', () => {
+  for (const [template, secret] of [
+    ['PGPASSWORD=§ psql', '<pw>hunter22'],
+    ['$ deploy --password §', '{{pw}}hunter22'],
+    ['mongosh -p §', '${{x}}hunter22'],
+    ['X-Api-Key: §', '<k>abcd1234'],
+  ] as [string, string][]) {
+    it(`${template} with ${secret}`, () => redacted(template, secret))
+  }
+})
+
+describe('1.12.1 review: the prose words after --password', () => {
+  for (const word of [
+    'to',
+    'for',
+    'is',
+    'in',
+    'and',
+    'or',
+    'on',
+    'with',
+    'when',
+    'if',
+    'as',
+    'of',
+    'the',
+    'a',
+    'an',
+    'that',
+    'this',
+    'from',
+  ]) {
+    it(`--password ${word} … is prose`, () => {
+      nothing(`Pass --password ${word} the tool.`, 'README.md')
+      nothing(`Pass --password ${word} the tool.`)
+    })
+  }
+  it('the CHANGELOG line is left alone, a real value is not', () => {
+    nothing(
+      '* **engine:** --password in source and string literals is judged',
+      'packages/engine/CHANGELOG.md'
+    )
+    // hunter2 itself is a long-standing known dummy (a placeholder), so the
+    // real-value case uses hunter22.
+    redacted('$ deploy --password §', 'hunter22', 'README.md')
+    redacted('$ deploy --password §', 'hunter22')
   })
 })

@@ -114,8 +114,28 @@ Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
 Under `'warn'` nothing is redacted: findings come back with `disposition:
 'report'` and each credential is left in the text as written. Under `'off'`
 nothing is reported either. **In no mode does a credential go into the symbol
-map**: identifier masking leaves every credential the rules find alone, and an
-entry an existing map holds for one is dropped. So nothing secret is written to
+map**: identifier masking leaves every credential the rules find alone. A name
+written exactly as a destroyed credential is replaced by that credential's
+redaction token: every other occurrence of a destroyed credential is, in a
+string, a URL, as a name, anywhere. A credential of 4 or more characters is
+replaced wherever it stands, inside a longer name or a URL too; a shorter one
+only as a whole word. Every occurrence of every credential is found on its
+own, and occurrences that overlap or touch are replaced as one span: by the
+covering credential's token, or by a new generic token where several meet, so
+no character of any of them is left. The one exception is a well-known default
+(`postgres`, `root`, `admin`, `mysql`, `sa`, `guest`, `test`, `user`,
+`password`, `changeme`, `secret`, `demo`) or common weak password (`pass`,
+`pwd`, `passw0rd`, `password1`, `1234` to `12345678`, `qwerty`, `letmein`,
+`welcome`, `abc123`, `P@ssw0rd`), replaced only as a whole word, and
+left as written where it stands in a position that
+is not a secret: an image name, a URL scheme, a URL user, a URL host, a user
+field, or a compose service name. Beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
+and a `postgres://` scheme stay, and are not mapped. Where the credential is left in the text by design (`warn`,
+`off`, a fixture), the equal name is left too and is not mapped. A name that only
+contains a credential, or is part of one, is masked and mapped like any other
+name. An entry an existing map
+holds for a credential is dropped, whether it is one on its own or one found in
+the text, and its number is not reused. So nothing secret is written to
 a saved map or uploaded with it. (Earlier versions masked an identifier-shaped
 key reversibly, into the map, under `'warn'` and `'off'`.)
 
@@ -128,17 +148,15 @@ types into one:
 - password flags: `-p<pw>` (attached only) after a mysql or mariadb client,
   where `-p <word>` is the database name; `-p <pw>` attached or not after a
   mongo client or sshpass; `-P <pw>` for sqlcmd, bcp, osql, isql and ipmitool;
-  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=`, a
-  space, or as the next element of an argv array. In source, config and
-  scripts the value is always judged, including inside a string literal
-  (a command run from code). Only in a prose or help file (Markdown,
-  text, reStructuredText, AsciiDoc, man pages) or text with no path can it be
-  prose: there a help-text metavar (`PASSWORD`, `TEXT`, `VALUE`, `KEY` and a
-  few more, `[…]`, `<…>`) or `to`/`for`/`is` is not a password, and in a prose
-  file only a command line counts (a fenced code block, a `$ ` or `> `
-  prompt, a Dockerfile `RUN` or CI `run:` line, a line that starts with a
-  known command or a path, or quoted code). Any other all-caps value is a
-  password. Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
+  `redis-cli -a <pw>`; `--password`, `--passwd` and `--pass` with `=` or a
+  space. Each of these is matched in an argv array too, the flag and its
+  value as one element or two (mysql's `-p` only as one). The same rule holds
+  in every file and with no path: the value after `--password` is a password
+  unless it is a help-text metavar (`PASSWORD`, `PASS`, `PASSWD`, `PWD`,
+  `TEXT`, `VALUE`, `SECRET`, `STRING`, `TOKEN`, `KEY`, `[…]`, `<…>`) or a
+  common prose word (`to`, `for`, `is`, `in`, `and`, `or`, `on`, `with`,
+  `when`, `if`, `as`, `of`, `the`, `a`, `an`, `that`, `this`, `from`). So `--password TEXT` in help text is left alone
+  and `--password hunter2` in a README is redacted. Port flags (`mysql -P 3306`, `psql -p 5432`, `ssh -p 22`,
   `docker run -p`) and flags with no value (`--password-stdin`,
   `--password-file`, `--no-password`) are left alone. A command continued
   with a trailing backslash is one command;
@@ -164,9 +182,10 @@ mixed (`deploy_user_2024`, `Build-Agent01`, `x-access-token`).
 Obvious placeholders are neither redacted nor reported: `changeme`,
 `password`, `xxx…`, `***`, `<your-password>`, `<your password>`, `${VAR}`,
 `${VAR:?message}`, `${{ secrets.X }}`, `{{ x }}`, `$VAR`, `%VAR%`, `$(…)`,
-`REDACTED`, an empty value. A placeholder that spans spaces is taken whole. In
+`REDACTED`, an ellipsis, an empty value. A placeholder that spans spaces is
+taken whole, and only when it is the whole value: `<pw>hunter2` is a value. In
 `${VAR:-default}` (and `-`, `:=`, and Spring's `${VAR:default}`) the default
-is the value and is judged as one.
+is the value and is judged as one, spaces included.
 
 **Redaction by context.** Pass the file the text came from as `path`
 (`anonymize(code, { path })`, `scanSecrets(code, policy, { path })`,
@@ -358,8 +377,11 @@ thrown on. It stays in the map and applies again where it is valid.
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
-- `credentialSpans(code, options?)` → `[start, end][]` of every credential the
-  rules find, whatever the policy; what `anonymize` keeps out of the map
+- `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
+  credential the rules find, whatever the policy: what `anonymize` keeps out
+  of the map. `ambiguous` marks a single word after `password =`
+- `redactionTokensOf(scan)` → each value a `scanSecrets` result destroyed, with
+  the token that replaced it
 - `detectLanguage(code)` / `guessLanguage(code)` → detection with a score
 - `extractIdentifiers(code, language?)` → `string[]`
 - `withAiPreamble(anonymized, map?)` / `AI_PREAMBLE` — a note to paste above masked

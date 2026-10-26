@@ -167,7 +167,16 @@ export interface ScanOptions {
  * credential. The masking pass leaves these alone, so a credential never
  * reaches the symbol map in any `secrets` mode (founder decision 2026-10-26).
  */
-export declare function credentialSpans(code: string, options?: ScanOptions): [number, number][];
+export declare function credentialSpans(code: string, options?: ScanOptions): CredentialSpan[];
+/** Where a credential stands in a text (`credentialSpans`). */
+export interface CredentialSpan {
+    start: number;
+    end: number;
+    /** The prose reading is as likely: a single word after `password =`
+     *  (`client_secret: "disabled"`). Not a fixture, which is a credential in a
+     *  test file reported rather than destroyed. */
+    ambiguous: boolean;
+}
 /** Detect credentials in `code` without modifying it. */
 export declare function detectSecrets(code: string, options?: ScanOptions): SecretFinding[];
 /**
@@ -180,6 +189,13 @@ export declare function detectSecrets(code: string, options?: ScanOptions): Secr
  * is one-way by construction, not by convention.
  */
 export declare function scanSecrets(code: string, policy?: SecretPolicy, options?: ScanOptions): SecretScan;
+/**
+ * Every value a scan destroyed, with the token that replaced it. `anonymize`
+ * writes the same token over every other occurrence of the value (1.12.1
+ * security review), so a password used again is never shown to the model nor
+ * written to the map. Empty for a scan that destroyed nothing.
+ */
+export declare function redactionTokensOf(scan: SecretScan): ReadonlyMap<string, string>;
 /** True when the scan found anything that should stop a user from pasting. */
 export declare function hasBlockingSecrets(findings: readonly SecretFinding[]): boolean;
 /** Count findings by severity, for badges and audit records. */
