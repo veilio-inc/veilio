@@ -14,7 +14,7 @@ set -eu
 
 if ! command -v veilio >/dev/null 2>&1; then
   echo "veilio: not installed — skipping credential scan." >&2
-  echo "  npm install -g @veilio/cli" >&2
+  echo "  npm install -g @veilio-inc/cli" >&2
   exit 0
 fi
 
