@@ -22,6 +22,26 @@ describe('isRawOnly', () => {
     'certs/client.p12',
     '.npmrc',
     '/home/dev/.netrc',
+    '/home/dev/.pgpass',
+    // Credential stores and keystores (security review of the guard's path change).
+    '/home/dev/.git-credentials',
+    'deploy/.htpasswd',
+    'android/release.jks',
+    'certs/server.keystore',
+    'keys/AuthKey_ABC123.p8',
+    'ops/kubeconfig',
+    '/home/dev/kubeconfig',
+    '/home/dev/.docker/config.json',
+    '.docker/config.json',
+    'CERTS/SERVER.KEYSTORE',
+    // Cloud and cluster credentials where their tools keep them.
+    '/home/dev/.kube/config',
+    '.kube/config',
+    '/home/dev/.kube/cache/discovery/servers.json',
+    '/home/dev/.aws/credentials',
+    '~/.aws/credentials',
+    '/home/dev/.azure/msal_token_cache.json',
+    '/home/dev/.config/gcloud/application_default_credentials.json',
   ])('refuses %s', (p) => {
     expect(isRawOnly(p, [])).toBe(true)
   })
@@ -33,6 +53,15 @@ describe('isRawOnly', () => {
     'veilio/map.json',
     'src/.envelope.ts',
     'README.md',
+    'src/kubeconfig.ts',
+    'docs/kubeconfig.md',
+    'config.json',
+    'docker/config.json',
+    'src/keystore.ts',
+    'src/jks.ts',
+    'src/kube/config.ts',
+    'docs/aws/credentials.md',
+    'config/gcloud.ts',
   ])('lets %s through', (p) => {
     expect(isRawOnly(p, [])).toBe(false)
   })
