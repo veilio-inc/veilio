@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.0](https://github.com/veilio-inc/veilio/compare/engine-v1.11.0...engine-v1.12.0) (2026-10-26)
+
+### Features
+
+* **engine:** passwords in a secret position are redacted whatever their strength, and only reported in test and example files ([11121ea](https://github.com/veilio-inc/veilio/commit/11121eac4d3a068939a907cea8fe1fa5ec8cb866))
+
+### Fixes
+
+* **engine:** --password in source and string literals is judged as a password; tighter metavar, code-root and overlap rules ([65b1014](https://github.com/veilio-inc/veilio/commit/65b101461df3979d433b5412bd86097ce0a42df7))
+* **engine:** a credential never goes into the symbol map in any secrets mode; review fixes for the secret-position rules ([3efda33](https://github.com/veilio-inc/veilio/commit/3efda3379ab84c97b4ec4cd358cc33a4baca9e60))
+* **engine:** a token carried as the user of a credential is redacted in every file ([f33b658](https://github.com/veilio-inc/veilio/commit/f33b658bcf24af57a060a8bd4b81465868fb2732))
+* **engine:** an unknown option key such as `style` now throws instead of being stored in the symbol map ([9c765c1](https://github.com/veilio-inc/veilio/commit/9c765c11fc2073fcbec3455e07a94e2293aa2175))
+
 ## [1.11.0](https://github.com/veilio-inc/veilio/compare/engine-v1.10.1...engine-v1.11.0) (2026-10-26)
 
 ### Features
