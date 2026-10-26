@@ -306,13 +306,17 @@ export class Destroyed {
   private tokens = new Map<string, string>()
   private next = 1001
   learn(values: readonly string[]): void {
-    // One too long to search for safely fails the text that holds it (the
-    // caller withholds it) and is not kept, so the session goes on.
-    if (values.some((v) => v.length > MAX_VALUE))
-      throw new Error('a destroyed credential too long to remove safely')
-    for (const v of values)
+    // Every value is kept, one too long to search for by its bounded prefix;
+    // then a too-long one fails the text that holds it (the caller withholds
+    // it). The others are never dropped (review of 600a53c).
+    let tooLong = false
+    for (const value of values) {
+      const v = value.length > MAX_VALUE ? value.slice(0, MAX_VALUE) : value
+      if (v.length < value.length) tooLong = true
       if (v !== '' && !this.tokens.has(v))
         this.tokens.set(v, `__REDACTED_CREDENTIAL_${this.next++}__`)
+    }
+    if (tooLong) throw new Error('a destroyed credential too long to remove safely')
   }
   get values(): string[] {
     return [...this.tokens.keys()]
@@ -360,7 +364,10 @@ export function redactKnown(text: string, known: Destroyed): string {
       spans.push([i, j, value])
       if (spans.length > MAX_SPANS)
         throw new Error('too many occurrences of a destroyed credential to remove them safely')
-      i = text.indexOf(value, j)
+      // A value that repeats at more than one shift can start again inside
+      // the run and cross its end: the search resumes where that is still
+      // possible, at least one period on (review of 600a53c).
+      i = text.indexOf(value, Math.max(i + period, j - value.length + 1))
     }
   }
   if (spans.length === 0) return text

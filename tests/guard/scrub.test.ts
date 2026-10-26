@@ -276,7 +276,37 @@ describe('a destroyed value too long to remove', () => {
   it('fails closed', () => {
     const known = new Destroyed()
     expect(() => known.learn(['k'.repeat(20_000)])).toThrow(/too long/)
-    // Not kept: the session goes on.
-    expect(known.values).toEqual([])
+    // Kept by its bounded prefix, so later texts holding it lose it too.
+    expect(known.values.map((v) => v.length)).toEqual([16_384])
+  })
+})
+
+describe('the end of a periodic run', () => {
+  it('an occurrence that starts inside a run and crosses its end is removed', () => {
+    // `..!..` repeats at shifts 3 and 4: after the run at 2 ends, another
+    // occurrence starts inside it.
+    const known = new Destroyed()
+    known.learn(['..!..'])
+    expect(redactKnown('x ..!...!.. y', known)).toBe('x __REDACTED_CREDENTIAL_1001__ y')
+  })
+
+  it('the same with a simple repeating value', () => {
+    const known = new Destroyed()
+    known.learn(['!?!?'])
+    expect(redactKnown('x !?!?!?!. !?!? y', known)).toBe(
+      'x __REDACTED_CREDENTIAL_1001__. __REDACTED_CREDENTIAL_1001__ y'
+    )
+  })
+})
+
+describe('a batch with one value too long', () => {
+  it('the others are still kept, and the long one by its prefix', () => {
+    const known = new Destroyed()
+    const long = `${'k'.repeat(20_000)}`
+    expect(() => known.learn([long, 'secretOne123', 'secretTwo456'])).toThrow(/too long/)
+    expect(redactKnown('x secretOne123 secretTwo456 y', known)).toBe(
+      'x __REDACTED_CREDENTIAL_1002__ __REDACTED_CREDENTIAL_1003__ y'
+    )
+    expect(redactKnown(`a ${'k'.repeat(16_384)} b`, known)).not.toContain('kkkk')
   })
 })
