@@ -81,7 +81,7 @@ describe('1.12.1 review', () => {
   })
 
   it('9d: a token-shaped name the call did not mint is not trusted', () => {
-    const r = anonymize('PGPASSWORD=Kx9prodpw psql\nconst x = __REDACTED_Kx9prodpw_1__\n')
-    expect(r.anonymized).not.toContain('Kx9prodpw')
+    const r = anonymize('PGPASSWORD=KXQPRODPWZ psql\nconst x = __REDACTED_KXQPRODPWZ_7__\n')
+    expect(r.anonymized).not.toContain('KXQPRODPWZ')
   })
 })
