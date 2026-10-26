@@ -135,9 +135,12 @@ interface Pattern {
    * test, fixture or example file a WEAK value is only reported (decision 6).
    */
   position?: true
-  /** What to judge for strength, when it is not the matched value itself
-   *  (Basic credentials: the decoded password). */
-  strengthOf?: (value: string) => string
+  /** What to judge for strength, when it is not the matched value alone:
+   *  every reading of the credential the value belongs to (Basic: the decoded
+   *  user half, password half and whole; userinfo and curl -u: the user, the
+   *  password and the pair). The STRONGEST decides (security review: a key
+   *  carried as the user, `sk_live_…:`, read as weak by its password half). */
+  strengthOf?: (value: string, match: string) => string[]
   /**
    * Structural confirmation, run on the matched value before it is reported.
    *
@@ -298,11 +301,26 @@ function basicCredentials(value: string): boolean {
   return decoded !== null && decoded.includes(':') && /^[\x20-\x7e]+$/.test(decoded)
 }
 
-/** The password half of Basic credentials, for judging strength. */
-function basicPassword(value: string): string {
+/** Basic credentials as they are judged for strength: both decoded halves
+ *  and the decoded whole. */
+function basicReadings(value: string): string[] {
   const decoded = decodeBase64(value)
-  if (decoded === null || !decoded.includes(':')) return value
-  return decoded.slice(decoded.indexOf(':') + 1)
+  if (decoded === null || !decoded.includes(':')) return [value]
+  const colon = decoded.indexOf(':')
+  return [decoded.slice(0, colon), decoded.slice(colon + 1), decoded]
+}
+
+/** A password after `user:` (URL userinfo, curl -u) as it is judged for
+ *  strength: the password, the user before it, and the pair. */
+function userPasswordReadings(value: string, match: string): string[] {
+  const head = match.slice(0, match.lastIndexOf(value))
+  const user = /([^\s"'=:/]*):$/.exec(head)?.[1] ?? ''
+  return [value, user, `${user}:${value}`]
+}
+
+/** Strong (research R7), or holding a provider-format key anywhere. */
+function strongOrProviderKey(value: string): boolean {
+  return isStrong(value) || holdsProviderKey(value)
 }
 
 // Values in a secret position: double-quoted, single-quoted, or bare. A bare
@@ -531,7 +549,7 @@ const PATTERNS: Pattern[] = [
     re: /\bBasic\s+([A-Za-z0-9+/]{16,400}={0,2})/g,
     group: 1,
     position: true,
-    strengthOf: basicPassword,
+    strengthOf: basicReadings,
   },
   {
     type: 'jwt',
@@ -578,7 +596,7 @@ const PATTERNS: Pattern[] = [
     // `Authorization: Basic auth` is prose; real credentials decode to
     // printable `user:password`.
     validate: basicCredentials,
-    strengthOf: basicPassword,
+    strengthOf: basicReadings,
   },
   {
     // A raw header line or a curl -H argument takes a bare value; an entry in
@@ -648,6 +666,21 @@ const PATTERNS: Pattern[] = [
     ),
     groups: [1, 2, 3],
     position: true,
+    strengthOf: userPasswordReadings,
+  },
+  {
+    // The user of curl -u, when it is a token: strong or provider-shaped, it
+    // is redacted in every context. A plain name stays.
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Token on a command line',
+    re: new RegExp(
+      `${command('curl')}${SAME_LINE}(?:-u[ \\t]*|--user(?:[ \\t]+|=))["']?([^\\s"':]{1,256}):`,
+      'g'
+    ),
+    group: 1,
+    validate: strongOrProviderKey,
   },
   {
     // Shell, dotenv, compose and PowerShell forms. After `=` a space ends a
@@ -673,6 +706,20 @@ const PATTERNS: Pattern[] = [
     re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/[^\s:@/]{0,128}:([^\s:@/]{1,256})@/gi,
     group: 1,
     position: true,
+    strengthOf: userPasswordReadings,
+  },
+  {
+    // The user half of URL userinfo, when it is a token (`https://<token>@`):
+    // strong or provider-shaped, it is redacted in every context. A plain
+    // name stays. The group is not the tail of the match, so its offset comes
+    // from the `d` flag.
+    type: 'connection-string',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'Token in URL userinfo',
+    re: /\b[a-z][a-z0-9+.-]{2,20}:\/\/([^\s:@/]{1,256})(?::[^\s@/]{0,256})?@/dgi,
+    group: 1,
+    validate: strongOrProviderKey,
   },
   {
     type: 'password-assignment',
@@ -767,6 +814,17 @@ const PATTERNS: Pattern[] = [
     validate: peselValid,
   },
 ]
+
+/** The provider-format rules: a named key shape, destroyed, not one of the
+ *  generic slot or catch-all rules. Copies without the global flag, so testing
+ *  a string never moves the table's own `lastIndex`. */
+let providerRules: RegExp[] | null = null
+function holdsProviderKey(text: string): boolean {
+  providerRules ??= PATTERNS.filter(
+    (p) => p.disposition === 'destroy' && p.position !== true && !GENERIC_MATCHERS.has(p.type)
+  ).map((p) => new RegExp(p.re.source, p.re.flags.replace(/[gyd]/g, '')))
+  return providerRules.some((re) => re.test(text))
+}
 
 /**
  * The grade each rule carries, derived from the table above rather than
@@ -1069,10 +1127,13 @@ function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
         const group = groups.find((g) => m![g] !== undefined)
         if (group === undefined) continue
         const captured = m[group]
-        // Locate the group inside the match. Groups here are always the
-        // trailing credential portion (at most a closing quote follows, which
-        // the value cannot contain), so a lastIndexOf is exact.
-        const offset = m[0].lastIndexOf(captured)
+        // Locate the group inside the match: from the `d` flag where the rule
+        // has it (a group that is not the tail of its match). Otherwise the
+        // group is the trailing credential portion (at most a closing quote or
+        // colon follows, which the value cannot contain), so a lastIndexOf is
+        // exact.
+        const at = m.indices?.[group]?.[0]
+        const offset = at !== undefined ? at - m.index : m[0].lastIndexOf(captured)
         if (offset < 0) continue
         start = m.index + offset
         value = captured
@@ -1098,7 +1159,7 @@ function collectMatches(code: string, exampleContext: boolean): RawMatch[] {
         verdict === 'credential' &&
         pattern.position === true &&
         exampleContext &&
-        !isStrong(pattern.strengthOf ? pattern.strengthOf(value) : value)
+        !(pattern.strengthOf ? pattern.strengthOf(value, m[0]) : [value]).some(strongOrProviderKey)
       if (fixture) verdict = 'ambiguous'
       const ambiguous = verdict === 'ambiguous'
       found.push({

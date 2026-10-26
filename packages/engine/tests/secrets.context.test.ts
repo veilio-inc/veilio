@@ -406,9 +406,12 @@ describe('redaction by context (decision 6)', () => {
     expectRedacted('PGPASSWORD=§ psql', 'correcthorsebatterystaple', 'tests/x.test.ts')
   })
 
-  it('Basic is judged on the decoded password, not the base64', () => {
-    // admin:hunter22 encodes to 20 base64 characters of high entropy.
-    expectReportedOnly('Authorization: Basic YWRtaW46aHVudGVyMjI=', 'tests/x.test.ts')
+  it('Basic is judged on the decoded credentials, not the base64', () => {
+    // admin:admin encodes to 16 base64 characters of high entropy; decoded,
+    // both halves and the whole are weak.
+    expectReportedOnly('Authorization: Basic YWRtaW46YWRtaW4=', 'tests/x.test.ts')
+    // admin:pass: its base64 alone would read as strong (3 classes, entropy 3+).
+    expectReportedOnly('Authorization: Basic YWRtaW46cGFzcw==', 'tests/x.test.ts')
   })
 
   it('leaves the generic password assignment as it was in tests', () => {
@@ -503,5 +506,118 @@ describe('linear time', () => {
       scanSecrets(line)
       expect(performance.now() - t, line.slice(0, 20)).toBeLessThan(1500)
     }
+  })
+})
+
+// Security review of the first cut: a credential's strength was judged on the
+// password half alone, so a key carried in the USER half (`sk_live_…:` in
+// Basic, a token as the URL user) was judged weak in a fixture and survived.
+// Rulings: a provider key anywhere in a decoded Basic payload is always
+// redacted; strength is the strongest of the user half, the password half and
+// the whole; a strong user half is redacted in every context, a plain one is
+// kept.
+describe('the user half of a credential (security review)', () => {
+  const FIXTURES = [undefined, 'src/config.ts', 'tests/x.test.ts', '.env.example']
+  const b64 = (text: string) => Buffer.from(text).toString('base64')
+
+  it('a Stripe key as the Basic user, empty password, is redacted in every context', () => {
+    for (const path of FIXTURES) {
+      expectRedacted('Authorization: Basic §', b64('sk_live_51H8xQ2ABCDEFGHIJKLMNOP:'), path)
+    }
+  })
+
+  it('a GitHub token as the Basic user is redacted in every context', () => {
+    const payload = b64('ghp_016C7e42F292c6912E7710c838347Ae178B4a:x-oauth-basic')
+    for (const path of FIXTURES) expectRedacted('Authorization: Basic §', payload, path)
+  })
+
+  it('a low-entropy provider-shaped key in a Basic payload is redacted in a fixture', () => {
+    // Weak by length and entropy alone: only the provider check catches it.
+    for (const path of FIXTURES) {
+      expectRedacted('Authorization: Basic §', b64('sk_live_aaaabbbbcc:'), path)
+    }
+  })
+
+  it('a provider key as the Basic password is redacted in every context', () => {
+    for (const path of FIXTURES) {
+      expectRedacted('Authorization: Basic §', b64('api:sk_live_51H8xQ2ABCDEFGHIJKLMNOP'), path)
+    }
+  })
+
+  it('a strong Basic user half with a trivial password is redacted in a fixture', () => {
+    expectRedacted('Authorization: Basic §', b64('Xk9#mQ2vL7pZ:x'), 'tests/x.test.ts')
+  })
+
+  it('Basic is report-only in a fixture only when both halves and the whole are weak', () => {
+    expectReportedOnly(`Authorization: Basic ${b64('u:pass')}`, 'tests/x.test.ts')
+    // Each half weak, the whole strong: redacted.
+    expectRedacted('Authorization: Basic §', b64('deploy:pass1234'), 'tests/x.test.ts')
+  })
+
+  it('curl -u: a strong user is redacted, and so is the trivial password beside it', () => {
+    for (const path of FIXTURES) {
+      const scan = scanSecrets('curl -u Xk9#mQ2vL7pZ:x https://api', 'redact', path ? { path } : {})
+      expect(scan.code, String(path)).toMatch(
+        new RegExp(`^curl -u ${TOKEN.source}:${TOKEN.source} https://api$`)
+      )
+    }
+  })
+
+  it('curl -u: a plain user stays, and a weak pair is only reported in a fixture', () => {
+    expectRedacted('curl -u admin:§ https://api', 'admin123')
+    expectReportedOnly('curl -u admin:admin https://api', 'tests/x.test.ts')
+  })
+
+  it('curl -u: each half weak but the whole strong is redacted in a fixture, the user kept', () => {
+    expectRedacted('curl -u deploy:§ https://api', 'pass1234', 'tests/x.test.ts')
+  })
+
+  it('URL: a token as the user, with no password, is redacted in every context', () => {
+    for (const path of FIXTURES) {
+      expectRedacted(
+        'git clone https://§@git.example.com/org/repo',
+        'a3f9c2e1b7d04f6e9a8b7c6d',
+        path
+      )
+    }
+  })
+
+  it('URL: a GitHub token as the user is redacted in every context', () => {
+    for (const path of FIXTURES) {
+      expectRedacted(
+        'https://§@github.com/org/repo.git',
+        'ghp_016C7e42F292c6912E7710c838347Ae178B4a',
+        path
+      )
+    }
+  })
+
+  it('URL: x-access-token:<tok> keeps the user and redacts the token, in a fixture too', () => {
+    expectRedacted('https://x-access-token:§@github.com/org/repo', 'abc12345', 'tests/x.test.ts')
+  })
+
+  it('URL: a strong user with a weak password is redacted whole, in a fixture too', () => {
+    const scan = scanSecrets('https://a3f9c2e1b7d04f6e9a8b7c6d:x@host/p', 'redact', {
+      path: 'tests/x.test.ts',
+    })
+    expect(scan.code).toMatch(new RegExp(`^https://${TOKEN.source}:${TOKEN.source}@host/p$`))
+  })
+
+  it('URL: a strong user that is also the password is redacted in both places', () => {
+    // The user's offset must come from the match, not from searching for its
+    // text, which finds the password first.
+    const t = 'a3f9c2e1b7d04f6e9a8b7c6d'
+    const scan = scanSecrets(`https://${t}:${t}@host/p`)
+    expect(scan.code).toMatch(new RegExp(`^https://${TOKEN.source}:${TOKEN.source}@host/p$`))
+  })
+
+  it('a provider key in a 16+ Basic value outside a header is redacted in a fixture', () => {
+    expectRedacted('Basic §', b64('sk_live_51H8xQ2ABCDEFGHIJKLMNOP:'), 'tests/x.test.ts')
+  })
+
+  it('URL: a plain user stays, and a weak pair is only reported in a fixture', () => {
+    expectRedacted('postgres://app:§@db/app', 'postgres')
+    expectReportedOnly('postgres://app:postgres@db/app', 'tests/x.test.ts')
+    expectUntouched('https://deploy@ci.example.com/hook', 'tests/x.test.ts')
   })
 })

@@ -136,6 +136,11 @@ types into one:
   characters or `Basic` credentials of any length, `X-Api-Key`, the same inside
   curl `-H`, and the password of curl `-u user:pass`.
 
+The user half is a credential too when it is a token (`https://<token>@host`,
+curl `-u <token>:`): a user that is strong or holds a provider-format key is
+redacted in every file; a plain user name stays. A provider-format key inside
+decoded `Basic` credentials, in either half, is always redacted.
+
 Obvious placeholders are neither redacted nor reported: `changeme`,
 `password`, `xxx…`, `***`, `<your-password>`, `${VAR}`, `$VAR`, `%VAR%`,
 `$(…)`, `REDACTED`, an empty value.
@@ -149,7 +154,9 @@ and similar) a **weak** value in one of these positions is only reported, as a
 `possible-credential` finding that does not block: there it is a fixture, and
 destroying it would corrupt the test. A **strong** value (12+ characters of
 three character classes, or 20+ near-random characters) is redacted there as
-everywhere. With no `path` the text is treated as real source and every value
+everywhere. For a `user:password` pair (Basic, URL userinfo, curl `-u`) the
+strongest of the user, the password and the whole pair decides, so the value
+is only reported when all three are weak. With no `path` the text is treated as real source and every value
 in these positions is redacted. The generic `password = "..."` rule keeps its
 own judgement (a single lowercase word there is only reported, in any file).
 
