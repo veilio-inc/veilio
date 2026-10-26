@@ -117,9 +117,13 @@ nothing is reported either. **In no mode does a credential go into the symbol
 map**: identifier masking leaves every credential the rules find alone. A name
 written exactly as a destroyed credential is replaced by that credential's
 redaction token: every other occurrence of a destroyed credential is, in a
-string, as a name, anywhere. The one exception is a well-known default
+string, a URL, as a name, anywhere. A credential of 4 or more characters is
+replaced wherever it stands, inside a longer name or a URL too; a shorter one
+only as a whole word. All are replaced in one pass, longest first, so one
+credential inside another is never cut. The one exception is a well-known default
 (`postgres`, `root`, `admin`, `mysql`, `sa`, `guest`, `test`, `user`,
-`password`, `changeme`, `secret`, `demo`) where it stands in a position that
+`password`, `changeme`, `secret`, `demo`), replaced only as a whole word, and
+left as written where it stands in a position that
 is not a secret: an image name, a URL scheme, a URL user, a user field, or a
 compose service name. Beside `POSTGRES_PASSWORD: postgres`, `image: postgres`
 and a `postgres://` scheme stay, and are not mapped. Where the credential is left in the text by design (`warn`,

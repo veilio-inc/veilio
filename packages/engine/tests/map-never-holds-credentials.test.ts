@@ -255,6 +255,39 @@ describe('a destroyed credential is redacted wherever else it appears', () => {
     const out = anonymize(code).anonymized
     expect(out).not.toContain('Kx9prodpw')
   })
+  it('two credentials, one inside the other, are both redacted whole: no fragment stays', () => {
+    const code =
+      'PGPASSWORD=Kx9prod psql\nMYSQL_PWD=Kx9prodpw9 mysql\nconst note = "use Kx9prodpw9 or Kx9prod"\n'
+    const result = anonymize(code)
+    expect(result.anonymized).not.toContain('Kx9prod')
+    expect(result.anonymized).not.toContain('pw9')
+    // No fragment of either reached the map through masking.
+    expect(Object.values(result.map).filter((v) => /Kx9|pw9/.test(v))).toEqual([])
+  })
+  it('a credential of 4+ characters is redacted inside larger names, URLs and strings', () => {
+    const code =
+      'PGPASSWORD=Xk9!p psql\nconst a = "Xk9!pSuffix"\nfetch("https://h/?t=Xk9!p&x=1")\n' +
+      'const body = \'{"key":"Xk9!p"}\'\nconst Xk9pName = 1\n'
+    const result = anonymize(code)
+    expect(result.anonymized).not.toContain('Xk9!p')
+    // Replaced before masking, so no fragment (Xk9, pSuffix) reaches the map.
+    expect(Object.values(result.map).filter((v) => /^Xk9$|pSuffix|^p$/.test(v))).toEqual([])
+    // A different name that merely shares letters is untouched by the spread.
+    expect(scanSecrets(code).code).toContain('Xk9pName')
+  })
+  it('a credential shorter than 4 characters is redacted only as a whole word', () => {
+    const code = 'PGPASSWORD=ab1 psql\nconst tab1 = "ab1"\n'
+    const result = anonymize(code)
+    expect(result.anonymized).not.toMatch(/"ab1"/)
+    expect(Object.values(result.map)).toContain('tab1')
+  })
+  it('a default word is redacted only as a whole word, never inside a longer name', () => {
+    const code = 'PGPASSWORD=postgres psql\nconst postgresClient = connect("postgresql")\n'
+    const result = anonymize(code)
+    expect(Object.values(result.map)).toContain('postgresClient')
+    expect(scanSecrets(code).code).toContain('"postgresql"')
+    expect(result.anonymized).not.toMatch(/__REDACTED_[A-Z_]+_\d+__(?:Client|ql)/)
+  })
   it('a default word anywhere else beside it is redacted', () => {
     const out = anonymize('POSTGRES_PASSWORD: postgres\ncommand: echo postgres\n').anonymized
     expect(out).not.toMatch(/\bpostgres\b/)

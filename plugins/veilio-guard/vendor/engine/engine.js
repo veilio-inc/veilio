@@ -735,18 +735,25 @@ function nonSecretPosition(text, at, word) {
 /**
  * The text with every other occurrence of a destroyed credential replaced by
  * that credential's own redaction token, so a password used again - in a
- * string, as a name - is never shown (1.12.1 security review). The one
- * exception: a well-known default word in a position that is structurally not
- * a secret (`nonSecretPosition`) stays as written.
+ * string, a URL, inside a longer name - is never shown (1.12.1 security
+ * reviews).
+ *
+ * One pass with one alternation, longest value first, so a shorter credential
+ * can never cut into a longer one that contains it. A value of 4 or more
+ * characters is replaced wherever it stands; a shorter one, and a well-known
+ * default word, only as a whole word - and a default word in a position that
+ * is structurally not a secret (`nonSecretPosition`) stays as written.
  */
 function spreadRedactions(text, tokens) {
-    let out = text;
-    for (const [value, token] of tokens) {
-        const isDefault = DEFAULT_WORDS.has(value.toLowerCase());
-        const re = new RegExp(`(?<![A-Za-z0-9_$])${escapeRegex(value)}(?![A-Za-z0-9_$])`, 'g');
-        out = out.replace(re, (m, offset, whole) => isDefault && nonSecretPosition(whole, offset, m) ? m : token);
-    }
-    return out;
+    if (tokens.size === 0)
+        return text;
+    const values = [...tokens.keys()].sort((a, b) => b.length - a.length);
+    const alternatives = values.map((value) => value.length >= 4 && !DEFAULT_WORDS.has(value.toLowerCase())
+        ? escapeRegex(value)
+        : `(?<![A-Za-z0-9_$])${escapeRegex(value)}(?![A-Za-z0-9_$])`);
+    return text.replace(new RegExp(alternatives.join('|'), 'g'), (m, offset, whole) => DEFAULT_WORDS.has(m.toLowerCase()) && nonSecretPosition(whole, offset, m)
+        ? m
+        : tokens.get(m));
 }
 /** Whether [start, end) overlaps any of `spans`. */
 function overlapsAny(spans, start, end) {
