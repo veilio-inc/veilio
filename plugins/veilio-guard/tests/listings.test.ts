@@ -35,13 +35,39 @@ const installed = {
     ],
     // Installed from a directory outside the plugin cache: the user's own.
     'devplug@local': [{ scope: 'user', installPath: '/work/devplug', version: '0.1.0' }],
+    // A company's private marketplace: in the cache like any other.
+    'corp-tool@corp': [
+      { scope: 'user', installPath: `${CONFIG}/plugins/cache/corp/corp-tool/1.0.0` },
+    ],
+    // A marketplace the user names as public in the guard's settings.
+    'acme-lib@acme-oss': [
+      { scope: 'user', installPath: `${CONFIG}/plugins/cache/acme-oss/acme-lib/2.0.0` },
+    ],
   },
 }
+
+// Where each marketplace comes from, as Claude Code records it.
+const known = {
+  'claude-plugins-official': {
+    source: { source: 'github', repo: 'anthropics/claude-plugins-official' },
+  },
+  corp: { source: { source: 'github', repo: 'acme/private-plugins' } },
+  'acme-oss': { source: { source: 'github', repo: 'acme/oss-plugins' } },
+  local: { source: { source: 'directory', path: '/work' } },
+}
+const KNOWN = `${CONFIG}/plugins/known_marketplaces.json`
+const INSTALLED = `${CONFIG}/plugins/installed_plugins.json`
+const CORP_SKILL = `Rotates ${CANARY} keys for review skills.`
+const ACME_SKILL = 'Formats review skills for the docs site.'
 
 // The plugin's own files in the cache. The description is folded, as YAML
 // writes a long one: its words are the listing's, in order.
 const CACHED: Record<string, string> = {
-  [`${CONFIG}/plugins/installed_plugins.json`]: JSON.stringify(installed),
+  [INSTALLED]: JSON.stringify(installed),
+  [KNOWN]: JSON.stringify(known),
+  [`${CONFIG}/plugins/cache/corp/corp-tool/1.0.0/skills/rotate/SKILL.md`]: `---\nname: rotate\ndescription: ${CORP_SKILL}\n---\n`,
+  [`${CONFIG}/plugins/cache/corp/corp-tool/1.0.0/agents/rotator.md`]: `---\nname: rotator\ndescription: ${CORP_SKILL}\n---\n`,
+  [`${CONFIG}/plugins/cache/acme-oss/acme-lib/2.0.0/skills/format/SKILL.md`]: `---\nname: format\ndescription: ${ACME_SKILL}\n---\n`,
   [`${CACHE}/superpowers/7.0.0/skills/brainstorming/SKILL.md`]: `---\nname: brainstorming\ndescription: >-\n  You MUST use this before any creative work - creating features,\n  building components, or review of skills.\n---\nBody.\n`,
   [`${CACHE}/feature-dev/1.0.0/agents/code-explorer.md`]: `---\nname: code-explorer\ndescription: ${PLUGIN_AGENT}\n---\nYou explore.\n`,
   '/work/devplug/skills/tool/SKILL.md': `---\nname: tool\ndescription: Devplug tool for ${CANARY}.\n---\n`,
@@ -463,4 +489,178 @@ test("a listing holding the guard's mark characters gets no exemption", async ($
   )
   expect(out).not.toContain(CANARY)
   expect(out).not.toContain(BUILTIN_REVIEW)
+})
+
+// Security review of 29767fe: being installed does not make a plugin public.
+// A plugin's entries are readable only when its marketplace is an official
+// Anthropic one whose recorded source is Anthropic's repository, or one the
+// user names in the guard's own settings, by its exact name.
+const corpSkill: Skill = {
+  name: 'corp-tool:rotate',
+  description: CORP_SKILL,
+  source: 'plugin',
+  plugin: 'corp-tool',
+}
+const acmeSkill: Skill = {
+  name: 'acme-lib:format',
+  description: ACME_SKILL,
+  source: 'plugin',
+  plugin: 'acme-lib',
+}
+
+test("a private marketplace's plugin skill is masked", async ($, on) => {
+  setUp(on, [corpSkill])
+  const out = await attach($, 'skill_listing', skillListing([`- corp-tool:rotate: ${CORP_SKILL}`]))
+  expect(out).not.toContain(CANARY)
+})
+
+test("a private marketplace's plugin agent is masked", async ($, on) => {
+  setUp(on, [])
+  await offer($, [
+    {
+      agent: 'corp-tool:rotator',
+      description: CORP_SKILL,
+      source: 'plugin',
+      provider: { plugin: 'corp-tool@corp', tier: 'user' },
+    },
+  ])
+  const out = await attach(
+    $,
+    'agent_listing_delta',
+    agentListing([`- corp-tool:rotator: ${CORP_SKILL} (Tools: *)`])
+  )
+  expect(out).not.toContain(CANARY)
+})
+
+test("a private plugin sharing a public plugin's name is masked", async ($, on) => {
+  const both = {
+    ...installed,
+    plugins: {
+      ...installed.plugins,
+      'superpowers@corp': [
+        { scope: 'user', installPath: `${CONFIG}/plugins/cache/corp/superpowers/1.0.0` },
+      ],
+    },
+  }
+  setUp(on, [pluginSkill], { files: { [INSTALLED]: JSON.stringify(both) } })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:brainstorming: ${PLUGIN_SKILL}`])
+  )
+  expect(out).not.toContain(PLUGIN_SKILL)
+})
+
+test("a private plugin's agent under a public plugin's name is masked", async ($, on) => {
+  setUp(on, [], {
+    files: {
+      [`${CONFIG}/plugins/cache/corp/feature-dev/1.0.0/agents/code-explorer.md`]: `description: ${PLUGIN_AGENT}`,
+      [INSTALLED]: JSON.stringify({
+        ...installed,
+        plugins: {
+          ...installed.plugins,
+          'feature-dev@corp': [
+            { scope: 'user', installPath: `${CONFIG}/plugins/cache/corp/feature-dev/1.0.0` },
+          ],
+        },
+      }),
+    },
+  })
+  await offer($, [{ ...pluginAgent, provider: { plugin: 'feature-dev@corp', tier: 'user' } }])
+  const out = await attach(
+    $,
+    'agent_listing_delta',
+    agentListing([`- feature-dev:code-explorer: ${PLUGIN_AGENT} (Tools: *)`])
+  )
+  expect(out).not.toContain(PLUGIN_AGENT)
+})
+
+test('a marketplace under an official name from another source is masked', async ($, on) => {
+  const forged = {
+    ...known,
+    'claude-plugins-official': {
+      source: { source: 'github', repo: 'acme/claude-plugins-official' },
+    },
+  }
+  setUp(on, [pluginSkill], { files: { [KNOWN]: JSON.stringify(forged) } })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:brainstorming: ${PLUGIN_SKILL}`])
+  )
+  expect(out).not.toContain(PLUGIN_SKILL)
+})
+
+test("when the marketplaces' sources cannot be read, only built-ins pass", async ($, on) => {
+  setUp(on, [builtinReview, pluginSkill], { failRead: (path) => path === KNOWN })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([
+      `- code-review: ${BUILTIN_REVIEW}`,
+      `- superpowers:brainstorming: ${PLUGIN_SKILL}`,
+    ])
+  )
+  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).not.toContain(PLUGIN_SKILL)
+})
+
+test(
+  'a marketplace the user names as public in the settings is readable',
+  { options: { publicMarketplaces: ['acme-oss'] } },
+  async ($, on) => {
+    setUp(on, [acmeSkill])
+    const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+    expect(out).toContain(`- acme-lib:format: ${ACME_SKILL}`)
+  }
+)
+
+test('a marketplace the user has not named is masked', async ($, on) => {
+  setUp(on, [acmeSkill])
+  const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+  expect(out).not.toContain(ACME_SKILL)
+})
+
+test(
+  "the user's marketplace names match exactly: no prefix, no wildcard",
+  { options: { publicMarketplaces: ['acme', 'acme*', '*', 'acme-o?s', 'ACME-OSS'] } },
+  async ($, on) => {
+    setUp(on, [acmeSkill])
+    const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+    expect(out).not.toContain(ACME_SKILL)
+  }
+)
+
+test(
+  'a marketplace the user names but Claude Code does not know is masked',
+  { options: { publicMarketplaces: ['acme-oss'] } },
+  async ($, on) => {
+    const { 'acme-oss': _gone, ...rest } = known
+    setUp(on, [acmeSkill], { files: { [KNOWN]: JSON.stringify(rest) } })
+    const out = await attach($, 'skill_listing', skillListing([`- acme-lib:format: ${ACME_SKILL}`]))
+    expect(out).not.toContain(ACME_SKILL)
+  }
+)
+
+test("a public marketplace's plugin installed outside the plugin cache is masked", async ($, on) => {
+  const moved = {
+    ...installed,
+    plugins: {
+      ...installed.plugins,
+      'superpowers@claude-plugins-official': [{ scope: 'user', installPath: '/work/superpowers' }],
+    },
+  }
+  setUp(on, [pluginSkill], {
+    files: {
+      [INSTALLED]: JSON.stringify(moved),
+      '/work/superpowers/skills/brainstorming/SKILL.md':
+        CACHED[`${CACHE}/superpowers/7.0.0/skills/brainstorming/SKILL.md`]!,
+    },
+  })
+  const out = await attach(
+    $,
+    'skill_listing',
+    skillListing([`- superpowers:brainstorming: ${PLUGIN_SKILL}`])
+  )
+  expect(out).not.toContain(PLUGIN_SKILL)
 })

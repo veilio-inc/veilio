@@ -22,7 +22,7 @@ import {
   type AgentOffer,
 } from '../lib/listings.ts'
 
-type Options = { rawOnly?: string[]; mcpRestore?: string[] }
+type Options = { rawOnly?: string[]; mcpRestore?: string[]; publicMarketplaces?: string[] }
 
 // Spec 050 T002: session.start has the 10 s HookBudget; 6 s of it indexes the
 // project. A tool result keeps 2 s of its budget for masking.
@@ -41,6 +41,9 @@ let config: { rawOnly: string[]; mcpRestore: string[] } = { rawOnly: [], mcpRest
 // Guard decision 1: what agent.offer reported for each agent type, the
 // provenance of the agent listing's entries (lib/listings.ts).
 const offers = new Map<string, AgentOffer>()
+// Marketplaces the user names as public in the plugin's own settings (never a
+// project's .veilio/guard.json), matched by exact name.
+let publicMarketplaces: string[] = []
 
 // The public entries of a skill or agent listing, by the engine's word and
 // the plugin cache. Anything that fails leaves none: the listing is masked.
@@ -52,7 +55,7 @@ async function listingEntries($: any, kind: 'skills' | 'agents'): Promise<string
       HOME: await $.env.get('HOME'),
       USERPROFILE: await $.env.get('USERPROFILE'),
     })
-    const installed = await installedInCache(io, configDir)
+    const installed = await installedInCache(io, configDir, publicMarketplaces)
     const given =
       kind === 'skills' ? { commands: await $.command.list() } : { offers: [...offers.values()] }
     return await publicEntries(kind, given, installed, io)
@@ -124,6 +127,9 @@ export function register(on: any, options: Options = {}) {
     rawOnly: Array.isArray(options.rawOnly) ? options.rawOnly : [],
     mcpRestore: Array.isArray(options.mcpRestore) ? options.mcpRestore : [],
   }
+  publicMarketplaces = Array.isArray(options.publicMarketplaces)
+    ? options.publicMarketplaces.filter((m): m is string => typeof m === 'string')
+    : []
 
   on('session.start', async ($: any, e: any, next: any) => {
     const g = await ready($)

@@ -21,6 +21,13 @@
       "title": "MCP servers that get real names (optional)",
       "description": "MCP servers whose tool arguments are restored to real identifiers before the call. Leave empty to send them placeholders.",
       "default": []
+    },
+    "publicMarketplaces": {
+      "type": "string",
+      "multiple": true,
+      "title": "Public plugin marketplaces (optional)",
+      "description": "Exact names of plugin marketplaces you know are public. Skill and agent names and descriptions from their plugins are sent as written. Official Anthropic marketplaces are public already; every other marketplace stays masked. No wildcards.",
+      "default": []
     }
   }
 }
