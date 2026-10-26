@@ -21,9 +21,7 @@ import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
-import { projectOverride } from '@veilio-inc/cli/client'
-
-type Env = Readonly<Record<string, string | undefined>>
+import { projectOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
 
 /**
@@ -207,7 +205,10 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
     }
   }
   const status = current.found.status
-  if (status !== 'locked' && status !== 'unavailable') return null
+  // 'refused' is asked again like 'unavailable': the variable cannot change in
+  // this process, but the server's projects can - one created, or a shared
+  // name made unique - and only the server's listing says which.
+  if (status !== 'locked' && status !== 'unavailable' && status !== 'refused') return null
   if (priming && !settledFlag) return status === 'locked' ? 'unlocked' : 'retrying'
   const now = Date.now()
   const credential = status === 'locked' ? readCredential(primedWith.home) : null

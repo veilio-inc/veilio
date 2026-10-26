@@ -77,13 +77,25 @@ export async function scopeCredential(
 ): Promise<Outcome<ScopedCredential>> {
   const value = projectOverride(env)
   if (value === null) return { ok: true, value: credential }
-  let answer: Awaited<ReturnType<typeof listProjects>>
   try {
-    // The listing names no project, so asking it never sends the stored one.
-    answer = await listProjects(credential)
+    return await resolveOverride(credential, value)
   } catch (err) {
     return { ok: false, refusal: refusalFromCloudError(err, { project: value, override: true }) }
   }
+}
+
+/**
+ * `value` through the server's listing. A failed request THROWS - so the team
+ * namespace resolver can retry it and hold it to its deadline, as it does its
+ * own reads - and only an answer that names no such project is a refusal.
+ */
+export async function resolveOverride(
+  credential: Credential,
+  value: string,
+  signal?: AbortSignal
+): Promise<Outcome<ScopedCredential>> {
+  // The listing names no project, so asking it never sends the stored one.
+  const answer = await listProjects(credential, signal)
   const rows = Array.isArray(answer?.projects) ? answer.projects : []
   const found = matchProject(rows, value)
   if (!found.ok) {
@@ -139,13 +151,12 @@ export function refusalScope(credential: ScopedCredential): {
  * matches nothing is listed against rather than refused: the list is how
  * somebody finds the value to set instead.
  */
-export function overrideSentence(
-  override:
-    | { value: string; id: string }
-    | { value: string; id: null; reason: 'not_found' }
-    | { value: string; id: null; reason: 'ambiguous'; count: number },
-  chosen: string | null
-): string {
+export type ProjectOverride =
+  | { value: string; id: string }
+  | { value: string; id: null; reason: 'not_found' }
+  | { value: string; id: null; reason: 'ambiguous'; count: number }
+
+export function overrideSentence(override: ProjectOverride, chosen: string | null): string {
   if (override.id !== null)
     return (
       `${PROJECT_ENV} is "${override.value}", so that project is in use here` +

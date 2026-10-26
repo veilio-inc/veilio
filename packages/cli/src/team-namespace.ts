@@ -30,7 +30,7 @@ import {
   type CloudMapSummary,
 } from './cloud.js'
 import { readTeamUnlock } from './team-unlock.js'
-import { scopeCredential, type Env } from './client/project-scope.js'
+import { projectOverride, resolveOverride, type Env } from './client/project-scope.js'
 import type { Refusal } from './client/wording.js'
 
 export type TeamNamespaceResult =
@@ -133,26 +133,12 @@ export async function resolveTeamNamespace(
     env?: Env
   } = {}
 ): Promise<TeamNamespaceResult> {
-  const stored = opts.credential ?? readCredential(home)
+  const credential = opts.credential ?? readCredential(home)
   // Not signed in: no request - a signed-out terminal has nothing to ask Cloud.
-  if (!stored) return { status: 'local' }
-  let credential: Credential = stored
-  if (!opts.credential) {
-    const scoped = await scopeCredential(stored, opts.env)
-    if (!scoped.ok) {
-      // A value the server's listing does not have is refused. A listing that
-      // failed (the network, the session) is the same 'unavailable' as a
-      // namespace read that failed - no project was used either way.
-      const code = scoped.refusal.code
-      if (code === 'project_env_not_found' || code === 'project_env_ambiguous')
-        return { status: 'refused', refusal: scoped.refusal }
-      // The same answers `noTeamToSpeakOf` reads as no team at all.
-      if (['session_rejected', 'unentitled', 'suspended', 'forbidden'].includes(code))
-        return { status: 'local' }
-      return { status: 'unavailable', reason: scoped.refusal.message }
-    }
-    credential = scoped.value
-  }
+  if (!credential) return { status: 'local' }
+  // VEILIO_PROJECT, unless the caller scoped the credential already. Resolved
+  // inside each attempt: under the same deadline, with the same retry.
+  const override = opts.credential ? null : projectOverride(opts.env)
 
   const giveUp = new AbortController()
   const timer =
@@ -163,7 +149,7 @@ export async function resolveTeamNamespace(
   })
   try {
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
+      return await attempt(credential, override, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
@@ -172,7 +158,7 @@ export async function resolveTeamNamespace(
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
     try {
-      return await attempt(credential, home, giveUp.signal, opts.excludeMapId, opts.list)
+      return await attempt(credential, override, home, giveUp.signal, opts.excludeMapId, opts.list)
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
@@ -189,12 +175,22 @@ function describe(err: unknown): string {
 }
 
 async function attempt(
-  credential: Credential,
+  stored: Credential,
+  override: string | null,
   home: string | undefined,
   signal: AbortSignal,
   excludeMapId: string | undefined,
   given: CloudMapList | undefined
 ): Promise<TeamNamespaceResult> {
+  let credential = stored
+  if (override !== null) {
+    // A failed listing throws, and is retried or given up on like any read
+    // here. A listing that has no such project is refused - never the
+    // stored choice, never the local map with a note (FR-012a).
+    const scoped = await resolveOverride(stored, override, signal)
+    if (!scoped.ok) return { status: 'refused', refusal: scoped.refusal }
+    credential = scoped.value
+  }
   const list = given ?? (await listMaps(credential, signal))
 
   // An older self-hosted Cloud may still merge server-side; that answer needs no

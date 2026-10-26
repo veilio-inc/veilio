@@ -177,6 +177,23 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
     expect(existsSync(storePath())).toBe(false)
   })
 
+  it('asked again later: a project created meanwhile is then used', async () => {
+    await primeNamespace(home, { env: { VEILIO_PROJECT: 'web' } })
+    const webEnv = ctxWith({ VEILIO_PROJECT: 'web' })
+    expect(callTool('anonymize_text', { text: 'export class Gamma {}' }, webEnv).isError).toBe(true)
+    cloud.projects.push({ id: 'p-web', name: 'web' })
+    const now = Date.now()
+    const later = vi.spyOn(Date, 'now').mockReturnValue(now + 31_000)
+    try {
+      expect(refreshNamespaceIfStale()).toBe('retrying')
+      await namespaceSettled()
+    } finally {
+      later.mockRestore()
+    }
+    const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
+    expect(r.isError ?? false, r.text).toBe(false)
+  })
+
   it('restore_text refuses too', async () => {
     saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
     await primeNamespace(home, { env })
@@ -225,6 +242,8 @@ describe('two servers, one HOME, two repositories’ .mcp.json', () => {
       expect(b).toContain(billingMap)
       expect(b).not.toContain(toolsMap)
       expect(b).toContain('project billing (from VEILIO_PROJECT)')
+      // One more on its own, last: the variable is never written down.
+      await mapsListFrom({ VEILIO_PROJECT: 'tools' })
       expect(readFileSync(credentialPath(home), 'utf8')).toBe(before)
     } finally {
       await close()

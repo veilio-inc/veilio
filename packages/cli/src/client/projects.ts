@@ -14,17 +14,10 @@ import { listProjects } from '../cloud.js'
 import { readCredential, writeCredential } from '../credential.js'
 import { refuse, refusalFromCloudError, type Outcome } from './wording.js'
 import type { ClientContext } from './maps.js'
-import { matchProject, projectOverride } from './project-scope.js'
-
-/**
- * VEILIO_PROJECT, when it is set, as this listing resolves it (FR-012a). The
- * listing is the one command that does not refuse a value that matches
- * nothing: it is how somebody finds the value to set instead.
- */
-export type ProjectOverride =
-  | { value: string; id: string }
-  | { value: string; id: null; reason: 'not_found' }
-  | { value: string; id: null; reason: 'ambiguous'; count: number }
+// VEILIO_PROJECT, when it is set, as this listing resolves it (FR-012a). The
+// listing is the one command that does not refuse a value that matches
+// nothing: it is how somebody finds the value to set instead.
+import { matchProject, projectOverride, type ProjectOverride } from './project-scope.js'
 
 export interface ListedProject {
   id: string

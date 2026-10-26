@@ -213,6 +213,27 @@ describe('a value that names no project is refused, naming it (never a fallback)
   })
 })
 
+describe('the listing that resolves the variable keeps the 5 s cap', () => {
+  it('a hung /api/projects: scrub gives up within the cap, as for any team read', async () => {
+    signIn(home, { team: true })
+    vi.stubGlobal('fetch', (url: string | URL, init?: RequestInit) =>
+      String(url).includes('/api/projects')
+        ? new Promise((_, reject) =>
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            )
+          )
+        : cloud.fetch(url, init)
+    )
+    const started = Date.now()
+    const r = await run(['scrub', 'g.ts'], { VEILIO_PROJECT: 'tools' })
+    expect(Date.now() - started).toBeLessThan(8000)
+    expect(r.err).toContain('did not wait for Cloud')
+    // Never another project: nothing past the listing was asked.
+    expect(cloud.requests.filter((x) => x.path.startsWith('/api/maps'))).toHaveLength(0)
+  }, 15_000)
+})
+
 describe('an empty value counts as unset', () => {
   it.each([[''], ['   ']])('%j: the stored choice applies, and no listing is asked', async (v) => {
     signIn(home, { project: 'p-billing' })
@@ -356,6 +377,9 @@ describe('two processes, one HOME, two values', () => {
       // And a third beside them, set empty: the stored choice, as it was.
       expect(unset.out).toContain(billingMap)
       expect(unset.err).not.toContain('VEILIO_PROJECT')
+      // And one more on its own, last, so no other run can write after it:
+      // the variable is never written down.
+      await runBinary(bin, ['maps', 'list'], { cwd, home, env: { VEILIO_PROJECT: 'tools' } })
       expect(readFileSync(credentialPath(home), 'utf8')).toBe(before)
     } finally {
       await close()
