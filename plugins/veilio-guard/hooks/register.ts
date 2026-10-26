@@ -14,6 +14,13 @@ import {
 } from '../lib/guard.ts'
 import { bandText, MODEL_NOTE, statusText } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
+import {
+  configDirOf,
+  installedInCache,
+  LISTING_TYPES,
+  publicEntries,
+  type AgentOffer,
+} from '../lib/listings.ts'
 
 type Options = { rawOnly?: string[]; mcpRestore?: string[] }
 
@@ -31,6 +38,28 @@ function deadline(next: any, cap = Infinity): number {
 let guard: Guard | null = null
 let loading: Promise<Guard> | null = null
 let config: { rawOnly: string[]; mcpRestore: string[] } = { rawOnly: [], mcpRestore: [] }
+// Guard decision 1: what agent.offer reported for each agent type, the
+// provenance of the agent listing's entries (lib/listings.ts).
+const offers = new Map<string, AgentOffer>()
+
+// The public entries of a skill or agent listing, by the engine's word and
+// the plugin cache. Anything that fails leaves none: the listing is masked.
+async function listingEntries($: any, kind: 'skills' | 'agents'): Promise<string[]> {
+  try {
+    const io = { read: (path: string) => $.fs.read(path) as Promise<string> }
+    const configDir = configDirOf({
+      CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
+      HOME: await $.env.get('HOME'),
+      USERPROFILE: await $.env.get('USERPROFILE'),
+    })
+    const installed = await installedInCache(io, configDir)
+    const given =
+      kind === 'skills' ? { commands: await $.command.list() } : { offers: [...offers.values()] }
+    return await publicEntries(kind, given, installed, io)
+  } catch {
+    return []
+  }
+}
 
 // The guard is loaded by whichever event comes first: the first prompt's
 // context can arrive before session.start has finished.
@@ -176,9 +205,27 @@ export function register(on: any, options: Options = {}) {
     // the plugins' blocks come as context_sections, and earlier builds sent
     // them with userEmail as session_context.
     const first = e.type === 'context_sections' || e.type === 'session_context'
-    const text = first ? g.applyContext(r.text) : g.applyText(r.text)
+    // Guard decision 1: a listing's public entries go as written.
+    const listing = LISTING_TYPES[e.type]
+    const text = first
+      ? g.applyContext(r.text)
+      : listing
+        ? g.applyListing(r.text, await listingEntries($, listing))
+        : g.applyText(r.text)
     return { ...r, text }
   }).catch(async () => ({ text: null }))
+
+  // Recorded, never changed: the provenance of the agent listing's entries.
+  on('agent.offer', async ($: any, e: any, next: any) => {
+    if (typeof e?.agent === 'string')
+      offers.set(e.agent, {
+        agent: e.agent,
+        description: e.description,
+        source: e.source,
+        provider: e.provider ? { plugin: e.provider.plugin, tier: e.provider.tier } : undefined,
+      })
+    return next(e)
+  })
 
   on('prompt.context', async ($: any, e: any, next: any) => {
     const g = await ready($)

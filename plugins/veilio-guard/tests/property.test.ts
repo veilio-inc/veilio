@@ -19,7 +19,20 @@ function check(seed: number, raw: string, sent: string, names: string[], kept: s
 // Many cases each: a slow runner (CI, a loaded machine) gets the time it needs.
 const SLOW = { timeoutMs: 60_000 }
 
-const ENTRY = ['prompt', 'attachment', 'context', 'bash', 'grep', 'read', 'restore'] as const
+const ENTRY = [
+  'prompt',
+  'attachment',
+  'context',
+  'bash',
+  'grep',
+  'read',
+  'restore',
+  'listing',
+] as const
+
+// Guard decision 1: a built-in skill's entry goes as written, beside a
+// project skill whose description is the random text.
+const PUBLIC = '- init: Initialize a new CLAUDE.md file with codebase documentation'
 
 function property(entry: (typeof ENTRY)[number]) {
   return async ($: any, on: any) => {
@@ -43,6 +56,17 @@ function property(entry: (typeof ENTRY)[number]) {
       return { text: e.text }
     })
     on('prompt.attachment', (_: any, e: any) => ({ text: e.text }))
+    on('command.list', () => ({
+      value: [
+        {
+          name: 'init',
+          description: 'Initialize a new CLAUDE.md file with codebase documentation',
+          source: 'builtin',
+        },
+        { name: 'own', description: 'random', source: 'user' },
+      ],
+    }))
+    on('env.get', () => ({ value: undefined }))
     let block = ''
     on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: block }] }))
     for (const [k, c] of cases.entries()) {
@@ -54,6 +78,10 @@ function property(entry: (typeof ENTRY)[number]) {
         if (r?.drop) failures.push(`seed ${seed}: prompt dropped`)
       } else if (entry === 'attachment') {
         out = ((await $.prompt.attachment({ type: 'edited_text_file', text: c.text })) as any).text
+      } else if (entry === 'listing') {
+        const text = `The following skills are available:\n\n${PUBLIC}\n- own: ${c.text}`
+        out = ((await $.prompt.attachment({ type: 'skill_listing', text })) as any).text
+        if (!out.includes(`${PUBLIC}\n`)) failures.push(`seed ${seed}: public entry masked`)
       } else if (entry === 'context') {
         block = c.text
         const r: any = await $.prompt.context(recordedPrompt('prompt.context').e)
@@ -118,3 +146,5 @@ test('the masking property holds through grep, over random texts', SLOW, propert
 test('the masking property holds through read, over random texts', SLOW, property('read'))
 
 test('the masking property holds through restore, over random texts', SLOW, property('restore'))
+
+test('the masking property holds through listing, over random texts', SLOW, property('listing'))

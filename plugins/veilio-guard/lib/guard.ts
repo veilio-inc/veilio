@@ -47,6 +47,7 @@ import {
 import type { MaskContext, ScanResult } from './scrub.ts'
 import { restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
+import { wholeEntries } from './listings.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -562,6 +563,40 @@ export class Guard {
     // sends the text through full masking first; only if that too leaves a
     // credential does the text fail (review of 6e14ec6).
     if (survivingSecrets(out, this.map).length > 0) return this.gate(this.maskText(text))
+    return out
+  }
+
+  /** A skill or agent listing (guard decision 1, spec 050 R7): each public
+   *  entry (lib/listings.ts) where it stands whole is held as one opaque mark
+   *  while the listing is masked as a whole, then put back as written, less
+   *  any credential this session destroyed. Everything else is masked as any
+   *  reminder is. A text that already holds a mark's characters gets no
+   *  exemption, and a credential that survives sends the whole listing
+   *  through full masking, as applyContext does. */
+  applyListing(text: string, entries: readonly string[]): string {
+    if (entries.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
+      return this.applyText(text)
+    const spans = wholeEntries(text, entries)
+    if (spans.length === 0) return this.applyText(text)
+    const marks = new Map<string, string>()
+    let marked = ''
+    let at = 0
+    for (const { at: pos, entry } of spans) {
+      let mark = marks.get(entry)
+      if (!mark) marks.set(entry, (mark = `\u0000${marks.size}\u0001`))
+      marked += text.slice(at, pos) + mark
+      at = pos + entry.length
+    }
+    marked += text.slice(at)
+    let out = this.maskText(marked)
+    for (const [entry, mark] of marks)
+      out = out.split(mark).join(redactKnown(entry, this.destroyed))
+    if (
+      out.includes('\u0000') ||
+      out.includes('\u0001') ||
+      survivingSecrets(out, this.map).length > 0
+    )
+      return this.applyText(text)
     return out
   }
 
