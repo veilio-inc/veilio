@@ -32,6 +32,8 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  holdsProviderKey,
+  restorableMap,
   redactKnown,
   maskShaped,
   NO_CONTEXT,
@@ -529,7 +531,7 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
-      const r = restoreArgs(s, this.map)
+      const r = restoreArgs(s, restorableMap(this.map))
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
@@ -541,8 +543,13 @@ export class Guard {
     // A credential Veilio destroyed is never put back, whatever a placeholder
     // says it stands for (security review of 933156e).
     const learned = this.destroyed.values
+    // Decided from what the restoration puts back, not only from what this
+    // session learned: a provider-format key that was not in the arguments as
+    // written is refused (security review of 2af9fca).
     const putsBack = (before: string, after: string) =>
-      learned.some((v) => after.includes(v) && !before.includes(v))
+      after !== before &&
+      (learned.some((v) => after.includes(v) && !before.includes(v)) ||
+        (holdsProviderKey(after) && !holdsProviderKey(before)))
     let restoresSecret = false
     const guarded = (s: string) => {
       const out = restoreOne(s)

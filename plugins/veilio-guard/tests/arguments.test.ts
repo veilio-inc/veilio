@@ -230,3 +230,40 @@ test('a shell command with known placeholders and language tokens runs', async (
     "sed -i '' 's/settledTotal/closedTotal/' src/ledger.ts && grep -rn __DEV__ src"
   )
 })
+
+// Security review of 2af9fca: a placeholder for a provider-format key is
+// never restored, even in a fresh session that learned nothing yet.
+test('a map entry holding a provider-format key is never restored, in a fresh session', async ($, on) => {
+  const edit = recorded('Edit')
+  const key = 'AKIA' + 'Q7RZ2XKM4PLB8WNE'
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__7: key }) })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'id = "__STR__7"',
+  })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('Veilio refused this call')
+})
+
+test('an ordinary project name restores fine beside that check', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const seen: any[] = []
+  on('tool.call', (_: any, e: any) => {
+    seen.push(e)
+    return edit.r
+  })
+  const out: any = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'const __VAR__1 =',
+    new_string: 'const __VAR__1 =',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen[0].new_string).toBe('const settledTotal =')
+})

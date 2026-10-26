@@ -311,6 +311,29 @@ const HEURISTIC = new Set([
   'possible-credential',
 ])
 
+/** Whether `text` holds a provider-format key (any rule but those that
+ *  judge by shape): a value no restoration may put back. */
+export function holdsProviderKey(text: string): boolean {
+  return detectSecrets(text).some(
+    (f) => !HEURISTIC.has(f.type) && SECRET_DISPOSITIONS[f.type] !== 'report'
+  )
+}
+
+const restorable = new WeakMap<SymbolMap, SymbolMap>()
+/** The map less the entries whose value is a provider-format key: those are
+ *  quarantined, never restored, whatever session wrote them (security review
+ *  of 2af9fca). */
+export function restorableMap(map: SymbolMap): SymbolMap {
+  let out = restorable.get(map)
+  if (!out) {
+    out = {}
+    for (const [placeholder, name] of Object.entries(map))
+      if (!holdsProviderKey(name)) out[placeholder] = name
+    restorable.set(map, out)
+  }
+  return out
+}
+
 const mapNames = new WeakMap<SymbolMap, ReadonlySet<string>>()
 /** The names a map holds, which are masked reversibly and never destroyed. */
 function namesOf(map: SymbolMap): ReadonlySet<string> {
