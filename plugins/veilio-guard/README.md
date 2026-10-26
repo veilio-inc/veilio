@@ -6,13 +6,15 @@ Claude Code reads files and runs commands itself, so code you would never paste 
 
 - **What Claude reads** (files, command output, search results, MCP results, what you type, and the reminders and instruction files Claude Code adds) reaches the model with identifiers replaced by placeholders such as `__CLS__1`, and with credentials removed. One exception: the entries of Claude Code's skill and agent listings that come from Claude Code itself or from a plugin installed from the official Anthropic marketplace are public, and are sent as written. Your project's and your own skills and agents, and plugins from any other marketplace, are masked.
 - **What Claude writes** (edits, commands, searches) gets the real names back before it runs. An edit or shell command that names a placeholder the map doesn't know, or a removed credential, is refused, so a file never receives a token that means nothing.
-- **`.env`, private keys and `.veilio/`** are refused before Claude reads them.
+- **`.env`, private keys, credential stores and `.veilio/`** are refused before Claude reads them. Credential stores include `.git-credentials`, `.htpasswd`, `.pgpass`, `.npmrc`, `.netrc`, `kubeconfig`, `.kube/`, `.docker/config.json`, `.aws/credentials`, `.azure/`, `.config/gcloud/`, and `*.jks`, `*.keystore` and `*.p8` keys.
 - **You see the real names** in Claude's replies, tool rows, diffs and command output, on your machine only. The session's transcript keeps the placeholders, with one exception COVERAGE.md describes: some Claude Code versions store CLAUDE.md as written.
 - **If the guard can't do its job, it fails closed:** a result it can't check is withheld, and a prompt it can't check isn't sent.
 
 It uses the same symbol map as the [Veilio CLI](../../packages/cli/README.md) and [MCP server](../../packages/mcp/README.md): `.veilio/map.json` in the project. It makes no network call.
 
 What it covers, what it doesn't, and the test behind each claim: [COVERAGE.md](COVERAGE.md).
+
+Every file is judged strictly, test, fixture and example files included. A weak password in a secret position (`PGPASSWORD=Summer24`, a password flag, the password in a URL, an auth header) is removed wherever Claude reads it, as in the CLI and the MCP server.
 
 ## Install
 

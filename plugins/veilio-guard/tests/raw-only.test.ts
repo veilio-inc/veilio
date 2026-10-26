@@ -11,6 +11,11 @@ for (const path of [
   'config/.env.local',
   `${ROOT}/keys/id_rsa`,
   `${ROOT}/.veilio/map.json`,
+  `${ROOT}/.git-credentials`,
+  `${ROOT}/deploy/kubeconfig`,
+  `${ROOT}/.docker/config.json`,
+  `${ROOT}/.kube/config`,
+  '/home/dev/.aws/credentials',
 ]) {
   test(`Read of ${path} is refused before it runs`, async ($, on) => {
     project(on, ENV)

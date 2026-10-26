@@ -278,6 +278,10 @@ git diff --cached | veilio scan || {
 
 Redacted credentials are **not** in the map. `restore` cannot bring them back, by construction.
 
+## Every file is judged strictly
+
+`scrub` and `scan` read every file as real source, test, fixture and example files included: a weak password in a secret position (`PGPASSWORD=Summer24`, `mysql -pSummer24`, the password in a URL, an auth header) is redacted wherever it is. The MCP server and the Claude Code guard do the same. A committed fixture cannot be told from a copy of `.env` in `tests/` safely enough to leave its passwords in place, so no Veilio client tries.
+
 ## In CI
 
 ### GitHub Action
