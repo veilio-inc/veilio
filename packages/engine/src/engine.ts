@@ -810,15 +810,25 @@ const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
 })
 const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 
-/** `map` without the entries whose real value is a credential on its own. */
-function withoutCredentials(map: SymbolMap): SymbolMap {
+/** `map` without the entries whose real value is a credential: one that is a
+ *  credential on its own, or one the rules found in the text being masked, in
+ *  any mode and context (round 3 of the review of #166, finding 1). */
+function withoutCredentials(map: SymbolMap, found: ReadonlySet<string>): SymbolMap {
   let out: SymbolMap | null = null
   for (const [placeholder, real] of Object.entries(map)) {
-    if (credentialSpans(real).length === 0) continue
+    if (!found.has(real) && credentialSpans(real).length === 0) continue
     out ??= { ...map }
     delete out[placeholder]
   }
   return out ?? map
+}
+
+/** Whether `name` is, or is most of, one of `values`: equal, or inside one and
+ *  either 6+ characters or at least half its length (round 3, finding 8). */
+function partOfAny(name: string, values: readonly string[]): boolean {
+  return values.some(
+    (v) => v === name || (v.includes(name) && (name.length >= 6 || name.length * 2 >= v.length))
+  )
 }
 
 /** Whether [start, end) overlaps any of `spans`. */
@@ -881,10 +891,16 @@ export function anonymize(
 ): AnonymizeResult {
   // Unknown keys throw; see resolveAnonymizeOptions.
   const opts = resolveAnonymizeOptions(options)
+  const where = { path: opts.path, root: opts.root }
+  // Every credential in the text as given, whatever the policy.
+  const found = credentialSpans(code, where)
   // A credential never goes into the map, in any `secrets` mode (founder
   // decision 2026-10-26): an entry an older map holds for one is dropped.
-  const existingMap = withoutCredentials(opts.existingMap ?? {})
-  const where = { path: opts.path, root: opts.root }
+  const givenMap = opts.existingMap ?? {}
+  const existingMap = withoutCredentials(
+    givenMap,
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)))
+  )
   const rules = opts.rules ?? []
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
@@ -904,6 +920,11 @@ export function anonymize(
   const namedCounters: Record<string, number> = {}
   for (const [placeholder, realName] of Object.entries(existingMap)) {
     reverseExisting[realName] = placeholder
+  }
+  // Counters from the map as given, dropped entries included, so a number a
+  // dropped credential held is never handed to another name (round 3,
+  // finding 10): a placeholder in old output must not come back as it.
+  for (const placeholder of Object.keys(givenMap)) {
     const namedMatch = placeholder.match(/^(__[A-Z][A-Z0-9_]*__)(\d+)$/)
     if (namedMatch) {
       const [, base, nStr] = namedMatch
@@ -973,7 +994,7 @@ export function anonymize(
   // possible credential under `redact`, anything under `off` - is neither
   // extracted nor substituted, so no part of it reaches the map. Found again
   // in `source`, so the offsets are the ones substitution sees.
-  const secretSpans = credentialSpans(source, where)
+  const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end] as const)
   // A name the existing map already holds may still be substituted inside one:
   // that writes nothing new, and the guard relies on it for a plain word
   // (`client_secret: "disabled"`) its map already masks.
@@ -981,10 +1002,12 @@ export function anonymize(
   // Values from the text as given too: under `redact` a destroyed credential
   // is gone from `source`, and its value must not enter the map as a name
   // written elsewhere either.
-  const secretValues = new Set([
-    ...secretSpans.map(([start, end]) => source.slice(start, end)),
-    ...credentialSpans(code, where).map(([start, end]) => code.slice(start, end)),
-  ])
+  const secretValues = [
+    ...new Set([
+      ...secretSpans.map(([start, end]) => source.slice(start, end)),
+      ...found.map((f) => code.slice(f.start, f.end)),
+    ]),
+  ]
   const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans)
   const identifiers = extractIdentifiers(scannable, language)
   const roleOf = classifyIdentifiers(scannable, language)
@@ -1015,7 +1038,7 @@ export function anonymize(
     // A name that is itself a credential the rules found in this text is never
     // written to the map, wherever else it stands (founder decision
     // 2026-10-26). It is left as written.
-    if (secretValues.has(name)) continue
+    if (partOfAny(name, secretValues)) continue
 
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))

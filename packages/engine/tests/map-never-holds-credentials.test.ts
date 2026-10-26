@@ -110,9 +110,70 @@ describe('a credential that is also written as a name elsewhere', () => {
     }
   })
   it('a mapped name inside a credential is not substituted there: the credential is kept as written', () => {
-    const code = 'const hunter = 1\nPGPASSWORD=admin-hunter psql\n'
+    const code = 'const admin = 1\nPGPASSWORD=admin-hunter psql\n'
     const result = anonymize(code, { secrets: 'warn' })
-    expect(Object.values(result.map)).toContain('hunter')
+    expect(Object.values(result.map)).toContain('admin')
     expect(result.anonymized).toContain('PGPASSWORD=admin-hunter ')
+  })
+})
+
+// Round 3 of the review.
+describe('an old map that already holds a credential found in the text', () => {
+  const OLD = { __VAR__1: 'Kx9_prodpw', __CLS__1: 'PaymentService' }
+  const cases: { name: string; code: string; options: object }[] = [
+    { name: 'warn', code: 'PGPASSWORD=Kx9_prodpw psql\n', options: { secrets: 'warn' } },
+    { name: 'off', code: 'PGPASSWORD=Kx9_prodpw psql\n', options: { secrets: 'off' } },
+    {
+      name: 'a weak fixture under redact',
+      code: 'PGPASSWORD=Kx9_prodpw psql\n',
+      options: { path: 'tests/db.test.ts' },
+    },
+  ]
+  for (const c of cases) {
+    it(`drops it and never writes its placeholder there (${c.name})`, () => {
+      const result = anonymize(c.code, { existingMap: OLD, ...c.options })
+      expect(result.anonymized).not.toContain('__VAR__1')
+      expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
+      expect(Object.values(result.map)).not.toContain('Kx9_prodpw')
+      expect(result.map.__CLS__1).toBe('PaymentService')
+    })
+  }
+  it('a dropped number is never reused', () => {
+    const code = 'PGPASSWORD=Kx9_prodpw psql\nconst invoiceTotal = 1\n'
+    const result = anonymize(code, { existingMap: OLD, secrets: 'warn' })
+    expect(result.map.__VAR__1).toBeUndefined()
+    const placeholder = Object.entries(result.map).find(([, v]) => v === 'invoiceTotal')?.[0]
+    expect(placeholder).toBeDefined()
+    expect(placeholder).not.toBe('__VAR__1')
+  })
+  it('a self-identifying credential dropped from the map does not free its number', () => {
+    const result = anonymize('const invoiceTotal = 1\n', {
+      existingMap: { __VAR__7: 'sk_live_51H8xQ2ABCDEFGHIJKLMNOP' },
+    })
+    const placeholder = Object.entries(result.map).find(([, v]) => v === 'invoiceTotal')?.[0]
+    expect(placeholder).toBe('__VAR__8')
+  })
+})
+
+describe('a name that is most of a credential', () => {
+  it('acmeCorp_2024 is not mapped when the password is acmeCorp_2024!', () => {
+    const code = "const acmeCorp_2024 = 1\nPGPASSWORD='acmeCorp_2024!' psql\n"
+    for (const secrets of MODES) {
+      const result = anonymize(code, { secrets })
+      expect(Object.values(result.map), secrets).not.toContain('acmeCorp_2024')
+    }
+  })
+  it('a part of 6+ characters is not mapped, even when it is under half the credential', () => {
+    const code = 'const secret = 1\nPGPASSWORD=my-secret-passphrase-9 psql\n'
+    expect(Object.values(anonymize(code, { secrets: 'warn' }).map)).not.toContain('secret')
+  })
+  it('a shorter part that is half the credential or more is not mapped', () => {
+    const code = 'const admin = 1\nPGPASSWORD=admin-pw1 psql\n'
+    expect(Object.values(anonymize(code, { secrets: 'warn' }).map)).not.toContain('admin')
+  })
+  it('a short common part of a long credential is still a name', () => {
+    const code = 'const pass = 1\nPGPASSWORD=my-secret-passphrase-9 psql\n'
+    const result = anonymize(code, { secrets: 'warn' })
+    expect(Object.values(result.map)).toContain('pass')
   })
 })
