@@ -443,14 +443,19 @@ function pathShaped(value: string): boolean {
 function referenceName(value: string, type: string): boolean {
   if (PUNCTUATED_RULES.has(type)) return false
   if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value)) return false
+  const segments = value.split('_')
+  // A number segment is a version or a port (PORT_8080, AWS_REGION_2), never a
+  // long run of digits, and there is at most one; a name is mostly letters.
+  const numbers = segments.filter((seg) => /^[0-9]+$/.test(seg))
+  if (numbers.length > 1 || numbers.some((seg) => seg.length > 4)) return false
+  const letters = value.replace(/[^A-Z]/g, '').length
+  if (letters * 2 < value.replace(/_/g, '').length) return false
   return (
-    value
-      .split('_')
-      .every(
-        (seg) =>
-          /^[0-9]+$/.test(seg) ||
-          (/^[A-Z]+[0-9]*$/.test(seg) && seg.length <= 12 && /[AEIOUY]/.test(seg))
-      ) && !randomLooking(value)
+    segments.every(
+      (seg) =>
+        /^[0-9]+$/.test(seg) ||
+        (/^[A-Z]+[0-9]*$/.test(seg) && seg.length <= 12 && /[AEIOUY]/.test(seg))
+    ) && !randomLooking(value)
   )
 }
 

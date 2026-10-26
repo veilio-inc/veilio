@@ -625,5 +625,21 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
     expect(survivingSecrets(`Authorization: Bearer GOOGLE_API_TOKEN_VALUE`)).not.toEqual([])
     // An all-caps value that looks random is a credential still.
     expect(applyMap(`password = "X7K9Q2LM4PZ8"`, {})).not.toContain('X7K9Q2LM4PZ8')
+    // Review of d55d9e2: a long run of digits is a secret, not a version
+    // number, and a name is mostly letters.
+    expect(applyMap(`password = "KEY_83749201847362910473"`, {})).not.toContain(
+      '83749201847362910473'
+    )
+    expect(applyMap(`password = "API_2024_0917_KEY"`, {})).not.toContain('API_2024_0917_KEY')
+    expect(applyMap(`password = "PORT_8080"`, {})).toContain('"PORT_8080"')
+    // One value per rule, each refused by that rule alone: a number segment
+    // longer than four digits, two number segments, mostly digits.
+    expect(applyMap(`password = "DATABASE_PASSWORD_839201"`, {})).not.toContain(
+      'DATABASE_PASSWORD_839201'
+    )
+    expect(applyMap(`password = "RELEASE_SERVICE_2024_10"`, {})).not.toContain(
+      'RELEASE_SERVICE_2024_10'
+    )
+    expect(applyMap(`password = "KEY_2024"`, {})).not.toContain('KEY_2024')
   })
 })
