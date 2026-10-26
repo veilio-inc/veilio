@@ -1,9 +1,8 @@
-// A HOME of this test file's own. The local commands read the credential, the
-// cached rules and the team keys from the home directory, so on a machine
-// where someone is signed in a test that forgot this asked that person's
-// Cloud account and failed on what it answered (or on its rate limit). Each
-// file that runs a command without an injected `io.home` calls this once, at
-// the top level.
+// A HOME of this test file's own. The server reads the credential, the cached
+// rules and the team keys from the home directory, so on a machine where
+// someone is signed in a test that forgot this saw that person's account (the
+// cloud tools listed, its Cloud asked). Each file that calls the server
+// without an injected `ctx.home` calls this once, at the top level.
 //
 // `os.homedir()` reads HOME (USERPROFILE on Windows) on every call, so setting
 // both before the tests run covers every read, and a child process spawned
