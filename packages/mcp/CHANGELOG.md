@@ -1,5 +1,19 @@
 # @veilio-inc/mcp
 
+## 0.6.2
+
+### Patch Changes
+
+- [#167](https://github.com/veilio-inc/veilio/pull/167) [`163a28e`](https://github.com/veilio-inc/veilio/commit/163a28ea9ced8539f98f4e27f8302180dc178f6c) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The README says when the server reads the team namespace again: after `veilio team unlock`, after a team map is created or updated or any map is removed through the server, after `projects_use` changes the project, and, with `VEILIO_PROJECT` set, when that name points to another project. It also says the server has two runtime dependencies, the engine and the CLI, both from this repository, and none from third parties. Before, it said "zero runtime dependencies".
+
+- [#174](https://github.com/veilio-inc/veilio/pull/174) [`a1f796d`](https://github.com/veilio-inc/veilio/commit/a1f796dad19c50240b6c2277e1a7a3985bd58689) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Requires `@veilio-inc/engine` 1.12.1 or later, which closes the redaction gaps found in 1.12.0.
+
+- [#171](https://github.com/veilio-inc/veilio/pull/171) [`7d76614`](https://github.com/veilio-inc/veilio/commit/7d766143c2cda4a39a1a05f191759d0ff5ba81cc) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Requires `@veilio-inc/engine` 1.12.0 or later: the engine that redacts passwords where they reappear and never stores a credential in the symbol map.
+
+- [#173](https://github.com/veilio-inc/veilio/pull/173) [`265f140`](https://github.com/veilio-inc/veilio/commit/265f14001a20bd9619adf232c048ada70a80ff8d) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The README says that `anonymize_file` and `scan_secrets` read every file strictly: a weak password in a secret position (`PGPASSWORD=Summer24`, a password flag, the password in a URL, an auth header) is redacted in test, fixture and example files too, as in the CLI and the Claude Code guard. The test that reads the home directory now sets up its own.
+- Updated dependencies [[`1858b60`](https://github.com/veilio-inc/veilio/commit/1858b60d15c8ebc465d13635734afab40bbe7b6e), [`3169df0`](https://github.com/veilio-inc/veilio/commit/3169df0d15120f6543ed19b5a22a9b9cbdc5fd21), [`a1f796d`](https://github.com/veilio-inc/veilio/commit/a1f796dad19c50240b6c2277e1a7a3985bd58689), [`7d76614`](https://github.com/veilio-inc/veilio/commit/7d766143c2cda4a39a1a05f191759d0ff5ba81cc), [`265f140`](https://github.com/veilio-inc/veilio/commit/265f14001a20bd9619adf232c048ada70a80ff8d)]:
+  - @veilio-inc/cli@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes

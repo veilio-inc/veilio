@@ -1,5 +1,27 @@
 # @veilio-inc/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- [#168](https://github.com/veilio-inc/veilio/pull/168) [`1858b60`](https://github.com/veilio-inc/veilio/commit/1858b60d15c8ebc465d13635734afab40bbe7b6e) Thanks [@DlgSHi](https://github.com/DlgSHi)! - **Breaking:** a flag a command doesn't use now stops with exit 2; it used to be ignored. Given `--days 3`, `scrub` used to run, and `--days` did nothing. Now it stops with `--days is not an option for scrub. Options for scrub: …`, naming the options `scrub` does take. A script that passed a flag to a command that never read it stops at that flag. Remove the flag, or move it to the command it belongs to.
+
+  - An unknown flag on a command uses the same wording: `unknown option --dayz. Options for scrub: …`. A line with no command keeps the general `unknown flag` form.
+  - `--help` or `-h` anywhere on the line wins. It prints that command's help and exits 0, even after a flag the command does not take. A group with no action (`maps --help`) shows all its actions.
+  - Flags may come before the command, and are checked against it: `-q` before `scrub` is the same as `-q` after it. A line of flags with no command prints the general help and exits 2, unless the flags are only `--help` or `--version`.
+  - `--instance` belongs to `login`, the only command that reads it. `--help` and `--version` work with any command.
+  - `veilio --help` lists, under each option, the commands it belongs to, and keeps the notes on `--days` (7 days by default), `--device` (required for an SSO-bound account) and `--team` (for a map you intend to publish). One table in the CLI drives the commands, the parser check and the help, so they cannot disagree.
+
+### Patch Changes
+
+- [#167](https://github.com/veilio-inc/veilio/pull/167) [`3169df0`](https://github.com/veilio-inc/veilio/commit/3169df0d15120f6543ed19b5a22a9b9cbdc5fd21) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio --help` lists `--device` for `login`. It also says that `scan` exits 1 on a credential, and on any finding with `--strict`. Before, it said "when it finds something", but an email or a private IP exits 0 without `--strict`. The README now says the same. It lists the `DELETE /api/maps/:id` route that `maps rm` uses, and says that the pre-commit framework hook is not supported yet: the repository has no `.pre-commit-hooks.yaml` and no `v*` tag.
+
+- [#174](https://github.com/veilio-inc/veilio/pull/174) [`a1f796d`](https://github.com/veilio-inc/veilio/commit/a1f796dad19c50240b6c2277e1a7a3985bd58689) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Requires `@veilio-inc/engine` 1.12.1 or later, which closes the redaction gaps found in 1.12.0.
+
+- [#171](https://github.com/veilio-inc/veilio/pull/171) [`7d76614`](https://github.com/veilio-inc/veilio/commit/7d766143c2cda4a39a1a05f191759d0ff5ba81cc) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Requires `@veilio-inc/engine` 1.12.0 or later: the engine that redacts passwords where they reappear and never stores a credential in the symbol map.
+
+- [#173](https://github.com/veilio-inc/veilio/pull/173) [`265f140`](https://github.com/veilio-inc/veilio/commit/265f14001a20bd9619adf232c048ada70a80ff8d) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The README says that `scrub` and `scan` read every file strictly: a weak password in a secret position (`PGPASSWORD=Summer24`, a password flag, the password in a URL, an auth header) is redacted in test, fixture and example files too, as in the MCP server and the Claude Code guard. Tests that read the home directory now set up their own, so `npm test` passes on a machine where someone is signed in.
+
 ## 0.6.1
 
 ### Patch Changes
