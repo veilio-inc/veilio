@@ -16,6 +16,8 @@ What it covers, what it doesn't, and the test behind each claim: [COVERAGE.md](C
 
 Every file is judged strictly, test, fixture and example files included. A weak password in a secret position (`PGPASSWORD=Summer24`, a password flag, the password in a URL, an auth header) is removed wherever Claude reads it, as in the CLI and the MCP server.
 
+In what Read, Edit and Write return for a dotenv file, a YAML file or a shell script - its text and its patch lines - a strong credential assigned to an environment-style name (`DB_PASSWORD=…`, `GITHUB_TOKEN: …`, `export STRIPE_SECRET_KEY=…`) is redacted in place, quoted or not; a weak one is handled as in any other file. The guard tells the engine the file's kind, never its path, so the strict judging above still holds. A Bash or Grep result has no single file kind and is read as before.
+
 ## Install
 
 You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and Linux, and in one Windows 11 session (terminal CLI), where Claude Code's PowerShell tool gets the same checks as Bash.

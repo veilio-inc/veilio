@@ -39,6 +39,7 @@ import {
   keepRule,
   languageOfPath,
   type LanguageOption,
+  fileKindOf,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -316,6 +317,9 @@ function runAnonymize(
     {
       language,
       secrets: 'redact',
+      // The file's kind, never its path (engine spec 013 R19): the
+      // environment-style credential rules apply, the test-file relaxation does not.
+      ...(file && fileKindOf(file) ? { fileKind: fileKindOf(file) } : {}),
       rules: [
         ...(rules.rules ?? []),
         ...keepRule(keep, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
@@ -540,7 +544,9 @@ export const TOOLS: ToolDefinition[] = [
     },
     handler: (args, ctx) => {
       const { text, label } = readTarget(args, ctx)
-      const findings = detectSecrets(text)
+      const path = str(args, 'path')
+      const fileKind = path ? fileKindOf(path) : undefined
+      const findings = detectSecrets(text, fileKind ? { fileKind } : {})
       return { text: `Scanned ${label}.\n${secretSummary(findings)}` }
     },
   },

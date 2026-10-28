@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.13.0](https://github.com/veilio-inc/veilio/compare/engine-v1.12.1...engine-v1.13.0) (2026-10-28)
+
+### Features
+
+* **engine:** environment-style credentials in dotenv, YAML and shell files; fileKind and fileKindOf ([11f2d20](https://github.com/veilio-inc/veilio/commit/11f2d20af8dcf0794c7e8341968c3edbf2d5a6e4))
+
+### Fixes
+
+* **engine:** a quoted value stops at any assignment prefix and spans at most 16 KB ([fac9576](https://github.com/veilio-inc/veilio/commit/fac95765071500dcba72365ae6df42ae7bfcc2f9))
+* **engine:** escaped and multi-line quoted values in the new rules ([f26b887](https://github.com/veilio-inc/veilio/commit/f26b88751b38431cbf86d6f664d88b41222c3ee6))
+* **engine:** quoted values of any length in the new rules; an unclosed quote takes the rest of the line ([1bde3ab](https://github.com/veilio-inc/veilio/commit/1bde3ab18410bc840c1e7558d90d8c3ffadef7bc))
+* **engine:** review of f26b887 - 1.12.1's grammar kept with no path; convention values judged; one-line quotes ([3b92110](https://github.com/veilio-inc/veilio/commit/3b921107ee3b4bbf467c8db31c6ab91536984a80))
+* **engine:** security review of 2bc28d4 - paths read as paths, closed quotes span lines up to the next assignment, long fixed-name values in shell files ([123730b](https://github.com/veilio-inc/veilio/commit/123730b4b4321c9b60fa85347bd05f90e268699e)), closes [zebra#91](https://github.com/veilio-inc/zebra/issues/91)
+
+### Refactoring
+
+* **engine:** drop BARE_LONG, unused since the fixed-name rule is back on 1.12.1's grammar ([2bc28d4](https://github.com/veilio-inc/veilio/commit/2bc28d4e43f8c275664924b3a0e8f3442826c13e))
+
 ## [1.12.1](https://github.com/veilio-inc/veilio/compare/engine-v1.12.0...engine-v1.12.1) (2026-10-26)
 
 ### Fixes

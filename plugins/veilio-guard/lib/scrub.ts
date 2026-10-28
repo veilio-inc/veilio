@@ -23,7 +23,7 @@ import {
   SECRET_DISPOSITIONS,
   shannonEntropy,
 } from '../vendor/engine/index.js'
-import type { Language, LanguageOption } from '../vendor/engine/index.js'
+import type { FileKind, Language, LanguageOption } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 
@@ -60,12 +60,19 @@ export function scrubSource(
   text: string,
   map: SymbolMap,
   language: LanguageOption = 'auto',
-  keep: ReadonlySet<string> = new Set()
+  keep: ReadonlySet<string> = new Set(),
+  fileKind?: FileKind
 ): { text: string; additions: SymbolMap } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole.
   const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
-  const result = anonymize(text, { existingMap: map, language, rules })
+  // The file's kind, never its path (engine spec 013 R19).
+  const result = anonymize(text, {
+    existingMap: map,
+    language,
+    rules,
+    ...(fileKind ? { fileKind } : {}),
+  })
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(result.map)) {
     if (map[placeholder] !== name) additions[placeholder] = name
@@ -744,11 +751,14 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
 export function destroyedValues(
   texts: readonly string[],
   map: SymbolMap = {},
-  scan?: ScanResult
+  scan?: ScanResult,
+  fileKind?: FileKind
 ): string[] {
   const values = new Set<string>()
+  const options = fileKind ? { fileKind } : {}
   for (const text of texts)
-    for (const value of learnable(text, scan ?? scanSecrets(text, 'redact'), map)) values.add(value)
+    for (const value of learnable(text, scan ?? scanSecrets(text, 'redact', options), map))
+      values.add(value)
   return [...values]
 }
 
@@ -868,7 +878,15 @@ export function applyMap(
   text: string,
   map: SymbolMap,
   ctx: MaskContext = NO_CONTEXT,
-  options: { scanned?: boolean; known?: Destroyed; scan?: ScanResult; swept?: boolean } = {}
+  options: {
+    scanned?: boolean
+    known?: Destroyed
+    scan?: ScanResult
+    swept?: boolean
+    /** The file's kind (engine spec 013 R19): its credentials are redacted
+     *  here, in place, and only learned when strong (decision 5). */
+    fileKind?: FileKind
+  } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
   // once, a Read's source the engine masked): only the names the map has
@@ -880,7 +898,9 @@ export function applyMap(
   // stands, with the key characters that run on after it, under its value's
   // one token; a value the map holds is a name masked reversibly, kept for
   // its placeholder and never learned (review of 99325ba).
-  const scan = options.scan ?? scanSecrets(text, 'redact')
+  const scan =
+    options.scan ??
+    scanSecrets(text, 'redact', options.fileKind ? { fileKind: options.fileKind } : {})
   known.learn(learnable(text, scan, map))
   const names = namesOf(map)
   let redacted = ''
