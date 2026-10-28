@@ -368,10 +368,6 @@ const SQ = "'([^'\\n]{0,256})'"
  *  on different characters, so the repetition stays linear. */
 const BARE_UNIT = '(?:\\$\\{[^}\\n]{0,200}\\}|[^\\s"\'`;&|$]|\\$(?!\\{[^}\\n]{0,200}\\}))'
 const BARE = `((?:${BARE_UNIT}){1,256})`
-/** A bare shell value of any length (spec 013 R17): the 1.12.1 grammar
- *  without its 256-character cap, so a long value never keeps a plain tail.
- *  Linear: the unit's alternatives start on different characters. */
-const BARE_LONG = `((?:${BARE_UNIT})+)`
 /** One shell word: bare units and quoted segments glued together
  *  (`abc"def ghi"` is one word). Linear: each alternative starts on its own
  *  character. */
