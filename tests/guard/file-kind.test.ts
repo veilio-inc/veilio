@@ -73,3 +73,38 @@ describe("the guard's Read: the file kind reaches the engine", () => {
     })
   }
 })
+
+describe("the guard's Edit: patch lines are read as the lines they hold", () => {
+  it('a compose file edit: neither value reaches the model, in the strings or the patch', async () => {
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await guard.load(root)
+    const path = join(root, 'compose.yml')
+    const before = '      API_TOKEN: Summer2024\n'
+    const after = '      API_TOKEN: Autumn2025\n'
+    const result = {
+      filePath: path,
+      oldString: before,
+      newString: after,
+      originalFile: `services:\n  db:\n    environment:\n${before}`,
+      structuredPatch: [
+        {
+          oldStart: 4,
+          oldLines: 1,
+          newStart: 4,
+          newLines: 1,
+          lines: [`-${before.trimEnd()}`, `+${after.trimEnd()}`],
+        },
+      ],
+      userModified: false,
+      replaceAll: false,
+    }
+    const out = JSON.stringify(
+      await guard.afterTool(
+        'Edit',
+        { tool: 'Edit', file_path: path, old_string: before, new_string: after },
+        { result }
+      )
+    )
+    expect(out).not.toMatch(/Summer2024|Autumn2025/)
+  })
+})
