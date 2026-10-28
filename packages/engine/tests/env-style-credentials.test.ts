@@ -287,6 +287,8 @@ describe('engine 1.12.2: linear time on adversarial lines', () => {
       [`A_TOKEN=a${' '.repeat(4000)}#\n`.repeat(50), '.env'],
       [`export A_TOKEN=${'${'.repeat(2000)}\n`.repeat(10), 'a.sh'],
       ['A_TOKEN="x\n'.repeat(2000), '.env'],
+      ['export A_TOKEN="x\n'.repeat(3000), '.env'],
+      ["export A_TOKEN='x\n".repeat(3000), '.env'],
       ["A_TOKEN: 'x\n".repeat(2000), 'a.yml'],
     ]
     for (const [text, path] of cases) expect(timed(text, path), text.slice(0, 30)).toBeLessThan(500)

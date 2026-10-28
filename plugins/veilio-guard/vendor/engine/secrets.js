@@ -322,12 +322,13 @@ const DIFF = '[+\\- ]?';
  *  may span lines, as dotenv and YAML allow, but never past a line that starts
  *  a new assignment (`NAME=`, `key:`): a quote that does not close before one
  *  takes the rest of its own line instead, so a stray quote never destroys the
- *  next keys. Linear: each alternative starts on its own character. */
-const NEXT_LINE = '\\n(?![ \\t]*[-+]?[ \\t]*["\']?[A-Za-z_][\\w.-]*["\']?[ \\t]*[=:])';
-const ENV_DQ = `"((?:[^"\\\\\\n]|\\\\.|${NEXT_LINE})*)"`;
-const ENV_SQ = `'((?:[^'\\n]|${NEXT_LINE})*)'`;
+ *  next keys. A quote spans at most 16 KB. Linear: each alternative starts on
+ *  its own character. */
+const NEXT_LINE = '\\n(?![ \\t]*[-+]?[ \\t]*(?:(?:export|set|ENV|ARG|readonly|local|declare[ \\t]+-x)[ \\t]+)?["\']?[A-Za-z_][\\w.-]*["\']?[ \\t]*[=:])';
+const ENV_DQ = `"((?:[^"\\\\\\n]|\\\\.|${NEXT_LINE}){0,16384})"`;
+const ENV_SQ = `'((?:[^'\\n]|${NEXT_LINE}){0,16384})'`;
 const YAML_DQ = ENV_DQ;
-const YAML_SQ = `'((?:[^'\\n]|''|${NEXT_LINE})*)'`;
+const YAML_SQ = `'((?:[^'\\n]|''|${NEXT_LINE}){0,16384})'`;
 const UNCLOSED = '(["\'][^\\n]*)';
 /** A convention name's value that is not a credential (review of f26b887): a
  *  file path or a reference to one (`./keys/jwt.pem`, `~/.ssh/id`,
