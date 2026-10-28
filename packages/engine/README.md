@@ -163,8 +163,7 @@ types into one:
 - well-known password environment variables: `PGPASSWORD`, `MYSQL_PWD`,
   `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MSSQL_SA_PASSWORD`,
   `REDISCLI_AUTH`, `SSHPASS` and others, in shell, dotenv, compose and
-  PowerShell forms, a value of any length (a bare YAML block indicator such as
-  `|` or `>-` is not a value);
+  PowerShell forms (a bare YAML block header such as `|` or `>-` is not a value);
 - in a dotenv file (`.env`, `.env.<word>`, `*.env`), a YAML file and a shell
   script or Dockerfile - known from `options.path` or `options.fileKind` - any other environment-style
   name that is, or ends in, a credential word (`DB_PASSWORD`,
@@ -176,18 +175,21 @@ types into one:
   `readonly`, `local`, `ENV` or `ARG` in a script. In dotenv and YAML the value
   is the rest of the line minus a ` # comment`; in a script one shell word.
   YAML syntax (`|`, `>`, a bare `!tag`, `&anchor` or `*alias`) is never a
-  value. Unlike the fixed names above, the value is judged exactly as the quoted
+  value. Unlike the fixed names above, the value is judged as the quoted
   `password = "…"` form is: a strong value is redacted (a passphrase and a
-  number of 8 or more digits included); a boolean, a short number and a
-  reference (`${DB_PASSWORD}`, `$X`) stay; a weak value is handled as the quoted
-  form handles it - reported as a possible credential and left as written, or,
-  when it is shorter than 8 characters or a default word, masked as a name. A
-  file kind therefore never relaxes a test file, but it can turn a weak value
-  that was masked as a name into one reported and left as written. A
+  number of 8 or more digits included); a value under 6 characters (a boolean,
+  a short number, `~`), a reference (`${DB_PASSWORD}`, `$X`), a command
+  substitution and a file path (`./keys/jwt.pem`, `$HOME/key.asc`) are not
+  values; a weak value is reported as a possible credential and left as
+  written, or, when it is a default word, masked as a name. A file kind never
+  relaxes a test file, but it can turn a weak value that was masked as a name
+  into one reported and left as written. Quoted values have no length limit
+  but are read on one line. A
   unified-diff line (`+`, `-` or a space first) is read as the line it holds. Without a `path` or `fileKind`, and in source, Markdown or other
   files, these names are read as before. Not covered yet: assignments in the
   middle of a line (`docker run -e NAME=v`), PowerShell `$env:`, cmd `set`,
-  fish `set -x`, `setx`, the body of a YAML block scalar, and the Kubernetes
+  fish `set -x`, `setx`, a quoted value spanning lines, the body of a YAML
+  block scalar, and the Kubernetes
   `name:` / `value:` pair;
 - the password in URL userinfo (`scheme://user:password@host`, the user may be
   empty), never the user or the host;
@@ -304,7 +306,7 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'`, for a caller that
     knows the file but passes no `path` (`fileKindOf(path)`): turns on the
     environment-style credential rules for that kind and nothing else - it
-    never relaxes a test file. Wins over the kind a `path` implies
+    never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
   - `options.rules` — whitelist / named-replacement rules

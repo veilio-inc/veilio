@@ -154,17 +154,6 @@ export declare const REDACTION_TOKENS: RegExp;
 /** A file kind whose assignment grammar the engine reads (spec 013 R17):
  *  credentials assigned to environment-style names are found in these. */
 export type FileKind = 'dotenv' | 'yaml' | 'shell';
-/**
- * The file kind of `path`, as the engine reads it, or undefined for any other
- * file (spec 013 R19). Clients pass the result as `fileKind` instead of the
- * path: a kind only adds rules, it never relaxes one, so the test-file
- * relaxation that a `path` brings stays off.
- * - dotenv: `.env`, `.env.<word>` (`.env.local`, `.env.production`) and
- *   `*.env`, in any case - not `.env.ts`, `.env.d.ts` or `.env.example.json`,
- *   which are code or data;
- * - YAML: `.yml`, `.yaml`;
- * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files.
- */
 export declare function fileKindOf(path: string): FileKind | undefined;
 /** Where the scanned text comes from. */
 export interface ScanOptions {
@@ -177,7 +166,7 @@ export interface ScanOptions {
     root?: string;
     /** The file's kind, when the caller knows it but passes no `path`
      *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
-     *  else. Wins over the kind a `path` implies. */
+     *  else. Adds to the kind a `path` implies; it never replaces it. */
     fileKind?: FileKind;
 }
 /**

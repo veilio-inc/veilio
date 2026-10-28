@@ -490,7 +490,8 @@ function proseValue(value: string): boolean {
  */
 /** A block indicator alone is never a value (`|`, `>-`, `|2`), for R2's
  *  fixed names too: anything else after them, `!` or `*` first included, is. */
-const notBlockIndicator = (value: string): boolean => !/^[|>][-+0-9]*$/.test(value)
+const notBlockIndicator = (value: string): boolean =>
+  !/^[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.test(value)
 /** In a YAML file, YAML syntax is never a value: a block indicator, an alias,
  *  or a bare tag or anchor. A tag or anchor before a value is stepped over by
  *  the rule (YAML_PROPS) and the value after it judged. */
@@ -502,17 +503,29 @@ const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
  *  as the lines it holds: `+DB_PASSWORD=…` is an assignment too. Only adds. */
 const DIFF = '[+\\- ]?'
 
-/** Quoted values in the new rules (security reviews of 11f2d20 and 1bde3ab):
- *  a quoted value runs to its closing quote, across lines as dotenv and YAML
- *  allow, up to 16 KB, so a long or multi-line value is never left in the map;
- *  a double-quoted one honours backslash escapes, a YAML single-quoted one
- *  `''`. A quote that does not close within that takes the rest of its line.
- *  Linear: each alternative starts on its own character. */
-const ENV_DQ = '"((?:[^"\\\\]|\\\\[\\s\\S]){0,16384})"'
-const ENV_SQ = "'([^']{0,16384})'"
+/** Quoted values in the new rules (security reviews of 11f2d20, 1bde3ab and
+ *  the review of f26b887): no length cap, so a long quoted value is never left
+ *  in the map; a double-quoted one honours backslash escapes, a YAML
+ *  single-quoted one `''`. One line only: a quote that does not close on its
+ *  line takes the rest of that line, never the lines after it (multi-line
+ *  quoted values are research R18). Linear. */
+const ENV_DQ = '"((?:[^"\\\\\\n]|\\\\.)*)"'
+const ENV_SQ = "'([^'\\n]*)'"
 const YAML_DQ = ENV_DQ
-const YAML_SQ = "'((?:[^']|''){0,16384})'"
+const YAML_SQ = "'((?:[^'\\n]|'')*)'"
 const UNCLOSED = '(["\'][^\\n]*)'
+
+/** A convention name's value that is not a credential (review of f26b887): a
+ *  file path or a reference to one (`./keys/jwt.pem`, `~/.ssh/id`,
+ *  `$HOME/key.asc`, `${PWD}/certs/sign.pem`); a shell command substitution
+ *  (`"$(openssl rand …)"`, a backtick); or, as the quoted generic rule reads
+ *  it, a value under 6 characters (`true`, `4096`, `on`, `~`). */
+function conventionValue(value: string): boolean {
+  const v = value.replace(/^["']/, '')
+  if (/^(?:\$\(|`)/.test(v)) return false
+  if (/^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?[\\/][^\s]*$/.test(v)) return false
+  return value.length >= 6
+}
 
 function envRules(): Pattern[] {
   const classes = [
@@ -530,6 +543,8 @@ function envRules(): Pattern[] {
         : 'Credential in an environment variable',
       ...(fixed ? { position: true as const } : {}),
     }
+    // Fixed names: a credential whatever the value. Convention names: judged.
+    const value = (v: string) => fixed || conventionValue(v)
     // dotenv: NAME=v, NAME = v, optional export - the rest of the line.
     // Convention names in any case there (dotenv keys are not always upper case).
     rules.push({
@@ -540,17 +555,18 @@ function envRules(): Pattern[] {
       ),
       groups: [1, 2, 3, 4],
       only: (scan) => scan.dotenv,
+      validate: (v) => value(v),
     })
     // YAML: NAME: v - the rest of the line, never YAML syntax.
     rules.push({
       ...base,
       re: new RegExp(
-        `^${DIFF}[ \\t]*["']?(?:${names})["']?[ \\t]*:[ \\t]*${YAML_PROPS}(?:${PH}|${YAML_DQ}|${YAML_SQ}|${LINE_VALUE}|${UNCLOSED})`,
+        `^${DIFF}[ \\t]*(?:-[ \\t]+)?["']?(?:${names})["']?[ \\t]*:[ \\t]*${YAML_PROPS}(?:${PH}|${YAML_DQ}|${YAML_SQ}|${LINE_VALUE}|${UNCLOSED})`,
         'gm'
       ),
       groups: [1, 2, 3, 4],
       only: (scan) => scan.yaml,
-      validate: (value, group) => group !== 3 || notYamlSyntax(value),
+      validate: (v, group) => (group !== 3 || notYamlSyntax(v)) && value(v),
     })
     // YAML compose list: - NAME=v, - "NAME=v", - 'NAME=v' (the quote kept).
     rules.push({
@@ -561,6 +577,7 @@ function envRules(): Pattern[] {
       ),
       groups: [1, 2, 3, 4],
       only: (scan) => scan.yaml,
+      validate: (v) => value(v),
     })
     // shell and Dockerfile: NAME=v after export, ENV and the like, in shell
     // grammar. Fixed names are R2's anywhere on a line already.
@@ -573,6 +590,7 @@ function envRules(): Pattern[] {
         ),
         groups: [1, 2, 3],
         only: (scan) => scan.shell,
+        validate: (v) => value(v),
       })
   }
   return rules
@@ -943,7 +961,7 @@ const PATTERNS: Pattern[] = [
     severity: 'medium',
     label: 'Password in an environment variable',
     re: new RegExp(
-      `(?<![\\w])(?:${PASSWORD_ENV})(?:["']?[ \\t]{0,3}=[ \\t]{0,3}(?:${PH}|${DQ}|${SQ})|=(?:${PH}|${BARE_LONG})|["']?[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|${DQ}|${SQ}|${BARE_LONG}))`,
+      `(?<![\\w])(?:${PASSWORD_ENV})(?:["']?[ \\t]{0,3}=[ \\t]{0,3}(?:${PH}|${DQ}|${SQ})|=(?:${PH}|${BARE})|["']?[ \\t]{0,3}:[ \\t]{0,3}(?:${PH}|${DQ}|${SQ}|${BARE}))`,
       'g'
     ),
     groups: [1, 2, 3, 4, 5, 6],
@@ -1719,8 +1737,15 @@ export type FileKind = 'dotenv' | 'yaml' | 'shell'
  * - YAML: `.yml`, `.yaml`;
  * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files.
  */
+const CODE_EXTENSIONS =
+  /^(?:[cm]?[jt]sx?|json|jsonc|toml|py|pyi|rb|go|java|kt|kts|scala|rs|swift|dart|exs?|lua|php|cs|fs|c|cc|cpp|h|hpp|m|mm|vue|svelte|md|mdx|rst|html|xml|sql|r|pl|ps1)$/i
+
 export function fileKindOf(path: string): FileKind | undefined {
   const name = path.split(/[\\/]/).pop() ?? ''
+  const last = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : ''
+  // Never a code, data or document file, whatever its name starts with
+  // (`dockerfile.py`, `Dockerfile.test.ts`, `.env.rs`, `.env.md`).
+  if (last && CODE_EXTENSIONS.test(last)) return undefined
   if (/\.ya?ml$/i.test(name)) return 'yaml'
   if (
     /\.(?:sh|bash|zsh|ksh)$/i.test(name) ||
@@ -1728,14 +1753,8 @@ export function fileKindOf(path: string): FileKind | undefined {
     /^\.(?:envrc|bashrc|zshrc|profile|bash_profile|zprofile)$/i.test(name)
   )
     return 'shell'
-  if (/\.env$/i.test(name)) return 'dotenv'
-  // `.env.<anything>` is dotenv - `.env.local`, `.env.txt`, a `~` backup -
-  // unless its last extension is code or structured data (`.env.ts`,
-  // `.env.d.ts`, `.env.example.json`).
-  if (/^\.env\./i.test(name)) {
-    const last = name.slice(name.lastIndexOf('.') + 1)
-    return /^(?:[cm]?[jt]sx?|json|toml|py|rb|go|java|kt|cs|php)$/i.test(last) ? undefined : 'dotenv'
-  }
+  // `.env`, `*.env`, and `.env.<anything>` - `.env.local`, `.env.txt`, a `~` backup.
+  if (/\.env$/i.test(name) || /^\.env\./i.test(name)) return 'dotenv'
   return undefined
 }
 
@@ -1750,7 +1769,7 @@ export interface ScanOptions {
   root?: string
   /** The file's kind, when the caller knows it but passes no `path`
    *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
-   *  else. Wins over the kind a `path` implies. */
+   *  else. Adds to the kind a `path` implies; it never replaces it. */
   fileKind?: FileKind
 }
 

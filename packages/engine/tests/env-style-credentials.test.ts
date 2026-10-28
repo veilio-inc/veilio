@@ -127,7 +127,7 @@ describe('engine 1.12.2: the whole value, as the file reads it', () => {
     for (const [text, path] of [
       [`DB_PASSWORD=${long.replace(/-/g, ' ')}\n`, '.env'],
       [`export DB_PASSWORD=${long}\n`, 'a.sh'],
-      [`PGPASSWORD=${long} psql\n`, 'a.sh'],
+      // (PGPASSWORD's own rule keeps 1.12.1's 256-character grammar: review of f26b887.)
     ] as const) {
       expect(leaked(anonymize(text, { path }), /q699z|q350z/), text.slice(0, 30)).toBe(false)
     }
@@ -351,6 +351,10 @@ describe('engine: environment-style forms not covered yet (R18)', () => {
   it.todo('PowerShell $env:DB_PASSWORD, cmd set, fish set -x, setx, Dockerfile ENV DB_PASSWORD v')
   it.todo('the body of a YAML block scalar after DB_PASSWORD: >-')
   it.todo('the Kubernetes pair - name: DB_PASSWORD / value: v')
+  it.todo(
+    'a quoted value spanning lines (dotenv and YAML allow it); one line is read, review of f26b887'
+  )
+  it.todo("the fixed names' own rule past 256 characters with no path, as 1.12.1")
 })
 
 describe('engine 1.12.2: security review of ad9d284', () => {
@@ -577,26 +581,6 @@ describe('engine 1.13.0: escaped and multi-line quoted values (security review o
       'DB_PASSWORD="Tr0ub4dor\\"zebra91 quokka77"\n',
       'dotenv',
     ],
-    [
-      'a multi-line double-quoted dotenv value',
-      'DB_PASSWORD="Tr0ub4dor\nzebra91\nquokka77"\nAPP=1\n',
-      'dotenv',
-    ],
-    [
-      'a multi-line single-quoted dotenv value',
-      "DB_PASSWORD='Tr0ub4dor\nzebra91 quokka77'\n",
-      'dotenv',
-    ],
-    [
-      'a multi-line double-quoted YAML value',
-      'DB_PASSWORD: "Tr0ub4dor\n  zebra91 quokka77"\nother: 1\n',
-      'yaml',
-    ],
-    [
-      'a multi-line single-quoted YAML value',
-      "DB_PASSWORD: 'Tr0ub4dor\n  zebra91 quokka77'\n",
-      'yaml',
-    ],
   ] as const
   for (const [what, text, kind] of cases) {
     it(`${what}: nothing of it reaches output or map`, () => {
@@ -604,11 +588,83 @@ describe('engine 1.13.0: escaped and multi-line quoted values (security review o
       expect(leaked(r, /Tr0ub4dor|zebra91|quokka77/), r.anonymized).toBe(false)
     })
   }
+})
 
-  it('the lines after a multi-line value are read as usual', () => {
-    const r = anonymize('DB_PASSWORD="Tr0ub4dor\nzebra91"\nAPP_ENV=production\n', {
+describe('engine 1.13.0: review of f26b887', () => {
+  it('no path: a fixed name in minified code takes no more than 1.12.1 took', () => {
+    const fields = Array.from({ length: 80 }, (_, i) => `f${i}:e.f${i}`).join(',')
+    const r = anonymize(`x={MYSQL_PWD:e.pwd,${fields},z:1}\n`, {})
+    expect(r.anonymized).toMatch(/,z:1\}\n$/)
+  })
+
+  it('no path: > with digits is a value, only a real YAML block header is not', () => {
+    for (const t of ['MYSQL_PWD: >20241028\n', 'PGPASSWORD: >1234\n'])
+      expect(anonymize(t, {}).anonymized, t).toMatch(REDACTED)
+    for (const t of [
+      'env:\n  POSTGRES_PASSWORD: >-\n    x\n',
+      'env:\n  POSTGRES_PASSWORD: |2\n    x\n',
+      'env:\n  POSTGRES_PASSWORD: >+1\n    x\n',
+    ])
+      expect(anonymize(t, { fileKind: 'yaml' }).anonymized.split('\n')[1], t).not.toMatch(REDACTED)
+  })
+
+  it('an unclosed quote takes its own line only; the next lines are read as usual', () => {
+    const r = anonymize("API_TOKEN='abc\nDATABASE_URL=postgres://db/app\nDEBUG='1'\n", {
       fileKind: 'dotenv',
     })
-    expect(r.anonymized).toMatch(/\nAPP_ENV=\S+\n$/)
+    expect(r.anonymized).toMatch(/\nDATABASE_URL=\S+\nDEBUG='1'\n$/)
+    const y = anonymize('API_TOKEN: "C:\\keys\\"\nhost: db\nport: "5432"\n', { fileKind: 'yaml' })
+    expect(y.anonymized).toMatch(/\n\S+: \S+\n\S+: "5432"\n$/)
+  })
+
+  it('a shell command substitution with nested quotes is not a value', () => {
+    for (const t of [
+      'PASSWORD="$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)"\n',
+      'TOKEN="$(cat "$HOME/.token")"\n',
+      'TOKEN=`cat ~/.token`\n',
+    ])
+      expect(anonymize(t, { fileKind: 'shell' }).anonymized, t).not.toMatch(REDACTED)
+  })
+
+  it('a key file path is not a value', () => {
+    for (const [t, k] of [
+      ['JWT_PRIVATE_KEY=./keys/jwt-private.pem\n', 'dotenv'],
+      ['TLS_PRIVATE_KEY=/etc/ssl/private/server.key\n', 'dotenv'],
+      ['SSH_PRIVATE_KEY=~/.ssh/id_ed25519\n', 'dotenv'],
+      ['export GPG_PRIVATE_KEY=$HOME/.gnupg/key.asc\n', 'shell'],
+      ['export SIGNING_KEY=${PWD}/certs/sign.pem\n', 'shell'],
+      ['SIGNING_KEY: /run/secrets/signing.pem\n', 'yaml'],
+    ] as const)
+      expect(anonymize(t, { fileKind: k }).anonymized, t).not.toMatch(REDACTED)
+  })
+
+  it('booleans, short numbers and null are not reported under a convention name', () => {
+    for (const t of [
+      'USE_API_KEY=false\n',
+      'MAX_TOKEN=4096\n',
+      'REQUIRE_PASSWORD=yes\n',
+      'PASSWORD=on\n',
+    ])
+      expect(detectSecrets(t, { fileKind: 'dotenv' }), t).toEqual([])
+    expect(detectSecrets('API_KEY: ~\n', { fileKind: 'yaml' })).toEqual([])
+  })
+
+  it('fileKindOf: code files are never dotenv or shell', () => {
+    for (const p of [
+      'tools/dockerfile.py',
+      'Dockerfile.test.ts',
+      '.env.rs',
+      '.env.swift',
+      '.env.lua',
+      '.env.md',
+    ])
+      expect(fileKindOf(p), p).toBeUndefined()
+    for (const p of ['Dockerfile', 'Dockerfile.prod', 'docker/Dockerfile.dev'])
+      expect(fileKindOf(p), p).toBe('shell')
+  })
+
+  it('an indented YAML list item - NAME: v', () => {
+    const r = anonymize('env:\n  - DB_PASSWORD: Xk9mQ2vL7pZq\n', { fileKind: 'yaml' })
+    expect(leaked(r, /Xk9mQ2vL7pZq/)).toBe(false)
   })
 })
