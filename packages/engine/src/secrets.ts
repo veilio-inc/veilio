@@ -502,6 +502,17 @@ const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
  *  as the lines it holds: `+DB_PASSWORD=…` is an assignment too. Only adds. */
 const DIFF = '[+\\- ]?'
 
+/** Quoted values in the new rules have no length cap, so a long quoted value
+ *  is never left whole in the map (security review of 11f2d20). YAML quotes
+ *  by its own rules: `''` inside single quotes, a backslash escape inside
+ *  double quotes. A quote that does not close on its line takes the rest of
+ *  the line. All linear. */
+const ENV_DQ = '"([^"\\n]*)"'
+const ENV_SQ = "'([^'\\n]*)'"
+const YAML_DQ = '"((?:[^"\\\\\\n]|\\\\.)*)"'
+const YAML_SQ = "'((?:[^'\\n]|'')*)'"
+const UNCLOSED = '(["\'][^\\n]*)'
+
 function envRules(): Pattern[] {
   const classes = [
     { names: PASSWORD_ENV, fixed: true },
@@ -523,20 +534,20 @@ function envRules(): Pattern[] {
     rules.push({
       ...base,
       re: new RegExp(
-        `^${DIFF}[ \\t]*(?:export[ \\t]+)?["']?(?:${names})["']?[ \\t]*=[ \\t]*(?:${PH}|${DQ}|${SQ}|${LINE_VALUE})`,
+        `^${DIFF}[ \\t]*(?:export[ \\t]+)?["']?(?:${names})["']?[ \\t]*=[ \\t]*(?:${PH}|${ENV_DQ}|${ENV_SQ}|${LINE_VALUE}|${UNCLOSED})`,
         fixed ? 'gm' : 'gmi'
       ),
-      groups: [1, 2, 3],
+      groups: [1, 2, 3, 4],
       only: (scan) => scan.dotenv,
     })
     // YAML: NAME: v - the rest of the line, never YAML syntax.
     rules.push({
       ...base,
       re: new RegExp(
-        `^${DIFF}[ \\t]*["']?(?:${names})["']?[ \\t]*:[ \\t]*${YAML_PROPS}(?:${PH}|${DQ}|${SQ}|${LINE_VALUE})`,
+        `^${DIFF}[ \\t]*["']?(?:${names})["']?[ \\t]*:[ \\t]*${YAML_PROPS}(?:${PH}|${YAML_DQ}|${YAML_SQ}|${LINE_VALUE}|${UNCLOSED})`,
         'gm'
       ),
-      groups: [1, 2, 3],
+      groups: [1, 2, 3, 4],
       only: (scan) => scan.yaml,
       validate: (value, group) => group !== 3 || notYamlSyntax(value),
     })
@@ -544,10 +555,10 @@ function envRules(): Pattern[] {
     rules.push({
       ...base,
       re: new RegExp(
-        `^${DIFF}[ \\t]*-[ \\t]+(?:"(?:${names})=([^"\\n]{1,4096})"|'(?:${names})=([^'\\n]{1,4096})'|(?:${names})=(?:${PH}|${LINE_VALUE}))`,
+        `^${DIFF}[ \\t]*-[ \\t]+(?:"(?:${names})=([^"\\n]+)"|'(?:${names})=([^'\\n]+)'|(?:${names})=(?:${PH}|${LINE_VALUE})|["'](?:${names})=([^\\n]+))`,
         'gm'
       ),
-      groups: [1, 2, 3],
+      groups: [1, 2, 3, 4],
       only: (scan) => scan.yaml,
     })
     // shell and Dockerfile: NAME=v after export, ENV and the like, in shell

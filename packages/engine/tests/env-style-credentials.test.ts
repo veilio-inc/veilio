@@ -528,3 +528,42 @@ describe('engine 1.13.0: review of 8c38100', () => {
     }
   })
 })
+
+describe('engine 1.13.0: quoted values of any length, unclosed quotes (security review of 11f2d20)', () => {
+  const long = Array.from({ length: 700 }, (_, i) => `q${i}z`).join('-')
+  const cases = [
+    ['a double-quoted dotenv value over 256 characters', `DB_PASSWORD="${long}"\n`, 'dotenv'],
+    [
+      'a single-quoted dotenv value over 4096 characters',
+      `DB_PASSWORD='${long}${long}'\n`,
+      'dotenv',
+    ],
+    ['a double-quoted YAML value over 256 characters', `DB_PASSWORD: "${long}"\n`, 'yaml'],
+    ['a single-quoted YAML value with an escaped quote', `DB_PASSWORD: 'q1z''${long}'\n`, 'yaml'],
+    ['a double-quoted YAML value with an escape', `DB_PASSWORD: "q1z\\"${long}"\n`, 'yaml'],
+    [
+      'a quoted compose item over 4096 characters',
+      `environment:\n  - "DB_PASSWORD=${long}${long}"\n`,
+      'yaml',
+    ],
+    ['an unclosed double quote in dotenv', `DB_PASSWORD="${long}\n`, 'dotenv'],
+    ['an unclosed single quote in YAML', `DB_PASSWORD: '${long}\n`, 'yaml'],
+  ] as const
+  for (const [what, text, kind] of cases) {
+    it(`${what}: nothing of it reaches output or map`, () => {
+      expect(leaked(anonymize(text, { fileKind: kind }), /q699z|q350z|q1z/)).toBe(false)
+    })
+  }
+})
+
+describe('engine 1.13.0: a long quoted value keeps its quotes', () => {
+  it('the closing quote stays', () => {
+    const long = Array.from({ length: 700 }, (_, i) => `q${i}z`).join('-')
+    expect(anonymize(`DB_PASSWORD="${long}"\n`, { fileKind: 'dotenv' }).anonymized).toMatch(
+      /^DB_PASSWORD="__REDACTED_[A-Z_]+_\d+__"\n$/
+    )
+    expect(anonymize(`DB_PASSWORD: '${long}'\n`, { fileKind: 'yaml' }).anonymized).toMatch(
+      /^DB_PASSWORD: '__REDACTED_[A-Z_]+_\d+__'\n$/
+    )
+  })
+})
