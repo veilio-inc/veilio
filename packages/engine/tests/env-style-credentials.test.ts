@@ -286,6 +286,8 @@ describe('engine 1.12.2: linear time on adversarial lines', () => {
       [`A_TOKEN=a${' '.repeat(4000)}b\n`.repeat(50), '.env'],
       [`A_TOKEN=a${' '.repeat(4000)}#\n`.repeat(50), '.env'],
       [`export A_TOKEN=${'${'.repeat(2000)}\n`.repeat(10), 'a.sh'],
+      ['A_TOKEN="x\n'.repeat(2000), '.env'],
+      ["A_TOKEN: 'x\n".repeat(2000), 'a.yml'],
     ]
     for (const [text, path] of cases) expect(timed(text, path), text.slice(0, 30)).toBeLessThan(500)
   })
@@ -565,5 +567,48 @@ describe('engine 1.13.0: a long quoted value keeps its quotes', () => {
     expect(anonymize(`DB_PASSWORD: '${long}'\n`, { fileKind: 'yaml' }).anonymized).toMatch(
       /^DB_PASSWORD: '__REDACTED_[A-Z_]+_\d+__'\n$/
     )
+  })
+})
+
+describe('engine 1.13.0: escaped and multi-line quoted values (security review of 1bde3ab)', () => {
+  const cases = [
+    [
+      'an escaped quote in a dotenv value',
+      'DB_PASSWORD="Tr0ub4dor\\"zebra91 quokka77"\n',
+      'dotenv',
+    ],
+    [
+      'a multi-line double-quoted dotenv value',
+      'DB_PASSWORD="Tr0ub4dor\nzebra91\nquokka77"\nAPP=1\n',
+      'dotenv',
+    ],
+    [
+      'a multi-line single-quoted dotenv value',
+      "DB_PASSWORD='Tr0ub4dor\nzebra91 quokka77'\n",
+      'dotenv',
+    ],
+    [
+      'a multi-line double-quoted YAML value',
+      'DB_PASSWORD: "Tr0ub4dor\n  zebra91 quokka77"\nother: 1\n',
+      'yaml',
+    ],
+    [
+      'a multi-line single-quoted YAML value',
+      "DB_PASSWORD: 'Tr0ub4dor\n  zebra91 quokka77'\n",
+      'yaml',
+    ],
+  ] as const
+  for (const [what, text, kind] of cases) {
+    it(`${what}: nothing of it reaches output or map`, () => {
+      const r = anonymize(text, { fileKind: kind })
+      expect(leaked(r, /Tr0ub4dor|zebra91|quokka77/), r.anonymized).toBe(false)
+    })
+  }
+
+  it('the lines after a multi-line value are read as usual', () => {
+    const r = anonymize('DB_PASSWORD="Tr0ub4dor\nzebra91"\nAPP_ENV=production\n', {
+      fileKind: 'dotenv',
+    })
+    expect(r.anonymized).toMatch(/\nAPP_ENV=\S+\n$/)
   })
 })

@@ -502,15 +502,16 @@ const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
  *  as the lines it holds: `+DB_PASSWORD=…` is an assignment too. Only adds. */
 const DIFF = '[+\\- ]?'
 
-/** Quoted values in the new rules have no length cap, so a long quoted value
- *  is never left whole in the map (security review of 11f2d20). YAML quotes
- *  by its own rules: `''` inside single quotes, a backslash escape inside
- *  double quotes. A quote that does not close on its line takes the rest of
- *  the line. All linear. */
-const ENV_DQ = '"([^"\\n]*)"'
-const ENV_SQ = "'([^'\\n]*)'"
-const YAML_DQ = '"((?:[^"\\\\\\n]|\\\\.)*)"'
-const YAML_SQ = "'((?:[^'\\n]|'')*)'"
+/** Quoted values in the new rules (security reviews of 11f2d20 and 1bde3ab):
+ *  a quoted value runs to its closing quote, across lines as dotenv and YAML
+ *  allow, up to 16 KB, so a long or multi-line value is never left in the map;
+ *  a double-quoted one honours backslash escapes, a YAML single-quoted one
+ *  `''`. A quote that does not close within that takes the rest of its line.
+ *  Linear: each alternative starts on its own character. */
+const ENV_DQ = '"((?:[^"\\\\]|\\\\[\\s\\S]){0,16384})"'
+const ENV_SQ = "'([^']{0,16384})'"
+const YAML_DQ = ENV_DQ
+const YAML_SQ = "'((?:[^']|''){0,16384})'"
 const UNCLOSED = '(["\'][^\\n]*)'
 
 function envRules(): Pattern[] {
