@@ -26,6 +26,7 @@ import {
   summarizeSecrets,
   type TeamLayer,
   withAiPreamble,
+  fileKindOf,
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
@@ -181,10 +182,14 @@ export async function runScrub(
       ...(cached?.rules ?? []),
       ...keepRule(own, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
     ]
+    // The file's kind, never its path (engine spec 013 R19): the
+    // environment-style credential rules apply, the test-file relaxation does not.
+    const fileKind = input.name ? fileKindOf(input.name) : undefined
     const masked = await mask(input.text, toPersist, {
       language,
       secrets: args.secrets,
       rules: rules.length ? rules : undefined,
+      ...(fileKind ? { fileKind } : {}),
     })
     if (!masked) return EXIT_ERROR
     const before = Object.keys(toPersist).length
@@ -440,7 +445,8 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
 
   const all: { file: string; finding: SecretFinding }[] = []
   for (const target of targets) {
-    for (const finding of detectSecrets(target.text)) {
+    const fileKind = target.name === '<stdin>' ? undefined : fileKindOf(target.name)
+    for (const finding of detectSecrets(target.text, fileKind ? { fileKind } : {})) {
       all.push({ file: target.name, finding })
     }
   }

@@ -45,7 +45,7 @@ import {
   survivingSecrets,
 } from './scrub.ts'
 import type { MaskContext, ScanResult } from './scrub.ts'
-import { restore, scanSecrets } from '../vendor/engine/index.js'
+import { fileKindOf, restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { wholeEntries } from './listings.ts'
 
@@ -849,6 +849,9 @@ export class Guard {
       return this.maskMessage(strip(raw), args, deadline, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
+    // The file's kind, never its path (engine spec 013 R19): the
+    // environment-style credential rules apply, the test-file relaxation does not.
+    const fileKind = filePath ? fileKindOf(filePath) : undefined
     outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
@@ -857,7 +860,7 @@ export class Guard {
       sent.push(s)
       return s
     })
-    this.destroyed.learn(destroyedValues(sent, this.map))
+    this.destroyed.learn(destroyedValues(sent, this.map, undefined, fileKind))
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -886,7 +889,9 @@ export class Guard {
           : fn(s, ctx)
       // Swept already, above: each string is scanned once here.
       const apply = (s: string) =>
-        perLine(s, (t, c) => applyMap(t, working, c, { known: this.destroyed, swept: true }))
+        perLine(s, (t, c) =>
+          applyMap(t, working, c, { known: this.destroyed, swept: true, fileKind })
+        )
       // A listed field, already scanned for credentials as written, only has
       // the names the map has learned since replaced in the pass over every
       // string; every other field is masked in full. Told apart by where the
@@ -902,7 +907,7 @@ export class Guard {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
             if (field.mode === 'apply') return apply(s)
-            const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external)
+            const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external, fileKind)
             grow(working, scrubbed.additions)
             grow(additions, scrubbed.additions)
             return scrubbed.text
