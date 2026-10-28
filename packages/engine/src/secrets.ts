@@ -500,13 +500,14 @@ const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
 const DIFF = '[+\\- ]?'
 
 /** Quoted values in the new rules (security reviews of 11f2d20, 1bde3ab,
- *  2bc28d4 and the review of f26b887): no length cap; a double-quoted one
- *  honours backslash escapes, a YAML single-quoted one `''`. A closed quote
- *  may span lines, as dotenv and YAML allow, but never past a line that starts
- *  a new assignment (`NAME=`, `key:`): a quote that does not close before one
- *  takes the rest of its own line instead, so a stray quote never destroys the
- *  next keys. A quote spans at most 16 KB. Linear: each alternative starts on
- *  its own character. */
+ *  2bc28d4, 123730b and the review of f26b887): up to 16 KB, a double-quoted
+ *  one honouring backslash escapes, a YAML single-quoted one `''`. A closed
+ *  quote may span lines, as dotenv and YAML allow, but never past a line that
+ *  starts a new assignment (`NAME=`, `key:`, any accepted prefix): a quote
+ *  that does not close before one, or within 16 KB, takes the rest of its own
+ *  line instead, so a stray quote never destroys the next keys. A multi-line
+ *  value past 16 KB is read to the end of its first line (research R18).
+ *  Linear: each alternative starts on its own character. */
 const NEXT_LINE =
   '\\n(?![ \\t]*[-+]?[ \\t]*(?:(?:export|set|ENV|ARG|readonly|local|declare[ \\t]+-x)[ \\t]+)?["\']?[A-Za-z_][\\w.-]*["\']?[ \\t]*[=:])'
 const ENV_DQ = `"((?:[^"\\\\\\n]|\\\\.|${NEXT_LINE}){0,16384})"`

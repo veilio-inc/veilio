@@ -354,6 +354,7 @@ describe('engine: environment-style forms not covered yet (R18)', () => {
   it.todo('the body of a YAML block scalar after DB_PASSWORD: >-')
   it.todo('the Kubernetes pair - name: DB_PASSWORD / value: v')
   it.todo('a quoted value spanning lines whose next line looks like an assignment (NAME= or key:)')
+  it.todo('a multi-line quoted value past 16 KB: read to the end of its first line')
   it.todo("the fixed names' own rule past 256 characters with no path, as 1.12.1")
 })
 
