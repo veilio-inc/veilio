@@ -351,9 +351,7 @@ describe('engine: environment-style forms not covered yet (R18)', () => {
   it.todo('PowerShell $env:DB_PASSWORD, cmd set, fish set -x, setx, Dockerfile ENV DB_PASSWORD v')
   it.todo('the body of a YAML block scalar after DB_PASSWORD: >-')
   it.todo('the Kubernetes pair - name: DB_PASSWORD / value: v')
-  it.todo(
-    'a quoted value spanning lines (dotenv and YAML allow it); one line is read, review of f26b887'
-  )
+  it.todo('a quoted value spanning lines whose next line looks like an assignment (NAME= or key:)')
   it.todo("the fixed names' own rule past 256 characters with no path, as 1.12.1")
 })
 
@@ -666,5 +664,36 @@ describe('engine 1.13.0: review of f26b887', () => {
   it('an indented YAML list item - NAME: v', () => {
     const r = anonymize('env:\n  - DB_PASSWORD: Xk9mQ2vL7pZq\n', { fileKind: 'yaml' })
     expect(leaked(r, /Xk9mQ2vL7pZq/)).toBe(false)
+  })
+})
+
+describe('engine 1.13.0: security review of 2bc28d4', () => {
+  it('a value starting with / is a path only when it reads as one', () => {
+    for (const t of ['DB_PASSWORD=/Tr0ub4dor!zebra#91\n', 'API_TOKEN=/xK9mQ2vL7pZq\n'])
+      expect(leaked(anonymize(t, { fileKind: 'dotenv' }), /Tr0ub4dor|xK9mQ2vL7pZq/), t).toBe(false)
+    for (const t of ['SIGNING_KEY=/run/secrets/sign\n', 'JWT_PRIVATE_KEY=/keys/jwt.pem\n'])
+      expect(anonymize(t, { fileKind: 'dotenv' }).anonymized, t).not.toMatch(REDACTED)
+  })
+
+  it('a closed quote spans lines until a line starts a new assignment', () => {
+    const ml = anonymize('DB_PASSWORD="Tr0ub4dor\nzebra91\nquokka77"\nAPP=1\n', {
+      fileKind: 'dotenv',
+    })
+    expect(leaked(ml, /Tr0ub4dor|zebra91|quokka77/), ml.anonymized).toBe(false)
+    expect(ml.anonymized).toMatch(/\nAPP=1\n$/)
+    const y = anonymize('DB_PASSWORD: "Tr0ub4dor\n  zebra91 quokka77"\nother: 1\n', {
+      fileKind: 'yaml',
+    })
+    expect(leaked(y, /Tr0ub4dor|zebra91|quokka77/), y.anonymized).toBe(false)
+    const stray = anonymize("API_TOKEN='abc\nDATABASE_URL=postgres://db/app\nDEBUG='1'\n", {
+      fileKind: 'dotenv',
+    })
+    expect(stray.anonymized).toMatch(/\nDATABASE_URL=\S+\nDEBUG='1'\n$/)
+  })
+
+  it('in a shell file a fixed name takes a long value whole', () => {
+    const long = Array.from({ length: 700 }, (_, i) => `q${i}z`).join('-')
+    const r = anonymize(`export PGPASSWORD=${long}\npsql\n`, { fileKind: 'shell' })
+    expect(leaked(r, /q699z|q350z/)).toBe(false)
   })
 })

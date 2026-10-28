@@ -499,16 +499,18 @@ const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
  *  as the lines it holds: `+DB_PASSWORD=…` is an assignment too. Only adds. */
 const DIFF = '[+\\- ]?'
 
-/** Quoted values in the new rules (security reviews of 11f2d20, 1bde3ab and
- *  the review of f26b887): no length cap, so a long quoted value is never left
- *  in the map; a double-quoted one honours backslash escapes, a YAML
- *  single-quoted one `''`. One line only: a quote that does not close on its
- *  line takes the rest of that line, never the lines after it (multi-line
- *  quoted values are research R18). Linear. */
-const ENV_DQ = '"((?:[^"\\\\\\n]|\\\\.)*)"'
-const ENV_SQ = "'([^'\\n]*)'"
+/** Quoted values in the new rules (security reviews of 11f2d20, 1bde3ab,
+ *  2bc28d4 and the review of f26b887): no length cap; a double-quoted one
+ *  honours backslash escapes, a YAML single-quoted one `''`. A closed quote
+ *  may span lines, as dotenv and YAML allow, but never past a line that starts
+ *  a new assignment (`NAME=`, `key:`): a quote that does not close before one
+ *  takes the rest of its own line instead, so a stray quote never destroys the
+ *  next keys. Linear: each alternative starts on its own character. */
+const NEXT_LINE = '\\n(?![ \\t]*[-+]?[ \\t]*["\']?[A-Za-z_][\\w.-]*["\']?[ \\t]*[=:])'
+const ENV_DQ = `"((?:[^"\\\\\\n]|\\\\.|${NEXT_LINE})*)"`
+const ENV_SQ = `'((?:[^'\\n]|${NEXT_LINE})*)'`
 const YAML_DQ = ENV_DQ
-const YAML_SQ = "'((?:[^'\\n]|'')*)'"
+const YAML_SQ = `'((?:[^'\\n]|''|${NEXT_LINE})*)'`
 const UNCLOSED = '(["\'][^\\n]*)'
 
 /** A convention name's value that is not a credential (review of f26b887): a
@@ -519,7 +521,14 @@ const UNCLOSED = '(["\'][^\\n]*)'
 function conventionValue(value: string): boolean {
   const v = value.replace(/^["']/, '')
   if (/^(?:\$\(|`)/.test(v)) return false
-  if (/^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?[\\/][^\s]*$/.test(v)) return false
+  // A path reads as one: two or more clean segments, or a key file's extension.
+  if (
+    /^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?(?:[\\/][\w.-]+){2,}[\\/]?$/.test(v) ||
+    /^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?(?:[\\/][\w.-]+)+\.(?:pem|key|asc|p12|pfx|crt|der|jks|keystore|pub|json)$/i.test(
+      v
+    )
+  )
+    return false
   return value.length >= 6
 }
 
@@ -575,19 +584,19 @@ function envRules(): Pattern[] {
       only: (scan) => scan.yaml,
       validate: (v) => value(v),
     })
-    // shell and Dockerfile: NAME=v after export, ENV and the like, in shell
-    // grammar. Fixed names are R2's anywhere on a line already.
-    if (!fixed)
-      rules.push({
-        ...base,
-        re: new RegExp(
-          `^${DIFF}[ \\t]*(?:(?:export|declare[ \\t]+-x|readonly|local|ENV|ARG)[ \\t]+)?(?:${names})=(?:${PH}|${DQ}(?=[\\s;&|]|$)|${SQ}(?=[\\s;&|]|$)|${SHELL_WORD})`,
-          'gm'
-        ),
-        groups: [1, 2, 3],
-        only: (scan) => scan.shell,
-        validate: (v) => value(v),
-      })
+    // shell and Dockerfile: NAME=v after export, ENV and the like, one shell
+    // word of any length. Fixed names too: R2's own rule keeps 1.12.1's
+    // 256-character grammar for text with no file kind.
+    rules.push({
+      ...base,
+      re: new RegExp(
+        `^${DIFF}[ \\t]*(?:(?:export|declare[ \\t]+-x|readonly|local|ENV|ARG)[ \\t]+)?(?:${names})=(?:${PH}|${DQ}(?=[\\s;&|]|$)|${SQ}(?=[\\s;&|]|$)|${SHELL_WORD})`,
+        'gm'
+      ),
+      groups: [1, 2, 3],
+      only: (scan) => scan.shell,
+      validate: (v) => value(v),
+    })
   }
   return rules
 }
