@@ -163,7 +163,32 @@ types into one:
 - well-known password environment variables: `PGPASSWORD`, `MYSQL_PWD`,
   `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MSSQL_SA_PASSWORD`,
   `REDISCLI_AUTH`, `SSHPASS` and others, in shell, dotenv, compose and
-  PowerShell forms;
+  PowerShell forms, a value of any length (a bare YAML block indicator such as
+  `|` or `>-` is not a value);
+- in a dotenv file (`.env`, `.env.<word>`, `*.env`), a YAML file and a shell
+  script or Dockerfile - known from `options.path` or `options.fileKind` - any other environment-style
+  name that is, or ends in, a credential word (`DB_PASSWORD`,
+  `STRIPE_SECRET_KEY`, `GITHUB_TOKEN`, `SECRET_KEY`, `APP_PASSPHRASE`,
+  `…_API_KEY`, `…_ENCRYPTION_KEY`, `…_CLIENT_SECRET` and the like; not a bare
+  `…_KEY`, `PWD`, `PASS` or `…_CREDENTIALS`, which hold paths), at the start of
+  a line: `NAME=v` and `NAME = v` in dotenv (any case), `NAME: v` and a compose
+  `- NAME=v` item in YAML, and `NAME=v` after `export`, `declare -x`,
+  `readonly`, `local`, `ENV` or `ARG` in a script. In dotenv and YAML the value
+  is the rest of the line minus a ` # comment`; in a script one shell word.
+  YAML syntax (`|`, `>`, a bare `!tag`, `&anchor` or `*alias`) is never a
+  value. Unlike the fixed names above, the value is judged exactly as the quoted
+  `password = "…"` form is: a strong value is redacted (a passphrase and a
+  number of 8 or more digits included); a boolean, a short number and a
+  reference (`${DB_PASSWORD}`, `$X`) stay; a weak value is handled as the quoted
+  form handles it - reported as a possible credential and left as written, or,
+  when it is shorter than 8 characters or a default word, masked as a name. A
+  file kind therefore never relaxes a test file, but it can turn a weak value
+  that was masked as a name into one reported and left as written. A
+  unified-diff line (`+`, `-` or a space first) is read as the line it holds. Without a `path` or `fileKind`, and in source, Markdown or other
+  files, these names are read as before. Not covered yet: assignments in the
+  middle of a line (`docker run -e NAME=v`), PowerShell `$env:`, cmd `set`,
+  fish `set -x`, `setx`, the body of a YAML block scalar, and the Kubernetes
+  `name:` / `value:` pair;
 - the password in URL userinfo (`scheme://user:password@host`, the user may be
   empty), never the user or the host;
 - auth headers: `Authorization` / `Proxy-Authorization` with `Bearer` from 8
@@ -276,6 +301,10 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
+  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'`, for a caller that
+    knows the file but passes no `path` (`fileKindOf(path)`): turns on the
+    environment-style credential rules for that kind and nothing else - it
+    never relaxes a test file. Wins over the kind a `path` implies
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
   - `options.rules` — whitelist / named-replacement rules
@@ -370,13 +399,16 @@ thrown on. It stays in the map and applies again where it is valid.
   mark is undone, say)
 - `detectSecrets(code, options?)` → `SecretFinding[]` — scan without modifying
 - `scanSecrets(code, policy?, options?)` → `{ findings, code, regulated }` —
-  `options.path` and `options.root` as for `anonymize`; `regulated`
+  `options.path`, `options.root` and `options.fileKind` as for `anonymize`; `regulated`
   holds the values handed to the masking pass; `anonymize` calls this first and
   masks them itself, so a caller doing its own masking is the only one that needs
   the field
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
+- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `undefined`: the
+  file kind the engine reads a path as (`.env`, `.env.local`, `*.env`; `.yml`;
+  `.sh`, a Dockerfile, shell rc files) - not `.env.ts` or `.env.example.json`
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`

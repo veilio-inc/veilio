@@ -12,7 +12,7 @@ import type { AnonymizeOptions, RestoreOptions, SymbolMap } from '../src/types.j
 // options, anything else throws.
 
 const CODE = 'class PaymentService { charge(amount) { return amount } }'
-const VALID = 'existingMap, rules, manual, language, secrets, path, root'
+const VALID = 'existingMap, rules, manual, language, secrets, path, root, fileKind'
 
 /** Call with an object the type system would refuse, as a JS caller can. */
 const loose = (o: object) => o as unknown as AnonymizeOptions
@@ -155,10 +155,10 @@ describe('scanSecrets and detectSecrets refuse an option they do not know', () =
   it('throws on a misspelt path', () => {
     const bad = { file: 'tests/x.test.ts' } as unknown as { path?: string }
     expect(() => scanSecrets('x', 'redact', bad)).toThrow(
-      "scanSecrets: unknown option 'file'. Valid options: path, root."
+      "scanSecrets: unknown option 'file'. Valid options: path, root, fileKind."
     )
     expect(() => detectSecrets('x', bad)).toThrow(
-      "detectSecrets: unknown option 'file'. Valid options: path, root."
+      "detectSecrets: unknown option 'file'. Valid options: path, root, fileKind."
     )
   })
   it('accepts { path } and {}', () => {
