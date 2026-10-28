@@ -174,4 +174,8 @@ export interface AnonymizeOptions {
     /** The project root, for an absolute `path`: only folders inside it count
      *  as test or example folders. */
     root?: string;
+    /** The file's kind (`fileKindOf(path)`), for a caller that passes no
+     *  `path`: credentials assigned to environment-style names are found in
+     *  dotenv, YAML and shell text. Never relaxes a test file. */
+    fileKind?: 'dotenv' | 'yaml' | 'shell';
 }

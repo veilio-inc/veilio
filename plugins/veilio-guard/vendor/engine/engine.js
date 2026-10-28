@@ -682,6 +682,7 @@ const ANONYMIZE_OPTIONS = optionKeys({
     secrets: true,
     path: true,
     root: true,
+    fileKind: true,
 });
 const RESTORE_OPTIONS = optionKeys({ strip: true });
 /** `map` without the entries whose real value is a credential: one that is a
@@ -924,7 +925,7 @@ function resolveAnonymizeOptions(options) {
 export function anonymize(code, options = {}) {
     // Unknown keys throw; see resolveAnonymizeOptions.
     const opts = resolveAnonymizeOptions(options);
-    const where = { path: opts.path, root: opts.root };
+    const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind };
     // Every credential in the text as given, whatever the policy.
     const found = credentialSpans(code, where);
     // A credential never goes into the map, in any `secrets` mode (founder

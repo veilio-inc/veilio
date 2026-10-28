@@ -330,12 +330,28 @@ describe('redaction by context (decision 6)', () => {
   // with no path, reported in tests and examples. Strong: redacted everywhere.
   const STRONG = 'Xk9#mQ2vL7pZ'
   const STRONG_B64 = 'YWRtaW46WGs5I21RMnZMN3Ba' // admin:Xk9#mQ2vL7pZ
-  const rules: { name: string; template: string; weak: string; strong: string }[] = [
+  const rules: {
+    name: string
+    template: string
+    weak: string
+    strong: string
+    notIn?: string[]
+  }[] = [
     { name: 'mysql -p', template: 'mysql -u root -p§ shop', weak: 'hunter22', strong: STRONG },
     { name: '-P tool', template: 'sqlcmd -U sa -P §', weak: 'Passw0rd', strong: STRONG },
     { name: 'redis-cli -a', template: 'redis-cli -a § ping', weak: 'redis', strong: STRONG },
     { name: '--password', template: './tool --password=§', weak: 'hunter22', strong: STRONG },
-    { name: 'env', template: 'PGPASSWORD=§ psql', weak: 'postgres', strong: STRONG },
+    // The shell form, a command after the value: 1.12.1's reading, pinned with
+    // no path and in source. In a dotenv file the rest of the line is the
+    // value (spec 013 R17), so there the next template ends its line instead.
+    {
+      name: 'env',
+      template: 'PGPASSWORD=§ psql',
+      weak: 'postgres',
+      strong: STRONG,
+      notIn: ['.env.example'],
+    },
+    { name: 'env, dotenv line', template: 'PGPASSWORD=§\nAPP=1', weak: 'postgres', strong: STRONG },
     { name: 'userinfo', template: 'postgres://app:§@db/app', weak: 'postgres', strong: STRONG },
     {
       name: 'header Bearer',
@@ -364,7 +380,7 @@ describe('redaction by context (decision 6)', () => {
       expectRedacted(r.template, r.weak, 'src/config.ts')
       expectRedacted(r.template, r.weak)
     })
-    for (const path of exampleish) {
+    for (const path of exampleish.filter((p) => !r.notIn?.includes(p))) {
       it(`${r.name}: a weak value is only reported in ${path}`, () => {
         expectReportedOnly(r.template.replace('§', r.weak), path)
       })

@@ -154,6 +154,8 @@ interface Pattern {
    */
   /** `group` is the capture group the value came from, when the rule has groups. */
   validate?: (value: string, group?: number) => boolean
+  /** Only in files this answers true for (spec 013 R17: the dotenv grammar). */
+  only?: (scan: ScanContext) => boolean
 }
 
 // ─── Structural validators ───────────────────────────────────────────────────
@@ -366,6 +368,15 @@ const SQ = "'([^'\\n]{0,256})'"
  *  on different characters, so the repetition stays linear. */
 const BARE_UNIT = '(?:\\$\\{[^}\\n]{0,200}\\}|[^\\s"\'`;&|$]|\\$(?!\\{[^}\\n]{0,200}\\}))'
 const BARE = `((?:${BARE_UNIT}){1,256})`
+/** One shell word: bare units and quoted segments glued together
+ *  (`abc"def ghi"` is one word). Linear: each alternative starts on its own
+ *  character. */
+const SHELL_WORD = `((?:${BARE_UNIT}|"[^"\\n]*"|'[^'\\n]*')+)`
+/** A dotenv or YAML value: the rest of the line. A ` #` (whitespace, then #)
+ *  starts a comment, after an empty value too (`DB_PASSWORD= # later`); a `#`
+ *  glued to the value, or right after the `=`, is part of it; trailing spaces
+ *  are not. Linear: a run of spaces is consumed once and checked once. */
+const LINE_VALUE = `((?!["'])(?:[^\\s#]|(?<![ \\t])#)(?:[^\\s]|[ \\t]+(?=[^\\s#]))*)`
 // After a separating space a bare value that starts with `-` is the next flag.
 const BARE_ARG = `((?!-)(?:${BARE_UNIT}){1,256})`
 /** A command word: the name standing alone, then whitespace or a quote. */
@@ -399,6 +410,31 @@ const SEPARATED_P_CLIENTS = 'mongo|mongosh|mongodump|mongorestore|mongoexport|mo
 // `-P` is the password for these; for mysql it is the port.
 const DASH_CAP_P_TOOLS = 'sqlcmd|bcp|osql|isql|ipmitool'
 // research R2. Exact names; `*_FILE` variants hold paths and are not listed.
+/** Spec 013 R17: the credential words an environment-style name ends in -
+ *  one list, so the suffix and the standalone forms cannot drift apart. */
+const CREDENTIAL_WORDS = [
+  'PASSWORD',
+  'PASSWD',
+  'PASSPHRASE',
+  'SECRET',
+  'SECRET_KEY',
+  'API_KEY',
+  'APIKEY',
+  'ACCESS_KEY',
+  'PRIVATE_KEY',
+  'ENCRYPTION_KEY',
+  'SIGNING_KEY',
+  'JWT_KEY',
+  'TOKEN',
+  'ACCESS_TOKEN',
+  'AUTH_TOKEN',
+  'REFRESH_TOKEN',
+  'CLIENT_SECRET',
+].join('|')
+/** A name that is, or ends in, a credential word. `PWD` and `PASS` count only
+ *  as a suffix (`DB_PWD`, `SMTP_PASS`): alone they are a directory and a flag.
+ *  Linear: `^` anchors each attempt to a line start, and the run is read once. */
+const ENV_CREDENTIAL_NAME = `(?:[A-Z][A-Z0-9_]*_(?:PWD|PASS)|(?:[A-Z][A-Z0-9_]*_)?(?:${CREDENTIAL_WORDS}))`
 const PASSWORD_ENV =
   'PGPASSWORD|MYSQL_PWD|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MARIADB_ROOT_PASSWORD|' +
   'MARIADB_PASSWORD|POSTGRES_PASSWORD|MONGO_INITDB_ROOT_PASSWORD|RABBITMQ_DEFAULT_PASS|' +
@@ -412,6 +448,16 @@ const ARGV_GROUPS = [7, 8, 9]
 interface ScanContext {
   /** A test, fixture or example file (decision 6). */
   example: boolean
+  /** Which grammar a `NAME=value` line follows (spec 013 R17): in a dotenv
+   *  file the value runs to the end of the line; elsewhere, as in a shell,
+   *  whitespace ends it. */
+  dotenv: boolean
+  /** A YAML file: a compose `- NAME=value` item is a plain scalar to the end
+   *  of its line. */
+  yaml: boolean
+  /** A shell script or a Dockerfile: `NAME=v` after `export`, `ENV` and the
+   *  like, in shell grammar. */
+  shell: boolean
 }
 
 /**
@@ -431,6 +477,134 @@ function proseValue(value: string): boolean {
 
 // Patterns are written to be linear-time: no nested quantifiers over the same
 // character class, and bounded repetition wherever the input is attacker-shaped.
+/**
+ * Spec 013 R17: credentials assigned to environment-style names, in the file
+ * kinds whose grammar is unambiguous - dotenv, YAML and shell - and nowhere
+ * else: with no path, in source code or in prose the engine behaves as 1.12.1
+ * did (research R17, R18). Fixed names (R2's list) are a secret position,
+ * destroyed; convention names are judged like the generic assignment rule.
+ */
+/** A block indicator alone is never a value (`|`, `>-`, `|2`), for R2's
+ *  fixed names too: anything else after them, `!` or `*` first included, is. */
+const notBlockIndicator = (value: string): boolean =>
+  !/^[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.test(value)
+/** In a YAML file, YAML syntax is never a value: a block indicator, an alias,
+ *  or a bare tag or anchor. A tag or anchor before a value is stepped over by
+ *  the rule (YAML_PROPS) and the value after it judged. */
+const notYamlSyntax = (value: string): boolean =>
+  notBlockIndicator(value) && !/^(?:\*\S+|&\S+|!\S*)$/.test(value)
+const YAML_PROPS = '(?:(?:&[^\\s]+|![^\\s]*)[ \\t]+)*'
+
+/** A unified-diff line's first character (`+`, `-`, a space), so a patch reads
+ *  as the lines it holds: `+DB_PASSWORD=…` is an assignment too. Only adds. */
+const DIFF = '[+\\- ]?'
+
+/** Quoted values in the new rules (security reviews of 11f2d20, 1bde3ab,
+ *  2bc28d4, 123730b and the review of f26b887): up to 16 KB, a double-quoted
+ *  one honouring backslash escapes, a YAML single-quoted one `''`. A closed
+ *  quote may span lines, as dotenv and YAML allow, but never past a line that
+ *  starts a new assignment (`NAME=`, `key:`, any accepted prefix): a quote
+ *  that does not close before one, or within 16 KB, takes the rest of its own
+ *  line instead, so a stray quote never destroys the next keys. A multi-line
+ *  value past 16 KB is read to the end of its first line (research R18).
+ *  Linear: each alternative starts on its own character. */
+const NEXT_LINE =
+  '\\n(?![ \\t]*[-+]?[ \\t]*(?:(?:export|set|ENV|ARG|readonly|local|declare[ \\t]+-x)[ \\t]+)?["\']?[A-Za-z_][\\w.-]*["\']?[ \\t]*[=:])'
+const ENV_DQ = `"((?:[^"\\\\\\n]|\\\\.|${NEXT_LINE}){0,16384})"`
+const ENV_SQ = `'((?:[^'\\n]|${NEXT_LINE}){0,16384})'`
+const YAML_DQ = ENV_DQ
+const YAML_SQ = `'((?:[^'\\n]|''|${NEXT_LINE}){0,16384})'`
+const UNCLOSED = '(["\'][^\\n]*)'
+
+/** A convention name's value that is not a credential (review of f26b887): a
+ *  file path or a reference to one (`./keys/jwt.pem`, `~/.ssh/id`,
+ *  `$HOME/key.asc`, `${PWD}/certs/sign.pem`); a shell command substitution
+ *  (`"$(openssl rand …)"`, a backtick); or, as the quoted generic rule reads
+ *  it, a value under 6 characters (`true`, `4096`, `on`, `~`). */
+function conventionValue(value: string): boolean {
+  const v = value.replace(/^["']/, '')
+  if (/^(?:\$\(|`)/.test(v)) return false
+  // A path reads as one: two or more clean segments, or a key file's extension.
+  if (
+    /^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?(?:[\\/][\w.-]+){2,}[\\/]?$/.test(v) ||
+    /^(?:~|\.{1,2}|\$\{?[A-Za-z_]\w*\}?|[A-Za-z]:)?(?:[\\/][\w.-]+)+\.(?:pem|key|asc|p12|pfx|crt|der|jks|keystore|pub|json)$/i.test(
+      v
+    )
+  )
+    return false
+  return value.length >= 6
+}
+
+function envRules(): Pattern[] {
+  const classes = [
+    { names: PASSWORD_ENV, fixed: true },
+    { names: ENV_CREDENTIAL_NAME, fixed: false },
+  ]
+  const rules: Pattern[] = []
+  for (const { names, fixed } of classes) {
+    const base = {
+      type: 'password-assignment' as const,
+      disposition: 'destroy' as const,
+      severity: 'medium' as const,
+      label: fixed
+        ? 'Password in an environment variable'
+        : 'Credential in an environment variable',
+      ...(fixed ? { position: true as const } : {}),
+    }
+    // Fixed names: a credential whatever the value. Convention names: judged.
+    const value = (v: string) => fixed || conventionValue(v)
+    // dotenv: NAME=v, NAME = v, optional export - the rest of the line.
+    // Convention names in any case there (dotenv keys are not always upper case).
+    rules.push({
+      ...base,
+      re: new RegExp(
+        `^${DIFF}[ \\t]*(?:export[ \\t]+)?["']?(?:${names})["']?[ \\t]*=[ \\t]*(?:${PH}|${ENV_DQ}|${ENV_SQ}|${LINE_VALUE}|${UNCLOSED})`,
+        fixed ? 'gm' : 'gmi'
+      ),
+      groups: [1, 2, 3, 4],
+      only: (scan) => scan.dotenv,
+      validate: (v) => value(v),
+    })
+    // YAML: NAME: v - the rest of the line, never YAML syntax.
+    rules.push({
+      ...base,
+      re: new RegExp(
+        `^${DIFF}[ \\t]*(?:-[ \\t]+)?["']?(?:${names})["']?[ \\t]*:[ \\t]*${YAML_PROPS}(?:${PH}|${YAML_DQ}|${YAML_SQ}|${LINE_VALUE}|${UNCLOSED})`,
+        'gm'
+      ),
+      groups: [1, 2, 3, 4],
+      only: (scan) => scan.yaml,
+      validate: (v, group) => (group !== 3 || notYamlSyntax(v)) && value(v),
+    })
+    // YAML compose list: - NAME=v, - "NAME=v", - 'NAME=v' (the quote kept).
+    rules.push({
+      ...base,
+      re: new RegExp(
+        `^${DIFF}[ \\t]*-[ \\t]+(?:"(?:${names})=([^"\\n]+)"|'(?:${names})=([^'\\n]+)'|(?:${names})=(?:${PH}|${LINE_VALUE})|["'](?:${names})=([^\\n]+))`,
+        'gm'
+      ),
+      groups: [1, 2, 3, 4],
+      only: (scan) => scan.yaml,
+      validate: (v) => value(v),
+    })
+    // shell and Dockerfile: NAME=v after export, ENV and the like, one shell
+    // word of any length. Fixed names too: R2's own rule keeps 1.12.1's
+    // 256-character grammar for text with no file kind.
+    rules.push({
+      ...base,
+      re: new RegExp(
+        `^${DIFF}[ \\t]*(?:(?:export|declare[ \\t]+-x|readonly|local|ENV|ARG)[ \\t]+)?(?:${names})=(?:${PH}|${DQ}(?=[\\s;&|]|$)|${SQ}(?=[\\s;&|]|$)|${SHELL_WORD})`,
+        'gm'
+      ),
+      groups: [1, 2, 3],
+      only: (scan) => scan.shell,
+      validate: (v) => value(v),
+    })
+  }
+  return rules
+}
+const ENV_RULES = envRules()
+
 const PATTERNS: Pattern[] = [
   {
     type: 'private-key',
@@ -800,7 +974,11 @@ const PATTERNS: Pattern[] = [
     ),
     groups: [1, 2, 3, 4, 5, 6],
     position: true,
+    // A bare YAML block indicator after `NAME:` is not the value (spec 013 R17);
+    // a quoted or `=` value starting with `>` or `|` is, as on 1.12.1.
+    validate: (value, group) => group !== 6 || notBlockIndicator(value),
   },
+  ...ENV_RULES,
   {
     type: 'connection-string',
     disposition: 'destroy',
@@ -1236,6 +1414,7 @@ function positionOf(starts: number[], offset: number): { line: number; column: n
 function collectMatches(code: string, scan: ScanContext): RawMatch[] {
   const found: RawMatch[] = []
   for (const pattern of PATTERNS) {
+    if (pattern.only !== undefined && !pattern.only(scan)) continue
     // The only two patterns that read their value out of an assignment, and so
     // the only two where an ordinary configuration word is a plausible reading
     // of what matched. A secret-position rule shares a type with them but not
@@ -1551,6 +1730,42 @@ export const REDACTION_TOKENS = new RegExp(
     .join('|')})__`,
   'g'
 )
+/** A file kind whose assignment grammar the engine reads (spec 013 R17):
+ *  credentials assigned to environment-style names are found in these. */
+export type FileKind = 'dotenv' | 'yaml' | 'shell'
+
+/**
+ * The file kind of `path`, as the engine reads it, or undefined for any other
+ * file (spec 013 R19). Clients pass the result as `fileKind` instead of the
+ * path: a kind only adds rules, it never relaxes one, so the test-file
+ * relaxation that a `path` brings stays off.
+ * - dotenv: `.env`, `.env.<word>` (`.env.local`, `.env.production`) and
+ *   `*.env`, in any case - not `.env.ts`, `.env.d.ts` or `.env.example.json`,
+ *   which are code or data;
+ * - YAML: `.yml`, `.yaml`;
+ * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files.
+ */
+const CODE_EXTENSIONS =
+  /^(?:[cm]?[jt]sx?|json|jsonc|toml|py|pyi|rb|go|java|kt|kts|scala|rs|swift|dart|exs?|lua|php|cs|fs|c|cc|cpp|h|hpp|m|mm|vue|svelte|md|mdx|rst|html|xml|sql|r|pl|ps1)$/i
+
+export function fileKindOf(path: string): FileKind | undefined {
+  const name = path.split(/[\\/]/).pop() ?? ''
+  const last = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : ''
+  // Never a code, data or document file, whatever its name starts with
+  // (`dockerfile.py`, `Dockerfile.test.ts`, `.env.rs`, `.env.md`).
+  if (last && CODE_EXTENSIONS.test(last)) return undefined
+  if (/\.ya?ml$/i.test(name)) return 'yaml'
+  if (
+    /\.(?:sh|bash|zsh|ksh)$/i.test(name) ||
+    /^Dockerfile(?:\..*)?$|\.dockerfile$/i.test(name) ||
+    /^\.(?:envrc|bashrc|zshrc|profile|bash_profile|zprofile)$/i.test(name)
+  )
+    return 'shell'
+  // `.env`, `*.env`, and `.env.<anything>` - `.env.local`, `.env.txt`, a `~` backup.
+  if (/\.env$/i.test(name) || /^\.env\./i.test(name)) return 'dotenv'
+  return undefined
+}
+
 /** Where the scanned text comes from. */
 export interface ScanOptions {
   /** The file the text was read from. In a test, fixture or example file
@@ -1560,13 +1775,31 @@ export interface ScanOptions {
   /** The project root, for an absolute `path`: only folders inside it count
    *  as test or example folders. */
   root?: string
+  /** The file's kind, when the caller knows it but passes no `path`
+   *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
+   *  else. Adds to the kind a `path` implies; it never replaces it. */
+  fileKind?: FileKind
 }
 
-const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true })
+const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true, fileKind: true })
+
+const FILE_KINDS: ReadonlySet<string> = new Set(['dotenv', 'yaml', 'shell'])
 
 function scanContext(options: ScanOptions): ScanContext {
   const path = options.path
-  return { example: path !== undefined && isExamplePath(path, options.root) }
+  if (options.fileKind !== undefined && !FILE_KINDS.has(options.fileKind))
+    throw new TypeError(
+      `unknown fileKind '${String(options.fileKind)}'. Valid: ${[...FILE_KINDS].join(', ')}.`
+    )
+  // An explicit kind adds to the one the path implies; it never replaces it,
+  // so no kind can turn a rule off.
+  const kinds = new Set([options.fileKind, path === undefined ? undefined : fileKindOf(path)])
+  return {
+    example: path !== undefined && isExamplePath(path, options.root),
+    dotenv: kinds.has('dotenv'),
+    yaml: kinds.has('yaml'),
+    shell: kinds.has('shell'),
+  }
 }
 
 /**

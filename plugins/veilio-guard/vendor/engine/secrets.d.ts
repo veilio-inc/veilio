@@ -151,6 +151,10 @@ export declare function blocksPaste(type: SecretType): boolean;
  *  (`__REDACTED_IBAN__`, from the type's name: veilio-guard lib/scrub.ts),
  *  whole and of a known kind. */
 export declare const REDACTION_TOKENS: RegExp;
+/** A file kind whose assignment grammar the engine reads (spec 013 R17):
+ *  credentials assigned to environment-style names are found in these. */
+export type FileKind = 'dotenv' | 'yaml' | 'shell';
+export declare function fileKindOf(path: string): FileKind | undefined;
 /** Where the scanned text comes from. */
 export interface ScanOptions {
     /** The file the text was read from. In a test, fixture or example file
@@ -160,6 +164,10 @@ export interface ScanOptions {
     /** The project root, for an absolute `path`: only folders inside it count
      *  as test or example folders. */
     root?: string;
+    /** The file's kind, when the caller knows it but passes no `path`
+     *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
+     *  else. Adds to the kind a `path` implies; it never replaces it. */
+    fileKind?: FileKind;
 }
 /**
  * Where the credentials in `code` stand, whatever the policy: every value a
