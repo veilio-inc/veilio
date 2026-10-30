@@ -111,4 +111,15 @@ describe('this member’s own renumbered placeholders', () => {
     expect(r.out).toBe('call __FN__3()\n')
     expect(r.err).toMatch(/__FN__3/)
   })
+  it('a contested alias is left even when a team map names that placeholder (security review)', async () => {
+    await teammateMap({ __FN__3: 'teamsMeaning' })
+    addAliases(join(cwd, STORE_DIR, STORE_FILE), { __FN__3: 'chargeCard' })
+    saveMap(
+      join(cwd, STORE_DIR, STORE_FILE),
+      { __VAR__1: 'amount', __FN__3: 'refund' },
+      { force: true }
+    )
+    const r = await restore('call __FN__3()\n')
+    expect(r.out).toBe('call __FN__3()\n')
+  })
 })

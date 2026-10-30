@@ -367,7 +367,9 @@ export async function runRestore(
     return EXIT_ERROR
   }
   const layers = restoreLayers({ own, team })
-  const map = layers.map
+  // A contested placeholder is in no layer: not this member's, not the team's.
+  const map = { ...layers.map }
+  for (const p of contestedAll) delete map[p]
   // Spec 063: a number reserved by another member than its map's publisher is
   // left with its own reason, apart from the maps disputing one.
   const disputedAll = layers.disputedIn(source)

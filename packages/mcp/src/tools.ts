@@ -490,7 +490,10 @@ export const TOOLS: ToolDefinition[] = [
       const contested = contestedAll.filter((p) =>
         new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(text)
       )
-      const result = restore(text, layers.map)
+      // A contested placeholder is in no layer: not this member's, not the team's.
+      const restoreMap = { ...layers.map }
+      for (const p of contestedAll) delete restoreMap[p]
+      const result = restore(text, restoreMap)
       // Measured against this project's map, not the whole team layer (review),
       // and a placeholder left for a named reason is not "invented".
       const report: RestoreReport = {
