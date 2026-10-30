@@ -239,3 +239,24 @@ describe('renumbering never overwrites a meaning (security review, 2026-10-30)',
     }
   )
 })
+
+describe('a personal map keeps every meaning its owner used (journey j052, 2026-10-30)', () => {
+  beforeEach(() => {
+    cloud.recordsReservations = true
+  })
+
+  it('after a team publish renumbers, a personal update is not a drop, and the old placeholder stays in it', async () => {
+    cloud.vault = null
+    signIn(home, { team: true, pmk: true })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const personal = await run(['maps', 'push', 'mine-personal'])
+    expect(personal.code, personal.err).toBe(EXIT_OK)
+    const personalId = /as (\S+)/.exec(personal.out)?.[1] ?? ''
+    await teammateMap({ __FN__41: 'refund' })
+    const team = await run(['maps', 'push', '--team', 'mine'])
+    expect(team.code, team.err).toBe(EXIT_OK)
+    expect(loadAliases(mapPath())).toEqual({ __FN__41: 'payout' })
+    const update = await run(['maps', 'update', personalId])
+    expect(update.code, update.err).toBe(EXIT_OK)
+  })
+})

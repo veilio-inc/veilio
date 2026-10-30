@@ -797,13 +797,15 @@ export async function createCloudMap(
   // (research §1), so the MCP server can open them; under the vault key only
   // for an account that has none yet, as every personal map was before.
   const sealKey = keys.value.pmk ?? keys.value.vault!
-  const envelope = await encryptMapForVault(sealKey, map)
+  // With the old placeholders a team publish renumbered (see the update).
+  const withOld = { ...loadAliases(opts.mapPath), ...map }
+  const envelope = await encryptMapForVault(sealKey, withOld)
   let created: { id: string }
   try {
     created = await createMap(credential, {
       name,
       map_data: JSON.stringify(envelope),
-      identifier_count: count,
+      identifier_count: Object.keys(withOld).length,
       scope: 'personal',
     })
   } catch (err) {
@@ -927,6 +929,8 @@ export async function updateCloudMap(
 
   let sealed: { map_data: string; key_version?: number }
   let current: SymbolMap
+  /** What goes up: the local map, and for a personal map its aliases too. */
+  let uploaded: SymbolMap = local
   let notes: string[] = []
   if (team) {
     const keys = await teamKeys(credential, ctx)
@@ -964,6 +968,7 @@ export async function updateCloudMap(
     )
     if (!numbered.ok) return numbered
     local = numbered.value.map
+    uploaded = local
     const dropped = droppedBy(current, local)
     if (dropped.length > 0 && opts.allowDrop !== true)
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
@@ -984,20 +989,27 @@ export async function updateCloudMap(
     const opened = await openPersonal(keys.value, fetched.value.map_data, label)
     if (!opened.ok) return opened
     current = opened.value
-    const dropped = droppedBy(current, local)
+    // A personal map keeps every meaning its owner used: the old placeholders
+    // a team publish renumbered (aliases.json) go up with it, so text masked
+    // with them restores on any of the owner's machines - and an update after
+    // a renumbering is not a drop (journey j052, spec 063). Never checked
+    // against the team, so they clash with nothing. The project's own map is
+    // not changed.
+    uploaded = { ...loadAliases(opts.mapPath), ...local }
+    const dropped = droppedBy(current, uploaded)
     if (dropped.length > 0 && opts.allowDrop !== true)
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
     // An updated personal map is sealed under the personal-maps key - never
     // left under the vault key, or the MCP server could not open it (FR-011).
     if (!keys.value.pmk) return refuse('no_pmk_yet')
-    sealed = { map_data: JSON.stringify(await encryptMapForVault(keys.value.pmk, local)) }
+    sealed = { map_data: JSON.stringify(await encryptMapForVault(keys.value.pmk, uploaded)) }
   }
 
   let answer: { id: string; updated_at: string }
   try {
     answer = await updateMapContent(credential, id, {
       ...sealed,
-      identifier_count: Object.keys(local).length,
+      identifier_count: Object.keys(uploaded).length,
       if_updated_at: ifUpdatedAt,
     })
   } catch (err) {
@@ -1020,8 +1032,8 @@ export async function updateCloudMap(
     id,
     name: summary.name,
     scope: team ? 'team' : 'personal',
-    count: Object.keys(local).length,
-    dropped: droppedBy(current, local).length,
+    count: Object.keys(uploaded).length,
+    dropped: droppedBy(current, uploaded).length,
     updatedAt,
     notes,
   })
