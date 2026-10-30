@@ -1,5 +1,5 @@
 import { isOrdinaryWord } from './ordinaryWords.js';
-import { isEngineBase, isSafeRegex } from './rule-checks.js';
+import { isEngineBase } from './rule-checks.js';
 import { compileRulePattern } from './rule-pattern.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
 import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
@@ -670,8 +670,6 @@ export function extractIdentifiers(code, language = DEFAULT_LANGUAGE) {
     return Array.from(seen).sort((a, b) => b.length - a.length);
 }
 function isRunnableRule(r) {
-    if (!isSafeRegex(r.pattern))
-        return false;
     return r.type !== 'replace' || !isEngineBase(r.placeholder);
 }
 // Custom-rule patterns run on the engine's linear-time matcher, never on
@@ -957,8 +955,9 @@ export function anonymize(code, options = {}) {
     // mapped as a name, and the guard relies on it round-tripping.
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))));
     // Spec 065: a rule the server could once refuse is now sealed where it
-    // cannot see it, so the engine skips one it must not run - a catastrophic
-    // pattern, or a replace rule under an engine base - whoever sealed it.
+    // cannot see it, so the engine skips a replace rule under an engine base,
+    // whoever sealed it. A pattern its matcher cannot run never matches
+    // (safeMatch), so it needs no filter here.
     const rules = (opts.rules ?? []).filter(isRunnableRule);
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers

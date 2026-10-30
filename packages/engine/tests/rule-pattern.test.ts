@@ -91,6 +91,14 @@ describe('the same answers as the platform matcher, on the language it accepts',
     ['a|^b', 'bx', true],
     ['\\$', 'a$b', true],
     ['^\\t$', '\t', true],
+    // Mutation pass: overlapping class ranges must merge, or the binary search
+    // misses a member; and only an anchored list is a set of whole names.
+    ['^[a-zb-c]$', 'x', true],
+    ['^[^a-zb-c]$', 'x', false],
+    ['^[b-ca-z_]$', 'q', true],
+    ['a(?:x|y)b', 'axb', true],
+    ['a(?:x|y)b', 'x', false],
+    ['^(?:x|y)b$', 'yb', true],
   ])('%s on %j', (pattern, name, expected) => {
     expect(new RegExp(pattern).test(name)).toBe(expected)
     expect(test(pattern, name)).toBe(expected)
@@ -185,5 +193,16 @@ describe('cost and failure bounds', () => {
     expect(m.test('pkg_4999xv')).toBe(false)
     expect(m.test('pkg_5000.v')).toBe(false)
     expect(m.test('xpkg_1.v')).toBe(false)
+  })
+})
+
+describe('the work cap (mutation pass)', () => {
+  it('past it a test answers no match - the safe direction - instead of running long', () => {
+    const m = compileRulePattern('a{50}c')!
+    const name = 'a'.repeat(500_000) + 'c'
+    expect(new RegExp('a{50}c').test(name)).toBe(true)
+    const start = Date.now()
+    expect(m.test(name)).toBe(false)
+    expect(Date.now() - start).toBeLessThan(50)
   })
 })

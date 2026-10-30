@@ -1,5 +1,5 @@
 import { isOrdinaryWord } from './ordinaryWords.js'
-import { isEngineBase, isSafeRegex } from './rule-checks.js'
+import { isEngineBase } from './rule-checks.js'
 import { compileRulePattern, type RuleMatcher } from './rule-pattern.js'
 import type {
   AnonymizeOptions,
@@ -802,7 +802,6 @@ export function extractIdentifiers(code: string, language: Language = DEFAULT_LA
 }
 
 function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
-  if (!isSafeRegex(r.pattern)) return false
   return r.type !== 'replace' || !isEngineBase(r.placeholder)
 }
 
@@ -1126,8 +1125,9 @@ export function anonymize(
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)))
   )
   // Spec 065: a rule the server could once refuse is now sealed where it
-  // cannot see it, so the engine skips one it must not run - a catastrophic
-  // pattern, or a replace rule under an engine base - whoever sealed it.
+  // cannot see it, so the engine skips a replace rule under an engine base,
+  // whoever sealed it. A pattern its matcher cannot run never matches
+  // (safeMatch), so it needs no filter here.
   const rules = (opts.rules ?? []).filter(isRunnableRule)
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
