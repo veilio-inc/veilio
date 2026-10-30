@@ -389,17 +389,21 @@ function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): Sy
 // replace rule, a manual mask or a redaction made (any other base) was masked
 // on purpose and stays masked, whatever word it is (security review).
 const ROLE_PLACEHOLDER = /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/
-const views = new WeakMap<SymbolMap, { version: number; view: SymbolMap }>()
+const views = new WeakMap<SymbolMap, { version: number; fingerprint: string; view: SymbolMap }>()
 function readableView(map: SymbolMap): SymbolMap {
   // Keyed on the map and its version, as the matcher is: grow() is the only
-  // mutator, so nothing is counted on each call (code review).
+  // mutator, so nothing is counted on each call (code review). The matcher is
+  // then built on the view, not the map, so the strict check runs here.
   const version = versionOf(map)
   const cached = views.get(map)
-  if (cached && cached.version === version) return cached.view
+  if (cached && cached.version === version) {
+    checkGrown(map, cached.fingerprint)
+    return cached.view
+  }
   const view: SymbolMap = {}
   for (const [p, name] of Object.entries(map))
     if (!(ROLE_PLACEHOLDER.test(p) && isOrdinaryWord(name))) view[p] = name
-  views.set(map, { version, view })
+  views.set(map, { version, fingerprint: strictMaps() ? fingerprintOf(map) : '', view })
   return view
 }
 
