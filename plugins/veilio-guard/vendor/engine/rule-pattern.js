@@ -17,6 +17,10 @@
 /** Bounds on what a pattern may expand to. */
 const MAX_BOUND = 50;
 const MAX_STATES = 10_000;
+/** Build steps, at most. Nested repeats of an empty group create no states,
+ *  so the state cap alone never trips, while compiling them walks the tree
+ *  50^depth times (fifth security review). */
+const MAX_BUILD_STEPS = 100_000;
 /** A name this long times the pattern's states is the most work one test may
  *  do. Past it the test answers "no match" - a whitelist does not keep the
  *  name readable and a replace rule does not rename it, so the engine masks
@@ -286,8 +290,11 @@ function compile(root) {
             preds.set(r, (p = predOf(r)));
         return p;
     };
+    let steps = 0;
     // Continuation style: build `node` so that it continues to state `next`.
     const build = (node, next) => {
+        if (++steps > MAX_BUILD_STEPS)
+            throw new Unsupported('a pattern too large');
         switch (node.t) {
             case 'char':
                 return add({ k: 'char', p: predFor(node.r), out: next });

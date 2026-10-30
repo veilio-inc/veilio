@@ -206,3 +206,22 @@ describe('the work cap (mutation pass)', () => {
     expect(Date.now() - start).toBeLessThan(50)
   })
 })
+
+// Fifth security review (on the web copy): nested repeats of an empty group
+// create no states, so the state cap never trips, but compiling them walks
+// the tree 50^depth times. Every build step counts against a budget.
+describe('compiling is bounded too', () => {
+  it.each([
+    '(?:(?:(?:(?:){50}){50}){50}){50}',
+    '((((){50}){50}){50}){50}',
+    '(?:(?:(?:(?:a?){0}){50}){50}){50}',
+  ])('%s is refused quickly', (pattern) => {
+    const start = Date.now()
+    expect(compileRulePattern(pattern)).toBeNull()
+    expect(Date.now() - start).toBeLessThan(200)
+  })
+
+  it('a large but honest pattern still compiles', () => {
+    expect(compileRulePattern('(?:[a-z]{50}){50}')).not.toBeNull()
+  })
+})
