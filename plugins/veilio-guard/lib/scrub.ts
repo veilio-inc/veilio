@@ -69,7 +69,9 @@ export function highestPerKind(map: SymbolMap): Record<string, number> {
   const out: Record<string, number> = {}
   for (const p of Object.keys(map)) {
     const m = NUMBERED.exec(p)
-    if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+    if (!m) continue
+    const [, base = '', n = '0'] = m
+    if (Number(n) > (out[base] ?? 0)) out[base] = Number(n)
   }
   return out
 }
@@ -120,9 +122,9 @@ export function scrubSource(
     if (name.startsWith(FLOOR_MARKER) || map[placeholder] === name) continue
     additions[placeholder] = name
     if (!blocks) continue
-    const m = NUMBERED.exec(placeholder)
-    const b = m ? usable[m[1]] : undefined
-    if (!b || Number(m![2]) < b.start || Number(m![2]) > b.end) outside++
+    const [, base = '', n = '0'] = NUMBERED.exec(placeholder) ?? []
+    const b = usable[base]
+    if (!b || Number(n) < b.start || Number(n) > b.end) outside++
   }
   return { text: result.anonymized, additions, outside }
 }
