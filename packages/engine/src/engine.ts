@@ -1,4 +1,5 @@
 import { isOrdinaryWord } from './ordinaryWords.js'
+import { isEngineBase, isSafeRegex } from './rule-checks.js'
 import type {
   AnonymizeOptions,
   AnonymizeResult,
@@ -799,6 +800,11 @@ export function extractIdentifiers(code: string, language: Language = DEFAULT_LA
   return Array.from(seen).sort((a, b) => b.length - a.length)
 }
 
+function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
+  if (!isSafeRegex(r.pattern)) return false
+  return r.type !== 'replace' || !isEngineBase(r.placeholder)
+}
+
 function safeMatch(pattern: string, name: string): boolean {
   try {
     return new RegExp(pattern).test(name)
@@ -1106,7 +1112,10 @@ export function anonymize(
     // mapped as a name, and the guard relies on it round-tripping.
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)))
   )
-  const rules = opts.rules ?? []
+  // Spec 065: a rule the server could once refuse is now sealed where it
+  // cannot see it, so the engine skips one it must not run - a catastrophic
+  // pattern, or a replace rule under an engine base - whoever sealed it.
+  const rules = (opts.rules ?? []).filter(isRunnableRule)
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers

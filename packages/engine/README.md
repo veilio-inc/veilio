@@ -481,6 +481,25 @@ only, no dependency added.
 - `webCryptoSubtle()`, `randomBytes(n)`, `toBase64` / `fromBase64` — the small
   platform layer the above are built on
 
+### Custom rules sealed under your keys
+
+A custom rule (a name to keep readable, or a pattern to mask under your own
+placeholder) is sealed before it leaves your machine, under the same keys as
+your maps, so a server storing it cannot read it.
+
+- `sealRuleForVault(key, rule)` / `openRuleFromVault(key, envelope)` — a
+  personal rule under the personal-maps key
+- `sealTeamRule(teamKey, rule)` / `openTeamRule(keys, envelope)` — a team rule
+  under the team key, opened with whichever held version fits
+- opening returns `{ ok: true, rule }` or `{ ok: false, reason }`, never
+  throws on bad content: `unopenable` (wrong key, damaged), `not-a-rule`
+  (something else was sealed there), `refused` (a rule no tool may apply)
+- `ruleRefusal(rule)` → the sentence why a rule may not be saved or applied,
+  or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
+  for its own names) and `isSafeRegex(pattern)` (a heuristic guard against
+  patterns that backtrack catastrophically) are the two checks it makes.
+  `anonymize` itself skips a rule that fails either.
+
 A lost `.veilio` passphrase is not recoverable, by construction. Nothing here
 holds an escrow copy and nothing in the format allows one.
 

@@ -234,7 +234,10 @@ describe('anonymize — roles with existing maps and rules', () => {
     expect(Object.values(map)).toContain('loadSkerryKey')
   })
 
-  it('a custom rule sharing a role base shares its counter (documented behavior)', () => {
+  // Spec 065: a rule may no longer use an engine base. The server refused one
+  // from spec 064; rules are now sealed where the server cannot see them, so
+  // the engine skips such a rule itself and the name keeps its own role.
+  it('a custom rule under a role base is skipped: the name gets its own role', () => {
     const rr: CustomRuleReplace = {
       id: 'r2',
       scope: 'personal',
@@ -247,9 +250,9 @@ describe('anonymize — roles with existing maps and rules', () => {
       sort_order: 1,
     }
     const { map } = anonymize('specialThing = 1\nplainHelper()', { rules: [rr] })
-    const fnKeys = Object.keys(map).filter((k) => k.startsWith('__FN__'))
-    expect(fnKeys).toHaveLength(2)
-    expect(new Set(fnKeys).size).toBe(2) // no collision/overwrite
+    const placeholderOf = (name: string) => Object.entries(map).find(([, n]) => n === name)?.[0]
+    expect(placeholderOf('specialThing')).toMatch(/^__VAR__\d+$/)
+    expect(placeholderOf('plainHelper')).toMatch(/^__FN__\d+$/)
   })
 })
 
