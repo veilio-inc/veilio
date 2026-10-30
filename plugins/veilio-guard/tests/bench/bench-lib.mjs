@@ -86,3 +86,54 @@ export async function callTeam(team, hook, args) {
   if (!team) return {}
   return (await team[hook](args)) ?? {}
 }
+
+// What a session that must not read raw code may not call. Everything else in
+// TOOLS (Edit, Write, Glob, ls, the test runners) stays, so every arm can still
+// list files, write its fix and confirm it.
+const RAW_READS = ['Read', 'Grep', 'Bash(cat:*)', 'Bash(grep:*)']
+const withoutRawReads = (extra) =>
+  [...TOOLS.split(',').filter((t) => !RAW_READS.includes(t)), ...extra].join(',')
+
+/**
+ * How one arm's session is started, besides what every arm shares.
+ *
+ * - plain: no guard. guard-*: the guard plugin, the same tools.
+ * - mcp: no guard; code is read only through the Veilio MCP server's
+ *   anonymize_file, and a fix goes back through `veilio restore`.
+ * - cli: no guard; code is read only through `veilio scrub`, and a fix goes
+ *   back through `veilio restore`.
+ *
+ * The workflow text an mcp or cli session is given comes from the task list
+ * (`armPrompts`), so the bench itself says nothing about how a product is used.
+ */
+export function armArgs(arm, { armPrompts = {}, mcpServer } = {}) {
+  if (arm === 'mcp' || arm === 'cli') {
+    const prompt = armPrompts[arm]
+    if (!prompt) throw new Error(`the ${arm} arm needs armPrompts.${arm} in the task list`)
+    if (arm === 'mcp' && !mcpServer) throw new Error('the mcp arm needs an mcpServer')
+    const extra =
+      arm === 'mcp'
+        ? [
+            'mcp__veilio__anonymize_file',
+            'mcp__veilio__symbol_map_summary',
+            'Bash(veilio restore:*)',
+          ]
+        : ['Bash(veilio scrub:*)', 'Bash(veilio restore:*)']
+    return {
+      guard: false,
+      allowed: withoutRawReads(extra),
+      disallowed: RAW_READS.join(','),
+      mcpConfig: arm === 'mcp' ? { mcpServers: { veilio: mcpServer } } : null,
+      appendPrompt: prompt,
+      veilioOnPath: true,
+    }
+  }
+  return {
+    guard: arm !== 'plain',
+    allowed: TOOLS,
+    disallowed: null,
+    mcpConfig: null,
+    appendPrompt: null,
+    veilioOnPath: false,
+  }
+}

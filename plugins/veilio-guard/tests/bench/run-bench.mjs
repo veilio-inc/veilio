@@ -50,7 +50,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { TOOLS, callTeam, deadlinePassed, loadTeam, schedule } from './bench-lib.mjs'
+import { TOOLS, armArgs, callTeam, deadlinePassed, loadTeam, schedule } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -61,7 +61,8 @@ let LANGUAGES = ['typescript']
 const { languageOfPath } = await import(join(HERE, '../../vendor/engine/index.js'))
 const PLUGIN = resolve(HERE, '../..')
 const CLI = resolve(PLUGIN, '../../packages/cli/dist/index.js')
-const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm', 'guard-team']
+const MCP = resolve(PLUGIN, '../../packages/mcp/dist/index.js')
+const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm', 'guard-team', 'mcp', 'cli']
 const DEFAULT_ARMS = ['plain', 'guard-cold', 'guard-warm']
 
 const { values: opt } = parseArgs({
@@ -142,6 +143,17 @@ function cleanup(dir) {
   temps.delete(dir)
 }
 temps.add(CLI_HOME)
+// The mcp and cli arms call `veilio` by name: a wrapper for this build, with
+// the same signed-out HOME, first on their PATH. Claude Code keeps the
+// developer's HOME for its own sign-in.
+const VEILIO_BIN = mkdtempSync(join(tmpdir(), 'veilio-bench-bin-'))
+temps.add(VEILIO_BIN)
+writeFileSync(
+  join(VEILIO_BIN, 'veilio'),
+  `#!/bin/sh\nHOME='${CLI_HOME}' exec node '${CLI}' "$@"\n`,
+  { mode: 0o755 }
+)
+const MCP_SERVER = { command: 'node', args: [MCP], env: { HOME: CLI_HOME, USERPROFILE: CLI_HOME } }
 process.on('exit', () => [...temps].forEach(cleanup))
 // After the temp HOME is registered, so a refusal still removes it.
 refuseSignedIn()
@@ -249,8 +261,20 @@ function mapSize(repo) {
 }
 
 function text(content) {
-  return typeof content === 'string' ? content : JSON.stringify(content ?? '')
+  if (typeof content === 'string') return content
+  // An MCP result is a list of text blocks: joined as written, so a name at the
+  // start of a line is still a whole word to the leak measure.
+  if (Array.isArray(content) && content.every((b) => typeof b?.text === 'string'))
+    return content.map((b) => b.text).join('\n')
+  return JSON.stringify(content ?? '')
 }
+
+// A shell call that prints a source file whole, past the arm's own reading
+// tool (spec 062 review): counted apart from test output, which every arm sees.
+// head/tail/sed/awk count when they start a command (on a file), not when
+// they trim piped test output.
+const RAW_READ_CALL =
+  /\bruby\s+-e\b|\bpython3?\s+-c\b|\bnode\s+-e\b|git\s+diff\s+--no-index|File\.read|open\(.+\)\.read|(?:^|&&|;)\s*(?:head|tail|sed\s+-n|awk)\b/
 
 function readStream(path) {
   const lines = readFileSync(path, 'utf8')
@@ -267,12 +291,19 @@ function readStream(path) {
   const result = lines.findLast((l) => l.type === 'result') ?? {}
   const toolCalls = {}
   const toolResults = []
+  const rawReadCalls = []
   // Everything the model was sent: tool results and the user's messages.
   const sent = []
   for (const l of lines) {
     if (l.type === 'user' && typeof l.message?.content === 'string') sent.push(l.message.content)
     for (const c of l.message?.content ?? []) {
       if (c.type === 'tool_use') toolCalls[c.name] = (toolCalls[c.name] ?? 0) + 1
+      if (
+        c.type === 'tool_use' &&
+        c.name === 'Bash' &&
+        RAW_READ_CALL.test(String(c.input?.command ?? ''))
+      )
+        rawReadCalls.push(String(c.input.command).slice(0, 160))
       if (c.type === 'tool_result') toolResults.push(text(c.content))
       if (l.type === 'user' && c.type === 'text') sent.push(c.text)
     }
@@ -303,13 +334,17 @@ function readStream(path) {
     sent: sent.join('\n'),
     plugins: (init.plugins ?? []).map((p) => p.name ?? p),
     mcpServers: (init.mcp_servers ?? []).map((s) => s.name ?? s),
+    mcpStatus: (init.mcp_servers ?? []).map((s) => `${s.name ?? s}:${s.status ?? '?'}`),
+    rawReadCalls,
   }
 }
 
 async function session(task, arm, rep, outDir, member) {
   const { dir, repo } = prepare(task, { mutate: true })
   try {
-    if (arm === 'guard-warm') buildMap(repo)
+    // The mcp and cli arms work on the same map the warm guard has.
+    if (arm === 'guard-warm' || arm === 'mcp' || arm === 'cli') buildMap(repo)
+    const a = armArgs(arm, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })
     // The team's map, as this member has it: the team module writes it.
     if (arm === 'guard-team') await callTeam(TEAM, 'beforeSession', { member, repo, task, rep })
     const mapBefore = mapSize(repo)
@@ -326,7 +361,7 @@ async function session(task, arm, rep, outDir, member) {
       '--permission-mode',
       'acceptEdits',
       '--allowedTools',
-      TOOLS,
+      a.allowed,
       '--max-turns',
       String(MAX_TURNS),
       '--output-format',
@@ -334,14 +369,24 @@ async function session(task, arm, rep, outDir, member) {
       '--verbose',
     ]
     if (SETTINGS) args.push('--settings', SETTINGS)
-    if (arm !== 'plain') args.push('--plugin-dir', GUARD)
+    if (a.guard) args.push('--plugin-dir', GUARD)
+    if (a.disallowed) args.push('--disallowedTools', a.disallowed)
+    if (a.appendPrompt) args.push('--append-system-prompt', a.appendPrompt)
+    if (a.mcpConfig) {
+      const cfg = join(dir, 'mcp.json')
+      writeFileSync(cfg, JSON.stringify(a.mcpConfig))
+      args.push('--mcp-config', cfg)
+    }
     const base = join(outDir, 'sessions', `${task.id}.${arm}.${rep}`)
     const streamFd = openSync(`${base}.jsonl`, 'w')
     const errFd = openSync(`${base}.err`, 'w')
     const started = Date.now()
     // Async, so the sessions of one wave run side by side.
     const run = await new Promise((done) => {
-      const child = spawn('claude', args, { cwd: repo, stdio: ['ignore', streamFd, errFd] })
+      const env = a.veilioOnPath
+        ? { ...process.env, PATH: `${VEILIO_BIN}:${process.env.PATH}` }
+        : process.env
+      const child = spawn('claude', args, { cwd: repo, env, stdio: ['ignore', streamFd, errFd] })
       const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
       child.on('error', (error) => (clearTimeout(timer), done({ error })))
       // The end is read here, not after: under concurrency a sibling's
@@ -439,7 +484,12 @@ if (!validate()) {
 if (opt.validate) process.exit(0)
 // The reference names (FR-011) come from the warm map, built once, whatever arms run.
 if (existsSync(CLI)) buildMap(null)
-if ((arms.includes('guard-warm') || TEAM) && !existsSync(CLI))
+if (arms.includes('mcp') && !existsSync(MCP))
+  throw new Error(`${MCP} is missing: npm run build:packages first`)
+// Every arm's arguments, before anything is spent: a task list without an arm's
+// workflow text fails here, on a fresh or a resumed run alike.
+for (const x of arms) armArgs(x, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })
+if ((arms.some((x) => ['guard-warm', 'mcp', 'cli'].includes(x)) || TEAM) && !existsSync(CLI))
   throw new Error(`${CLI} is missing: npm run build:packages first`)
 
 const outDir = resolve(
@@ -482,6 +532,9 @@ if (!existsSync(join(outDir, 'meta.json')))
           : null,
         maxTurns: MAX_TURNS,
         tools: TOOLS,
+        armTools: Object.fromEntries(
+          arms.map((x) => [x, armArgs(x, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })])
+        ),
         // The warm map was built by a signed-out CLI: no Cloud request.
         cli: 'signed out, own HOME',
       },

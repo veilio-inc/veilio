@@ -1,7 +1,15 @@
 // node --test plugins/veilio-guard/tests/bench/bench-lib.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { TOOLS, byLanguage, callTeam, deadlinePassed, loadTeam, schedule } from './bench-lib.mjs'
+import {
+  TOOLS,
+  armArgs,
+  byLanguage,
+  callTeam,
+  deadlinePassed,
+  loadTeam,
+  schedule,
+} from './bench-lib.mjs'
 
 const tasks = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((id) => ({ id }))
 const arms = ['plain', 'guard-warm', 'guard-team']
@@ -133,4 +141,54 @@ test('team hooks are called with their arguments and their fields come back', as
   ])
   // No module (the arm is not a team arm): nothing is called, nothing comes back.
   assert.deepEqual(await callTeam(null, 'afterSession', {}), {})
+})
+
+test('plain and guard arms keep their tools and get no extra prompt or server', () => {
+  for (const arm of ['plain', 'guard-cold', 'guard-warm', 'guard-team']) {
+    const a = armArgs(arm, {})
+    assert.equal(a.allowed, TOOLS)
+    assert.equal(a.disallowed, null)
+    assert.equal(a.mcpConfig, null)
+    assert.equal(a.appendPrompt, null)
+    assert.equal(a.guard, arm !== 'plain')
+    assert.equal(a.veilioOnPath, false)
+  }
+})
+
+test('the mcp arm reads only through the MCP server and restores with the CLI', () => {
+  const server = { command: 'node', args: ['/mcp/index.js'], env: { HOME: '/h' } }
+  const a = armArgs('mcp', { armPrompts: { mcp: 'use anonymize_file' }, mcpServer: server })
+  assert.equal(a.guard, false)
+  assert.deepEqual(a.mcpConfig, { mcpServers: { veilio: server } })
+  const allowed = a.allowed.split(',')
+  for (const t of [
+    'mcp__veilio__anonymize_file',
+    'mcp__veilio__symbol_map_summary',
+    'Bash(veilio restore:*)',
+  ])
+    assert.ok(allowed.includes(t), t)
+  for (const t of ['Read', 'Grep', 'Bash(cat:*)', 'Bash(grep:*)']) {
+    assert.ok(!allowed.includes(t), `${t} still allowed`)
+    assert.ok(a.disallowed.split(',').includes(t), `${t} not denied`)
+  }
+  assert.equal(a.appendPrompt, 'use anonymize_file')
+  assert.equal(a.veilioOnPath, true)
+})
+
+test('the cli arm reads only through veilio scrub and restores with veilio restore', () => {
+  const a = armArgs('cli', { armPrompts: { cli: 'use veilio scrub' } })
+  assert.equal(a.guard, false)
+  assert.equal(a.mcpConfig, null)
+  const allowed = a.allowed.split(',')
+  assert.ok(allowed.includes('Bash(veilio scrub:*)') && allowed.includes('Bash(veilio restore:*)'))
+  for (const t of ['Read', 'Grep', 'Bash(cat:*)', 'Bash(grep:*)'])
+    assert.ok(!allowed.includes(t), t)
+  assert.equal(a.appendPrompt, 'use veilio scrub')
+  assert.equal(a.veilioOnPath, true)
+})
+
+test('an mcp or cli arm without its workflow text is refused', () => {
+  assert.throws(() => armArgs('mcp', { mcpServer: {} }), /armPrompts\.mcp/)
+  assert.throws(() => armArgs('cli', {}), /armPrompts\.cli/)
+  assert.throws(() => armArgs('mcp', { armPrompts: { mcp: 'x' } }), /mcpServer/)
 })

@@ -25,7 +25,7 @@ const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .map((r) => ({ ...r, contextTokens: r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens }))
 
 // From the results, not meta.json: a resumed run can cover more than it began with.
-const arms = ['plain', 'guard-cold', 'guard-warm', 'guard-team'].filter((a) =>
+const arms = ['plain', 'guard-cold', 'guard-warm', 'guard-team', 'mcp', 'cli'].filter((a) =>
   runs.some((r) => r.arm === a)
 )
 const tasks = [...new Set(runs.map((r) => r.task))]
@@ -75,7 +75,7 @@ if (meta.settings?.enabledPlugins)
     ''
   )
 out.push(
-  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session.',
+  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session. **mcp** has no guard: Claude reads code only through the Veilio MCP server and restores its fix with `veilio restore`. **cli** has no guard: Claude reads code only through `veilio scrub` and restores with `veilio restore`. Both work on the warm map.',
   ''
 )
 if (meta.concurrency > 1)
@@ -210,6 +210,9 @@ else {
   out.push(
     `| it stopped to ask for the prompt again | ${arms.map((a) => of(a).filter((r) => r.askedAgain).length).join(' | ')} |`
   )
+  out.push(
+    `| it printed a file past its reading tool (shell one-liner) | ${arms.map((a) => of(a).filter((r) => r.rawReadCalls?.length).length).join(' | ')} |`
+  )
   out.push('')
 }
 
@@ -254,13 +257,14 @@ const baseline = (runs[0]?.plugins ?? [])
   .join(', ')
 for (const r of runs) {
   const guarded = r.plugins.some((p) => /veilio/i.test(p))
-  if (r.arm === 'plain' && guarded)
-    warnings.push(`${r.task} #${r.rep}: plain session loaded the guard`)
-  if (r.arm !== 'plain' && !guarded)
+  const wantsGuard = r.arm.startsWith('guard-')
+  if (!wantsGuard && guarded)
+    warnings.push(`${r.task} ${r.arm} #${r.rep}: an unguarded session loaded the guard`)
+  if (wantsGuard && !guarded)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: guarded session did not list the guard`)
-  if (r.arm !== 'plain' && r.mapAfter === 0)
+  if (r.arm !== 'plain' && r.mapAfter === 0 && wantsGuard)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: the map is empty after the session`)
-  if ((r.arm === 'guard-warm' || r.arm === 'guard-team') && r.mapBefore === 0)
+  if (['guard-warm', 'guard-team', 'mcp', 'cli'].includes(r.arm) && r.mapBefore === 0)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: started on an empty map`)
   // Claude Code loads a few plugins of its own whatever the settings say; what
   // matters is that every session loads the same ones.
@@ -272,7 +276,11 @@ for (const r of runs) {
     warnings.push(
       `${r.task} ${r.arm} #${r.rep}: other plugins differ (${others || 'none'}, not ${baseline || 'none'})`
     )
-  if (r.mcpServers.length)
+  if (r.arm === 'mcp' && (r.mcpStatus ?? []).join() !== 'veilio:connected')
+    warnings.push(
+      `${r.task} mcp #${r.rep}: the MCP server was not connected (${(r.mcpStatus ?? []).join(', ') || 'none'})`
+    )
+  if (r.arm === 'mcp' ? r.mcpServers.join() !== 'veilio' : r.mcpServers.length)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: MCP servers loaded (${r.mcpServers.join(', ')})`)
   if (r.subtype === 'no-result') warnings.push(`${r.task} ${r.arm} #${r.rep}: no result line`)
   if (r.arm !== 'plain' && r.leakedNames?.length)
@@ -288,7 +296,7 @@ out.push('## Checks on the run itself', '')
 out.push(
   warnings.length
     ? warnings.map((w) => `- ${w}`).join('\n')
-    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own) and no MCP server, and every guarded session had a map.`
+    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own), no MCP server outside the mcp arm (where only Veilio's, connected), and every masked session had a map.`
 )
 out.push('')
 
