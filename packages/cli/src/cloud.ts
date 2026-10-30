@@ -541,7 +541,8 @@ export async function reservePlaceholders(
   credential: Credential,
   teamId: string,
   requests: readonly { base: string; count: number; floor: number }[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: { block?: boolean } = {}
 ): Promise<{ ranges: PlaceholderRange[] }> {
   for (const { base, count } of requests) {
     if (!PLACEHOLDER_BASE.test(base)) {
@@ -556,8 +557,41 @@ export async function reservePlaceholders(
   }
   return request<{ ranges: PlaceholderRange[] }>(
     `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
-    { credential, method: 'POST', body: { requests }, signal }
+    {
+      credential,
+      method: 'POST',
+      // Spec 063: a block, whose size the server sets, for the guard to number in offline.
+      body: options.block ? { requests, block: true } : { requests },
+      signal,
+    }
   )
+}
+
+/** One run of the team's numbers and the member who reserved it (spec 063). */
+export type PlaceholderReservation = { base: string; start: number; end: number; member: string }
+
+/**
+ * Who holds which of the team's numbers: every page. Numbers, kinds and
+ * account ids only - restore reads it to leave in place a placeholder whose
+ * map was published by someone other than its number's reserver.
+ */
+export async function readReservations(
+  credential: Credential,
+  teamId: string,
+  signal?: AbortSignal
+): Promise<PlaceholderReservation[]> {
+  const all: PlaceholderReservation[] = []
+  let after = 0
+  for (let page = 0; page < 1000; page++) {
+    const r = await request<{ reservations: PlaceholderReservation[]; next: number | null }>(
+      `/api/teams/${encodeURIComponent(teamId)}/placeholders/reservations?limit=1000&after=${after}`,
+      { credential, signal }
+    )
+    all.push(...r.reservations)
+    if (r.next === null) return all
+    after = r.next
+  }
+  throw new CloudError('server', "the team's reservations did not end after 1000 pages")
 }
 
 /**
