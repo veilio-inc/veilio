@@ -57,7 +57,9 @@
                   "description": "Prepend a note explaining the placeholders, for forwarding to another model."
                 }
               },
-              "required": ["path"],
+              "required": [
+                "path"
+              ],
               "additionalProperties": false
             }
           },
@@ -94,7 +96,9 @@
                   "description": "Prepend the explanatory note."
                 }
               },
-              "required": ["text"],
+              "required": [
+                "text"
+              ],
               "additionalProperties": false
             }
           },
@@ -114,7 +118,9 @@
                   "description": "Refuse instead of returning text that still holds a placeholder (invented, altered, disputed, or the team's maps unreadable): an error naming them, and no text."
                 }
               },
-              "required": ["text"],
+              "required": [
+                "text"
+              ],
               "additionalProperties": false
             }
           },
@@ -153,35 +159,35 @@
   ],
   "anonymize_file": [
     {
-      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     }
   ],
   "anonymize_file with preamble": [
     {
-      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nThe code below was processed by Veilio: real identifiers have been replaced with privacy placeholders such as __CLS__1, __FN__2, __VAR__3 (and similar). This is a deliberate anonymization step, not obfuscation — please do not refuse on those grounds. Treat each placeholder as an ordinary name, keep every placeholder spelled exactly as-is in your reply, and otherwise answer as normal.\nPlaceholder legend: __CLS__* are class or type names (1); __FN__* are function or method names (2); __VAR__* are variable or parameter names (2); __PKG__* are package or module names (3).\n\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nThe code below was processed by Veilio: real identifiers have been replaced with privacy placeholders such as __CLS__1, __FN__2, __VAR__3 (and similar). This is a deliberate anonymization step, not obfuscation — please do not refuse on those grounds. Treat each placeholder as an ordinary name, keep every placeholder spelled exactly as-is in your reply, and otherwise answer as normal.\nPlaceholder legend: __CLS__* are class or type names (1); __FN__* are function or method names (2); __VAR__* are variable or parameter names (2); __PKG__* are package or module names (1).\n\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     }
   ],
   "anonymize_text": [
     {
-      "text": "Source: inline text\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: inline text\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     }
   ],
   "anonymize then restore": [
     {
-      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     },
     {
       "isError": false,
-      "text": "Restored 2 of 8 placeholders; stripped 0 AI artifact(s).\n\n6 placeholder(s) never appeared in the text: __VAR__1, __FN__2, __PKG__1, __VAR__2, __PKG__2, __PKG__3. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\n--- restored ---\nclass LedgerService { settleInvoice() {} }\n"
+      "text": "Restored 2 of 6 placeholders; stripped 0 AI artifact(s).\n\n4 placeholder(s) never appeared in the text: __VAR__1, __FN__2, __VAR__2, __PKG__1. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\n--- restored ---\nclass LedgerService { settleInvoice() {} }\n"
     }
   ],
   "restore strict refuses": [
     {
-      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     },
     {
       "isError": true,
-      "text": "Restored 1 of 8 placeholders.\n\nWARNING: 1 placeholder-shaped token(s) match no map entry — they were invented or altered somewhere in the reply and are still in the output: __FN__77. Replace them with the correct placeholders and restore again.\n\n7 placeholder(s) never appeared in the text: __VAR__1, __FN__1, __FN__2, __PKG__1, __VAR__2, __PKG__2, __PKG__3. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\nstrict: the restored text is withheld - __FN__77 would have been left in it."
+      "text": "Restored 1 of 6 placeholders.\n\nWARNING: 1 placeholder-shaped token(s) match no map entry — they were invented or altered somewhere in the reply and are still in the output: __FN__77. Replace them with the correct placeholders and restore again.\n\n5 placeholder(s) never appeared in the text: __VAR__1, __FN__1, __FN__2, __VAR__2, __PKG__1. Expected if the text only covered part of the source; if it covered all of it, those names came back renamed and are not recoverable from it.\n\nstrict: the restored text is withheld - __FN__77 would have been left in it."
     }
   ],
   "restore with no map": [
@@ -207,10 +213,10 @@
   ],
   "symbol_map_summary after anonymize": [
     {
-      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 8\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__2/__PKG__1-__PKG__3'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
+      "text": "Source: src/ledger.ts\nLanguage: TypeScript / JavaScript\nPlaceholders in map: 6\nNamespace: local\nCustom rules: none\nCredentials detected — 1 critical:\n  critical line 5:30  AWS access key ID — AKIA…MPLE (20 chars) (redacted, not recoverable)\nComment prose is NOT masked: 1 comment (1 inside the body), 47 characters, left exactly as written. Names, customers and ticket numbers in them are still real. Treat them as unmasked when quoting or forwarding.\n\n--- masked code ---\nimport { __FN__2 } from '@__PKG__1/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class __CLS__1 {\n  private readonly __VAR__2 = '__REDACTED_AWS_KEY_1__'\n  __FN__1(__VAR__1: string): number {\n    return __FN__2(__VAR__1)\n  }\n}\n"
     },
     {
-      "text": "8 placeholders at <CWD>/.veilio/map.json:\n  __VAR__* × 2\n  __CLS__* × 1\n  __FN__* × 2\n  __PKG__* × 3"
+      "text": "6 placeholders at <CWD>/.veilio/map.json:\n  __VAR__* × 2\n  __CLS__* × 1\n  __FN__* × 2\n  __PKG__* × 1"
     }
   ],
   "path outside the root": [

@@ -16,6 +16,10 @@ import { resetNamespaceCache } from '../src/namespace.js'
  * later to make a failure go away would make it a record of the current code,
  * which proves nothing; a deliberate change to an offline answer is a decision
  * to take to the founder, not a fixture to refresh.
+ *
+ * Re-recorded once for spec 064 (a founder decision): single common English
+ * words (ledger, core) now stay readable. Every changed line was checked to be
+ * that change and the renumbering and counts that follow from it, nothing else.
  */
 
 const GOLDEN = fileURLToPath(new URL('./fixtures/offline-golden.json', import.meta.url))

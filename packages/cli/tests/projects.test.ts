@@ -170,7 +170,7 @@ describe('every map call carries the project (FR-013)', () => {
 
   it('a removed project is not retried as if Cloud were down: one request, no wait', async () => {
     signIn(home, { team: true, project: 'p-gone' })
-    writeFileSync(join(cwd, 'g.ts'), 'export class Gamma {}\n')
+    writeFileSync(join(cwd, 'g.ts'), 'export class TarnGamma {}\n')
     const started = Date.now()
     const r = await run(['scrub', 'g.ts'])
     expect(r.code).toBe(EXIT_OK)
@@ -185,18 +185,18 @@ describe('masking in one project uses none of another’s placeholders (SC-004)'
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-billing',
-      map_data: await sealTeam({ __CLS__1: 'Alpha' }),
+      map_data: await sealTeam({ __CLS__1: 'Skerrify' }),
     })
     cloud.add({
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-tools',
-      map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+      map_data: await sealTeam({ __CLS__5: 'TarnGamma' }),
     })
-    writeFileSync(join(cwd, 'g.ts'), 'export class Gamma {}\n')
+    writeFileSync(join(cwd, 'g.ts'), 'export class TarnGamma {}\n')
   })
 
-  it('in billing, Gamma is a new name, numbered above billing’s own', async () => {
+  it('in billing, TarnGamma is a new name, numbered above billing’s own', async () => {
     signIn(home, { team: true, project: 'p-billing' })
     const r = await run(['scrub', 'g.ts'])
     expect(r.code, r.err).toBe(EXIT_OK)
@@ -204,7 +204,7 @@ describe('masking in one project uses none of another’s placeholders (SC-004)'
     expect(r.out).not.toContain('__CLS__5')
   })
 
-  it('in tools, Gamma is the team’s __CLS__5', async () => {
+  it('in tools, TarnGamma is the team’s __CLS__5', async () => {
     signIn(home, { team: true, project: 'p-tools' })
     const r = await run(['scrub', 'g.ts'])
     expect(r.code, r.err).toBe(EXIT_OK)

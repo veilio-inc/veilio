@@ -20,6 +20,11 @@ import type { Io } from '../src/commands.js'
  * commit it claims to describe. Regenerating it to make this pass would turn
  * the test into a record of whatever the code does now, which proves nothing.
  *
+ * Re-recorded once for spec 064 (a founder decision): single common English
+ * words (common, ledger, core, balance, total) now stay readable. Every changed
+ * line was checked to be that change and the renumbering and counts that follow
+ * from it, nothing else.
+ *
  * The one thing normalised is the temp directory's path, which `map` prints.
  */
 

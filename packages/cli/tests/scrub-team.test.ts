@@ -156,7 +156,7 @@ describe('veilio scrub, signed out', () => {
 describe('veilio scrub, a third-party name the team holds as code', () => {
   it('stays masked', async () => {
     const { home } = await teamScenario(fetchMock, {
-      maps: mapsFor({ namespace: { __FN__30: 'describe' }, aliases: {}, conflicts: {} }),
+      maps: mapsFor({ namespace: { __FN__30: 'tarnwickSuite' }, aliases: {}, conflicts: {} }),
     })
     const { mkdirSync, writeFileSync } = await import('node:fs')
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-held-'))
@@ -164,12 +164,12 @@ describe('veilio scrub, a third-party name the team holds as code', () => {
     mkdirSync(join(cwd, 'src'))
     writeFileSync(
       join(cwd, 'src/a.test.ts'),
-      "import { describe, expect } from 'vitest'\nexport function settleLedger() {}\n"
+      "import { tarnwickSuite, expect } from 'vitest'\nexport function settleLedger() {}\n"
     )
     let out = ''
     const io: Io = { cwd, home, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
     expect(await main(['scrub', 'src/a.test.ts'], io)).toBe(EXIT_OK)
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })
 
@@ -184,11 +184,11 @@ describe('veilio scrub, the same placeholder in the project map and the team', (
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-clash-'))
     mkdirSync(join(cwd, '.git'))
     mkdirSync(join(cwd, 'src'))
-    saveMap(resolveMapPath(null, cwd), { __FN__30: 'describe' })
-    writeFileSync(join(cwd, 'src/a.test.ts'), "import { describe, expect } from 'vitest'\n")
+    saveMap(resolveMapPath(null, cwd), { __FN__30: 'tarnwickSuite' })
+    writeFileSync(join(cwd, 'src/a.test.ts'), "import { tarnwickSuite, expect } from 'vitest'\n")
     let out = ''
     const io: Io = { cwd, home, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
     await main(['scrub', 'src/a.test.ts'], io)
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })
