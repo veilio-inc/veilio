@@ -6,6 +6,12 @@ import { writeCredential } from '@veilio-inc/cli/credential'
 import { readRules, rulesPath, writeRules } from '@veilio-inc/cli/rules'
 import type { CustomRule } from '@veilio-inc/engine'
 import { primeRules, resetRulesCache } from '../src/rules.js'
+import {
+  ME,
+  sealedPersonalRule,
+  sealedTeamRule,
+  signIn as sealedSignIn,
+} from '../../cli/tests/helpers/fake-cloud.js'
 import { callTool } from '../src/tools.js'
 
 /**
@@ -53,7 +59,6 @@ function rule(
 }
 
 const WHITELIST = rule('w', 'whitelist', 'team', '^customerId$')
-const REPLACE = rule('r', 'replace', 'personal', '^settle')
 
 function anonymize(): string {
   return callTool('anonymize_text', { text: SOURCE }, { cwd, mapPath: null }).text
@@ -86,8 +91,29 @@ describe('rules at startup', () => {
   })
 
   it('from Cloud: applied, stated, and cached for the CLI', async () => {
-    signIn()
-    fetchMock.mockResolvedValue(json(200, { rules: [REPLACE], teamRules: [WHITELIST] }))
+    // Sealed under this account's keys since spec 065 (rules-sealed.test.ts).
+    sealedSignIn(home, { pmk: true, team: true })
+    fetchMock.mockResolvedValue(
+      json(200, {
+        rules: [
+          await sealedPersonalRule('r', 0, {
+            name: 'r',
+            type: 'replace',
+            pattern: '^settle',
+            placeholder: '__LEDGER__',
+            enabled: true,
+          }),
+        ],
+        teamRules: [
+          await sealedTeamRule('w', 0, {
+            name: 'w',
+            type: 'whitelist',
+            pattern: '^customerId$',
+            enabled: true,
+          }),
+        ],
+      })
+    )
     const resolved = await primeRules(home)
     expect(resolved.source).toBe('cloud')
     expect(String(fetchMock.mock.calls[0][0])).toBe(`${INSTANCE}/api/rules`)
@@ -95,14 +121,16 @@ describe('rules at startup', () => {
     fetchMock.mockClear()
     const text = anonymize()
     expect(text).toContain('Custom rules: 2 custom rules from Cloud')
+    expect(text).not.toContain('not applied')
     expect(text).toContain('return customerId') // whitelisted
     expect(text).toContain('__LEDGER__1') // replaced
     expect(text).not.toContain('settleLedger')
     // The tool call itself touched no network.
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(
-      readRules({ instance: INSTANCE, account: ACCOUNT }, home)?.rules.map((r) => r.id)
-    ).toEqual(['w', 'r'])
+    expect(readRules({ instance: INSTANCE, account: ME }, home)?.rules.map((r) => r.id)).toEqual([
+      'w',
+      'r',
+    ])
   })
 
   it('Cloud unreachable: the cached pull is used, and says so', async () => {

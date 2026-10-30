@@ -16,6 +16,7 @@ import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } f
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { STORE_DIR, type CustomRule } from '@veilio-inc/engine'
+import type { RulesSkipped } from './client/rules-skipped.js'
 
 export const RULES_FILE = 'rules.json'
 
@@ -27,6 +28,9 @@ export interface CachedRules {
   pulledAt: string
   /** Already merged into the order the engine applies them in. */
   rules: CustomRule[]
+  /** Served but not applied here, by cause (spec 065). Absent in a cache
+   *  written before it, which reads as all zeros. */
+  skipped?: RulesSkipped
 }
 
 export function rulesPath(home: string = homedir()): string {
@@ -58,6 +62,17 @@ export function mergeRules(
   ].map((r, i) => ({ ...r, sort_order: i }))
 }
 
+function readSkipped(value: unknown): RulesSkipped {
+  const v = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  const n = (x: unknown): number => (Number.isInteger(x) && (x as number) >= 0 ? (x as number) : 0)
+  return {
+    vaultLocked: n(v.vaultLocked),
+    teamLocked: n(v.teamLocked),
+    unopenable: n(v.unopenable),
+    refused: n(v.refused),
+  }
+}
+
 function isRule(value: unknown): value is CustomRule {
   if (typeof value !== 'object' || value === null) return false
   const r = value as Record<string, unknown>
@@ -83,7 +98,7 @@ export function readRules(
   if (typeof c.pulledAt !== 'string' || !Array.isArray(c.rules) || !c.rules.every(isRule)) {
     return null
   }
-  return parsed as CachedRules
+  return { ...(parsed as CachedRules), skipped: readSkipped(c.skipped) }
 }
 
 /** 0600: the patterns name what a team considers sensitive. */

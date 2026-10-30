@@ -34,6 +34,7 @@ import {
 } from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
 import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
+import { openFetchedRules } from './rules-open.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -44,7 +45,7 @@ import {
   updateCloudMap,
   type ClientContext,
 } from './client/maps.js'
-import { refusal, renderRefusal, type Refusal } from './client/wording.js'
+import { refusal, renderRefusal, rulesSkippedSentences, type Refusal } from './client/wording.js'
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
@@ -694,8 +695,7 @@ export async function runRulesPull(io: Io): Promise<number> {
     return reportCloudFailure(err, io)
   }
 
-  const personal = fetched.rules ?? []
-  const team = fetched.teamRules ?? []
+  const { personal, team, skipped } = await openFetchedRules(fetched, credential, io.home)
   const rules = mergeRules(personal, team)
   writeRules(
     {
@@ -703,15 +703,18 @@ export async function runRulesPull(io: Io): Promise<number> {
       account: credential.account,
       pulledAt: new Date().toISOString(),
       rules,
+      skipped,
     },
     io.home
   )
-  const skipped = personal.length + team.length - rules.length
+  const disabled = personal.length + team.length - rules.length
   io.stdout(
     `Pulled ${rules.length} custom rule${rules.length === 1 ? '' : 's'} ` +
-      `(${personal.length} personal, ${team.length} team${skipped > 0 ? `, ${skipped} disabled and skipped` : ''}). ` +
+      `(${personal.length} personal, ${team.length} team${disabled > 0 ? `, ${disabled} disabled and skipped` : ''}). ` +
       '`veilio scrub` applies them.\n'
   )
+  // Not an error: masking works without them, and the fix is one command away.
+  for (const sentence of rulesSkippedSentences(skipped)) io.stdout(`${sentence}\n`)
   return EXIT_OK
 }
 

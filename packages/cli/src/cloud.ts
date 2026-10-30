@@ -25,7 +25,6 @@
 
 import type { Credential } from './credential.js'
 import { VERSION } from './version.js'
-import type { CustomRule } from '@veilio-inc/engine'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
@@ -340,11 +339,28 @@ export function listMaps(credential: Credential, signal?: AbortSignal): Promise<
   return request<CloudMapList>(`/api/maps${projectQuery(credential)}`, { credential, signal })
 }
 
-/** The account's custom rules: its own, and those of the teams it is in. */
-export function listRules(
-  credential: Credential
-): Promise<{ rules: CustomRule[]; teamRules: CustomRule[] }> {
-  return request<{ rules: CustomRule[]; teamRules: CustomRule[] }>('/api/rules', { credential })
+/** A custom rule as Cloud holds it (spec 065): only what it needs to store and
+ *  order it is readable. `data` is the customer's envelope as a JSON string - a
+ *  vault envelope under the personal-maps key, or a team envelope under the team
+ *  key - holding the name, type, pattern, placeholder and enabled state. */
+export interface SealedRule {
+  id: string
+  scope: 'personal' | 'team'
+  team_id: string | null
+  sort_order: number
+  key_version?: number
+  data: string
+  updated_at?: string
+}
+
+export interface SealedRuleList {
+  rules: SealedRule[]
+  teamRules: SealedRule[]
+}
+
+/** The account's custom rules, sealed: its own, and those of the teams it is in. */
+export function listRules(credential: Credential): Promise<SealedRuleList> {
+  return request<SealedRuleList>('/api/rules', { credential })
 }
 
 /**

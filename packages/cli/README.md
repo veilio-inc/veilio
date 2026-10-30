@@ -119,6 +119,27 @@ Custom rules (whitelist and replace, set in the web app) are applied by
 offline - and says on every run how many rules it applied and how old the copy
 is. Pull again after the rules change; `logout` removes the copy.
 
+Cloud holds the rules sealed under your keys, so it cannot read them: personal
+rules under your personal-maps key, team rules under your team key. `rules pull`
+opens them on this machine, so it needs `veilio vault unlock` for personal rules
+and `veilio team unlock` for team rules. A rule it cannot open is skipped, never
+an error: `scrub` still masks, with the built-in engine and the rules that did
+open, and both commands say what was skipped and how to fix it, one sentence per
+cause (on every `scrub`, `--quiet` included):
+
+```
+2 custom rules not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.
+1 custom rule not applied: team key locked - run `veilio team unlock`, then `veilio rules pull`.
+1 custom rule not applied: they could not be opened with the keys on this machine, and were skipped.
+1 custom rule not applied: refused as unsafe to apply (an engine placeholder or a pattern that could hang), and skipped.
+```
+
+"Could not be opened" is a rule sealed under a team-key version this machine
+does not hold (run `veilio team unlock` again after a rotation) or a damaged
+one. "Refused" is a rule no tool applies, whoever wrote it: a replace
+placeholder that reuses an engine base such as `__FN__`, a pattern that could
+hang the matcher, or a sealed body moved to another rule's row.
+
 Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
 and the chosen project, removed by `logout`), `rules.json` (the rules copy),
 `team-keys.json` (the keys `team unlock` opened, kept seven days) and

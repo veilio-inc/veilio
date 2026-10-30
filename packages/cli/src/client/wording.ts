@@ -451,3 +451,8 @@ export function refusalFromCloudError(
       return refusal('server', { detail: err.message })
   }
 }
+
+// The custom-rules sentences live in their own module, with no import of the
+// cloud boundary, because `veilio scrub` prints them and must stay offline
+// (offline.test.ts). Re-exported so every renderer finds them here.
+export * from './rules-skipped.js'

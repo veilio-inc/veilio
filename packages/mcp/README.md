@@ -173,6 +173,21 @@ every anonymize call. Each result states their source: `from Cloud`, `cached`
 (Cloud did not answer, so the last `veilio rules pull` is used, with its age),
 or `none`.
 
+Cloud holds the rules sealed under your keys and cannot read them. The server
+has no passphrase, so it opens them with the keys `veilio vault unlock`
+(personal rules) and `veilio team unlock` (team rules) left on this machine. A
+rule it cannot open is skipped and masking goes on; while any are skipped, every
+anonymize result says so beside the source line, one sentence per cause, with
+the fix, for example:
+
+```
+1 custom rule not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.
+```
+
+The other causes are `team key locked`, rules that could not be opened with the
+keys on this machine, and rules refused as unsafe to apply; the CLI README lists
+the exact sentences.
+
 ### One restore rule, and what the server refuses to guess
 
 `restore_text` resolves the team's maps first — aliases included — and this

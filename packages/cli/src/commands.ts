@@ -34,6 +34,7 @@ import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { contestedNote, misattributedNote, ownWithAliases } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
+import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
 import { anonymizeOverTeam, reservedAnonymizeOverTeam, type Reserve } from './team-anonymize.js'
 import { thirdPartyNames } from './third-party.js'
 
@@ -226,6 +227,11 @@ export async function runScrub(
         `to use your team's numbers.\n`
     )
   }
+
+  // Survives --quiet, like the language warning below: rules the account set
+  // were not applied, so the output masks less than its owner expects.
+  const skipped = rulesSkippedSentences(cached?.skipped ?? NO_RULES_SKIPPED)
+  if (skipped.length) io.stderr(`${BIN_NAME}: ${skipped.join(' ')}\n`)
 
   for (const { name, result } of results) {
     if (!result.languageFallback) continue
