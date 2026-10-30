@@ -59,6 +59,16 @@ describe('mergeAdditions', () => {
     expect(r.conflicts).toEqual(['__CLS__2'])
     expect(r.merged).toEqual({ __CLS__7: 'Mine' })
   })
+
+  it("a custom rule's placeholder for a name under an engine placeholder is added beside it (spec 065)", () => {
+    const r = mergeAdditions({ __STR__3: 'phoenix' }, { __CODENAME__1: 'phoenix' })
+    expect(r.conflicts).toEqual([])
+    expect(r.merged).toEqual({ __STR__3: 'phoenix', __CODENAME__1: 'phoenix' })
+    // Two rule placeholders for one name are still a clash.
+    expect(mergeAdditions(r.merged, { __CODENAME__2: 'phoenix' }).conflicts).toEqual([
+      '__CODENAME__2',
+    ])
+  })
 })
 
 describe('serialiseMapFile', () => {

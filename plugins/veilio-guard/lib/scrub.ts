@@ -14,6 +14,7 @@ import {
   REDACTION_TOKENS,
   REGULATED_BASES,
   anonymize,
+  compileRulePattern,
   detectSecrets,
   isKeyword,
   isOrdinaryWord,
@@ -24,7 +25,13 @@ import {
   SECRET_DISPOSITIONS,
   shannonEntropy,
 } from '../vendor/engine/index.js'
-import type { FileKind, Language, LanguageOption } from '../vendor/engine/index.js'
+import type {
+  CustomRule,
+  FileKind,
+  Language,
+  LanguageOption,
+  RuleMatcher,
+} from '../vendor/engine/index.js'
 import type { Block } from './mapfile.ts'
 
 export type SymbolMap = Record<string, string>
@@ -48,6 +55,8 @@ export type MaskContext = {
   external: ReadonlySet<string>
   declared: ReadonlySet<string>
   kind: 'result' | 'prompt'
+  /** The account's custom rules (spec 065), in the CLI's order. */
+  rules?: readonly CustomRule[]
 }
 
 export const NO_CONTEXT: MaskContext = {
@@ -113,11 +122,16 @@ export function scrubSource(
   language: LanguageOption = 'auto',
   keep: ReadonlySet<string> = new Set(),
   fileKind?: FileKind,
-  blocks?: Record<string, Block>
+  blocks?: Record<string, Block>,
+  custom: readonly CustomRule[] = []
 ): { text: string; additions: SymbolMap; outside: number } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
-  // through the engine's own whitelist rules, matched whole.
-  const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
+  // through the engine's own whitelist rules, matched whole. It goes first,
+  // then the account's rules (spec 065 R10).
+  const rules = [
+    ...keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names'),
+    ...custom,
+  ]
   // Inside the member's blocks where one is usable (spec 063); a kind without
   // one numbers as it always did, and its new names are counted as outside.
   const { seeded, usable } = seedBlocks(map, blocks)
@@ -136,6 +150,9 @@ export function scrubSource(
     if (!blocks) continue
     const [, base = '', n = '0'] = NUMBERED.exec(placeholder) ?? []
     const b = usable[base]
+    // A rule's own kind with no block is not a team number the member missed:
+    // `veilio maps pull` would not give it one.
+    if (!b && custom.some((r) => r.type === 'replace' && r.placeholder === base)) continue
     if (!b || Number(n) < b.start || Number(n) > b.end) outside++
   }
   return { text: result.anonymized, additions, outside }
@@ -301,6 +318,8 @@ function leftAsWritten(
   m: Matcher,
   ctx: MaskContext
 ): boolean {
+  // A whitelist rule first, as the engine checks it (spec 065).
+  if (ruleMatches(name, ctx, 'whitelist')) return true
   if (reserved(name, ctx)) return true
   if (ctx.declared.has(name)) return false
   if (ctx.external.has(name)) return true
@@ -1066,6 +1085,24 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
   return languages.some((language) => isKeyword(name, language))
 }
 
+// Custom-rule patterns run on the engine's linear-time matcher, compiled once
+// per pattern (a teammate's pattern cannot freeze the guard; spec 065).
+const ruleMatchers = new Map<string, RuleMatcher | null>()
+function ruleMatches(name: string, ctx: MaskContext, type: CustomRule['type']): boolean {
+  if (!ctx.rules?.length) return false
+  return ctx.rules.some((r) => {
+    if (r.type !== type) return false
+    let m = ruleMatchers.get(r.pattern)
+    if (m === undefined) {
+      if (ruleMatchers.size > 1000) ruleMatchers.clear()
+      ruleMatchers.set(r.pattern, (m = compileRulePattern(r.pattern)))
+    }
+    return m?.test(name) ?? false
+  })
+}
+
+const WORD_TOKEN = /(?<![\w$])[A-Za-z_$][\w$]*(?![\w$])/g
+
 /** Masks the names shaped like identifiers that are still in `text` after the
  *  map was applied, minting their placeholders through the engine so the
  *  numbering is the map's, and returns them for the map file. Not for what the
@@ -1077,7 +1114,10 @@ export function maskShaped(
   ctx: MaskContext,
   blocks?: Record<string, Block>
 ): { text: string; additions: SymbolMap } {
-  if (ctx.kind === 'prompt') return { text, additions: {} }
+  // What the user typed is not shape-masked; a replace rule's names are
+  // (spec 065), as everywhere else.
+  if (ctx.kind === 'prompt' && !ctx.rules?.some((r) => r.type === 'replace'))
+    return { text, additions: {} }
   // A name written against a redaction token is masked like any other.
   if (text.includes('__REDACTED_')) {
     let working = map
@@ -1104,7 +1144,24 @@ function maskShapedPart(
   const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
   const reused: SymbolMap = {}
   const found = new Set<string>()
-  for (const [token] of text.matchAll(SHAPED)) {
+  // Spec 065: a name a replace rule matches that is still here - not in the
+  // map, or held only under an engine placeholder 064 shows - is minted with
+  // the rule's placeholder. A whitelisted or third-party name is left.
+  if (ctx.rules?.some((r) => r.type === 'replace')) {
+    const shown = namesOf(readableView(map))
+    for (const [token] of text.matchAll(WORD_TOKEN))
+      if (
+        !shown.has(token) &&
+        !isPlaceholder(token) &&
+        !ctx.external.has(token) &&
+        !keywordIn(token, ctx) &&
+        !ruleMatches(token, ctx, 'whitelist') &&
+        ruleMatches(token, ctx, 'replace')
+      )
+        found.add(token)
+  }
+  for (const [token] of ctx.kind === 'prompt' ? [] : text.matchAll(SHAPED)) {
+    if (found.has(token)) continue
     const known = placeholderOf.get(token)
     if (known) {
       reused[known] = token
@@ -1127,6 +1184,7 @@ function maskShapedPart(
     existingMap: seeded,
     language: 'typescript',
     secrets: 'off',
+    ...(ctx.rules?.length ? { rules: [...ctx.rules] } : {}),
   }).map
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(minted))

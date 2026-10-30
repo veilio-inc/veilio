@@ -192,3 +192,90 @@ test('a headless reply keeps its placeholders: no route writes real names into a
   expect(stored).toContain('__CLS__1')
   expect(stored).not.toContain(CANARY)
 })
+
+// Spec 065 US4: the band says whether the account's custom rules apply, and
+// why not, for the whole session.
+const HOME = '/home/dev'
+const ME = { instance: 'https://veilio.dev', account: 'dev@example.com' }
+const RULE = {
+  id: 'r1',
+  scope: 'personal',
+  team_id: null,
+  type: 'replace',
+  name: 'codename',
+  pattern: '^phoenix$',
+  placeholder: '__CODENAME__',
+  enabled: true,
+  sort_order: 0,
+}
+
+async function band($: TestHost, on: TestOn, files: Record<string, string>): Promise<string> {
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
+  await loaded($, on, {
+    [`${HOME}/.veilio/credential.json`]: JSON.stringify({ token: 't', ...ME }),
+    ...files,
+  })
+  const seen: Fields[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  const ui = await $.ui.mount(
+    SITE('AbovePrompt', {
+      hasSurvey: false,
+      isWorking: false,
+      maxRows: 5,
+      bodyColumns: 100,
+      scroll: { offset: 0, bodyRows: 5 },
+      view: {},
+    })
+  )
+  const line = await ui.find({ type: 'Text', text: /^Veilio guard on/ })
+  return String(line?.children?.[0] ?? JSON.stringify(line))
+}
+
+const rules = (list: unknown[], skipped?: Record<string, number>) => ({
+  [`${HOME}/.veilio/rules.json`]: JSON.stringify({
+    ...ME,
+    pulledAt: '2026-10-30T10:00:00Z',
+    rules: list,
+    skipped,
+  }),
+})
+
+test('the band counts the custom rules applied', async ($, on) => {
+  expect(await band($, on, rules([RULE, { ...RULE, id: 'r2', pattern: '^falcon$' }]))).toContain(
+    ' · custom rules: 2'
+  )
+})
+
+test('the band says when no custom rules are pulled, and how to pull them', async ($, on) => {
+  expect(await band($, on, {})).toContain(' · custom rules: none pulled - run `veilio rules pull`')
+})
+
+test('the band says when the rules on this machine are for another account', async ($, on) => {
+  const other = {
+    [`${HOME}/.veilio/rules.json`]: JSON.stringify({
+      ...ME,
+      account: 'x@y.z',
+      pulledAt: 'now',
+      rules: [RULE],
+    }),
+  }
+  expect(await band($, on, other)).toContain(
+    ' · custom rules: none for this account - run `veilio rules pull`'
+  )
+})
+
+test('the band names the custom rules skipped, by cause', async ($, on) => {
+  const text = await band(
+    $,
+    on,
+    rules([RULE, { ...RULE, id: 'bad', pattern: '(a)\\1' }], {
+      vaultLocked: 2,
+      teamLocked: 1,
+      unopenable: 1,
+    })
+  )
+  expect(text).toContain(
+    ' · custom rules: 1 (not applied: 2 vault locked, 1 team key locked, 1 unopenable, 1 refused)'
+  )
+})

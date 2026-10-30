@@ -116,8 +116,15 @@ async function ready($: Host): Promise<Guard> {
         ),
     }
     const g = new Guard(io, config)
+    // Where the CLI keeps its rules cache (spec 065); none known, no rules.
+    const home = Promise.resolve()
+      .then(() => Promise.all([$.env.get('HOME'), $.env.get('USERPROFILE')]))
+      .then(
+        ([h, p]) => (typeof h === 'string' && h) || (typeof p === 'string' && p) || undefined,
+        () => undefined
+      )
     loading = $.session.cwd().then(async (cwd) => {
-      await g.load(cwd)
+      await g.load(cwd, await home)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
       guard = g
@@ -232,6 +239,7 @@ export function register(on: On, options: Options = {}) {
     if (raw !== undefined && !isTexts(raw)) throw new Error('a context entry is not text')
     const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
+    await g.learnRuleNames([e.text, ...given])
     const text = g.applyText(e.text, 'prompt', scan)
     const context = raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i])) : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
@@ -249,6 +257,7 @@ export function register(on: On, options: Options = {}) {
     const first = e.type === 'context_sections' || e.type === 'session_context'
     // Guard decision 1: a listing's public entries go as written.
     const listing = listingKind(e.type)
+    await g.learnRuleNames([r.text])
     const text = first
       ? g.applyContext(r.text)
       : listing
@@ -274,6 +283,7 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'stopped') return { ...r, blocks: [] }
     const raw = r.blocks.map((b) => b.text)
     const scans = g.learnTogether(raw)
+    await g.learnRuleNames(raw)
     // Remembered, so the copy Claude Code passes back as an attachment is
     // not judged a second time.
     const blocks = r.blocks.map((b, i) => ({
@@ -290,6 +300,7 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'stopped') {
       return { text: `Veilio guard stopped: ${g.stoppedReason}. The skill's text was left out.` }
     }
+    await g.learnRuleNames([r.text])
     return { ...r, text: g.applyText(r.text) }
   }).catch(async () => ({ text: 'Veilio could not check this skill, so its text was left out.' }))
 
