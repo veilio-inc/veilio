@@ -68,7 +68,7 @@ test('a project with a map: a name the map does not hold yet is masked and added
   const out = await $.tool.call(eventOf(TEST_RUN))
   expect(leaked(out)).toEqual([])
   expect(res(out).stdout).toContain('__FN__1')
-  expect(saved(p)).toEqual(expect.arrayContaining(['luhnValid', 'settle', 'reconcileBatch']))
+  expect(saved(p)).toEqual(expect.arrayContaining(['luhnValid', 'tarnplot', 'reconcileBatch']))
 })
 
 test('not a git checkout: the files a result names are still masked before it goes', async ($, on) => {
@@ -111,46 +111,46 @@ const lowercaseNameIsMasked = (stdout: string) => async ($: TestHost, on: TestOn
   const run = shellWith(stdout, 'toolu_form')
   on('tool.call', () => run.r)
   const out = await $.tool.call(eventOf(run))
-  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
+  expect(JSON.stringify(out)).not.toMatch(/\btarnplot\b/)
 }
 test(
   'a lowercase name is masked when the output names its file as a Windows path',
-  lowercaseNameIsMasked(' ❯ settle src\\secrets.ts:11:3')
+  lowercaseNameIsMasked(' ❯ tarnplot src\\secrets.ts:11:3')
 )
 test(
   'a lowercase name is masked when the output names its file as a file URL',
-  lowercaseNameIsMasked(` ❯ settle file://${ROOT}/src/secrets.ts:11:3`)
+  lowercaseNameIsMasked(` ❯ tarnplot file://${ROOT}/src/secrets.ts:11:3`)
 )
 test(
   'a lowercase name is masked when the output names its file as a path in brackets',
-  lowercaseNameIsMasked(' at settle [src/secrets.ts:11:3]')
+  lowercaseNameIsMasked(' at tarnplot [src/secrets.ts:11:3]')
 )
 test(
   'a lowercase name is masked when the output names its file as a path after a semicolon',
-  lowercaseNameIsMasked('see;src/secrets.ts: settle failed')
+  lowercaseNameIsMasked('see;src/secrets.ts: tarnplot failed')
 )
 test(
   'a lowercase name is masked when the output names its file as a path relative to a subdirectory',
-  lowercaseNameIsMasked(' ❯ settle ../src/secrets.ts:11:3')
+  lowercaseNameIsMasked(' ❯ tarnplot ../src/secrets.ts:11:3')
 )
 
 test('a path the guard cannot resolve makes it finish the index before the result goes', async ($, on) => {
   const files = {
     ...COLD_FILES,
-    [`${ROOT}/src/my dir/ledger.ts`]: 'export function reconcile() {}\n',
+    [`${ROOT}/src/my dir/ledger.ts`]: 'export function skerrify() {}\n',
   }
   project(on, files)
-  const run = shellWith(' ❯ reconcile src/my dir/ledger.ts:1:17', 'toolu_space')
+  const run = shellWith(' ❯ skerrify src/my dir/ledger.ts:1:17', 'toolu_space')
   on('tool.call', () => run.r)
   const out = await $.tool.call(eventOf(run))
-  expect(JSON.stringify(out)).not.toMatch(/\breconcile\b/)
+  expect(JSON.stringify(out)).not.toMatch(/\bskerrify\b/)
 })
 
 test('a denial that names a project function is masked like a result', async ($, on) => {
   project(on, { ...COLD_FILES })
-  on('tool.call', () => ({ deny: 'cannot run settle: src/secrets.ts is locked' }))
+  on('tool.call', () => ({ deny: 'cannot run tarnplot: src/secrets.ts is locked' }))
   const out = await $.tool.call(eventOf(TEST_RUN))
-  expect(out.deny).not.toMatch(/\bsettle\b/)
+  expect(out.deny).not.toMatch(/\btarnplot\b/)
 })
 
 test('in a record, a one-word value that is not an enum is still shape-masked', async ($, on) => {
@@ -195,28 +195,28 @@ test('a denial that still holds a credential after masking is withheld', async (
 test('a diff names its files as a/ and b/: they are found and indexed', async ($, on) => {
   project(on, { ...COLD_FILES })
   const run = shellWith(
-    'diff --git a/src/secrets.ts b/src/secrets.ts\n-export function settle(batch: number[]): number {',
+    'diff --git a/src/secrets.ts b/src/secrets.ts\n-export function tarnplot(batch: number[]): number {',
     'toolu_diff'
   )
   on('tool.call', () => run.r)
   const out = await $.tool.call(eventOf(run))
-  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
+  expect(JSON.stringify(out)).not.toMatch(/\btarnplot\b/)
 })
 
 test('with no listing, a source path the guard cannot find withholds the result', async ($, on) => {
   project(on, { ...COLD_FILES }, { noGit: true })
-  const run = shellWith(' ❯ settle lib/elsewhere/ledger.ts:3:1', 'toolu_nolist')
+  const run = shellWith(' ❯ tarnplot lib/elsewhere/ledger.ts:3:1', 'toolu_nolist')
   on('tool.call', () => run.r)
   const out = await $.tool.call(eventOf(run))
   expect(out.deny).toContain('Veilio withheld this result')
-  expect(JSON.stringify(out)).not.toMatch(/\bsettle\b/)
+  expect(JSON.stringify(out)).not.toMatch(/\btarnplot\b/)
 })
 
 // Security review of 2947c81: a path found only by stripping directories may be
 // another file than the one printed; it does not count as checked.
 test('a path found only by stripping its directories is not trusted before the index is complete', async ($, on) => {
   project(on, { ...COLD_FILES }, { noGit: true })
-  const run = shellWith(' ❯ settle vendor/acme/src/secrets.ts:3:1', 'toolu_strip')
+  const run = shellWith(' ❯ tarnplot vendor/acme/src/secrets.ts:3:1', 'toolu_strip')
   on('tool.call', () => run.r)
   const out = await $.tool.call(eventOf(run))
   expect(out.deny).toContain('Veilio withheld this result')

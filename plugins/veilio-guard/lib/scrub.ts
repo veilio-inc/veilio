@@ -16,6 +16,7 @@ import {
   anonymize,
   detectSecrets,
   isKeyword,
+  isOrdinaryWord,
   isPlaceholder,
   keepRule,
   restore,
@@ -358,7 +359,24 @@ function aroundTokens(text: string, fn: (part: string) => string): string {
 }
 
 function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
-  return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
+  const shown = readableView(map)
+  return aroundTokens(dropResidue(text), (part) => replaceNames(part, shown, ctx))
+}
+
+// Spec 064: an entry whose name is an ordinary word (a common English word,
+// shared vocabulary, a toolchain's name) is never written over in what the
+// model is sent - a traceback's "most recent call last", a path's `src/main`,
+// Claude Code's own messages. The map keeps the entry, so text masked with it
+// before still restores. Cached per map object: the map can hold thousands.
+const views = new WeakMap<SymbolMap, { size: number; view: SymbolMap }>()
+function readableView(map: SymbolMap): SymbolMap {
+  const size = Object.keys(map).length
+  const cached = views.get(map)
+  if (cached && cached.size === size) return cached.view
+  const view: SymbolMap = {}
+  for (const [p, name] of Object.entries(map)) if (!isOrdinaryWord(name)) view[p] = name
+  views.set(map, { size, view })
+  return view
 }
 
 // Short words that camelCase identifiers are made of: a piece this short is

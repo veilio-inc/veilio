@@ -9,3 +9,4 @@ export * from './teamNamespace.js';
 export * from './restoreLayers.js';
 export * from './imports.js';
 export * from './types.js';
+export * from './ordinaryWords.js';

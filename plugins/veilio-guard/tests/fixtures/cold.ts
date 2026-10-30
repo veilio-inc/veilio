@@ -5,10 +5,11 @@
 // a bug by running the tests and searching, with no Read.
 import { ROOT } from '../helpers.ts'
 
-/** The names the project declares. None may reach the model. `settle` is a
- *  lowercase one-word name: no shape rule can tell it from English, so only
- *  the index protects it. */
-export const DECLARED = ['luhnValid', 'BatchReconciler', 'reconcileBatch', 'settle', 'digitsOf']
+/** The names the project declares. None may reach the model. `tarnplot` is a
+ *  lowercase one-word name: no shape rule can tell it from a word, so only the
+ *  index protects it. (Spec 064: an ordinary English word such as `settle` is
+ *  not masked at all, so the fixture uses an invented one.) */
+export const DECLARED = ['luhnValid', 'BatchReconciler', 'reconcileBatch', 'tarnplot', 'digitsOf']
 
 export const COLD_FILES: Record<string, string> = {
   [`${ROOT}/src/secrets.ts`]: [
@@ -21,17 +22,17 @@ export const COLD_FILES: Record<string, string> = {
     '  return digits.length >= 12',
     '}',
     '',
-    'export function settle(batch: number[]): number {',
+    'export function tarnplot(batch: number[]): number {',
     '  return batch.length',
     '}',
     '',
   ].join('\n'),
   [`${ROOT}/src/batch.ts`]: [
-    "import { settle } from './secrets.ts'",
+    "import { tarnplot } from './secrets.ts'",
     '',
     'export class BatchReconciler {',
     '  reconcileBatch(entries: number[]): number {',
-    '    return settle(entries)',
+    '    return tarnplot(entries)',
     '  }',
     '}',
     '',
@@ -68,7 +69,7 @@ export const TEST_RUN = {
       ' FAIL  tests/secrets.test.ts > luhnValid > accepts a valid card',
       'AssertionError: expected false to be true',
       ' ❯ luhnValid src/secrets.ts:7:10',
-      ' ❯ settle src/secrets.ts:11:3',
+      ' ❯ tarnplot src/secrets.ts:11:3',
       ' ❯ BatchReconciler.reconcileBatch src/batch.ts:5:12',
       ' Test Files  1 failed (1)',
     ].join('\n')

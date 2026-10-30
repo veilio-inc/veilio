@@ -87,7 +87,12 @@ test('a Read of a directory: the error reaches the model as masked text, not as 
 test('a comment in a source Read: known names masked, everyday words left', async ($, on) => {
   const read = recorded('Read')
   project(on, {
-    [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__9: 'total', __STR__1: 'keep' }),
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      ...SEEDED,
+      __VAR__9: 'total',
+      __VAR__10: 'tarnwick',
+      __STR__1: 'keep',
+    }),
   })
   on('tool.call', () => ({
     ...read.r,
@@ -95,24 +100,34 @@ test('a comment in a source Read: known names masked, everyday words left', asyn
       ...read.r.result,
       file: {
         ...read.r.result.file,
-        content: `// keep the total in ${CANARY}\nexport class ${CANARY} {\n  total = 1\n}\n`,
+        content: `// keep the total and the tarnwick in ${CANARY}\nexport class ${CANARY} {\n  total = 1\n  tarnwick = 2\n}\n`,
       },
     },
   }))
   const out = await $.tool.call(eventOf(read))
   const lines = res(out).file.content.split('\n')
-  expect(lines[0]).toBe('// keep the __VAR__9 in __CLS__1')
+  // Spec 064: ordinary words stay readable. `total` is an English word, left
+  // as written though the map holds it; `tarnwick` is masked, in the comment too.
+  expect(lines[0]).toBe('// keep the total and the __VAR__10 in __CLS__1')
   expect(lines[1]).toBe('export class __CLS__1 {')
-  expect(lines[2]).toBe('  __VAR__9 = 1')
+  expect(lines[2]).toBe('  total = 1')
+  expect(lines[3]).toBe('  __VAR__10 = 2')
 })
 
 test('Grep in both modes and Glob: content and file names scrubbed, enums kept', async ($, on) => {
   const content = recorded('Grep')
   const files = recorded('Grep', 1)
   const glob = recorded('Glob')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __PKG__9: 'ledger' }) })
+  // `ledger`, the recorded file's name, is an ordinary word (spec 064): the
+  // Glob result names a file with a distinctive one instead.
+  const globbed = {
+    ...glob.r,
+    result: { ...glob.r.result, filenames: ['src/quayward.ts'] },
+    text: 'src/quayward.ts',
+  }
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __PKG__9: 'quayward' }) })
   on('tool.call', (_, e) =>
-    e.tool === 'Glob' ? glob.r : e.output_mode === 'content' ? content.r : files.r
+    e.tool === 'Glob' ? globbed : e.output_mode === 'content' ? content.r : files.r
   )
   const a = await $.tool.call(eventOf(content))
   const b = await $.tool.call(eventOf(files))
@@ -120,7 +135,8 @@ test('Grep in both modes and Glob: content and file names scrubbed, enums kept',
   expect(res(a).mode).toBe('content')
   expect(res(b).mode).toBe('files_with_matches')
   expect(JSON.stringify(a)).not.toContain('settledTotal')
-  expect(JSON.stringify(c)).not.toContain('ledger.ts')
+  expect(JSON.stringify(c)).not.toContain('quayward')
+  expect(JSON.stringify(c)).toContain('__PKG__9.ts')
 })
 
 test('Edit and Write records: the original file and the patch are scrubbed', async ($, on) => {
@@ -266,8 +282,8 @@ test('a secret a rule only partly took is redacted whole, and the result is sent
 
 test('a plain word under a long placeholder number is not read as a credential', async ($, on) => {
   const read = recorded('Read')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__1290: 'disabled' }) })
-  const content = 'export const auth = { client_secret: "disabled" }\n'
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __STR__1290: 'quayward' }) })
+  const content = 'export const auth = { client_secret: "quayward" }\n'
   on('tool.call', () => ({
     ...read.r,
     result: { ...read.r.result, file: { ...read.r.result.file, content } },
@@ -291,8 +307,8 @@ test('a credential-shaped placeholder for a plain word in output is not read as 
 
 test('a plain word under a long placeholder number is masked, not redacted, in output', async ($, on) => {
   const bash = recorded('Bash')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'disabled' }) })
-  const stdout = 'client_secret: "disabled"\n'
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'quayward' }) })
+  const stdout = 'client_secret: "quayward"\n'
   on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
   const out = await $.tool.call(eventOf(bash))
   expect(out.deny).toBeUndefined()
@@ -365,7 +381,7 @@ test('a short connection-string password under a mapped user is redacted', async
 
 test('a credential that reads as one as written stays destroyed, whatever the map holds', async ($, on) => {
   const bash = recorded('Bash')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...SEEDED, __VAR__1290: 'quayward' }) })
   // As written, this value has the entropy of key material: it is destroyed,
   // though it is spelled like one of the map's placeholders.
   const stdout = 'password = "__VAR__1290"\n'

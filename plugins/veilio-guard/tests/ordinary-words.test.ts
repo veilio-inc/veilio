@@ -1,0 +1,34 @@
+// Spec 064: what the guard returns keeps ordinary words as written - in a
+// traceback, a path, a test runner's report, Claude Code's own messages - and
+// still masks the project's distinctive names. In spec 062 the guard masked
+// `recent` inside "Traceback (most recent call last)" and every package
+// segment of a Java path, and the model listed the whole tree to find its way.
+import { expect, test } from 'claude-code/testing'
+import { eventOf, mapFile, project, recordedRaw, ROOT } from './helpers.ts'
+
+const MAP = mapFile({
+  __VAR__1: 'recent',
+  __VAR__2: 'ledger',
+  __VAR__3: 'tarnwick',
+  __CLS__4: 'SkerryTariff',
+  __VAR__5: 'java',
+})
+
+const OUTPUT = [
+  'Traceback (most recent call last):',
+  '  File "ledger/src/main/java/com/tarnwick/ledger/SkerryTariff.java", line 3',
+  'AssertionError: expected SkerryTariff',
+].join('\n')
+
+test('ordinary words in tool output stay as written; distinctive names are masked', async ($, on) => {
+  const bash = recordedRaw('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: MAP })
+  const r = bash.r as { result: Record<string, unknown> }
+  on('tool.call', () => ({ ...r, result: { ...r.result, stdout: OUTPUT } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+  expect(out).toContain('most recent call last')
+  expect(out).toContain('ledger/src/main/java/com/')
+  expect(out).not.toContain('tarnwick')
+  expect(out).not.toContain('SkerryTariff')
+  expect(out).toContain('__CLS__4')
+})
