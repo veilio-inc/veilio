@@ -120,8 +120,15 @@ export class FakeCloud {
   servedPublicKey: string | null = null
   /** A dishonest server: the wrap it hands back instead of the one stored. */
   servedWrap: string | null = null
+  /** Spec 063: who holds which numbers. Tests may add a teammate's run. */
+  reservations: { base: string; start: number; end: number; member: string }[] = []
+  /** This account's id, as the reservations record it. */
+  memberId = 'u-me'
+  /** The day's block ceiling is reached: block requests answer 429. */
+  blocksRefused = false
   private nextId = 1
-  private counters = new Map<string, number>()
+  /** Per kind, as the server's team-wide counter. */
+  counters = new Map<string, number>()
 
   /** Install the vault for PASSPHRASE. */
   async withVault(): Promise<CryptoKeyLike> {
@@ -413,12 +420,21 @@ export class FakeCloud {
     }
     if (path === `/api/teams/${TEAM_ID}/placeholders/reserve` && method === 'POST') {
       const asked = (body?.requests ?? []) as { base: string; count: number; floor: number }[]
-      const ranges = asked.map(({ base, count, floor }) => {
+      // Spec 063: a block's size is the server's (500), and every run is
+      // recorded against the member who took it.
+      const block = body?.block === true
+      if (block && this.blocksRefused) return json(429, { error: 'Too many blocks today' })
+      const ranges = asked.map(({ base, count: wanted, floor }) => {
+        const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
         this.counters.set(base, start + count - 1)
+        this.reservations.push({ base, start, end: start + count - 1, member: this.memberId })
         return { base, start, end: start + count - 1 }
       })
       return json(200, { ranges })
+    }
+    if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
+      return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {
       return json(200, {

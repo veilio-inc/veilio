@@ -45,6 +45,7 @@ import {
   type CloudMapList,
 } from '../cloud.js'
 import { readCredential, type Credential } from '../credential.js'
+import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
 import { readTeamUnlock } from '../team-unlock.js'
 import { describeMaps, resolveTeamNamespace } from '../team-namespace.js'
@@ -324,7 +325,9 @@ export async function pullCloudMap(
   ctx: ClientContext,
   id: string | null,
   opts: { mapPath: string; force?: boolean }
-): Promise<Outcome<{ id: string; name: string; count: number; path: string }>> {
+): Promise<
+  Outcome<{ id: string; name: string; count: number; path: string; blocks?: BlocksOutcome }>
+> {
   const credential = signedIn(ctx)
   if (!credential) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
@@ -346,6 +349,7 @@ export async function pullCloudMap(
   const label = { id: remote.id, name: remote.name }
 
   let opened: Outcome<SymbolMap>
+  let teamId: string | null = null
   if (team) {
     // A team map belongs to one project: with VEILIO_PROJECT set it must be in
     // that one, and a value that names nothing is refused as everywhere else.
@@ -368,6 +372,7 @@ export async function pullCloudMap(
     }
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
+    teamId = keys.value.teamId
     opened = await openTeam(keys.value, remote.map_data, label)
   } else {
     const keys = await personalKeys(credential, ctx)
@@ -408,11 +413,15 @@ export async function pullCloudMap(
     force: true,
     remote: { id: remote.id, updatedAt: remote.updated_at, pulledAt: new Date().toISOString() },
   })
+  // Spec 063: a team map comes with a block of the team's numbers, so the
+  // guard numbers where no teammate can. A refusal there does not undo the pull.
+  const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath) : undefined
   return ok({
     id: remote.id,
     name: remote.name,
     count: Object.keys(map).length,
     path: opts.mapPath,
+    ...(blocks ? { blocks } : {}),
   })
 }
 

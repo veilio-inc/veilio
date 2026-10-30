@@ -7,6 +7,9 @@
 // that walk meaningful instead of something to be deleted the moment it becomes
 // inconvenient.
 
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import {
   CloudError,
   startDeviceLogin,
@@ -20,6 +23,7 @@ import {
   request,
 } from './cloud.js'
 import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
+import { ensureBlocks } from './client/blocks.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   removeTeamUnlock,
@@ -571,8 +575,19 @@ export async function runMapsPull(
 ): Promise<number> {
   const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
   if (!pulled.ok) return refused(pulled.refusal, io)
-  const { name, count, path } = pulled.value
+  const { name, count, path, blocks } = pulled.value
   io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
+  // Spec 063: what the guard will number new names from.
+  if (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length)
+    io.stdout(
+      `Reserved team numbers for new names: ${Object.entries(blocks.blocks)
+        .map(([base, b]) => `${base}${b.start}-${b.end}`)
+        .join(', ')}\n`
+    )
+  if (blocks?.status === 'failed')
+    io.stderr(
+      `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
+    )
   return EXIT_OK
 }
 
@@ -710,7 +725,7 @@ export async function runRulesPull(io: Io): Promise<number> {
  * is present to type the passphrase. See `team-unlock.ts` for what is stored
  * and why it is the team key rather than the vault key.
  */
-export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
+export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Promise<number> {
   const credential = readCredential(io.home)
   if (!credential) {
     io.stderr('veilio: not signed in. Run `veilio login` first.\n')
@@ -832,6 +847,28 @@ export async function runTeamUnlock(io: Io, days?: number): Promise<number> {
         `Stored in ${teamUnlockPath(io.home)}, readable only by you. ` +
         `Run \`veilio team lock\` to remove them.\n`
     )
+    // Spec 063: a project that already has a map gets this member's block of
+    // the team's numbers now, so the guard numbers where no teammate can even
+    // before a team map is pulled. Never the home directory's own store (the
+    // credential lives there), never a store created here.
+    if (
+      teamId &&
+      mapPath &&
+      existsSync(mapPath) &&
+      dirname(mapPath) !== join(io.home ?? homedir(), '.veilio')
+    ) {
+      const blocks = await ensureBlocks(credential, teamId, mapPath)
+      if (blocks.status === 'reserved' && Object.keys(blocks.blocks).length)
+        io.stdout(
+          `Reserved team numbers for new names: ${Object.entries(blocks.blocks)
+            .map(([base, b]) => `${base}${b.start}-${b.end}`)
+            .join(', ')}\n`
+        )
+      if (blocks.status === 'failed')
+        io.stderr(
+          `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
+        )
+    }
     return EXIT_OK
   } catch (err) {
     return reportCloudFailure(err, io)
