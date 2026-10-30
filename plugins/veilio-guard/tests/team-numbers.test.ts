@@ -4,7 +4,7 @@
 // map, so two members gave one placeholder two meanings and 93 of 128
 // publishes were refused.
 import { expect, test } from 'claude-code/testing'
-import { eventOf, mapFile, project, recorded, res, ROOT } from './helpers.ts'
+import { eventOf, mapFile, project, recorded, recordedRaw, res, ROOT } from './helpers.ts'
 
 const reservedFile = (blocks: Record<string, { start: number; end: number }>) =>
   JSON.stringify({
@@ -115,4 +115,25 @@ test('a block the map has outgrown is reported as unusable, never as numbers lef
   const status = await $.command.run({ command: 'veilio', args: '' })
   expect(status.text).toMatch(/no usable team numbers \(run veilio maps pull\)/)
   expect(status.text).not.toMatch(/team numbers: -?\d+ left/)
+})
+
+test('a distinctive name first seen in command output is numbered inside the block too (team bench, 2026-10-30)', async ($, on) => {
+  // The guard masks shaped names it meets in output (maskShaped). That path
+  // numbered above the map's highest - inside a teammate's block - and a
+  // teammate's restore then named the teammate's own name.
+  const bash = recordedRaw('Bash')
+  project(on, { [`${ROOT}/.veilio/reserved.json`]: reservedFile(BLOCKS) })
+  const r = bash.r as { result: Record<string, unknown> }
+  on('tool.call', () => ({
+    ...r,
+    result: { ...r.result, stdout: 'FAIL QuaywardRebalancer: skerryHoldCount was 3' },
+  }))
+  const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+  expect(out).not.toContain('QuaywardRebalancer')
+  for (const [base, b] of Object.entries(BLOCKS))
+    for (const n of numbersOf(out, base)) {
+      expect(n).toBeGreaterThanOrEqual(b.start)
+      expect(n).toBeLessThanOrEqual(b.end)
+    }
+  expect(numbersOf(out, '__CLS__').length + numbersOf(out, '__VAR__').length).toBeGreaterThan(0)
 })

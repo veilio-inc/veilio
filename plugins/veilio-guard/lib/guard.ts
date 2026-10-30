@@ -834,7 +834,8 @@ export class Guard {
     const shaped = maskShaped(
       applyMap(raw, this.map, ctx, { known: this.destroyed }),
       this.map,
-      ctx
+      ctx,
+      this.blocks
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
@@ -976,7 +977,7 @@ export class Guard {
         // `status`, or a value deeper down, is masked like any other.
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c)
+          const shaped = maskShaped(t, working, c, this.blocks)
           grow(working, shaped.additions)
           grow(additions, shaped.additions)
           return shaped.text
