@@ -356,7 +356,12 @@ export function listRules(
 export function getTeamEnvelopes(
   credential: Credential,
   signal?: AbortSignal
-): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
+): Promise<{
+  maps: { id: string; created_at: string; map_data: string; owner_id?: string }[]
+  unreadable: string[]
+  /** Spec 063: who holds which of the team's numbers. Absent on an older instance. */
+  reservations?: PlaceholderReservation[]
+}> {
   return request(`/api/maps/team-envelopes${projectQuery(credential)}`, { credential, signal })
 }
 

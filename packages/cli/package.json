@@ -1,7 +1,7 @@
 {
   "name": "@veilio-inc/cli",
   "version": "0.7.1",
-  "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM — from the terminal, a pipe, or a pre-commit hook.",
+  "description": "Anonymize identifiers and redact credentials in source code before it reaches an LLM \u2014 from the terminal, a pipe, or a pre-commit hook.",
   "type": "module",
   "bin": {
     "veilio": "dist/index.js"
@@ -53,7 +53,8 @@
     "./rules": "./dist/rules.js",
     "./team-anonymize": "./dist/team-anonymize.js",
     "./third-party": "./dist/third-party.js",
-    "./client": "./dist/client/index.js"
+    "./client": "./dist/client/index.js",
+    "./reservations": "./dist/reservations.js"
   },
   "repository": {
     "type": "git",

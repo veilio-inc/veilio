@@ -127,6 +127,10 @@ export class FakeCloud {
   recordsReservations = false
   /** This account's id, as the reservations record it. */
   memberId = 'u-me'
+  /** An account id for an owner address: this account's, or `u-<local part>`. */
+  idOf(owner: string): string {
+    return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
+  }
   /** The day's block ceiling is reached: block requests answer 429. */
   blocksRefused = false
   private nextId = 1
@@ -291,8 +295,16 @@ export class FakeCloud {
       return json(200, {
         maps: rows
           .filter((m) => !this.serverUnreadable.has(m.id))
-          .map((m) => ({ id: m.id, created_at: m.created_at, map_data: m.map_data })),
+          .map((m) => ({
+            id: m.id,
+            created_at: m.created_at,
+            map_data: m.map_data,
+            // Spec 063: the publisher, and the team's reservations, as the
+            // server sends them; an instance from before it sends neither.
+            ...(this.recordsReservations ? { owner_id: this.idOf(m.owner) } : {}),
+          })),
         unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
+        ...(this.recordsReservations ? { reservations: this.reservations } : {}),
       })
     }
     if (path === '/api/maps' && method === 'POST') {

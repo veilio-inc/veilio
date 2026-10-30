@@ -179,6 +179,27 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(r.text).not.toContain('Ledger')
   })
 
+  it('restore_text leaves a number another member reserved, naming why, and restores the reserver’s own (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.reservations.push(
+      { base: '__FN__', start: 1, end: 100, member: 'u-bob' },
+      { base: '__FN__', start: 101, end: 200, member: 'u-ada' }
+    )
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__12: 'refund', __FN__150: 'settle' }),
+    })
+    saveMap(mapPath(), { __VAR__1: 'amount' }, { force: true })
+    await primeNamespace(home)
+    const r = callTool('restore_text', { text: 'a(__FN__12) b(__FN__150)' }, ctx)
+    expect(r.text).toContain('a(__FN__12) b(settle)')
+    expect(r.text).toMatch(/reserved by another member/)
+    expect(r.text).not.toContain('refund')
+  })
+
   it('maps_create renumbers entries outside this member’s reserved numbers instead of refusing them (spec 063)', async () => {
     signIn(home, { team: true })
     cloud.recordsReservations = true

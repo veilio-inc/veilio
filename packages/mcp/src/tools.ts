@@ -48,7 +48,8 @@ import {
   namespaceLine,
   refreshNamespaceIfStale,
 } from './namespace.js'
-import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
+import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace'
+import { loadAliases } from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
@@ -456,7 +457,9 @@ export const TOOLS: ToolDefinition[] = [
     handler: (args, ctx) => {
       const text = str(args, 'text', true)
       const strict = bool(args, 'strict')
-      const own = loadMap(resolveMapPath(ctx.mapPath, ctx.cwd))
+      // Spec 063: this member's renumbered old placeholders still read back here.
+      const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
+      const own = { ...loadAliases(mapPath), ...loadMap(mapPath) }
       // The one restore rule (spec 028), shared with the web app and the CLI:
       // the team's maps - aliases included, disputed placeholders left out -
       // then this project's map on top where it is in the team's numbering.
@@ -478,7 +481,11 @@ export const TOOLS: ToolDefinition[] = [
         throw new ToolError(`no symbol map yet — run anonymize_file (or "${BIN_NAME} scrub") first`)
       }
       const layers = restoreLayers({ own, team })
-      const disputed = layers.disputedIn(text)
+      // Spec 063: a number another member reserved is left with its own reason.
+      const misattributed = team && found.status === 'team' ? (found.misattributed ?? []) : []
+      const disputedAll = layers.disputedIn(text)
+      const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
+      const disputed = disputedAll.filter((p) => !misattributed.includes(p))
       const localOnly = layers.locallyNumberedIn(text)
       const result = restore(text, layers.map)
       // Measured against this project's map, not the whole team layer (review),
@@ -487,16 +494,17 @@ export const TOOLS: ToolDefinition[] = [
         ...result.report,
         missing: result.report.missing.filter((p) => p in own),
         unresolved: result.report.unresolved.filter(
-          (p) => !disputed.includes(p) && !localOnly.includes(p)
+          (p) => !disputed.includes(p) && !localOnly.includes(p) && !otherMembers.includes(p)
         ),
       }
       const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
       const altered = result.report.altered
-      const left = [...report.unresolved, ...disputed, ...localOnly, ...altered]
+      const left = [...report.unresolved, ...disputed, ...otherMembers, ...localOnly, ...altered]
       const warnings = [
         ...(refreshing ? [loadingNote(refreshing)] : []),
         ...(note ? [`WARNING: ${note}`] : []),
         ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
+        ...(otherMembers.length ? [`WARNING: ${misattributedNote(otherMembers)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
       ]

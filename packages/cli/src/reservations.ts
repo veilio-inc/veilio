@@ -127,3 +127,12 @@ export function addAliases(mapPath: string, entries: SymbolMap): void {
       )
   writePrivate(aliasesPath(mapPath), { version: 1, aliases: { ...aliases, ...entries } })
 }
+
+/** How the CLI and the MCP name a placeholder left because its number was another member's. */
+export function misattributedNote(placeholders: readonly string[]): string {
+  const one = placeholders.length === 1
+  return (
+    `left as is: ${placeholders.join(', ')}. ${one ? 'Its number was' : 'Their numbers were'} reserved by another member ` +
+    `than the one whose map names ${one ? 'it' : 'them'}, so restoring would be a guess.`
+  )
+}

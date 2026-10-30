@@ -28,6 +28,7 @@ import {
   listMaps,
   type CloudMapList,
   type CloudMapSummary,
+  type PlaceholderReservation,
 } from './cloud.js'
 import { readTeamUnlock } from './team-unlock.js'
 import { projectOverride, resolveOverride, type Env } from './client/project-scope.js'
@@ -43,6 +44,8 @@ export type TeamNamespaceResult =
   | {
       status: 'team'
       analysis: TeamNamespaceAnalysis
+      /** Spec 063: placeholders whose number another member reserved (also in analysis.conflicts). */
+      misattributed?: string[]
       conflictDetection: boolean
       /**
        * The team whose namespace this is, for reserving placeholder numbers
@@ -251,15 +254,50 @@ async function attempt(
       reason: `none of the team maps opened with the unlocked key: ${describeMaps(unreadable)}`,
     }
   }
+  const analysis = analyzeTeamNamespace(entries)
+  // Spec 063 (research R5 rule 3): an entry whose number another member
+  // reserved was not numbered by the map that publishes it. It joins the
+  // disputed set - scrub never emits it, a publish treats it as taken, restore
+  // leaves it and names it - rather than be restored as a guess.
+  const misattributed = read.reservations ? misattributedIn(analysis, kept, read.reservations) : []
+  for (const p of misattributed) analysis.conflicts[p] = Math.max(analysis.conflicts[p] ?? 0, 2)
   return {
     status: 'team',
-    analysis: analyzeTeamNamespace(entries),
+    analysis,
+    misattributed,
     conflictDetection: true,
     teamId,
     unreadable,
     ...(excludedEntry ? { excluded: { map: excludedEntry.map } } : {}),
   }
 }
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+/**
+ * Placeholders the team's maps give a name although the member who reserved
+ * the number published no map that gives it that name. A number in no
+ * reservation (from before spec 063) is not judged: it restores as before.
+ */
+export function misattributedIn(
+  analysis: { namespace: Record<string, string>; aliases: Record<string, string> },
+  entries: readonly { owner?: string; map: Record<string, string> | null }[],
+  reservations: readonly PlaceholderReservation[]
+): string[] {
+  const out: string[] = []
+  const named = { ...analysis.aliases, ...analysis.namespace }
+  for (const [p, name] of Object.entries(named)) {
+    const [, base = '', digits = ''] = NUMBERED.exec(p) ?? []
+    if (!base) continue
+    const n = Number(digits)
+    const reserver = reservations.find((r) => r.base === base && n >= r.start && n <= r.end)?.member
+    if (!reserver) continue
+    if (!entries.some((e) => e.owner === reserver && e.map?.[p] === name)) out.push(p)
+  }
+  return out
+}
+
+export { misattributedNote } from './reservations.js'
 
 /** `"billing" (m-1), m-2` - the names a person recognises, beside the ids they
  *  would type to remove one. Five at most, then a count. */
@@ -311,7 +349,11 @@ async function readTeamEntries(
   keys: readonly { version: number; key: CryptoKeyLike }[],
   teamScoped: readonly CloudMapSummary[],
   signal: AbortSignal
-): Promise<{ entries: IdentifiedEntry[]; unreadable: string[] }> {
+): Promise<{
+  entries: IdentifiedEntry[]
+  unreadable: string[]
+  reservations?: PlaceholderReservation[]
+}> {
   let bulk: Awaited<ReturnType<typeof getTeamEnvelopes>>
   try {
     bulk = await getTeamEnvelopes(credential, signal)
@@ -333,20 +375,25 @@ async function readTeamEntries(
         return {
           id: row.id,
           createdAt: row.created_at,
+          owner: row.owner_id,
           map: await decryptTeamMapWithAny(keys, envelope),
         }
       } catch {
         // A version this member was never granted: skipped, not fatal - but
         // named, by the caller, wherever it matters (FR-018).
-        return { id: row.id, createdAt: row.created_at, map: null }
+        return { id: row.id, createdAt: row.created_at, owner: row.owner_id, map: null }
       }
     })
   )
   // The server could not peel its own layer off these: also unreadable.
-  return { entries, unreadable: Array.isArray(bulk.unreadable) ? bulk.unreadable : [] }
+  return {
+    entries,
+    unreadable: Array.isArray(bulk.unreadable) ? bulk.unreadable : [],
+    ...(Array.isArray(bulk.reservations) ? { reservations: bulk.reservations } : {}),
+  }
 }
 
-type IdentifiedEntry = TeamMapEntry & { id: string }
+type IdentifiedEntry = TeamMapEntry & { id: string; owner?: string }
 
 async function openTeamMap(
   credential: Credential,

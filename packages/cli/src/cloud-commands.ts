@@ -988,14 +988,19 @@ export async function teamLayerFor(
   home: string | undefined,
   missing: readonly string[],
   env?: Env
-): Promise<{ team: TeamLayer | null; note: string | null; refused?: string }> {
+): Promise<{
+  team: TeamLayer | null
+  note: string | null
+  refused?: string
+  misattributed?: string[]
+}> {
   // Signed out, the resolver answers 'local' without a request. At most 5 s: a
   // hung instance must not stall a `... | veilio restore > file` pipeline.
   const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS, env })
   if (found.status === 'refused')
     return { team: null, note: null, refused: renderRefusal(found.refusal) }
   if (found.status === 'team' && found.conflictDetection)
-    return { team: found.analysis, note: null }
+    return { team: found.analysis, note: null, misattributed: found.misattributed ?? [] }
   return { team: null, note: teamLayerNote(found, missing) }
 }
 
