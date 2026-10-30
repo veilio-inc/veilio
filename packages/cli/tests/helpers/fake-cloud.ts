@@ -122,6 +122,9 @@ export class FakeCloud {
   servedWrap: string | null = null
   /** Spec 063: who holds which numbers. Tests may add a teammate's run. */
   reservations: { base: string; start: number; end: number; member: string }[] = []
+  /** Spec 063's record of who holds which numbers. Off by default: the
+   *  tests written before it describe an instance that keeps none. */
+  recordsReservations = false
   /** This account's id, as the reservations record it. */
   memberId = 'u-me'
   /** The day's block ceiling is reached: block requests answer 429. */
@@ -263,7 +266,18 @@ export class FakeCloud {
               .filter((m) => m.scope === 'team' && m.owner !== ME && inProject(m))
               .map((m) => this.listed(m))
           : [],
-        team: this.teamId ? { id: this.teamId } : null,
+        team: this.teamId
+          ? {
+              id: this.teamId,
+              ...(this.recordsReservations
+                ? {
+                    reservations: this.reservations
+                      .filter((r) => r.member === this.memberId)
+                      .map(({ base, start, end }) => ({ base, start, end })),
+                  }
+                : {}),
+            }
+          : null,
         plan: 'team',
         ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
       })
@@ -434,6 +448,8 @@ export class FakeCloud {
       return json(200, { ranges })
     }
     if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
+      // An instance from before spec 063 has no such route.
+      if (!this.recordsReservations) return json(404, { error: 'Not found' })
       return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {

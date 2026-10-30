@@ -1,0 +1,171 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { decryptTeamMap, importTeamKey, toBase64, type TeamMapEnvelope } from '@veilio-inc/engine'
+import { main } from '../src/index.js'
+import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
+import { STORE_DIR, STORE_FILE, loadMap, saveMap } from '../src/store.js'
+import { loadAliases } from '../src/reservations.js'
+import {
+  FakeCloud,
+  PASSPHRASE,
+  TEAMMATE,
+  TEAM_RAW,
+  sealTeam,
+  signIn,
+} from './helpers/fake-cloud.js'
+
+/**
+ * Spec 063 FR-003 (US1): a team publish carries only numbers its publisher
+ * reserved. A new entry numbered outside them - by a guard with no block, or
+ * before this feature - is renumbered from a fresh reservation before
+ * anything is sealed, and its old placeholder is kept locally, so the
+ * publisher's own restore still reads text masked before. In spec 061 the
+ * same entries were refused as clashes 93 times out of 128, for good.
+ */
+
+let home: string
+let cwd: string
+let cloud: FakeCloud
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'veilio-pub-home-'))
+  cwd = mkdtempSync(join(tmpdir(), 'veilio-pub-work-'))
+  mkdirSync(join(cwd, '.git'), { recursive: true })
+  cloud = new FakeCloud()
+  cloud.recordsReservations = true
+  vi.stubGlobal('fetch', cloud.fetch)
+  signIn(home, { team: true })
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+  rmSync(home, { recursive: true, force: true })
+  rmSync(cwd, { recursive: true, force: true })
+})
+
+const mapPath = (): string => join(cwd, STORE_DIR, STORE_FILE)
+async function run(argv: string[]): Promise<{ code: number; out: string; err: string }> {
+  let out = ''
+  let err = ''
+  const io: Io = {
+    cwd,
+    home,
+    stdin: async () => '',
+    stdout: (t) => (out += t),
+    stderr: (t) => (err += t),
+    prompt: async () => '',
+    password: async () => PASSPHRASE,
+  }
+  return { code: await main(argv, io), out, err }
+}
+async function published(id: string): Promise<Record<string, string>> {
+  const m = cloud.find(id)!
+  return decryptTeamMap(
+    await importTeamKey(toBase64(TEAM_RAW)),
+    JSON.parse(m.map_data) as TeamMapEnvelope
+  )
+}
+const teammateMap = async (map: Record<string, string>) =>
+  cloud.add({ owner: TEAMMATE, scope: 'team', name: 'theirs', map_data: await sealTeam(map) })
+const pushedId = (out: string) => /as (\S+)/.exec(out)?.[1] ?? ''
+
+describe('a team publish carries only the publisher’s reserved numbers', () => {
+  it('entries inside the publisher’s reservations go up as they are', async () => {
+    cloud.reservations.push({ base: '__FN__', start: 5001, end: 5500, member: 'u-me' })
+    saveMap(mapPath(), { __FN__5001: 'chargeCard' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(await published(pushedId(res.out))).toEqual({ __FN__5001: 'chargeCard' })
+    expect(loadAliases(mapPath())).toEqual({})
+  })
+
+  it('a clash on an unreserved number is renumbered, not refused (spec 061 F2)', async () => {
+    await teammateMap({ __FN__41: 'refund' })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    const up = await published(pushedId(res.out))
+    const [placeholder] = Object.keys(up)
+    expect(up[placeholder]).toBe('payout')
+    expect(Number(placeholder.replace('__FN__', ''))).toBeGreaterThan(41)
+    // Reserved for this member, and recorded as theirs.
+    expect(
+      cloud.reservations.some((r) => r.member === 'u-me' && r.start <= Number(placeholder.slice(6)))
+    ).toBe(true)
+    // The local map now holds the new number; the old one stays readable here.
+    expect(loadMap(mapPath())).toEqual({ [placeholder]: 'payout' })
+    expect(loadAliases(mapPath())).toEqual({ __FN__41: 'payout' })
+    expect(res.out + res.err).toMatch(/renumbered 1/i)
+  })
+
+  it('a name the team already holds takes the team’s placeholder, with no reservation', async () => {
+    await teammateMap({ __FN__7: 'chargeCard' })
+    saveMap(mapPath(), { __FN__90: 'chargeCard' }, { force: true })
+    const before = cloud.requests.filter((r) => r.path.endsWith('/placeholders/reserve')).length
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(await published(pushedId(res.out))).toEqual({ __FN__7: 'chargeCard' })
+    expect(cloud.requests.filter((r) => r.path.endsWith('/placeholders/reserve')).length).toBe(
+      before
+    )
+    expect(loadAliases(mapPath())).toEqual({ __FN__90: 'chargeCard' })
+  })
+
+  it('a number another member reserved is never published by this one', async () => {
+    cloud.reservations.push({ base: '__FN__', start: 1, end: 500, member: 'u-ada' })
+    saveMap(mapPath(), { __FN__12: 'chargeCard' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    const up = await published(pushedId(res.out))
+    expect(Object.keys(up)).not.toContain('__FN__12')
+  })
+
+  it('when no numbers can be reserved, nothing is uploaded and the entries are named', async () => {
+    await teammateMap({ __FN__41: 'refund' })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    cloud.limited.add('/api/teams/team-1/placeholders/reserve')
+    const mapWrites = () => cloud.writes().filter((w) => w.path.startsWith('/api/maps')).length
+    const writesBefore = mapWrites()
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/__FN__41/)
+    expect(res.err).toMatch(/reserve/i)
+    expect(mapWrites()).toBe(writesBefore)
+    expect(loadMap(mapPath())).toEqual({ __FN__41: 'payout' })
+  })
+
+  it('maps update renumbers the same way', async () => {
+    cloud.reservations.push({ base: '__FN__', start: 5001, end: 5500, member: 'u-me' })
+    saveMap(mapPath(), { __FN__5001: 'chargeCard' }, { force: true })
+    const first = await run(['maps', 'push', '--team', 'mine'])
+    const id = pushedId(first.out)
+    await teammateMap({ __FN__6000: 'refund' })
+    saveMap(mapPath(), { __FN__5001: 'chargeCard', __FN__6000: 'payout' }, { force: true })
+    const res = await run(['maps', 'update', id])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    const up = await published(id)
+    expect(up.__FN__5001).toBe('chargeCard')
+    expect(up.__FN__6000).toBeUndefined()
+    expect(Object.values(up)).toContain('payout')
+  })
+})
+
+describe('an instance without the reservations record', () => {
+  it('publishes as before (the clash check still refuses a real clash)', async () => {
+    cloud.recordsReservations = false
+    const real = cloud.fetch
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
+      String(url).includes('/placeholders/reservations')
+        ? new Response(JSON.stringify({ error: 'Not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        : real(url, init)
+    )
+    await teammateMap({ __FN__41: 'refund' })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/something else to the team/)
+  })
+})

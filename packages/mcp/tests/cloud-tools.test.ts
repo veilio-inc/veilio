@@ -179,6 +179,22 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(r.text).not.toContain('Ledger')
   })
 
+  it('maps_create renumbers entries outside this member’s reserved numbers instead of refusing them (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__41: 'refund' }),
+    })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const r = await callToolAsync('maps_create', { name: 'mine', scope: 'team' }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Renumbered 1 entry/)
+    expect(Object.keys(loadMap(mapPath()))).not.toContain('__FN__41')
+  })
+
   it('maps_pull of a team map says which team numbers this member now holds (spec 063)', async () => {
     signIn(home, { team: true })
     const row = cloud.add({

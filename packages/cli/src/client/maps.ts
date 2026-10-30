@@ -40,10 +40,15 @@ import {
   getPersonalMapsKeyWrap,
   listMaps,
   listProjects,
+  reservePlaceholders,
   updateMapContent,
   type CloudMap,
   type CloudMapList,
 } from '../cloud.js'
+import { addAliases } from '../reservations.js'
+import { highestPerBase } from '../team-anonymize.js'
+
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 import { readCredential, type Credential } from '../credential.js'
 import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
@@ -486,6 +491,111 @@ async function teamForWrite(
   return ok(found)
 }
 
+/**
+ * Spec 063 FR-003: the map a team publish seals holds only numbers its
+ * publisher reserved. A new entry (one the team does not already hold under
+ * that placeholder with that name) numbered outside this account's
+ * reservations - by a guard with no block, a signed-out scrub, a map from
+ * before 063 - takes the team's own placeholder where the team already knows
+ * the name, and otherwise a number reserved now. The old placeholder is kept
+ * in aliases.json, so this member's own restore still reads text masked with
+ * it; teammates never saw it, because it was never published.
+ *
+ * Before anything is sealed. An instance that keeps no reservations record
+ * (older self-hosted, 404) publishes as before; the clash check still runs.
+ */
+async function renumberUnreserved(
+  credential: Credential,
+  list: CloudMapList,
+  found: TeamFound,
+  map: Record<string, string>,
+  mapPath: string,
+  /** What this member's own map being updated already holds: published, so never moved. */
+  published: Record<string, string> = {}
+): Promise<Outcome<{ map: Record<string, string>; renumbered: number }>> {
+  const unchanged = ok({ map, renumbered: 0 })
+  // This account's runs come with the listing the publish already read: no
+  // request of its own. An instance that keeps no record sends none, and the
+  // publish goes ahead as before.
+  const mine = list.team?.reservations
+  if (!found.teamId || !mine) return unchanged
+  const { namespace, conflicts, highest } = found.analysis
+  const byName = new Map<string, string>()
+  for (const [p, name] of Object.entries(namespace)) if (!(p in conflicts)) byName.set(name, p)
+
+  const moves: Record<string, string> = {} // old placeholder -> new
+  const needs: { placeholder: string; base: string; n: number }[] = []
+  for (const [p, name] of Object.entries(map)) {
+    if (namespace[p] === name || published[p] === name) continue // already the team's, as it is
+    const m = NUMBERED.exec(p)
+    if (!m) continue
+    const [, base = '', digits = '0'] = m
+    const n = Number(digits)
+    if (mine.some((r) => r.base === base && n >= r.start && n <= r.end)) continue
+    const theirs = byName.get(name)
+    if (theirs) moves[p] = theirs
+    else needs.push({ placeholder: p, base, n })
+  }
+  if (Object.keys(moves).length === 0 && needs.length === 0) return unchanged
+
+  if (needs.length) {
+    const top = highestPerBase(map)
+    const counts = new Map<string, number>()
+    for (const x of needs) counts.set(x.base, (counts.get(x.base) ?? 0) + 1)
+    let ranges: { base: string; start: number; end: number }[]
+    try {
+      ranges = (
+        await reservePlaceholders(
+          credential,
+          found.teamId,
+          [...counts].map(([base, count]) => ({
+            base,
+            count,
+            floor: Math.max(highest[base] ?? 0, top[base] ?? 0),
+          }))
+        )
+      ).ranges
+    } catch (err) {
+      return refuse('unreserved_numbers', {
+        count: needs.length,
+        list: shortList(needs.map((x) => x.placeholder)),
+        detail: err instanceof Error ? err.message : String(err),
+      })
+    }
+    const next = new Map(ranges.map((r) => [r.base, { at: r.start, end: r.end }]))
+    for (const x of [...needs].sort((a, b) => a.n - b.n)) {
+      const run = next.get(x.base)
+      if (!run || run.at > run.end)
+        return refuse('unreserved_numbers', {
+          count: needs.length,
+          list: shortList(needs.map((y) => y.placeholder)),
+          detail: 'the server reserved fewer numbers than were asked for',
+        })
+      moves[x.placeholder] = `${x.base}${run.at++}`
+    }
+  }
+
+  const renumbered: Record<string, string> = {}
+  const aliases: Record<string, string> = {}
+  for (const [p, name] of Object.entries(map)) {
+    const to = moves[p]
+    if (to) aliases[p] = name
+    renumbered[to ?? p] = name
+  }
+  addAliases(mapPath, aliases)
+  saveMap(mapPath, renumbered, { force: true })
+  return ok({ map: renumbered, renumbered: Object.keys(moves).length })
+}
+
+function renumberNote(n: number): string[] {
+  return n > 0
+    ? [
+        `Renumbered ${n} ${n === 1 ? 'entry' : 'entries'} into this account's reserved team numbers before publishing; ` +
+          'the old placeholders still restore on this machine (.veilio/aliases.json).',
+      ]
+    : []
+}
+
 function checkAgainstTeam(found: TeamFound, map: Record<string, string>): Outcome<TeamCheck> {
   const clashes = conflictsWithTeam(map, found.analysis.namespace)
   if (clashes.length > 0) {
@@ -572,7 +682,7 @@ export async function createCloudMap(
 ): Promise<Outcome<Created>> {
   const stored = signedIn(ctx)
   if (!stored) return refuse('not_signed_in')
-  const map = loadMap(opts.mapPath)
+  let map = loadMap(opts.mapPath)
   if (Object.keys(map).length === 0) return refuse('no_local_map', { path: opts.mapPath })
   // A team map lands in a project; a personal map has none, so only a team
   // push resolves VEILIO_PROJECT (and pays for the listing that takes).
@@ -600,9 +710,18 @@ export async function createCloudMap(
     if (teamId !== keys.value.teamId) return refuse('team_key_mismatch')
     const found = await teamForWrite(ctx, credential, listed.value)
     if (!found.ok) return found
+    const numbered = await renumberUnreserved(
+      credential,
+      listed.value,
+      found.value,
+      map,
+      opts.mapPath
+    )
+    if (!numbered.ok) return numbered
+    map = numbered.value.map
     const check = checkAgainstTeam(found.value, map)
     if (!check.ok) return check
-    // Nothing above this line has sent anything.
+    // Nothing above this line has sent a map (only the reservation, if any).
     const envelope = await encryptTeamMap(keys.value.newest.key, map)
     let created: { id: string }
     try {
@@ -627,7 +746,7 @@ export async function createCloudMap(
       count,
       teamTotal: new Set([...Object.keys(check.value.namespace), ...Object.keys(map)]).size,
       disputed: check.value.disputed,
-      notes: check.value.notes,
+      notes: [...renumberNote(numbered.value.renumbered), ...check.value.notes],
     })
   }
 
@@ -711,7 +830,7 @@ export async function updateCloudMap(
   const stored = signedIn(ctx)
   if (!stored) return refuse('not_signed_in')
   if (!id) return refuse('which_map')
-  const local = loadMap(opts.mapPath)
+  let local = loadMap(opts.mapPath)
   if (Object.keys(local).length === 0) return refuse('no_local_map', { path: opts.mapPath })
   // VEILIO_PROJECT is a team map's question: a personal map belongs to no
   // project, so with the variable set it is found first, and a value that
@@ -794,12 +913,22 @@ export async function updateCloudMap(
     }
     if (!opened.ok) return opened
     current = opened.value
+    const numbered = await renumberUnreserved(
+      credential,
+      list,
+      found.value,
+      local,
+      opts.mapPath,
+      current
+    )
+    if (!numbered.ok) return numbered
+    local = numbered.value.map
     const dropped = droppedBy(current, local)
     if (dropped.length > 0 && opts.allowDrop !== true)
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
     const check = checkAgainstTeam(found.value, local)
     if (!check.ok) return check
-    notes = check.value.notes
+    notes = [...renumberNote(numbered.value.renumbered), ...check.value.notes]
     sealed = {
       map_data: JSON.stringify(await encryptTeamMap(keys.value.newest.key, local)),
       key_version: keys.value.newest.version,

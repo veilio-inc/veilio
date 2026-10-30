@@ -285,7 +285,12 @@ export interface CloudMapList {
   teamNamespace?: Record<string, string> | null
   /** The active team, when the account has one. Needed to ask for that team's
    *  key wraps. */
-  team: { id: string } | null
+  team: {
+    id: string
+    /** Spec 063: the runs of team numbers this account holds. Absent on an
+     *  instance from before it, which keeps no such record. */
+    reservations?: { base: string; start: number; end: number }[]
+  } | null
   plan: string
 }
 
