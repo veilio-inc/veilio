@@ -173,7 +173,10 @@ if (teamRuns.length) {
   out.push(
     `| Cloud requests by the CLI (sessions' pull and publish) | ${teamRuns.reduce((s, r) => s + (r.team.requests ?? 0), 0)} |`
   )
-  out.push(`| sessions with a refused publish | ${count((r) => r.team.publish !== 'ok')} |`, '')
+  out.push(
+    `| sessions with a refused publish | ${count((r) => !['ok', 'unchanged'].includes(r.team.publish))} |`,
+    ''
+  )
   const wavesPath = join(dir, 'waves.jsonl')
   if (existsSync(wavesPath)) {
     const waves = readFileSync(wavesPath, 'utf8')
@@ -182,7 +185,7 @@ if (teamRuns.length) {
       .map((l) => JSON.parse(l))
     const last = waves.findLast((w) => !w.error) ?? {}
     out.push(
-      `After ${waves.length} team waves the team's ${last.maps ?? '?'} maps hold ${last.placeholders ?? '?'} placeholders: ${last.placeholderTwoNames ?? '?'} naming two different names, and ${last.nameTwoPlaceholders ?? '?'} names under two placeholders. A refused publish keeps its clashes out of these maps; the restore probe above is where they show.`,
+      `After ${waves.length} team waves the team's ${last.maps != null ? `${last.maps} maps hold` : 'namespace holds'} ${last.placeholders ?? '?'} placeholders: ${last.placeholderTwoNames ?? '?'} naming two different names, and ${last.nameTwoPlaceholders ?? '?'} names under two placeholders (each restores).${last.misattributed != null ? ` ${last.misattributed} numbered by one member and published by another.` : ''} A refused publish keeps its clashes out of these maps; the restore probe above is where they show.`,
       ''
     )
   }
