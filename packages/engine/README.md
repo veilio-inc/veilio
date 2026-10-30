@@ -502,8 +502,8 @@ your maps, so a server storing it cannot read it.
   or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
   for its own names) and `isSafeRegex(pattern)` are the checks it makes
 - `compileRulePattern(pattern)` → a matcher whose `test(name)` gives
-  `RegExp.test`'s answer in time linear in the name's length, or `null` for a
-  pattern outside its language. Rule patterns run on it, never on `RegExp`, so
+  the platform regex's answer in time linear in the name's length, or `null` for a
+  pattern outside its language. Rule patterns run on it, never on the platform regex, so
   a teammate's pattern such as `(a+)+$` cannot freeze the tool applying it.
   The language: literals, `.`, classes, `\d \w \s` and their negations,
   `^ $`, groups, alternation, and quantifiers with bounds up to 50.
