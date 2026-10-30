@@ -15,6 +15,14 @@
 //     --only <ids>      these task ids only, comma-separated
 //     --max-turns <n>   (default: 40)
 //     --out <dir>       results directory; an existing one is resumed
+//     --concurrency <n> sessions started together, one arm per wave
+//                       (default: 1, one session at a time)
+//     --hours <h>       time box: no wave starts after it (default: none)
+//     --team <module>   the team behind the guard-team arm: a module whose
+//                       default export signs its members in, hands each
+//                       session its map and publishes it after (see
+//                       bench-lib.mjs loadTeam). The bench itself knows no
+//                       Cloud instance.
 //     --validate        check every task's planted bug, run no session
 //     --plugin <dir>    the guard to measure (default: this one), such as a
 //                       worktree of an earlier release, to compare the two
@@ -24,7 +32,7 @@
 //
 // Spends model usage: one session per task, arm and rep. Needs Claude Code
 // signed in, and packages/cli built.
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   appendFileSync,
   existsSync,
@@ -42,6 +50,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { TOOLS, callTeam, deadlinePassed, loadTeam, schedule } from './bench-lib.mjs'
+import { pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const { isKeyword } = await import(join(HERE, '../../vendor/engine/index.js'))
@@ -51,7 +61,8 @@ let LANGUAGES = ['typescript']
 const { languageOfPath } = await import(join(HERE, '../../vendor/engine/index.js'))
 const PLUGIN = resolve(HERE, '../..')
 const CLI = resolve(PLUGIN, '../../packages/cli/dist/index.js')
-const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm']
+const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm', 'guard-team']
+const DEFAULT_ARMS = ['plain', 'guard-cold', 'guard-warm']
 
 const { values: opt } = parseArgs({
   options: {
@@ -59,13 +70,16 @@ const { values: opt } = parseArgs({
     tasks: { type: 'string', default: join(HERE, 'tasks/veilio-oss.json') },
     model: { type: 'string', default: 'claude-sonnet-5-5' },
     reps: { type: 'string', default: '3' },
-    arms: { type: 'string', default: ALL_ARMS.join(',') },
+    arms: { type: 'string', default: DEFAULT_ARMS.join(',') },
     only: { type: 'string' },
     'max-turns': { type: 'string', default: '40' },
     out: { type: 'string' },
     validate: { type: 'boolean', default: false },
     plugin: { type: 'string' },
     settings: { type: 'string' },
+    concurrency: { type: 'string', default: '1' },
+    hours: { type: 'string' },
+    team: { type: 'string' },
   },
 })
 const REPO = resolve(opt.repo)
@@ -79,23 +93,12 @@ const arms = opt.arms.split(',')
 for (const a of arms) if (!ALL_ARMS.includes(a)) throw new Error(`unknown arm: ${a}`)
 const REPS = Number(opt.reps)
 const MAX_TURNS = Number(opt['max-turns'])
-// The same tools in every arm. A call outside them is denied, and the denial
-// costs every arm the same.
-const TOOLS = [
-  'Read',
-  'Edit',
-  'Write',
-  'Grep',
-  'Glob',
-  'Bash(npx vitest:*)',
-  'Bash(npm test:*)',
-  'Bash(npm run test:*)',
-  'Bash(git diff:*)',
-  'Bash(git status:*)',
-  'Bash(ls:*)',
-  'Bash(cat:*)',
-  'Bash(grep:*)',
-].join(',')
+const CONCURRENCY = Math.max(1, Number(opt.concurrency))
+const TEAM = await loadTeam(opt.team ? pathToFileURL(resolve(opt.team)).href : null, arms)
+const MEMBERS = TEAM ? TEAM.members() : []
+// Two sessions of one wave for one member would pull and publish the same map.
+if (TEAM && CONCURRENCY > MEMBERS.length)
+  throw new Error(`--concurrency ${CONCURRENCY} is more than the team's ${MEMBERS.length} members`)
 // The CLI runs signed out, in a HOME of its own. Signed in, every `veilio
 // scrub` asks Veilio Cloud for the team's maps and reserves placeholder
 // numbers: one request per file, hundreds per run, on whichever account the
@@ -303,10 +306,12 @@ function readStream(path) {
   }
 }
 
-function session(task, arm, rep, outDir) {
+async function session(task, arm, rep, outDir, member) {
   const { dir, repo } = prepare(task, { mutate: true })
   try {
     if (arm === 'guard-warm') buildMap(repo)
+    // The team's map, as this member has it: the team module writes it.
+    if (arm === 'guard-team') await callTeam(TEAM, 'beforeSession', { member, repo, task, rep })
     const mapBefore = mapSize(repo)
     const prompt = spec.prompt.replaceAll('{test}', task.test)
     const args = [
@@ -334,14 +339,18 @@ function session(task, arm, rep, outDir) {
     const streamFd = openSync(`${base}.jsonl`, 'w')
     const errFd = openSync(`${base}.err`, 'w')
     const started = Date.now()
-    const run = spawnSync('claude', args, {
-      cwd: repo,
-      stdio: ['ignore', streamFd, errFd],
-      timeout: 30 * 60_000,
+    // Async, so the sessions of one wave run side by side.
+    const run = await new Promise((done) => {
+      const child = spawn('claude', args, { cwd: repo, stdio: ['ignore', streamFd, errFd] })
+      const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
+      child.on('error', (error) => (clearTimeout(timer), done({ error })))
+      // The end is read here, not after: under concurrency a sibling's
+      // synchronous work (its test run, its team hooks) can hold the loop.
+      child.on('exit', (status) => (clearTimeout(timer), done({ status, endedAt: Date.now() })))
     })
     closeSync(streamFd)
     closeSync(errFd)
-    const wallMs = Date.now() - started
+    const wallMs = (run.endedAt ?? Date.now()) - started
     const s = readStream(`${base}.jsonl`)
     // A session that never got to work (usage limit, signed out, timed out)
     // says nothing about the guard. It stops the run instead of being scored,
@@ -375,15 +384,22 @@ function session(task, arm, rep, outDir) {
       ...new Set(
         (sent.match(/__[A-Z]+__\d+/g) ?? [])
           .map((p) => finalMap[p])
-          .filter((n) => n && LANGUAGES.some((l) => isKeyword(n, l)))
+          // The task's own language when it names one: on a mixed repository the
+          // union of every language's keywords counts a TypeScript `match` as a
+          // masked Python keyword.
+          .filter(
+            (n) => n && (task.language ? [task.language] : LANGUAGES).some((l) => isKeyword(n, l))
+          )
       ),
     ]
     // A session that stopped to ask for its prompt again, and changed nothing.
     const askedAgain =
       changed.length === 0 &&
       /paste|plain text|send (it|the command) again|which (test|file) you mean/i.test(stream.final)
-    return {
+    const record = {
       task: task.id,
+      language: task.language ?? null,
+      member: member ?? null,
       arm,
       rep,
       leakedNames,
@@ -399,6 +415,13 @@ function session(task, arm, rep, outDir) {
       wallMs,
       ...stream,
     }
+    // What the team made of it: published or refused, restored or not.
+    if (arm === 'guard-team')
+      Object.assign(
+        record,
+        await callTeam(TEAM, 'afterSession', { member, repo, task, rep, record })
+      )
+    return record
   } finally {
     cleanup(dir)
   }
@@ -416,7 +439,7 @@ if (!validate()) {
 if (opt.validate) process.exit(0)
 // The reference names (FR-011) come from the warm map, built once, whatever arms run.
 if (existsSync(CLI)) buildMap(null)
-if (arms.includes('guard-warm') && !existsSync(CLI))
+if ((arms.includes('guard-warm') || TEAM) && !existsSync(CLI))
   throw new Error(`${CLI} is missing: npm run build:packages first`)
 
 const outDir = resolve(
@@ -452,6 +475,11 @@ if (!existsSync(join(outDir, 'meta.json')))
         taskIds: tasks.map((t) => t.id),
         arms,
         reps: REPS,
+        concurrency: CONCURRENCY,
+        hours: opt.hours ? Number(opt.hours) : null,
+        team: TEAM
+          ? { module: relative(process.cwd(), resolve(opt.team)), members: MEMBERS }
+          : null,
         maxTurns: MAX_TURNS,
         tools: TOOLS,
         // The warm map was built by a signed-out CLI: no Cloud request.
@@ -463,20 +491,77 @@ if (!existsSync(join(outDir, 'meta.json')))
   )
 
 const total = tasks.length * arms.length * REPS
+const started = Date.now()
 let n = done.size
-for (let rep = 1; rep <= REPS; rep++)
-  for (const [i, task] of tasks.entries())
-    // The arm order turns with every task and rep, so no arm always runs first.
-    for (let k = 0; k < arms.length; k++) {
-      const arm = arms[(k + i + rep) % arms.length]
-      if (done.has(`${task.id}.${arm}.${rep}`)) continue
-      n++
-      process.stdout.write(`[${n}/${total}] ${task.id} ${arm} #${rep} ... `)
-      const r = session(task, arm, rep, outDir)
-      appendFileSync(resultsPath, `${JSON.stringify(r)}\n`)
-      console.log(
-        `${r.passed ? 'pass' : 'FAIL'}  ${r.turns} turns  $${r.costUsd?.toFixed(3)}  ${Math.round(r.wallMs / 1000)}s`
-      )
+if (TEAM) {
+  // Once, on a clean copy: the members sign in and the team's first map is
+  // published from it (a planted bug adds no name).
+  const clean = prepare(tasks[0], { mutate: false })
+  try {
+    await callTeam(TEAM, 'setup', { cleanRepo: clean.repo, cli: CLI, outDir })
+  } finally {
+    cleanup(clean.dir)
+  }
+}
+const waves = schedule({
+  tasks,
+  arms,
+  reps: REPS,
+  concurrency: CONCURRENCY,
+  members: MEMBERS.length || 1,
+})
+let boxed = false
+for (const wave of waves) {
+  const items = wave.items.filter((i) => !done.has(`${i.task.id}.${wave.arm}.${wave.rep}`))
+  if (!items.length) continue
+  if (deadlinePassed(started, opt.hours)) {
+    boxed = true
+    break
+  }
+  const label = items.map((i) => i.task.id).join(', ')
+  console.log(`[${n + 1}-${n + items.length}/${total}] ${wave.arm} #${wave.rep}: ${label}`)
+  n += items.length
+  const records = []
+  // Each session is saved the moment it ends: an interrupted wave keeps the
+  // sessions that finished, and a resumed run does not repeat them (a team
+  // session has already published by then).
+  const settled = await Promise.allSettled(
+    items.map((i) =>
+      session(
+        i.task,
+        wave.arm,
+        wave.rep,
+        outDir,
+        wave.arm === 'guard-team' ? MEMBERS[i.member] : undefined
+      ).then((r) => {
+        records.push(r)
+        appendFileSync(resultsPath, `${JSON.stringify(r)}\n`)
+        console.log(
+          `  ${r.task}${r.member ? ` (${r.member})` : ''}: ${r.passed ? 'pass' : 'FAIL'}  ${r.turns} turns  $${r.costUsd?.toFixed(3)}  ${Math.round(r.wallMs / 1000)}s`
+        )
+        return r
+      })
+    )
+  )
+  if (wave.arm === 'guard-team' && records.length) {
+    // A count that could not be taken is written as such, never skipped.
+    let w
+    try {
+      w = await callTeam(TEAM, 'afterWave', { records, rep: wave.rep })
+    } catch (error) {
+      w = { error: String(error?.message ?? error).slice(0, 300) }
     }
+    appendFileSync(
+      join(outDir, 'waves.jsonl'),
+      `${JSON.stringify({ rep: wave.rep, tasks: records.map((r) => r.task), at: new Date().toISOString(), ...w })}\n`
+    )
+  }
+  // A session that did not run says nothing about the guard: the run stops,
+  // and resuming the same --out runs it again. Its wave-mates are kept.
+  const failed = settled.find((s) => s.status === 'rejected')
+  if (failed) throw failed.reason
+}
+if (boxed) console.log(`Time box of ${opt.hours} h reached: no further wave started.`)
+await callTeam(TEAM, 'teardown', { outDir })
 
 spawnSync('node', [join(HERE, 'score-bench.mjs'), outDir], { stdio: 'inherit' })

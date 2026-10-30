@@ -2,14 +2,21 @@
 // per arm, how many sessions fixed the bug, and what it took (turns, cost,
 // tokens, time), against the no-guard arm.
 //
-//   node plugins/veilio-guard/tests/bench/score-bench.mjs <results-dir>
+//   node plugins/veilio-guard/tests/bench/score-bench.mjs <results-dir> [--baseline <text>]
+//
+// --baseline names an earlier run's figures to read the new ones against,
+// printed under the result as given.
 //
 // Pass rate leads. A placeholder costs about as many tokens as the name it
 // hides, so the token count can stay flat while the model does worse.
 import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { byLanguage } from './bench-lib.mjs'
 
 const dir = process.argv[2]
+const bi = process.argv.indexOf('--baseline')
+const baselineNote = bi > 0 ? process.argv[bi + 1] : null
 const meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8'))
 const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .split('\n')
@@ -18,7 +25,9 @@ const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .map((r) => ({ ...r, contextTokens: r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens }))
 
 // From the results, not meta.json: a resumed run can cover more than it began with.
-const arms = ['plain', 'guard-cold', 'guard-warm'].filter((a) => runs.some((r) => r.arm === a))
+const arms = ['plain', 'guard-cold', 'guard-warm', 'guard-team'].filter((a) =>
+  runs.some((r) => r.arm === a)
+)
 const tasks = [...new Set(runs.map((r) => r.task))]
 const reps = Math.max(...runs.map((r) => r.rep))
 const METRICS = [
@@ -41,9 +50,13 @@ const pct = (x) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(0)}%`
 
 // Tasks differ in size, so the guard's overhead is the geometric mean of its
 // per-task ratio to the no-guard arm, not a ratio of pooled medians.
-function pairedRatio(arm, key) {
+function pairedRatio(arm, key, pool = runs) {
+  const among = (a, t) => pool.filter((r) => r.arm === a && r.task === t)
   const ratios = tasks
-    .map((t) => [median(of(arm, t).map((r) => r[key])), median(of('plain', t).map((r) => r[key]))])
+    .map((t) => [
+      median(among(arm, t).map((r) => r[key])),
+      median(among('plain', t).map((r) => r[key])),
+    ])
     .filter(([a, b]) => a != null && b)
     .map(([a, b]) => a / b)
   if (!ratios.length) return null
@@ -62,11 +75,24 @@ if (meta.settings?.enabledPlugins)
     ''
   )
 out.push(
-  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has.',
+  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session.',
   ''
 )
+if (meta.concurrency > 1)
+  out.push(
+    `Sessions ran ${meta.concurrency} at a time, one arm per wave${meta.team ? `; the team arm's members: ${meta.team.members.join(', ')}` : ''}.`,
+    ''
+  )
 
 out.push('## Result', '')
+// The time box can stop a run inside a group, leaving arms with different
+// tasks behind them: the raw counts are then not like for like.
+const covered = arms.map((a) => of(a).length)
+if (new Set(covered).size > 1)
+  out.push(
+    `_The arms ran different numbers of sessions (${arms.map((a, i) => `${a} ${covered[i]}`).join(', ')}). The percentages pair tasks both arms ran; the "bug fixed" and "What went wrong" counts do not._`,
+    ''
+  )
 out.push(`| | ${arms.join(' | ')} |`, `|---|${arms.map(() => '---').join('|')}|`)
 const passRow = arms.map((a) => {
   const rs = of(a)
@@ -98,6 +124,69 @@ out.push(
   'The percentage beside a guarded median is the geometric mean, over tasks, of that arm\'s per-task median against plain\'s. "Cost per bug fixed" is everything the arm spent, divided by the bugs it fixed. It is what Claude Code reports as `total_cost_usd`; on a subscription that is usage, not a bill.',
   ''
 )
+
+if (baselineNote) out.push(`Read against: ${baselineNote}`, '')
+
+const langs = byLanguage(runs)
+if (Object.keys(langs).length > 1 || !langs.unknown) {
+  out.push('## Per language', '')
+  out.push(`| language | ${arms.map((a) => `${a}: fixed · cost · input`).join(' | ')} |`)
+  out.push(`|---|${arms.map(() => '---').join('|')}|`)
+  for (const [lang, byArm] of Object.entries(langs).sort()) {
+    const pool = Object.values(byArm).flat()
+    const cells = arms.map((a) => {
+      const rs = byArm[a] ?? []
+      if (!rs.length) return '–'
+      const fixed = `${rs.filter((r) => r.passed).length}/${rs.length}`
+      if (a === 'plain') {
+        const c = median(rs.map((r) => r.costUsd))
+        return `${fixed} · ${c == null ? '–' : `$${c.toFixed(3)}`} · ${(median(rs.map((r) => r.contextTokens)) / 1000).toFixed(0)}k`
+      }
+      const rc = pairedRatio(a, 'costUsd', pool)
+      const rt = pairedRatio(a, 'contextTokens', pool)
+      return `${fixed} · ${rc == null ? '–' : pct(rc - 1)} · ${rt == null ? '–' : pct(rt - 1)}`
+    })
+    out.push(`| ${lang} | ${cells.join(' | ')} |`)
+  }
+  out.push(
+    '',
+    'Plain shows its median cost and input; a guarded arm, its paired difference from plain within that language.',
+    ''
+  )
+}
+
+const teamRuns = runs.filter((r) => r.team)
+if (teamRuns.length) {
+  out.push('## The team', '')
+  const count = (f) => teamRuns.filter(f).length
+  const publish = {}
+  for (const r of teamRuns) publish[r.team.publish] = (publish[r.team.publish] ?? 0) + 1
+  out.push(`| | sessions |`, `|---|---|`)
+  for (const [k, v] of Object.entries(publish).sort()) out.push(`| publish ${k} | ${v} |`)
+  const sum = (k) => teamRuns.reduce((s, r) => s + (r.team.restore?.[k] ?? 0), 0)
+  out.push(
+    `| teammate placeholders restored right · left · wrong | ${sum('right')} · ${sum('left')} · ${sum('wrong')} |`
+  )
+  out.push(
+    `| new names minted in sessions | ${teamRuns.reduce((s, r) => s + (r.team.minted ?? 0), 0)} |`
+  )
+  out.push(
+    `| Cloud requests by the CLI (sessions' pull and publish) | ${teamRuns.reduce((s, r) => s + (r.team.requests ?? 0), 0)} |`
+  )
+  out.push(`| sessions with a refused publish | ${count((r) => r.team.publish !== 'ok')} |`, '')
+  const wavesPath = join(dir, 'waves.jsonl')
+  if (existsSync(wavesPath)) {
+    const waves = readFileSync(wavesPath, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    const last = waves.findLast((w) => !w.error) ?? {}
+    out.push(
+      `After ${waves.length} team waves the team's ${last.maps ?? '?'} maps hold ${last.placeholders ?? '?'} placeholders: ${last.placeholderTwoNames ?? '?'} naming two different names, and ${last.nameTwoPlaceholders ?? '?'} names under two placeholders. A refused publish keeps its clashes out of these maps; the restore probe above is where they show.`,
+      ''
+    )
+  }
+}
 
 out.push('## What reached the model (spec 050 FR-011)', '')
 out.push(
@@ -171,8 +260,8 @@ for (const r of runs) {
     warnings.push(`${r.task} ${r.arm} #${r.rep}: guarded session did not list the guard`)
   if (r.arm !== 'plain' && r.mapAfter === 0)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: the map is empty after the session`)
-  if (r.arm === 'guard-warm' && r.mapBefore === 0)
-    warnings.push(`${r.task} #${r.rep}: guard-warm started on an empty map`)
+  if ((r.arm === 'guard-warm' || r.arm === 'guard-team') && r.mapBefore === 0)
+    warnings.push(`${r.task} ${r.arm} #${r.rep}: started on an empty map`)
   // Claude Code loads a few plugins of its own whatever the settings say; what
   // matters is that every session loads the same ones.
   const others = r.plugins
