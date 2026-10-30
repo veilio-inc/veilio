@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
 import { maskSelection, unmaskTerm, previewTerm, stripOption } from './manualMarks.js'
 
-const SOURCE = '// escalated by Kowalska, acct 88412037\nfunction settle(rate) { return rate }'
+const SOURCE = '// escalated by Kowalska, acct 88412037\nfunction settleQuayFees(tarnRate) { return tarnRate }'
 
 /** Nothing measured. These cases are about the placeholder substitution, and
  *  `unmaskTerm` recomputes the exposure from the output it produces anyway. */
