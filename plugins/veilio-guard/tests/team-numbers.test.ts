@@ -103,5 +103,6 @@ test('a planted reservation file cannot put control characters into the band', a
   })
   const status = await $.command.run({ command: 'veilio', args: '' })
   expect(status.text).toMatch(/reserved\.json unreadable/)
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
   expect(status.text).not.toMatch(/\u001b/)
 })

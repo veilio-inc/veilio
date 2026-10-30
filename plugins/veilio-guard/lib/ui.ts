@@ -27,6 +27,7 @@ function teamNumbers(g: Guard): string {
   const r = g.reserved
   if (!r) return ''
   if (!r.ok)
+    // eslint-disable-next-line no-control-regex -- matching control characters is the point
     return ` · .veilio/reserved.json unreadable (${r.reason.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')}): new names numbered here`
   const outside = g.counts.outsideReserved
   const left = numbersLeft(g.map, r.blocks)
