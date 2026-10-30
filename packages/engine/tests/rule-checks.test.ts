@@ -55,6 +55,14 @@ describe('isSafeRegex: star height, at any depth', () => {
     '(a{1,3}){2,}',
     '(a)\\1',
     '(?<n>a)\\k<n>',
+    // Second review: JS closes a class at its first ']' - '[^]' and '[]' are
+    // whole classes - so a parser reading them the PCRE way missed what follows.
+    '[^](x+)+]',
+    '[](x+)+',
+    // Second review: no repetition, but each alternation group doubles the
+    // backtracking on a name that fails late.
+    '(a|a)(a|a)(a|a)(a|a)(a|a)$',
+    '(?:x|xx)(?:x|xx)(?:x|xx)(?:x|xx)(?:x|xx)y',
   ])('%s is refused', (p) => expect(isSafeRegex(p)).toBe(false))
 
   it.each([
@@ -66,6 +74,9 @@ describe('isSafeRegex: star height, at any depth', () => {
     '(a|b)?',
     '(ab){2}',
     '\\w*\\d*$',
+    '^(?:alpha|beta|gamma|delta|epsilon|zeta|eta|theta)$',
+    '(?:ab|cd)(?:ef|gh)',
+    '[^]]+',
   ])('%s is safe', (p) => expect(isSafeRegex(p)).toBe(true))
 })
 

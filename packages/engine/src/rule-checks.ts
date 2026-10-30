@@ -41,16 +41,25 @@ export function isEngineBase(placeholder: string): boolean {
  * the engine matching rules only against names of 200 characters or fewer.
  */
 const BUDGET_MS = 100
-const FUZZ_STRINGS = ['a'.repeat(20) + 'b', 'a'.repeat(25) + 'b']
 
 interface Group {
+  /** Holds a quantifier or an alternation, at any depth. */
   inner: boolean
+  /** Holds an alternation directly. */
+  alt: boolean
 }
+
+/** Groups holding an alternation, at most. Each one can double the
+ *  backtracking on a name that fails late, repeated or not - (a|a)(a|a)...
+ *  (second security review). One group with many branches, such as the
+ *  guard's list of third-party names, counts once. */
+const MAX_ALTERNATION_GROUPS = 4
 
 /** True when the pattern repeats a group holding a quantifier or alternation,
  *  or uses a backreference. */
 function exceedsStarHeight(pattern: string): boolean {
-  const stack: Group[] = [{ inner: false }]
+  const stack: Group[] = [{ inner: false, alt: false }]
+  let alternations = 0
   let last: Group | 'atom' | null = null
   let i = 0
   const top = (): Group => stack[stack.length - 1]!
@@ -64,16 +73,18 @@ function exceedsStarHeight(pattern: string): boolean {
       continue
     }
     if (c === '[') {
+      // As JS reads it: the first unescaped ']' closes the class, so '[]' and
+      // '[^]' are whole classes (second security review: reading them the PCRE
+      // way hid what followed).
       i++
       if (pattern[i] === '^') i++
-      if (pattern[i] === ']') i++
       while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1
       i++
       last = 'atom'
       continue
     }
     if (c === '(') {
-      stack.push({ inner: false })
+      stack.push({ inner: false, alt: false })
       i++
       if (pattern[i] === '?') {
         // (?: (?= (?! (?<= (?<! (?<name>
@@ -89,6 +100,7 @@ function exceedsStarHeight(pattern: string): boolean {
     }
     if (c === ')') {
       const closed = stack.length > 1 ? stack.pop()! : top()
+      if (closed.alt) alternations++
       if (closed.inner) top().inner = true
       last = closed
       i++
@@ -96,6 +108,7 @@ function exceedsStarHeight(pattern: string): boolean {
     }
     if (c === '|') {
       top().inner = true
+      top().alt = true
       last = null
       i++
       continue
@@ -117,7 +130,17 @@ function exceedsStarHeight(pattern: string): boolean {
     last = 'atom'
     i++
   }
-  return false
+  if (stack[0]!.alt) alternations++
+  return alternations > MAX_ALTERNATION_GROUPS
+}
+
+/** Short strings to time the pattern on: a run of one letter, and a run of the
+ *  pattern's own letters, each ending in a character that makes it fail late. */
+function fuzzStrings(pattern: string): string[] {
+  const own = [...new Set(pattern.replace(/\\./g, '').replace(/[^A-Za-z0-9_]/g, ''))].join('')
+  const strings = ['a'.repeat(20) + 'b', 'a'.repeat(25) + 'b']
+  if (own) strings.push(own.repeat(Math.ceil(30 / own.length)).slice(0, 30) + '!')
+  return strings
 }
 
 export function isSafeRegex(pattern: string): boolean {
@@ -130,7 +153,7 @@ export function isSafeRegex(pattern: string): boolean {
   if (exceedsStarHeight(pattern)) return false
   const start = Date.now()
   try {
-    for (const fuzz of FUZZ_STRINGS) {
+    for (const fuzz of fuzzStrings(pattern)) {
       compiled.test(fuzz)
       if (Date.now() - start >= BUDGET_MS) return false
     }

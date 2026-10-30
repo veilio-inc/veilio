@@ -809,8 +809,11 @@ function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
  *  backtracking one that passed isSafeRegex can still do (polynomial,
  *  \w*\w*$) stays bounded. A longer name is not matched by it - so such a
  *  whitelist does not keep it readable, the safe direction. A pattern with no
- *  quantifier cannot backtrack and matches any length (spec 065 security
- *  review). */
+ *  quantifier matches any length (spec 065 security review): it cannot
+ *  backtrack past its own alternatives, and isSafeRegex allows at most four
+ *  alternation groups, so its cost stays a small multiple of the name's
+ *  length. Capping it too would break whitelisting a long generated name,
+ *  which an existing test pins. */
 export const RULE_MATCH_MAX = 200
 
 function hasQuantifier(pattern: string): boolean {
