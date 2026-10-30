@@ -6,7 +6,7 @@ import { decryptTeamMap, importTeamKey, toBase64, type TeamMapEnvelope } from '@
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { STORE_DIR, STORE_FILE, loadMap, saveMap } from '../src/store.js'
-import { loadAliases } from '../src/reservations.js'
+import { addAliases, loadAliases } from '../src/reservations.js'
 import {
   FakeCloud,
   PASSPHRASE,
@@ -98,17 +98,29 @@ describe('a team publish carries only the publisher’s reserved numbers', () =>
     expect(res.out + res.err).toMatch(/renumbered 1/i)
   })
 
-  it('a name the team already holds takes the team’s placeholder, with no reservation', async () => {
+  it('a name the team already holds gets a fresh number above the map, so no retired number is reachable again (review)', async () => {
     await teammateMap({ __FN__7: 'chargeCard' })
     saveMap(mapPath(), { __FN__90: 'chargeCard' }, { force: true })
-    const before = cloud.requests.filter((r) => r.path.endsWith('/placeholders/reserve')).length
     const res = await run(['maps', 'push', '--team', 'mine'])
     expect(res.code, res.err).toBe(EXIT_OK)
-    expect(await published(pushedId(res.out))).toEqual({ __FN__7: 'chargeCard' })
-    expect(cloud.requests.filter((r) => r.path.endsWith('/placeholders/reserve')).length).toBe(
-      before
-    )
+    const after = loadMap(mapPath())
+    const [placeholder] = Object.keys(after)
+    expect(after[placeholder]).toBe('chargeCard')
+    // Above the retired __FN__90: local numbering, which counts up from the
+    // map's highest, can never mint __FN__90 again for another name.
+    expect(Number(placeholder.replace('__FN__', ''))).toBeGreaterThan(90)
     expect(loadAliases(mapPath())).toEqual({ __FN__90: 'chargeCard' })
+  })
+
+  it('an old placeholder already retired with another meaning is refused by name, not thrown', async () => {
+    await teammateMap({ __FN__41: 'refund' })
+    addAliases(mapPath(), { __FN__41: 'payout' })
+    saveMap(mapPath(), { __FN__41: 'foo' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/__FN__41/)
+    expect(res.err).not.toMatch(/at .*\.js:\d+/)
+    expect(loadMap(mapPath())).toEqual({ __FN__41: 'foo' })
   })
 
   it('a number another member reserved is never published by this one', async () => {

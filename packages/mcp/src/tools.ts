@@ -49,7 +49,7 @@ import {
   refreshNamespaceIfStale,
 } from './namespace.js'
 import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace'
-import { loadAliases } from '@veilio-inc/cli/reservations'
+import { contestedNote, ownWithAliases } from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
@@ -459,7 +459,7 @@ export const TOOLS: ToolDefinition[] = [
       const strict = bool(args, 'strict')
       // Spec 063: this member's renumbered old placeholders still read back here.
       const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
-      const own = { ...loadAliases(mapPath), ...loadMap(mapPath) }
+      const { own, contested: contestedAll } = ownWithAliases(mapPath, loadMap(mapPath))
       // The one restore rule (spec 028), shared with the web app and the CLI:
       // the team's maps - aliases included, disputed placeholders left out -
       // then this project's map on top where it is in the team's numbering.
@@ -487,6 +487,9 @@ export const TOOLS: ToolDefinition[] = [
       const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
       const disputed = disputedAll.filter((p) => !misattributed.includes(p))
       const localOnly = layers.locallyNumberedIn(text)
+      const contested = contestedAll.filter((p) =>
+        new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(text)
+      )
       const result = restore(text, layers.map)
       // Measured against this project's map, not the whole team layer (review),
       // and a placeholder left for a named reason is not "invented".
@@ -494,17 +497,29 @@ export const TOOLS: ToolDefinition[] = [
         ...result.report,
         missing: result.report.missing.filter((p) => p in own),
         unresolved: result.report.unresolved.filter(
-          (p) => !disputed.includes(p) && !localOnly.includes(p) && !otherMembers.includes(p)
+          (p) =>
+            !disputed.includes(p) &&
+            !localOnly.includes(p) &&
+            !otherMembers.includes(p) &&
+            !contested.includes(p)
         ),
       }
       const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
       const altered = result.report.altered
-      const left = [...report.unresolved, ...disputed, ...otherMembers, ...localOnly, ...altered]
+      const left = [
+        ...report.unresolved,
+        ...disputed,
+        ...otherMembers,
+        ...contested,
+        ...localOnly,
+        ...altered,
+      ]
       const warnings = [
         ...(refreshing ? [loadingNote(refreshing)] : []),
         ...(note ? [`WARNING: ${note}`] : []),
         ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
         ...(otherMembers.length ? [`WARNING: ${misattributedNote(otherMembers)}`] : []),
+        ...(contested.length ? [`WARNING: ${contestedNote(contested)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
       ]

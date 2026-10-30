@@ -100,4 +100,15 @@ describe('this member’s own renumbered placeholders', () => {
     const r = await restore('call __FN__3()\n')
     expect(r.out).toBe('call chargeCard()\n')
   })
+  it('an alias the map now gives another name is left and named, never restored either way', async () => {
+    addAliases(join(cwd, STORE_DIR, STORE_FILE), { __FN__3: 'chargeCard' })
+    saveMap(
+      join(cwd, STORE_DIR, STORE_FILE),
+      { __VAR__1: 'amount', __FN__3: 'refund' },
+      { force: true }
+    )
+    const r = await restore('call __FN__3()\n')
+    expect(r.out).toBe('call __FN__3()\n')
+    expect(r.err).toMatch(/__FN__3/)
+  })
 })

@@ -45,7 +45,7 @@ import {
   type CloudMap,
   type CloudMapList,
 } from '../cloud.js'
-import { addAliases } from '../reservations.js'
+import { addAliases, loadAliases } from '../reservations.js'
 import { highestPerBase } from '../team-anonymize.js'
 
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
@@ -521,9 +521,7 @@ async function renumberUnreserved(
   // publish goes ahead as before.
   const mine = list.team?.reservations
   if (!found.teamId || !mine) return unchanged
-  const { namespace, conflicts, highest } = found.analysis
-  const byName = new Map<string, string>()
-  for (const [p, name] of Object.entries(namespace)) if (!(p in conflicts)) byName.set(name, p)
+  const { namespace, highest } = found.analysis
 
   const moves: Record<string, string> = {} // old placeholder -> new
   const needs: { placeholder: string; base: string; n: number }[] = []
@@ -534,12 +532,13 @@ async function renumberUnreserved(
     const [, base = '', digits = '0'] = m
     const n = Number(digits)
     if (mine.some((r) => r.base === base && n >= r.start && n <= r.end)) continue
-    // The team's own placeholder for the name - unless this map still uses it
-    // for something else, which a move would silently overwrite (security
-    // review): then a fresh number, like any other.
-    const theirs = byName.get(name)
-    if (theirs && (map[theirs] === undefined || map[theirs] === name)) moves[p] = theirs
-    else needs.push({ placeholder: p, base, n })
+    // Always a fresh number, even for a name the team already holds under
+    // another placeholder (it then holds both, an alias). A fresh number is
+    // above everything in this map, so the map's highest never falls below a
+    // retired placeholder and local numbering can never mint it again for a
+    // different name (code review: reusing the team's lower placeholder let
+    // it, and this member's own restore would then name the new meaning).
+    needs.push({ placeholder: p, base, n })
   }
   if (Object.keys(moves).length === 0 && needs.length === 0) return unchanged
   const refuseNumbers = (detail: string) =>
@@ -607,6 +606,14 @@ async function renumberUnreserved(
   }
   if (new Set(Object.values(renumbered)).size < new Set(Object.values(map)).size)
     return refuseNumbers('renumbering would lose an entry')
+  // An old placeholder retired before with another meaning cannot be retired
+  // again: text masked under either meaning would read back wrong here.
+  const retired = loadAliases(mapPath)
+  const twice = Object.keys(aliases).filter((p) => p in retired && retired[p] !== aliases[p])
+  if (twice.length)
+    return refuseNumbers(
+      `${shortList(twice)} already stood for another name before an earlier renumbering; remove that entry from .veilio/aliases.json once no text masked with it is left`
+    )
   return ok({ map: renumbered, renumbered: Object.keys(moves).length, aliases })
 }
 

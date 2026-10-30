@@ -136,3 +136,28 @@ export function misattributedNote(placeholders: readonly string[]): string {
     `than the one whose map names ${one ? 'it' : 'them'}, so restoring would be a guess.`
   )
 }
+
+/**
+ * This member's own restore layer: the map, and the old placeholders a publish
+ * renumbered (aliases.json). A placeholder the two give different names is
+ * contested - text masked under either meaning could hold it - so it is in
+ * neither, and the caller names it (code review).
+ */
+export function ownWithAliases(
+  mapPath: string,
+  map: SymbolMap
+): { own: SymbolMap; contested: string[] } {
+  const aliases = loadAliases(mapPath)
+  const contested = Object.keys(aliases).filter((p) => p in map && map[p] !== aliases[p])
+  const own: SymbolMap = { ...aliases, ...map }
+  for (const p of contested) delete own[p]
+  return { own, contested }
+}
+
+export function contestedNote(placeholders: readonly string[]): string {
+  const one = placeholders.length === 1
+  return (
+    `left as is: ${placeholders.join(', ')}. This project's map and its renumbered old placeholders ` +
+    `(.veilio/aliases.json) give ${one ? 'it' : 'them'} different identifiers, so restoring would be a guess.`
+  )
+}
