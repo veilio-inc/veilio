@@ -26,7 +26,8 @@ export function bandText(g: Guard): string {
 function teamNumbers(g: Guard): string {
   const r = g.reserved
   if (!r) return ''
-  if (!r.ok) return ` · .veilio/reserved.json unreadable (${r.reason}): new names numbered here`
+  if (!r.ok)
+    return ` · .veilio/reserved.json unreadable (${r.reason.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')}): new names numbered here`
   const outside = g.counts.outsideReserved
   const left = numbersLeft(g.map, r.blocks)
   return outside > 0

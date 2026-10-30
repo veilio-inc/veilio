@@ -93,3 +93,15 @@ test('a malformed reservation file is not numbered from: local numbering, and th
   const status = await $.command.run({ command: 'veilio', args: '' })
   expect(status.text).toMatch(/reserved\.json/)
 })
+
+test('a planted reservation file cannot put control characters into the band', async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/reserved.json`]: JSON.stringify({
+      version: 1,
+      blocks: { '\u001b[2J\u001b[31mOWNED': { start: 1, end: 2 } },
+    }),
+  })
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toMatch(/reserved\.json unreadable/)
+  expect(status.text).not.toMatch(/\u001b/)
+})

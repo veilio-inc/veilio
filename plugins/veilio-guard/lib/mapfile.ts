@@ -91,7 +91,10 @@ export function parseReservedFile(text: string): Reserved {
     return { ok: false, reason: 'it has no blocks' }
   const blocks: Record<string, Block> = {}
   for (const [base, b] of Object.entries(r.blocks as Record<string, Partial<Block>>)) {
-    if (!BASE.test(base)) return { ok: false, reason: `${base} is not a placeholder kind` }
+    // Quoted and cut short: a planted file's key must not put control
+    // characters into the band (security review, 2026-10-30).
+    if (!BASE.test(base))
+      return { ok: false, reason: `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind` }
     if (
       !Number.isInteger(b?.start) ||
       !Number.isInteger(b?.end) ||

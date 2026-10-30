@@ -65,7 +65,11 @@ export function loadReserved(mapPath: string): ReservedFile | null {
   if (typeof r.blocks !== 'object' || r.blocks === null || Array.isArray(r.blocks))
     throw new ReservedFileError(path, 'it has no blocks')
   for (const [base, b] of Object.entries(r.blocks)) {
-    if (!BASE.test(base)) throw new ReservedFileError(path, `${base} is not a placeholder kind`)
+    if (!BASE.test(base))
+      throw new ReservedFileError(
+        path,
+        `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind`
+      )
     if (!Number.isInteger(b?.start) || !Number.isInteger(b?.end) || b.start < 1 || b.end < b.start)
       throw new ReservedFileError(path, `the ${base} block is not a run of whole numbers`)
   }
