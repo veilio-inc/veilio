@@ -156,3 +156,34 @@ describe('differential: random patterns of the accepted language, against the pl
     expect(compared).toBe(5000)
   })
 })
+
+// Fourth security review, and what fixing it showed.
+describe('cost and failure bounds', () => {
+  it('a large class repeated is checked in constant-ish time per step', () => {
+    const cls = `[${Array.from({ length: 400 }, (_, i) => String.fromCharCode(0x4e00 + i * 2)).join('')}]`
+    const m = compileRulePattern(`^${cls}{50}$`)!
+    const start = Date.now()
+    expect(m.test('一'.repeat(5000) + 'x')).toBe(false)
+    expect(Date.now() - start).toBeLessThan(500)
+  })
+
+  it('a long chain of optional atoms does not overflow the stack: test never throws', () => {
+    const m = compileRulePattern('a?'.repeat(250))!
+    expect(() => m.test('a'.repeat(10_000))).not.toThrow()
+    expect(m.test('a'.repeat(10_000))).toBe(true)
+  })
+
+  it("the guard's keep rule - an anchored list of literal names - is exact and fast at any size", () => {
+    const names = Array.from({ length: 5000 }, (_, i) => `pkg_${i}.v`)
+    const escape = (n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = compileRulePattern(`^(?:${names.map(escape).join('|')})$`)!
+    expect(m).not.toBeNull()
+    const start = Date.now()
+    for (let i = 0; i < 20_000; i++) m.test(`pkg_${i}.v`)
+    expect(Date.now() - start).toBeLessThan(500)
+    expect(m.test('pkg_4999.v')).toBe(true)
+    expect(m.test('pkg_4999xv')).toBe(false)
+    expect(m.test('pkg_5000.v')).toBe(false)
+    expect(m.test('xpkg_1.v')).toBe(false)
+  })
+})

@@ -818,7 +818,12 @@ function safeMatch(pattern: string, name: string): boolean {
     if (ruleMatchers.size > 1000) ruleMatchers.clear()
     ruleMatchers.set(pattern, m)
   }
-  return m !== null && m.test(name)
+  if (m === null) return false
+  try {
+    return m.test(name)
+  } catch {
+    return false // never thrown on purpose; no match is the safe direction
+  }
 }
 
 const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
