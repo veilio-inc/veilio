@@ -1,5 +1,6 @@
 import { isOrdinaryWord } from './ordinaryWords.js'
 import { isEngineBase, isSafeRegex } from './rule-checks.js'
+import { compileRulePattern, type RuleMatcher } from './rule-pattern.js'
 import type {
   AnonymizeOptions,
   AnonymizeResult,
@@ -805,28 +806,19 @@ function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
   return r.type !== 'replace' || !isEngineBase(r.placeholder)
 }
 
-/** A pattern with a quantifier matches only names this long or shorter: what
- *  backtracking one that passed isSafeRegex can still do (polynomial,
- *  \w*\w*$) stays bounded. A longer name is not matched by it - so such a
- *  whitelist does not keep it readable, the safe direction. A pattern with no
- *  quantifier matches any length (spec 065 security review): it cannot
- *  backtrack past its own alternatives, and isSafeRegex allows at most four
- *  alternation groups, so its cost stays a small multiple of the name's
- *  length. Capping it too would break whitelisting a long generated name,
- *  which an existing test pins. */
-export const RULE_MATCH_MAX = 200
-
-function hasQuantifier(pattern: string): boolean {
-  return /[*+?{]/.test(pattern.replace(/\\./g, '').replace(/\[[^\]]*\]/g, ''))
-}
+// Custom-rule patterns run on the engine's linear-time matcher, never on
+// RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
+// Compiled once per pattern.
+const ruleMatchers = new Map<string, RuleMatcher | null>()
 
 function safeMatch(pattern: string, name: string): boolean {
-  if (name.length > RULE_MATCH_MAX && hasQuantifier(pattern)) return false
-  try {
-    return new RegExp(pattern).test(name)
-  } catch {
-    return false
+  let m = ruleMatchers.get(pattern)
+  if (m === undefined) {
+    m = compileRulePattern(pattern)
+    if (ruleMatchers.size > 1000) ruleMatchers.clear()
+    ruleMatchers.set(pattern, m)
   }
+  return m !== null && m.test(name)
 }
 
 const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({

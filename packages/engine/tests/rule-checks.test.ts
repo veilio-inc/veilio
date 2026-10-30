@@ -27,57 +27,27 @@ describe('isEngineBase', () => {
   )
 })
 
-// Moved from the Cloud backend (lib/safe-regex.ts), with one rule added: a
-// repeated group holding an alternation - (a|aa)+$ - which its fuzz strings were
-// too short to expose and real identifiers are not.
+// Third security review: patterns run on the engine's linear-time matcher
+// (rule-pattern.test.ts), so "safe" means "that matcher accepts it". Shapes
+// that freeze RegExp are accepted - they cannot freeze this matcher - and the
+// constructs it cannot run are refused.
 describe('isSafeRegex', () => {
-  it.each(['^phoenix$', 'foo', '^[a-z]+_id$', '^(?:alpha|beta)$', 'a{2,5}'])('%s is safe', (p) =>
-    expect(isSafeRegex(p)).toBe(true)
-  )
+  it.each([
+    '^phoenix$',
+    'foo',
+    '^[a-z]+_id$',
+    '^(?:alpha|beta)$',
+    'a{2,5}',
+    '(a+)+$',
+    '((a+))+',
+    '(a|aa)+$',
+    '[^](x+)+]',
+  ])('%s is accepted', (p) => expect(isSafeRegex(p)).toBe(true))
 
-  it.each(['(a+)+$', '(\\w+\\s?)*$', '(a|aa)+', '(a|aa)+$', '(?:a|aa)*', '(x+x+)+y', '(', '[a-'])(
+  it.each(['(a)\\1', '(?<n>a)\\k<n>', '(?=a)', '\\bx', 'a{1,1000}', '(', '[a-'])(
     '%s is refused',
     (p) => expect(isSafeRegex(p)).toBe(false)
   )
-})
-
-// Security review (2026-10-30): the two regexes above were a heuristic that a
-// nested group got past. The check is now a parser: no repeated group may hold
-// a quantifier or an alternation at any depth (star height above one), and a
-// backreference is refused.
-describe('isSafeRegex: star height, at any depth', () => {
-  it.each([
-    '((a+))+',
-    '(?:(a|b))+',
-    '((?:x|y)z)*',
-    '([a-z]+_)+$',
-    '(a?)+',
-    '(a{1,3}){2,}',
-    '(a)\\1',
-    '(?<n>a)\\k<n>',
-    // Second review: JS closes a class at its first ']' - '[^]' and '[]' are
-    // whole classes - so a parser reading them the PCRE way missed what follows.
-    '[^](x+)+]',
-    '[](x+)+',
-    // Second review: no repetition, but each alternation group doubles the
-    // backtracking on a name that fails late.
-    '(a|a)(a|a)(a|a)(a|a)(a|a)$',
-    '(?:x|xx)(?:x|xx)(?:x|xx)(?:x|xx)(?:x|xx)y',
-  ])('%s is refused', (p) => expect(isSafeRegex(p)).toBe(false))
-
-  it.each([
-    '(?:ab)+',
-    '[(a+)]+',
-    '\\(a+\\)+',
-    '(?:alpha|beta)',
-    '^(?:alpha|beta)$',
-    '(a|b)?',
-    '(ab){2}',
-    '\\w*\\d*$',
-    '^(?:alpha|beta|gamma|delta|epsilon|zeta|eta|theta)$',
-    '(?:ab|cd)(?:ef|gh)',
-    '[^]]+',
-  ])('%s is safe', (p) => expect(isSafeRegex(p)).toBe(true))
 })
 
 describe('ruleRefusal', () => {
@@ -100,7 +70,7 @@ describe('ruleRefusal', () => {
     ['a name of 81 characters', { ...replace, name: 'n'.repeat(81) }],
     ['an empty pattern', { ...replace, pattern: '' }],
     ['a pattern of 501 characters', { ...replace, pattern: 'p'.repeat(501) }],
-    ['an unsafe pattern', { ...replace, pattern: '(a+)+$' }],
+    ['an unsupported pattern', { ...replace, pattern: '(a)\\1' }],
     ['a placeholder that is not __NAME__', { ...replace, placeholder: 'CODENAME' }],
     ['a lower-case placeholder', { ...replace, placeholder: '__codename__' }],
     ['a reserved __P<n>__', { ...replace, placeholder: '__P3__' }],

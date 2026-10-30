@@ -121,7 +121,7 @@ describe('what opening refuses', () => {
     ['a bad enabled', { ...base, enabled: 'yes' }, 'refused'],
     ['an engine base', { ...base, placeholder: '__VAR__' }, 'refused'],
     ['__P<n>__', { ...base, placeholder: '__P7__' }, 'refused'],
-    ['an unsafe pattern', { ...base, pattern: '(a+)+$' }, 'refused'],
+    ['an unsupported pattern', { ...base, pattern: '(?=a)a' }, 'refused'],
     ['an empty name', { ...base, name: '' }, 'refused'],
     ['a replace rule with no placeholder', { ...base, placeholder: '' }, 'refused'],
   ])('%s', async (_label, body, reason) => {

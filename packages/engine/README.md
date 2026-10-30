@@ -500,9 +500,15 @@ your maps, so a server storing it cannot read it.
   may apply, or one sealed for another row)
 - `ruleRefusal(rule)` → the sentence why a rule may not be saved or applied,
   or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
-  for its own names) and `isSafeRegex(pattern)` (a heuristic guard against
-  patterns that backtrack catastrophically) are the two checks it makes.
-  `anonymize` itself skips a rule that fails either.
+  for its own names) and `isSafeRegex(pattern)` are the checks it makes
+- `compileRulePattern(pattern)` → a matcher whose `test(name)` gives
+  `RegExp.test`'s answer in time linear in the name's length, or `null` for a
+  pattern outside its language. Rule patterns run on it, never on `RegExp`, so
+  a teammate's pattern such as `(a+)+$` cannot freeze the tool applying it.
+  The language: literals, `.`, classes, `\d \w \s` and their negations,
+  `^ $`, groups, alternation, and quantifiers with bounds up to 50.
+  Backreferences, lookaround and `\b` are refused; `isSafeRegex` is true
+  exactly when this compiles
 
 A lost `.veilio` passphrase is not recoverable, by construction. Nothing here
 holds an escrow copy and nothing in the format allows one.

@@ -8,6 +8,7 @@
 
 import { MANUAL_BASE, REGULATED_BASES, ROLE_BASES } from './engine.js'
 import { REDACTION_PREFIX } from './product.js'
+import { compileRulePattern } from './rule-pattern.js'
 
 let bases: Set<string> | null = null
 
@@ -25,142 +26,13 @@ export function isEngineBase(placeholder: string): boolean {
 }
 
 /**
- * Guard against patterns that backtrack catastrophically (ReDoS).
- *
- * The engine has no dependencies, so it cannot run patterns on a linear-time
- * engine. Instead:
- *
- * 1. Static, a small parser: no repeated group may hold a quantifier or an
- *    alternation at any depth - (a+)+, ((a+))+, (a|aa)+ - and no
- *    backreference. That is star height one, which rules out the exponential
- *    cases. (A security review found the two regexes this replaced let a
- *    nested group through.)
- * 2. Runtime: the compiled pattern runs on short strings under a 100 ms budget.
- *
- * What is left - polynomial backtracking such as \w*\w*$ - is bounded by
- * the engine matching rules only against names of 200 characters or fewer.
+ * Whether a custom rule's pattern may be applied: the engine's own linear-time
+ * matcher accepts it (rule-pattern.ts). Such a pattern cannot freeze a tool,
+ * whatever its shape - three rounds of security review showed that shape
+ * heuristics over the platform's backtracking RegExp can always be bypassed.
  */
-const BUDGET_MS = 100
-
-interface Group {
-  /** Holds a quantifier or an alternation, at any depth. */
-  inner: boolean
-  /** Holds an alternation directly. */
-  alt: boolean
-}
-
-/** Groups holding an alternation, at most. Each one can double the
- *  backtracking on a name that fails late, repeated or not - (a|a)(a|a)...
- *  (second security review). One group with many branches, such as the
- *  guard's list of third-party names, counts once. */
-const MAX_ALTERNATION_GROUPS = 4
-
-/** True when the pattern repeats a group holding a quantifier or alternation,
- *  or uses a backreference. */
-function exceedsStarHeight(pattern: string): boolean {
-  const stack: Group[] = [{ inner: false, alt: false }]
-  let alternations = 0
-  let last: Group | 'atom' | null = null
-  let i = 0
-  const top = (): Group => stack[stack.length - 1]!
-  while (i < pattern.length) {
-    const c = pattern[i]!
-    if (c === '\\') {
-      const next = pattern[i + 1] ?? ''
-      if (/[1-9]/.test(next) || next === 'k') return true
-      last = 'atom'
-      i += 2
-      continue
-    }
-    if (c === '[') {
-      // As JS reads it: the first unescaped ']' closes the class, so '[]' and
-      // '[^]' are whole classes (second security review: reading them the PCRE
-      // way hid what followed).
-      i++
-      if (pattern[i] === '^') i++
-      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1
-      i++
-      last = 'atom'
-      continue
-    }
-    if (c === '(') {
-      stack.push({ inner: false, alt: false })
-      i++
-      if (pattern[i] === '?') {
-        // (?: (?= (?! (?<= (?<! (?<name>
-        i++
-        if (pattern[i] === '<' && pattern[i + 1] !== '=' && pattern[i + 1] !== '!') {
-          while (i < pattern.length && pattern[i] !== '>') i++
-        }
-        i++
-        if (pattern[i - 1] === '<') i++
-      }
-      last = null
-      continue
-    }
-    if (c === ')') {
-      const closed = stack.length > 1 ? stack.pop()! : top()
-      if (closed.alt) alternations++
-      if (closed.inner) top().inner = true
-      last = closed
-      i++
-      continue
-    }
-    if (c === '|') {
-      top().inner = true
-      top().alt = true
-      last = null
-      i++
-      continue
-    }
-    const quant = /^(?:[*+?]|\{(\d+)(,(\d*))?\})/.exec(pattern.slice(i))
-    if (quant && last !== null) {
-      const [whole, min, comma, max] = quant
-      const repeats =
-        whole === '*' ||
-        whole === '+' ||
-        (whole !== '?' && (comma !== undefined ? max === '' || Number(max) > 1 : Number(min) > 1))
-      if (repeats && last !== 'atom' && last.inner) return true
-      top().inner = true
-      i += whole.length
-      if (pattern[i] === '?') i++
-      last = null
-      continue
-    }
-    last = 'atom'
-    i++
-  }
-  if (stack[0]!.alt) alternations++
-  return alternations > MAX_ALTERNATION_GROUPS
-}
-
-/** Short strings to time the pattern on: a run of one letter, and a run of the
- *  pattern's own letters, each ending in a character that makes it fail late. */
-function fuzzStrings(pattern: string): string[] {
-  const own = [...new Set(pattern.replace(/\\./g, '').replace(/[^A-Za-z0-9_]/g, ''))].join('')
-  const strings = ['a'.repeat(20) + 'b', 'a'.repeat(25) + 'b']
-  if (own) strings.push(own.repeat(Math.ceil(30 / own.length)).slice(0, 30) + '!')
-  return strings
-}
-
 export function isSafeRegex(pattern: string): boolean {
-  let compiled: RegExp
-  try {
-    compiled = new RegExp(pattern)
-  } catch {
-    return false
-  }
-  if (exceedsStarHeight(pattern)) return false
-  const start = Date.now()
-  try {
-    for (const fuzz of fuzzStrings(pattern)) {
-      compiled.test(fuzz)
-      if (Date.now() - start >= BUDGET_MS) return false
-    }
-  } catch {
-    return false
-  }
-  return Date.now() - start < BUDGET_MS
+  return compileRulePattern(pattern) !== null
 }
 
 /** A rule as its owner wrote it - what is sealed. */
@@ -178,7 +50,8 @@ export function ruleRefusal(rule: RuleBody): string | null {
     return 'A rule needs a name of 1 to 80 characters'
   if (typeof rule.pattern !== 'string' || rule.pattern.length < 1 || rule.pattern.length > 500)
     return 'A pattern is 1 to 500 characters'
-  if (!isSafeRegex(rule.pattern)) return 'Invalid or unsafe regex pattern'
+  if (!isSafeRegex(rule.pattern))
+    return 'This pattern uses something rules do not support (a backreference, lookaround, \\b, or a bound over 50)'
   if (rule.type === 'replace') {
     const p = (rule as { placeholder?: unknown }).placeholder
     if (typeof p !== 'string' || p.length < 3 || p.length > 80 || !PLACEHOLDER_RE.test(p))
