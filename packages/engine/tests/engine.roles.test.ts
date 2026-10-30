@@ -150,10 +150,10 @@ describe('anonymize — role-typed placeholders', () => {
   })
 
   it('numbers each role base independently', () => {
-    const { map } = anonymize('class Alpha {}\nclass Bravo {}\nfunction charlie() {}')
+    const { map } = anonymize('class Tarnwick {}\nclass Quayward {}\nfunction skerryCharlie() {}')
     expect(map.__CLS__1).toBeDefined()
     expect(map.__CLS__2).toBeDefined()
-    expect(map.__FN__1).toBe('charlie')
+    expect(map.__FN__1).toBe('skerryCharlie')
   })
 
   it('round-trips verbatim under role placeholders', () => {
@@ -197,8 +197,8 @@ describe('anonymize — roles with existing maps and rules', () => {
   })
 
   it('continues role counters from an existing role map', () => {
-    const { map } = anonymize('class Newcomer {}', { existingMap: { __CLS__4: 'OldTimer' } })
-    expect(map.__CLS__5).toBe('Newcomer')
+    const { map } = anonymize('class TarnwickNewcomer {}', { existingMap: { __CLS__4: 'OldTimer' } })
+    expect(map.__CLS__5).toBe('TarnwickNewcomer')
   })
 
   it('whitelist rules still win over role placeholders (negative)', () => {
@@ -229,9 +229,9 @@ describe('anonymize — roles with existing maps and rules', () => {
       enabled: true,
       sort_order: 1,
     }
-    const { map } = anonymize('const stripeApiKey = load()', { rules: [rr] })
+    const { map } = anonymize('const stripeApiKey = loadSkerryKey()', { rules: [rr] })
     expect(map.__APIKEY__1).toBe('stripeApiKey')
-    expect(Object.values(map)).toContain('load')
+    expect(Object.values(map)).toContain('loadSkerryKey')
   })
 
   it('a custom rule sharing a role base shares its counter (documented behavior)', () => {

@@ -19,7 +19,7 @@ chargeCustomer({ taxRate: 0.23 })
 
 function realTrace(): string {
   try {
-    runInNewContext(CODE, {}, { filename: '/srv/app/src/billing/invoice.js' })
+    runInNewContext(CODE, {}, { filename: '/srv/app/src/quayward/invoice.js' })
   } catch (e) {
     return (e as Error).stack as string
   }
@@ -58,7 +58,7 @@ describe('a stack trace masked with the code’s map', () => {
   })
 
   it('does not leak a real function name into the masked trace', () => {
-    for (const name of ['calculateInvoiceTotal', 'chargeCustomer', 'lineItems', 'billing']) {
+    for (const name of ['calculateInvoiceTotal', 'chargeCustomer', 'lineItems', 'quayward']) {
       expect(masked.anonymized).not.toContain(name)
     }
   })

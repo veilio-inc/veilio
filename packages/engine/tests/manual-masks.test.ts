@@ -104,7 +104,7 @@ describe('manual masks', () => {
     // visually obvious token there. Mapping one placeholder to another would
     // survive anonymize and then silently lose the real name on restore, since
     // restore is a single pass and would stop at the literal '__FN__1'.
-    const first = anonymize('function settle(rate) { return rate }')
+    const first = anonymize('function settleBerthQuota(quayRate) { return quayRate }')
 
     expect(() =>
       anonymize(first.anonymized, { existingMap: first.map, manual: ['__FN__1'] })
@@ -115,19 +115,19 @@ describe('manual masks', () => {
     // The UI re-anonymizes its own output, so the text being masked is already
     // full of placeholders. Marking 'FN' previously rewrote the middle of
     // __FN__1 and produced ____MANUAL__1__1.
-    const first = anonymize('function settle(rate) { return rate }')
+    const first = anonymize('function settleBerthQuota(quayRate) { return quayRate }')
     const second = anonymize(first.anonymized, { existingMap: first.map, manual: ['FN'] })
 
     expect(second.anonymized).toContain('__FN__1')
     expect(second.anonymized).not.toContain('____MANUAL__')
     expect(restore(second.anonymized, second.map, { strip: 'none' }).restored).toBe(
-      'function settle(rate) { return rate }'
+      'function settleBerthQuota(quayRate) { return quayRate }'
     )
   })
 
   it('still masks a term sitting next to a placeholder', () => {
     // The placeholder guard must not swallow legitimate neighbouring matches.
-    const first = anonymize('// by Kowalska\nfunction settle(rate) { return rate }')
+    const first = anonymize('// by Kowalska\nfunction settleBerthQuota(quayRate) { return quayRate }')
     const second = anonymize(first.anonymized, {
       existingMap: first.map,
       manual: ['Kowalska'],

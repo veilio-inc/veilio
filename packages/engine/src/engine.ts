@@ -1,3 +1,4 @@
+import { isOrdinaryWord } from './ordinaryWords.js'
 import type {
   AnonymizeOptions,
   AnonymizeResult,
@@ -1279,6 +1280,15 @@ export function anonymize(
     if (secretValues.has(name) && !alreadyMapped.has(name)) continue
 
     if (whitelist.some((r) => safeMatch(r.pattern, name))) {
+      whitelisted.add(name)
+      continue
+    }
+
+    // Spec 064: a single common word, shared vocabulary or a toolchain's name
+    // is left as written - unless a custom replace rule asks for it. Like a
+    // whitelisted name, an older map's entry for it is kept (old text still
+    // restores) but no longer substituted.
+    if (isOrdinaryWord(name) && !replacers.some((r) => safeMatch(r.pattern, name))) {
       whitelisted.add(name)
       continue
     }

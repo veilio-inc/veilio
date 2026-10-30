@@ -7,7 +7,7 @@ import type { SymbolMap } from '../src/types.js'
 // equally confident in all of them.
 const SOURCE = [
   'function validateSessionToken(userToken) {',
-  '  return authService.check(userToken)',
+  '  return authService.checkQuayToken(userToken)',
   '}',
 ].join('\n')
 

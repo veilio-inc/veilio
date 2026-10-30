@@ -57,9 +57,9 @@ describe('strings that may span lines still do', () => {
 
 describe('a URL is not a comment', () => {
   it.each(LINE_BOUNDED)('%s: a file:/// frame in a trace is masked', (language) => {
-    const line = '    at chargeCustomer (file:///Users/jkowalski/acmeBilling/src/invoice.js:6:10)'
+    const line = '    at chargeCustomer (file:///Users/jkowalski/acmeBilling/src/tarnwick.js:6:10)'
     const r = anonymize(line, { language })
-    for (const word of ['jkowalski', 'acmeBilling', 'invoice']) {
+    for (const word of ['jkowalski', 'acmeBilling', 'tarnwick']) {
       expect(r.anonymized).not.toContain(word)
     }
     expect(r.comments.total).toBe(0)
