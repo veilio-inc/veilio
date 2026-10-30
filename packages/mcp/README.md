@@ -38,7 +38,10 @@ that the masking did not cover something: one when no language marker matched
 (the file was masked as TypeScript, which may be wrong), and one counting the
 **comment prose left exactly as written** — names and ticket numbers in comments
 are still real. Names written entirely in capitals are not masked either
-(`ACME_TENANT_ID`); nothing counts those.
+(`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
+English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
+toolchain's name (`vitest`, `junit`): only distinctive names are masked. A codename
+that is an ordinary word stays masked only with a custom replace rule.
 
 ## Tools
 

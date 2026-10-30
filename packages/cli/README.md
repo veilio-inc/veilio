@@ -272,6 +272,17 @@ git diff --cached | veilio scan || {
 }
 ```
 
+## What is masked
+
+Distinctive names - `quaywardThrottle`, `SkerryTariff`, `berth_quorum`, an invented
+`tarnwick` - become placeholders. A name that is a single common English word
+(`total`, `ledger`, `invoice`), shared vocabulary every codebase has (`src`,
+`util`, `com`, `java`) or a toolchain's name (`vitest`, `junit`, `mvn`) is left as
+written: it is nobody's secret, and masking it made paths and test output
+unreadable. A codename that is an ordinary word (`phoenix`) is therefore readable;
+a custom replace rule (`veilio rules pull`) keeps it masked. Credentials are
+redacted whatever they are called.
+
 ## The symbol map
 
 `scrub` writes `.veilio/map.json` at the project root and `restore` reads it, so placeholders stay stable across runs and across a whole session. The store is created `0600` with its own `.gitignore` — it holds the real identifier names, so committing it would undo the anonymization for anyone reading the repo.
