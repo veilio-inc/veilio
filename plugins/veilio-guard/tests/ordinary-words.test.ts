@@ -48,3 +48,15 @@ test('a codename a custom rule masks stays masked though it is an ordinary word 
   expect(out).toContain('__CODENAME__1')
   expect(out).toContain('ledger/main')
 })
+
+test('a credential that is an ordinary word an older map holds is redacted, not shown (code review)', async ($, on) => {
+  const bash = recordedRaw('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'sunshine' }) })
+  const r = bash.r as { result: Record<string, unknown> }
+  // A possible credential (client_secret: "sunshine"): the guard writes the
+  // map's entry over it, as before. A weak password the scanner does not flag
+  // at all (PASSWORD=sunshine) is the documented limit in COVERAGE.md.
+  on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'client_secret: "sunshine"' } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+  expect(out).not.toContain('sunshine')
+})

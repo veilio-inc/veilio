@@ -1297,7 +1297,20 @@ export function anonymize(
       continue
     }
 
-    if (reverseExisting[name]) continue // already mapped
+    // Already mapped - unless it is an ordinary word the engine itself mapped
+    // before a team's replace rule for it existed: the rule then gives it a
+    // placeholder of its own (the old entry still restores old text). Without
+    // this the engine's entry would win, and a masking that leaves ordinary
+    // words readable would show the codename (code review, spec 064).
+    if (
+      reverseExisting[name] &&
+      !(
+        /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/.test(reverseExisting[name]) &&
+        isOrdinaryWord(name) &&
+        replacers.some((r) => safeMatch(r.pattern, name))
+      )
+    )
+      continue // already mapped
 
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))

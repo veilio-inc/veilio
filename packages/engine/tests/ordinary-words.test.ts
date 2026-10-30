@@ -104,3 +104,30 @@ describe('inside a credential, an older map still masks an ordinary word (securi
     expect(anonymized).toContain('const mode = disabled')
   })
 })
+
+describe('a rule made after a word was masked by the engine (code review)', () => {
+  it('gives the word a rule placeholder too, so a masking that keeps rule entries still hides it', () => {
+    const { anonymized, map } = anonymize('deploy(phoenix)\n', {
+      language: 'typescript',
+      existingMap: { __VAR__3: 'phoenix' },
+      rules: [
+        {
+          id: 'r1',
+          scope: 'team',
+          team_id: 't',
+          name: 'codename',
+          type: 'replace',
+          pattern: '^phoenix$',
+          placeholder: '__CODENAME__',
+          enabled: true,
+          sort_order: 0,
+        },
+      ],
+    })
+    expect(anonymized).not.toMatch(/\bphoenix\b/)
+    expect(anonymized).toContain('__CODENAME__1')
+    expect(map.__CODENAME__1).toBe('phoenix')
+    // The old placeholder still restores old text.
+    expect(map.__VAR__3).toBe('phoenix')
+  })
+})
