@@ -153,7 +153,16 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         return refusalResult(refusal('destructive_off'))
       return answered(
         pulled,
-        ({ name, count, path }) => `Pulled "${name}" (${count} symbols) into ${path}`
+        ({ name, count, path, blocks }) =>
+          `Pulled "${name}" (${count} symbols) into ${path}` +
+          // Spec 063: the numbers this member's guard will mint new names from.
+          (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length
+            ? `\nReserved team numbers for new names: ${Object.entries(blocks.blocks)
+                .map(([base, b]) => `${base}${b.start}-${b.end}`)
+                .join(', ')}`
+            : blocks?.status === 'failed'
+              ? `\nCould not reserve team numbers (${blocks.detail}); until it can, new names are numbered on this machine, and a publish renumbers them.`
+              : '')
       )
     },
   },

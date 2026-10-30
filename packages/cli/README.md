@@ -140,6 +140,18 @@ map. The summary says `Namespace: team`.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 
+### Team numbers for the guard
+
+The Claude Code guard makes no request, so it cannot ask the team for a number
+each time it masks a new name. Instead, `veilio maps pull` of a team map (and
+`veilio team unlock` in a project that already has a map) reserves a **block**
+of the team's numbers for you - 500 per kind - and keeps it in
+`.veilio/reserved.json`. The guard numbers new names inside it, so two members
+working at the same time never give one placeholder two meanings. A pull takes
+a new block whenever a teammate's newer numbers sit above yours. If no block can
+be reserved, the pull still succeeds and says so; new names are then numbered on
+this machine, and the next publish renumbers them.
+
 ### Restoring a teammate's placeholders
 
 `veilio restore` resolves a placeholder this project's map cannot explain
@@ -176,7 +188,7 @@ a plan feature the web app couldn't.
                         For: scrub
 -m, --map <path>        Use a specific map file
                         For: scrub, restore, map, maps pull, maps push, maps
-                        update
+                        update, team unlock
     --json              Machine-readable output
                         For: scan, map
     --strict            scan: also fail on advisory findings. restore: write

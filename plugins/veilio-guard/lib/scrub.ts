@@ -25,6 +25,7 @@ import {
   shannonEntropy,
 } from '../vendor/engine/index.js'
 import type { FileKind, Language, LanguageOption } from '../vendor/engine/index.js'
+import type { Block } from './mapfile.ts'
 
 export type SymbolMap = Record<string, string>
 
@@ -57,28 +58,87 @@ export const NO_CONTEXT: MaskContext = {
   kind: 'result',
 }
 
+// Spec 063: a marker entry at a block's floor moves the engine's counter
+// there - it numbers above the highest number of a kind in the map it is
+// given. The value holds a NUL no identifier contains, so it matches nothing in
+// the text, and it is stripped from what comes back (the CLI's anonymizeAbove).
+const FLOOR_MARKER = '\u0000veilio-guard-floor:'
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+/** Highest number per kind in a map. */
+export function highestPerKind(map: SymbolMap): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const p of Object.keys(map)) {
+    const m = NUMBERED.exec(p)
+    if (!m) continue
+    const [, base = '', n = '0'] = m
+    if (Number(n) > (out[base] ?? 0)) out[base] = Number(n)
+  }
+  return out
+}
+
+/** A block is usable while nothing in the map sits at or above its end. */
+export function usableBlocks(map: SymbolMap, blocks: Record<string, Block>): Record<string, Block> {
+  const top = highestPerKind(map)
+  return Object.fromEntries(Object.entries(blocks).filter(([base, b]) => (top[base] ?? 0) < b.end))
+}
+
+/** Reserved numbers still free, over every usable block. */
+export function numbersLeft(map: SymbolMap, blocks: Record<string, Block>): number {
+  const top = highestPerKind(map)
+  return Object.entries(usableBlocks(map, blocks)).reduce(
+    (sum, [base, b]) => sum + b.end - Math.max(top[base] ?? 0, b.start - 1),
+    0
+  )
+}
+
+/** The map with a floor marker at each usable block's start, so the engine
+ *  numbers new names of that kind inside it (spec 063). Shared by every path
+ *  that mints: a source read and a name first met in output (team bench). */
+function seedBlocks(
+  map: SymbolMap,
+  blocks?: Record<string, Block>
+): { seeded: SymbolMap; usable: Record<string, Block> } {
+  const usable = blocks ? usableBlocks(map, blocks) : {}
+  const top = highestPerKind(map)
+  const seeded: SymbolMap = { ...map }
+  for (const [base, b] of Object.entries(usable))
+    if (b.start - 1 > (top[base] ?? 0)) seeded[`${base}${b.start - 1}`] = `${FLOOR_MARKER}${base}`
+  return { seeded, usable }
+}
+
 export function scrubSource(
   text: string,
   map: SymbolMap,
   language: LanguageOption = 'auto',
   keep: ReadonlySet<string> = new Set(),
-  fileKind?: FileKind
-): { text: string; additions: SymbolMap } {
+  fileKind?: FileKind,
+  blocks?: Record<string, Block>
+): { text: string; additions: SymbolMap; outside: number } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole.
   const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
+  // Inside the member's blocks where one is usable (spec 063); a kind without
+  // one numbers as it always did, and its new names are counted as outside.
+  const { seeded, usable } = seedBlocks(map, blocks)
   // The file's kind, never its path (engine spec 013 R19).
   const result = anonymize(text, {
-    existingMap: map,
+    existingMap: seeded,
     language,
     rules,
     ...(fileKind ? { fileKind } : {}),
   })
   const additions: SymbolMap = {}
+  let outside = 0
   for (const [placeholder, name] of Object.entries(result.map)) {
-    if (map[placeholder] !== name) additions[placeholder] = name
+    if (name.startsWith(FLOOR_MARKER) || map[placeholder] === name) continue
+    additions[placeholder] = name
+    if (!blocks) continue
+    const [, base = '', n = '0'] = NUMBERED.exec(placeholder) ?? []
+    const b = usable[base]
+    if (!b || Number(n) < b.start || Number(n) > b.end) outside++
   }
-  return { text: result.anonymized, additions }
+  return { text: result.anonymized, additions, outside }
 }
 
 const WORD = /[A-Za-z0-9_$]/
@@ -1014,7 +1074,8 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
 export function maskShaped(
   text: string,
   map: SymbolMap,
-  ctx: MaskContext
+  ctx: MaskContext,
+  blocks?: Record<string, Block>
 ): { text: string; additions: SymbolMap } {
   if (ctx.kind === 'prompt') return { text, additions: {} }
   // A name written against a redaction token is masked like any other.
@@ -1022,7 +1083,7 @@ export function maskShaped(
     let working = map
     const additions: SymbolMap = {}
     const out = aroundTokens(text, (part) => {
-      const r = maskShapedPart(part, working, ctx)
+      const r = maskShapedPart(part, working, ctx, blocks)
       if (Object.keys(r.additions).length) {
         Object.assign(additions, r.additions)
         working = { ...working, ...r.additions }
@@ -1031,13 +1092,14 @@ export function maskShaped(
     })
     return { text: out, additions }
   }
-  return maskShapedPart(text, map, ctx)
+  return maskShapedPart(text, map, ctx, blocks)
 }
 
 function maskShapedPart(
   text: string,
   map: SymbolMap,
-  ctx: MaskContext
+  ctx: MaskContext,
+  blocks?: Record<string, Block>
 ): { text: string; additions: SymbolMap } {
   const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
   const reused: SymbolMap = {}
@@ -1057,10 +1119,19 @@ function maskShapedPart(
   const source = [...found]
     .map((t) => (/^[A-Z]/.test(t) && !t.includes('_') ? `class ${t} {}` : `let ${t} = 0`))
     .join('\n')
-  const minted = anonymize(source, { existingMap: map, language: 'typescript', secrets: 'off' }).map
+  // Inside this member's block, as a source read numbers (spec 063): a name met
+  // first in a test's output once took the next number above the map - a
+  // teammate's (team bench, 2026-10-30).
+  const { seeded } = seedBlocks(map, blocks)
+  const minted = anonymize(source, {
+    existingMap: seeded,
+    language: 'typescript',
+    secrets: 'off',
+  }).map
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(minted))
-    if (found.has(name) && map[placeholder] !== name) additions[placeholder] = name
+    if (found.has(name) && !name.startsWith(FLOOR_MARKER) && map[placeholder] !== name)
+      additions[placeholder] = name
   return { text: replaceNames(text, { ...reused, ...additions }, ctx), additions }
 }
 
