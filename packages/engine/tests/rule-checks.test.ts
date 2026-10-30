@@ -41,6 +41,34 @@ describe('isSafeRegex', () => {
   )
 })
 
+// Security review (2026-10-30): the two regexes above were a heuristic that a
+// nested group got past. The check is now a parser: no repeated group may hold
+// a quantifier or an alternation at any depth (star height above one), and a
+// backreference is refused.
+describe('isSafeRegex: star height, at any depth', () => {
+  it.each([
+    '((a+))+',
+    '(?:(a|b))+',
+    '((?:x|y)z)*',
+    '([a-z]+_)+$',
+    '(a?)+',
+    '(a{1,3}){2,}',
+    '(a)\\1',
+    '(?<n>a)\\k<n>',
+  ])('%s is refused', (p) => expect(isSafeRegex(p)).toBe(false))
+
+  it.each([
+    '(?:ab)+',
+    '[(a+)]+',
+    '\\(a+\\)+',
+    '(?:alpha|beta)',
+    '^(?:alpha|beta)$',
+    '(a|b)?',
+    '(ab){2}',
+    '\\w*\\d*$',
+  ])('%s is safe', (p) => expect(isSafeRegex(p)).toBe(true))
+})
+
 describe('ruleRefusal', () => {
   const replace = {
     name: 'codename',

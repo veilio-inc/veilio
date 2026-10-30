@@ -44,4 +44,13 @@ describe('anonymize skips a rule it must not run', () => {
     expect(placeholder).not.toMatch(/^__FN__/)
     expect(anonymized).not.toContain('quaywardPlan')
   })
+
+  it('a name over 200 characters is never matched by a rule: the cost of a pattern stays bounded', () => {
+    const long = 'q' + 'w'.repeat(250)
+    const { anonymized } = anonymize(`const ${long} = 1\n`, {
+      language: 'typescript',
+      rules: [rule({ type: 'whitelist', pattern: '^qw+$' })],
+    })
+    expect(anonymized).not.toContain(long)
+  })
 })

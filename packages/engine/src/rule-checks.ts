@@ -25,20 +25,100 @@ export function isEngineBase(placeholder: string): boolean {
 }
 
 /**
- * Heuristic ReDoS guard, moved from the Cloud backend.
+ * Guard against patterns that backtrack catastrophically (ReDoS).
  *
- * 1. Static: refuses a repeated group that itself repeats - (a+)+, (\w+)* - or
- *    that holds an alternation - (a|aa)+. The second was added with the move:
- *    its cost grows with the identifier's length, which the fuzz strings below
- *    are too short to show.
- * 2. Runtime: runs the compiled pattern on short strings under a 100 ms budget.
+ * The engine has no dependencies, so it cannot run patterns on a linear-time
+ * engine. Instead:
  *
- * Not a guarantee; defence in depth beside the 500-character cap.
+ * 1. Static, a small parser: no repeated group may hold a quantifier or an
+ *    alternation at any depth - (a+)+, ((a+))+, (a|aa)+ - and no
+ *    backreference. That is star height one, which rules out the exponential
+ *    cases. (A security review found the two regexes this replaced let a
+ *    nested group through.)
+ * 2. Runtime: the compiled pattern runs on short strings under a 100 ms budget.
+ *
+ * What is left - polynomial backtracking such as \w*\w*$ - is bounded by
+ * the engine matching rules only against names of 200 characters or fewer.
  */
 const BUDGET_MS = 100
-const NESTED_QUANTIFIER_RE = /\([^)]*[+*][^)]*\)[+*{]|\([^)]*\)[+*]\+/
-const REPEATED_ALTERNATION_RE = /\((?:\?:)?[^()]*\|[^()]*\)[+*{]/
 const FUZZ_STRINGS = ['a'.repeat(20) + 'b', 'a'.repeat(25) + 'b']
+
+interface Group {
+  inner: boolean
+}
+
+/** True when the pattern repeats a group holding a quantifier or alternation,
+ *  or uses a backreference. */
+function exceedsStarHeight(pattern: string): boolean {
+  const stack: Group[] = [{ inner: false }]
+  let last: Group | 'atom' | null = null
+  let i = 0
+  const top = (): Group => stack[stack.length - 1]!
+  while (i < pattern.length) {
+    const c = pattern[i]!
+    if (c === '\\') {
+      const next = pattern[i + 1] ?? ''
+      if (/[1-9]/.test(next) || next === 'k') return true
+      last = 'atom'
+      i += 2
+      continue
+    }
+    if (c === '[') {
+      i++
+      if (pattern[i] === '^') i++
+      if (pattern[i] === ']') i++
+      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1
+      i++
+      last = 'atom'
+      continue
+    }
+    if (c === '(') {
+      stack.push({ inner: false })
+      i++
+      if (pattern[i] === '?') {
+        // (?: (?= (?! (?<= (?<! (?<name>
+        i++
+        if (pattern[i] === '<' && pattern[i + 1] !== '=' && pattern[i + 1] !== '!') {
+          while (i < pattern.length && pattern[i] !== '>') i++
+        }
+        i++
+        if (pattern[i - 1] === '<') i++
+      }
+      last = null
+      continue
+    }
+    if (c === ')') {
+      const closed = stack.length > 1 ? stack.pop()! : top()
+      if (closed.inner) top().inner = true
+      last = closed
+      i++
+      continue
+    }
+    if (c === '|') {
+      top().inner = true
+      last = null
+      i++
+      continue
+    }
+    const quant = /^(?:[*+?]|\{(\d+)(,(\d*))?\})/.exec(pattern.slice(i))
+    if (quant && last !== null) {
+      const [whole, min, comma, max] = quant
+      const repeats =
+        whole === '*' ||
+        whole === '+' ||
+        (whole !== '?' && (comma !== undefined ? max === '' || Number(max) > 1 : Number(min) > 1))
+      if (repeats && last !== 'atom' && last.inner) return true
+      top().inner = true
+      i += whole.length
+      if (pattern[i] === '?') i++
+      last = null
+      continue
+    }
+    last = 'atom'
+    i++
+  }
+  return false
+}
 
 export function isSafeRegex(pattern: string): boolean {
   let compiled: RegExp
@@ -47,7 +127,7 @@ export function isSafeRegex(pattern: string): boolean {
   } catch {
     return false
   }
-  if (NESTED_QUANTIFIER_RE.test(pattern) || REPEATED_ALTERNATION_RE.test(pattern)) return false
+  if (exceedsStarHeight(pattern)) return false
   const start = Date.now()
   try {
     for (const fuzz of FUZZ_STRINGS) {

@@ -20,16 +20,29 @@ import {
 export const RULE_KIND = 'veilio-rule'
 const RULE_V = '1'
 
+/** The row a sealed body belongs to: its id and its team (null: personal).
+ *  Sealed into the body and checked on opening, so a server that cannot read
+ *  a rule cannot move it either - put a copy of one rule in another's row, or
+ *  a team's rule in another team's (security review, 2026-10-30). Replaying an
+ *  older body of the SAME row is not caught: that needs state the client does
+ *  not keep, as for maps. */
+export interface RuleBinding {
+  id: string
+  teamId: string | null
+}
+
 export type RuleOpened =
   | { ok: true; rule: RuleBody }
   /** `unopenable`: wrong key or damaged bytes. `not-a-rule`: something else was
    *  sealed there. `refused`: a rule no tool may apply; `detail` says why. */
   | { ok: false; reason: 'unopenable' | 'not-a-rule' | 'refused'; detail?: string }
 
-function toRecord(rule: RuleBody): Record<string, string> {
+function toRecord(rule: RuleBody, bind: RuleBinding): Record<string, string> {
   return {
     kind: RULE_KIND,
     v: RULE_V,
+    id: bind.id,
+    team: bind.teamId ?? '',
     name: rule.name,
     type: rule.type,
     pattern: rule.pattern,
@@ -38,12 +51,13 @@ function toRecord(rule: RuleBody): Record<string, string> {
   }
 }
 
-function fromRecord(raw: unknown): RuleOpened {
+function fromRecord(raw: unknown, bind: RuleBinding): RuleOpened {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
     return { ok: false, reason: 'not-a-rule' }
   const r = raw as Record<string, unknown>
   if (r.kind !== RULE_KIND || r.v !== RULE_V) return { ok: false, reason: 'not-a-rule' }
   const refused = (detail: string): RuleOpened => ({ ok: false, reason: 'refused', detail })
+  if (r.id !== bind.id || r.team !== (bind.teamId ?? '')) return refused('sealed for another rule')
   if (r.enabled !== 'true' && r.enabled !== 'false') return refused('enabled is not true or false')
   if (typeof r.name !== 'string' || typeof r.pattern !== 'string')
     return refused('a field is missing')
@@ -68,15 +82,20 @@ function fromRecord(raw: unknown): RuleOpened {
 
 /** Seal a personal rule under the personal-maps key. Refuses a rule no tool
  *  may apply, so a bad rule is never sealed in the first place. */
-export async function sealRuleForVault(key: CryptoKeyLike, rule: RuleBody): Promise<VaultEnvelope> {
+export async function sealRuleForVault(
+  key: CryptoKeyLike,
+  rule: RuleBody,
+  bind: RuleBinding
+): Promise<VaultEnvelope> {
   const why = ruleRefusal(rule)
   if (why) throw new Error(why)
-  return encryptMapForVault(key, toRecord(rule))
+  return encryptMapForVault(key, toRecord(rule, bind))
 }
 
 export async function openRuleFromVault(
   key: CryptoKeyLike,
-  env: VaultEnvelope
+  env: VaultEnvelope,
+  bind: RuleBinding
 ): Promise<RuleOpened> {
   let raw: unknown
   try {
@@ -84,23 +103,25 @@ export async function openRuleFromVault(
   } catch {
     return { ok: false, reason: 'unopenable' }
   }
-  return fromRecord(raw)
+  return fromRecord(raw, bind)
 }
 
 /** Seal a team rule under the team key. */
 export async function sealTeamRule(
   teamKey: CryptoKeyLike,
-  rule: RuleBody
+  rule: RuleBody,
+  bind: RuleBinding
 ): Promise<TeamMapEnvelope> {
   const why = ruleRefusal(rule)
   if (why) throw new Error(why)
-  return encryptTeamMap(teamKey, toRecord(rule))
+  return encryptTeamMap(teamKey, toRecord(rule, bind))
 }
 
 /** Open a team rule with whichever held version fits. */
 export async function openTeamRule(
   keys: readonly { version: number; key: CryptoKeyLike }[],
-  env: TeamMapEnvelope
+  env: TeamMapEnvelope,
+  bind: RuleBinding
 ): Promise<RuleOpened> {
   let raw: unknown
   try {
@@ -108,5 +129,5 @@ export async function openTeamRule(
   } catch {
     return { ok: false, reason: 'unopenable' }
   }
-  return fromRecord(raw)
+  return fromRecord(raw, bind)
 }

@@ -197,7 +197,9 @@ describe('anonymize — roles with existing maps and rules', () => {
   })
 
   it('continues role counters from an existing role map', () => {
-    const { map } = anonymize('class TarnwickNewcomer {}', { existingMap: { __CLS__4: 'OldTimer' } })
+    const { map } = anonymize('class TarnwickNewcomer {}', {
+      existingMap: { __CLS__4: 'OldTimer' },
+    })
     expect(map.__CLS__5).toBe('TarnwickNewcomer')
   })
 

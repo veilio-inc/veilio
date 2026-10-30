@@ -805,7 +805,20 @@ function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
   return r.type !== 'replace' || !isEngineBase(r.placeholder)
 }
 
+/** A pattern with a quantifier matches only names this long or shorter: what
+ *  backtracking one that passed isSafeRegex can still do (polynomial,
+ *  \w*\w*$) stays bounded. A longer name is not matched by it - so such a
+ *  whitelist does not keep it readable, the safe direction. A pattern with no
+ *  quantifier cannot backtrack and matches any length (spec 065 security
+ *  review). */
+export const RULE_MATCH_MAX = 200
+
+function hasQuantifier(pattern: string): boolean {
+  return /[*+?{]/.test(pattern.replace(/\\./g, '').replace(/\[[^\]]*\]/g, ''))
+}
+
 function safeMatch(pattern: string, name: string): boolean {
+  if (name.length > RULE_MATCH_MAX && hasQuantifier(pattern)) return false
   try {
     return new RegExp(pattern).test(name)
   } catch {
