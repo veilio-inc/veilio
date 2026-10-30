@@ -130,15 +130,16 @@ cause (on every `scrub`, `--quiet` included):
 ```
 2 custom rules not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.
 1 custom rule not applied: team key locked - run `veilio team unlock`, then `veilio rules pull`.
-1 custom rule not applied: they could not be opened with the keys on this machine, and were skipped.
-1 custom rule not applied: refused as unsafe to apply (an engine placeholder or a pattern that could hang), and skipped.
+1 custom rule not applied: could not be opened with the keys on this machine, and skipped.
+1 custom rule not applied: refused as unsafe to apply (an engine placeholder or a pattern rules do not support), and skipped.
 ```
 
 "Could not be opened" is a rule sealed under a team-key version this machine
 does not hold (run `veilio team unlock` again after a rotation) or a damaged
 one. "Refused" is a rule no tool applies, whoever wrote it: a replace
-placeholder that reuses an engine base such as `__FN__`, a pattern that could
-hang the matcher, or a sealed body moved to another rule's row.
+placeholder that reuses an engine base such as `__FN__`, a pattern the rule
+matcher does not support (a backreference, lookaround, `\b`, or a bound over
+50), or a sealed body moved to another rule's row.
 
 Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
 and the chosen project, removed by `logout`), `rules.json` (the rules copy),

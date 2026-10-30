@@ -118,7 +118,7 @@ describe('sealed rules in the MCP server', () => {
     await primeRules(home)
     const text = anonymize()
     expect(text).toContain('1 custom rule not applied: refused as unsafe to apply')
-    expect(text).toContain('1 custom rule not applied: they could not be opened')
+    expect(text).toContain('1 custom rule not applied: could not be opened')
   })
 
   it('Cloud unreachable: the cached skipped counts still show, even with no rules', async () => {

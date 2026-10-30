@@ -170,7 +170,7 @@ describe('rules pull, personal rules', () => {
       placeholder: '__FN__',
       enabled: 'true',
     }
-    const unsafe = { ...engineBase, id: 'bad-regex', placeholder: '__OK__', pattern: '(a+)+$' }
+    const unsafe = { ...engineBase, id: 'bad-regex', placeholder: '__OK__', pattern: '(a)\\1' }
     serve({
       rules: [
         await sealedPersonalRule('good', 0, KEEP),
@@ -187,10 +187,10 @@ describe('rules pull, personal rules', () => {
     expect(cached()?.rules.map((r) => r.id)).toEqual(['good'])
     expect(cached()?.skipped).toEqual({ vaultLocked: 0, teamLocked: 0, unopenable: 3, refused: 3 })
     expect(res.out).toContain(
-      '3 custom rules not applied: they could not be opened with the keys on this machine, and were skipped.'
+      '3 custom rules not applied: could not be opened with the keys on this machine, and skipped.'
     )
     expect(res.out).toContain(
-      '3 custom rules not applied: refused as unsafe to apply (an engine placeholder or a pattern that could hang), and skipped.'
+      '3 custom rules not applied: refused as unsafe to apply (an engine placeholder or a pattern rules do not support), and skipped.'
     )
   })
 

@@ -38,12 +38,10 @@ export function rulesSkippedSentences(s: RulesSkipped): string[] {
       `${n(s.teamLocked)}: team key locked - run \`veilio team unlock\`, then \`veilio rules pull\`.`
     )
   if (s.unopenable > 0)
-    out.push(
-      `${n(s.unopenable)}: they could not be opened with the keys on this machine, and were skipped.`
-    )
+    out.push(`${n(s.unopenable)}: could not be opened with the keys on this machine, and skipped.`)
   if (s.refused > 0)
     out.push(
-      `${n(s.refused)}: refused as unsafe to apply (an engine placeholder or a pattern that could hang), and skipped.`
+      `${n(s.refused)}: refused as unsafe to apply (an engine placeholder or a pattern rules do not support), and skipped.`
     )
   return out
 }
