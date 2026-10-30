@@ -70,11 +70,19 @@ export async function encryptMapForVault(key, map) {
  * came from the right key, not that they are a symbol map.
  */
 export async function decryptMapFromVault(key, envelope) {
+    return parseSymbolMap(await openVaultEnvelope(key, envelope));
+}
+/**
+ * The JSON a vault envelope holds, unvalidated - for a caller that checks its
+ * own shape (a sealed custom rule, spec 065). Same version and algorithm check
+ * first, for the same reason as above.
+ */
+export async function openVaultEnvelope(key, envelope) {
     if (envelope.v !== 1 || envelope.alg !== VAULT_ENVELOPE_ALG) {
         throw new VaultEnvelopeError();
     }
     const plaintext = await webCryptoSubtle().decrypt({ name: ALG, iv: fromBase64(envelope.iv) }, key, fromBase64(envelope.data));
-    return parseSymbolMap(JSON.parse(new TextDecoder().decode(plaintext)));
+    return JSON.parse(new TextDecoder().decode(plaintext));
 }
 /** Parse a stored envelope string, or say plainly that it is not one. */
 export function parseVaultEnvelope(raw) {

@@ -51,6 +51,12 @@ export declare function encryptMapForVault(key: CryptoKeyLike, map: SymbolMap): 
  * came from the right key, not that they are a symbol map.
  */
 export declare function decryptMapFromVault(key: CryptoKeyLike, envelope: VaultEnvelope): Promise<SymbolMap>;
+/**
+ * The JSON a vault envelope holds, unvalidated - for a caller that checks its
+ * own shape (a sealed custom rule, spec 065). Same version and algorithm check
+ * first, for the same reason as above.
+ */
+export declare function openVaultEnvelope(key: CryptoKeyLike, envelope: VaultEnvelope): Promise<unknown>;
 /** Parse a stored envelope string, or say plainly that it is not one. */
 export declare function parseVaultEnvelope(raw: string): VaultEnvelope;
 /**
