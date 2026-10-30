@@ -1,6 +1,7 @@
 // What the developer reads: the band above the prompt and the /veilio reply
 // (spec 033, contracts/mod.md).
 import type { Guard } from './guard.ts'
+import { numbersLeft } from './scrub.ts'
 
 export const COVERAGE_LINK =
   'https://github.com/veilio-inc/veilio/blob/main/plugins/veilio-guard/COVERAGE.md'
@@ -18,7 +19,19 @@ export function bandText(g: Guard): string {
       : index?.state === 'unavailable'
         ? ` · index off (${index.reason})`
         : ''
-  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+}
+
+/** Spec 063: what the guard numbers new names from, when a team is involved. */
+function teamNumbers(g: Guard): string {
+  const r = g.reserved
+  if (!r) return ''
+  if (!r.ok) return ` · .veilio/reserved.json unreadable (${r.reason}): new names numbered here`
+  const outside = g.counts.outsideReserved
+  const left = numbersLeft(g.map, r.blocks)
+  return outside > 0
+    ? ` · ${outside} name${outside === 1 ? '' : 's'} outside reserved team numbers (run veilio maps pull)`
+    : ` · team numbers: ${left} left`
 }
 
 export function statusText(g: Guard, managed: boolean): string {

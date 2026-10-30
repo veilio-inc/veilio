@@ -66,3 +66,40 @@ export function serialiseMapFile(stored: StoredMap): string {
   }
   return `${JSON.stringify(payload, null, 2)}\n`
 }
+
+// Spec 063: this member's blocks of the team's placeholder numbers, written by
+// the CLI or the MCP server (`veilio maps pull`, `veilio team unlock`) to
+// .veilio/reserved.json beside the map. The guard only reads it, and numbers
+// new names inside a block offline; it never asks for numbers itself.
+
+export type Block = { start: number; end: number }
+export type Reserved = { ok: true; blocks: Record<string, Block> } | { ok: false; reason: string }
+
+const BASE = /^__[A-Z][A-Z0-9_]*__$/
+
+export function parseReservedFile(text: string): Reserved {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return { ok: false, reason: 'it is not valid JSON' }
+  }
+  const r = parsed as { version?: unknown; blocks?: unknown }
+  if (r?.version !== 1)
+    return { ok: false, reason: `its version is ${JSON.stringify(r?.version)}, not 1` }
+  if (typeof r.blocks !== 'object' || r.blocks === null || Array.isArray(r.blocks))
+    return { ok: false, reason: 'it has no blocks' }
+  const blocks: Record<string, Block> = {}
+  for (const [base, b] of Object.entries(r.blocks as Record<string, Partial<Block>>)) {
+    if (!BASE.test(base)) return { ok: false, reason: `${base} is not a placeholder kind` }
+    if (
+      !Number.isInteger(b?.start) ||
+      !Number.isInteger(b?.end) ||
+      b!.start! < 1 ||
+      b!.end! < b!.start!
+    )
+      return { ok: false, reason: `the ${base} block is not a run of whole numbers` }
+    blocks[base] = { start: b!.start!, end: b!.end! }
+  }
+  return { ok: true, blocks }
+}

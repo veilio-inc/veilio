@@ -24,6 +24,7 @@ import {
   shannonEntropy,
 } from '../vendor/engine/index.js'
 import type { FileKind, Language, LanguageOption } from '../vendor/engine/index.js'
+import type { Block } from './mapfile.ts'
 
 export type SymbolMap = Record<string, string>
 
@@ -56,28 +57,74 @@ export const NO_CONTEXT: MaskContext = {
   kind: 'result',
 }
 
+// Spec 063: a marker entry at a block's floor moves the engine's counter
+// there - it numbers above the highest number of a kind in the map it is
+// given. The value holds a NUL no identifier contains, so it matches nothing in
+// the text, and it is stripped from what comes back (the CLI's anonymizeAbove).
+const FLOOR_MARKER = '\u0000veilio-guard-floor:'
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
+
+/** Highest number per kind in a map. */
+export function highestPerKind(map: SymbolMap): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const p of Object.keys(map)) {
+    const m = NUMBERED.exec(p)
+    if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+  }
+  return out
+}
+
+/** A block is usable while nothing in the map sits at or above its end. */
+export function usableBlocks(map: SymbolMap, blocks: Record<string, Block>): Record<string, Block> {
+  const top = highestPerKind(map)
+  return Object.fromEntries(Object.entries(blocks).filter(([base, b]) => (top[base] ?? 0) < b.end))
+}
+
+/** Reserved numbers still free, over every usable block. */
+export function numbersLeft(map: SymbolMap, blocks: Record<string, Block>): number {
+  const top = highestPerKind(map)
+  return Object.entries(usableBlocks(map, blocks)).reduce(
+    (sum, [base, b]) => sum + b.end - Math.max(top[base] ?? 0, b.start - 1),
+    0
+  )
+}
+
 export function scrubSource(
   text: string,
   map: SymbolMap,
   language: LanguageOption = 'auto',
   keep: ReadonlySet<string> = new Set(),
-  fileKind?: FileKind
-): { text: string; additions: SymbolMap } {
+  fileKind?: FileKind,
+  blocks?: Record<string, Block>
+): { text: string; additions: SymbolMap; outside: number } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole.
   const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
+  // Inside the member's blocks where one is usable (spec 063); a kind without
+  // one numbers as it always did, and its new names are counted as outside.
+  const usable = blocks ? usableBlocks(map, blocks) : {}
+  const top = highestPerKind(map)
+  const seeded: SymbolMap = { ...map }
+  for (const [base, b] of Object.entries(usable))
+    if (b.start - 1 > (top[base] ?? 0)) seeded[`${base}${b.start - 1}`] = `${FLOOR_MARKER}${base}`
   // The file's kind, never its path (engine spec 013 R19).
   const result = anonymize(text, {
-    existingMap: map,
+    existingMap: seeded,
     language,
     rules,
     ...(fileKind ? { fileKind } : {}),
   })
   const additions: SymbolMap = {}
+  let outside = 0
   for (const [placeholder, name] of Object.entries(result.map)) {
-    if (map[placeholder] !== name) additions[placeholder] = name
+    if (name.startsWith(FLOOR_MARKER) || map[placeholder] === name) continue
+    additions[placeholder] = name
+    if (!blocks) continue
+    const m = NUMBERED.exec(placeholder)
+    const b = m ? usable[m[1]] : undefined
+    if (!b || Number(m![2]) < b.start || Number(m![2]) > b.end) outside++
   }
-  return { text: result.anonymized, additions }
+  return { text: result.anonymized, additions, outside }
 }
 
 const WORD = /[A-Za-z0-9_$]/
