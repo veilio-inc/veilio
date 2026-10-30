@@ -182,16 +182,12 @@ describe('renumbering never overwrites a meaning (security review, 2026-10-30)',
     // a move of chargeCard onto it would silently overwrite it.
     saveMap(mapPath(), { __FN__7: 'refund', __FN__90: 'chargeCard' }, { force: true })
     const res = await run(['maps', 'push', '--team', 'mine'])
-    const after = loadMap(mapPath())
-    expect(Object.keys(after)).toHaveLength(2)
-    expect(
-      after.__FN__7 ?? Object.entries(after).find(([, n]) => n === 'refund')?.[0]
-    ).toBeDefined()
-    expect(Object.values(after).sort()).toEqual(['chargeCard', 'refund'])
-    if (res.code === EXIT_OK) {
-      const up = await published(pushedId(res.out))
-      expect(Object.values(up).sort()).toEqual(['chargeCard', 'refund'])
-    }
+    // __FN__7 is this member's and the teammate's map claims it too: a real
+    // clash, refused - and nothing local moved, whichever check said so.
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.err).toMatch(/__FN__7/)
+    expect(loadMap(mapPath())).toEqual({ __FN__7: 'refund', __FN__90: 'chargeCard' })
+    expect(loadAliases(mapPath())).toEqual({})
   })
 
   it.each([

@@ -106,3 +106,13 @@ test('a planted reservation file cannot put control characters into the band', a
   // eslint-disable-next-line no-control-regex -- matching control characters is the point
   expect(status.text).not.toMatch(/\u001b/)
 })
+
+test('a block the map has outgrown is reported as unusable, never as numbers left', async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__6000: 'SomeoneElsesClass' }),
+    [`${ROOT}/.veilio/reserved.json`]: reservedFile({ __CLS__: { start: 5001, end: 5500 } }),
+  })
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toMatch(/no usable team numbers \(run veilio maps pull\)/)
+  expect(status.text).not.toMatch(/team numbers: -?\d+ left/)
+})

@@ -31,9 +31,11 @@ function teamNumbers(g: Guard): string {
     return ` · .veilio/reserved.json unreadable (${r.reason.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')}): new names numbered here`
   const outside = g.counts.outsideReserved
   const left = numbersLeft(g.map, r.blocks)
-  return outside > 0
-    ? ` · ${outside} name${outside === 1 ? '' : 's'} outside reserved team numbers (run veilio maps pull)`
-    : ` · team numbers: ${left} left`
+  if (outside > 0)
+    return ` · ${outside} name${outside === 1 ? '' : 's'} outside reserved team numbers (run veilio maps pull)`
+  return left > 0
+    ? ` · team numbers: ${left} left`
+    : ' · no usable team numbers (run veilio maps pull)'
 }
 
 export function statusText(g: Guard, managed: boolean): string {
