@@ -20,7 +20,7 @@ const OUTPUT = [
   'AssertionError: expected SkerryTariff',
 ].join('\n')
 
-test('ordinary words in tool output stay as written; distinctive names are masked', async ($, on) => {
+test('ordinary words in tool output stay as written, and distinctive names are masked', async ($, on) => {
   const bash = recordedRaw('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: MAP })
   const r = bash.r as { result: Record<string, unknown> }
