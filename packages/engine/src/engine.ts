@@ -1264,6 +1264,10 @@ export function anonymize(
 
   // Track whitelisted identifiers so the substitution loop knows to skip them
   const whitelisted = new Set<string>()
+  // Spec 064: ordinary words, never minted. An older map's entry for one is
+  // still substituted inside a credential (security review: a weak password
+  // that is a dictionary word), and nowhere else.
+  const ordinary = new Set<string>()
 
   for (const name of identifiers) {
     // 1. Whitelist: skip - checked BEFORE "already mapped". A name a team map
@@ -1289,7 +1293,7 @@ export function anonymize(
     // whitelisted name, an older map's entry for it is kept (old text still
     // restores) but no longer substituted.
     if (isOrdinaryWord(name) && !replacers.some((r) => safeMatch(r.pattern, name))) {
-      whitelisted.add(name)
+      ordinary.add(name)
       continue
     }
 
@@ -1381,7 +1385,9 @@ export function anonymize(
               : text.replace(pattern, (m, offset: number) =>
                   inSpan(verbatim, start + offset) ||
                   (!alreadyMapped.has(m) &&
-                    overlapsAny(secretSpans, start + offset, start + offset + m.length))
+                    overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
+                  (ordinary.has(m) &&
+                    !overlapsAny(secretSpans, start + offset, start + offset + m.length))
                     ? m
                     : (reverseExisting[m] ?? m)
                 )

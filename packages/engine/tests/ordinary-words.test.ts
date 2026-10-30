@@ -13,9 +13,20 @@ describe('isOrdinaryWord', () => {
     (w) => expect(isOrdinaryWord(w)).toBe(true)
   )
 
-  it.each(['java', 'com', 'org', 'src', 'util', 'vitest', 'unittest', 'junit', 'pytest', 'mvn', 'npx'])(
-    '%s (programming vocabulary or a toolchain) is ordinary',
-    (w) => expect(isOrdinaryWord(w)).toBe(true)
+  it.each([
+    'java',
+    'com',
+    'org',
+    'src',
+    'util',
+    'vitest',
+    'unittest',
+    'junit',
+    'pytest',
+    'mvn',
+    'npx',
+  ])('%s (programming vocabulary or a toolchain) is ordinary', (w) =>
+    expect(isOrdinaryWord(w)).toBe(true)
   )
 
   it.each([
@@ -79,5 +90,17 @@ describe('masking leaves ordinary words and masks the rest', () => {
     })
     expect(anonymized).not.toMatch(/\brecent\b/)
     expect(anonymized).toContain('__SECRET__1')
+  })
+})
+
+describe('inside a credential, an older map still masks an ordinary word (security review)', () => {
+  it('client_secret: "disabled" keeps its placeholder; the same word elsewhere is readable', () => {
+    const code = 'client_secret: "disabled"\nconst mode = disabled\n'
+    const { anonymized } = anonymize(code, {
+      language: 'typescript',
+      existingMap: { __VAR__9: 'disabled' },
+    })
+    expect(anonymized).toContain(': "__VAR__9"')
+    expect(anonymized).toContain('const mode = disabled')
   })
 })
