@@ -930,7 +930,7 @@ export async function updateCloudMap(
   let sealed: { map_data: string; key_version?: number }
   let current: SymbolMap
   /** What goes up: the local map, and for a personal map its aliases too. */
-  let uploaded: SymbolMap = local
+  let uploaded: SymbolMap
   let notes: string[] = []
   if (team) {
     const keys = await teamKeys(credential, ctx)
