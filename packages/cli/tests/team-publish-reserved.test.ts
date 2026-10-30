@@ -169,3 +169,65 @@ describe('an instance without the reservations record', () => {
     expect(res.err).toMatch(/something else to the team/)
   })
 })
+
+describe('renumbering never overwrites a meaning (security review, 2026-10-30)', () => {
+  beforeEach(() => {
+    cloud.recordsReservations = true
+  })
+
+  it('the team’s placeholder for a name is not taken when this map uses it for another name', async () => {
+    await teammateMap({ __FN__7: 'chargeCard' })
+    cloud.reservations.push({ base: '__FN__', start: 7, end: 7, member: 'u-me' })
+    // This member's own __FN__7 (reserved by them) means something else here;
+    // a move of chargeCard onto it would silently overwrite it.
+    saveMap(mapPath(), { __FN__7: 'refund', __FN__90: 'chargeCard' }, { force: true })
+    const res = await run(['maps', 'push', '--team', 'mine'])
+    const after = loadMap(mapPath())
+    expect(Object.keys(after)).toHaveLength(2)
+    expect(
+      after.__FN__7 ?? Object.entries(after).find(([, n]) => n === 'refund')?.[0]
+    ).toBeDefined()
+    expect(Object.values(after).sort()).toEqual(['chargeCard', 'refund'])
+    if (res.code === EXIT_OK) {
+      const up = await published(pushedId(res.out))
+      expect(Object.values(up).sort()).toEqual(['chargeCard', 'refund'])
+    }
+  })
+
+  it.each([
+    [
+      'a run for another kind',
+      (floor: number) => ({ ranges: [{ base: '__VAR__', start: floor + 1, end: floor + 1 }] }),
+    ],
+    ['a run at or below the floor', () => ({ ranges: [{ base: '__FN__', start: 3, end: 3 }] })],
+    [
+      'a run shorter than asked',
+      (floor: number) => ({ ranges: [{ base: '__FN__', start: floor + 1, end: floor }] }),
+    ],
+    [
+      'numbers that are not whole',
+      (floor: number) => ({ ranges: [{ base: '__FN__', start: floor + 0.5, end: floor + 1 }] }),
+    ],
+  ])(
+    'a reservation answer with %s is refused: nothing uploaded, the map untouched',
+    async (_why, answer) => {
+      await teammateMap({ __FN__41: 'refund' })
+      saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+      const real = cloud.fetch
+      vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
+        String(url).endsWith('/placeholders/reserve')
+          ? new Response(JSON.stringify(answer(41)), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          : real(url, init)
+      )
+      const res = await run(['maps', 'push', '--team', 'mine'])
+      expect(res.code).toBe(EXIT_ERROR)
+      expect(res.err).toMatch(/__FN__41/)
+      expect(loadMap(mapPath())).toEqual({ __FN__41: 'payout' })
+      expect(loadAliases(mapPath())).toEqual({})
+      expect(cloud.writes().filter((w) => w.path.startsWith('/api/maps'))).toHaveLength(0)
+    }
+  )
+})

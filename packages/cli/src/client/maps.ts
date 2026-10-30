@@ -512,8 +512,10 @@ async function renumberUnreserved(
   mapPath: string,
   /** What this member's own map being updated already holds: published, so never moved. */
   published: Record<string, string> = {}
-): Promise<Outcome<{ map: Record<string, string>; renumbered: number }>> {
-  const unchanged = ok({ map, renumbered: 0 })
+): Promise<
+  Outcome<{ map: Record<string, string>; renumbered: number; aliases: Record<string, string> }>
+> {
+  const unchanged = ok({ map, renumbered: 0, aliases: {} as Record<string, string> })
   // This account's runs come with the listing the publish already read: no
   // request of its own. An instance that keeps no record sends none, and the
   // publish goes ahead as before.
@@ -532,48 +534,69 @@ async function renumberUnreserved(
     const [, base = '', digits = '0'] = m
     const n = Number(digits)
     if (mine.some((r) => r.base === base && n >= r.start && n <= r.end)) continue
+    // The team's own placeholder for the name - unless this map still uses it
+    // for something else, which a move would silently overwrite (security
+    // review): then a fresh number, like any other.
     const theirs = byName.get(name)
-    if (theirs) moves[p] = theirs
+    if (theirs && (map[theirs] === undefined || map[theirs] === name)) moves[p] = theirs
     else needs.push({ placeholder: p, base, n })
   }
   if (Object.keys(moves).length === 0 && needs.length === 0) return unchanged
+  const refuseNumbers = (detail: string) =>
+    refuse('unreserved_numbers', {
+      count: needs.length + Object.keys(moves).length,
+      list: shortList([...needs.map((x) => x.placeholder), ...Object.keys(moves)]),
+      detail,
+    })
 
   if (needs.length) {
     const top = highestPerBase(map)
     const counts = new Map<string, number>()
     for (const x of needs) counts.set(x.base, (counts.get(x.base) ?? 0) + 1)
+    const asked = [...counts].map(([base, count]) => ({
+      base,
+      count,
+      floor: Math.max(highest[base] ?? 0, top[base] ?? 0),
+    }))
     let ranges: { base: string; start: number; end: number }[]
     try {
-      ranges = (
-        await reservePlaceholders(
-          credential,
-          found.teamId,
-          [...counts].map(([base, count]) => ({
-            base,
-            count,
-            floor: Math.max(highest[base] ?? 0, top[base] ?? 0),
-          }))
-        )
-      ).ranges
+      ranges = (await reservePlaceholders(credential, found.teamId, asked)).ranges
     } catch (err) {
-      return refuse('unreserved_numbers', {
-        count: needs.length,
-        list: shortList(needs.map((x) => x.placeholder)),
-        detail: err instanceof Error ? err.message : String(err),
-      })
+      return refuseNumbers(err instanceof Error ? err.message : String(err))
     }
-    const next = new Map(ranges.map((r) => [r.base, { at: r.start, end: r.end }]))
+    // The answer decides what this map's entries will mean: one whole run per
+    // kind asked, above its floor, as long as asked - or no renumbering.
+    const sane =
+      Array.isArray(ranges) &&
+      ranges.length === asked.length &&
+      asked.every(({ base, count, floor }) => {
+        const r = ranges.find((x) => x?.base === base)
+        return (
+          r !== undefined &&
+          Number.isInteger(r.start) &&
+          Number.isInteger(r.end) &&
+          r.start > floor &&
+          r.end - r.start + 1 >= count
+        )
+      })
+    if (!sane) return refuseNumbers('the server answered without a usable run of numbers')
+    const next = new Map(ranges.map((r) => [r.base, r.start]))
     for (const x of [...needs].sort((a, b) => a.n - b.n)) {
-      const run = next.get(x.base)
-      if (!run || run.at > run.end)
-        return refuse('unreserved_numbers', {
-          count: needs.length,
-          list: shortList(needs.map((y) => y.placeholder)),
-          detail: 'the server reserved fewer numbers than were asked for',
-        })
-      moves[x.placeholder] = `${x.base}${run.at++}`
+      const at = next.get(x.base)!
+      moves[x.placeholder] = `${x.base}${at}`
+      next.set(x.base, at + 1)
     }
   }
+
+  // Every target is free in what stays: a placeholder that is not moving keeps
+  // its meaning, and no two entries land on one number.
+  const staying = new Set(Object.keys(map).filter((p) => !(p in moves)))
+  const targets = Object.values(moves)
+  if (
+    new Set(targets).size !== targets.length ||
+    Object.entries(moves).some(([p, to]) => staying.has(to) && map[to] !== map[p])
+  )
+    return refuseNumbers('the new numbers would overwrite an entry this map keeps')
 
   const renumbered: Record<string, string> = {}
   const aliases: Record<string, string> = {}
@@ -582,9 +605,19 @@ async function renumberUnreserved(
     if (to) aliases[p] = name
     renumbered[to ?? p] = name
   }
-  addAliases(mapPath, aliases)
-  saveMap(mapPath, renumbered, { force: true })
-  return ok({ map: renumbered, renumbered: Object.keys(moves).length })
+  if (new Set(Object.values(renumbered)).size < new Set(Object.values(map)).size)
+    return refuseNumbers('renumbering would lose an entry')
+  return ok({ map: renumbered, renumbered: Object.keys(moves).length, aliases })
+}
+
+/** Write a renumbering locally - only once the publish's checks have passed. */
+function keepRenumbering(
+  mapPath: string,
+  r: { map: SymbolMap; aliases: SymbolMap; renumbered: number }
+): void {
+  if (r.renumbered === 0) return
+  addAliases(mapPath, r.aliases)
+  saveMap(mapPath, r.map, { force: true })
 }
 
 function renumberNote(n: number): string[] {
@@ -721,6 +754,7 @@ export async function createCloudMap(
     map = numbered.value.map
     const check = checkAgainstTeam(found.value, map)
     if (!check.ok) return check
+    keepRenumbering(opts.mapPath, numbered.value)
     // Nothing above this line has sent a map (only the reservation, if any).
     const envelope = await encryptTeamMap(keys.value.newest.key, map)
     let created: { id: string }
@@ -928,6 +962,7 @@ export async function updateCloudMap(
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
     const check = checkAgainstTeam(found.value, local)
     if (!check.ok) return check
+    keepRenumbering(opts.mapPath, numbered.value)
     notes = [...renumberNote(numbered.value.renumbered), ...check.value.notes]
     sealed = {
       map_data: JSON.stringify(await encryptTeamMap(keys.value.newest.key, local)),
