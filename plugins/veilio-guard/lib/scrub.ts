@@ -368,14 +368,21 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
 // model is sent - a traceback's "most recent call last", a path's `src/main`,
 // Claude Code's own messages. The map keeps the entry, so text masked with it
 // before still restores. Cached per map object: the map can hold thousands.
-const views = new WeakMap<SymbolMap, { size: number; view: SymbolMap }>()
+// Only the engine's own role placeholders are left out: an entry a custom
+// replace rule, a manual mask or a redaction made (any other base) was masked
+// on purpose and stays masked, whatever word it is (security review).
+const ROLE_PLACEHOLDER = /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/
+const views = new WeakMap<SymbolMap, { key: string; view: SymbolMap }>()
 function readableView(map: SymbolMap): SymbolMap {
-  const size = Object.keys(map).length
+  const keys = Object.keys(map)
+  // Entries are only ever added; the count and the newest key name a version.
+  const key = `${keys.length}:${keys[keys.length - 1] ?? ''}:${map[keys[keys.length - 1] ?? ''] ?? ''}`
   const cached = views.get(map)
-  if (cached && cached.size === size) return cached.view
+  if (cached && cached.key === key) return cached.view
   const view: SymbolMap = {}
-  for (const [p, name] of Object.entries(map)) if (!isOrdinaryWord(name)) view[p] = name
-  views.set(map, { size, view })
+  for (const [p, name] of Object.entries(map))
+    if (!(ROLE_PLACEHOLDER.test(p) && isOrdinaryWord(name))) view[p] = name
+  views.set(map, { key, view })
   return view
 }
 

@@ -32,3 +32,19 @@ test('ordinary words in tool output stay as written; distinctive names are maske
   expect(out).not.toContain('SkerryTariff')
   expect(out).toContain('__CLS__4')
 })
+
+test('a codename a custom rule masks stays masked though it is an ordinary word (security review)', async ($, on) => {
+  const bash = recordedRaw('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CODENAME__1: 'phoenix', __VAR__2: 'ledger' }),
+  })
+  const r = bash.r as { result: Record<string, unknown> }
+  on('tool.call', () => ({
+    ...r,
+    result: { ...r.result, stdout: 'deploying phoenix from ledger/main' },
+  }))
+  const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+  expect(out).not.toContain('phoenix')
+  expect(out).toContain('__CODENAME__1')
+  expect(out).toContain('ledger/main')
+})
