@@ -7,8 +7,9 @@
 //   npx tsx scripts/value-differential.mts /tmp/pre064/packages/engine/dist-old [project dir]
 //
 // Inputs: every string literal of the engine's secret and credential tests and
-// fixtures, read as code and as each config kind; and, given a directory, each
-// file in it. Where a text holds values is read by an independent lexer
+// fixtures, read as code and as each config kind; the generated syntax corpus
+// (tests/fixtures/syntax-corpus.ts), with its path and without, in every mode;
+// and, given a directory, each file in it. Where a text holds values is read by an independent lexer
 // (tests/fixtures/value-lexer.ts), not by the engine. A word the old engine
 // masked that the new one shows in a value is a leak, and the script exits
 // non-zero. One the new engine shows elsewhere is 064's gain, in an identifier
@@ -18,6 +19,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import { valueRanges, wordCounts } from '../packages/engine/tests/fixtures/value-lexer.ts'
+import { SYNTAXES, VALUES } from '../packages/engine/tests/fixtures/syntax-corpus.ts'
 
 type Engine = typeof import('../packages/engine/src/index.ts')
 type Opts = { path?: string }
@@ -90,6 +92,45 @@ for (const text of literals)
     corpus.masked += r.mustMask.length
   }
 
+// (c) Round 4: the generated syntax corpus, every format with every value,
+// with its path and with none. Checked in every mode: the value is never
+// readable (but where a rule found it and warn or off leave it, by the user's
+// choice), and never in the map. Each text is compared with the old engine
+// too.
+const syntax = {
+  formats: new Set(SYNTAXES.map((c) => c.format)).size,
+  cases: 0,
+  checks: 0,
+  readable: [] as object[],
+  inMap: [] as object[],
+}
+for (const c of SYNTAXES)
+  for (const value of VALUES)
+    for (const opts of [{ path: c.path }, {}] as Opts[]) {
+      const text = c.text(value)
+      syntax.cases++
+      const r = compare(text, opts)
+      corpus.inputs++
+      corpus.identifiers += r.identifiers
+      corpus.paths += r.paths
+      corpus.masked += r.mustMask.length
+      for (const word of r.leaks) corpus.leaks.push({ text, path: opts.path, word })
+      const at = text.indexOf(value)
+      const ruled = NEW.credentialSpans(text, opts).some((s) => s.start <= at && at < s.end)
+      for (const secrets of ['redact', 'warn', 'off'] as const) {
+        const out = NEW.anonymize(text, { ...opts, secrets })
+        syntax.checks += 2
+        if (out.anonymized.includes(value) && (secrets === 'redact' || !ruled))
+          syntax.readable.push({ format: c.format, path: opts.path, value, secrets })
+        if (
+          Object.values(out.map).some(
+            (v) => v.includes(value) || (v.length > 3 && value.includes(v))
+          )
+        )
+          syntax.inMap.push({ format: c.format, path: opts.path, value, secrets })
+      }
+    }
+
 // (b) Every file of a project.
 const bench = total()
 if (project) {
@@ -119,13 +160,23 @@ const report = (t: ReturnType<typeof total>) => ({
 })
 const summary = {
   corpus: report(corpus),
+  syntax: {
+    formats: syntax.formats,
+    cases: syntax.cases,
+    checks: syntax.checks,
+    readable: syntax.readable.length,
+    inMap: syntax.inMap.length,
+  },
   ...(project ? { project: { ...report(bench), dir: basename(resolve(project)) } } : {}),
 }
 console.log(JSON.stringify(summary, null, 2))
 for (const l of [...corpus.leaks, ...bench.leaks].slice(0, 40))
   console.log('LEAK', JSON.stringify(l))
+for (const l of syntax.readable.slice(0, 20)) console.log('READABLE', JSON.stringify(l))
+for (const l of syntax.inMap.slice(0, 20)) console.log('IN MAP', JSON.stringify(l))
 writeFileSync(
   join(tests, 'fixtures/value-differential.out.json'),
   JSON.stringify(summary, null, 2) + '\n'
 )
-if (corpus.leaks.length || bench.leaks.length) process.exit(1)
+if (corpus.leaks.length || bench.leaks.length || syntax.readable.length || syntax.inMap.length)
+  process.exit(1)

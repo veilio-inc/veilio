@@ -1,12 +1,19 @@
 {
   "corpus": {
-    "inputs": 10800,
-    "maskedInValues": 3534,
+    "inputs": 11616,
+    "maskedInValues": 3771,
     "leaks": 0,
     "newlyReadable": {
-      "identifiers": 16837,
+      "identifiers": 17573,
       "paths": 61
     }
+  },
+  "syntax": {
+    "formats": 58,
+    "cases": 348,
+    "checks": 2088,
+    "readable": 0,
+    "inMap": 0
   },
   "project": {
     "inputs": 485,
