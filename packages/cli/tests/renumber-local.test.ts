@@ -247,3 +247,22 @@ describe('a personal map keeps its local entries', () => {
     expect(reserveAsks()).toEqual([])
   })
 })
+
+describe('a process holding a session tag (no reserved.json) after a publish', () => {
+  it('numbers the next local name under a new tag, never a retired placeholder', async () => {
+    writeFileSync(join(cwd, 'a.ts'), 'export const holdbackDays = 3\n')
+    const first = await run(['scrub', 'a.ts'])
+    const retired = /__LOCAL_[A-Z0-9]{6}_VAR__1/.exec(first.out)?.[0]
+    expect(retired, first.out).toBeDefined()
+    const pushed = await run(['maps', 'push', '--team', 'mine'])
+    expect(pushed.code, pushed.err).toBe(EXIT_OK)
+    expect(loadAliases(mapPath())).toEqual({ [retired!]: 'holdbackDays' })
+
+    writeFileSync(join(cwd, 'b.ts'), 'export const payoutCutoff = 5\n')
+    const next = await run(['scrub', 'b.ts'])
+    const minted = /__LOCAL_([A-Z0-9]{6})_VAR__\d+/.exec(next.out)
+    expect(minted, next.out).not.toBeNull()
+    expect(minted![1]).not.toBe(retired!.slice('__LOCAL_'.length, '__LOCAL_'.length + 6))
+    expect(next.out).not.toContain(retired!)
+  })
+})

@@ -108,6 +108,12 @@ export function loadReserved(mapPath: string): ReservedFile | null {
 /** Drawn once per process, for a checkout whose file gives no tag. */
 let sessionTag: string | null = null
 
+/** A publish retired this process's local placeholders: the next is drawn
+ *  afresh, so a retired one is never minted again for another name (R6). */
+export function resetSessionTag(): void {
+  sessionTag = null
+}
+
 /**
  * What signed-in scrub and the MCP server number new names from (spec 066 R3):
  * this checkout's blocks and tag, when `reserved.json` is this account's for

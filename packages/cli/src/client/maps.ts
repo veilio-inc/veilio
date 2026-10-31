@@ -47,7 +47,14 @@ import {
   type CloudMap,
   type CloudMapList,
 } from '../cloud.js'
-import { addAliases, drawTag, loadAliases, loadReserved, saveReserved } from '../reservations.js'
+import {
+  addAliases,
+  drawTag,
+  loadAliases,
+  loadReserved,
+  resetSessionTag,
+  saveReserved,
+} from '../reservations.js'
 import { highestPerBase } from '../team-anonymize.js'
 
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
@@ -646,6 +653,7 @@ function keepRenumbering(
       // malformed: the next pull replaces it, with a new tag
     }
     if (held) saveReserved(mapPath, { ...held, local: { tag: drawTag() } })
+    resetSessionTag() // a long-running MCP server with no file holds one too
   }
 }
 
