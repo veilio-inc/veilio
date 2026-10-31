@@ -511,7 +511,7 @@ export function listProjects(
 export function getTeamKeyPending(
   credential: Credential,
   teamId: string
-): Promise<{ rotationNeededSince?: string | null; nextVersion?: number }> {
+): Promise<{ rotationNeededSince?: string | null; nextVersion?: number; version?: number }> {
   return request(`/api/teams/${encodeURIComponent(teamId)}/key/pending`, { credential })
 }
 
@@ -575,10 +575,13 @@ export async function reservePlaceholders(
     /** The team's raw keys, newest first: a rule's base is sent as its hash
      *  under the newest (founder decision, Cloud audit M1). */
     keys?: readonly Uint8Array[]
+    /** The newest key's version (`teamKeyVersion`): a rule base is reserved
+     *  only while the server's current version is this one. */
+    keyVersion?: number
     /** The team's reservations, when the caller has already read them. */
     reservations?: readonly PlaceholderReservation[]
   } = {}
-): Promise<{ ranges: PlaceholderRange[] }> {
+): Promise<{ ranges: PlaceholderRange[]; refused?: { bases: string[]; detail: string } }> {
   const key = options.keys?.[0]
   for (const { base, count } of requests) {
     if (!PLACEHOLDER_BASE.test(base)) {
@@ -605,12 +608,33 @@ export async function reservePlaceholders(
   // key version held here - never another hash, so one rule's (or a hostile
   // teammate's) huge block cannot floor every other base. No old key held:
   // the map's floor only. No listing, no reservation for a rule base.
-  const hashed = requests.some((r) => !isEngineBase(r.base))
+  // Security review (Cloud 809444d0): a rule base is hashed under the newest
+  // key held here, and only while the server's current version is that one.
+  // A server reporting an older one (a downgrade), a newer one or none gets
+  // nothing for it; the caller numbers it in the local family and says so.
+  // Asked only when a rule base is in the request.
+  let refused: { bases: string[]; detail: string } | undefined
+  const rules = requests.filter((r) => !isEngineBase(r.base)).map((r) => r.base)
+  if (rules.length) {
+    const served = (await getTeamKeyPending(credential, teamId))?.version
+    if (!Number.isInteger(served) || served !== options.keyVersion)
+      refused = {
+        bases: rules,
+        detail:
+          `numbers for ${rules.join(', ')} were not reserved: the team key is at version ${Number.isInteger(served) ? served : 'unknown'} on the server and ${options.keyVersion ?? 'none'} on this machine, so they are numbered on this machine (__LOCAL_…) - run \`veilio team unlock\``.slice(
+            0,
+            200
+          ),
+      }
+  }
+  const asked = refused ? requests.filter((r) => isEngineBase(r.base)) : requests
+  if (asked.length === 0) return { ranges: [], refused }
+  const hashed = asked.some((r) => !isEngineBase(r.base))
   const held = hashed
     ? (options.reservations ?? (await readReservations(credential, teamId, signal)))
     : []
   const real = new Map<string, string>()
-  const wire = requests.map((r) => {
+  const wire = asked.map((r) => {
     const sent = key ? wireBase(r.base, key) : r.base
     real.set(sent, r.base)
     let floor = r.floor
@@ -635,7 +659,7 @@ export async function reservePlaceholders(
   const ranges = Array.isArray(answer?.ranges)
     ? answer.ranges.map((r) => ({ ...r, base: real.get(r?.base) ?? r?.base }))
     : answer?.ranges
-  return { ...answer, ranges }
+  return { ...answer, ranges, ...(refused ? { refused } : {}) }
 }
 
 /** One run of the team's numbers and the member who reserved it (spec 063). */

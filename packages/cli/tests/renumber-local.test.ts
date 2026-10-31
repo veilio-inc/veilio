@@ -47,6 +47,7 @@ beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'veilio-rnl-work-'))
   mkdirSync(join(cwd, '.git'), { recursive: true })
   cloud = new FakeCloud()
+  cloud.usedVersions = 1 // the team key version signIn holds
   cloud.recordsReservations = true
   vi.stubGlobal('fetch', cloud.fetch)
   signIn(home, { team: true, pmk: true })

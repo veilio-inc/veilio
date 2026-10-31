@@ -8,7 +8,7 @@
 
 import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
 import { reservePlaceholders, CloudError } from '../cloud.js'
-import { teamKeyBytes } from '../hashed-bases.js'
+import { teamKeyBytes, teamKeyVersion } from '../hashed-bases.js'
 import type { Credential } from '../credential.js'
 import { loadMap } from '../store.js'
 import {
@@ -64,7 +64,7 @@ export async function ensureBlocks(
     held.instance === credential.instance &&
     held.account === credential.account &&
     held.teamId === teamId
-  const mine = same ? held!.blocks : {}
+  let mine = same ? held!.blocks : {}
   const tag = (same && held!.local?.tag) || drawTag()
   const save = (blocks: Record<string, Block>, refused?: Refused) =>
     saveReserved(mapPath, {
@@ -97,17 +97,22 @@ export async function ensureBlocks(
   // Keyed by base: a local kind's numbers are another family and floor nothing.
   const floors = highestPerKind(map)
   let ranges: { base: string; start: number; end: number }[] = []
+  // A rule base the server's key version refuses (Cloud 809444d0): no block
+  // for it, the engine bases' blocks kept, and the refusal on the band.
+  let refused: { bases: string[]; detail: string } | undefined
   if (need.length) {
     try {
-      ranges = (
-        await reservePlaceholders(
-          credential,
-          teamId,
-          need.map((base) => ({ base, count: 1, floor: floors[base] ?? 0 })),
-          undefined,
-          { block: true, keys: teamKeyBytes(credential, home, teamId) }
-        )
-      ).ranges
+      ;({ ranges, refused } = await reservePlaceholders(
+        credential,
+        teamId,
+        need.map((base) => ({ base, count: 1, floor: floors[base] ?? 0 })),
+        undefined,
+        {
+          block: true,
+          keys: teamKeyBytes(credential, home, teamId),
+          keyVersion: teamKeyVersion(credential, home, teamId),
+        }
+      ))
     } catch (err) {
       const retry = err instanceof CloudError ? err.body?.retry_at : undefined
       const nextAt =
@@ -117,13 +122,20 @@ export async function ensureBlocks(
   }
   // A reply that is not one sane run per kind asked for is no block: the
   // guard would otherwise number from whatever it said.
+  const asked = need.filter((base) => !refused?.bases.includes(base))
   const sane =
     Array.isArray(ranges) &&
-    ranges.length === need.length &&
-    ranges.every((r) => need.includes(r?.base) && isSaneBlock(r) && r.start > (floors[r.base] ?? 0))
+    ranges.length === asked.length &&
+    ranges.every(
+      (r) => asked.includes(r?.base) && isSaneBlock(r) && r.start > (floors[r.base] ?? 0)
+    )
   if (!sane) return fail('server', 'the server answered without a usable block')
   const blocks: Record<string, Block> = { ...mine }
   for (const r of ranges) blocks[r.base] = { start: r.start, end: r.end }
+  if (refused) {
+    mine = blocks
+    return fail('server', refused.detail)
+  }
   save(blocks)
   return {
     status: 'reserved',

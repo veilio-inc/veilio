@@ -44,7 +44,7 @@ import {
 } from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
-import { teamKeyBytes } from './hashed-bases.js'
+import { teamKeyBytes, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -1070,12 +1070,15 @@ export async function teamNamespaceForScrub(
       team: found.analysis,
       note: null,
       numberingTeam: teamId,
-      reserve: async (requests) =>
-        (
-          await reservePlaceholders(credential, teamId, requests, undefined, {
-            keys: teamKeyBytes(credential, home, teamId),
-          })
-        ).ranges,
+      // A refused rule base refuses the scrub, as any failed reservation does.
+      reserve: async (requests) => {
+        const r = await reservePlaceholders(credential, teamId, requests, undefined, {
+          keys: teamKeyBytes(credential, home, teamId),
+          keyVersion: teamKeyVersion(credential, home, teamId),
+        })
+        if (r.refused) throw new CloudError('forbidden', r.refused.detail)
+        return r.ranges
+      },
     }
   }
   if (found.status === 'locked')

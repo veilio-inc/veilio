@@ -36,7 +36,7 @@ import {
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
-import { servedAs, teamKeyBytes } from '../hashed-bases.js'
+import { servedAs, teamKeyBytes, teamKeyVersion } from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -607,8 +607,12 @@ async function renumberUnreserved(
     }))
     let ranges: { base: string; start: number; end: number }[]
     try {
-      ranges = (await reservePlaceholders(credential, found.teamId, asked, undefined, { keys }))
-        .ranges
+      const r = await reservePlaceholders(credential, found.teamId, asked, undefined, {
+        keys,
+        keyVersion: teamKeyVersion(credential, home, found.teamId),
+      })
+      if (r.refused) return refuseNumbers(r.refused.detail)
+      ranges = r.ranges
     } catch (err) {
       return refuseNumbers(err instanceof Error ? err.message : String(err))
     }

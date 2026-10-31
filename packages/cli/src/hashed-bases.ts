@@ -21,6 +21,23 @@ export function teamKeyBytes(
   home: string | undefined,
   teamId: string
 ): Uint8Array[] {
+  return heldKeys(credential, home, teamId).map((k) => k.raw)
+}
+
+/** The newest team key version this machine holds for `teamId`. */
+export function teamKeyVersion(
+  credential: Pick<Credential, 'instance' | 'account'>,
+  home: string | undefined,
+  teamId: string
+): number | undefined {
+  return heldKeys(credential, home, teamId)[0]?.version
+}
+
+function heldKeys(
+  credential: Pick<Credential, 'instance' | 'account'>,
+  home: string | undefined,
+  teamId: string
+): { version: number; raw: Uint8Array }[] {
   const unlock = readTeamUnlock(
     { instance: credential.instance, account: credential.account },
     home
@@ -34,7 +51,7 @@ export function teamKeyBytes(
       continue // a damaged entry: the others may still serve
     }
   }
-  return out.sort((a, b) => b.version - a.version).map((k) => k.raw)
+  return out.sort((a, b) => b.version - a.version)
 }
 
 /** Whether a base the server served (a reservation's) is `base`: as written,

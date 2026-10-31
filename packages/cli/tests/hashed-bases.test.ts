@@ -51,6 +51,7 @@ beforeEach(() => {
   mkdirSync(join(cwd, '.git'), { recursive: true })
   cloud = new FakeCloud()
   cloud.recordsReservations = true
+  cloud.usedVersions = 1 // the team key version signIn holds
   vi.stubGlobal('fetch', cloud.fetch)
   signIn(home, { team: true, pmk: true })
   writeRules(
@@ -154,6 +155,7 @@ describe('a replace rule base and the server', () => {
       },
       home
     )
+    cloud.usedVersions = 2
     const res = await run(['scrub', '--team'], 'export function acmeNew() {}\n')
     expect(res.code, res.err).toBe(EXIT_OK)
     const n = Number(/__CODENAME__(\d+)/.exec(res.out)?.[1])
@@ -174,17 +176,25 @@ describe('a hashed base and the numbers the team already holds', () => {
   const ask = (floor = 0) => [{ base: '__CODENAME__', count: 500, floor }]
 
   it('after a rotation the new hash starts above the old hash’s block', async () => {
-    const a = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    const a = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      keyVersion: 1,
+    })
     expect(a.ranges[0]).toMatchObject({ start: 1, end: 500 })
+    cloud.usedVersions = 2
     const b = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
       keys: [OTHER_RAW, TEAM_RAW],
+      keyVersion: 2,
     })
     expect(b.ranges[0]!.start).toBeGreaterThan(500)
   })
 
   it('a block an older CLI reserved under the plain base floors the hashed one', async () => {
     cloud.reservations.push({ base: '__CODENAME__', start: 1, end: 500, member: 'old-cli' })
-    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      keyVersion: 1,
+    })
     expect(r.ranges[0]!.start).toBeGreaterThan(500)
     // The plain base is read from the listing, never sent.
     expect(sent()).not.toMatch(/CODENAME/)
@@ -193,6 +203,7 @@ describe('a hashed base and the numbers the team already holds', () => {
   it('the reservations a caller already holds are used, not fetched again', async () => {
     const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
       keys: [TEAM_RAW],
+      keyVersion: 1,
       reservations: [{ base: wireBase('__CODENAME__', TEAM_RAW), start: 1, end: 900, member: 'x' }],
     })
     expect(r.ranges[0]!.start).toBeGreaterThan(900)
@@ -204,7 +215,10 @@ describe('a hashed base and the numbers the team already holds', () => {
       { base: wireBase('__OTHER_RULE__', TEAM_RAW), start: 1, end: 900_000_000, member: 'x' },
       { base: '__H_00000000DEADBEEF__', start: 1, end: 800_000_000, member: 'hostile' }
     )
-    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      keyVersion: 1,
+    })
     expect(r.ranges[0]).toMatchObject({ start: 1, end: 500 })
   })
 
@@ -218,14 +232,22 @@ describe('a hashed base and the numbers the team already holds', () => {
     ])
       cloud.reservations.push({ base: mine, start, end, member: 'x' })
     cloud.reservations.push({ base: '__CODENAME__', start: -5, end: 1e15, member: 'x' })
-    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      keyVersion: 1,
+    })
     expect(r.ranges[0]).toMatchObject({ start: 1, end: 500 })
   })
 
   it('with no old key version held, a rotation falls back to the map floor', async () => {
-    await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      keyVersion: 1,
+    })
+    cloud.usedVersions = 2
     const r = await reservePlaceholders(credential, TEAM_ID, ask(7), undefined, {
       keys: [OTHER_RAW],
+      keyVersion: 2,
     })
     expect(r.ranges[0]!.start).toBe(8)
   })
@@ -238,8 +260,78 @@ describe('a hashed base and the numbers the team already holds', () => {
   it('without the listing a hashed base is not reserved: nothing is sent to reserve', async () => {
     cloud.recordsReservations = false
     await expect(
-      reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+      reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+        keys: [TEAM_RAW],
+        keyVersion: 1,
+      })
     ).rejects.toThrow()
     expect(cloud.requests.some((q) => q.path.endsWith('/placeholders/reserve'))).toBe(false)
+  })
+})
+
+// Security review (Cloud 809444d0): a rule base is hashed under the newest key
+// version this machine holds, and only while the server's current version is
+// that one. A server reporting an older version (a downgrade), a newer one or
+// none gets nothing for a rule base; the engine bases still reserve.
+describe('the key a rule base is hashed under', () => {
+  const credential = { token: 'tok', account: ME, instance: INSTANCE }
+  const ask = [
+    { base: '__CODENAME__', count: 5, floor: 0 },
+    { base: '__FN__', count: 1, floor: 0 },
+  ]
+  const held = { keys: [OTHER_RAW, TEAM_RAW], keyVersion: 2 }
+  const reserved = () =>
+    cloud.requests.filter((q) => q.path.endsWith('/placeholders/reserve')).map((q) => q.raw)
+
+  it('the server at the version held: reserved under its hash', async () => {
+    cloud.usedVersions = 2
+    const r = await reservePlaceholders(credential, TEAM_ID, ask, undefined, held)
+    expect(r.refused).toBeUndefined()
+    expect(r.ranges.map((x) => x.base).sort()).toEqual(['__CODENAME__', '__FN__'])
+    expect(reserved().join()).toContain(wireBase('__CODENAME__', OTHER_RAW))
+  })
+
+  it.each([
+    ['an older version this machine also holds (a downgrade)', 1],
+    ['a newer version', 3],
+    ['no version', undefined],
+  ])(
+    'the server reporting %s: the rule base is refused, the engine base reserved',
+    async (_w, v) => {
+      cloud.usedVersions = v as number
+      const r = await reservePlaceholders(credential, TEAM_ID, ask, undefined, held)
+      expect(r.refused?.bases).toEqual(['__CODENAME__'])
+      expect(r.refused?.detail).toMatch(/team key/)
+      expect(r.ranges.map((x) => x.base)).toEqual(['__FN__'])
+      expect(reserved().join()).not.toMatch(/__H_|CODENAME/)
+    }
+  )
+
+  it('the version is asked only when a rule base is in the request', async () => {
+    await reservePlaceholders(
+      credential,
+      TEAM_ID,
+      [{ base: '__FN__', count: 1, floor: 0 }],
+      undefined,
+      held
+    )
+    expect(cloud.requests.some((q) => q.path.endsWith('/key/pending'))).toBe(false)
+  })
+
+  it('a pull with the server downgraded: the engine blocks are held, the rule base refused visibly', async () => {
+    cloud.usedVersions = 0
+    saveMap(mapPath(), { __CODENAME__3: 'acmeOld' }, { force: true })
+    const { ensureBlocks } = await import('../src/client/blocks.js')
+    const outcome = await ensureBlocks(credential, TEAM_ID, mapPath(), home)
+    expect(outcome).toMatchObject({ status: 'failed', detail: expect.stringMatching(/team key/) })
+    const file = JSON.parse(
+      (await import('node:fs')).readFileSync(join(cwd, STORE_DIR, 'reserved.json'), 'utf8')
+    )
+    expect(Object.keys(file.blocks)).toEqual(
+      expect.arrayContaining(['__FN__', '__VAR__', '__CLS__'])
+    )
+    expect(file.blocks.__CODENAME__).toBeUndefined()
+    expect(file.refused.detail).toMatch(/team key/)
+    expect(reserved().join()).not.toMatch(/__H_|CODENAME/)
   })
 })
