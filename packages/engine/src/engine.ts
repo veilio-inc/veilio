@@ -35,7 +35,14 @@ import {
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
-import { isLocalTag, isRolePlaceholder, localBaseOf, teamBaseOf } from './localFamily.js'
+import {
+  isLocalTag,
+  isRolePlaceholder,
+  isSaneBlock,
+  localBaseOf,
+  MAX_PLACEHOLDER_NUMBER,
+  teamBaseOf,
+} from './localFamily.js'
 import {
   assertKnownOptions,
   assertObject,
@@ -839,19 +846,29 @@ type Mint = (base: string) => string
  *  the base. With it (spec 066 R3): inside the base's block while it has a
  *  number left, else from the checkout's local family - never above the map,
  *  which is where the next teammate's block starts. */
-function minter(counters: Record<string, number>, team?: AnonymizeOptions['team']): Mint {
+function minter(
+  counters: Record<string, number>,
+  team: AnonymizeOptions['team'],
+  taken: Set<string>
+): Mint {
   return (base) => {
     if (team) {
-      const block = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined
+      // A block is trusted only while sane: whole, in order, at most 1e9
+      // (security audit) - past that, the name is numbered locally.
+      const given = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined
+      const block = isSaneBlock(given) ? given : undefined
       const n = block ? Math.max(counters[base] ?? 0, block.start - 1) + 1 : NaN
       if (block && n <= block.end) {
         counters[base] = n
+        taken.add(`${base}${n}`)
         return `${base}${n}`
       }
       base = localBaseOf(base, team.tag)
     }
-    const n = (counters[base] ?? 0) + 1
+    let n = (counters[base] ?? 0) + 1
+    while (taken.has(`${base}${n}`)) n++
     counters[base] = n
+    taken.add(`${base}${n}`)
     return `${base}${n}`
   }
 }
@@ -1199,7 +1216,7 @@ export function anonymize(
     if (namedMatch) {
       const [, base, nStr] = namedMatch
       const n = parseInt(nStr, 10)
-      if (!isNaN(n) && n > (namedCounters[base] ?? 0)) {
+      if (!isNaN(n) && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[base] ?? 0)) {
         namedCounters[base] = n
       }
     }
@@ -1219,7 +1236,7 @@ export function anonymize(
     if (namedMatch) {
       const [, base, nStr] = namedMatch
       const n = parseInt(nStr, 10)
-      if (!isNaN(n) && n > (namedCounters[base] ?? 0)) {
+      if (!isNaN(n) && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[base] ?? 0)) {
         namedCounters[base] = n
       }
     }
@@ -1230,10 +1247,19 @@ export function anonymize(
   // are gone from the map but still mean their old name in text already sent.
   for (const placeholder of opts.team?.retired ?? []) {
     const m = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/.exec(placeholder)
-    if (m && Number(m[2]) > (namedCounters[m[1]] ?? 0)) namedCounters[m[1]] = Number(m[2])
+    const n = m ? Number(m[2]) : 0
+    if (m && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[m[1]] ?? 0)) namedCounters[m[1]] = n
   }
 
-  const mint = minter(namedCounters, opts.team)
+  // Every placeholder already meaning something: a number above
+  // MAX_PLACEHOLDER_NUMBER counts towards no highest, so one minted that high
+  // must still step over them.
+  const taken = new Set([
+    ...Object.keys(givenMap),
+    ...(opts.team?.retired ?? []),
+    ...(redacted.match(codePlaceholderRegex) ?? []),
+  ])
+  const mint = minter(namedCounters, opts.team, taken)
   const map: SymbolMap = { ...existingMap }
 
   // Manual marks run before extraction, so the extractor sees placeholders

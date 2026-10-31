@@ -27,7 +27,7 @@
  * Cloud's shared package (spec 028) so the web app, the CLI and the MCP server
  * all read a team's maps by one definition.
  */
-import { LOCAL_PREFIX } from './localFamily.js';
+import { LOCAL_PREFIX, MAX_PLACEHOLDER_NUMBER } from './localFamily.js';
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/;
 export function analyzeTeamNamespace(entries) {
     // Copy before sorting: callers pass state they still hold.
@@ -53,7 +53,8 @@ export function analyzeTeamNamespace(entries) {
             const numbered = NUMBERED.exec(placeholder);
             if (numbered) {
                 const n = Number(numbered[2]);
-                if (n > (highest[numbered[1]] ?? 0))
+                // Above 1e9 (a planted key) is never a floor (security audit).
+                if (n <= MAX_PLACEHOLDER_NUMBER && n > (highest[numbered[1]] ?? 0))
                     highest[numbered[1]] = n;
             }
             if (placeholder in namespace)

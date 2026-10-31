@@ -6,7 +6,7 @@
 // what keeps the block usable, because the engine numbers above the map's
 // highest number of a kind and never into a gap below it.
 
-import { highestPerKind } from '@veilio-inc/engine'
+import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
 import { reservePlaceholders, CloudError } from '../cloud.js'
 import type { Credential } from '../credential.js'
 import { loadMap } from '../store.js'
@@ -117,14 +117,7 @@ export async function ensureBlocks(
   const sane =
     Array.isArray(ranges) &&
     ranges.length === need.length &&
-    ranges.every(
-      (r) =>
-        need.includes(r?.base) &&
-        Number.isInteger(r.start) &&
-        Number.isInteger(r.end) &&
-        r.start > (floors[r.base] ?? 0) &&
-        r.end >= r.start
-    )
+    ranges.every((r) => need.includes(r?.base) && isSaneBlock(r) && r.start > (floors[r.base] ?? 0))
   if (!sane) return fail('server', 'the server answered without a usable block')
   const blocks: Record<string, Block> = { ...mine }
   for (const r of ranges) blocks[r.base] = { start: r.start, end: r.end }

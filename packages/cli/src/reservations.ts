@@ -10,7 +10,13 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import { highestPerKind, isLocalTag, teamBaseOf, type SymbolMap } from '@veilio-inc/engine'
+import {
+  highestPerKind,
+  isLocalTag,
+  isSaneBlock,
+  teamBaseOf,
+  type SymbolMap,
+} from '@veilio-inc/engine'
 
 export const RESERVED_FILE = 'reserved.json'
 export const ALIASES_FILE = 'aliases.json'
@@ -88,7 +94,8 @@ export function loadReserved(mapPath: string): ReservedFile | null {
         path,
         `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind`
       )
-    if (!Number.isInteger(b?.start) || !Number.isInteger(b?.end) || b.start < 1 || b.end < b.start)
+    // At most 1e9 and 10000 long (security audit): near 2^53 two names share a number.
+    if (!isSaneBlock(b))
       throw new ReservedFileError(path, `the ${base} block is not a run of whole numbers`)
   }
   if (r.local !== undefined && !isLocalTag(r.local?.tag))
@@ -195,6 +202,14 @@ export function localNumbering(
       local: { tag: drawTag() },
     })
   return teamNumbering(mapPath, { ...who, teamId })
+}
+
+/** Said by `maps pull` (CLI and MCP) when the map held numbers above 1e9. */
+export function outOfRangeNote(n: number): string {
+  return (
+    `${n} placeholder${n === 1 ? '' : 's'} in this map ${n === 1 ? 'is' : 'are'} numbered above 1,000,000,000: ` +
+    `kept for restore, but never numbered after - no Veilio client mints that high.`
+  )
 }
 
 /** Said by `maps pull` (CLI and MCP) when a team map held local-family keys. */

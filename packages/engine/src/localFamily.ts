@@ -13,6 +13,27 @@ export type Block = { start: number; end: number }
 
 export const LOCAL_PREFIX = '__LOCAL_'
 
+/** The highest placeholder number anything mints or trusts (security audit):
+ *  near 2^53 adding one stops changing a number, and two names would share a
+ *  placeholder. A number above it - a planted key, a server's answer - is
+ *  ignored for the highest, and never numbered after. */
+export const MAX_PLACEHOLDER_NUMBER = 1_000_000_000
+/** The most numbers one reservation may span (the server asks at most 5000). */
+export const MAX_BLOCK_SPAN = 10_000
+
+/** A run of numbers safe to number in: whole, in [1, 1e9], in order, short. */
+export function isSaneBlock(b: unknown): b is Block {
+  const { start, end } = (b ?? {}) as Partial<Record<keyof Block, unknown>>
+  return (
+    Number.isSafeInteger(start) &&
+    Number.isSafeInteger(end) &&
+    (start as number) >= 1 &&
+    (end as number) <= MAX_PLACEHOLDER_NUMBER &&
+    (start as number) <= (end as number) &&
+    (end as number) - (start as number) <= MAX_BLOCK_SPAN
+  )
+}
+
 const TAG = /^[A-Z0-9]{6}$/
 const TEAM_BASE = /^__[A-Z][A-Z0-9_]*__$/
 const LOCAL_BASE = /^__LOCAL_[A-Z0-9]{6}_([A-Z][A-Z0-9_]*)__$/
@@ -58,7 +79,7 @@ export function highestPerKind(map: SymbolMap): Record<string, number> {
     const m = NUMBERED.exec(p)
     if (!m) continue
     const [, base = '', n = '0'] = m
-    if (Number(n) > (out[base] ?? 0)) out[base] = Number(n)
+    if (Number(n) <= MAX_PLACEHOLDER_NUMBER && Number(n) > (out[base] ?? 0)) out[base] = Number(n)
   }
   return out
 }

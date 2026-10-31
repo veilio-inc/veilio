@@ -4,7 +4,7 @@
 // own new entries, and treats a placeholder that would mean two names as a
 // conflict to resolve by masking again - never by overwriting.
 
-import { isLocalTag, isRolePlaceholder } from '../vendor/engine/index.js'
+import { isLocalTag, isRolePlaceholder, isSaneBlock } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 export type StoredMap = {
@@ -124,12 +124,8 @@ export function parseReservedFile(text: string): Reserved {
     // characters into the band (security review, 2026-10-30).
     if (!BASE.test(base))
       return { ok: false, reason: `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind` }
-    if (
-      !Number.isInteger(b?.start) ||
-      !Number.isInteger(b?.end) ||
-      b!.start! < 1 ||
-      b!.end! < b!.start!
-    )
+    // At most 1e9 and 10000 long (security audit): near 2^53 two names share a number.
+    if (!isSaneBlock(b))
       return { ok: false, reason: `the ${base} block is not a run of whole numbers` }
     blocks[base] = { start: b!.start!, end: b!.end! }
   }

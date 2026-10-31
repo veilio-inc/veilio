@@ -27,8 +27,10 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  isSaneBlock,
   parseVaultEnvelope,
   LOCAL_PREFIX,
+  MAX_PLACEHOLDER_NUMBER,
   teamBaseOf,
   type CryptoKeyLike,
   type SymbolMap,
@@ -348,6 +350,8 @@ export async function pullCloudMap(
     blocks?: BlocksOutcome
     /** Local-family keys the team map held and the pull left out (spec 066). */
     localDropped?: number
+    /** Keys numbered above 1e9: kept, never numbered after (security audit). */
+    outOfRange?: number
   }>
 > {
   const credential = signedIn(ctx)
@@ -446,6 +450,9 @@ export async function pullCloudMap(
   // Spec 063: a team map comes with a block of the team's numbers, so the
   // guard numbers where no teammate can. A refusal there does not undo the pull.
   const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath) : undefined
+  const outOfRange = Object.keys(map).filter(
+    (p) => Number(/\d+$/.exec(p)?.[0] ?? 0) > MAX_PLACEHOLDER_NUMBER
+  ).length
   return ok({
     id: remote.id,
     name: remote.name,
@@ -453,6 +460,7 @@ export async function pullCloudMap(
     path: opts.mapPath,
     ...(blocks ? { blocks } : {}),
     ...(localKeys.length ? { localDropped: localKeys.length } : {}),
+    ...(outOfRange ? { outOfRange } : {}),
   })
 }
 
@@ -605,13 +613,7 @@ async function renumberUnreserved(
       ranges.length === asked.length &&
       asked.every(({ base, count, floor }) => {
         const r = ranges.find((x) => x?.base === base)
-        return (
-          r !== undefined &&
-          Number.isInteger(r.start) &&
-          Number.isInteger(r.end) &&
-          r.start > floor &&
-          r.end - r.start + 1 >= count
-        )
+        return r !== undefined && isSaneBlock(r) && r.start > floor && r.end - r.start + 1 >= count
       })
     if (!sane) return refuseNumbers('the server answered without a usable run of numbers')
     const next = new Map(ranges.map((r) => [r.base, r.start]))

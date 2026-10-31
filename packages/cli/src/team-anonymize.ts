@@ -4,7 +4,12 @@
 // project's own map only and gave a member's terminal placeholders that meant
 // something else in the team.
 
-import { anonymize, type AnonymizeOptions } from '@veilio-inc/engine'
+import {
+  anonymize,
+  isSaneBlock,
+  MAX_PLACEHOLDER_NUMBER,
+  type AnonymizeOptions,
+} from '@veilio-inc/engine'
 
 /**
  * The map handed to the engine to anonymize: this project's store and the
@@ -75,7 +80,7 @@ export function floorsWith(
   const floors = { ...highest }
   for (const placeholder of Object.keys(local)) {
     const m = NUMBERED.exec(placeholder)
-    if (m && Number(m[2]) > (floors[m[1]] ?? 0)) floors[m[1]] = Number(m[2])
+    if (m && counted(m[2]) > (floors[m[1]] ?? 0)) floors[m[1]] = counted(m[2])
   }
   return floors
 }
@@ -88,11 +93,18 @@ export function anonymizeAbove(
   const inMap: Record<string, number> = {}
   for (const p of Object.keys(options.existingMap)) {
     const m = NUMBERED.exec(p)
-    if (m && Number(m[2]) > (inMap[m[1]] ?? 0)) inMap[m[1]] = Number(m[2])
+    if (m && counted(m[2]) > (inMap[m[1]] ?? 0)) inMap[m[1]] = counted(m[2])
   }
   const seeded = { ...options.existingMap }
   for (const [base, floor] of Object.entries(floors)) {
-    if (floor > (inMap[base] ?? 0)) seeded[`${base}${floor}`] = `${FLOOR_MARKER}${base}`
+    // Never above 1e9 (the engine ignores it there) and never over an entry
+    // the map holds: the marker is dropped from the result, and the entry with it.
+    if (
+      floor > (inMap[base] ?? 0) &&
+      floor <= MAX_PLACEHOLDER_NUMBER &&
+      !(`${base}${floor}` in options.existingMap)
+    )
+      seeded[`${base}${floor}`] = `${FLOOR_MARKER}${base}`
   }
   const result = anonymize(source, { ...options, existingMap: seeded })
   const map = Object.fromEntries(
@@ -170,12 +182,18 @@ export function anonymizeOverTeam(
 // reserve. An agent that reserved numbers it then discarded would consume the
 // team's allocation on every tool call.
 
+/** A placeholder's number as a floor: one above 1e9 (planted) counts as none. */
+function counted(digits: string): number {
+  const n = Number(digits)
+  return n <= MAX_PLACEHOLDER_NUMBER ? n : 0
+}
+
 /** Highest number per base in a map. */
 export function highestPerBase(map: Record<string, string>): Record<string, number> {
   const out: Record<string, number> = {}
   for (const placeholder of Object.keys(map)) {
     const m = NUMBERED.exec(placeholder)
-    if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+    if (m && counted(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = counted(m[2])
   }
   return out
 }
@@ -194,7 +212,7 @@ const TOKEN = /(?<![A-Za-z0-9_$])(__[A-Z][A-Z0-9_]*__)(\d+)(?![A-Za-z0-9_$])/g
 export function highestInText(text: string): Record<string, number> {
   const out: Record<string, number> = {}
   for (const m of text.matchAll(TOKEN)) {
-    if (Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
+    if (counted(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = counted(m[2])
   }
   return out
 }
@@ -294,7 +312,7 @@ export async function reservedAnonymizeOverTeam(
   const floors: Record<string, number> = {}
   for (const { base } of requests) {
     const range = byBase.get(base)
-    if (!range) throw new ReservationMismatch(`${base}*`)
+    if (!range || !isSaneBlock(range)) throw new ReservationMismatch(`${base}*`)
     floors[base] = range.start - 1
   }
   const second = anonymizeAbove(source, { ...options, existingMap }, floors)
