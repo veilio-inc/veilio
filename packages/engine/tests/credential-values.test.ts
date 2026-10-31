@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, credentialValueSpans, detectSecrets, restore } from '../src/index.js'
+import { anonymize, credentialsAmong, detectSecrets, restore, valueSpans } from '../src/index.js'
 import type { FileKind, Language } from '../src/index.js'
+
+// The credential values in text of no known kind, as the guard reads output.
+const credentialValueSpans = (text: string) => credentialsAmong(valueSpans(text))
 
 // Security audit (spec 064 regression): a dictionary-word password is a
 // single ordinary word, and 064 leaves those as written. As the value of a
@@ -54,9 +57,9 @@ describe('a dictionary word as the value of a credential-named key', () => {
 })
 
 describe('controls: 064 still leaves ordinary words readable elsewhere', () => {
+  // Round 3: a string's contents are a value - `const mood = "sunshine"` and
+  // `password_hint = "..."` no longer keep their words (value-positions.test.ts).
   it.each([
-    ['const password_hint = "sunshine is a word"\n', 'sunshine'],
-    ['const mood = "sunshine"\n', 'sunshine'],
     ['weather: sunshine\n', 'sunshine'],
     ['const monkey = ledger\n', 'ledger'],
     ['interface Env {\n  DB_PASSWORD: string\n}\n', 'string'],
@@ -66,10 +69,18 @@ describe('controls: 064 still leaves ordinary words readable elsewhere', () => {
     expect(anonymize(code).anonymized).toContain(word)
   })
 
-  it('an ordinary word used both as a password and elsewhere is redacted only as the password', () => {
+  // Round 3: in another value it would be minted into the map, so it is the
+  // credential's token there too; as a name it stays readable.
+  it('an ordinary word used both as a password and elsewhere is redacted in values only', () => {
     const r = anonymize('password: sunshine\ngreeting: sunshine\n', { fileKind: 'yaml' })
-    expect(r.anonymized).toBe('password: __REDACTED_CREDENTIAL_1__\ngreeting: sunshine\n')
+    expect(r.anonymized).toBe(
+      'password: __REDACTED_CREDENTIAL_1__\ngreeting: __REDACTED_CREDENTIAL_1__\n'
+    )
     expect(Object.values(r.map)).not.toContain('sunshine')
+    const code = anonymize('const password = "sunshine"\nlet sunshine = 1\n', {
+      language: 'typescript',
+    })
+    expect(code.anonymized).toBe('const password = "__REDACTED_CREDENTIAL_1__"\nlet sunshine = 1\n')
   })
 })
 
@@ -112,17 +123,24 @@ describe('more credential syntaxes (security review of round 1)', () => {
   })
 
   it.each([
-    ['const password_hint = "sunshine"\n', 'sunshine'],
-    ['author: sunshine\n', 'sunshine'],
-    ['<author>sunshine</author>\n', 'sunshine'],
-    ['<entry key="password_hint">sunshine</entry>\n', 'sunshine'],
     ['ENV AUTHOR sunshine\n', 'sunshine'],
-    ["define('AUTHOR','sunshine');\n", 'sunshine'],
     ['env:\n  - name: AUTHOR\n    value: sunshine\n', 'sunshine'],
     ['const monkey = "monkey"\nconst animal = monkey\n', 'monkey'],
     ['PRIMARY_KEY=id\n', 'id'],
   ])('the control %j keeps %s', (code, word) => {
     expect(anonymize(code).anonymized).toMatch(new RegExp(`\\b${word}\\b`))
+  })
+
+  // Round 3: a key CONTAINS a credential word (`password_hint`, `author`), and
+  // a string or an element's text is a value: these controls no longer hold.
+  it.each([
+    ['const password_hint = "sunshine"\n', 'sunshine'],
+    ['author: sunshine\n', 'sunshine'],
+    ['<author>sunshine</author>\n', 'sunshine'],
+    ['<entry key="password_hint">sunshine</entry>\n', 'sunshine'],
+    ["define('AUTHOR','sunshine');\n", 'sunshine'],
+  ])('the former control %j hides %s', (code, word) => {
+    expect(anonymize(code).anonymized).not.toMatch(new RegExp(`\\b${word}\\b`))
   })
 })
 
@@ -156,14 +174,20 @@ describe('exemptions fail closed (security review of round 2)', () => {
     expect(credentialValueSpans(text).map((s) => s.value)).toEqual([value])
   })
 
+  // Round 3: the key is matched by CONTAINS - `password_hint`, a `key`
+  // attribute and `SORT_KEY` name credentials now. A value of two characters
+  // is no secret (`PRIMARY_KEY=id`).
   it.each([
-    '<entry key="password_hint">sunshine</entry>',
-    '<Item key="sunshine" />',
-    '<li key="sunshine">x</li>',
-    'PRIMARY_KEY=id',
-    'SORT_KEY=createdAt',
-  ])('%j is not', (text) => {
-    expect(credentialValueSpans(text)).toEqual([])
+    ['<entry key="password_hint">sunshine</entry>', 'sunshine'],
+    ['<Item key="sunshine" />', 'sunshine'],
+    ['<li key="sunshine">x</li>', 'sunshine'],
+    ['SORT_KEY=createdAt', 'createdAt'],
+  ])('%j is one now', (text, value) => {
+    expect(credentialValueSpans(text).map((s) => s.value)).toContain(value)
+  })
+
+  it('PRIMARY_KEY=id is not', () => {
+    expect(credentialValueSpans('PRIMARY_KEY=id')).toEqual([])
   })
 
   it('a value equal to its key is masked, and the key stays readable', () => {

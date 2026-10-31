@@ -39,8 +39,12 @@ Masked:
   variables, properties, and the words of import paths — as `__CLS__n`,
   `__FN__n`, `__VAR__n`, `__PKG__n`, unless it is a single ordinary word
   (below);
-- the words inside string literals — URL paths, error messages, the table and
-  column names in SQL — as `__STR__n`, with the same exception;
+- every word of a value — inside a string literal (URL paths, error
+  messages, the table and column names in SQL), after `=` or `:` in a
+  dotenv, INI, properties, TOML or YAML file, in XML attribute values and
+  element text, in a shell command's `KEY=val` — as `__STR__n` and the like,
+  ordinary words included; only a path-shaped string (`'./src/utils'`) keeps
+  them readable;
 - bank account, card and PESEL numbers (reversibly), and credentials
   (irreversibly — see below).
 
@@ -53,13 +57,17 @@ Not masked:
   with an inner capital, an underscore or a digit (`refundInvoice`,
   `customer_invoices`, `invoice2`) is a choice somebody made and is masked, as
   are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
-  mask any word. The value of a credential-named key (`password: sunshine`,
-  `SECRET_KEY = "phoenix"`) is the exception: it is a secret. Under the
-  default `secrets: 'redact'` it is redacted one-way there, as a detected
-  secret is, so the map never holds it; under `warn` and `off` it gets a
-  reversible placeholder, or is left as the scanner's rule says. A bare
-  `key = word` in code with no file kind may name a variable and keeps a
-  reversible placeholder. The same ordinary word elsewhere stays readable;
+  mask any word. This holds for names and path segments only, never for a
+  value (above). A value whose key names a credential — the key contains
+  `pass`, `pwd`, `secret`, `token`, `key`, `auth`, `cred`, `private` or
+  `salt` (`password: sunshine`, `const DB_PASS = "Summer2024!"`,
+  `Password=sunshine;` inside a connection string) — is a secret: under the
+  default `secrets: 'redact'` it is redacted one-way, whole, as a detected
+  secret is, so the map never holds it; under `warn` and `off` it is masked
+  reversibly like any value. A number, a boolean, a `$NAME` reference, a URL
+  or a path under such a key is masked, not redacted. A bare `key = word` in
+  code the engine cannot place in a language may name a variable and keeps a
+  reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
@@ -71,8 +79,8 @@ Not masked:
   its SQL and URLs.
 
 So what holds is: no mixed- or lower-case internal identifier other than a
-single ordinary word, no string contents beyond such words, and no credential
-reaches the model. Not "the model cannot tell what
+single ordinary word, no word of a value other than a path's ordinary
+segments, and no credential reaches the model. Not "the model cannot tell what
 this code does" — the shape and one comment will often say it is billing code.
 
 ## Ten languages, not one

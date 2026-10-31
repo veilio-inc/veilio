@@ -153,7 +153,8 @@ describe('engine 1.12.2: what stays readable', () => {
     ],
     ['booleans and numbers', 'REQUIRE_PASSWORD=true\nDEBUG=true\nENABLE_TOKEN=1\nPORT=1\n', '.env'],
     ['a number used elsewhere', 'MAX_TOKEN=4096\nlimit = 4096\n', '.env'],
-    ['PRIMARY_KEY and SORT_KEY', 'PRIMARY_KEY=id\nSORT_KEY=createdAt\n', '.env'],
+    // Round 3: SORT_KEY=createdAt is redacted now - a key CONTAINS `key`.
+    ['PRIMARY_KEY, a two-character value', 'PRIMARY_KEY=id\n', '.env'],
   ] as const
   for (const [what, text, path] of notRedacted) {
     it(`${what} is not redacted`, () => {
@@ -163,9 +164,10 @@ describe('engine 1.12.2: what stays readable', () => {
 
   // Security audit: a word as the value of a credential-named key is never
   // left readable - a possible one is redacted there, and only there.
-  it('a YAML word used elsewhere is redacted only as the credential value', () => {
+  // Round 3: another value is no place for it either - it would be minted.
+  it('a YAML word used elsewhere is redacted wherever it is a value', () => {
     expect(anonymize('TOKEN: bearer\ntype: bearer\n', { path: 'c.yml' }).anonymized).toBe(
-      'TOKEN: __REDACTED_CREDENTIAL_1__\ntype: bearer\n'
+      'TOKEN: __REDACTED_CREDENTIAL_1__\ntype: __REDACTED_CREDENTIAL_1__\n'
     )
   })
 

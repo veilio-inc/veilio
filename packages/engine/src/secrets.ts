@@ -1732,7 +1732,7 @@ export const REDACTION_TOKENS = new RegExp(
 )
 /** A file kind whose assignment grammar the engine reads (spec 013 R17):
  *  credentials assigned to environment-style names are found in these. */
-export type FileKind = 'dotenv' | 'yaml' | 'shell'
+export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml'
 
 /**
  * The file kind of `path`, as the engine reads it, or undefined for any other
@@ -1743,7 +1743,10 @@ export type FileKind = 'dotenv' | 'yaml' | 'shell'
  *   `*.env`, in any case - not `.env.ts`, `.env.d.ts` or `.env.example.json`,
  *   which are code or data;
  * - YAML: `.yml`, `.yaml`;
- * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files.
+ * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files;
+ * - ini: `.ini`, `.cfg`, `.conf`, `.properties`, `.toml`;
+ * - xml: `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`.
+ * The last two add no secret rules: they tell masking where values stand.
  */
 const CODE_EXTENSIONS =
   /^(?:[cm]?[jt]sx?|json|jsonc|toml|py|pyi|rb|go|java|kt|kts|scala|rs|swift|dart|exs?|lua|php|cs|fs|c|cc|cpp|h|hpp|m|mm|vue|svelte|md|mdx|rst|html|xml|sql|r|pl|ps1)$/i
@@ -1753,7 +1756,8 @@ export function fileKindOf(path: string): FileKind | undefined {
   const last = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : ''
   // Never a code, data or document file, whatever its name starts with
   // (`dockerfile.py`, `Dockerfile.test.ts`, `.env.rs`, `.env.md`).
-  if (last && CODE_EXTENSIONS.test(last)) return undefined
+  if (last && CODE_EXTENSIONS.test(last))
+    return /^toml$/i.test(last) ? 'ini' : /^xml$/i.test(last) ? 'xml' : undefined
   if (/\.ya?ml$/i.test(name)) return 'yaml'
   if (
     /\.(?:sh|bash|zsh|ksh)$/i.test(name) ||
@@ -1763,6 +1767,8 @@ export function fileKindOf(path: string): FileKind | undefined {
     return 'shell'
   // `.env`, `*.env`, and `.env.<anything>` - `.env.local`, `.env.txt`, a `~` backup.
   if (/\.env$/i.test(name) || /^\.env\./i.test(name)) return 'dotenv'
+  if (/^(?:ini|cfg|conf|properties)$/i.test(last)) return 'ini'
+  if (/^(?:config|xaml|csproj|props|targets|plist)$/i.test(last)) return 'xml'
   return undefined
 }
 
@@ -1783,7 +1789,7 @@ export interface ScanOptions {
 
 const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true, fileKind: true })
 
-const FILE_KINDS: ReadonlySet<string> = new Set(['dotenv', 'yaml', 'shell'])
+const FILE_KINDS: ReadonlySet<string> = new Set(['dotenv', 'yaml', 'shell', 'ini', 'xml'])
 
 function scanContext(options: ScanOptions): ScanContext {
   const path = options.path

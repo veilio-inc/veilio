@@ -1,3 +1,4 @@
+import type { ValueSpan } from './ordinaryWords.js';
 import type { AnonymizeOptions, AnonymizeResult, CommentExposure, IdentifierRole, RestoreOptions, RestoreResult, StrippedItemType, SymbolMap } from './types.js';
 import { type Language, type LanguageOption } from './languages.js';
 import type { SecretType } from './secrets.js';
@@ -78,6 +79,10 @@ export declare function isPlaceholder(token: string): boolean;
  * callers keep prior behavior.
  */
 export declare function extractIdentifiers(code: string, language?: Language): string[];
+/** Where `code` holds values, as `anonymize` reads them (security review,
+ *  round 3): an ordinary word there is masked, and a value under a
+ *  credential key is redacted. */
+export declare function valuePositions(code: string, opts?: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>): ValueSpan[];
 /**
  * Anonymize source code, replacing real identifiers with role-typed
  * placeholders (__CLS__1, __FN__2, ...). Pass an existing map to continue

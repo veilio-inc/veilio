@@ -343,15 +343,15 @@ describe('anonymize — per-language masking', () => {
       }
     })
 
-    // Spec 064: ordinary words stay readable.
+    // Spec 064: ordinary words stay readable as names. Round 3: one that is
+    // also in a string (`"missing rate"`) is masked there, so it is mapped.
     it(`leaves ${language} single ordinary words as written`, () => {
-      const { anonymized, map } = anonymize(code, { language })
+      const { anonymized } = anonymize(code, { language })
       for (const word of READABLE[language]) {
         expect(
           new RegExp(`(?<![a-zA-Z0-9_$])${word}(?![a-zA-Z0-9_$])`).test(anonymized),
           `${language}: expected "${word}" to stay readable`
         ).toBe(true)
-        expect(Object.values(map)).not.toContain(word)
       }
     })
 

@@ -1,0 +1,20 @@
+{
+  "corpus": {
+    "inputs": 10188,
+    "leaks": 0,
+    "newlyReadable": {
+      "identifiers": 17032,
+      "paths": 61
+    },
+    "maskedInValues": 3392
+  },
+  "project": {
+    "inputs": 485,
+    "leaks": 0,
+    "newlyReadable": {
+      "identifiers": 17470,
+      "paths": 549
+    },
+    "dir": "veilio-bench-polyglot"
+  }
+}

@@ -1,7 +1,7 @@
 [
   {
     "name": "typescript, plain",
-    "anonymized": "import { __VAR__4 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__4) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__VAR__2: string, __VAR__5: number) {\n    const __VAR__3 = this.__VAR__1.get(__VAR__2) ?? 0\n    const message = `settling ${__VAR__2} for ${__VAR__5}`\n    await this.ledger.__FN__2(__VAR__2, __VAR__3 + __VAR__5, message)\n    return { __VAR__2, total: __VAR__3 + __VAR__5 }\n  }\n}\n",
+    "anonymized": "import { __VAR__4 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__4) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__VAR__2: string, __VAR__5: number) {\n    const __VAR__3 = this.__VAR__1.get(__VAR__2) ?? 0\n    const message = `__STR__1 ${__VAR__2} for ${__VAR__5}`\n    await this.ledger.__FN__2(__VAR__2, __VAR__3 + __VAR__5, message)\n    return { __VAR__2, total: __VAR__3 + __VAR__5 }\n  }\n}\n",
     "map": {
       "__CLS__1": "SettlementPlanner",
       "__VAR__1": "pendingBatches",
@@ -11,12 +11,13 @@
       "__VAR__4": "ledgerClient",
       "__FN__2": "recordIntent",
       "__VAR__5": "amountMinor",
-      "__PKG__1": "quayward"
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
     }
   },
   {
     "name": "typescript over an existing map",
-    "anonymized": "import { __VAR__11 } from './__PKG__1/ledger'\n\nexport class __CLS__41 {\n  private __VAR__8: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__11) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__91(__VAR__9: string, __VAR__12: number) {\n    const __VAR__10 = this.__VAR__8.get(__VAR__9) ?? 0\n    const message = `settling ${__VAR__9} for ${__VAR__12}`\n    await this.ledger.__FN__92(__VAR__9, __VAR__10 + __VAR__12, message)\n    return { __VAR__9, total: __VAR__10 + __VAR__12 }\n  }\n}\n",
+    "anonymized": "import { __VAR__11 } from './__PKG__1/ledger'\n\nexport class __CLS__41 {\n  private __VAR__8: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__11) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__91(__VAR__9: string, __VAR__12: number) {\n    const __VAR__10 = this.__VAR__8.get(__VAR__9) ?? 0\n    const message = `__STR__1 ${__VAR__9} for ${__VAR__12}`\n    await this.ledger.__FN__92(__VAR__9, __VAR__10 + __VAR__12, message)\n    return { __VAR__9, total: __VAR__10 + __VAR__12 }\n  }\n}\n",
     "map": {
       "__CLS__41": "SettlementPlanner",
       "__VAR__7": "ledger",
@@ -28,12 +29,13 @@
       "__VAR__11": "ledgerClient",
       "__FN__92": "recordIntent",
       "__VAR__12": "amountMinor",
-      "__PKG__1": "quayward"
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
     }
   },
   {
     "name": "typescript with a replace rule",
-    "anonymized": "import { __VAR__3 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__3) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__CODENAME__1: string, __VAR__4: number) {\n    const __VAR__2 = this.__VAR__1.get(__CODENAME__1) ?? 0\n    const message = `settling ${__CODENAME__1} for ${__VAR__4}`\n    await this.ledger.__FN__2(__CODENAME__1, __VAR__2 + __VAR__4, message)\n    return { __CODENAME__1, total: __VAR__2 + __VAR__4 }\n  }\n}\n",
+    "anonymized": "import { __VAR__3 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__3) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__CODENAME__1: string, __VAR__4: number) {\n    const __VAR__2 = this.__VAR__1.get(__CODENAME__1) ?? 0\n    const message = `__STR__1 ${__CODENAME__1} for ${__VAR__4}`\n    await this.ledger.__FN__2(__CODENAME__1, __VAR__2 + __VAR__4, message)\n    return { __CODENAME__1, total: __VAR__2 + __VAR__4 }\n  }\n}\n",
     "map": {
       "__CLS__1": "SettlementPlanner",
       "__VAR__1": "pendingBatches",
@@ -43,7 +45,8 @@
       "__VAR__3": "ledgerClient",
       "__FN__2": "recordIntent",
       "__VAR__4": "amountMinor",
-      "__PKG__1": "quayward"
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
     }
   },
   {

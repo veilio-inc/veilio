@@ -1416,7 +1416,10 @@ export const REDACTION_TOKENS = new RegExp(`__REDACTED_(?:${[...new Set(Object.v
  *   `*.env`, in any case - not `.env.ts`, `.env.d.ts` or `.env.example.json`,
  *   which are code or data;
  * - YAML: `.yml`, `.yaml`;
- * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files.
+ * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files;
+ * - ini: `.ini`, `.cfg`, `.conf`, `.properties`, `.toml`;
+ * - xml: `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`.
+ * The last two add no secret rules: they tell masking where values stand.
  */
 const CODE_EXTENSIONS = /^(?:[cm]?[jt]sx?|json|jsonc|toml|py|pyi|rb|go|java|kt|kts|scala|rs|swift|dart|exs?|lua|php|cs|fs|c|cc|cpp|h|hpp|m|mm|vue|svelte|md|mdx|rst|html|xml|sql|r|pl|ps1)$/i;
 export function fileKindOf(path) {
@@ -1425,7 +1428,7 @@ export function fileKindOf(path) {
     // Never a code, data or document file, whatever its name starts with
     // (`dockerfile.py`, `Dockerfile.test.ts`, `.env.rs`, `.env.md`).
     if (last && CODE_EXTENSIONS.test(last))
-        return undefined;
+        return /^toml$/i.test(last) ? 'ini' : /^xml$/i.test(last) ? 'xml' : undefined;
     if (/\.ya?ml$/i.test(name))
         return 'yaml';
     if (/\.(?:sh|bash|zsh|ksh)$/i.test(name) ||
@@ -1435,10 +1438,14 @@ export function fileKindOf(path) {
     // `.env`, `*.env`, and `.env.<anything>` - `.env.local`, `.env.txt`, a `~` backup.
     if (/\.env$/i.test(name) || /^\.env\./i.test(name))
         return 'dotenv';
+    if (/^(?:ini|cfg|conf|properties)$/i.test(last))
+        return 'ini';
+    if (/^(?:config|xaml|csproj|props|targets|plist)$/i.test(last))
+        return 'xml';
     return undefined;
 }
 const SCAN_OPTIONS = optionKeys({ path: true, root: true, fileKind: true });
-const FILE_KINDS = new Set(['dotenv', 'yaml', 'shell']);
+const FILE_KINDS = new Set(['dotenv', 'yaml', 'shell', 'ini', 'xml']);
 function scanContext(options) {
     const path = options.path;
     if (options.fileKind !== undefined && !FILE_KINDS.has(options.fileKind))

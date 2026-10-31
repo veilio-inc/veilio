@@ -7,6 +7,7 @@
 // A name with an inner capital, an underscore or a digit is never ordinary: it
 // is a choice somebody made (ledgerEntry, berth_quorum, invoice2). Neither is a
 // mixed-case word no dictionary spells (lEdger). Custom rules still win.
+import { isKeyword, LANGUAGES } from './languages.js';
 import { ENGLISH_WORDS } from './words.js';
 /** Words every codebase shares and toolchain names, beyond the dictionary. */
 const PROGRAMMING = [
@@ -182,112 +183,252 @@ export function isOrdinaryWord(name) {
         return false;
     return dictionary().has(name.toLowerCase());
 }
-// Security audit (spec 064 regression): a dictionary-word password is an
-// ordinary word, but as the value of a credential-named key it is a password.
-// A key ends in a credential word at a word boundary (`DB_PASSWORD`, `apiKey`,
-// `db.password`, `$password`), so `password_hint`, `author` and `monkey` are
-// not credential-named.
-const CREDENTIAL_KEY_END = /(?:api[_-]?key|pass(?:word|wd|phrase)?s?|pwd|pw|secrets?|tokens?|keys?|auth|credentials?)$/i;
-// A `key` that names a record, an index or a lookup, not a credential: the
-// whole key, so `DB_PRIMARY_KEY` and `AZURE_STORAGE_KEY` are still credentials.
-const NOT_A_CREDENTIAL_KEY = /^(?:primary|sort|foreign|partition|cache|index|unique|composite|routing|lookup|idempotency|row|column|dict|translation|i18n|shard|sharding)[_.-]?keys?$/i;
-// A placeholder in the slot is text already masked, not a password.
-const PLACEHOLDER = /^__[A-Z][A-Z0-9_]*__\d*$/;
-const NOT_A_VALUE = /^(?:true|false|null|none|nil|undefined|yes|no|on|off)$/i;
-// An unquoted `$NAME` is a reference to another variable
-// (`DB_PASSWORD=$DB_PASSWORD`); a quoted one (`"$unshine"`) is a value.
-const REFERENCE = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/;
-// A value is one word: quoted whole, or bare where the line or the entry ends
-// after it - so prose (`"sunshine is a word"`) is not one. Each alternative
-// below captures the key, then the value in one of these groups.
-const WORD = '[A-Za-z_$][\\w$]{0,255}';
-const QUOTED = `"(${WORD})"|'(${WORD})'|\`(${WORD})\``;
-const BARE_END = `(${WORD})(?=[ \\t]*(?:[,;})\\]#<]|\\/\\/|\\r?$))`;
-const KEY = '[A-Za-z_$][\\w$.-]{0,100}';
-// Each shape: a credential-named key, a separator or a call-argument boundary,
-// then the value. Linear: a key starts only where a run of key characters
-// starts, every run is bounded, and no quantified group nests another.
-const SHAPES = [
-    // `key = value`, `key: value`, `"key": "value"`, `key => value`, an env
-    // line, a subscript (`env["KEY"] = v`, `config[:key] = v`).
-    new RegExp(`(?<![\\w$.-])["'\`]?(${KEY})["'\`]?\\]?[ \\t]*(?:=>|:=|=(?![=~])|:(?!:))[ \\t]*(?:${QUOTED}|${BARE_END})`, 'dgm'),
-    // A call's two string arguments: `define('KEY', 'v')`, `os.Setenv("KEY", "v")`.
-    new RegExp(`(?<![\\w$])["'](${KEY})["'][ \\t]*,[ \\t]*(?:${QUOTED})[ \\t]*\\)`, 'dg'),
-    // A Dockerfile's `ENV KEY value`.
-    new RegExp(`^[ \\t]*ENV[ \\t]+(${KEY})[ \\t]+(?:${QUOTED}|(${WORD}))[ \\t]*\\r?$`, 'dgm'),
-    // A k8s or compose env entry: `name: KEY` and, next in the same entry, `value: v`.
-    new RegExp(`(?<![\\w$])["']?name["']?[ \\t]*:[ \\t]*["']?(${KEY})["']?[ \\t]*(?:,|\\r?\\n)[ \\t]*["']?value["']?[ \\t]*:[ \\t]*(?:${QUOTED}|${BARE_END})`, 'dgm'),
-    // An XML element: `<key>v</`, or its `key="..."`/`name="..."` attribute.
-    new RegExp(`<([A-Za-z_][\\w.:-]{0,100})((?:[ \\t]+[\\w.:-]{1,100}[ \\t]*=[ \\t]*"[^"<>]{0,200}"){0,20})[ \\t]*>[ \\t]*(${WORD})[ \\t]*<\\/`, 'dg'),
-];
-const XML_KEY_ATTR = /(?:^|[ \t])(?:key|name)[ \t]*=[ \t]*"([^"]*)"/g;
-function credentialNamed(key) {
-    const m = CREDENTIAL_KEY_END.exec(key);
-    if (!m)
+// Security review, round 3 (an amendment to spec 064): an ordinary word is
+// readable only as an identifier or a path segment. In a value position - a
+// string literal; in configuration the text after `=` or `:`, or on the line
+// below an empty one; XML element text; a command's `KEY=val` prefix - it is
+// masked, whatever its key is called. A list of dangerous credential syntaxes
+// could never be complete, so the value positions are listed instead.
+// The unit is the whole value up to its delimiter: `"Summer2024!"` is one.
+/** A key that names a credential: one of these anywhere in it. */
+const CREDENTIAL = /pass|pwd|secret|token|key|auth|cred|private|salt|(?<![a-z])pw(?![a-z])/i;
+// Shapes no credential has, as the secret scanner reads them (engine
+// 1.12.2): text already masked, a flag's word, a number, a placeholder, a
+// command, a CI expression, a YAML alias, a URL without userinfo, a path
+// that reads as one (two segments, an extension, or `~/`, `./`, `$HOME/`).
+// Such a value is still a value: masked reversibly, never shown.
+const NOT_SECRET = /^(?:.{1,2}|(?:__[A-Z][A-Z0-9_]*__\d*)+|true|false|null|none|nil|undefined|yes|no|on|off|~|\d+|<[^<>]*>|\$\(.*|`.*|\$\{\{.*\}\}|\*[\w-]+|[a-z][\w+.-]*:\/\/[^\s@]*|(?:~|\.{1,2}|\$\{?\w+\}?)?(?:\/[\w.@~+-]+){2,}\/?|(?:~|\.{1,2}|\$\{?\w+\}?)?\/[\w@~+-]+\.\w{1,8}|(?:~|\.{1,2}|\$\{?\w+\}?)\/[\w.@~+-]+)$/i;
+// An unquoted `$NAME` or `${NAME}` is a reference to another variable; a
+// quoted one (`"$unshine"`) is a value.
+const REFERENCE = /^\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})$/;
+// A path keeps 064's readable segments: no space, no scheme, a separator.
+const PATH = /^[\w.@~+-]*[\\/][\w.@~+\\/-]*$/;
+const QUOTED = /(?<![A-Za-z0-9])(["'`])([^\n]{0,4096}?)\1/g;
+const KEY_TOKEN = /[A-Za-z_$][\w$]*/g;
+const KEY_STRING = /["'`]([\w.$-]{1,100})["'`]/g;
+function keyword(word, language) {
+    if (CREDENTIAL.test(word))
         return false;
-    // `key` alone names a lookup (`<entry key="...">`, React's `key`), and a
-    // record's `primary_key` is no credential either.
-    if (/^keys?$/i.test(m[0]) && NOT_A_CREDENTIAL_KEY.test(key))
-        return false;
-    if (m.index === 0)
-        return true;
-    // A long credential word needs no boundary: `PGPASSWORD`, `userpassword`.
-    if (/^pass(?:word|wd|phrase)s?$/i.test(m[0]))
-        return true;
-    const before = key[m.index - 1];
-    return /[._$:-]/.test(before) || (/[a-z0-9]/.test(before) && /[A-Z]/.test(key[m.index]));
+    return language ? isKeyword(word, language) : LANGUAGES.some((l) => isKeyword(word, l));
 }
-/** Whether `at` is inside an open tag: after a `<name` with no `>` since. */
-function inTag(text, at) {
-    const before = text.slice(Math.max(0, at - 1000), at);
-    const open = before.lastIndexOf('<');
-    return open !== -1 && open > before.lastIndexOf('>') && /^<[A-Za-z]/.test(before.slice(open));
-}
-/** The key a shape's match names: in XML, the element's `key` or `name`
- *  attribute where it has one, else its tag. */
-function keyOf(m, shape) {
-    if (shape !== SHAPES.length - 1)
-        return m[1];
-    let attr;
-    for (const a of (m[2] ?? '').matchAll(XML_KEY_ATTR))
-        attr = a[1];
-    return attr ?? m[1];
-}
-/** Where `text` holds a word as the value of a credential-named key. Such a
- *  word is never left readable as an ordinary word: the engine masks it
- *  there, and the guard writes its map's entry over it. Sorted, and never
- *  overlapping. `literal`: written as a value - quoted, or in a shape only
- *  configuration has; a bare `key = word` may be code naming a variable. */
-export function credentialValueSpans(text) {
-    const found = [];
-    SHAPES.forEach((re, shape) => {
-        const first = shape === SHAPES.length - 1 ? 3 : 2;
-        for (const m of text.matchAll(re)) {
-            let g = first;
-            while (g < m.length && m[g] === undefined)
-                g++;
-            const value = m[g];
-            // The three QUOTED groups come first; XML text is a value as written.
-            const quoted = shape === SHAPES.length - 1 || g < first + 3;
-            if (!value || NOT_A_VALUE.test(value) || PLACEHOLDER.test(value))
-                continue;
-            if (!quoted && REFERENCE.test(value))
-                continue;
-            const key = keyOf(m, shape);
-            if (!credentialNamed(key))
-                continue;
-            // `key` alone is a credential, except as a tag's attribute: a JSX `key`
-            // prop, or XML's `<entry key="name">` naming an entry.
-            if (/^keys?$/i.test(key) && inTag(text, m.index))
-                continue;
-            const [start, end] = m.indices[g];
-            found.push({ start, end, value, literal: quoted || shape !== 0 });
+/** Whether the value at `at` sits under a credential key: the last name, or
+ *  the last key-shaped string, between it and the statement or argument
+ *  boundary before it (`password: string = `, `<add key="DbPassword" value=`).
+ *  Right after an argument's comma, only the string before it is the key
+ *  (`define('DB_PASSWORD', `). At most 256 characters back. */
+function credentialBefore(text, at, language) {
+    const from = Math.max(0, at - 256);
+    let i = at - 1;
+    let words = false;
+    let argument = false;
+    for (; i >= from; i--) {
+        const c = text[i];
+        if (c === '\n')
+            break;
+        if (';{}(,<>['.includes(c)) {
+            if (words || argument)
+                break;
+            argument = c === ',';
+            if (!argument)
+                break;
         }
-    });
-    found.sort((a, b) => a.start - b.start);
+        else if (/\w/.test(c))
+            words = true;
+    }
+    const prefix = text.slice(i + 1, at);
+    let quoted;
+    for (const m of prefix.matchAll(KEY_STRING))
+        quoted = m[1];
+    if (argument)
+        return CREDENTIAL.test(quoted ?? '');
+    // In a tag, `key="..."` names the entry (`<add key="Theme" value="dark"/>`).
+    if (text[i] === '<' && /(?:^|\s)(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix))
+        return false;
+    let name;
+    for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
+        if (!keyword(t, language))
+            name = t;
+    return CREDENTIAL.test(name ?? '') || CREDENTIAL.test(quoted ?? '');
+}
+const STRING = /(["'`])[^"'`]*\1/g;
+/** A value that may be a secret: one no shape above rules out. */
+function secretShaped(value, quoted) {
+    const v = value.trim();
+    return v !== '' && !NOT_SECRET.test(v) && (quoted || !REFERENCE.test(v));
+}
+// `key=value` pairs inside a value: a connection string, a query string.
+const INNER = /(?<![\w.$-])([A-Za-z_][\w.-]{0,100})[ \t]*[=:][ \t]*([^\s;&,'"<>]+)/dg;
+// Configuration lines. Each starts at a line start, every run is bounded or
+// ends at the line's end, and no quantified group nests another: linear.
+const ENV_LINE = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]{0,200})[ \t]*=([^\n]*)$/dgm;
+const INI_LINE = /^[ \t]*["']?([A-Za-z_$][\w.$-]{0,200})["']?[ \t]*[=:]([^\n]*)$/dgm;
+const YAML_LINE = /^([ \t]*)(?:-[ \t]+)?["']?([^\s:"'#-][^:"'\n]{0,200}?)["']?[ \t]*:((?:[ \t][^\n]*)?)$/dgm;
+const YAML_SCALAR = /^[ \t]*(?!-[ \t]|-$|#|---|\.\.\.)([^\n]+)$/dgm;
+const YAML_ITEM = /^[ \t]*-[ \t]+([^\n]*)$/dgm;
+const SHELL_PAIR = /(?<![^\s;&|(])(?:export[ \t]+)?([A-Za-z_]\w{0,200})=("[^"\n]*"|'[^'\n]*'|[^\s;&|]*)/dg;
+const DOCKER_ENV = /^[ \t]*ENV[ \t]+([A-Za-z_]\w{0,200})[ \t]+([^\n=]+)$/dgm;
+const XML_TEXT = /<([A-Za-z_][\w.:-]{0,100})([^<>]{0,2000})>([^<]+)<\//dg;
+// A comment starts after a space; a glued `#` is part of the value.
+const HASH = /[ \t]#/;
+const HASH_OR_SEMICOLON = /[ \t][#;]/;
+const XML_KEY_ATTR = /(?:^|\s)(?:key|name|id)[ \t]*=[ \t]*["']([^"']*)["']/g;
+/** The value in `raw` at `offset`: its comment and quotes taken off, and in
+ *  YAML its anchor and tag; a block header has its value on the lines below. */
+function trimmed(raw, offset, comment, yaml = false, stop = null) {
+    let end = raw.length;
+    for (const re of [comment, stop]) {
+        const at = re ? raw.slice(0, end).search(re) : -1;
+        if (at !== -1)
+            end = at;
+    }
+    let start = 0;
+    while (start < end && /\s/.test(raw[start]))
+        start++;
+    while (end > start && /\s/.test(raw[end - 1]))
+        end--;
+    if (yaml) {
+        const props = /^(?:[&!]\S*[ \t]+)*(?:[&!]\S*$)?/.exec(raw.slice(start, end))[0];
+        start += props.length;
+        if (/^[|>][-+]?\d?[-+]?$/.test(raw.slice(start, end)))
+            return null;
+    }
+    const quoted = end - start >= 2 && /["'`]/.test(raw[start]) && raw[end - 1] === raw[start];
+    if (quoted) {
+        start++;
+        end--;
+    }
+    return end > start ? { start: offset + start, end: offset + end, quoted } : null;
+}
+/** Every value position in `text`, sorted by start. Spans may nest: a
+ *  connection string's `password=...` lies inside its string. */
+export function valueSpans(text, scan = {}) {
     const out = [];
-    for (const s of found)
-        if (!out.length || s.start >= out[out.length - 1].end)
+    const kind = scan.kind;
+    // Under a credential key a value is never a readable path.
+    const add = (start, end, keyed, quoted, module = false) => {
+        const value = text.slice(start, end);
+        const credential = keyed && secretShaped(value, quoted);
+        out.push({ start, end, value, credential, path: !keyed && (module || PATH.test(value)) });
+    };
+    const strings = scan.strings ??
+        [...text.matchAll(QUOTED)].map((m) => ({
+            start: m.index + 1,
+            end: m.index + 1 + m[2].length,
+        }));
+    for (const s of strings) {
+        // A module is a path; a shell's backticks run a command.
+        const command = text[s.start - 1] === '`' && (kind === 'shell' || kind === 'dotenv');
+        const keyed = !s.module && !command && credentialBefore(text, s.start - 1, scan.language);
+        add(s.start, s.end, keyed, true, s.module);
+    }
+    const any = kind === undefined;
+    // In text of no known kind a line holds several pairs: `,` and `;` end one.
+    const end = any ? /[,;]/ : null;
+    const line = (re, key, value, comment) => {
+        for (const m of text.matchAll(re)) {
+            const raw = m[value];
+            if (raw === undefined)
+                continue;
+            const at = m.indices[value][0];
+            const v = trimmed(raw, at, comment, false, end);
+            if (v)
+                add(v.start, v.end, key > 0 && CREDENTIAL.test(m[key]), v.quoted);
+        }
+    };
+    // A config file written in its neighbour's syntax keeps its values too: a
+    // `key: value` in a dotenv file, a `KEY=value` in YAML.
+    if (any || kind === 'dotenv' || kind === 'yaml')
+        line(ENV_LINE, 1, 2, HASH);
+    if (any || kind === 'ini' || kind === 'dotenv')
+        line(INI_LINE, 1, 2, HASH_OR_SEMICOLON);
+    if (any || kind === 'shell') {
+        line(SHELL_PAIR, 1, 2, null);
+        line(DOCKER_ENV, 1, 2, HASH);
+    }
+    if (any || kind === 'yaml') {
+        // A list item is a value; a `KEY=value` in it is found as a pair inside.
+        line(YAML_ITEM, 0, 1, HASH);
+        // A key with nothing after it may have its value on the line below; a
+        // k8s env entry's `value:` belongs to the `name:` above it.
+        let previous = null;
+        const keys = new Set();
+        for (const m of text.matchAll(YAML_LINE)) {
+            keys.add(m.index);
+            const indent = m[1].length;
+            const key = m[2];
+            const named = previous && /^value$/i.test(key) && /^name$/i.test(previous.key);
+            const credential = CREDENTIAL.test(key) || (named === true && CREDENTIAL.test(previous.value));
+            const raw = m[3] ?? '';
+            const v = trimmed(raw, m.indices[3]?.[0] ?? m.index + m[0].length, HASH, true, end);
+            if (v)
+                add(v.start, v.end, credential, v.quoted);
+            else {
+                const next = m.index + m[0].length + 1;
+                const nl = text.indexOf('\n', next);
+                const below = text.slice(next, nl === -1 ? text.length : nl);
+                const lead = below.length - below.trimStart().length;
+                if (lead > indent && !/^[ \t]*(?:-|#|[^\s:]+:(?:\s|$))/.test(below)) {
+                    const w = trimmed(below, next, HASH, true);
+                    if (w)
+                        add(w.start, w.end, credential, w.quoted);
+                }
+            }
+            previous = { indent, key, value: v ? text.slice(v.start, v.end) : '' };
+        }
+        // Any other line of a YAML file is a scalar: a block's body, a plain
+        // value over several lines, a document that is one value.
+        if (kind === 'yaml')
+            for (const m of text.matchAll(YAML_SCALAR)) {
+                if (keys.has(m.index))
+                    continue;
+                const v = trimmed(m[1], m.indices[1][0], HASH, true);
+                if (v)
+                    add(v.start, v.end, false, v.quoted);
+            }
+    }
+    // Element text, in every kind: XML embedded in code, JSX.
+    {
+        for (const m of text.matchAll(XML_TEXT)) {
+            const [s] = m.indices[3];
+            const v = trimmed(m[3], s, null);
+            if (!v)
+                continue;
+            let credential = CREDENTIAL.test(m[1]);
+            for (const a of m[2].matchAll(XML_KEY_ATTR))
+                credential ||= CREDENTIAL.test(a[1]);
+            add(v.start, v.end, credential, false);
+        }
+    }
+    // A bare name after a credential key, in code or text of no known kind.
+    if (any || kind === 'text') {
+        for (const m of text.matchAll(BARE)) {
+            const [s, e] = m.indices[2];
+            const value = m[2];
+            if (!CREDENTIAL.test(m[1]) || !secretShaped(value, false) || keyword(value, scan.language))
+                continue;
+            out.push({ start: s, end: e, value, credential: true, path: false, bare: true });
+        }
+    }
+    // Pairs inside every value found so far.
+    for (const span of out.slice()) {
+        if (span.credential)
+            continue;
+        for (const m of span.value.matchAll(INNER)) {
+            if (!CREDENTIAL.test(m[1]))
+                continue;
+            const [s, e] = m.indices[2];
+            add(span.start + s, span.start + e, true, false);
+        }
+    }
+    // A value written as one wins over the same text read as a bare name.
+    return out.sort((a, b) => a.start - b.start || b.end - a.end || Number(!!a.bare) - Number(!!b.bare));
+}
+const BARE = /(?<![\w$.-])["'`]?([A-Za-z_$][\w$.-]{0,100})["'`]?\]?[ \t]*(?:=>|:=|=(?![=~>])|:(?!:))[ \t]*([A-Za-z_$][\w$]{0,255})(?=[ \t]*(?:[,;})\]#<]|\/\/|\r?$))/dgm;
+/** The credential values among `spans`, never overlapping: the first wins. */
+export function credentialsAmong(spans) {
+    const out = [];
+    for (const s of spans)
+        if (s.credential && (!out.length || s.start >= out[out.length - 1].end))
             out.push(s);
     return out;
 }

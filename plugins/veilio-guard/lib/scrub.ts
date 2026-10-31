@@ -15,7 +15,7 @@ import {
   REGULATED_BASES,
   anonymize,
   compileRulePattern,
-  credentialValueSpans,
+  credentialsAmong,
   detectSecrets,
   isKeyword,
   isLocalPlaceholder,
@@ -27,6 +27,7 @@ import {
   scanSecrets,
   SECRET_DISPOSITIONS,
   shannonEntropy,
+  valueSpans,
 } from '../vendor/engine/index.js'
 import type {
   CustomRule,
@@ -403,7 +404,23 @@ function aroundTokens(text: string, fn: (part: string) => string): string {
 
 function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
   const shown = withCredentialWords(text, map, readableView(map))
-  return aroundTokens(dropResidue(text), (part) => replaceNames(part, shown, ctx))
+  return aroundTokens(dropResidue(text), (part) => inValues(part, map, shown, ctx))
+}
+
+/** Security review, round 3: an ordinary word is readable as a name, never in
+ *  a value. Where output shows one - a quoted string, a `KEY=val` - the whole
+ *  map is written over it; elsewhere, the readable view. */
+function inValues(text: string, map: SymbolMap, shown: SymbolMap, ctx: MaskContext): string {
+  if (shown === map) return replaceNames(text, map, ctx)
+  let out = ''
+  let at = 0
+  for (const s of valueSpans(text, { kind: 'shell' })) {
+    if (s.path || s.start < at) continue
+    out += replaceNames(text.slice(at, s.start), shown, ctx)
+    out += replaceNames(text.slice(s.start, s.end), map, ctx)
+    at = s.end
+  }
+  return out + replaceNames(text.slice(at), shown, ctx)
 }
 
 /** An ordinary word the map holds that this text shows as a credential, or a
@@ -417,7 +434,7 @@ function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): Sy
   const lines = text.split('\n')
   const values = new Set([
     ...found.map((f) => (lines[f.line - 1] ?? '').slice(f.column - 1, f.column - 1 + f.length)),
-    ...credentialValueSpans(text).map((s) => s.value),
+    ...credentialsAmong(valueSpans(text)).map((s) => s.value),
   ])
   if (values.size === 0) return shown
   let out: SymbolMap | null = null
@@ -1008,16 +1025,18 @@ export function applyMap(
     at = end
   }
   redacted += text.slice(at)
-  // The value of a credential-named key, whatever the map holds (security
-  // review: with an empty map nothing was written over `DB_PASSWORD=sunshine`).
-  // A map name keeps its placeholder (withCredentialWords); any other value is
-  // removed one-way, and an env-var name (a reference) is left. Not learned:
-  // the same word elsewhere is an ordinary word.
+  // The value of a credential-named key - one CONTAINS a credential word -
+  // whole, up to its delimiter, whatever the map holds (security review: with
+  // an empty map nothing was written over `DB_PASSWORD=sunshine`). A map name
+  // keeps its placeholder (withCredentialWords); any other value is removed
+  // one-way. Only `$NAME` and `${NAME}` are references: `DB_PASSWORD=
+  // ADMIN_PASSWORD` is a value (round 3). Not learned: the same word
+  // elsewhere is an ordinary word.
   const held = namesOf(map)
   let unvalued = ''
   at = 0
-  for (const { start, end, value } of credentialValueSpans(redacted)) {
-    if (held.has(value) || referenceName(value, '')) continue
+  for (const { start, end, value } of credentialsAmong(valueSpans(redacted))) {
+    if (held.has(value)) continue
     unvalued += redacted.slice(at, start) + known.tokenFor(value)
     at = end
   }

@@ -36,9 +36,12 @@ describe('scrubSource: a file Claude reads', () => {
     expect(survivingSecrets(r.text, r.additions)).toEqual([])
   })
 
-  it('the control: an ordinary word that is not a credential value stays readable', () => {
-    const r = scrubSource('const password_hint = "sunshine is a word"\n', {}, 'typescript')
-    expect(r.text).toContain('sunshine is a word')
+  // Round 3: a string is a value - its ordinary words are masked; a name stays.
+  it('the control: an ordinary word stays readable as a name, not in a string', () => {
+    const r = scrubSource('const sunshine = "sunshine is a word"\n', {}, 'typescript')
+    expect(r.text).toMatch(/^const sunshine = "__[A-Z]+__\d+ is a __[A-Z]+__\d+"\n$/)
+    const hint = scrubSource('const password_hint = "sunshine is a word"\n', {}, 'typescript')
+    expect(hint.text).toContain('"__REDACTED_CREDENTIAL_')
   })
 })
 
@@ -52,10 +55,12 @@ describe('applyMap: command output, with the word in the map', () => {
     expect(applyMap(text, MAP)).not.toContain(word)
   })
 
-  it('the control: the same word in prose stays readable', () => {
-    expect(applyMap('a sunshine day; password_hint = "sunshine is a word"', MAP)).toBe(
-      'a sunshine day; password_hint = "sunshine is a word"'
+  // Round 3: in prose it stays readable; in a quoted value it is written over.
+  it('the control: the same word in prose stays readable, in a value it does not', () => {
+    expect(applyMap('a sunshine day; mood = "sunshine is a word"', MAP)).toBe(
+      'a sunshine day; mood = "__VAR__1 is a word"'
     )
+    expect(applyMap('a sunshine day; MOOD=sunshine', MAP)).toBe('a sunshine day; MOOD=__VAR__1')
   })
 })
 
@@ -74,13 +79,32 @@ describe('applyMap: command output, with an empty map', () => {
     expect(out).toContain('__REDACTED_CREDENTIAL_')
   })
 
-  it('the controls: prose, a hint and a reference stay as written', () => {
+  it('the controls: prose and a `$NAME` or `${NAME}` reference stay as written', () => {
     for (const text of [
       'a sunshine day',
-      'password_hint = "sunshine is a word"',
       'export DB_PASSWORD=$DB_PASSWORD',
+      'export DB_PASSWORD=${DB_PASSWORD}',
     ])
       expect(applyMap(text, {})).toBe(text)
+  })
+
+  // Round 3: the key CONTAINS a credential word, the value is whole up to its
+  // delimiter, and only `$NAME`/`${NAME}` is a reference.
+  it.each([
+    ['password_hint = "sunshine is a word"', 'sunshine is a word'],
+    ['DB_PASSWORD=ADMIN_PASSWORD', 'ADMIN_PASSWORD'],
+    ['DB_PASSWORD_PROD="sunshine"', 'sunshine'],
+    ['DB_PASSWORD=sunshine ./run', 'sunshine'],
+    ['conn = "Server=x;Password=sunshine;"', 'sunshine'],
+    ['const DB_PASS = "Summer2024!"', 'Summer2024'],
+    ['<add key="DbPassword" value="sunshine"/>', 'sunshine'],
+    ['<property name="password" value="sunshine"/>', 'sunshine'],
+    ['password:\n  sunshine', 'sunshine'],
+    ['dsn: password=sunshine dbname=y', 'sunshine'],
+  ])('%j does not show %s', (text, value) => {
+    const out = applyMap(text, {})
+    expect(out).not.toContain(value)
+    expect(out).toContain('__REDACTED_CREDENTIAL_')
   })
 })
 
@@ -161,6 +185,14 @@ describe('more credential syntaxes (security review of round 1)', () => {
     expect(applyMap(text, {})).not.toMatch(new RegExp(`\\b${word}\\b`))
   })
 
+  it.each(['const animal = monkey', 'a monkey and a sunshine'])(
+    'the control %j stays as written in command output',
+    (text) => {
+      expect(applyMap(text, {})).toBe(text)
+    }
+  )
+
+  // Round 3: a key CONTAINS a credential word (`author`, `password_hint`).
   it.each([
     'author: sunshine',
     '<author>sunshine</author>',
@@ -168,9 +200,8 @@ describe('more credential syntaxes (security review of round 1)', () => {
     'ENV AUTHOR sunshine',
     "define('AUTHOR','sunshine');",
     'env:\n  - name: AUTHOR\n    value: sunshine',
-    'const animal = monkey',
-  ])('the control %j stays as written in command output', (text) => {
-    expect(applyMap(text, {})).toBe(text)
+  ])('the former control %j hides sunshine in command output', (text) => {
+    expect(applyMap(text, {})).not.toContain('sunshine')
   })
 })
 
@@ -187,7 +218,10 @@ describe('exemptions fail closed in command output (security review of round 2)'
     expect(applyMap(text, {})).not.toContain(shown)
   })
 
-  it.each(['<li key="sunshine">x</li>', 'PRIMARY_KEY=id'])('%j stays as written', (text) => {
-    expect(applyMap(text, {})).toBe(text)
+  // Round 3: a `key` attribute names a credential by CONTAINS; two characters
+  // are no secret.
+  it('PRIMARY_KEY=id stays as written; <li key="sunshine"> does not', () => {
+    expect(applyMap('PRIMARY_KEY=id', {})).toBe('PRIMARY_KEY=id')
+    expect(applyMap('<li key="sunshine">x</li>', {})).not.toContain('sunshine')
   })
 })

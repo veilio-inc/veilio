@@ -58,11 +58,11 @@ describe('what it says is masked, is', () => {
 
 describe('what it says goes out as written, does', () => {
   // Spec 064: ordinary words stay readable.
-  it('single ordinary words, in identifiers, import paths and strings', () => {
+  it('single ordinary words, in identifiers and import paths, not in strings', () => {
     expect(SECTION).toMatch(/\*\*single ordinary words\*\*/)
     expect(out).toContain("import { refund } from './billing/__PKG__")
     expect(out).toMatch(/-refunds'/)
-    expect(out).toContain("'Refund failed for __STR__")
+    expect(out).toMatch(/'__STR__\d+ __STR__\d+ for __STR__\d+'/)
   })
 
   it('comments', () => {

@@ -194,8 +194,9 @@ export interface AnonymizeOptions {
     root?: string;
     /** The file's kind (`fileKindOf(path)`), for a caller that passes no
      *  `path`: credentials assigned to environment-style names are found in
-     *  dotenv, YAML and shell text. Never relaxes a test file. */
-    fileKind?: 'dotenv' | 'yaml' | 'shell';
+     *  dotenv, YAML and shell text, and values are found by each kind's
+     *  grammar (INI and XML too). Never relaxes a test file. */
+    fileKind?: 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml';
     /** The allowance of rule-matching steps to draw on (`ruleBudget()`), when a
      *  caller shares one across calls - the guard's, per hook invocation. Absent:
      *  a fresh one for this call. */

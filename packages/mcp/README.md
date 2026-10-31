@@ -40,11 +40,12 @@ that the masking did not cover something: one when no language marker matched
 are still real. Names written entirely in capitals are not masked either
 (`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
 English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
-toolchain's name (`vitest`, `junit`): only distinctive names are masked. A codename
-that is an ordinary word stays masked only with a custom replace rule. An ordinary
-word that is the value of a credential-named key (`password: sunshine`) is a
-password: redacted one-way there under the default `redact`, so the map never
-holds it.
+toolchain's name (`vitest`, `junit`) as a name or a path segment: only distinctive
+names are masked. A codename that is an ordinary word stays masked only with a custom
+replace rule. In a value - a string literal, a config value, XML text - every word is
+masked, and a value whose key contains a credential word (`password: sunshine`,
+`const DB_PASS = "Summer2024!"`) is redacted one-way, whole, under the default
+`redact`, so the map never holds it.
 
 ## Tools
 

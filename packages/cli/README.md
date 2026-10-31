@@ -391,13 +391,14 @@ Distinctive names - `quaywardThrottle`, `SkerryTariff`, `berth_quorum`, an inven
 `tarnwick` - become placeholders. A name that is a single common English word
 (`total`, `ledger`, `invoice`), shared vocabulary every codebase has (`src`,
 `util`, `com`, `java`) or a toolchain's name (`vitest`, `junit`, `mvn`) is left as
-written: it is nobody's secret, and masking it made paths and test output
-unreadable. A codename that is an ordinary word (`phoenix`) is therefore readable;
-a custom replace rule (`veilio rules pull`) keeps it masked. An ordinary word that
-is the value of a credential-named key (`password: sunshine`, `DB_PASSWORD=sunshine`)
-is a password: redacted one-way there under the default `--secrets redact`, so
-the map never holds it. Credentials are redacted whatever they are
-called.
+written as a name or a path segment: it is nobody's secret, and masking it made
+paths and test output unreadable. A codename that is an ordinary word (`phoenix`)
+is therefore readable as a name; a custom replace rule (`veilio rules pull`) keeps
+it masked. In a value - a string literal, a config value, XML text - every word is
+masked. A value whose key contains a credential word (`password: sunshine`,
+`DB_PASSWORD_PROD="sunshine"`, `const DB_PASS = "Summer2024!"`) is redacted one-way,
+whole, under the default `--secrets redact`, so the map never holds it. Credentials
+are redacted whatever they are called.
 
 ## The symbol map
 

@@ -1,4 +1,5 @@
-import { credentialValueSpans, isOrdinaryWord } from './ordinaryWords.js'
+import { credentialsAmong, isOrdinaryWord, valueSpans } from './ordinaryWords.js'
+import type { ValueGrammar, ValueSpan } from './ordinaryWords.js'
 import { isEngineBase } from './rule-checks.js'
 import {
   compileRulePattern,
@@ -26,6 +27,7 @@ import {
   fnKeywordsFor,
   isKeyword,
   describeLanguage,
+  guessLanguage,
   type CommentSyntax,
   type Language,
   type LanguageOption,
@@ -1113,6 +1115,76 @@ function overlapsAny(spans: readonly (readonly [number, number])[], start: numbe
   return spans.some(([a, b]) => start < b && a < end)
 }
 
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
+const WORDS = /[A-Za-z_$][\w$]*/g
+
+/** The grammar values are read by: the file's kind; code in no language the
+ *  engine recognised may be configuration. */
+function valueKind(
+  code: string,
+  opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>
+): ValueGrammar | 'code' | 'text' {
+  return (
+    opts.fileKind ??
+    (opts.path ? fileKindOf(opts.path) : undefined) ??
+    ((opts.language ?? 'auto') === 'auto' && guessLanguage(code).fallback ? 'text' : 'code')
+  )
+}
+
+/** Where `code` holds values, as `anonymize` reads them (security review,
+ *  round 3): an ordinary word there is masked, and a value under a
+ *  credential key is redacted. */
+export function valuePositions(
+  code: string,
+  opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'> = {}
+): ValueSpan[] {
+  return valuesIn(code, describeLanguage(code, opts.language).language, valueKind(code, opts))
+}
+
+/** The value positions in `text` (ordinaryWords.ts), with the tokenizer's
+ *  string literals: contents only, a module specifier as a path. */
+function valuesIn(
+  text: string,
+  language: Language,
+  kind: ValueGrammar | 'code' | 'text'
+): ValueSpan[] {
+  const strings: { start: number; end: number; module?: boolean }[] = []
+  let at = 0
+  for (const s of tokenizeForMasking(text, language)) {
+    if (s.isString) {
+      const closed = s.text.length > 1 && s.text.endsWith(s.text[0]!)
+      const end = at + s.text.length - (closed ? 1 : 0)
+      strings.push({ start: at + 1, end, ...(s.isModuleSpecifier ? { module: true } : {}) })
+    }
+    at += s.text.length
+  }
+  return valueSpans(text, { strings, kind, language })
+}
+
+/** Spans as sorted, disjoint ranges, for `covers`. */
+function mergedRanges(spans: readonly { start: number; end: number }[]): [number, number][] {
+  const out: [number, number][] = []
+  for (const { start, end } of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1]
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
+    else out.push([start, end])
+  }
+  return out
+}
+
+/** Whether `[start, end)` overlaps one of `ranges` (sorted, disjoint), by
+ *  binary search: a file holds thousands of strings. */
+function covers(ranges: readonly [number, number][], start: number, end: number): boolean {
+  let lo = 0
+  let hi = ranges.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (ranges[mid]![1] <= start) lo = mid + 1
+    else hi = mid
+  }
+  return lo < ranges.length && ranges[lo]![0] < end
+}
+
 /**
  * Options, or the positional existing map, decided by the keys.
  *
@@ -1317,29 +1389,44 @@ export function anonymize(
       .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
       .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`] as const)
   )
-  // Security audit: the value of a credential-named key is a secret. Under
-  // `redact` it is replaced one-way, as a detected secret is, so the map never
-  // holds it - unless an older map already masks it reversibly, which the
-  // guard relies on. A bare `key = word` in code with no file kind may name a
-  // variable (`const apiKey = key`), and keeps a reversible placeholder, as
-  // under `warn` and `off`. A distinctive word is replaced wherever it stands
-  // as a name; an ordinary word elsewhere is vocabulary, left as written.
+  // Security review, round 3: under `redact` a value under a credential key
+  // is a secret, replaced whole and one-way, as a detected secret is, so the
+  // map never holds it - unless an older map already masks it reversibly,
+  // which the guard relies on. A bare name after a credential key in code
+  // may be a variable (`const apiKey = key`) and stays reversible, as every
+  // value does under `warn` and `off`. A distinctive value is replaced
+  // wherever it stands as a name too.
+  const kind = valueKind(code, opts)
   let unvalued = marked
   if ((opts.secrets ?? 'redact') === 'redact') {
     const mapped = new Set(Object.values(existingMap))
-    const config = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined)
     const tokens = new Map<string, string>()
     let out = ''
     let at = 0
-    for (const { start, end, value, literal } of credentialValueSpans(marked)) {
-      if (!(literal || config) || mapped.has(value) || destroyed.has(value)) continue
+    for (const { start, end, value, bare } of credentialsAmong(valuesIn(marked, language, kind))) {
+      if (bare || mapped.has(value) || destroyed.has(value)) continue
       if (!tokens.has(value)) tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`)
       out += marked.slice(at, start) + tokens.get(value)
       at = end
     }
     unvalued = out + marked.slice(at)
     for (const [value, token] of tokens)
-      if (!isOrdinaryWord(value)) unvalued = replaceWholeWord(unvalued, value, token)
+      if (value.length > 2 && !isOrdinaryWord(value) && !isKeyword(value, language))
+        unvalued = replaceWholeWord(unvalued, value, token)
+    // An ordinary word stays readable as a name, but in another value it would
+    // be minted into the map: there it is the credential's token too.
+    const words = [...tokens].filter(([value]) => isOrdinaryWord(value))
+    if (words.length > 0) {
+      out = ''
+      at = 0
+      for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind))) {
+        let part = unvalued.slice(start, end)
+        for (const [value, token] of words) part = replaceWholeWord(part, value, token)
+        out += unvalued.slice(at, start) + part
+        at = end
+      }
+      unvalued = out + unvalued.slice(at)
+    }
   }
   const source = applyRegulatedMasks(
     keptCredentials.size > 0 ? spreadRedactions(unvalued, keptCredentials, trusted) : unvalued,
@@ -1358,9 +1445,9 @@ export function anonymize(
   // extracted nor substituted, so no part of it reaches the map. Found again
   // in `source`, so the offsets are the ones substitution sees.
   const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end] as const)
-  const valued = credentialValueSpans(source)
-  const valueSpans = valued.map((s) => [s.start, s.end] as const)
-  const credentialWords = new Set(valued.map((s) => s.value))
+  // Every value position but a path's: an ordinary word there is masked.
+  const valued = valuesIn(source, language, kind).filter((s) => !s.path)
+  const values = mergedRanges(valued)
   // A name the existing map already holds may still be substituted inside one:
   // that writes nothing new, and the guard relies on it for a plain word
   // (`client_secret: "disabled"`) its map already masks.
@@ -1383,10 +1470,13 @@ export function anonymize(
   // A credential value the extractor passes over (`PASSWORD=SUNSHINE` reads as
   // a constant) is a name here all the same, where it is still in the text.
   const extractedNames = extractIdentifiers(scannable, language)
-  const missed = valued
-    .filter((s) => scannable.slice(s.start, s.end) === s.value)
+  const missed = credentialsAmong(valued)
+    .filter((s) => IDENTIFIER.test(s.value) && scannable.slice(s.start, s.end) === s.value)
     .map((s) => s.value)
     .filter((v) => !extractedNames.includes(v) && !isKeyword(v, language))
+  const valueWords = new Set<string>()
+  for (const [start, end] of values)
+    for (const [w] of scannable.slice(start, end).matchAll(WORDS)) valueWords.add(w)
   const identifiers =
     missed.length === 0
       ? extractedNames
@@ -1403,9 +1493,9 @@ export function anonymize(
 
   // Track whitelisted identifiers so the substitution loop knows to skip them
   const whitelisted = new Set<string>()
-  // Spec 064: ordinary words, never minted. An older map's entry for one is
-  // still substituted inside a credential (security review: a weak password
-  // that is a dictionary word), and nowhere else.
+  // Spec 064: ordinary words, minted only for their value positions. An older
+  // map's entry for one is substituted inside a credential or a value, and
+  // nowhere else.
   const ordinary = new Set<string>()
 
   for (const name of identifiers) {
@@ -1431,8 +1521,8 @@ export function anonymize(
     // is left as written - unless a custom replace rule asks for it. Like a
     // whitelisted name, an older map's entry for it is kept (old text still
     // restores) but no longer substituted.
-    // The value of a credential-named key is the exception (security audit):
-    // it is given a placeholder, written there and left readable elsewhere.
+    // In a value position it is masked (security review, round 3): given a
+    // placeholder, written there and left readable elsewhere.
     // With the budget spent, a replace rule can no longer say a word is not
     // its codename: the word is masked rather than shown.
     if (
@@ -1441,7 +1531,7 @@ export function anonymize(
       !(replacers.length > 0 && budget.spent)
     ) {
       ordinary.add(name)
-      if (!credentialWords.has(name)) continue
+      if (!valueWords.has(name)) continue
     }
 
     // Already mapped - unless it is an ordinary word the engine itself mapped
@@ -1547,7 +1637,7 @@ export function anonymize(
                     overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
                   (ordinary.has(m) &&
                     !overlapsAny(secretSpans, start + offset, start + offset + m.length) &&
-                    !overlapsAny(valueSpans, start + offset, start + offset + m.length))
+                    !covers(values, start + offset, start + offset + m.length))
                     ? m
                     : (reverseExisting[m] ?? m)
                 )
