@@ -18,10 +18,13 @@
 //     --concurrency <n> sessions started together, one arm per wave
 //                       (default: 1, one session at a time)
 //     --hours <h>       time box: no wave starts after it (default: none)
-//     --team <module>   the team behind the guard-team arm: a module whose
+//     --team <module>   the team behind the team arms (guard-team, mcp-team,
+//                       cli-team): a module whose
 //                       default export signs its members in, hands each
 //                       session its map and publishes it after (see
-//                       bench-lib.mjs loadTeam). The bench itself knows no
+//                       bench-lib.mjs loadTeam). Its beforeSession returns
+//                       { home }, the member's signed-in CLI home, for
+//                       mcp-team and cli-team. The bench itself knows no
 //                       Cloud instance.
 //     --validate        check every task's planted bug, run no session
 //     --plugin <dir>    the guard to measure (default: this one), such as a
@@ -50,7 +53,16 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { TOOLS, armArgs, callTeam, deadlinePassed, loadTeam, schedule } from './bench-lib.mjs'
+import {
+  ARM_ORDER,
+  TOOLS,
+  armArgs,
+  callTeam,
+  deadlinePassed,
+  isTeamArm,
+  loadTeam,
+  schedule,
+} from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -62,7 +74,6 @@ const { languageOfPath } = await import(join(HERE, '../../vendor/engine/index.js
 const PLUGIN = resolve(HERE, '../..')
 const CLI = resolve(PLUGIN, '../../packages/cli/dist/index.js')
 const MCP = resolve(PLUGIN, '../../packages/mcp/dist/index.js')
-const ALL_ARMS = ['plain', 'guard-cold', 'guard-warm', 'guard-team', 'mcp', 'cli']
 const DEFAULT_ARMS = ['plain', 'guard-cold', 'guard-warm']
 
 const { values: opt } = parseArgs({
@@ -91,7 +102,7 @@ const spec = JSON.parse(readFileSync(TASKS_FILE, 'utf8'))
 const only = opt.only?.split(',')
 const tasks = spec.tasks.filter((t) => !only || only.includes(t.id))
 const arms = opt.arms.split(',')
-for (const a of arms) if (!ALL_ARMS.includes(a)) throw new Error(`unknown arm: ${a}`)
+for (const a of arms) if (!ARM_ORDER.includes(a)) throw new Error(`unknown arm: ${a}`)
 const REPS = Number(opt.reps)
 const MAX_TURNS = Number(opt['max-turns'])
 const CONCURRENCY = Math.max(1, Number(opt.concurrency))
@@ -100,7 +111,8 @@ const MEMBERS = TEAM ? TEAM.members() : []
 // Two sessions of one wave for one member would pull and publish the same map.
 if (TEAM && CONCURRENCY > MEMBERS.length)
   throw new Error(`--concurrency ${CONCURRENCY} is more than the team's ${MEMBERS.length} members`)
-// The CLI runs signed out, in a HOME of its own. Signed in, every `veilio
+// The CLI runs signed out, in a HOME of its own (the mcp-team and cli-team
+// arms excepted: their sessions run in a member's home, from the team module). Signed in, every `veilio
 // scrub` asks Veilio Cloud for the team's maps and reserves placeholder
 // numbers: one request per file, hundreds per run, on whichever account the
 // developer is signed in to (a staging account's rate limit was exhausted
@@ -144,15 +156,24 @@ function cleanup(dir) {
 }
 temps.add(CLI_HOME)
 // The mcp and cli arms call `veilio` by name: a wrapper for this build, with
-// the same signed-out HOME, first on their PATH. Claude Code keeps the
-// developer's HOME for its own sign-in.
-const VEILIO_BIN = mkdtempSync(join(tmpdir(), 'veilio-bench-bin-'))
-temps.add(VEILIO_BIN)
-writeFileSync(
-  join(VEILIO_BIN, 'veilio'),
-  `#!/bin/sh\nHOME='${CLI_HOME}' exec node '${CLI}' "$@"\n`,
-  { mode: 0o755 }
-)
+// the signed-out HOME (a team arm's, the member's), first on their PATH.
+// Claude Code keeps the developer's HOME for its own sign-in.
+const bins = new Map()
+function veilioBin(home) {
+  if (!bins.has(home)) {
+    const dir = mkdtempSync(join(tmpdir(), 'veilio-bench-bin-'))
+    temps.add(dir)
+    // VEILIO_PROJECT cleared as the team module's own calls clear it: the
+    // member's chosen project, not the runner's environment, decides.
+    writeFileSync(
+      join(dir, 'veilio'),
+      `#!/bin/sh\nHOME='${home}' USERPROFILE='${home}' VEILIO_PROJECT= exec node '${CLI}' "$@"\n`,
+      { mode: 0o755 }
+    )
+    bins.set(home, dir)
+  }
+  return bins.get(home)
+}
 const MCP_SERVER = { command: 'node', args: [MCP], env: { HOME: CLI_HOME, USERPROFILE: CLI_HOME } }
 process.on('exit', () => [...temps].forEach(cleanup))
 // After the temp HOME is registered, so a refusal still removes it.
@@ -344,9 +365,12 @@ async function session(task, arm, rep, outDir, member) {
   try {
     // The mcp and cli arms work on the same map the warm guard has.
     if (arm === 'guard-warm' || arm === 'mcp' || arm === 'cli') buildMap(repo)
-    const a = armArgs(arm, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })
-    // The team's map, as this member has it: the team module writes it.
-    if (arm === 'guard-team') await callTeam(TEAM, 'beforeSession', { member, repo, task, rep })
+    // The team's map, as this member has it: the team module writes it, and
+    // names the member's signed-in home for mcp-team and cli-team.
+    const pre = isTeamArm(arm)
+      ? await callTeam(TEAM, 'beforeSession', { member, repo, task, rep, arm })
+      : {}
+    const a = armArgs(arm, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER, home: pre.home })
     const mapBefore = mapSize(repo)
     const prompt = spec.prompt.replaceAll('{test}', task.test)
     const args = [
@@ -384,7 +408,7 @@ async function session(task, arm, rep, outDir, member) {
     // Async, so the sessions of one wave run side by side.
     const run = await new Promise((done) => {
       const env = a.veilioOnPath
-        ? { ...process.env, PATH: `${VEILIO_BIN}:${process.env.PATH}` }
+        ? { ...process.env, PATH: `${veilioBin(a.home ?? CLI_HOME)}:${process.env.PATH}` }
         : process.env
       const child = spawn('claude', args, { cwd: repo, env, stdio: ['ignore', streamFd, errFd] })
       const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
@@ -461,10 +485,10 @@ async function session(task, arm, rep, outDir, member) {
       ...stream,
     }
     // What the team made of it: published or refused, restored or not.
-    if (arm === 'guard-team')
+    if (isTeamArm(arm))
       Object.assign(
         record,
-        await callTeam(TEAM, 'afterSession', { member, repo, task, rep, record })
+        await callTeam(TEAM, 'afterSession', { member, repo, task, rep, arm, record })
       )
     return record
   } finally {
@@ -484,11 +508,15 @@ if (!validate()) {
 if (opt.validate) process.exit(0)
 // The reference names (FR-011) come from the warm map, built once, whatever arms run.
 if (existsSync(CLI)) buildMap(null)
-if (arms.includes('mcp') && !existsSync(MCP))
+if ((arms.includes('mcp') || arms.includes('mcp-team')) && !existsSync(MCP))
   throw new Error(`${MCP} is missing: npm run build:packages first`)
 // Every arm's arguments, before anything is spent: a task list without an arm's
-// workflow text fails here, on a fresh or a resumed run alike.
-for (const x of arms) armArgs(x, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })
+// workflow text fails here, on a fresh or a resumed run alike. A team arm's
+// real home comes from the team module per session; this one stands for it.
+const MEMBER_HOME = "<the member's signed-in CLI home>"
+const armArgsFor = (x) =>
+  armArgs(x, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER, home: MEMBER_HOME })
+for (const x of arms) armArgsFor(x)
 if ((arms.some((x) => ['guard-warm', 'mcp', 'cli'].includes(x)) || TEAM) && !existsSync(CLI))
   throw new Error(`${CLI} is missing: npm run build:packages first`)
 
@@ -532,11 +560,10 @@ if (!existsSync(join(outDir, 'meta.json')))
           : null,
         maxTurns: MAX_TURNS,
         tools: TOOLS,
-        armTools: Object.fromEntries(
-          arms.map((x) => [x, armArgs(x, { armPrompts: spec.armPrompts, mcpServer: MCP_SERVER })])
-        ),
-        // The warm map was built by a signed-out CLI: no Cloud request.
-        cli: 'signed out, own HOME',
+        armTools: Object.fromEntries(arms.map((x) => [x, armArgsFor(x)])),
+        // The warm map was built by a signed-out CLI: no Cloud request. The
+        // team arms' CLI is signed in, through the team module.
+        cli: 'signed out, own HOME; mcp-team and cli-team: the member’s signed-in home',
       },
       null,
       2
@@ -585,7 +612,7 @@ for (const wave of waves) {
         wave.arm,
         wave.rep,
         outDir,
-        wave.arm === 'guard-team' ? MEMBERS[i.member] : undefined
+        isTeamArm(wave.arm) ? MEMBERS[i.member] : undefined
       ).then((r) => {
         records.push(r)
         appendFileSync(resultsPath, `${JSON.stringify(r)}\n`)
@@ -596,17 +623,17 @@ for (const wave of waves) {
       })
     )
   )
-  if (wave.arm === 'guard-team' && records.length) {
+  if (isTeamArm(wave.arm) && records.length) {
     // A count that could not be taken is written as such, never skipped.
     let w
     try {
-      w = await callTeam(TEAM, 'afterWave', { records, rep: wave.rep })
+      w = await callTeam(TEAM, 'afterWave', { records, rep: wave.rep, arm: wave.arm })
     } catch (error) {
       w = { error: String(error?.message ?? error).slice(0, 300) }
     }
     appendFileSync(
       join(outDir, 'waves.jsonl'),
-      `${JSON.stringify({ rep: wave.rep, tasks: records.map((r) => r.task), at: new Date().toISOString(), ...w })}\n`
+      `${JSON.stringify({ arm: wave.arm, rep: wave.rep, tasks: records.map((r) => r.task), at: new Date().toISOString(), ...w })}\n`
     )
   }
   // A session that did not run says nothing about the guard: the run stops,

@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { byLanguage } from './bench-lib.mjs'
+import { ARM_ORDER, byLanguage, teamTable } from './bench-lib.mjs'
 
 const dir = process.argv[2]
 const bi = process.argv.indexOf('--baseline')
@@ -25,9 +25,7 @@ const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .map((r) => ({ ...r, contextTokens: r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens }))
 
 // From the results, not meta.json: a resumed run can cover more than it began with.
-const arms = ['plain', 'guard-cold', 'guard-warm', 'guard-team', 'mcp', 'cli'].filter((a) =>
-  runs.some((r) => r.arm === a)
-)
+const arms = ARM_ORDER.filter((a) => runs.some((r) => r.arm === a))
 const tasks = [...new Set(runs.map((r) => r.task))]
 const reps = Math.max(...runs.map((r) => r.rep))
 const METRICS = [
@@ -75,7 +73,7 @@ if (meta.settings?.enabledPlugins)
     ''
   )
 out.push(
-  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session. **mcp** has no guard: Claude reads code only through the Veilio MCP server and restores its fix with `veilio restore`. **cli** has no guard: Claude reads code only through `veilio scrub` and restores with `veilio restore`. Both work on the warm map.',
+  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session. **mcp** has no guard: Claude reads code only through the Veilio MCP server and restores its fix with `veilio restore`. **cli** has no guard: Claude reads code only through `veilio scrub` and restores with `veilio restore`. Both work on the warm map. **mcp-team** and **cli-team** are mcp and cli with the CLI and MCP server signed in as a team member, on the map that member pulled, published back after the session, like guard-team.',
   ''
 )
 if (meta.concurrency > 1)
@@ -158,25 +156,10 @@ if (Object.keys(langs).length > 1 || !langs.unknown) {
 const teamRuns = runs.filter((r) => r.team)
 if (teamRuns.length) {
   out.push('## The team', '')
-  const count = (f) => teamRuns.filter(f).length
-  const publish = {}
-  for (const r of teamRuns) publish[r.team.publish] = (publish[r.team.publish] ?? 0) + 1
-  out.push(`| | sessions |`, `|---|---|`)
-  for (const [k, v] of Object.entries(publish).sort()) out.push(`| publish ${k} | ${v} |`)
-  const sum = (k) => teamRuns.reduce((s, r) => s + (r.team.restore?.[k] ?? 0), 0)
-  out.push(
-    `| teammate placeholders restored right · left · wrong | ${sum('right')} · ${sum('left')} · ${sum('wrong')} |`
-  )
-  out.push(
-    `| new names minted in sessions | ${teamRuns.reduce((s, r) => s + (r.team.minted ?? 0), 0)} |`
-  )
-  out.push(
-    `| Cloud requests by the CLI (sessions' pull and publish) | ${teamRuns.reduce((s, r) => s + (r.team.requests ?? 0), 0)} |`
-  )
-  out.push(
-    `| sessions with a refused publish | ${count((r) => !['ok', 'unchanged'].includes(r.team.publish))} |`,
-    ''
-  )
+  const t = teamTable(runs)
+  out.push(`| | ${t.arms.join(' | ')} |`, `|---|${t.arms.map(() => '---').join('|')}|`)
+  for (const [label, ...cells] of t.rows) out.push(`| ${label} | ${cells.join(' | ')} |`)
+  out.push('')
   const wavesPath = join(dir, 'waves.jsonl')
   if (existsSync(wavesPath)) {
     const waves = readFileSync(wavesPath, 'utf8')
@@ -267,7 +250,7 @@ for (const r of runs) {
     warnings.push(`${r.task} ${r.arm} #${r.rep}: guarded session did not list the guard`)
   if (r.arm !== 'plain' && r.mapAfter === 0 && wantsGuard)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: the map is empty after the session`)
-  if (['guard-warm', 'guard-team', 'mcp', 'cli'].includes(r.arm) && r.mapBefore === 0)
+  if (r.arm !== 'plain' && r.arm !== 'guard-cold' && r.mapBefore === 0)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: started on an empty map`)
   // Claude Code loads a few plugins of its own whatever the settings say; what
   // matters is that every session loads the same ones.
@@ -279,11 +262,12 @@ for (const r of runs) {
     warnings.push(
       `${r.task} ${r.arm} #${r.rep}: other plugins differ (${others || 'none'}, not ${baseline || 'none'})`
     )
-  if (r.arm === 'mcp' && (r.mcpStatus ?? []).join() !== 'veilio:connected')
+  const mcpArm = r.arm === 'mcp' || r.arm === 'mcp-team'
+  if (mcpArm && (r.mcpStatus ?? []).join() !== 'veilio:connected')
     warnings.push(
-      `${r.task} mcp #${r.rep}: the MCP server was not connected (${(r.mcpStatus ?? []).join(', ') || 'none'})`
+      `${r.task} ${r.arm} #${r.rep}: the MCP server was not connected (${(r.mcpStatus ?? []).join(', ') || 'none'})`
     )
-  if (r.arm === 'mcp' ? r.mcpServers.join() !== 'veilio' : r.mcpServers.length)
+  if (mcpArm ? r.mcpServers.join() !== 'veilio' : r.mcpServers.length)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: MCP servers loaded (${r.mcpServers.join(', ')})`)
   if (r.subtype === 'no-result') warnings.push(`${r.task} ${r.arm} #${r.rep}: no result line`)
   if (r.arm !== 'plain' && r.leakedNames?.length)
@@ -299,7 +283,7 @@ out.push('## Checks on the run itself', '')
 out.push(
   warnings.length
     ? warnings.map((w) => `- ${w}`).join('\n')
-    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own), no MCP server outside the mcp arm (where only Veilio's, connected), and every masked session had a map.`
+    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own), no MCP server outside the mcp arms (where only Veilio's, connected), and every masked session had a map.`
 )
 out.push('')
 

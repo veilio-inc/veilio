@@ -65,16 +65,32 @@ export function byLanguage(runs) {
   return out
 }
 
+/** Every arm, in the order the run lists them and the score shows them. */
+export const ARM_ORDER = [
+  'plain',
+  'guard-cold',
+  'guard-warm',
+  'guard-team',
+  'mcp',
+  'mcp-team',
+  'cli',
+  'cli-team',
+]
+
+/** An arm whose sessions are worked by a team member: the team module is needed. */
+export const isTeamArm = (arm) => arm.endsWith('-team')
+
 const HOOKS = ['members', 'setup', 'beforeSession', 'afterSession', 'afterWave', 'teardown']
 
 /**
- * The team module behind the guard-team arm, or null when no arm needs one.
+ * The team module behind the team arms, or null when no arm needs one.
  * The bench knows nothing of any Cloud instance: signing in, sharing maps and
  * counting what the team's maps hold are the module's.
  */
 export async function loadTeam(spec, arms) {
-  if (!arms.includes('guard-team')) return null
-  if (!spec) throw new Error('guard-team needs --team <module>: the arm has no team without one')
+  const arm = arms.find(isTeamArm)
+  if (!arm) return null
+  if (!spec) throw new Error(`${arm} needs --team <module>: the arm has no team without one`)
   const mod = (await import(spec)).default
   for (const h of HOOKS)
     if (typeof mod?.[h] !== 'function') throw new Error(`the team module is missing ${h}()`)
@@ -102,17 +118,29 @@ const withoutRawReads = (extra) =>
  *   anonymize_file, and a fix goes back through `veilio restore`.
  * - cli: no guard; code is read only through `veilio scrub`, and a fix goes
  *   back through `veilio restore`.
+ * - mcp-team, cli-team: mcp and cli in a team member's signed-in CLI home
+ *   (`home`, from the team module), so the MCP server and `veilio` number from
+ *   the team's maps and the member's reserved blocks. mcp and cli always keep
+ *   the signed-out home: `home` is null for them, whatever is passed.
  *
  * The workflow text an mcp or cli session is given comes from the task list
  * (`armPrompts`), so the bench itself says nothing about how a product is used.
  */
-export function armArgs(arm, { armPrompts = {}, mcpServer } = {}) {
-  if (arm === 'mcp' || arm === 'cli') {
-    const prompt = armPrompts[arm]
-    if (!prompt) throw new Error(`the ${arm} arm needs armPrompts.${arm} in the task list`)
-    if (arm === 'mcp' && !mcpServer) throw new Error('the mcp arm needs an mcpServer')
+export function armArgs(arm, { armPrompts = {}, mcpServer, home } = {}) {
+  const base = arm === 'mcp-team' || arm === 'cli-team' ? arm.slice(0, 3) : arm
+  if (base === 'mcp' || base === 'cli') {
+    const team = base !== arm
+    // The product's own workflow text; a team variant only if the task list has one.
+    const prompt = armPrompts[arm] ?? armPrompts[base]
+    if (!prompt) throw new Error(`the ${arm} arm needs armPrompts.${base} in the task list`)
+    if (base === 'mcp' && !mcpServer) throw new Error(`the ${arm} arm needs an mcpServer`)
+    if (team && !home) throw new Error(`the ${arm} arm needs the member's signed-in home`)
+    const server =
+      base === 'mcp' && team
+        ? { ...mcpServer, env: { HOME: home, USERPROFILE: home, VEILIO_PROJECT: '' } }
+        : mcpServer
     const extra =
-      arm === 'mcp'
+      base === 'mcp'
         ? [
             'mcp__veilio__anonymize_file',
             'mcp__veilio__symbol_map_summary',
@@ -123,9 +151,10 @@ export function armArgs(arm, { armPrompts = {}, mcpServer } = {}) {
       guard: false,
       allowed: withoutRawReads(extra),
       disallowed: RAW_READS.join(','),
-      mcpConfig: arm === 'mcp' ? { mcpServers: { veilio: mcpServer } } : null,
+      mcpConfig: base === 'mcp' ? { mcpServers: { veilio: server } } : null,
       appendPrompt: prompt,
       veilioOnPath: true,
+      home: team ? home : null,
     }
   }
   return {
@@ -135,5 +164,48 @@ export function armArgs(arm, { armPrompts = {}, mcpServer } = {}) {
     mcpConfig: null,
     appendPrompt: null,
     veilioOnPath: false,
+  }
+}
+
+const RESTORES = ['right', 'left', 'leftLocal', 'wrong']
+
+/**
+ * The score's team section: one column per team arm that ran, so a refusal or
+ * a wrong restore shows under the arm it happened in.
+ */
+export function teamTable(runs) {
+  const teamRuns = runs.filter((r) => r.team)
+  const arms = ARM_ORDER.filter((a) => teamRuns.some((r) => r.arm === a))
+  if (!arms.length) return { arms, rows: [] }
+  const of = (a) => teamRuns.filter((r) => r.arm === a)
+  const row = (label, f) => [label, ...arms.map((a) => String(f(of(a))))]
+  const sum = (rs, f) => rs.reduce((s, r) => s + (f(r.team) ?? 0), 0)
+  const kinds = [...new Set(teamRuns.map((r) => r.team.publish))].sort()
+  return {
+    arms,
+    rows: [
+      row('sessions', (rs) => rs.length),
+      ...kinds.map((k) =>
+        row(`publish ${k}`, (rs) => rs.filter((r) => r.team.publish === k).length)
+      ),
+      row(
+        'sessions with a refused publish',
+        (rs) => rs.filter((r) => !['ok', 'unchanged'].includes(r.team.publish)).length
+      ),
+      row(
+        'sessions whose reservation was refused',
+        (rs) => rs.filter((r) => r.team.pull?.refused).length
+      ),
+      row('teammate placeholders restored right · left · left-local · wrong', (rs) =>
+        RESTORES.map((k) => sum(rs, (t) => t.restore?.[k])).join(' · ')
+      ),
+      row('minted outside the local family after a refusal', (rs) =>
+        sum(rs, (t) => t.regressed?.length)
+      ),
+      row('new names minted in sessions', (rs) => sum(rs, (t) => t.minted)),
+      row('Cloud requests by the CLI (sessions’ pull and publish)', (rs) =>
+        sum(rs, (t) => t.requests)
+      ),
+    ],
   }
 }
