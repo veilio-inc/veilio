@@ -19,7 +19,7 @@ import {
 import { bandText } from '../../plugins/veilio-guard/lib/ui.ts'
 import { Guard, type GuardIO } from '../../plugins/veilio-guard/lib/guard.ts'
 import { ruleBudget } from '../../plugins/veilio-guard/vendor/engine/index.js'
-import type { CustomRule } from '../../plugins/veilio-guard/vendor/engine/index.js'
+import type { CustomRule, RuleBudget } from '../../plugins/veilio-guard/vendor/engine/index.js'
 
 // Security audit: a Read whose custom rules ran out of matching budget is
 // counted, and the band says custom rules stopped matching.
@@ -103,7 +103,7 @@ describe('one rule budget per hook invocation', () => {
     } as Guard['rules']
     return g
   }
-  const read = (g: Guard, name: string, content: string) => {
+  const read = (g: Guard, name: string, content: string, budget?: RuleBudget) => {
     const path = join(root, name)
     writeFileSync(path, content)
     return g.afterTool(
@@ -114,19 +114,23 @@ describe('one rule budget per hook invocation', () => {
           type: 'text',
           file: { filePath: path, content, numLines: 1, startLine: 1, totalLines: 1 },
         },
-      }
+      },
+      Date.now() + 60_000,
+      budget
     )
   }
 
   it('a Bash result in a guard: the band says rules stopped', async () => {
     const g = await hostile()
-    g.invocation()
+    const budget = g.invocation()
     const started = performance.now()
     const out = JSON.stringify(
       await g.afterTool(
         'Bash',
         { tool: 'Bash', command: 'ls' },
-        { result: { stdout: OUTPUT, stderr: '', interrupted: false, isImage: false } }
+        { result: { stdout: OUTPUT, stderr: '', interrupted: false, isImage: false } },
+        Date.now() + 60_000,
+        budget
       )
     )
     expect(performance.now() - started).toBeLessThan(20_000)
@@ -136,19 +140,43 @@ describe('one rule budget per hook invocation', () => {
 
   it('files read in one invocation share it; the next invocation starts afresh', async () => {
     const g = await hostile()
-    g.invocation()
-    await read(g, 'big.ts', SOURCE)
-    expect(g.budget.spent).toBe(true)
+    let budget = g.invocation()
+    await read(g, 'big.ts', SOURCE, budget)
+    expect(budget.spent).toBe(true)
     const afterBig = g.counts.rulesStopped
     expect(afterBig).toBeGreaterThan(0)
     // A one-line file on its own would never spend it: shared, it is spent.
-    await read(g, 'small.ts', 'const small_name_x = 1\n')
+    await read(g, 'small.ts', 'const small_name_x = 1\n', budget)
     expect(g.counts.rulesStopped).toBeGreaterThan(afterBig)
-    g.invocation()
-    expect(g.budget.spent).toBe(false)
+    budget = g.invocation()
+    expect(budget.spent).toBe(false)
     const before = g.counts.rulesStopped
-    await read(g, 'other.ts', 'const other_name_x = 1\n')
-    expect(g.budget.spent).toBe(false)
+    await read(g, 'other.ts', 'const other_name_x = 1\n', budget)
+    expect(budget.spent).toBe(false)
     expect(g.counts.rulesStopped).toBe(before)
+  })
+
+  it('an index slice between beforeTool and afterTool does not refill the hook’s budget', async () => {
+    const g = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await g.load(root)
+    const keep: CustomRule = { ...HOSTILE[0]!, id: 'keep', pattern: '^keep_me' }
+    g.rules = {
+      state: 'applied',
+      rules: [keep],
+      skipped: { vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 },
+    } as Guard['rules']
+    const path = join(root, 'a.ts')
+    writeFileSync(path, 'const keep_me_name = 1\n')
+    const budget = g.invocation()
+    await g.beforeTool({ tool: 'Read', file_path: path }, budget)
+    // The hook's own work spent its budget ...
+    budget.left = -1
+    budget.spent = true
+    // ... then the background index takes a slice, with a budget of its own.
+    g.invocation()
+    await g.indexProject(Date.now() + 1000)
+    const out = JSON.stringify(await read(g, 'a.ts', 'const keep_me_name = 1\n', budget))
+    // Spent, no rule keeps a name readable: the whitelisted name is masked.
+    expect(out).not.toContain('keep_me_name')
   })
 })

@@ -49,6 +49,7 @@ import {
 } from './scrub.ts'
 import type { MaskContext, Numbering, ScanResult } from './scrub.ts'
 import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
+import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
@@ -148,15 +149,20 @@ export class Guard {
   mcpRestore: string[] = []
   /** rulesStopped: Reads whose custom rules ran out of matching budget (security audit). */
   counts = { withheld: 0, denied: 0, outsideReserved: 0, rulesStopped: 0 }
-  /** The current hook invocation's allowance of rule-matching steps, shared
-   *  by every file and tool output it masks (security review). */
-  budget = ruleBudget()
+  /** The newest hook invocation's rule budget, read by the band only: work
+   *  draws on the budget it is handed, never on this. */
+  latest: RuleBudget = ruleBudget()
+  /** What the running index batch draws on: the budget of the hook (or the
+   *  background slice) that started it. Batches run one at a time. */
+  private indexBudget: RuleBudget = ruleBudget()
 
-  /** A new hook invocation: a fresh rule budget. A spent one is counted, so
-   *  the band still says rules stopped. */
-  invocation(): void {
-    if (this.budget.spent) this.counts.rulesStopped++
-    this.budget = ruleBudget()
+  /** A new hook invocation's allowance of rule-matching steps, shared by every
+   *  file and tool output it masks and threaded through its calls, so nothing
+   *  else - a background index slice, another hook - can refill it (security
+   *  review). A spent one before it is counted, for the band. */
+  invocation(): RuleBudget {
+    if (this.latest.spent) this.counts.rulesStopped++
+    return (this.latest = ruleBudget())
   }
   /** Spec 063: this member's blocks of team numbers (.veilio/reserved.json), or why there are none. */
   reserved: Reserved | null = null
@@ -293,7 +299,7 @@ export class Guard {
           undefined,
           this.numbering,
           this.rules.rules,
-          this.budget
+          this.indexBudget
         )
         this.counts.outsideReserved += outside
         if (rulesStopped) this.counts.rulesStopped++
@@ -309,9 +315,13 @@ export class Guard {
   /** Indexes `paths` before `deadline` and saves what they add, in one write.
    *  Returns the paths it could not index. One batch at a time: the map's
    *  placeholders are numbered from what the last batch saved. */
-  indexFiles(paths: readonly string[], deadline: number): Promise<string[]> {
+  indexFiles(
+    paths: readonly string[],
+    deadline: number,
+    budget: RuleBudget = ruleBudget()
+  ): Promise<string[]> {
     const run = this.indexing.then(() =>
-      this.indexBatch(deadline, () => this.index!.index(paths, deadline))
+      this.indexBatch(deadline, budget, () => this.index!.index(paths, deadline))
     )
     this.indexing = run.catch(() => undefined)
     // Waiting for the batch ahead counts against this deadline too: late, every
@@ -327,9 +337,9 @@ export class Guard {
   }
 
   /** Continues through the project's files not indexed yet, until `deadline`. */
-  indexProject(deadline: number): Promise<string[]> {
+  indexProject(deadline: number, budget: RuleBudget = ruleBudget()): Promise<string[]> {
     const run = this.indexing.then(() =>
-      this.indexBatch(deadline, async () => {
+      this.indexBatch(deadline, budget, async () => {
         await this.index!.run(deadline)
         return []
       })
@@ -338,8 +348,13 @@ export class Guard {
     return run
   }
 
-  private async indexBatch(deadline: number, work: () => Promise<string[]>): Promise<string[]> {
+  private async indexBatch(
+    deadline: number,
+    budget: RuleBudget,
+    work: () => Promise<string[]>
+  ): Promise<string[]> {
     if (!this.index) return []
+    this.indexBudget = budget
     // The listing gives the project's shape (what is external); a late one
     // only means fewer names are exempt, so the batch goes on without it.
     await bounded(this.index.start(), deadline, this.clock)
@@ -412,7 +427,8 @@ export class Guard {
   private async indexNamed(
     args: ToolEvent,
     texts: string[],
-    deadline: number
+    deadline: number,
+    budget: RuleBudget
   ): Promise<string | null> {
     if (!this.index) return null
     // Paths resolve against the listing, so it comes first (bounded: a late
@@ -429,11 +445,11 @@ export class Guard {
       // 2947c81). Only a complete index then lets the result through.
       if (onDisk !== rel) missing++
     }
-    const missed = exist.length ? await this.indexFiles(exist, deadline) : []
+    const missed = exist.length ? await this.indexFiles(exist, deadline, budget) : []
     // A path the guard could not find may be in a file it has not indexed yet
     // (a name with a space, a form it does not read): the index is finished
     // first, or the result waits.
-    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline)
+    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline, budget)
     const files = (n: number) => `${n} source file${n === 1 ? '' : 's'}`
     const unread = missed.filter((rel) => this.index!.failed.has(rel)).length
     if (unread) return `it names ${files(unread)} Veilio could not read to check`
@@ -573,8 +589,13 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    return this.gate(this.maskText(text, kind, scan))
+  applyText(
+    text: string,
+    kind: MaskContext['kind'] = 'result',
+    scan?: ScanResult,
+    budget: RuleBudget = ruleBudget()
+  ): string {
+    return this.gate(this.maskText(text, kind, scan, budget))
   }
 
   /** Spec 065: the names a replace rule matches in text bound for the model
@@ -582,13 +603,18 @@ export class Guard {
    *  minted under the rule's placeholder and saved before the text is masked,
    *  so the masking that follows writes them over and an edit restores them.
    *  Found in the masked text, so a credential is never minted. */
-  async learnRuleNames(texts: readonly string[]): Promise<void> {
+  async learnRuleNames(texts: readonly string[], budget: RuleBudget = ruleBudget()): Promise<void> {
     if (!this.rules.rules.some((r) => r.type === 'replace')) return
-    const ctx = this.context('unknown', 'prompt')
+    const ctx = this.context('unknown', 'prompt', budget)
     const working = ownedMap(this.map)
     const additions = ownedMap()
     for (const t of texts) {
-      const r = maskShaped(this.maskText(t, 'prompt'), working, ctx, this.numbering)
+      const r = maskShaped(
+        this.maskText(t, 'prompt', undefined, budget),
+        working,
+        ctx,
+        this.numbering
+      )
       grow(working, r.additions)
       grow(additions, r.additions)
     }
@@ -597,8 +623,16 @@ export class Guard {
   }
 
   /** Masks without the last gate: for a caller that has a fallback. */
-  maskText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
+  maskText(
+    text: string,
+    kind: MaskContext['kind'] = 'result',
+    scan?: ScanResult,
+    budget: RuleBudget = ruleBudget()
+  ): string {
+    return applyMap(text, this.map, this.context('unknown', kind, budget), {
+      known: this.destroyed,
+      scan,
+    })
   }
 
   /** The same last gate as a tool's result: a credential still here fails the
@@ -646,7 +680,7 @@ export class Guard {
    *  nothing written against it joins it, and a secret laid across it is
    *  still one match (review of d18b5c5). A text that already holds a mark's
    *  characters gets no exemption. */
-  applyContext(text: string, scan?: ScanResult): string {
+  applyContext(text: string, scan?: ScanResult, budget: RuleBudget = ruleBudget()): string {
     // Every copy is held as one opaque mark while the text is masked, so a
     // secret laid across one is still one match. Only a copy that is a whole
     // section (a body that is the held text, or starts with it before a
@@ -654,7 +688,7 @@ export class Guard {
     // the text around it (security review of 933156e).
     const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
     if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
-      return this.applyText(text, 'result', scan)
+      return this.applyText(text, 'result', scan, budget)
     const isWhole = (at: number, h: string) =>
       (at === 0 || text[at - 1] === '\n') &&
       (at + h.length === text.length ||
@@ -688,13 +722,18 @@ export class Guard {
     // The whole, read back, scanned once more: anything a hold let through
     // sends the text through full masking first; only if that too leaves a
     // credential does the text fail (review of 6e14ec6).
-    return this.holdAndMask(text, spans, (key) => {
+    return this.holdAndMask(text, spans, budget, (key) => {
       const h = held[Number(key.slice(0, key.indexOf(':')))]!
-      if (!key.endsWith(':1')) return this.maskText(h)
+      if (!key.endsWith(':1')) return this.maskText(h, 'result', undefined, budget)
       if (h === MODEL_NOTE) return h
-      return applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
-        scanned: true,
-      })
+      return applyMap(
+        redactKnown(h, this.destroyed),
+        this.map,
+        this.context('unknown', 'result', budget),
+        {
+          scanned: true,
+        }
+      )
     })
   }
 
@@ -702,15 +741,19 @@ export class Guard {
    *  entry (lib/listings.ts) where it stands whole is held while the listing
    *  is masked as a whole, then put back as written, less any credential
    *  this session destroyed. Everything else is masked as any reminder is. */
-  applyListing(text: string, entries: readonly string[]): string {
+  applyListing(
+    text: string,
+    entries: readonly string[],
+    budget: RuleBudget = ruleBudget()
+  ): string {
     if (entries.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
-      return this.applyText(text)
+      return this.applyText(text, 'result', undefined, budget)
     const spans = wholeEntries(text, entries).map(({ at, entry }) => ({
       at,
       length: entry.length,
       key: entry,
     }))
-    return this.holdAndMask(text, spans, (entry) => redactKnown(entry, this.destroyed))
+    return this.holdAndMask(text, spans, budget, (entry) => redactKnown(entry, this.destroyed))
   }
 
   /** Masks `text` as a whole with each span held as one opaque mark, and puts
@@ -724,9 +767,10 @@ export class Guard {
   private holdAndMask(
     text: string,
     spans: readonly HeldSpan[],
+    budget: RuleBudget,
     back: (key: string) => string
   ): string {
-    const full = () => this.gate(this.maskText(text))
+    const full = () => this.gate(this.maskText(text, 'result', undefined, budget))
     if (text.includes('\u0000') || text.includes('\u0001')) return full()
     const marks = new Map<string, string>()
     let marked = ''
@@ -739,7 +783,7 @@ export class Guard {
       at = span.at + span.length
     }
     marked += text.slice(at)
-    let out = this.maskText(marked)
+    let out = this.maskText(marked, 'result', undefined, budget)
     for (const [key, mark] of marks) out = out.split(mark).join(back(key))
     if (out.includes('\u0000') || out.includes('\u0001')) return full()
     if (survivingSecrets(out, this.map).length > 0) return full()
@@ -747,9 +791,12 @@ export class Guard {
   }
 
   /** What masking knows about a text of `language` (spec 050). */
-  context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
+  context(
+    language: MaskContext['language'],
+    kind: MaskContext['kind'] = 'result',
+    budget: RuleBudget
+  ): MaskContext {
     const rules = this.rules.rules
-    const budget = this.budget
     if (!this.index) return { ...NO_CONTEXT, language, kind, rules, budget }
     return {
       language,
@@ -792,7 +839,10 @@ export class Guard {
   }
 
   /** Before the tool runs: the raw-only check, then the arguments restored. */
-  async beforeTool(e: ToolEvent): Promise<{ deny: string } | { args: ToolEvent }> {
+  async beforeTool(
+    e: ToolEvent,
+    budget: RuleBudget = ruleBudget()
+  ): Promise<{ deny: string } | { args: ToolEvent }> {
     const policy = argumentPolicy(e.tool, this.mcpRestore)
     const unresolved = new Set<string>()
     const altered = new Set<string>()
@@ -845,7 +895,7 @@ export class Guard {
       for (const p of [e[field], args[field]]) {
         if (typeof p === 'string' && (await this.rawOnlyHit(p))) {
           return this.deny(
-            `Veilio keeps ${this.applyText(p)} away from the model. Ask the user for what you need from it`,
+            `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
             false
           )
         }
@@ -857,7 +907,7 @@ export class Guard {
         for (const word of pathsInCommand(c)) {
           if (await this.rawOnlyHit(word)) {
             return this.deny(
-              `Veilio keeps ${this.applyText(word)} away from the model. Ask the user for what you need from it`,
+              `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
             )
           }
@@ -877,7 +927,7 @@ export class Guard {
           // A path, not prose that mentions one: no whitespace.
           if (isPathLike(s) && (await this.rawOnlyHit(s))) {
             return this.deny(
-              `Veilio keeps ${this.applyText(s)} away from the model. Ask the user for what you need from it`,
+              `Veilio keeps ${this.applyText(s, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
             )
           }
@@ -937,13 +987,14 @@ export class Guard {
     raw: string,
     args: ToolEvent,
     deadline: number,
+    budget: RuleBudget,
     indexed = false
   ): Promise<ToolOutcome> {
     if (!indexed) {
-      const unchecked = await this.indexNamed(args, [raw], deadline)
+      const unchecked = await this.indexNamed(args, [raw], deadline, budget)
       if (unchecked) return this.withhold(unchecked)
     }
-    const ctx = this.context('unknown')
+    const ctx = this.context('unknown', 'result', budget)
     const shaped = maskShaped(
       applyMap(raw, this.map, ctx, { known: this.destroyed }),
       this.map,
@@ -968,11 +1019,12 @@ export class Guard {
     tool: string,
     args: ToolEvent,
     received: { deny?: string; result?: unknown; text?: string; isError?: boolean },
-    deadline = Date.now() + 6_000
+    deadline = Date.now() + 6_000,
+    budget: RuleBudget = ruleBudget()
   ): Promise<ToolOutcome> {
     let outcome = received
     // A denial reaches the model as text, like an error's: masked the same way.
-    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline)
+    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
@@ -980,7 +1032,7 @@ export class Guard {
       texts.push(s)
       return s
     })
-    const unchecked = await this.indexNamed(args, texts, deadline)
+    const unchecked = await this.indexNamed(args, texts, deadline, budget)
     if (unchecked) return this.withhold(unchecked)
     // What any scan of this result destroys is removed from all of it, as
     // written, before anything is masked: no repeat of a credential on
@@ -996,7 +1048,7 @@ export class Guard {
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
       this.destroyed.learn(destroyedValues([raw], this.map))
-      return this.maskMessage(strip(raw), args, deadline, true)
+      return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     // The file's kind, never its path (engine spec 013 R19): the
@@ -1028,13 +1080,13 @@ export class Guard {
       const working: SymbolMap = ownedMap(this.map)
       const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
-      const ctx = this.context(this.resultLanguage(tool, args, filePath))
+      const ctx = this.context(this.resultLanguage(tool, args, filePath), 'result', budget)
       // A Grep result mixes files: each line is masked in its own file's language.
       const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
         tool === 'Grep'
           ? s
               .split('\n')
-              .map((line) => fn(line, this.context(languageOfGrepLine(line))))
+              .map((line) => fn(line, this.context(languageOfGrepLine(line), 'result', budget)))
               .join('\n')
           : fn(s, ctx)
       // Swept already, above: each string is scanned once here.
@@ -1065,7 +1117,7 @@ export class Guard {
               fileKind,
               this.numbering,
               this.rules.rules,
-              this.budget
+              budget
             )
             this.counts.outsideReserved += scrubbed.outside
             if (scrubbed.rulesStopped) this.counts.rulesStopped++
