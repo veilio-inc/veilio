@@ -1126,6 +1126,11 @@ const WORDS = /[A-Za-z_$][\w$]*/g
  *  code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
  *  or pasted text no language claims has no grammar of its own, and every
  *  value grammar applies (security review, round 4). */
+/** Code whose language is only guessed: no path, no kind, no language named. */
+function guessedCode(opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>): boolean {
+  return !opts.fileKind && !opts.path && (opts.language ?? 'auto') === 'auto'
+}
+
 function valueKind(
   code: string,
   opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>
@@ -1137,13 +1142,6 @@ function valueKind(
   return (opts.language ?? 'auto') !== 'auto' || !guessLanguage(code).fallback ? 'code' : undefined
 }
 
-/** Whether the text came from code - a code file's path or a named
- *  language - whatever grammar its content is read by. */
-function fromCode(opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>): boolean {
-  if ((opts.language ?? 'auto') !== 'auto') return true
-  return !opts.fileKind && !!opts.path && fileKindOf(opts.path) === undefined
-}
-
 /** Where `code` holds values, as `anonymize` reads them (security review,
  *  round 3): an ordinary word there is masked, and a value under a
  *  credential key is redacted. */
@@ -1153,7 +1151,7 @@ export function valuePositions(
 ): ValueSpan[] {
   const kind = valueKind(code, opts)
   const language = describeLanguage(code, opts.language).language
-  return valuesIn(code, language, kind, kind === 'code' || fromCode(opts))
+  return valuesIn(code, language, kind, guessedCode(opts))
 }
 
 /** `detectSecrets`, and every credential value `anonymize` would redact that
@@ -1193,7 +1191,7 @@ function valuesIn(
   text: string,
   language: Language,
   kind: ValueGrammar | 'code' | undefined,
-  code = kind === 'code'
+  net = false
 ): ValueSpan[] {
   const strings: { start: number; end: number; module?: boolean }[] = []
   let at = 0
@@ -1205,7 +1203,7 @@ function valuesIn(
     }
     at += s.text.length
   }
-  return valueSpans(text, { strings, kind, language, code })
+  return valueSpans(text, { strings, kind, language, net })
 }
 
 /** Spans as sorted, disjoint ranges, for `covers`. */
@@ -1445,7 +1443,7 @@ export function anonymize(
   // by a rule - except where a rule found it, which those modes leave as
   // written by the user's choice.
   const kind = valueKind(code, opts)
-  const calls = kind === 'code' || fromCode(opts)
+  const net = guessedCode(opts)
   const policy = opts.secrets ?? 'redact'
   const reported =
     policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end] as const)
@@ -1455,7 +1453,7 @@ export function anonymize(
     const tokens = new Map<string, string>()
     let out = ''
     let at = 0
-    for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, calls))) {
+    for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, net))) {
       if (mapped.has(value) || destroyed.has(value) || overlapsAny(reported, start, end)) continue
       if (!tokens.has(value)) tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`)
       out += marked.slice(at, start) + tokens.get(value)
@@ -1471,7 +1469,7 @@ export function anonymize(
     if (words.length > 0) {
       out = ''
       at = 0
-      for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, calls))) {
+      for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, net))) {
         let part = unvalued.slice(start, end)
         for (const [value, token] of words) part = replaceWholeWord(part, value, token)
         out += unvalued.slice(at, start) + part
@@ -1498,7 +1496,7 @@ export function anonymize(
   // in `source`, so the offsets are the ones substitution sees.
   const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end] as const)
   // Every value position but a path's: an ordinary word there is masked.
-  const valued = valuesIn(source, language, kind, calls).filter((s) => !s.path)
+  const valued = valuesIn(source, language, kind, net).filter((s) => !s.path)
   const values = mergedRanges(valued)
   // A name the existing map already holds may still be substituted inside one:
   // that writes nothing new, and the guard relies on it for a plain word

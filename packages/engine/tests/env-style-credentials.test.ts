@@ -236,8 +236,6 @@ describe('engine 1.12.2: nothing new outside dotenv, YAML and shell files', () =
       'const c = {\n  DB_PASSWORD: getSecret("db"),\n}\n',
       undefined,
     ],
-    ['a Python call', 'SECRET_KEY=os.getenv("SECRET_KEY")\nAPI_KEY=get_key()\n', 'a.py'],
-    ['a JS call', 'TOKEN=getToken();\n', 'a.js'],
     ['a string in code', 'run("PGPASSWORD=$PGPASS")\n', 'a.py'],
     ['an env line in JSON', '{"env": "PGPASSWORD=$PGPASS", "x": 1}\n', 'a.json'],
   ] as const
@@ -497,9 +495,17 @@ describe('engine 1.13.0: fileKindOf and the fileKind option', () => {
   })
 
   it('a .env.ts source file is code, not dotenv', () => {
-    expect(
-      anonymize('secret = config.secretValue\n', { path: 'src/.env.ts' }).anonymized
-    ).not.toMatch(REDACTED)
+    expect(fileKindOf('src/.env.ts')).toBeUndefined()
+  })
+
+  // Review of round 4: a code file whose text reads as no code is read as
+  // configuration, and there a call or member access is a value: fail closed.
+  it.each([
+    ['secret = config.secretValue\n', 'src/.env.ts'],
+    ['SECRET_KEY=os.getenv("SECRET_KEY")\n', 'a.py'],
+    ['TOKEN=getToken();\n', 'a.js'],
+  ])('%j in %s, read as configuration, is redacted', (text, path) => {
+    expect(anonymize(text, { path }).anonymized).toMatch(REDACTED)
   })
 })
 

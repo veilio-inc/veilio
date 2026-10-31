@@ -76,8 +76,13 @@ Not masked:
   of one or two characters, a placeholder (`<your password>`), an unquoted
   `$NAME` or `${NAME}`, a CI expression (`${{ secrets.X }}`), a shell command
   (`$(...)`, backticks), a URL without userinfo or a path under such a key is
-  masked, not redacted; so, in a code file only, is a call or member access
-  that is the whole value (`os.getenv("KEY")`, `config.secret`). In code a
+  masked, not redacted; so, in code only - a code file or a language whose
+  text reads as code - is a call or member access that is the whole value
+  (`os.getenv("KEY")`, `config.secret`); anywhere else it fails closed. An
+  unquoted value runs to the next whitespace (`sun,shine` is one), or to the
+  closing quote, brace or paren of the string, object or call it stands in.
+  Text pasted with no path whose language is only guessed is read by the
+  net too, for a line's own `KEY=value` or `KEY := value`. In code a
   bare `key = word` may name a variable and keeps a reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;

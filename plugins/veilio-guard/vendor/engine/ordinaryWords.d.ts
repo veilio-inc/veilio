@@ -28,10 +28,9 @@ export interface ValueScan {
      *  where every grammar applies, a bare name after a credential key too. */
     kind?: ValueGrammar | 'code';
     language?: Language;
-    /** The text came from a code file (by its path or its language), whatever
-     *  grammar it is read by: an unquoted call or member access there reads a
-     *  value (`os.getenv(...)`, `config.secret`). Never in configuration. */
-    code?: boolean;
+    /** Code only guessed at - pasted with no path and no language: the
+     *  credential net reads it too, as it reads text of no kind. */
+    net?: boolean;
 }
 /** Every value position in `text`, sorted by start. Spans may nest: a
  *  connection string's `password=...` lies inside its string. */

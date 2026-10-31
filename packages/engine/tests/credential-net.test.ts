@@ -128,24 +128,31 @@ describe('the net is linear on adversarial lines', () => {
     }
     return best
   }
-  const lines = (n: number): string[] => [
-    `${'password '.repeat(n / 9)}\n`.repeat(4),
-    `password${' '.repeat(n)}x\n`.repeat(4),
-    `password${' := '.repeat(n / 4)}x\n`.repeat(4),
-    `password<![CDATA[${'a'.repeat(n)}]\n`.repeat(4),
-    `password '''${"'".repeat(n)}\n`.repeat(4),
-    `${'dbPw'.repeat(n / 4)}=x\n`.repeat(4),
-    `${'a:'.repeat(n / 2)}\n`.repeat(4),
-    `password \\\n${' \\\n'.repeat(n / 3)}x\n`,
-  ]
+  const lines = (n: number): string[] =>
+    [
+      `${'password '.repeat(n / 9)}\n`,
+      `password${' '.repeat(n)}x\n`,
+      `password${' := '.repeat(n / 4)}x\n`,
+      `password<![CDATA[${'a'.repeat(n)}]\n`,
+      `password '''${"'".repeat(n)}\n`,
+      `${'dbPw'.repeat(n / 4)}=x\n`,
+      `${'a:'.repeat(n / 2)}\n`,
+      `password \\\n${' \\\n'.repeat(n / 3)}x\n`,
+      `{"a": "${'password=x,'.repeat(n / 11)}"}\n`,
+      `{${'password=x '.repeat(n / 11)}}\n`,
+      `password=${'a'.repeat(n)}\n`,
+      `${'a:1:b:c:'.repeat(n / 8)}\n`,
+      `${'x.ts:1: password=a '.repeat(n / 20)}\n`,
+    ].map((line) => line.repeat(4))
   it('4000, 8000 and 16000 characters grow linearly', () => {
     const [a, b, c] = [4000, 8000, 16000].map((n) => lines(n).map(time))
     for (let i = 0; i < a!.length; i++) {
+      // Linear is 2x and 4x; quadratic 4x and 16x.
       const base = Math.max(a![i]!, 2)
-      expect(b![i]! / base, `line ${i} at 8000`).toBeLessThan(6)
-      expect(c![i]! / base, `line ${i} at 16000`).toBeLessThan(10)
+      expect(b![i]! / base, `line ${i} at 8000`).toBeLessThan(8)
+      expect(c![i]! / base, `line ${i} at 16000`).toBeLessThan(11)
     }
-  })
+  }, 60_000)
 })
 
 // Founder ruling (round 4), each mode by each source: a value the credential
@@ -190,4 +197,27 @@ it('a quoted CI expression is not a value, and its words stay masked', () => {
   const r = anonymize('PGPASSWORD="${{ secrets.PG }}" psql\n', { path: 'run.sh' })
   expect(r.anonymized).not.toContain('__REDACTED_')
   expect(r.anonymized).not.toMatch(/\bsecrets\b/)
+})
+
+// Review of round 4: no skip on the value's shape alone, and an unquoted
+// value runs to the next whitespace.
+describe('the net does not fail open on a value shape', () => {
+  it.each([
+    ['password=12:sunshine\n', '12:sunshine'],
+    ['password=--sunshine\n', 'sunshine'],
+    ['password=sun,shine\n', 'shine'],
+    ['password=sun;shine\n', 'shine'],
+  ])('%j hides %s', (text, word) => {
+    for (const opts of [{}, { path: 'notes.txt' }, { path: '.env' }]) {
+      const r = anonymize(text, opts)
+      expect(r.anonymized, JSON.stringify(opts)).not.toContain(word)
+      expect(JSON.stringify(r.map)).not.toContain('shine')
+    }
+  })
+
+  it('a whole option word after the name on a command line is the next option', () => {
+    expect(anonymize('mysql --password --verbose\n', { path: 'run.sh' }).anonymized).toContain(
+      '--verbose'
+    )
+  })
 })

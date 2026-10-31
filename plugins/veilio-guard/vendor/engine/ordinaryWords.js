@@ -274,7 +274,7 @@ function inCommand(text, at) {
 // In code, an unquoted call or member access (`getToken()`, `settings.token`)
 // reads a value; it is not one. The whole value, and only in code: in
 // configuration `Xk9m.Q2v` is a password (security review, round 4).
-const CALL_OR_MEMBER = /^[A-Za-z_$][\w$]*(?:(?:\.[A-Za-z_$][\w$]*)+(?:\([^()]*\))?|\([^()]*\));?$/;
+const CALL_OR_MEMBER = /^[A-Za-z_$][\w$]*(?:(?:\.[A-Za-z_$][\w$]*)+(?:\([^()]*\))?|\([^()]*\))[,;]?$/;
 /** A value that may be a secret: one no shape above rules out. */
 function secretShaped(value, quoted, code = false) {
     const v = value.trim();
@@ -293,6 +293,10 @@ function secretShaped(value, quoted, code = false) {
 // command output is not a pair.
 const NET_KEY = /(?<![\w$.-])-{0,2}([A-Za-z_$][\w$.-]{0,100})/g;
 const NET_TAIL = /(?:[ \t]|\\\r?\n|=>|->|:=|[=:"'`>]|<!\[CDATA\[|[([,](?=[ \t]*["'`])){1,40}((?:[^\s"'`;,<\]]|\](?!\]>)){1,4096})/dy;
+// The start of a line of code, for the net over code only guessed at.
+const CODE_START = /(?:^|\n)[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/;
+const CODE_LINE = /\n[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/;
+const PGPASS_SHAPE = /^[^:\s]+:(?:\d{1,5}|\*):[^:\s]+:[^:\s]+:(\S+)$/dgm;
 // `.pgpass`: host:port:database:user:password, one entry a line.
 const PGPASS_LINE = /^(?![ \t]*#)(?:[^:\n]*:){4}([^\n]+)$/dgm;
 // `key=value` pairs inside a value: a connection string, a query string.
@@ -346,7 +350,8 @@ function trimmed(raw, offset, comment, yaml = false, stop = null) {
 export function valueSpans(text, scan = {}) {
     const out = [];
     const kind = scan.kind;
-    const calls = kind === 'code' || scan.code === true;
+    // In code an unquoted call or member access reads a value; never elsewhere.
+    const calls = kind === 'code';
     // Under a credential key a value is never a readable path.
     const add = (start, end, keyed, quoted, module = false) => {
         const value = text.slice(start, end);
@@ -453,19 +458,49 @@ export function valueSpans(text, scan = {}) {
             out.push({ start: s, end: e, value, credential: true, path: false, bare: true });
         }
     }
-    if (kind !== 'code') {
+    if (kind !== 'code' || scan.net) {
+        // In code only guessed at, the net reads a line's own `KEY=value` (a
+        // Makefile, a pasted .env); a name's type (`DB_PASSWORD: Optional[str]`)
+        // and a statement (`const monkey = ledger`) are code's.
+        const guessed = kind === 'code';
         let covered = 0;
         for (const k of text.matchAll(NET_KEY)) {
-            const keyEnd = k.index + k[0].length;
+            const at = k.index;
+            const keyEnd = at + k[0].length;
             // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
-            if (k.index < covered || /__[A-Z]/.test(k[1]) || !CREDENTIAL.test(k[1]))
+            if (at < covered || /__[A-Z]/.test(k[1]) || !CREDENTIAL.test(k[1]))
+                continue;
+            // A search result's `src/secrets.ts:12:` is a file and its line.
+            if (/\.\w{1,8}$/.test(k[1]) && /^[:-]\d+[:-]/.test(text.slice(keyEnd, keyEnd + 12)))
+                continue;
+            if (guessed && !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at)))
                 continue;
             NET_TAIL.lastIndex = keyEnd;
             const m = NET_TAIL.exec(text);
             if (!m)
                 continue;
-            const [s, e] = m.indices[1];
-            const value = m[1];
+            const s = m.indices[1][0];
+            let e = m.indices[1][1];
+            const sep = text.slice(keyEnd, s);
+            if (guessed && !sep.includes('='))
+                continue;
+            // Unquoted, the value runs to the next whitespace (`sun,shine`); in
+            // quotes, CDATA or element text it ends where they do. Inside a quoted
+            // string, a brace or a call on its line it also ends at the closing
+            // quote, brace (or the next pair's comma) or paren, and in a shell line
+            // at `;`, `&` or `|`.
+            if (!/["'`>[]$/.test(sep)) {
+                const line = lineBefore(text, at);
+                const stop = (/["'`]/.test(line) ? `"'\`` : '') +
+                    (line.includes('{') ? '},' : '') +
+                    (line.includes('(') ? ')' : '') +
+                    (kind === 'shell' || kind === 'dotenv' ? ';&|' : '');
+                let n = s;
+                while (n < s + 4096 && n < text.length && !/\s/.test(text[n]) && !stop.includes(text[n]))
+                    n++;
+                e = n;
+            }
+            const value = text.slice(s, e);
             covered = e;
             if (!secretShaped(value, false, calls) || keyword(value, scan.language))
                 continue;
@@ -475,7 +510,11 @@ export function valueSpans(text, scan = {}) {
             if (/^[$<]/.test(value) || calls) {
                 // Inside quotes, up to the closing one.
                 const quote = /["'`]/.test(text[s - 1] ?? '') ? text[s - 1] : '\n';
-                const rest = text.slice(s, s + 512).split('\n', 1)[0].split(quote, 1)[0].trim();
+                const rest = text
+                    .slice(s, s + 512)
+                    .split('\n', 1)[0]
+                    .split(quote, 1)[0]
+                    .trim();
                 if (/^[$<]/.test(value) && !secretShaped(rest, false))
                     continue;
                 if (calls && CALL_OR_MEMBER.test(rest))
@@ -487,16 +526,20 @@ export function valueSpans(text, scan = {}) {
                 continue;
             if (kind === 'yaml' && /^(?:[&!]\S*|[|>][-+]?\d?[-+]?)$/.test(value))
                 continue;
-            // A search result's `path:12:` or `path-12-` is a file and its line.
-            if (/^\d+[:-]/.test(value))
-                continue;
-            // A flag after the name (`--password --verbose`, "pass --dry-run") is
-            // the next option, not this one's value.
-            if (/^-{1,2}[A-Za-z_]/.test(value))
+            // On a command line, a whole option word after the name (`--password
+            // --verbose`, "pass --dry-run") is the next option, not this one's value.
+            if (/^[ \t]+$/.test(sep) && /^--?[A-Za-z][\w-]*$/.test(value))
                 continue;
             out.push({ start: s, end: e, value, credential: true, path: false });
         }
     }
+    // `host:port:db:user:password` in text of no kind: a .pgpass line.
+    if (kind === undefined || scan.net)
+        for (const m of text.matchAll(PGPASS_SHAPE)) {
+            const [s, e] = m.indices[1];
+            if (secretShaped(m[1], false))
+                out.push({ start: s, end: e, value: m[1], credential: true, path: false });
+        }
     if (kind === 'pgpass')
         for (const m of text.matchAll(PGPASS_LINE)) {
             const [s, e] = m.indices[1];
