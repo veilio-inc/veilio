@@ -27,6 +27,7 @@
  * Cloud's shared package (spec 028) so the web app, the CLI and the MCP server
  * all read a team's maps by one definition.
  */
+import { LOCAL_PREFIX } from './localFamily.js';
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/;
 export function analyzeTeamNamespace(entries) {
     // Copy before sorting: callers pass state they still hold.
@@ -35,12 +36,17 @@ export function analyzeTeamNamespace(entries) {
     const claimedNames = new Set();
     const meanings = new Map();
     const highest = {};
+    let localDropped = 0;
     for (const entry of sorted) {
         // A map we could not decrypt is skipped, never fatal - one unreadable row
         // must not cost a whole team its namespace.
         if (!entry.map)
             continue;
         for (const [placeholder, identifier] of Object.entries(entry.map)) {
+            if (placeholder.startsWith(LOCAL_PREFIX)) {
+                localDropped++;
+                continue;
+            }
             const seen = meanings.get(placeholder) ?? new Set();
             seen.add(identifier);
             meanings.set(placeholder, seen);
@@ -68,7 +74,7 @@ export function analyzeTeamNamespace(entries) {
             aliases[placeholder] = [...seen][0];
         }
     }
-    return { namespace, aliases, conflicts, highest };
+    return { namespace, aliases, conflicts, highest, localDropped };
 }
 export function mergeTeamNamespace(entries) {
     return analyzeTeamNamespace(entries).namespace;

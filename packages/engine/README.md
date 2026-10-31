@@ -446,15 +446,18 @@ its numbering with both repositories green.
 - `mergeTeamNamespace(entries)` / `TeamMapEntry` — merge team maps into one
   namespace, oldest first, so an edited map cannot steal a placeholder an older
   one already claimed
-- `analyzeTeamNamespace(entries)` → `{ namespace, aliases, conflicts, highest }`
+- `analyzeTeamNamespace(entries)` → `{ namespace, aliases, conflicts, highest, localDropped }`
   — the same merge, plus what the merge had to decide: the placeholders two maps
   disagree about, the aliases that still restore, and the highest number per
-  base so new names are minted above the team's
+  base so new names are minted above the team's. A `__LOCAL_` key is dropped
+  before any of it and counted in `localDropped`: no team map should hold one
 - `restoreLayers({ own, team })` → the one restore rule, shared by the web app,
   the CLI and the MCP server: the team's layer under this project's own, with
   `disputedIn(text)` and `locallyNumberedIn(text)` naming the placeholders that
   must be left alone rather than guessed. `disputedNote` / `locallyNumberedNote`
-  render the message each caller shows
+  render the message each caller shows. The team layer never gives a
+  `__LOCAL_` placeholder a meaning; `otherLocalIn(text)` names the ones the
+  own map lacks (another checkout numbered them), and `localFamilyNote` says so
 - `unwrapPrivateKey`, `deriveWrappingKey`, `importPublicKey`, `unwrapTeamKey`,
   `importTeamKey` / `exportTeamKey`, `decryptTeamMap`,
   `decryptTeamMapWithAny`, `encryptTeamMap`, `TeamKeyError` — opening team-key

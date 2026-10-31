@@ -28,6 +28,8 @@
  * all read a team's maps by one definition.
  */
 
+import { LOCAL_PREFIX } from './localFamily.js'
+
 export interface TeamMapEntry {
   createdAt: string
   /** Decrypted mapping, or null when this map could not be opened. */
@@ -47,12 +49,19 @@ export interface TeamMapEntry {
  * - `highest`: per placeholder base, the highest number in ANY readable map,
  *   dropped entries included - the floor for the next reservation, so a number
  *   in use anywhere is never handed out again.
+ * - `localDropped`: keys under `__LOCAL_` found in the maps and ignored before
+ *   all of the above (spec 066). A local placeholder means something only on
+ *   the checkout that numbered it; no client seals one into a team map, so one
+ *   found there came from an old or hostile client.
  */
 export interface TeamNamespaceAnalysis {
   namespace: Record<string, string>
   aliases: Record<string, string>
   conflicts: Record<string, number>
   highest: Record<string, number>
+  /** Always set by `analyzeTeamNamespace`; optional so an analysis built from
+   *  an older instance's server-merged namespace still type-checks. */
+  localDropped?: number
 }
 
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
@@ -67,6 +76,7 @@ export function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamName
   const claimedNames = new Set<string>()
   const meanings = new Map<string, Set<string>>()
   const highest: Record<string, number> = {}
+  let localDropped = 0
 
   for (const entry of sorted) {
     // A map we could not decrypt is skipped, never fatal - one unreadable row
@@ -74,6 +84,10 @@ export function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamName
     if (!entry.map) continue
 
     for (const [placeholder, identifier] of Object.entries(entry.map)) {
+      if (placeholder.startsWith(LOCAL_PREFIX)) {
+        localDropped++
+        continue
+      }
       const seen = meanings.get(placeholder) ?? new Set<string>()
       seen.add(identifier)
       meanings.set(placeholder, seen)
@@ -101,7 +115,7 @@ export function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamName
     }
   }
 
-  return { namespace, aliases, conflicts, highest }
+  return { namespace, aliases, conflicts, highest, localDropped }
 }
 
 export function mergeTeamNamespace(entries: readonly TeamMapEntry[]): Record<string, string> {
