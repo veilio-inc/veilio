@@ -127,3 +127,49 @@ describe("the guard's command output, with no map", () => {
     for (const [, word] of OUTPUT) expect(out).not.toMatch(new RegExp(`\\b${word}\\b`))
   })
 })
+
+// Security review of round 1: syntaxes the first rule missed, in a file the
+// guard reads and in command output with an empty map.
+const MORE: [string, string, string, FileKind?][] = [
+  ['python', 'app.config["SECRET_KEY"] = "phoenix"\n', 'phoenix'],
+  ['python', 'os.environ["PGPASSWORD"] = "sunshine"\n', 'sunshine'],
+  ['ruby', "config[:password] = 'sunshine'\n", 'sunshine'],
+  ['php', "<?php\n$password = 'sunshine';\n", 'sunshine'],
+  ['auto', 'PASSWORD=SUNSHINE\n', 'SUNSHINE'],
+  ['auto', 'password: `sunshine`\n', 'sunshine'],
+  ['typescript', 'const password = `sunshine`;\n', 'sunshine'],
+  ['auto', '<password>sunshine</password>\n', 'sunshine'],
+  ['java', '<entry key="password">sunshine</entry>\n', 'sunshine'],
+  ['auto', 'env:\n  - name: DB_PASSWORD\n    value: sunshine\n', 'sunshine', 'yaml'],
+  ['auto', 'ENV PASSWORD sunshine\n', 'sunshine', 'shell'],
+  ['php', "<?php\ndefine('DB_PASSWORD','sunshine');\n", 'sunshine'],
+  ['go', 'os.Setenv("DB_PASSWORD","sunshine")\n', 'sunshine'],
+  ['python', 'pw = "sunshine"\n', 'sunshine'],
+  ['auto', 'passwords: sunshine\n', 'sunshine', 'yaml'],
+  // A quoted `$` value is a value, not a reference (security review).
+  ['auto', 'password: "$unshine"\n', 'unshine'],
+  ['auto', "PASSWORD='$ecret123'\n", 'ecret123'],
+]
+
+describe('more credential syntaxes (security review of round 1)', () => {
+  it.each(MORE)('a Read of %s %j does not show %s', (language, text, word, fileKind) => {
+    const r = scrubSource(text, {}, language as 'auto', new Set(), fileKind)
+    expect(r.text).not.toMatch(new RegExp(`\\b${word}\\b`))
+  })
+
+  it.each(MORE)('command output (%s) %j does not show %s', (_language, text, word) => {
+    expect(applyMap(text, {})).not.toMatch(new RegExp(`\\b${word}\\b`))
+  })
+
+  it.each([
+    'author: sunshine',
+    '<author>sunshine</author>',
+    '<entry key="password_hint">sunshine</entry>',
+    'ENV AUTHOR sunshine',
+    "define('AUTHOR','sunshine');",
+    'env:\n  - name: AUTHOR\n    value: sunshine',
+    'const animal = monkey',
+  ])('the control %j stays as written in command output', (text) => {
+    expect(applyMap(text, {})).toBe(text)
+  })
+})

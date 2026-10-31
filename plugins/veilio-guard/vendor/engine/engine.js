@@ -1156,7 +1156,16 @@ export function anonymize(code, options = {}) {
     // round 3).
     const secretValues = new Set(found.map((f) => code.slice(f.start, f.end)));
     const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans);
-    const identifiers = extractIdentifiers(scannable, language);
+    // A credential value the extractor passes over (`PASSWORD=SUNSHINE` reads as
+    // a constant) is a name here all the same, where it is still in the text.
+    const extractedNames = extractIdentifiers(scannable, language);
+    const missed = valued
+        .filter((s) => scannable.slice(s.start, s.end) === s.value)
+        .map((s) => s.value)
+        .filter((v) => !extractedNames.includes(v) && !isKeyword(v, language));
+    const identifiers = missed.length === 0
+        ? extractedNames
+        : [...new Set([...extractedNames, ...missed])].sort((a, b) => b.length - a.length);
     const roleOf = classifyIdentifiers(scannable, language);
     // Split rules by type, sort by sort_order ASC (lower = earlier)
     const whitelist = rules
