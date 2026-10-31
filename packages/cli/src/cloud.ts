@@ -23,7 +23,9 @@
 // anything crosses it, and so the tests that police it are written against
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
+import { isEngineBase } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
+import { wireBase } from './hashed-bases.js'
 import { VERSION } from './version.js'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
@@ -568,8 +570,14 @@ export async function reservePlaceholders(
   teamId: string,
   requests: readonly { base: string; count: number; floor: number }[],
   signal?: AbortSignal,
-  options: { block?: boolean } = {}
+  options: {
+    block?: boolean
+    /** The team's raw keys, newest first: a rule's base is sent as its hash
+     *  under the newest (founder decision, Cloud audit M1). */
+    keys?: readonly Uint8Array[]
+  } = {}
 ): Promise<{ ranges: PlaceholderRange[] }> {
+  const key = options.keys?.[0]
   for (const { base, count } of requests) {
     if (!PLACEHOLDER_BASE.test(base)) {
       throw new CloudError(
@@ -580,17 +588,36 @@ export async function reservePlaceholders(
     if (!Number.isInteger(count) || count < 1) {
       throw new CloudError('forbidden', `cannot reserve ${count} numbers for ${base}`)
     }
+    // Never in plain text: with no key to hash it, nothing is sent.
+    if (!isEngineBase(base) && !key) {
+      throw new CloudError(
+        'forbidden',
+        `numbers for ${base} are reserved under its hash with the team key, and the team key is not unlocked on this machine - run \`veilio team unlock\``
+      )
+    }
   }
-  return request<{ ranges: PlaceholderRange[] }>(
+  const real = new Map<string, string>()
+  const wire = requests.map((r) => {
+    const sent = key ? wireBase(r.base, key) : r.base
+    real.set(sent, r.base)
+    return { ...r, base: sent }
+  })
+  const answer = await request<{ ranges: PlaceholderRange[] }>(
     `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
     {
       credential,
       method: 'POST',
       // Spec 063: a block, whose size the server sets, for the guard to number in offline.
-      body: options.block ? { requests, block: true } : { requests },
+      body: options.block ? { requests: wire, block: true } : { requests: wire },
       signal,
     }
   )
+  // Read back under the real base; a base the request did not send stays as
+  // served, and the caller's check refuses it.
+  const ranges = Array.isArray(answer?.ranges)
+    ? answer.ranges.map((r) => ({ ...r, base: real.get(r?.base) ?? r?.base }))
+    : answer?.ranges
+  return { ...answer, ranges }
 }
 
 /** One run of the team's numbers and the member who reserved it (spec 063). */

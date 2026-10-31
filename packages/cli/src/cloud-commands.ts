@@ -44,6 +44,7 @@ import {
 } from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
+import { teamKeyBytes } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -871,7 +872,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       existsSync(mapPath) &&
       dirname(mapPath) !== join(io.home ?? homedir(), '.veilio')
     ) {
-      const blocks = await ensureBlocks(credential, teamId, mapPath)
+      const blocks = await ensureBlocks(credential, teamId, mapPath, io.home)
       if (blocks.status === 'reserved' && Object.keys(blocks.blocks).length)
         io.stdout(
           `Reserved team numbers for new names: ${Object.entries(blocks.blocks)
@@ -1069,7 +1070,12 @@ export async function teamNamespaceForScrub(
       team: found.analysis,
       note: null,
       numberingTeam: teamId,
-      reserve: async (requests) => (await reservePlaceholders(credential, teamId, requests)).ranges,
+      reserve: async (requests) =>
+        (
+          await reservePlaceholders(credential, teamId, requests, undefined, {
+            keys: teamKeyBytes(credential, home, teamId),
+          })
+        ).ranges,
     }
   }
   if (found.status === 'locked')

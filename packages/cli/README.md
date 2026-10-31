@@ -207,6 +207,15 @@ of the team's numbers for you - 500 per kind - and keeps it in
 working at the same time never give one placeholder two meanings. A pull takes
 a new block whenever a teammate's newer numbers sit above yours.
 
+A reservation sends Cloud a kind, a count and a floor - never a name. The
+engine's own kinds (`__VAR__`, `__FN__`, `__CLS__`, ...) go as they are; a
+custom replace rule's placeholder (`__ACME_ACQUISITION_TARGET__`) names what
+the team considers sensitive, so it is sent as `__H_<16 hex>__`, an HMAC of it
+under the newest team key, and read back locally. Teammates holding the same
+key send the same hash; after a key rotation the hash changes, and the floor
+from the team's maps keeps new numbers above the old ones. Without the team key
+unlocked, numbers for a rule's kind are not reserved at all.
+
 If no block can be reserved - the day's limit, offline, the plan, a server
 error - the pull (or the unlock) still succeeds, exits 0, and says so on its
 normal output, with the reason and, for the day's limit, when the next block is

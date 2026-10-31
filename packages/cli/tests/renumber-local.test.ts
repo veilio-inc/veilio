@@ -16,6 +16,7 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { STORE_DIR, STORE_FILE, loadMap, saveMap } from '../src/store.js'
 import { RESERVED_FILE, loadAliases } from '../src/reservations.js'
+import { wireBase } from '../src/hashed-bases.js'
 import { createCloudMap, updateCloudMap } from '../src/client/index.js'
 import { importPersonalMapsKey } from '../src/client/personal-maps-key.js'
 import {
@@ -119,7 +120,8 @@ describe('a team publish renumbers local entries', () => {
       reserveAsks()
         .map((r) => r.base)
         .sort()
-    ).toEqual(['__API_KEY__', '__FN__'])
+      // A rule's base goes under its hash with the team key (Cloud audit M1).
+    ).toEqual([wireBase('__API_KEY__', TEAM_RAW), '__FN__'].sort())
     expect(loadAliases(mapPath())).toEqual(LOCALS)
     expect(Object.keys(loadMap(mapPath())).filter(isLocalPlaceholder)).toEqual([])
   })

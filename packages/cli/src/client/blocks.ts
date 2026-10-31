@@ -8,6 +8,7 @@
 
 import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
 import { reservePlaceholders, CloudError } from '../cloud.js'
+import { teamKeyBytes } from '../hashed-bases.js'
 import type { Credential } from '../credential.js'
 import { loadMap } from '../store.js'
 import {
@@ -46,7 +47,9 @@ function reasonOf(err: unknown): RefusalReason {
 export async function ensureBlocks(
   credential: Credential,
   teamId: string,
-  mapPath: string
+  mapPath: string,
+  /** Where the team keys are: a rule's base is reserved under its hash. */
+  home?: string
 ): Promise<BlocksOutcome> {
   let held: ReservedFile | null
   try {
@@ -102,7 +105,7 @@ export async function ensureBlocks(
           teamId,
           need.map((base) => ({ base, count: 1, floor: floors[base] ?? 0 })),
           undefined,
-          { block: true }
+          { block: true, keys: teamKeyBytes(credential, home, teamId) }
         )
       ).ranges
     } catch (err) {

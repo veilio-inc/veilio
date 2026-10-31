@@ -36,6 +36,7 @@ import {
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
+import { servedAs, teamKeyBytes } from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -449,7 +450,7 @@ export async function pullCloudMap(
   })
   // Spec 063: a team map comes with a block of the team's numbers, so the
   // guard numbers where no teammate can. A refusal there does not undo the pull.
-  const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath) : undefined
+  const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath, ctx.home) : undefined
   const outOfRange = Object.keys(map).filter(
     (p) => Number(/\d+$/.exec(p)?.[0] ?? 0) > MAX_PLACEHOLDER_NUMBER
   ).length
@@ -550,7 +551,8 @@ async function renumberUnreserved(
   map: Record<string, string>,
   mapPath: string,
   /** What this member's own map being updated already holds: published, so never moved. */
-  published: Record<string, string> = {}
+  published: Record<string, string> = {},
+  home?: string
 ): Promise<
   Outcome<{ map: Record<string, string>; renumbered: number; aliases: Record<string, string> }>
 > {
@@ -561,6 +563,8 @@ async function renumberUnreserved(
   const mine = list.team?.reservations
   if (!found.teamId || !mine) return unchanged
   const { namespace, highest } = found.analysis
+  // A rule's base is reserved, and listed back, under its hash (Cloud audit M1).
+  const keys = teamKeyBytes(credential, home, found.teamId)
 
   const moves: Record<string, string> = {} // old placeholder -> new
   const needs: { placeholder: string; base: string; n: number }[] = []
@@ -574,7 +578,8 @@ async function renumberUnreserved(
     const base = local ? teamBaseOf(own) : own
     if (!base) continue
     const n = Number(digits)
-    if (!local && mine.some((r) => r.base === base && n >= r.start && n <= r.end)) continue
+    if (!local && mine.some((r) => servedAs(r.base, base, keys) && n >= r.start && n <= r.end))
+      continue
     // Always a fresh number, even for a name the team already holds under
     // another placeholder (it then holds both, an alias). A fresh number is
     // above everything in this map, so the map's highest never falls below a
@@ -602,7 +607,8 @@ async function renumberUnreserved(
     }))
     let ranges: { base: string; start: number; end: number }[]
     try {
-      ranges = (await reservePlaceholders(credential, found.teamId, asked)).ranges
+      ranges = (await reservePlaceholders(credential, found.teamId, asked, undefined, { keys }))
+        .ranges
     } catch (err) {
       return refuseNumbers(err instanceof Error ? err.message : String(err))
     }
@@ -816,7 +822,9 @@ export async function createCloudMap(
       listed.value,
       found.value,
       map,
-      opts.mapPath
+      opts.mapPath,
+      {},
+      ctx.home
     )
     if (!numbered.ok) return numbered
     map = numbered.value.map
@@ -1027,7 +1035,8 @@ export async function updateCloudMap(
       found.value,
       local,
       opts.mapPath,
-      current
+      current,
+      ctx.home
     )
     if (!numbered.ok) return numbered
     local = numbered.value.map

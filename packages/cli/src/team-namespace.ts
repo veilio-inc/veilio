@@ -11,6 +11,7 @@
 // namespace looked exactly like one that used the team's, until a teammate's
 // placeholders came back unrestored (Constitution V).
 
+import { servedAs, teamKeyBytes } from './hashed-bases.js'
 import {
   analyzeTeamNamespace,
   decryptTeamMapWithAny,
@@ -278,7 +279,9 @@ async function attempt(
   // reserved was not numbered by the map that publishes it. It joins the
   // disputed set - scrub never emits it, a publish treats it as taken, restore
   // leaves it and names it - rather than be restored as a guess.
-  const misattributed = read.reservations ? misattributedIn(analysis, kept, read.reservations) : []
+  const misattributed = read.reservations
+    ? misattributedIn(analysis, kept, read.reservations, teamKeyBytes(credential, home, teamId))
+    : []
   for (const p of misattributed) analysis.conflicts[p] = Math.max(analysis.conflicts[p] ?? 0, 2)
   return {
     status: 'team',
@@ -301,7 +304,9 @@ const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 export function misattributedIn(
   analysis: { namespace: Record<string, string>; aliases: Record<string, string> },
   entries: readonly { owner?: string; map: Record<string, string> | null }[],
-  reservations: readonly PlaceholderReservation[]
+  reservations: readonly PlaceholderReservation[],
+  /** The team's raw keys: a rule's base is listed under its hash (Cloud audit M1). */
+  keys: readonly Uint8Array[] = []
 ): string[] {
   const out: string[] = []
   const named = { ...analysis.aliases, ...analysis.namespace }
@@ -309,7 +314,9 @@ export function misattributedIn(
     const [, base = '', digits = ''] = NUMBERED.exec(p) ?? []
     if (!base) continue
     const n = Number(digits)
-    const reserver = reservations.find((r) => r.base === base && n >= r.start && n <= r.end)?.member
+    const reserver = reservations.find(
+      (r) => servedAs(r.base, base, keys) && n >= r.start && n <= r.end
+    )?.member
     if (!reserver) continue
     if (!entries.some((e) => e.owner === reserver && e.map?.[p] === name)) out.push(p)
   }
