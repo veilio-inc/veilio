@@ -213,11 +213,12 @@ custom replace rule's placeholder (`__ACME_ACQUISITION_TARGET__`) names what
 the team considers sensitive, so it is sent as `__H_<16 hex>__`, an HMAC of it
 under the newest team key, and read back locally. Teammates holding the same
 key send the same hash. Cloud counts each hash on its own, so a rule's kind is
-floored above every hashed reservation the team holds and any made under the
-plain name by an older CLI (read from the team's reservations): after a key
-rotation new numbers stay above the old hash's. Without the team key unlocked,
-or without that listing (an older instance), numbers for a rule's kind are not
-reserved at all.
+floored above the team's reservations of it under the plain name (an older
+CLI) and under its hash with every team key version this machine holds (read
+from the team's reservations): after a key rotation new numbers stay above the
+old hash's while the old key is still held; without it, the floor is the
+map's. Without the team key unlocked, or without that listing (an older
+instance), numbers for a rule's kind are not reserved at all.
 
 If no block can be reserved - the day's limit, offline, the plan, a server
 error - the pull (or the unlock) still succeeds, exits 0, and says so on its

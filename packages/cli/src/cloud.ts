@@ -23,7 +23,7 @@
 // anything crosses it, and so the tests that police it are written against
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
-import { isEngineBase } from '@veilio-inc/engine'
+import { isEngineBase, isSaneBlock } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
 import { wireBase } from './hashed-bases.js'
 import { VERSION } from './version.js'
@@ -599,10 +599,12 @@ export async function reservePlaceholders(
     }
   }
   // Security review: the server counts per (team, base), so a rule base's
-  // numbers reserved under its plain name (an older CLI) or another key's hash
-  // (before a rotation) are invisible to this hash's counter. Floored above
-  // every hashed reservation the team holds, and the plain base's: too high a
-  // floor only spends numbers. No listing, no reservation for a rule base.
+  // numbers reserved under its plain name (an older CLI) or an older key's
+  // hash (before a rotation) are invisible to this hash's counter. Floored
+  // above every sane reservation under the plain base or its hash under any
+  // key version held here - never another hash, so one rule's (or a hostile
+  // teammate's) huge block cannot floor every other base. No old key held:
+  // the map's floor only. No listing, no reservation for a rule base.
   const hashed = requests.some((r) => !isEngineBase(r.base))
   const held = hashed
     ? (options.reservations ?? (await readReservations(credential, teamId, signal)))
@@ -612,14 +614,10 @@ export async function reservePlaceholders(
     const sent = key ? wireBase(r.base, key) : r.base
     real.set(sent, r.base)
     let floor = r.floor
-    if (!isEngineBase(r.base))
-      for (const h of held)
-        if (
-          typeof h?.base === 'string' &&
-          (h.base.startsWith('__H_') || h.base === r.base) &&
-          Number.isSafeInteger(h.end)
-        )
-          floor = Math.max(floor, h.end)
+    if (!isEngineBase(r.base)) {
+      const names = new Set([r.base, ...(options.keys ?? []).map((k) => wireBase(r.base, k))])
+      for (const h of held) if (names.has(h?.base) && isSaneBlock(h)) floor = Math.max(floor, h.end)
+    }
     return { ...r, base: sent, floor }
   })
   const answer = await request<{ ranges: PlaceholderRange[] }>(

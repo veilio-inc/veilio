@@ -193,10 +193,41 @@ describe('a hashed base and the numbers the team already holds', () => {
   it('the reservations a caller already holds are used, not fetched again', async () => {
     const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
       keys: [TEAM_RAW],
-      reservations: [{ base: '__H_0000000000000000__', start: 1, end: 900, member: 'x' }],
+      reservations: [{ base: wireBase('__CODENAME__', TEAM_RAW), start: 1, end: 900, member: 'x' }],
     })
     expect(r.ranges[0]!.start).toBeGreaterThan(900)
     expect(cloud.requests.some((q) => q.path.endsWith('/placeholders/reservations'))).toBe(false)
+  })
+
+  it('only the hashes this client can recompute floor it: another rule’s or a hostile one does not', async () => {
+    cloud.reservations.push(
+      { base: wireBase('__OTHER_RULE__', TEAM_RAW), start: 1, end: 900_000_000, member: 'x' },
+      { base: '__H_00000000DEADBEEF__', start: 1, end: 800_000_000, member: 'hostile' }
+    )
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    expect(r.ranges[0]).toMatchObject({ start: 1, end: 500 })
+  })
+
+  it('a held reservation that is not a sane block floors nothing', async () => {
+    const mine = wireBase('__CODENAME__', TEAM_RAW)
+    for (const [start, end] of [
+      [0, 700],
+      [800, 700],
+      [1, 2_000_000_000],
+      [1.5, 700],
+    ])
+      cloud.reservations.push({ base: mine, start, end, member: 'x' })
+    cloud.reservations.push({ base: '__CODENAME__', start: -5, end: 1e15, member: 'x' })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    expect(r.ranges[0]).toMatchObject({ start: 1, end: 500 })
+  })
+
+  it('with no old key version held, a rotation falls back to the map floor', async () => {
+    await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(7), undefined, {
+      keys: [OTHER_RAW],
+    })
+    expect(r.ranges[0]!.start).toBe(8)
   })
 
   it('an engine base needs no listing', async () => {
