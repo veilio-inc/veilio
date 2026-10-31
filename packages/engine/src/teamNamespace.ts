@@ -59,9 +59,9 @@ export interface TeamNamespaceAnalysis {
   aliases: Record<string, string>
   conflicts: Record<string, number>
   highest: Record<string, number>
-  /** Always set by `analyzeTeamNamespace`; optional so an analysis built from
-   *  an older instance's server-merged namespace still type-checks. */
-  localDropped?: number
+  /** Local-family keys dropped; 0 for an older instance's server-merged
+   *  namespace, which predates the family. */
+  localDropped: number
 }
 
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
