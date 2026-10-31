@@ -40,10 +40,11 @@ function customRules(g: Guard): string {
   return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}`
 }
 
-/** A planted file's text must not put control characters into the band
- *  (security review, 2026-10-30). */
+/** A planted file's text must not put control characters, nor Unicode format
+ *  characters such as bidi overrides, into the band (security review,
+ *  2026-10-30; code review of spec 066). */
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
-const printable = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
+const printable = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?')
 
 /** HH:MM on this machine's clock. */
 function hhmm(iso: string): string {

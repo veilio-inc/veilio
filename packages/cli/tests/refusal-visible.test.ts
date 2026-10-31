@@ -172,3 +172,13 @@ describe('signed-in scrub says it while reserved.json holds a refusal', () => {
     expect(res.err).not.toMatch(/could not reserve/)
   })
 })
+
+describe('the server’s words cannot reorder or hide what the terminal shows (code review)', () => {
+  it('Unicode format characters in the server’s error are replaced', async () => {
+    cloud.failWith(500, { error: 'boom\u202Eevil\u2066x\u200By\u200Fz' })
+    const id = cloud.add({ owner: TEAMMATE, scope: 'team', map_data: await sealTeam({}) }).id
+    const res = await run(['maps', 'pull', id])
+    expect(res.out).toContain('boom?evil?x?y?z')
+    expect(res.out).not.toMatch(/\p{Cf}/u)
+  })
+})

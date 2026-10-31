@@ -346,3 +346,19 @@ test('without a refusal the band is as before', async ($, on) => {
   expect(text).toContain(' · team numbers: 500 left')
   expect(text).not.toContain('refused (')
 })
+
+test('Unicode format characters in a refusal’s detail never reach the band (code review)', async ($, on) => {
+  const text = await band(
+    $,
+    on,
+    reservedWith({
+      refused: {
+        reason: 'server',
+        at: '2026-10-31T10:00:00.000Z',
+        detail: 'boom\u202Eevil\u2066x\u200By\u200F',
+      },
+    })
+  )
+  expect(text).toContain('team numbers refused (server: boom?evil?x?y?)')
+  expect(text).not.toMatch(/\p{Cf}/u)
+})

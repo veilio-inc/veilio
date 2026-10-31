@@ -218,8 +218,10 @@ export function reservationRefusedSentence(
   refused: Pick<Refused, 'reason' | 'nextAt' | 'detail'>,
   tag: string
 ): string {
-  // eslint-disable-next-line no-control-regex -- the server's words reach a terminal
-  const detail = (refused.detail ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').trim()
+  // Control and Unicode format characters (bidi overrides, zero-width) are
+  // replaced: the server's words reach a terminal (code review).
+  // eslint-disable-next-line no-control-regex -- matching them is the point
+  const detail = (refused.detail ?? '').replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?').trim()
   const why =
     refused.reason === 'cap'
       ? "this account's daily limit for this team is reached" +
