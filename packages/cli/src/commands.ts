@@ -23,6 +23,7 @@ import {
   localFamilyNote,
   restore,
   restoreLayers,
+  RULES_STOPPED_NOTE,
   appearsAsToken,
   type SecretFinding,
   STRIPPABLE_TYPES,
@@ -269,6 +270,9 @@ export async function runScrub(
   if (skipped.length && !appliedLine) io.stderr(`${BIN_NAME}: ${skipped.join(' ')}\n`)
 
   for (const { name, result } of results) {
+    // Survives --quiet: the rules the account set stopped applying part-way.
+    if (result.rulesStopped)
+      io.stderr(`${BIN_NAME}: ${name ? `${name}: ` : ''}${RULES_STOPPED_NOTE}\n`)
     if (!result.languageFallback) continue
     io.stderr(
       `${BIN_NAME}: ${name ? `${name}: ` : ''}no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +

@@ -310,7 +310,7 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 
 ## API
 
-- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
+- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments, rulesStopped }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
   - `options.path` — the file the code came from; a weak password in a secret
@@ -538,6 +538,12 @@ your maps, so a server storing it cannot read it.
   the platform regex's answer in time linear in the name's length, or `null` for a
   pattern outside its language. Rule patterns run on it, never on the platform regex, so
   a teammate's pattern such as `(a+)+$` cannot freeze the tool applying it.
+  `test(name, budget?)` takes its steps from a `ruleBudget()` when given one.
+  One `anonymize` call shares a budget of `RULE_WORK_BUDGET` (50,000,000)
+  steps across all its rules and names; once spent, every rule test answers
+  "no match" (no name is kept readable or given a rule's placeholder, and an
+  ordinary word a replace rule might have matched is masked), and the result
+  carries `rulesStopped: true` - `RULES_STOPPED_NOTE` is the sentence to show.
   The language: literals, `.`, classes, `\d \w \s` and their negations,
   `^ $`, groups, alternation, and quantifiers with bounds up to 50.
   Backreferences, lookaround and `\b` are refused; `isSafeRegex` is true

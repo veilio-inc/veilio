@@ -25,6 +25,7 @@ import {
   isPlaceholder,
   restore,
   restoreLayers,
+  RULES_STOPPED_NOTE,
   appearsAsToken,
   disputedNote,
   locallyNumberedNote,
@@ -356,6 +357,7 @@ function runAnonymize(
   // to decide for itself; dropping them here would leave an agent believing the
   // output is clean when a name is sitting in a comment inside it.
   const caveats: string[] = []
+  if (result.rulesStopped) caveats.push(`WARNING: ${RULES_STOPPED_NOTE}`)
   if (result.languageFallback) {
     caveats.push(
       `WARNING: no language marker matched. Masked as ${LANGUAGE_LABELS[result.language]}, ` +

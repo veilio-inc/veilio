@@ -67,6 +67,10 @@ export interface AnonymizeResult {
     /** Comment prose that was left as written. The largest thing this engine
      *  does not mask, stated rather than left to be discovered. */
     comments: CommentExposure;
+    /** Present when custom rules stopped matching part-way: the call's budget of
+     *  matching steps was spent, and every later rule test answered "no match"
+     *  (security audit). See RULES_STOPPED_NOTE for the wording to show. */
+    rulesStopped?: true;
 }
 export type StrippedItemType = 'jsdoc' | 'todo' | 'step-marker' | 'narration' | 'separator' | 'section-header' | 'inline-annotation';
 export interface StrippedItem {

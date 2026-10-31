@@ -158,6 +158,15 @@ placeholder that reuses an engine base such as `__FN__`, a pattern the rule
 matcher does not support (a backreference, lookaround, `\b`, or a bound over
 50), or a sealed body moved to another rule's row.
 
+One `scrub` of one input spends a bounded amount of matching work on custom
+rules, all rules and names together. Rules that would take more stop matching
+part-way - the names after that point are masked as usual, none kept readable
+or given a rule's placeholder - and `scrub` says so, under `--quiet` too:
+
+```
+veilio: custom rules stopped matching: too much work. Names after that point were masked as usual, and no rule kept one readable or gave it a rule placeholder.
+```
+
 Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
 and the chosen project, removed by `logout`), `rules.json` (the rules copy),
 `team-keys.json` (the keys `team unlock` opened, kept seven days) and

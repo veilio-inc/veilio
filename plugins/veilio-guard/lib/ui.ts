@@ -37,7 +37,9 @@ function customRules(g: Guard): string {
   ]
     .filter(([n]) => (n as number) > 0)
     .map(([n, why]) => `${n} ${why}`)
-  return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}`
+  // RULES_STOPPED_NOTE's opening words: what the band has room for.
+  const stopped = g.counts.rulesStopped ? ' - custom rules stopped matching: too much work' : ''
+  return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}${stopped}`
 }
 
 /** A planted file's text must not put control characters, nor Unicode format

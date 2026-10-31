@@ -200,7 +200,9 @@ the fix, for example:
 
 The other causes are `team key locked`, rules that could not be opened with the
 keys on this machine, and rules refused as unsafe to apply; the CLI README lists
-the exact sentences.
+the exact sentences. A call whose rules would take more matching work than one
+call allows stops applying them part-way (the rest is masked as usual) and says
+`WARNING: custom rules stopped matching: too much work. …`.
 
 The server reads the rules once, when it starts. After `veilio vault lock` or
 `veilio team lock` it keeps the rules it already loaded until it restarts;

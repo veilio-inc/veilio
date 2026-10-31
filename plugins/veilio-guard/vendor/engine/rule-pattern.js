@@ -34,6 +34,15 @@ const MAX_BUILD_STEPS = 100_000;
  *  name readable and a replace rule does not rename it, so the engine masks
  *  it as it would anyway: the safe direction. */
 const MAX_WORK = 20_000_000;
+/** Matching steps one anonymize call may spend over all its rules and names
+ *  (security audit: hostile rules over 5000 names took seconds). Past it,
+ *  every test answers "no match", and the call says so. */
+export const RULE_WORK_BUDGET = 50_000_000;
+/** What the CLI, the MCP and the guard say when `rulesStopped` is set. */
+export const RULES_STOPPED_NOTE = 'custom rules stopped matching: too much work. Names after that point were masked as usual, and no rule kept one readable or gave it a rule placeholder.';
+export function ruleBudget(steps = RULE_WORK_BUDGET) {
+    return { left: steps, spent: false };
+}
 class Unsupported extends Error {
 }
 function normalize(pairs) {
@@ -386,7 +395,7 @@ export function compileRulePattern(pattern) {
     }
     const whole = wholeLiterals(root);
     if (whole)
-        return { test: (name) => whole.has(name) };
+        return { test: (name, budget) => !budget?.spent && whole.has(name) };
     let program;
     try {
         program = compile(root);
@@ -397,18 +406,23 @@ export function compileRulePattern(pattern) {
     const { states, start } = program;
     const answers = new Map();
     return {
-        test(name) {
+        test(name, budget) {
+            if (budget?.spent)
+                return false;
             const known = answers.get(name);
             if (known !== undefined)
                 return known;
             let answer;
             try {
-                answer = run(states, start, name);
+                answer = run(states, start, name, budget);
             }
             catch {
                 // Never thrown on purpose; were it, no match - the safe direction.
                 answer = false;
             }
+            // An answer cut short by the budget is not the pattern's: not kept.
+            if (budget?.spent)
+                return false;
             if (answers.size >= CACHE_SIZE)
                 answers.clear();
             answers.set(name, answer);
@@ -416,10 +430,11 @@ export function compileRulePattern(pattern) {
         },
     };
 }
-function run(states, start, name) {
+function run(states, start, name, budget) {
     const n = name.length;
     if (n * states.length > MAX_WORK)
         return false;
+    let steps = 0;
     let seen = new Uint32Array(states.length);
     let stamp = 1;
     let found = false;
@@ -429,6 +444,7 @@ function run(states, start, name) {
     const close = (list, from, pos) => {
         work.push(from);
         while (work.length > 0) {
+            steps++;
             const s = work.pop();
             if (seen[s] === stamp)
                 continue;
@@ -459,6 +475,14 @@ function run(states, start, name) {
     };
     let current = [];
     for (let pos = 0;; pos++) {
+        if (budget) {
+            budget.left -= steps + current.length;
+            steps = 0;
+            if (budget.left < 0) {
+                budget.spent = true;
+                return false;
+            }
+        }
         // A new thread at every position: test() searches, it does not anchor.
         close(current, start, pos);
         if (found)

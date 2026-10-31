@@ -87,7 +87,7 @@ export function scrubSource(
   fileKind?: FileKind,
   team?: Numbering,
   custom: readonly CustomRule[] = []
-): { text: string; additions: SymbolMap; outside: number } {
+): { text: string; additions: SymbolMap; outside: number; rulesStopped: boolean } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole. It goes first,
   // then the account's rules (spec 065 R10).
@@ -113,7 +113,7 @@ export function scrubSource(
     // Numbered on this machine only, until the next publish renumbers it.
     if (isLocalPlaceholder(placeholder)) outside++
   }
-  return { text: result.anonymized, additions, outside }
+  return { text: result.anonymized, additions, outside, rulesStopped: result.rulesStopped === true }
 }
 
 const WORD = /[A-Za-z0-9_$]/

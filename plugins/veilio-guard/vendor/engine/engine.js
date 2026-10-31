@@ -1,6 +1,6 @@
 import { credentialValueSpans, isOrdinaryWord } from './ordinaryWords.js';
 import { isEngineBase } from './rule-checks.js';
-import { compileRulePattern } from './rule-pattern.js';
+import { compileRulePattern, ruleBudget, } from './rule-pattern.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
 import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
@@ -678,7 +678,7 @@ function isRunnableRule(r) {
 // RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
 // Compiled once per pattern.
 const ruleMatchers = new Map();
-function safeMatch(pattern, name) {
+function safeMatch(pattern, name, budget) {
     let m = ruleMatchers.get(pattern);
     if (m === undefined) {
         m = compileRulePattern(pattern);
@@ -689,7 +689,7 @@ function safeMatch(pattern, name) {
     if (m === null)
         return false;
     try {
-        return m.test(name);
+        return m.test(name, budget);
     }
     catch {
         return false; // never thrown on purpose; no match is the safe direction
@@ -992,6 +992,9 @@ export function anonymize(code, options = {}) {
     // whoever sealed it. A pattern its matcher cannot run never matches
     // (safeMatch), so it needs no filter here.
     const rules = (opts.rules ?? []).filter(isRunnableRule);
+    // One allowance of matching steps for every rule and name in this call
+    // (security audit); once spent, rule tests answer no match.
+    const budget = ruleBudget();
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.
@@ -1182,7 +1185,7 @@ export function anonymize(code, options = {}) {
         // still used (1.12.1 review: fail closed for what is new).
         if (secretValues.has(name) && !alreadyMapped.has(name))
             continue;
-        if (whitelist.some((r) => safeMatch(r.pattern, name))) {
+        if (whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
             whitelisted.add(name);
             continue;
         }
@@ -1192,7 +1195,11 @@ export function anonymize(code, options = {}) {
         // restores) but no longer substituted.
         // The value of a credential-named key is the exception (security audit):
         // it is given a placeholder, written there and left readable elsewhere.
-        if (isOrdinaryWord(name) && !replacers.some((r) => safeMatch(r.pattern, name))) {
+        // With the budget spent, a replace rule can no longer say a word is not
+        // its codename: the word is masked rather than shown.
+        if (isOrdinaryWord(name) &&
+            !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
+            !(replacers.length > 0 && budget.spent)) {
             ordinary.add(name);
             if (!credentialWords.has(name))
                 continue;
@@ -1205,10 +1212,10 @@ export function anonymize(code, options = {}) {
         if (reverseExisting[name] &&
             !(isRolePlaceholder(reverseExisting[name]) &&
                 isOrdinaryWord(name) &&
-                replacers.some((r) => safeMatch(r.pattern, name))))
+                replacers.some((r) => safeMatch(r.pattern, name, budget))))
             continue; // already mapped
         // 2. Replace: first match wins
-        const matched = replacers.find((r) => safeMatch(r.pattern, name));
+        const matched = replacers.find((r) => safeMatch(r.pattern, name, budget));
         if (matched) {
             const ph = mint(matched.placeholder);
             map[ph] = name;
@@ -1244,9 +1251,13 @@ export function anonymize(code, options = {}) {
     // so it adds nothing to the map - but if the map already holds it, it is a
     // user's name and is masked like anywhere else.
     const extracted = new Set(identifiers);
-    const knownInFrames = extractIdentifiers(unextracted.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => reverseExisting[n] && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n)));
+    const knownInFrames = extractIdentifiers(unextracted.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => reverseExisting[n] &&
+        !extracted.has(n) &&
+        !whitelist.some((r) => safeMatch(r.pattern, n, budget)));
     // Likewise inside a credential: only names the existing map already holds.
-    const knownInSecrets = extractIdentifiers(secretSpans.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => alreadyMapped.has(n) && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n)));
+    const knownInSecrets = extractIdentifiers(secretSpans.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => alreadyMapped.has(n) &&
+        !extracted.has(n) &&
+        !whitelist.some((r) => safeMatch(r.pattern, n, budget)));
     const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
         .sort((a, b) => b.length - a.length)
         .filter((n) => !whitelisted.has(n) && reverseExisting[n]);
@@ -1298,6 +1309,7 @@ export function anonymize(code, options = {}) {
         // is the text whose comments are copied into `anonymized`. Measuring the
         // raw input would keep charging for a name the user has already marked.
         comments: summarizeComments(segments),
+        ...(budget.spent ? { rulesStopped: true } : {}),
     };
 }
 /** Strip patterns in application order — larger blocks before line-level ones,

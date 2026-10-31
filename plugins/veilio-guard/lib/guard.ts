@@ -146,7 +146,8 @@ export class Guard {
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
-  counts = { withheld: 0, denied: 0, outsideReserved: 0 }
+  /** rulesStopped: Reads whose custom rules ran out of matching budget (security audit). */
+  counts = { withheld: 0, denied: 0, outsideReserved: 0, rulesStopped: 0 }
   /** Spec 063: this member's blocks of team numbers (.veilio/reserved.json), or why there are none. */
   reserved: Reserved | null = null
   /** Credentials destroyed this session, in memory only: removed from
@@ -274,7 +275,7 @@ export class Guard {
         wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
       },
       async (rel, text, language) => {
-        const { additions, outside } = scrubSource(
+        const { additions, outside, rulesStopped } = scrubSource(
           text,
           { ...this.map, ...this.unsaved },
           language,
@@ -284,6 +285,7 @@ export class Guard {
           this.rules.rules
         )
         this.counts.outsideReserved += outside
+        if (rulesStopped) this.counts.rulesStopped++
         grow(this.unsaved, additions)
         this.batch.push(rel)
       },
@@ -1052,6 +1054,7 @@ export class Guard {
               this.rules.rules
             )
             this.counts.outsideReserved += scrubbed.outside
+            if (scrubbed.rulesStopped) this.counts.rulesStopped++
             grow(working, scrubbed.additions)
             grow(additions, scrubbed.additions)
             return scrubbed.text
