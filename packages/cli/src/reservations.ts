@@ -296,41 +296,55 @@ const MAX_ALIASES = 1_000_000
 const MAX_NAME = 100_000
 
 /**
- * aliases.json, checked like map.json (security audit): an object of
- * non-empty strings within bounds, else it throws. A key that is not a
- * placeholder is dropped and counted in `ignored`.
+ * aliases.json, checked like map.json (security audit), and never thrown on
+ * (security review of round 1: one bad entry cost teamNumbering every
+ * retired placeholder). An entry whose name is not a string of 1 to 100000
+ * characters, whose key is not a placeholder, or past the entry bound is
+ * dropped and counted in `ignored`; the rest are kept. A file that is not an
+ * object of aliases is `unreadable`: no aliases, and never written over.
  */
-export function readAliases(mapPath: string): { aliases: SymbolMap; ignored: number } {
+export function readAliases(mapPath: string): {
+  aliases: SymbolMap
+  ignored: number
+  unreadable?: true
+} {
   const path = aliasesPath(mapPath)
+  const none = { aliases: {}, ignored: 0, unreadable: true as const }
   if (!existsSync(path)) return { aliases: {}, ignored: 0 }
-  const malformed = (why: string) => new Error(`aliases file at ${path} is malformed: ${why}`)
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'))
   } catch {
-    throw malformed('it is not valid JSON')
+    return none
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
-    throw malformed('it is not an object')
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return none
   const raw = (parsed as { aliases?: unknown }).aliases ?? {}
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
-    throw malformed('its aliases are not an object')
-  const entries = Object.entries(raw)
-  if (entries.length > MAX_ALIASES) throw malformed(`it holds over ${MAX_ALIASES} entries`)
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return none
   let ignored = 0
+  let kept = 0
   const aliases: SymbolMap = {}
-  for (const [p, name] of entries) {
-    if (typeof name !== 'string' || name.length === 0 || name.length > MAX_NAME)
-      throw malformed('a name is not a string of 1 to 100000 characters')
-    if (isPlaceholder(p)) aliases[p] = name
-    else ignored++
+  for (const [p, name] of Object.entries(raw)) {
+    if (
+      kept < MAX_ALIASES &&
+      typeof name === 'string' &&
+      name.length > 0 &&
+      name.length <= MAX_NAME &&
+      isPlaceholder(p)
+    ) {
+      aliases[p] = name
+      kept++
+    } else ignored++
   }
   return { aliases, ignored }
 }
 
 /** Remember renumbered placeholders' old meanings. One old placeholder never gets a second meaning. */
 export function addAliases(mapPath: string, entries: SymbolMap): void {
-  const aliases = loadAliases(mapPath)
+  const read = readAliases(mapPath)
+  // Written over, an unreadable file would lose every old meaning it holds.
+  if (read.unreadable)
+    throw new Error(`${ALIASES_FILE} is not a readable aliases file; nothing was changed`)
+  const aliases = read.aliases
   for (const [p, name] of Object.entries(entries))
     if (p in aliases && aliases[p] !== name)
       throw new Error(
