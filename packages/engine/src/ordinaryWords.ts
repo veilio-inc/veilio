@@ -184,3 +184,45 @@ export function isOrdinaryWord(name: string): boolean {
   if (!/^(?:[a-z]+|[A-Z][a-z]+|[A-Z]+)$/.test(name)) return false
   return dictionary().has(name.toLowerCase())
 }
+
+// Security audit (spec 064 regression): a dictionary-word password is an
+// ordinary word, but as the value of a credential-named key it is a password.
+// A key ends in a credential word at a word boundary (`DB_PASSWORD`, `apiKey`,
+// `db.password`), so `password_hint` and `monkey` are not credential-named.
+const CREDENTIAL_KEY_END =
+  /(?:api[_-]?key|pass(?:word|wd|phrase)?|pwd|secret|token|key|auth|credentials?)$/i
+// A placeholder in the slot is text already masked, not a password.
+const PLACEHOLDER = /^__[A-Z][A-Z0-9_]*__\d*$/
+const NOT_A_VALUE = /^(?:true|false|null|none|nil|undefined|yes|no|on|off)$/i
+// `key = value`, `key: value`, `"key": "value"`, `key => value`, an env line:
+// the value is the whole value - one quoted word, or one bare word the line
+// or the entry ends after - so prose (`"sunshine is a word"`) is not one.
+// Linear: a key starts only where a run of key characters starts, and is short.
+const KEY_VALUE =
+  /(?<![\w$.-])["'`]?([A-Za-z_$][\w$.-]{0,100})["'`]?[ \t]*(?:=>|:=|=(?![=~])|:(?!:))[ \t]*(?:"([A-Za-z_$][\w$]{0,255})"|'([A-Za-z_$][\w$]{0,255})'|([A-Za-z_$][\w$]{0,255})(?=[ \t]*(?:[,;})\]#]|\/\/|\r?$)))/dgm
+
+function credentialNamed(key: string): boolean {
+  const m = CREDENTIAL_KEY_END.exec(key)
+  if (!m) return false
+  if (m.index === 0) return true
+  const before = key[m.index - 1]!
+  return /[._-]/.test(before) || (/[a-z0-9]/.test(before) && /[A-Z]/.test(key[m.index]!))
+}
+
+/** Where `text` holds a word as the value of a credential-named key. Such a
+ *  word is never left readable as an ordinary word: the engine masks it
+ *  there, and the guard writes its map's entry over it. */
+export function credentialValueSpans(
+  text: string
+): { start: number; end: number; value: string }[] {
+  const out: { start: number; end: number; value: string }[] = []
+  for (const m of text.matchAll(KEY_VALUE)) {
+    const g = m[2] !== undefined ? 2 : m[3] !== undefined ? 3 : 4
+    const value = m[g]
+    if (!value || !credentialNamed(m[1]!) || NOT_A_VALUE.test(value) || PLACEHOLDER.test(value))
+      continue
+    const [start, end] = m.indices![g]!
+    out.push({ start, end, value })
+  }
+  return out
+}

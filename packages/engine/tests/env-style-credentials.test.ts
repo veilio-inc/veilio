@@ -153,7 +153,6 @@ describe('engine 1.12.2: what stays readable', () => {
     ],
     ['booleans and numbers', 'REQUIRE_PASSWORD=true\nDEBUG=true\nENABLE_TOKEN=1\nPORT=1\n', '.env'],
     ['a number used elsewhere', 'MAX_TOKEN=4096\nlimit = 4096\n', '.env'],
-    ['a YAML word used elsewhere', 'TOKEN: bearer\ntype: bearer\n', 'c.yml'],
     ['PRIMARY_KEY and SORT_KEY', 'PRIMARY_KEY=id\nSORT_KEY=createdAt\n', '.env'],
   ] as const
   for (const [what, text, path] of notRedacted) {
@@ -161,6 +160,14 @@ describe('engine 1.12.2: what stays readable', () => {
       expect(anonymize(text, { path }).anonymized).not.toMatch(REDACTED)
     })
   }
+
+  // Security audit: a word as the value of a credential-named key is never
+  // left readable - a possible one is redacted there, and only there.
+  it('a YAML word used elsewhere is redacted only as the credential value', () => {
+    expect(anonymize('TOKEN: bearer\ntype: bearer\n', { path: 'c.yml' }).anonymized).toBe(
+      'TOKEN: __REDACTED_CREDENTIAL_1__\ntype: bearer\n'
+    )
+  })
 
   // The syntax stays; words in it are masked as ordinary names, as on 1.12.1.
   it('YAML syntax is never a value: block indicators, a tag, an anchor', () => {

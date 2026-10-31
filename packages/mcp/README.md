@@ -41,7 +41,9 @@ are still real. Names written entirely in capitals are not masked either
 (`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
 English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
 toolchain's name (`vitest`, `junit`): only distinctive names are masked. A codename
-that is an ordinary word stays masked only with a custom replace rule.
+that is an ordinary word stays masked only with a custom replace rule. An ordinary
+word that is the value of a credential-named key (`password: sunshine`) is a
+password, and is masked there.
 
 ## Tools
 

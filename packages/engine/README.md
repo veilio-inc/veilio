@@ -53,7 +53,10 @@ Not masked:
   with an inner capital, an underscore or a digit (`refundInvoice`,
   `customer_invoices`, `invoice2`) is a choice somebody made and is masked, as
   are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
-  mask any word;
+  mask any word. The value of a credential-named key (`password: sunshine`,
+  `SECRET_KEY = "phoenix"`) is the exception: it is a password, masked there
+  (redacted where the scanner flags it as a possible credential) and left
+  readable elsewhere;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment

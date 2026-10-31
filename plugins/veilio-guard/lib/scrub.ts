@@ -15,6 +15,7 @@ import {
   REGULATED_BASES,
   anonymize,
   compileRulePattern,
+  credentialValueSpans,
   detectSecrets,
   isKeyword,
   isLocalPlaceholder,
@@ -402,14 +403,17 @@ function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
 /** An ordinary word the map holds that this text shows as a credential, or a
  *  possible one, is written over after all (code review: `client_secret:
  *  "sunshine"` with `sunshine` in an older map), as the engine does inside a
- *  credential span. Errs towards masking: the word is masked throughout. */
+ *  credential span - and so is one that is the value of a credential-named
+ *  key the scanner does not flag (`PASSWORD=sunshine`, security audit).
+ *  Errs towards masking: the word is masked throughout. */
 function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): SymbolMap {
   const found = detectSecrets(text)
-  if (found.length === 0) return shown
   const lines = text.split('\n')
-  const values = new Set(
-    found.map((f) => (lines[f.line - 1] ?? '').slice(f.column - 1, f.column - 1 + f.length))
-  )
+  const values = new Set([
+    ...found.map((f) => (lines[f.line - 1] ?? '').slice(f.column - 1, f.column - 1 + f.length)),
+    ...credentialValueSpans(text).map((s) => s.value),
+  ])
+  if (values.size === 0) return shown
   let out: SymbolMap | null = null
   for (const [p, name] of Object.entries(map))
     if (!(p in shown) && values.has(name)) (out ??= { ...shown })[p] = name

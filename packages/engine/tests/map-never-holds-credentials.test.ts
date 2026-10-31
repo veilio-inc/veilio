@@ -94,11 +94,14 @@ describe('a name the map already holds', () => {
     const result = anonymize(code, { existingMap: { __STR__1290: 'disabled' } })
     expect(result.anonymized).toContain('"__STR__1290"')
   })
-  it('a new name inside a credential slot is not extracted', () => {
+  it('a new name inside a credential slot is not extracted: it is redacted (security audit)', () => {
+    // Not mapped, and - since the CE security audit - not left readable either:
+    // the value of a credential-named key is a password, never shown as written.
     const code = 'export const auth = { client_secret: "disabled" }\n'
     const result = anonymize(code)
     expect(Object.values(result.map)).not.toContain('disabled')
-    expect(result.anonymized).toContain('"disabled"')
+    expect(result.anonymized).toContain('"__REDACTED_CREDENTIAL_1__"')
+    expect(anonymize(code, { secrets: 'warn' }).anonymized).toContain('"disabled"')
   })
 })
 

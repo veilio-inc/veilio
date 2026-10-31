@@ -54,8 +54,9 @@ test('a credential that is an ordinary word an older map holds is redacted, not 
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'sunshine' }) })
   const r = bash.r as { result: Record<string, unknown> }
   // A possible credential (client_secret: "sunshine"): the guard writes the
-  // map's entry over it, as before. A weak password the scanner does not flag
-  // at all (PASSWORD=sunshine) is the documented limit in COVERAGE.md.
+  // map's entry over it, as before. So is one the scanner does not flag at
+  // all, as the value of a credential-named key (PASSWORD=sunshine, security
+  // audit; tests/guard/credential-values.test.ts).
   on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'client_secret: "sunshine"' } }))
   const out = JSON.stringify(await $.tool.call(eventOf(bash)))
   expect(out).not.toContain('sunshine')

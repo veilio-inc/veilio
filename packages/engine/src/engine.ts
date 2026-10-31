@@ -1,4 +1,4 @@
-import { isOrdinaryWord } from './ordinaryWords.js'
+import { credentialValueSpans, isOrdinaryWord } from './ordinaryWords.js'
 import { isEngineBase } from './rule-checks.js'
 import { compileRulePattern, type RuleMatcher } from './rule-pattern.js'
 import type {
@@ -1281,8 +1281,30 @@ export function anonymize(
       .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
       .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`] as const)
   )
+  // Security audit: a word that is the value of a credential-named key is a
+  // password, never left as written. One the scan flags as possible is never
+  // mapped either, so under `redact` it is redacted one-way where it is that
+  // value (the same word elsewhere is an ordinary word) - unless an older map
+  // already masks it reversibly, which the guard relies on.
+  let unvalued = marked
+  if ((opts.secrets ?? 'redact') === 'redact') {
+    const mapped = new Set(Object.values(existingMap))
+    const possible = new Set(
+      found.filter((f) => f.ambiguous).map((f) => code.slice(f.start, f.end))
+    )
+    const tokens = new Map<string, string>()
+    let out = ''
+    let at = 0
+    for (const { start, end, value } of credentialValueSpans(marked)) {
+      if (!possible.has(value) || mapped.has(value) || destroyed.has(value)) continue
+      if (!tokens.has(value)) tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`)
+      out += marked.slice(at, start) + tokens.get(value)
+      at = end
+    }
+    unvalued = out + marked.slice(at)
+  }
   const source = applyRegulatedMasks(
-    keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked,
+    keptCredentials.size > 0 ? spreadRedactions(unvalued, keptCredentials, trusted) : unvalued,
     regulated,
     map,
     reverseExisting,
@@ -1298,6 +1320,9 @@ export function anonymize(
   // extracted nor substituted, so no part of it reaches the map. Found again
   // in `source`, so the offsets are the ones substitution sees.
   const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end] as const)
+  const valued = credentialValueSpans(source)
+  const valueSpans = valued.map((s) => [s.start, s.end] as const)
+  const credentialWords = new Set(valued.map((s) => s.value))
   // A name the existing map already holds may still be substituted inside one:
   // that writes nothing new, and the guard relies on it for a plain word
   // (`client_secret: "disabled"`) its map already masks.
@@ -1358,9 +1383,11 @@ export function anonymize(
     // is left as written - unless a custom replace rule asks for it. Like a
     // whitelisted name, an older map's entry for it is kept (old text still
     // restores) but no longer substituted.
+    // The value of a credential-named key is the exception (security audit):
+    // it is given a placeholder, written there and left readable elsewhere.
     if (isOrdinaryWord(name) && !replacers.some((r) => safeMatch(r.pattern, name))) {
       ordinary.add(name)
-      continue
+      if (!credentialWords.has(name)) continue
     }
 
     // Already mapped - unless it is an ordinary word the engine itself mapped
@@ -1461,7 +1488,8 @@ export function anonymize(
                   (!alreadyMapped.has(m) &&
                     overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
                   (ordinary.has(m) &&
-                    !overlapsAny(secretSpans, start + offset, start + offset + m.length))
+                    !overlapsAny(secretSpans, start + offset, start + offset + m.length) &&
+                    !overlapsAny(valueSpans, start + offset, start + offset + m.length))
                     ? m
                     : (reverseExisting[m] ?? m)
                 )
