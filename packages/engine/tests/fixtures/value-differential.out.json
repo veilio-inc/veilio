@@ -1,10 +1,10 @@
 {
   "corpus": {
-    "inputs": 11616,
-    "maskedInValues": 3771,
+    "inputs": 11778,
+    "maskedInValues": 3856,
     "leaks": 0,
     "newlyReadable": {
-      "identifiers": 17573,
+      "identifiers": 17683,
       "paths": 61
     }
   },

@@ -82,8 +82,9 @@ describe('the flag rule is for flags in what you type, nothing else', () => {
     )
   })
   it('in a prompt, a code name after a dash is masked', () => {
-    expect(applyMap('pass --quayward to it', map, ctx({ kind: 'prompt' }))).toBe(
-      'pass --__VAR__1 to it'
+    // "pass" is a credential word: the net would take the flag as its value.
+    expect(applyMap('add --quayward to it', map, ctx({ kind: 'prompt' }))).toBe(
+      'add --__VAR__1 to it'
     )
   })
 })

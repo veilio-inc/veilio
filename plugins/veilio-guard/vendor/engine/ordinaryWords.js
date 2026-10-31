@@ -284,15 +284,12 @@ function secretShaped(value, quoted, code = false) {
 }
 // The credential net (security review, round 4): in every file that is not
 // code, a name holding a credential word, any separator, and the value up to
-// its delimiter. Fail closed: only a shape no credential has (NOT_SECRET: a
-// placeholder, one or two characters, a number, a path, a URL without
-// userinfo, a CI expression), a `$NAME` reference or a language keyword
-// (`null`, `None`) is left.
+// its delimiter (netValueEnd). Fail closed: only netExempt's shapes are left.
 // A name is a whole token (`--db-password`, `_authToken`, `db.password`); a
 // `(`, `[` or `,` separates only a quoted value, so `[token, setToken]` in
 // command output is not a pair.
 const NET_KEY = /(?<![\w$.-])-{0,2}([A-Za-z_$][\w$.-]{0,100})/g;
-const NET_TAIL = /(?:[ \t]|\\\r?\n|=>|->|:=|[=:"'`>]|<!\[CDATA\[|[([,](?=[ \t]*["'`])){1,40}((?:[^\s"'`;,<\]]|\](?!\]>)){1,4096})/dy;
+const NET_TAIL = /(?:[ \t]|\\\r?\n|=>|->|:=|[=:"'`>]|<!\[CDATA\[|[([,](?=[ \t]*["'`])){1,40}(?=\S)/y;
 // The start of a line of code, for the net over code only guessed at.
 const CODE_START = /(?:^|\n)[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/;
 const CODE_LINE = /\n[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/;
@@ -344,6 +341,82 @@ function trimmed(raw, offset, comment, yaml = false, stop = null) {
         end -= triple ? 3 : 1;
     }
     return end > start ? { start: offset + start, end: offset + end, quoted } : null;
+}
+/** The net's only exemptions (ruling, round 4): text already masked, one
+ *  or two characters, a `$NAME` reference, a language keyword, and in code a
+ *  call or member access that is the whole value. */
+function netExempt(value, calls, language) {
+    return (value.length <= 2 ||
+        /^(?:__[A-Z][A-Z0-9_]*__\d*)+$/.test(value) ||
+        REFERENCE.test(value) ||
+        keyword(value, language) ||
+        (calls && CALL_OR_MEMBER.test(value)));
+}
+/** Where a net value starting at `s` ends. In quotes, at the closing quote;
+ *  as element text, at `<`; in CDATA, at `]]>`. Otherwise at the next
+ *  whitespace - or at a quote, brace (or its pair's comma) or paren opened
+ *  before the key on its line and still open (a `"KEY=value"` string, an
+ *  object, a call). However long: each character is read once. */
+function netValueEnd(text, key, s, sep) {
+    const end = netValueStop(text, key, s, sep);
+    // A command, a CI expression or a `<placeholder>` is one value however many
+    // words it holds: redacted to its close, never cut at a space inside it.
+    const limit = text.length;
+    const opener = /^(?:\$\(|\$\{\{|<|`)/.exec(text.slice(s, s + 3))?.[0];
+    if (!opener)
+        return end;
+    let depth = 0;
+    let n = s;
+    for (; n < limit && text[n] !== '\n'; n++) {
+        const c = text[n];
+        if (opener === '$(') {
+            if (c === '(')
+                depth++;
+            else if (c === ')' && --depth === 0)
+                return Math.max(end, n + 1);
+        }
+        else if (opener === '${{') {
+            if (c === '}' && text[n + 1] === '}' && n > s + 2)
+                return Math.max(end, n + 2);
+        }
+        else if (c === (opener === '<' ? '>' : '`') && n > s)
+            return Math.max(end, n + 1);
+    }
+    // Never closed: to the end of the line, failing closed.
+    return Math.max(end, n);
+}
+function netValueStop(text, key, s, sep) {
+    const limit = text.length;
+    // Character by character: the cost is the value's own length.
+    const until = (stop) => {
+        let n = s;
+        while (n < limit && text[n] !== '\n' && !stop.includes(text[n]))
+            n++;
+        return n;
+    };
+    const last = sep[sep.length - 1];
+    if (/["'`]/.test(last))
+        return until(last);
+    if (sep.endsWith('<![CDATA[')) {
+        const end = until('');
+        const close = text.slice(s, end).indexOf(']]>');
+        return close === -1 ? end : s + close;
+    }
+    if (last === '>')
+        return until('<');
+    const line = lineBefore(text, key);
+    const open = (o, c) => line.split(o).length > line.split(c).length;
+    let stop = ' \t\r\f\v';
+    for (const q of ['"', "'", '`'])
+        if ((line.split(q).length - 1) % 2 === 1)
+            stop += q;
+    if (open('{', '}'))
+        stop += '},';
+    if (open('(', ')'))
+        stop += ')';
+    if (open('[', ']'))
+        stop += ']';
+    return until(stop);
 }
 /** Every value position in `text`, sorted by start. Spans may nest: a
  *  connection string's `password=...` lies inside its string. */
@@ -470,65 +543,20 @@ export function valueSpans(text, scan = {}) {
             // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
             if (at < covered || /__[A-Z]/.test(k[1]) || !CREDENTIAL.test(k[1]))
                 continue;
-            // A search result's `src/secrets.ts:12:` is a file and its line.
-            if (/\.\w{1,8}$/.test(k[1]) && /^[:-]\d+[:-]/.test(text.slice(keyEnd, keyEnd + 12)))
-                continue;
             if (guessed && !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at)))
                 continue;
             NET_TAIL.lastIndex = keyEnd;
             const m = NET_TAIL.exec(text);
             if (!m)
                 continue;
-            const s = m.indices[1][0];
-            let e = m.indices[1][1];
-            const sep = text.slice(keyEnd, s);
+            const s = keyEnd + m[0].length;
+            const sep = m[0];
             if (guessed && !sep.includes('='))
                 continue;
-            // Unquoted, the value runs to the next whitespace (`sun,shine`); in
-            // quotes, CDATA or element text it ends where they do. Inside a quoted
-            // string, a brace or a call on its line it also ends at the closing
-            // quote, brace (or the next pair's comma) or paren, and in a shell line
-            // at `;`, `&` or `|`.
-            if (!/["'`>[]$/.test(sep)) {
-                const line = lineBefore(text, at);
-                const stop = (/["'`]/.test(line) ? `"'\`` : '') +
-                    (line.includes('{') ? '},' : '') +
-                    (line.includes('(') ? ')' : '') +
-                    (kind === 'shell' || kind === 'dotenv' ? ';&|' : '');
-                let n = s;
-                while (n < s + 4096 && n < text.length && !/\s/.test(text[n]) && !stop.includes(text[n]))
-                    n++;
-                e = n;
-            }
+            const e = netValueEnd(text, at, s, sep);
             const value = text.slice(s, e);
             covered = e;
-            if (!secretShaped(value, false, calls) || keyword(value, scan.language))
-                continue;
-            // A call, a `${{ }}` expression or a `<placeholder>` runs on past the
-            // value's delimiter: read on to the end of the line, at most 512
-            // characters, so many keys on one long line stay linear.
-            if (/^[$<]/.test(value) || calls) {
-                // Inside quotes, up to the closing one.
-                const quote = /["'`]/.test(text[s - 1] ?? '') ? text[s - 1] : '\n';
-                const rest = text
-                    .slice(s, s + 512)
-                    .split('\n', 1)[0]
-                    .split(quote, 1)[0]
-                    .trim();
-                if (/^[$<]/.test(value) && !secretShaped(rest, false))
-                    continue;
-                if (calls && CALL_OR_MEMBER.test(rest))
-                    continue;
-            }
-            // A shell's backticks run a command; YAML's anchor, tag and block
-            // indicator stand before a value, which the YAML grammar reads.
-            if ((kind === 'shell' || kind === 'dotenv') && text[s - 1] === '`')
-                continue;
-            if (kind === 'yaml' && /^(?:[&!]\S*|[|>][-+]?\d?[-+]?)$/.test(value))
-                continue;
-            // On a command line, a whole option word after the name (`--password
-            // --verbose`, "pass --dry-run") is the next option, not this one's value.
-            if (/^[ \t]+$/.test(sep) && /^--?[A-Za-z][\w-]*$/.test(value))
+            if (netExempt(value, calls, scan.language))
                 continue;
             out.push({ start: s, end: e, value, credential: true, path: false });
         }
@@ -543,7 +571,7 @@ export function valueSpans(text, scan = {}) {
     if (kind === 'pgpass')
         for (const m of text.matchAll(PGPASS_LINE)) {
             const [s, e] = m.indices[1];
-            if (secretShaped(m[1], false))
+            if (!netExempt(m[1], false, scan.language))
                 out.push({ start: s, end: e, value: m[1], credential: true, path: false });
         }
     // Pairs inside every value found so far.

@@ -143,6 +143,8 @@ describe('the net is linear on adversarial lines', () => {
       `password=${'a'.repeat(n)}\n`,
       `${'a:1:b:c:'.repeat(n / 8)}\n`,
       `${'x.ts:1: password=a '.repeat(n / 20)}\n`,
+      `${'password=<'.repeat(n / 10)}\n`,
+      `${'password=$('.repeat(n / 11)}\n`,
     ].map((line) => line.repeat(4))
   it('4000, 8000 and 16000 characters grow linearly', () => {
     const [a, b, c] = [4000, 8000, 16000].map((n) => lines(n).map(time))
@@ -193,9 +195,10 @@ it("a search result's path and line number are not a key and its value", () => {
   expect(anonymize(text).anonymized).not.toContain('__REDACTED_')
 })
 
-it('a quoted CI expression is not a value, and its words stay masked', () => {
+// Ruling, round 4: a CI expression is no exemption - it is redacted.
+it('a quoted CI expression under a credential key is redacted', () => {
   const r = anonymize('PGPASSWORD="${{ secrets.PG }}" psql\n', { path: 'run.sh' })
-  expect(r.anonymized).not.toContain('__REDACTED_')
+  expect(r.anonymized).toContain('__REDACTED_CREDENTIAL_')
   expect(r.anonymized).not.toMatch(/\bsecrets\b/)
 })
 
@@ -215,9 +218,63 @@ describe('the net does not fail open on a value shape', () => {
     }
   })
 
-  it('a whole option word after the name on a command line is the next option', () => {
-    expect(anonymize('mysql --password --verbose\n', { path: 'run.sh' }).anonymized).toContain(
+  // Ruling, round 4: an option word after the name is no exemption either.
+  it('an option word after the name is redacted as its value', () => {
+    expect(anonymize('mysql --password --verbose\n', { path: 'run.sh' }).anonymized).not.toContain(
       '--verbose'
     )
   })
+})
+
+// Ruling, round 4: the net fails closed. Its only exemptions are a $NAME
+// reference, a code-only call or member access, a language keyword, one or two
+// characters and a type annotation (and text already masked). Each shape
+// below was once exempt and is now redacted.
+describe('removed exemptions: now redacted', () => {
+  it.each([
+    ['src/secrets.ts:3:sunshine\n', 'sunshine'],
+    ['db.password:12:sunshine\n', 'sunshine'],
+    ['password=/run/secrets/sunshine\n', 'sunshine'],
+    ['TOKEN_URL=https://auth.example.com/sunshine\n', 'sunshine'],
+    ['password=$(cat sunshine)\n', 'cat'],
+    ['password: ${{ secrets.sunshine }}\n', '${{'],
+    ['password=`cat sunshine`\n', 'cat'],
+    ['password --sunshine\n', 'sunshine'],
+    ['password: !sunshine\n', 'sunshine'],
+    ['password=1234\n', '1234'],
+  ])('%j', (text, word) => {
+    const r = anonymize(text, { path: 'notes.txt' })
+    expect(r.anonymized).toContain('__REDACTED_CREDENTIAL_')
+    expect(r.anonymized).not.toContain(word)
+  })
+
+  it.each([
+    ['x "a" password=sun"shine\n', 'shine'],
+    ['f(a) password=sun)shine\n', 'shine'],
+    ['{a} password=sun}shine\n', 'shine'],
+  ])('a stop character not opened before the key does not end the value: %j', (text, word) => {
+    expect(anonymize(text, { path: 'notes.txt' }).anonymized).not.toContain(word)
+  })
+
+  it('a quote opened before the key ends the value: the reference is not redacted', () => {
+    const r = anonymize('run("PGPASSWORD=$PGPASS")\n', { path: 'notes.txt' })
+    expect(r.anonymized).not.toContain('__REDACTED_')
+    expect(r.anonymized).toMatch(/"\)\n$/)
+  })
+
+  it("a brace opened before the key ends the value at its pair's comma", () => {
+    expect(anonymize('x = { password: sun, y: 1 }\n', { path: 'notes.txt' }).anonymized).toContain(
+      'y: 1'
+    )
+  })
+})
+
+it('a command or placeholder under a credential word is redacted to its close', () => {
+  for (const [text, word] of [
+    ['password=$(cat sunshine)\n', 'sunshine'],
+    ['DB_PASSWORD=<your password>\n', 'your'],
+    ['PASSWORD="$(openssl rand | tr -d "=+/" | cut -c1-25)"\n', 'cut'],
+    ['password: ${{ secrets.PG }}\n', 'secrets'],
+  ])
+    expect(anonymize(text, { path: 'notes.txt' }).anonymized, text).not.toContain(word)
 })

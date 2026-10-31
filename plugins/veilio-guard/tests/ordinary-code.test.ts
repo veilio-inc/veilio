@@ -57,7 +57,10 @@ test('a search over TypeScript keeps the keywords on every line', async ($, on) 
   project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
   on('tool.call', () => GREP.r)
   const out = await $.tool.call(eventOf(GREP))
-  expect(res(out).content).toContain('export function __FN__1(')
+  // Ruling, round 4: `src/secrets.ts:3:export` reads as a credential word and
+  // its value, and is redacted - an accepted false positive in search output.
+  expect(res(out).content).toContain('function __FN__1(')
+  expect(res(out).content).toMatch(/src\/secrets\.ts:__REDACTED_CREDENTIAL_\d+__ function/)
   expect(res(out).content).not.toMatch(/__VAR__690|__FN__1006/)
 })
 

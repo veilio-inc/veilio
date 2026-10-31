@@ -112,13 +112,14 @@ describe('engine 1.12.2: the whole value, as the file reads it', () => {
     expect(r.anonymized).toMatch(/- "DB_PASSWORD=__REDACTED_[A-Z_]+_\d+__"\n$/)
   })
 
-  it('in a shell line whitespace and ; end the value, so the command stays', () => {
+  // Ruling, round 4: an unquoted value runs to whitespace, `;` included.
+  it('in a shell line whitespace ends the value, so the command stays', () => {
     expect(anonymize('PGPASSWORD=Tr0ub4dor psql -h db\n', { path: 'run.sh' }).anonymized).toMatch(
       /^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__ \S+ -h \S+\n$/
     )
     expect(
       anonymize('export DB_PASSWORD=Tr0ub4dor-zebra-91; node app.js\n', { path: 'a.sh' }).anonymized
-    ).toMatch(/DB_PASSWORD=__REDACTED_[A-Z_]+_\d+__; /)
+    ).toMatch(/DB_PASSWORD=__REDACTED_[A-Z_]+_\d+__ node app\.js\n$/)
   })
 
   it('a long value is redacted whole', () => {
@@ -140,25 +141,38 @@ describe('engine 1.12.2: what stays readable', () => {
     ['a $ reference', 'export DB_PASSWORD=$DB_PASSWORD\n', 'a.sh'],
     ['a ${} reference in YAML', 'DB_PASSWORD: ${DB_PASSWORD}\n', 'compose.yml'],
     ['an empty value', 'DB_PASSWORD=\n', '.env'],
-    ['a GitHub Actions expression', 'DB_PASSWORD: ${{ secrets.DB_PASSWORD }}\n', 'ci.yml'],
-    ['a <placeholder>', 'DB_PASSWORD=<your password>\n', '.env'],
-    ['a path held by a _FILE name', 'DB_PASSWORD_FILE=/run/secrets/db\n', '.env'],
-    ['a URL held by a TOKEN_URL name', 'TOKEN_URL=https://auth.example.com/oauth/token\n', '.env'],
     ['BYPASS_CACHE and PASSTHROUGH', 'BYPASS_CACHE=1\nPASSTHROUGH=true\n', '.env'],
-    ['PWD, a path', 'PWD=/Users/dlugosh/Documents/Repository\n', '.env'],
-    [
-      'GOOGLE_APPLICATION_CREDENTIALS, a path',
-      'GOOGLE_APPLICATION_CREDENTIALS=/etc/gcp/sa.json\n',
-      '.env',
-    ],
     ['booleans and numbers', 'REQUIRE_PASSWORD=true\nDEBUG=true\nENABLE_TOKEN=1\nPORT=1\n', '.env'],
-    ['a number used elsewhere', 'MAX_TOKEN=4096\nlimit = 4096\n', '.env'],
     // Round 3: SORT_KEY=createdAt is redacted now - a key CONTAINS `key`.
     ['PRIMARY_KEY, a two-character value', 'PRIMARY_KEY=id\n', '.env'],
   ] as const
   for (const [what, text, path] of notRedacted) {
     it(`${what} is not redacted`, () => {
       expect(anonymize(text, { path }).anonymized).not.toMatch(REDACTED)
+    })
+  }
+
+  // Ruling, round 4: the credential net fails closed. Its only exemptions are
+  // a $NAME reference, a code-only call or member access, a keyword, one or
+  // two characters and a type annotation; these shapes are redacted now.
+  const nowRedacted = [
+    ['a GitHub Actions expression', 'DB_PASSWORD: ${{ secrets.DB_PASSWORD }}\n', 'ci.yml'],
+    ['a <placeholder>', 'DB_PASSWORD=<your password>\n', '.env'],
+    ['a path held by a _FILE name', 'DB_PASSWORD_FILE=/run/secrets/db\n', '.env'],
+    ['a URL held by a TOKEN_URL name', 'TOKEN_URL=https://auth.example.com/oauth/token\n', '.env'],
+    ['PWD, a path', 'PWD=/Users/dlugosh/Documents/Repository\n', '.env'],
+    [
+      'GOOGLE_APPLICATION_CREDENTIALS, a path',
+      'GOOGLE_APPLICATION_CREDENTIALS=/etc/gcp/sa.json\n',
+      '.env',
+    ],
+    ['a number', 'MAX_TOKEN=4096\n', '.env'],
+    ['a YAML tag', 'DB_PASSWORD: !vault |\n  x\n', 'c.yml'],
+    ['a YAML anchor', 'DB_PASSWORD: &pw x\n', 'c.yml'],
+  ] as const
+  for (const [what, text, path] of nowRedacted) {
+    it(`${what} is redacted`, () => {
+      expect(anonymize(text, { path }).anonymized).toMatch(REDACTED)
     })
   }
 
@@ -176,8 +190,6 @@ describe('engine 1.12.2: what stays readable', () => {
     for (const [text, kept] of [
       ['env:\n  DB_PASSWORD: >-\n    x\n', /DB_PASSWORD: >-\n/],
       ['env:\n  POSTGRES_PASSWORD: |\n    x\n', /POSTGRES_PASSWORD: \|\n/],
-      ['DB_PASSWORD: !vault |\n  x\n', /^DB_PASSWORD: !\S+ \|\n/],
-      ['DB_PASSWORD: &pw x\nOTHER: *pw\n', /^DB_PASSWORD: &\S+ /],
       ['DB_PASSWORD: |2\n  x\n', /^DB_PASSWORD: \|2\n/],
     ] as const) {
       const out = anonymize(text, { path: 'c.yml' }).anonymized
@@ -381,10 +393,10 @@ describe('engine 1.12.2: security review of ad9d284', () => {
     })
   }
 
-  it('an anchor or a tag before the value survives', () => {
-    expect(anonymize('DB_PASSWORD: &pw Tr0ub4dorZebra91\n', { path: 'c.yml' }).anonymized).toMatch(
-      /^DB_PASSWORD: &\S+ __REDACTED_[A-Z_]+_\d+__\n$/
-    )
+  // Ruling, round 4: the anchor is redacted with the value.
+  it('an anchor before the value: neither is readable', () => {
+    const out = anonymize('DB_PASSWORD: &pw Tr0ub4dorZebra91\n', { path: 'c.yml' }).anonymized
+    expect(out).toMatch(/^DB_PASSWORD: __REDACTED_[A-Z_]+_\d+__ __REDACTED_[A-Z_]+_\d+__\n$/)
   })
 
   it('a quoted shell value stays quoted', () => {
@@ -393,13 +405,11 @@ describe('engine 1.12.2: security review of ad9d284', () => {
     ).toMatch(/^export DB_PASSWORD="__REDACTED_[A-Z_]+_\d+__"\n$/)
   })
 
-  it('PWD, PASS and *_CREDENTIALS still hold paths, not credentials', () => {
-    for (const t of [
-      'PWD=/Users/x/repo\n',
-      'PASS=1\n',
-      'GOOGLE_APPLICATION_CREDENTIALS=/etc/sa.json\n',
-    ])
-      expect(anonymize(t, { path: '.env' }).anonymized, t).not.toMatch(REDACTED)
+  // Ruling, round 4: a path under a credential word is redacted too.
+  it('PWD and *_CREDENTIALS paths are redacted; PASS=1 is one character', () => {
+    for (const t of ['PWD=/Users/x/repo\n', 'GOOGLE_APPLICATION_CREDENTIALS=/etc/sa.json\n'])
+      expect(anonymize(t, { path: '.env' }).anonymized, t).toMatch(REDACTED)
+    expect(anonymize('PASS=1\n', { path: '.env' }).anonymized).not.toMatch(REDACTED)
   })
 })
 
@@ -514,9 +524,8 @@ describe('engine 1.13.0: a # right after = is a value', () => {
     expect(
       leaked(anonymize('DB_PASSWORD=#Tr0ub4dorZebra91\n', { path: '.env' }), /Tr0ub4dor/)
     ).toBe(false)
-    expect(anonymize('DB_PASSWORD: &pw # later\n', { path: 'c.yml' }).anonymized).not.toMatch(
-      REDACTED
-    )
+    // Ruling, round 4: an anchor is no exemption.
+    expect(anonymize('DB_PASSWORD: &pw # later\n', { path: 'c.yml' }).anonymized).toMatch(REDACTED)
   })
 })
 
@@ -648,16 +657,18 @@ describe('engine 1.13.0: review of f26b887', () => {
     expect(y.anonymized).toMatch(/\n\S+: \S+\n\S+: "5432"\n$/)
   })
 
-  it('a shell command substitution with nested quotes is not a value', () => {
+  // Ruling, round 4: a command under a credential word is redacted too.
+  it('a shell command substitution under a credential word is redacted', () => {
     for (const t of [
       'PASSWORD="$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)"\n',
       'TOKEN="$(cat "$HOME/.token")"\n',
       'TOKEN=`cat ~/.token`\n',
     ])
-      expect(anonymize(t, { fileKind: 'shell' }).anonymized, t).not.toMatch(REDACTED)
+      expect(anonymize(t, { fileKind: 'shell' }).anonymized, t).toMatch(REDACTED)
   })
 
-  it('a key file path is not a value', () => {
+  // Ruling, round 4: a key file's path is redacted too.
+  it('a key file path under a credential word is redacted', () => {
     for (const [t, k] of [
       ['JWT_PRIVATE_KEY=./keys/jwt-private.pem\n', 'dotenv'],
       ['TLS_PRIVATE_KEY=/etc/ssl/private/server.key\n', 'dotenv'],
@@ -666,7 +677,7 @@ describe('engine 1.13.0: review of f26b887', () => {
       ['export SIGNING_KEY=${PWD}/certs/sign.pem\n', 'shell'],
       ['SIGNING_KEY: /run/secrets/signing.pem\n', 'yaml'],
     ] as const)
-      expect(anonymize(t, { fileKind: k }).anonymized, t).not.toMatch(REDACTED)
+      expect(anonymize(t, { fileKind: k }).anonymized, t).toMatch(REDACTED)
   })
 
   it('booleans, short numbers and null are not reported under a convention name', () => {
@@ -704,8 +715,9 @@ describe('engine 1.13.0: security review of 2bc28d4', () => {
   it('a value starting with / is a path only when it reads as one', () => {
     for (const t of ['DB_PASSWORD=/Tr0ub4dor!zebra#91\n', 'API_TOKEN=/xK9mQ2vL7pZq\n'])
       expect(leaked(anonymize(t, { fileKind: 'dotenv' }), /Tr0ub4dor|xK9mQ2vL7pZq/), t).toBe(false)
+    // Ruling, round 4: so is one that reads as a path.
     for (const t of ['SIGNING_KEY=/run/secrets/sign\n', 'JWT_PRIVATE_KEY=/keys/jwt.pem\n'])
-      expect(anonymize(t, { fileKind: 'dotenv' }).anonymized, t).not.toMatch(REDACTED)
+      expect(anonymize(t, { fileKind: 'dotenv' }).anonymized, t).toMatch(REDACTED)
   })
 
   it('a closed quote spans lines until a line starts a new assignment', () => {

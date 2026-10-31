@@ -68,20 +68,20 @@ Not masked:
   never holds it. Outside code a credential net reads every line: the
   credential-named name, any separator (whitespace, `=`, `:=`, `:`, `->`,
   `=>`, quotes, a `\` continuation, `<![CDATA[`, a tag's `>`, and `(`, `[` or
-  `,` before a quoted value), and the value up to whitespace, a quote, `;`,
-  `,` or `<` - `password sunshine` in a properties file, `.netrc`'s `password
-  sunshine`, a Makefile's `PASSWORD := sunshine`. A `.pgpass` line's fifth
+  `,` before a quoted value), and the value - `password sunshine` in a
+  properties file, `.netrc`'s `password sunshine`, a Makefile's `PASSWORD :=
+  sunshine`. A quoted value ends at its closing quote, element text at `<`,
+  CDATA at `]]>`. A `.pgpass` line's fifth
   field is a password. Prose is over-masked on purpose: "password reset"
-  redacts "reset". A number, a boolean or another language keyword, a value
-  of one or two characters, a placeholder (`<your password>`), an unquoted
-  `$NAME` or `${NAME}`, a CI expression (`${{ secrets.X }}`), a shell command
-  (`$(...)`, backticks), a URL without userinfo or a path under such a key is
-  masked, not redacted; so, in code only - a code file or a language whose
-  text reads as code - is a call or member access that is the whole value
-  (`os.getenv("KEY")`, `config.secret`); anywhere else it fails closed. An
-  unquoted value runs to the next whitespace (`sun,shine` is one), or to the
-  closing quote, brace or paren of the string, object or call it stands in.
-  Text pasted with no path whose language is only guessed is read by the
+  redacts "reset". The net fails closed: only a value of one or two
+  characters, an unquoted `$NAME` or `${NAME}`, a language keyword (`null`,
+  `true`, `None`), text already masked, and - in code only, as the whole value
+  - a call or member access (`os.getenv("KEY")`, `config.secret`) is left; a
+  path, a URL, a number, a CI expression or a shell command under a
+  credential word is redacted. An unquoted value runs to the next whitespace
+  (`sun,shine` is one); a quote, brace or paren ends it only when it was
+  opened before the key (a `"KEY=value"` string, an object, a call). Text
+  pasted with no path whose language is only guessed is read by the
   net too, for a line's own `KEY=value` or `KEY := value`. In code a
   bare `key = word` may name a variable and keeps a reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
