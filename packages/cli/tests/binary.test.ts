@@ -20,8 +20,14 @@ import { tmpdir } from 'node:os'
  */
 const DIST = resolve(import.meta.dirname, '..', 'dist', 'index.js')
 
+// Its own HOME, never the developer's: a signed-in ~/.veilio changes what the
+// CLI does (spec 066 numbers a signed-in account's new names locally), so the
+// test passed on CI and failed on any machine with a credential.
+const HOME = mkdtempSync(join(tmpdir(), 'veilio-binary-home-'))
+const ENV = { ...process.env, HOME, USERPROFILE: HOME }
+
 function run(bin: string, args: string[], input?: string): string {
-  return execFileSync(bin, args, { input: input ?? '', encoding: 'utf8' })
+  return execFileSync(bin, args, { input: input ?? '', encoding: 'utf8', env: ENV })
 }
 
 describe('the binary, executed as a binary', () => {
@@ -83,7 +89,7 @@ describe('the binary, executed as a binary', () => {
     const result = spawnSync(
       process.execPath,
       [DIST, 'login', '--instance', 'http://localhost:1'],
-      { input: 'someone@example.com\nhunter2\n', encoding: 'utf8', timeout: 10_000 }
+      { input: 'someone@example.com\nhunter2\n', encoding: 'utf8', timeout: 10_000, env: ENV }
     )
     expect(result.status, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).not.toBe(0)
     expect(result.stderr).not.toMatch(/no password given/)
