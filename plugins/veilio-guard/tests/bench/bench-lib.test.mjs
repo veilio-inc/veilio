@@ -11,6 +11,7 @@ import {
   isTeamArm,
   loadTeam,
   schedule,
+  sessionEnv,
   teamTable,
 } from './bench-lib.mjs'
 
@@ -322,4 +323,38 @@ test('the score lists the seven arms in the run order', () => {
     ARM_ORDER.filter((a) => a !== 'guard-cold'),
     ['plain', 'guard-warm', 'guard-team', 'mcp', 'mcp-team', 'cli', 'cli-team']
   )
+})
+
+// Code review (LOW): an agent that runs `node packages/cli/dist/index.js`
+// skips the wrapper on PATH, so the whole session, not only the wrapper, has
+// the arm's CLI home. Claude Code keeps its own sign-in through its config dir.
+test('the mcp and cli arms run the whole session in the arm CLI home', () => {
+  const runner = { HOME: '/dev-home', USERPROFILE: '/dev-home', PATH: '/usr/bin', OTHER: 'x' }
+  const opts = {
+    env: runner,
+    cliHome: '/signed-out',
+    bin: '/bin-dir',
+    claudeConfig: '/dev-home/.claude',
+  }
+  for (const [arm, home, want] of [
+    ['mcp', undefined, '/signed-out'],
+    ['cli', undefined, '/signed-out'],
+    ['mcp-team', '/member', '/member'],
+    ['cli-team', '/member', '/member'],
+  ]) {
+    const a = armArgs(arm, {
+      armPrompts: { mcp: 'm', cli: 'c' },
+      mcpServer: { command: 'node' },
+      home,
+    })
+    const env = sessionEnv(a, opts)
+    assert.equal(env.HOME, want, arm)
+    assert.equal(env.USERPROFILE, want, arm)
+    assert.equal(env.CLAUDE_CONFIG_DIR, '/dev-home/.claude', arm)
+    assert.equal(env.VEILIO_PROJECT, '', arm)
+    assert.equal(env.PATH, '/bin-dir:/usr/bin', arm)
+    assert.equal(env.OTHER, 'x', arm)
+  }
+  for (const arm of ['plain', 'guard-warm', 'guard-team'])
+    assert.equal(sessionEnv(armArgs(arm, {}), opts), runner, arm)
 })

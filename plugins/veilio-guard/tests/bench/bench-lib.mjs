@@ -167,6 +167,27 @@ export function armArgs(arm, { armPrompts = {}, mcpServer, home } = {}) {
   }
 }
 
+/**
+ * The environment a session runs in. An mcp or cli arm's whole session has
+ * the arm's CLI home (signed out, or the member's for a team arm), not only
+ * the `veilio` wrapper first on its PATH: an agent that runs
+ * `node packages/cli/dist/index.js` itself must not reach the developer's
+ * ~/.veilio (code review). Claude Code keeps its own sign-in through
+ * CLAUDE_CONFIG_DIR. Every other arm runs in the runner's environment.
+ */
+export function sessionEnv(a, { env = process.env, cliHome, bin, claudeConfig }) {
+  if (!a.veilioOnPath) return env
+  const home = a.home ?? cliHome
+  return {
+    ...env,
+    HOME: home,
+    USERPROFILE: home,
+    VEILIO_PROJECT: '',
+    CLAUDE_CONFIG_DIR: claudeConfig,
+    PATH: `${bin}:${env.PATH}`,
+  }
+}
+
 const RESTORES = ['right', 'left', 'leftLocal', 'wrong']
 
 /**

@@ -49,7 +49,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -62,6 +62,7 @@ import {
   isTeamArm,
   loadTeam,
   schedule,
+  sessionEnv,
 } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
@@ -117,9 +118,9 @@ if (TEAM && CONCURRENCY > MEMBERS.length)
 // numbers: one request per file, hundreds per run, on whichever account the
 // developer is signed in to (a staging account's rate limit was exhausted
 // that way). The bench measures the local guard; it never touches Cloud.
-// Claude Code itself needs the developer's HOME for its own sign-in, and the
-// guard plugin running inside it makes no network request and does not read
-// ~/.veilio.
+// The guard arms' sessions keep the developer's HOME (the guard plugin makes
+// no network request and does not read ~/.veilio); the mcp and cli arms' run
+// in this home, with Claude Code signed in through its config dir.
 const CLI_HOME = mkdtempSync(join(tmpdir(), 'veilio-bench-home-'))
 const CLI_ENV = { ...process.env, HOME: CLI_HOME, USERPROFILE: CLI_HOME }
 function refuseSignedIn() {
@@ -156,8 +157,8 @@ function cleanup(dir) {
 }
 temps.add(CLI_HOME)
 // The mcp and cli arms call `veilio` by name: a wrapper for this build, with
-// the signed-out HOME (a team arm's, the member's), first on their PATH.
-// Claude Code keeps the developer's HOME for its own sign-in.
+// the signed-out HOME (a team arm's, the member's), first on their PATH. The
+// session itself runs in that home too (sessionEnv).
 const bins = new Map()
 function veilioBin(home) {
   if (!bins.has(home)) {
@@ -174,6 +175,9 @@ function veilioBin(home) {
   }
   return bins.get(home)
 }
+// Where Claude Code keeps its sign-in, so a session run under the arm's CLI
+// home stays signed in to Claude.
+const CLAUDE_CONFIG = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const MCP_SERVER = { command: 'node', args: [MCP], env: { HOME: CLI_HOME, USERPROFILE: CLI_HOME } }
 process.on('exit', () => [...temps].forEach(cleanup))
 // After the temp HOME is registered, so a refusal still removes it.
@@ -407,9 +411,11 @@ async function session(task, arm, rep, outDir, member) {
     const started = Date.now()
     // Async, so the sessions of one wave run side by side.
     const run = await new Promise((done) => {
-      const env = a.veilioOnPath
-        ? { ...process.env, PATH: `${veilioBin(a.home ?? CLI_HOME)}:${process.env.PATH}` }
-        : process.env
+      const env = sessionEnv(a, {
+        cliHome: CLI_HOME,
+        bin: a.veilioOnPath ? veilioBin(a.home ?? CLI_HOME) : '',
+        claudeConfig: CLAUDE_CONFIG,
+      })
       const child = spawn('claude', args, { cwd: repo, env, stdio: ['ignore', streamFd, errFd] })
       const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
       child.on('error', (error) => (clearTimeout(timer), done({ error })))
