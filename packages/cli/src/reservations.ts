@@ -205,6 +205,15 @@ export function localDroppedNote(n: number): string {
   )
 }
 
+/**
+ * A server's words, safe for a terminal: control characters and Unicode format
+ * characters (bidi overrides, zero-width) become `?` (code review of spec 066).
+ */
+export function printable(text: string): string {
+  // eslint-disable-next-line no-control-regex -- matching them is the point
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?')
+}
+
 /** HH:MM on this machine's clock. */
 function localTime(iso: string): string {
   const d = new Date(iso)
@@ -219,10 +228,7 @@ export function reservationRefusedSentence(
   refused: Pick<Refused, 'reason' | 'nextAt' | 'detail'>,
   tag: string
 ): string {
-  // Control and Unicode format characters (bidi overrides, zero-width) are
-  // replaced: the server's words reach a terminal (code review).
-  // eslint-disable-next-line no-control-regex -- matching them is the point
-  const detail = (refused.detail ?? '').replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?').trim()
+  const detail = printable(refused.detail ?? '').trim()
   const why =
     refused.reason === 'cap'
       ? "this account's daily limit for this team is reached" +

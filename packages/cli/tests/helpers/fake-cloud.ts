@@ -109,6 +109,8 @@ export class FakeCloud {
   legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
   failing = new Set<string>()
+  /** What a failing path answers with. */
+  failingBody: unknown = { error: 'Service Unavailable' }
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
   /** This account's keypair, as the web app makes it; null until made. */
@@ -238,7 +240,7 @@ export class FakeCloud {
       ])
     )
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
-    if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
+    if (this.failing.has(u.pathname)) return json(503, this.failingBody)
     if (this.reserveFailure && u.pathname.endsWith('/placeholders/reserve')) {
       if (this.reserveFailure === 'network') throw new TypeError('fetch failed')
       return json(this.reserveFailure.status, this.reserveFailure.body)

@@ -116,3 +116,15 @@ describe('signed in, no unlock, no reserved.json, Cloud unreachable', () => {
     expect(fresh(c.mapPath)).toEqual(['__FN__4'])
   })
 })
+
+describe('the reason the team’s maps could not be read (code review)', () => {
+  it('cannot put control or Unicode format characters on the terminal', async () => {
+    signIn(home, { team: true })
+    cloud.failing.add('/api/maps')
+    cloud.failingBody = { error: 'down\u001b[2J‮evil​z' }
+    const r = await scrub(clone().cwd)
+    expect(r.err).toMatch(/could not read the team's maps \(down\?\[2J\?evil\?z/)
+    // eslint-disable-next-line no-control-regex -- matching control characters is the point
+    expect(r.err).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]|\p{Cf}/u)
+  })
+})

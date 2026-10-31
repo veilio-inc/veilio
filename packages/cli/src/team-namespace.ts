@@ -22,6 +22,7 @@ import {
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
 import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
+import { printable } from './reservations.js'
 import {
   CloudError,
   getMap,
@@ -193,9 +194,11 @@ export async function resolveTeamNamespace(
   }
 }
 
+/** The reason, shown on a terminal and to a model: never raw server text. */
 function describe(err: unknown): string {
-  if (err instanceof CloudError) return `${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`
-  return err instanceof Error ? err.message : String(err)
+  if (err instanceof CloudError)
+    return printable(`${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`)
+  return printable(err instanceof Error ? err.message : String(err))
 }
 
 async function attempt(
