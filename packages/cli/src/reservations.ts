@@ -288,10 +288,44 @@ export function basesNeedingBlocks(
 }
 
 export function loadAliases(mapPath: string): SymbolMap {
+  return readAliases(mapPath).aliases
+}
+
+/** Bounds on aliases.json, far above any real one. */
+const MAX_ALIASES = 1_000_000
+const MAX_NAME = 100_000
+
+/**
+ * aliases.json, checked like map.json (security audit): an object of
+ * non-empty strings within bounds, else it throws. A key that is not a
+ * placeholder is dropped and counted in `ignored`.
+ */
+export function readAliases(mapPath: string): { aliases: SymbolMap; ignored: number } {
   const path = aliasesPath(mapPath)
-  if (!existsSync(path)) return {}
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as { aliases?: SymbolMap }
-  return parsed.aliases ?? {}
+  if (!existsSync(path)) return { aliases: {}, ignored: 0 }
+  const malformed = (why: string) => new Error(`aliases file at ${path} is malformed: ${why}`)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    throw malformed('it is not valid JSON')
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    throw malformed('it is not an object')
+  const raw = (parsed as { aliases?: unknown }).aliases ?? {}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    throw malformed('its aliases are not an object')
+  const entries = Object.entries(raw)
+  if (entries.length > MAX_ALIASES) throw malformed(`it holds over ${MAX_ALIASES} entries`)
+  let ignored = 0
+  const aliases: SymbolMap = {}
+  for (const [p, name] of entries) {
+    if (typeof name !== 'string' || name.length === 0 || name.length > MAX_NAME)
+      throw malformed('a name is not a string of 1 to 100000 characters')
+    if (isPlaceholder(p)) aliases[p] = name
+    else ignored++
+  }
+  return { aliases, ignored }
 }
 
 /** Remember renumbered placeholders' old meanings. One old placeholder never gets a second meaning. */
@@ -326,11 +360,12 @@ export function ownWithAliases(
   mapPath: string,
   given: SymbolMap
 ): { own: SymbolMap; contested: string[]; ignored: number } {
-  let ignored = 0
-  const shaped = (m: SymbolMap): SymbolMap =>
-    Object.fromEntries(Object.entries(m).filter(([p]) => isPlaceholder(p) || (ignored++, false)))
-  const aliases = shaped(loadAliases(mapPath))
-  const map = shaped(given)
+  const read = readAliases(mapPath)
+  let ignored = read.ignored
+  const aliases = read.aliases
+  const map = Object.fromEntries(
+    Object.entries(given).filter(([p]) => isPlaceholder(p) || (ignored++, false))
+  )
   const contested = Object.keys(aliases).filter((p) => p in map && map[p] !== aliases[p])
   const own: SymbolMap = { ...aliases, ...map }
   for (const p of contested) delete own[p]
