@@ -61,7 +61,7 @@ describe('controls: 064 still leaves ordinary words readable elsewhere', () => {
     ['const monkey = ledger\n', 'ledger'],
     ['interface Env {\n  DB_PASSWORD: string\n}\n', 'string'],
     ['REQUIRE_PASSWORD=true\n', 'true'],
-    ['enum Kind {\n  PASSWORD = "PASSWORD",\n}\n', '"PASSWORD"'],
+    ['enum Kind {\n  PASSWORD = "PASSWORD",\n}\n', 'PASSWORD = '],
   ])('%j keeps %s', (code, word) => {
     expect(anonymize(code).anonymized).toContain(word)
   })
@@ -138,5 +138,36 @@ describe('a `$` value (security review)', () => {
   it('unquoted and variable-shaped, it is a reference', () => {
     for (const text of ['export DB_PASSWORD=$DB_PASSWORD', 'password: $secret_value'])
       expect(credentialValueSpans(text)).toEqual([])
+  })
+})
+
+describe('exemptions fail closed (security review of round 2)', () => {
+  it.each([
+    'key: sunshine',
+    'KEY=sunshine',
+    'AZURE_STORAGE_KEY=sunshine',
+    'ALGOLIA_SEARCH_KEY=sunshine',
+    'HASH_KEY=sunshine',
+    'S3_OBJECT_KEY=sunshine',
+    'DB_PRIMARY_KEY=sunshine',
+    'password: password',
+  ])('%j is a credential value', (text) => {
+    const value = /[=:] ?(\w+)$/.exec(text)![1]
+    expect(credentialValueSpans(text).map((s) => s.value)).toEqual([value])
+  })
+
+  it.each([
+    '<entry key="password_hint">sunshine</entry>',
+    '<Item key="sunshine" />',
+    '<li key="sunshine">x</li>',
+    'PRIMARY_KEY=id',
+    'SORT_KEY=createdAt',
+  ])('%j is not', (text) => {
+    expect(credentialValueSpans(text)).toEqual([])
+  })
+
+  it('a value equal to its key is masked, and the key stays readable', () => {
+    const r = anonymize('password: password\n', { fileKind: 'yaml' })
+    expect(r.anonymized).toMatch(/^password: __[A-Z_]+\d*__\d*\n$/)
   })
 })

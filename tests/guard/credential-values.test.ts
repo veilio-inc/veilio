@@ -173,3 +173,21 @@ describe('more credential syntaxes (security review of round 1)', () => {
     expect(applyMap(text, {})).toBe(text)
   })
 })
+
+describe('exemptions fail closed in command output (security review of round 2)', () => {
+  it.each([
+    ['key: sunshine', 'sunshine'],
+    ['KEY=sunshine', 'sunshine'],
+    ['AZURE_STORAGE_KEY=sunshine', 'sunshine'],
+    ['ALGOLIA_SEARCH_KEY=sunshine', 'sunshine'],
+    ['HASH_KEY=sunshine', 'sunshine'],
+    ['S3_OBJECT_KEY=sunshine', 'sunshine'],
+    ['password: password', ': password'],
+  ])('%j does not show the value', (text, shown) => {
+    expect(applyMap(text, {})).not.toContain(shown)
+  })
+
+  it.each(['<li key="sunshine">x</li>', 'PRIMARY_KEY=id'])('%j stays as written', (text) => {
+    expect(applyMap(text, {})).toBe(text)
+  })
+})

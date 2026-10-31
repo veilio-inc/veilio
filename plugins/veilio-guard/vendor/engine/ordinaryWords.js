@@ -188,8 +188,9 @@ export function isOrdinaryWord(name) {
 // `db.password`, `$password`), so `password_hint`, `author` and `monkey` are
 // not credential-named.
 const CREDENTIAL_KEY_END = /(?:api[_-]?key|pass(?:word|wd|phrase)?s?|pwd|pw|secrets?|tokens?|keys?|auth|credentials?)$/i;
-// A `key` that names a record, an index or a lookup, not a credential.
-const NOT_A_CREDENTIAL_KEY = /(?:primary|sort|foreign|partition|cache|index|unique|composite|routing|object|lookup|idempotency|row|column|group|hash|map|dict|translation|i18n|public|storage|search|shard|sharding)[_.-]?keys?$/i;
+// A `key` that names a record, an index or a lookup, not a credential: the
+// whole key, so `DB_PRIMARY_KEY` and `AZURE_STORAGE_KEY` are still credentials.
+const NOT_A_CREDENTIAL_KEY = /^(?:primary|sort|foreign|partition|cache|index|unique|composite|routing|lookup|idempotency|row|column|dict|translation|i18n|shard|sharding)[_.-]?keys?$/i;
 // A placeholder in the slot is text already masked, not a password.
 const PLACEHOLDER = /^__[A-Z][A-Z0-9_]*__\d*$/;
 const NOT_A_VALUE = /^(?:true|false|null|none|nil|undefined|yes|no|on|off)$/i;
@@ -226,7 +227,7 @@ function credentialNamed(key) {
         return false;
     // `key` alone names a lookup (`<entry key="...">`, React's `key`), and a
     // record's `primary_key` is no credential either.
-    if (/^keys?$/i.test(m[0]) && (m[0] === key || NOT_A_CREDENTIAL_KEY.test(key)))
+    if (/^keys?$/i.test(m[0]) && NOT_A_CREDENTIAL_KEY.test(key))
         return false;
     if (m.index === 0)
         return true;
@@ -235,6 +236,12 @@ function credentialNamed(key) {
         return true;
     const before = key[m.index - 1];
     return /[._$:-]/.test(before) || (/[a-z0-9]/.test(before) && /[A-Z]/.test(key[m.index]));
+}
+/** Whether `at` is inside an open tag: after a `<name` with no `>` since. */
+function inTag(text, at) {
+    const before = text.slice(Math.max(0, at - 1000), at);
+    const open = before.lastIndexOf('<');
+    return open !== -1 && open > before.lastIndexOf('>') && /^<[A-Za-z]/.test(before.slice(open));
 }
 /** The key a shape's match names: in XML, the element's `key` or `name`
  *  attribute where it has one, else its tag. */
@@ -266,8 +273,11 @@ export function credentialValueSpans(text) {
             if (!quoted && REFERENCE.test(value))
                 continue;
             const key = keyOf(m, shape);
-            // A value that is its own key is a label (`PASSWORD = "PASSWORD"`).
-            if (value === key || !credentialNamed(key))
+            if (!credentialNamed(key))
+                continue;
+            // `key` alone is a credential, except as a tag's attribute: a JSX `key`
+            // prop, or XML's `<entry key="name">` naming an entry.
+            if (/^keys?$/i.test(key) && inTag(text, m.index))
                 continue;
             const [start, end] = m.indices[g];
             found.push({ start, end, value });
