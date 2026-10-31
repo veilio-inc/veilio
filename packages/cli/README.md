@@ -391,7 +391,8 @@ written: it is nobody's secret, and masking it made paths and test output
 unreadable. A codename that is an ordinary word (`phoenix`) is therefore readable;
 a custom replace rule (`veilio rules pull`) keeps it masked. An ordinary word that
 is the value of a credential-named key (`password: sunshine`, `DB_PASSWORD=sunshine`)
-is a password, and is masked there. Credentials are redacted whatever they are
+is a password: redacted one-way there under the default `--secrets redact`, so
+the map never holds it. Credentials are redacted whatever they are
 called.
 
 ## The symbol map

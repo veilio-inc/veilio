@@ -43,7 +43,8 @@ English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
 toolchain's name (`vitest`, `junit`): only distinctive names are masked. A codename
 that is an ordinary word stays masked only with a custom replace rule. An ordinary
 word that is the value of a credential-named key (`password: sunshine`) is a
-password, and is masked there.
+password: redacted one-way there under the default `redact`, so the map never
+holds it.
 
 ## Tools
 

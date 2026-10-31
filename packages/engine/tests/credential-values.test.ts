@@ -66,10 +66,10 @@ describe('controls: 064 still leaves ordinary words readable elsewhere', () => {
     expect(anonymize(code).anonymized).toContain(word)
   })
 
-  it('an ordinary word used both as a password and elsewhere is masked only as the password', () => {
+  it('an ordinary word used both as a password and elsewhere is redacted only as the password', () => {
     const r = anonymize('password: sunshine\ngreeting: sunshine\n', { fileKind: 'yaml' })
-    expect(r.anonymized).toBe('password: __VAR__1\ngreeting: sunshine\n')
-    expect(restore(r.anonymized, r.map).restored).toBe('password: sunshine\ngreeting: sunshine\n')
+    expect(r.anonymized).toBe('password: __REDACTED_CREDENTIAL_1__\ngreeting: sunshine\n')
+    expect(Object.values(r.map)).not.toContain('sunshine')
   })
 })
 
@@ -169,5 +169,54 @@ describe('exemptions fail closed (security review of round 2)', () => {
   it('a value equal to its key is masked, and the key stays readable', () => {
     const r = anonymize('password: password\n', { fileKind: 'yaml' })
     expect(r.anonymized).toMatch(/^password: __[A-Z_]+\d*__\d*\n$/)
+  })
+})
+
+// Security review of round 1: under `redact`, the value of a credential-named
+// key is a secret - replaced one-way, as a detected secret is, so the map
+// never holds it. Under `warn` and `off` it keeps a reversible placeholder.
+const VALUES: { code: string; word: string; fileKind?: FileKind; language?: Language }[] = [
+  { code: 'const db = { password: "sunshine" }\n', word: 'sunshine' },
+  { code: 'SECRET_KEY = "phoenix"\n', word: 'phoenix', language: 'python' },
+  { code: 'password: sunshine\n', word: 'sunshine', fileKind: 'yaml' },
+  { code: 'PASSWORD=SUNSHINE\n', word: 'SUNSHINE', fileKind: 'dotenv' },
+  { code: 'api_key: "zorblaxquint"\nconst zorblaxquint = 1\n', word: 'zorblaxquint' },
+  { code: '<password>sunshine</password>\n', word: 'sunshine' },
+  { code: 'os.Setenv("DB_PASSWORD","sunshine")\n', word: 'sunshine', language: 'go' },
+]
+
+describe('a credential value is a secret under redact (security review)', () => {
+  it.each(VALUES)('$code: redacted one-way, never in the map', (c) => {
+    const opts = {
+      ...(c.fileKind ? { fileKind: c.fileKind } : {}),
+      ...(c.language ? { language: c.language } : {}),
+    }
+    const r = anonymize(c.code, opts)
+    expect(r.anonymized).toContain('__REDACTED_CREDENTIAL_')
+    expect(r.anonymized).not.toMatch(new RegExp(`\\b${c.word}\\b`))
+    expect(Object.values(r.map)).not.toContain(c.word)
+  })
+
+  it('under warn and off nothing is redacted one-way: as on main, a value is masked reversibly or left as asked', () => {
+    for (const secrets of ['warn', 'off'] as const) {
+      for (const [code, opts] of [
+        ['password: sunshine\n', { fileKind: 'yaml' as const }],
+        ['const db = { password: "sunshine" }\n', {}],
+      ] as const) {
+        const r = anonymize(code, { ...opts, secrets })
+        expect(r.anonymized).not.toContain('__REDACTED_')
+        expect(restore(r.anonymized, r.map).restored).toBe(code)
+      }
+      // One the scanner does not flag is never shown: a reversible placeholder.
+      const plain = anonymize('password: sunshine\n', { fileKind: 'yaml', secrets })
+      expect(plain.anonymized).toMatch(/^password: __[A-Z]+__\d+\n$/)
+    }
+  })
+
+  it('a bare name in code is a variable, not a value: it stays reversible', () => {
+    const code = 'const apiKey = key;\nfunction f(key: string) { return key }\n'
+    const r = anonymize(code, { language: 'typescript' })
+    expect(r.anonymized).not.toContain('__REDACTED_')
+    expect(restore(r.anonymized, r.map).restored).toBe(code)
   })
 })

@@ -2,7 +2,7 @@ import { credentialValueSpans, isOrdinaryWord } from './ordinaryWords.js';
 import { isEngineBase } from './rule-checks.js';
 import { compileRulePattern, ruleBudget, } from './rule-pattern.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
-import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
+import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, fileKindOf, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
 import { isLocalTag, isRolePlaceholder, isSaneBlock, localBaseOf, MAX_PLACEHOLDER_NUMBER, teamBaseOf, } from './localFamily.js';
@@ -1102,20 +1102,22 @@ export function anonymize(code, options = {}) {
     const keptCredentials = new Map(scan.regulated
         .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
         .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`]));
-    // Security audit: a word that is the value of a credential-named key is a
-    // password, never left as written. One the scan flags as possible is never
-    // mapped either, so under `redact` it is redacted one-way where it is that
-    // value (the same word elsewhere is an ordinary word) - unless an older map
-    // already masks it reversibly, which the guard relies on.
+    // Security audit: the value of a credential-named key is a secret. Under
+    // `redact` it is replaced one-way, as a detected secret is, so the map never
+    // holds it - unless an older map already masks it reversibly, which the
+    // guard relies on. A bare `key = word` in code with no file kind may name a
+    // variable (`const apiKey = key`), and keeps a reversible placeholder, as
+    // under `warn` and `off`. A distinctive word is replaced wherever it stands
+    // as a name; an ordinary word elsewhere is vocabulary, left as written.
     let unvalued = marked;
     if ((opts.secrets ?? 'redact') === 'redact') {
         const mapped = new Set(Object.values(existingMap));
-        const possible = new Set(found.filter((f) => f.ambiguous).map((f) => code.slice(f.start, f.end)));
+        const config = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined);
         const tokens = new Map();
         let out = '';
         let at = 0;
-        for (const { start, end, value } of credentialValueSpans(marked)) {
-            if (!possible.has(value) || mapped.has(value) || destroyed.has(value))
+        for (const { start, end, value, literal } of credentialValueSpans(marked)) {
+            if (!(literal || config) || mapped.has(value) || destroyed.has(value))
                 continue;
             if (!tokens.has(value))
                 tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`);
@@ -1123,6 +1125,9 @@ export function anonymize(code, options = {}) {
             at = end;
         }
         unvalued = out + marked.slice(at);
+        for (const [value, token] of tokens)
+            if (!isOrdinaryWord(value))
+                unvalued = replaceWholeWord(unvalued, value, token);
     }
     const source = applyRegulatedMasks(keptCredentials.size > 0 ? spreadRedactions(unvalued, keptCredentials, trusted) : unvalued, regulated, map, reverseExisting, mint);
     // What Node wrote in a pasted stack trace - V8's message wording, its own

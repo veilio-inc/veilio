@@ -54,9 +54,12 @@ Not masked:
   `customer_invoices`, `invoice2`) is a choice somebody made and is masked, as
   are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
   mask any word. The value of a credential-named key (`password: sunshine`,
-  `SECRET_KEY = "phoenix"`) is the exception: it is a password, masked there
-  (redacted where the scanner flags it as a possible credential) and left
-  readable elsewhere;
+  `SECRET_KEY = "phoenix"`) is the exception: it is a secret. Under the
+  default `secrets: 'redact'` it is redacted one-way there, as a detected
+  secret is, so the map never holds it; under `warn` and `off` it gets a
+  reversible placeholder, or is left as the scanner's rule says. A bare
+  `key = word` in code with no file kind may name a variable and keeps a
+  reversible placeholder. The same ordinary word elsewhere stays readable;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
