@@ -59,7 +59,7 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@typescript-eslint/eslint-plugin": "^8.72.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.70.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^5.0.5",
@@ -72,7 +72,7 @@
     "prettier": "^3.9.10",
     "semantic-release": "25.0.9",
     "typescript": "^5.4.0",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.1",
     "yaml": "^2.9.1"
   }
