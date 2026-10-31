@@ -140,6 +140,39 @@ export function teamNumbering(
   return { blocks: {}, tag: tag() }
 }
 
+/** HH:MM on this machine's clock. */
+function localTime(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/**
+ * Spec 066 R7: a refused reservation, said the same way by the CLI and the
+ * MCP server - the reason, and what follows from it.
+ */
+export function reservationRefusedSentence(
+  refused: Pick<Refused, 'reason' | 'nextAt' | 'detail'>,
+  tag: string
+): string {
+  // eslint-disable-next-line no-control-regex -- the server's words reach a terminal
+  const detail = (refused.detail ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').trim()
+  const why =
+    refused.reason === 'cap'
+      ? "this account's daily limit for this team is reached" +
+        (refused.nextAt
+          ? `; the next block is possible at ${localTime(refused.nextAt)} (local time)`
+          : '')
+      : refused.reason === 'payment'
+        ? "the team's plan is not active"
+        : refused.reason === 'offline'
+          ? 'Veilio Cloud could not be reached'
+          : detail.replace(/[.!?]+$/, '') || 'the server refused it'
+  return (
+    `could not reserve team numbers: ${why}. New names are numbered on this machine as ` +
+    `__LOCAL_${tag}_… until a block is held; your next publish gives them team numbers.`
+  )
+}
+
 export function saveReserved(mapPath: string, reserved: ReservedFile): void {
   writePrivate(reservedPath(mapPath), reserved)
 }

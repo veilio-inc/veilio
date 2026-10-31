@@ -41,6 +41,7 @@ import {
   languageOfPath,
   type LanguageOption,
   fileKindOf,
+  isLocalPlaceholder,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -50,7 +51,12 @@ import {
   refreshNamespaceIfStale,
 } from './namespace.js'
 import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace'
-import { contestedNote, ownWithAliases, teamNumbering } from '@veilio-inc/cli/reservations'
+import {
+  contestedNote,
+  ownWithAliases,
+  reservationRefusedSentence,
+  teamNumbering,
+} from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
@@ -333,6 +339,9 @@ function runAnonymize(
     numbering
   )
   saveMap(mapPath, toPersist)
+  const localMints = Object.keys(result.map).filter(
+    (p) => isLocalPlaceholder(p) && !(p in localMap)
+  ).length
 
   const body =
     args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
@@ -372,6 +381,17 @@ function runAnonymize(
     // Beside the source, on every result while it holds: rules the account set
     // were not applied, so the masking is less than its owner expects.
     ...rulesSkippedSentences(rules.skipped),
+    // Spec 066 R8: on every result while this checkout's last reservation is
+    // refused, and whenever this call numbered names on this machine only.
+    ...(numbering?.refused
+      ? [`WARNING: ${reservationRefusedSentence(numbering.refused, numbering.tag)}`]
+      : []),
+    ...(localMints > 0
+      ? [
+          `${localMints} name${localMints === 1 ? '' : 's'} numbered locally (__LOCAL_${numbering?.tag}_…): ` +
+            "teammates' restores leave them as written until this checkout's next publish.",
+        ]
+      : []),
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')

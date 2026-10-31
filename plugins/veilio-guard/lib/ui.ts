@@ -40,13 +40,31 @@ function customRules(g: Guard): string {
   return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}`
 }
 
+/** A planted file's text must not put control characters into the band
+ *  (security review, 2026-10-30). */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const printable = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
+
+/** HH:MM on this machine's clock. */
+function hhmm(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** Spec 063: what the guard numbers new names from, when a team is involved. */
 function teamNumbers(g: Guard): string {
   const r = g.reserved
   if (!r) return ''
   if (!r.ok)
-    // eslint-disable-next-line no-control-regex -- matching control characters is the point
-    return ` · .veilio/reserved.json unreadable (${r.reason.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')}): new names numbered here`
+    return ` · .veilio/reserved.json unreadable (${printable(r.reason)}): new names numbered here`
+  // Spec 066 R8: for the whole session, ahead of the numbers left - new names
+  // go into this checkout's local family until a pull holds a block.
+  if (r.refused) {
+    const f = r.refused
+    const why =
+      f.reason === 'server' && f.detail ? `server: ${printable(f.detail).slice(0, 80)}` : f.reason
+    return ` · team numbers refused (${why}): new names numbered here${f.nextAt ? `, next block ${hhmm(f.nextAt)}` : ''}`
+  }
   const outside = g.counts.outsideReserved
   const left = numbersLeft(g.map, r.blocks)
   if (outside > 0)

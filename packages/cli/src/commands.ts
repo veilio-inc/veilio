@@ -32,7 +32,13 @@ import {
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
-import { contestedNote, misattributedNote, ownWithAliases, teamNumbering } from './reservations.js'
+import {
+  contestedNote,
+  misattributedNote,
+  ownWithAliases,
+  reservationRefusedSentence,
+  teamNumbering,
+} from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
 import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
@@ -232,6 +238,10 @@ export async function runScrub(
   // must not swallow.
   // A finding, not the summary: the placeholders may clash with the team's.
   if (found.note) io.stderr(`${BIN_NAME}: ${found.note}\n`)
+  // Spec 066 R8: survives --quiet. New names were numbered locally because the
+  // last reservation failed; stderr is scrub's normal channel for findings.
+  if (numbering?.refused)
+    io.stderr(`${BIN_NAME}: ${reservationRefusedSentence(numbering.refused, numbering.tag)}\n`)
   // `--team` asked for the team's numbers, and with nobody signed in there is
   // no team to ask - the Community Edition's case. Numbering locally is right
   // (there is nobody to clash with), but only if it is said: a flag that

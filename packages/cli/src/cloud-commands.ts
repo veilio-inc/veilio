@@ -24,6 +24,7 @@ import {
 } from './cloud.js'
 import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { ensureBlocks } from './client/blocks.js'
+import { reservationRefusedSentence } from './reservations.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   removeTeamUnlock,
@@ -585,10 +586,9 @@ export async function runMapsPull(
         .map(([base, b]) => `${base}${b.start}-${b.end}`)
         .join(', ')}\n`
     )
+  // Spec 066 R8: on the normal output - in the 065 benchmark nobody read stderr.
   if (blocks?.status === 'failed')
-    io.stderr(
-      `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
-    )
+    io.stdout(`veilio: ${reservationRefusedSentence(blocks, blocks.tag)}\n`)
   return EXIT_OK
 }
 
@@ -868,9 +868,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
             .join(', ')}\n`
         )
       if (blocks.status === 'failed')
-        io.stderr(
-          `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
-        )
+        io.stdout(`veilio: ${reservationRefusedSentence(blocks, blocks.tag)}\n`)
     }
     return EXIT_OK
   } catch (err) {

@@ -194,8 +194,17 @@ working at the same time never give one placeholder two meanings. A pull takes
 a new block whenever a teammate's newer numbers sit above yours.
 
 If no block can be reserved - the day's limit, offline, the plan, a server
-error - the pull still succeeds and says so, and `reserved.json` is still
-written, with the reason. Until a block is held, the guard, a signed-in
+error - the pull (or the unlock) still succeeds, exits 0, and says so on its
+normal output, with the reason and, for the day's limit, when the next block is
+possible:
+
+```
+veilio: could not reserve team numbers: this account's daily limit for this team is reached; the next block is possible at 09:14 (local time). New names are numbered on this machine as __LOCAL_K7Q2XA_… until a block is held; your next publish gives them team numbers.
+```
+
+`reserved.json` is still written, with the reason, and a signed-in
+`veilio scrub` repeats the sentence on stderr - even under `--quiet` - for as
+long as it holds. Until a block is held, the guard, a signed-in
 `veilio scrub` and the MCP server number new names in this checkout's **local
 family**, `__LOCAL_<TAG>_<KIND>__n` (`__LOCAL_K7Q2XA_VAR__3`). The tag is six
 characters drawn for this checkout, so two checkouts never mint the same

@@ -116,8 +116,9 @@ describe('pulling a team map reserves a block when the member needs one', () => 
     const res = await run(['maps', 'pull', id])
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(existsSync(mapPath())).toBe(true)
-    expect(res.err).toMatch(/could not reserve/i)
-    expect(res.err).toMatch(/numbers? new names (on this machine|locally)/i)
+    // Spec 066: on the normal output.
+    expect(res.out).toMatch(/could not reserve/i)
+    expect(res.out).toMatch(/new names are numbered on this machine/i)
     // Spec 066 R4: written anyway, with no block, so the guard knows it is in a team.
     expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'cap' } })
   })
@@ -162,7 +163,7 @@ describe('a block is taken only from a sane answer', () => {
     // answers above are short or wrong either way.
     const res = await run(['maps', 'pull', id])
     expect(res.code, res.err).toBe(EXIT_OK)
-    expect(res.err).toMatch(/could not reserve/i)
+    expect(res.out).toMatch(/could not reserve/i)
     expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'server' } })
   })
 })

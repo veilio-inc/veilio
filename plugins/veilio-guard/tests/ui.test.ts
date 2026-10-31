@@ -286,3 +286,63 @@ test('the band names the custom rules skipped, by cause', async ($, on) => {
     ' · custom rules: 1 (not applied: 2 vault locked, 1 team key locked, 1 unopenable, 1 refused)'
   )
 })
+
+// Spec 066 R8: a refused reservation stays on the band for the whole session,
+// ahead of how many reserved numbers are left - in the 065 benchmark it was
+// said once, on stderr, and nobody saw it.
+const RESERVED = `${ROOT}/.veilio/reserved.json`
+const reservedWith = (extra: Record<string, unknown>) => ({
+  [RESERVED]: JSON.stringify({
+    version: 1,
+    instance: 'https://veilio.test',
+    account: 'me@example.test',
+    teamId: 'team-1',
+    blocks: { __CLS__: { start: 5001, end: 5500 } },
+    local: { tag: 'K7Q2XA' },
+    ...extra,
+  }),
+})
+const hhmm = (iso: string) => {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+test('a refused reservation is on the band, with the next block’s time, on every render', async ($, on) => {
+  const nextAt = '2026-11-01T09:14:00.000Z'
+  const files = reservedWith({ refused: { reason: 'cap', at: '2026-10-31T10:00:00.000Z', nextAt } })
+  const text = await band($, on, files)
+  const said = ` · team numbers refused (cap): new names numbered here, next block ${hhmm(nextAt)}`
+  expect(text).toContain(said)
+  expect(text).not.toMatch(/team numbers: \d+ left/)
+  // Every render: /veilio draws the same band.
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toContain(said)
+})
+
+test('a refusal without a next time says only the reason', async ($, on) => {
+  const text = await band(
+    $,
+    on,
+    reservedWith({ refused: { reason: 'offline', at: '2026-10-31T10:00:00.000Z' } })
+  )
+  expect(text).toContain(' · team numbers refused (offline): new names numbered here ·')
+})
+
+test('control characters in a refusal’s detail never reach the band', async ($, on) => {
+  const text = await band(
+    $,
+    on,
+    reservedWith({
+      refused: { reason: 'server', at: '2026-10-31T10:00:00.000Z', detail: 'boom\u001b[2J\u0007' },
+    })
+  )
+  expect(text).toContain('team numbers refused (server: boom?[2J?)')
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
+  expect(text).not.toMatch(/[\u0000-\u001f]/)
+})
+
+test('without a refusal the band is as before', async ($, on) => {
+  const text = await band($, on, reservedWith({}))
+  expect(text).toContain(' · team numbers: 500 left')
+  expect(text).not.toContain('refused (')
+})
