@@ -54,8 +54,8 @@ import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace
 import {
   contestedNote,
   ownWithAliases,
+  localNumbering,
   reservationRefusedSentence,
-  teamNumbering,
 } from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
@@ -317,7 +317,10 @@ function runAnonymize(
   const rules = getRules()
   // Spec 066 R3: in a team, inside this checkout's block, else its local
   // family - read from reserved.json, never written, never reserved here.
-  const numbering = resolved.owner ? teamNumbering(mapPath, resolved.owner) : undefined
+  const owner = resolved.owner
+  const numbering = owner
+    ? localNumbering(mapPath, owner, owner.teamId, { write: false })
+    : undefined
   // The same composition `veilio scrub` uses (spec 030): the team's maps over
   // this project's, new names inside the block or local, and only the team
   // entries the output uses kept in the store.

@@ -159,7 +159,9 @@ in `.veilio/reserved.json`, written by `veilio maps pull` and `veilio team
 unlock`. This server only reads that file: it never writes it and never
 reserves. With no usable block, a new name goes into this checkout's local
 family, `__LOCAL_<TAG>_<KIND>__n`, which no team map holds and the next team
-publish renumbers (see the CLI README). While the last reservation is refused,
+publish renumbers (see the CLI README). The same holds with the team key locked
+or Cloud unreachable: still a team, so new names are never numbered above the
+map. While the last reservation is refused,
 every anonymize result says so beside the rules line, in the CLI's words
 (`WARNING: could not reserve team numbers: …`), and a call that numbered names
 locally says how many (`2 names numbered locally`).

@@ -27,6 +27,7 @@ import { ensureBlocks } from './client/blocks.js'
 import { reservationRefusedSentence } from './reservations.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
+  readTeamUnlock,
   removeTeamUnlock,
   writeTeamUnlock,
   teamUnlockPath,
@@ -1057,20 +1058,25 @@ export async function teamNamespaceForScrub(
     return {
       team: found.analysis,
       note: null,
-      teamId,
+      numberingTeam: teamId,
       reserve: async (requests) => (await reservePlaceholders(credential, teamId, requests)).ranges,
     }
   }
   if (found.status === 'locked')
     return {
       team: null,
-      note: "the team key is locked on this machine, so this was numbered from this project's map only and may clash with the team's placeholders. Run `veilio team unlock`, then scrub again.",
+      numberingTeam: found.teamId ?? null,
+      note: 'the team key is locked on this machine, so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…). Run `veilio team unlock`, then scrub again.',
     }
-  if (found.status === 'unavailable')
+  if (found.status === 'unavailable') {
+    const credential = readCredential(home)
     return {
       team: null,
-      note: `could not read the team's maps (${found.reason}), so this was numbered from this project's map only and may clash with the team's placeholders.`,
+      // Which team, if this machine ever unlocked its key (spec 066 FR-001).
+      numberingTeam: credential ? (readTeamUnlock(credential, home)?.teamId ?? null) : undefined,
+      note: `could not read the team's maps (${found.reason}), so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…), and the next team publish renumbers them.`,
     }
+  }
   return { team: null, note: null }
 }
 

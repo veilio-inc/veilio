@@ -236,7 +236,9 @@ describe('scrub with cached rules', () => {
     const res = await run(['scrub'], SOURCE)
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(res.out).toContain('customerId') // whitelisted: left readable
-    expect(res.out).toContain('__LEDGER__1') // replaced with the rule's placeholder
+    // Replaced with the rule's placeholder - in the local family, as the team's
+    // maps were not read (spec 066 FR-001).
+    expect(res.out).toMatch(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/)
     expect(res.out).not.toContain('settleLedger')
     expect(res.err).toMatch(/applied 2 custom rules pulled just now/)
     // Rules come from the cache, never fetched by scrub. (Signed in, scrub does

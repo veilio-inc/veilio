@@ -73,8 +73,10 @@ export type TeamNamespaceResult =
     }
   /** Nothing to read: signed out, or not in a team. The local namespace is right. */
   | { status: 'local' }
-  /** In a team, but no team key on this machine: `veilio team unlock`. */
-  | { status: 'locked' }
+  /** In a team, but no team key on this machine: `veilio team unlock`.
+   *  `teamId`: which team, so new names can still be numbered from this
+   *  checkout's reserved.json (spec 066). */
+  | { status: 'locked'; teamId?: string }
   /** In a team, and the maps could not be read. `reason` says why. */
   | { status: 'unavailable'; reason: string }
   /**
@@ -236,7 +238,7 @@ async function attempt(
   const teamId = list.team?.id
   if (!teamId) return { status: 'local' }
   const keys = await heldTeamKeys(credential, home, teamId)
-  if (keys.length === 0) return { status: 'locked' }
+  if (keys.length === 0) return { status: 'locked', teamId }
 
   const scoped = teamScopedMaps(list)
   const read = await readTeamEntries(credential, keys, scoped, signal)

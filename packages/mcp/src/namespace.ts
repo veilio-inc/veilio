@@ -61,8 +61,9 @@ export interface ResolvedNamespace {
    *  never to restore - it cannot tell a disputed placeholder (spec 028). */
   conflictDetection: boolean
   /** Spec 066: whose `reserved.json` this checkout numbers from - the signed-in
-   *  account in a team, its maps read. Null where no team numbering applies. */
-  owner: { instance: string; account: string; teamId: string } | null
+   *  account in a team, its maps read or not (FR-001). `teamId` null: in a team
+   *  whose id is unknown here. Null where no team numbering applies. */
+  owner: { instance: string; account: string; teamId: string | null } | null
 }
 
 function localFrom(
@@ -97,8 +98,22 @@ async function fetchNamespace(
   }
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
-  if (found.status !== 'team') return localFrom(found)
   const credential = readCredential(home)
+  // Locked or unreadable is still a team (code review of spec 066, FR-001):
+  // new names go into the local family, never above the map.
+  if (found.status === 'locked' || found.status === 'unavailable') {
+    const teamId =
+      found.status === 'locked'
+        ? (found.teamId ?? null)
+        : credential
+          ? (readTeamUnlock(credential, home)?.teamId ?? null)
+          : null
+    return localFrom(
+      found,
+      credential ? { instance: credential.instance, account: credential.account, teamId } : null
+    )
+  }
+  if (found.status !== 'team') return localFrom(found)
   const owner =
     credential && found.teamId
       ? { instance: credential.instance, account: credential.account, teamId: found.teamId }

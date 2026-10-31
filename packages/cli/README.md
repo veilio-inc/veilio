@@ -178,8 +178,9 @@ The summary says `Namespace: team`. `scrub` only reads `reserved.json`; it never
 reserves, except with `--team`.
 
 - **Locked or unreachable, it still masks** — from this project's map — and says
-  so on stderr, with the reason, even under `--quiet`: those placeholders may
-  clash with the team's.
+  so on stderr, with the reason, even under `--quiet`. It is still a team, so
+  new names go into the local family (`__LOCAL_<TAG>_…`), never above the
+  map; with no `reserved.json` yet, scrub writes one holding a fresh tag.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 

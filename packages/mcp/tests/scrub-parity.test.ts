@@ -104,6 +104,8 @@ describe('scrub <file> and anonymize_file, one project, one file', () => {
     let cli = ''
     const code = await main(['scrub', '--quiet', 'src/ledger.test.ts'], {
       cwd: project(),
+      // A home of its own: signed out, never the developer's ~/.veilio.
+      home: fresh(),
       stdin: async () => '',
       stdout: (t) => (cli += t),
       stderr: () => {},

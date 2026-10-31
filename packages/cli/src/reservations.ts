@@ -157,6 +157,45 @@ export function teamNumbering(
   return { blocks: {}, tag: tag(), retired }
 }
 
+/**
+ * Spec 066 FR-001 (code review): numbering for a signed-in checkout in a team,
+ * whether or not the team's maps could be read. The file's blocks and tag when
+ * it is this account's (for `teamId`, or for any team when that is unknown);
+ * otherwise, with a known team, no blocks - and with `write` a fresh file
+ * holding a new tag, so the tag outlives this run. With no team known at all
+ * (no file of this account's, no team id) there is no team numbering.
+ */
+export function localNumbering(
+  mapPath: string,
+  who: { instance: string; account: string },
+  teamId: string | null,
+  opts: { write: boolean }
+): ReturnType<typeof teamNumbering> | undefined {
+  let held: ReservedFile | null = null
+  try {
+    held = loadReserved(mapPath)
+  } catch {
+    // malformed: replaced below when allowed, never numbered from
+  }
+  if (
+    held &&
+    held.instance === who.instance &&
+    held.account === who.account &&
+    (teamId === null || held.teamId === teamId)
+  )
+    return teamNumbering(mapPath, { ...who, teamId: held.teamId })
+  if (!teamId) return undefined
+  if (opts.write)
+    saveReserved(mapPath, {
+      version: 1,
+      ...who,
+      teamId,
+      blocks: {},
+      local: { tag: drawTag() },
+    })
+  return teamNumbering(mapPath, { ...who, teamId })
+}
+
 /** HH:MM on this machine's clock. */
 function localTime(iso: string): string {
   const d = new Date(iso)

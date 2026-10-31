@@ -7,7 +7,8 @@
 //      corrupting that pipe.
 
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import {
   alteredNote,
   BIN_NAME,
@@ -37,7 +38,7 @@ import {
   misattributedNote,
   ownWithAliases,
   reservationRefusedSentence,
-  teamNumbering,
+  localNumbering,
 } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -129,15 +130,17 @@ export async function runScrub(
     io.stderr(found.refused)
     return EXIT_ERROR
   }
-  // Spec 066 R3: in a team, new names go inside this checkout's block, else
-  // into its local family - the guard's rule, from the same reserved.json.
+  // Spec 066 R3, FR-001: in a team - its maps read or not - new names go
+  // inside this checkout's block, else into its local family: the guard's
+  // rule, from the same reserved.json. Never the home store's directory.
   const numbering =
-    found.team && found.teamId && credential
-      ? teamNumbering(mapPath, {
-          instance: credential.instance,
-          account: credential.account,
-          teamId: found.teamId,
-        })
+    credential && found.numberingTeam !== undefined
+      ? localNumbering(
+          mapPath,
+          { instance: credential.instance, account: credential.account },
+          found.numberingTeam,
+          { write: dirname(mapPath) !== join(io.home ?? homedir(), '.veilio') }
+        )
       : undefined
 
   // `--team`: take new numbers out of the team's SHARED allocation rather than
@@ -347,8 +350,12 @@ export type TeamNamespaceSource = () => Promise<{
    * because the alternative is pretending the number is safe.
    */
   reserve?: Reserve | null
-  /** The team the namespace is, for matching `reserved.json` (spec 066). */
-  teamId?: string | null
+  /**
+   * Spec 066: new names are numbered from this checkout's reserved.json -
+   * the team's id, or null in a team (or maybe one) whose id is unknown.
+   * Undefined: no team numbering (signed out, in no team, an older instance).
+   */
+  numberingTeam?: string | null
   /**
    * The command is refused, in these words (a whole `veilio: ...` line):
    * VEILIO_PROJECT names no project the team works in (spec 052 FR-012a).

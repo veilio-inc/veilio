@@ -27,6 +27,9 @@ const TEAM = { __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' }
 const CODE = 'export class LedgerService { settleInvoice() {} reverseEntry() {} }\n'
 /** Spec 066: a checkout with no block numbers new names in its local family. */
 const LOCAL = '__LOCAL_[A-Z0-9]{6}_'
+const LOCAL_ONLY = new RegExp(
+  `^export class ${LOCAL}CLS__1 \\{ ${LOCAL}FN__1\\(\\) \\{\\} ${LOCAL}FN__2\\(\\) \\{\\} \\}\\n$`
+)
 
 async function scrub(
   stdin: string,
@@ -109,25 +112,26 @@ describe('veilio scrub, signed in to a team', () => {
     ])
   })
 
-  it('the team key is locked: masked from the project map, and says why - even under --quiet', async () => {
+  it('the team key is locked: new names numbered locally, and it says why - even under --quiet', async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
       locked: true,
     })
     const r = await scrub(CODE, home, ['scrub', '--quiet'])
     expect(r.code).toBe(EXIT_OK)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    // Spec 066 FR-001: still a team, so new names take the local family.
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/team key is locked[\s\S]*veilio team unlock/)
   })
 
-  it('Cloud cannot be read: masked from the project map, with the reason', async () => {
+  it('Cloud cannot be read: new names numbered locally, with the reason', async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
       failures: 5,
       failStatus: 503,
     })
     const r = await scrub(CODE, home)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/could not read the team's maps/)
   })
 
@@ -139,7 +143,7 @@ describe('veilio scrub, signed in to a team', () => {
     const started = Date.now()
     const r = await scrub(CODE, home)
     expect(Date.now() - started).toBeLessThan(7000)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/did not wait for Cloud/)
   }, 10000)
 

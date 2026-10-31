@@ -104,7 +104,8 @@ describe.each(cases)('vault open: $vault, team key open: $team, refused rule: $r
 
     const check = (text: string): void => {
       expect(text).not.toContain('settleLedger')
-      expect(text.includes('__LEDGER__1')).toBe(c.vault)
+      // The local family when the team key is held but the maps were not read (spec 066).
+      expect(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/.test(text)).toBe(c.vault)
       expect(text.includes('return customerId')).toBe(c.team)
     }
 
