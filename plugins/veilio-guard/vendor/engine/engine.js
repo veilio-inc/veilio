@@ -1042,6 +1042,13 @@ export function anonymize(code, options = {}) {
         }
         // Digitless tokens (__DEV__) carry no counter to bump.
     }
+    // Spec 066 (code review): placeholders a publish retired into aliases.json
+    // are gone from the map but still mean their old name in text already sent.
+    for (const placeholder of opts.team?.retired ?? []) {
+        const m = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/.exec(placeholder);
+        if (m && Number(m[2]) > (namedCounters[m[1]] ?? 0))
+            namedCounters[m[1]] = Number(m[2]);
+    }
     const mint = minter(namedCounters, opts.team);
     const map = { ...existingMap };
     // Manual marks run before extraction, so the extractor sees placeholders

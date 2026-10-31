@@ -179,8 +179,11 @@ export interface AnonymizeOptions {
   /** A team checkout's numbering (spec 066): every new number of a base comes
    *  from `blocks[base]` while that block has one left, and otherwise from the
    *  local family `__LOCAL_<tag>_<KIND>__n`, which no team map holds. Without
-   *  it, new names are numbered above the map's highest, as always. */
-  team?: { blocks: Record<string, Block>; tag: string }
+   *  it, new names are numbered above the map's highest, as always.
+   *  `retired`: placeholders a publish moved out of the map (aliases.json).
+   *  Numbering stays above them, so a retired one is never minted again for
+   *  another name (code review). */
+  team?: { blocks: Record<string, Block>; tag: string; retired?: readonly string[] }
   rules?: CustomRule[]
   /** Literal strings the author marked sensitive by hand.
    *

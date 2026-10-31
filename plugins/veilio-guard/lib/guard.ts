@@ -178,8 +178,9 @@ export class Guard {
   get numbering(): Numbering | undefined {
     const r = this.reserved
     if (!r) return undefined
-    if (!r.ok) return { blocks: {}, tag: this.sessionTag() }
-    return { blocks: r.blocks, tag: r.tag ?? this.sessionTag() }
+    const retired = Object.keys(this.aliases)
+    if (!r.ok) return { blocks: {}, tag: this.sessionTag(), retired }
+    return { blocks: r.blocks, tag: r.tag ?? this.sessionTag(), retired }
   }
 
   private drawnTag: string | null = null
@@ -478,9 +479,19 @@ export class Guard {
     }
   }
 
-  async reloadMap(): Promise<void> {
+  /** reserved.json and aliases.json, re-read whenever the map is: a CLI
+   *  publish rewrites all three at once (code review of spec 066). */
+  private async reloadSideFiles(): Promise<void> {
     await this.reloadReserved()
     this.aliases = await this.readAliases()
+    // A session tag whose placeholders a publish retired is not used again.
+    const tag = this.drawnTag
+    if (tag && Object.keys(this.aliases).some((p) => p.startsWith(`__LOCAL_${tag}_`)))
+      this.drawnTag = null
+  }
+
+  async reloadMap(): Promise<void> {
+    await this.reloadSideFiles()
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
       return
@@ -1154,6 +1165,7 @@ export class Guard {
         }
         onDisk = parsed.stored
       }
+      await this.reloadSideFiles()
       // Everything this guard knows, not only the new entries: a writer that
       // dropped ours (two programs saving at once) gets them back.
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })

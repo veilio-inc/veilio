@@ -71,7 +71,12 @@ export const NO_CONTEXT: MaskContext = {
 
 /** What new names are numbered from in a team checkout (spec 066): this
  *  checkout's blocks, and the tag of its local family. */
-export type Numbering = { blocks: Record<string, Block>; tag: string }
+export type Numbering = {
+  blocks: Record<string, Block>
+  tag: string
+  /** Placeholders a publish retired (aliases.json): never minted again. */
+  retired?: readonly string[]
+}
 
 export function scrubSource(
   text: string,

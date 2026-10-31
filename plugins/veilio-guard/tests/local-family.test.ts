@@ -194,3 +194,75 @@ test('a reload after a publish redrew the tag mints under the new tag', async ($
   const content = res(await $.tool.call(eventOf(read))).file.content as string
   expect([...tagsIn(content)]).toEqual(['B7B7B7'])
 })
+
+// Code review of spec 066: a CLI publish while the session runs renumbers the
+// guard's local entries into aliases.json and redraws the tag. The guard
+// re-read only the map, kept its tag, its local counter restarted at 1, and
+// it minted a retired placeholder again for another name - one the model's
+// context still read as the old name.
+async function publishMidSession(
+  $: TestHost,
+  on: TestOn,
+  reserved: string,
+  newReserved: (tag: string) => string
+) {
+  const bash = recordedRaw('Bash')
+  const p = project(on, { [RESERVED]: reserved })
+  const r = bash.r as { result: Record<string, unknown> }
+  let stdout = 'FAIL HoldbackLedger'
+  const edit = recorded('Edit')
+  const edits: Record<string, unknown>[] = []
+  on('tool.call', (_, e) => {
+    if (e.tool === 'Edit') {
+      edits.push(e)
+      return edit.r
+    }
+    return { ...r, result: { ...r.result, stdout } }
+  })
+  const first = JSON.stringify(await $.tool.call(eventOf(bash)))
+  const retired = /__LOCAL_([A-Z0-9]{6})_CLS__1/.exec(first)
+  if (!retired) throw new Error(`nothing minted locally: ${first}`)
+  // What `veilio maps push --team` leaves on disk.
+  p.files[MAP] = mapFile({ __CLS__502: 'HoldbackLedger' })
+  p.files[`${ROOT}/.veilio/aliases.json`] = JSON.stringify({
+    version: 1,
+    aliases: { [retired[0]]: 'HoldbackLedger' },
+  })
+  p.files[RESERVED] = newReserved(retired[1])
+  stdout = 'FAIL QuaywardRebalancer'
+  const outs: string[] = []
+  for (let i = 0; i < 3; i++) outs.push(JSON.stringify(await $.tool.call(eventOf(bash))))
+  return { retired: retired[0], oldTag: retired[1], outs, p, edit, edits }
+}
+
+test('after a CLI publish mid-session, the guard never mints a retired local placeholder again, and takes the new tag', async ($, on) => {
+  const { retired, outs } = await publishMidSession($, on, reservedFile(), () =>
+    reservedFile({ local: { tag: 'B7B7B7' } })
+  )
+  for (const out of outs) expect(out).not.toContain(retired)
+  expect(outs.join()).toMatch(/__LOCAL_B7B7B7_CLS__1/)
+})
+
+test('with no tag in the file (a session tag), a retired placeholder is never minted again either', async ($, on) => {
+  const noTag = (extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      version: 1,
+      instance: 'https://veilio.test',
+      account: 'me@example.test',
+      teamId: 'team-1',
+      blocks: {},
+      ...extra,
+    })
+  const { retired, oldTag, outs } = await publishMidSession($, on, noTag(), () => noTag())
+  for (const out of outs) expect(out).not.toContain(retired)
+  // The session tag is redrawn once its placeholders are retired.
+  expect(outs.join()).not.toContain(`__LOCAL_${oldTag}_`)
+})
+
+test('after a CLI publish mid-session, an edit with the retired placeholder restores through the new aliases', async ($, on) => {
+  const { retired, edit, edits } = await publishMidSession($, on, reservedFile(), () =>
+    reservedFile({ local: { tag: 'B7B7B7' } })
+  )
+  await $.tool.call({ ...eventOf(edit), old_string: `new ${retired}()`, new_string: 'x' })
+  expect(edits.at(-1)?.old_string).toBe('new HoldbackLedger()')
+})
