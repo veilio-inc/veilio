@@ -143,6 +143,14 @@ locked does not bring them back:
 1 custom rule not applied: refused as unsafe to apply (an engine placeholder or a pattern rules do not support), and skipped.
 ```
 
+When some rules applied and others did not, `scrub` says both in one line:
+
+```
+veilio: applied 1 custom rule pulled just now; 2 not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.
+```
+
+Under `--quiet` it prints only what was not applied, in the sentences above.
+
 "Could not be opened" is a rule sealed under a team-key version this machine
 does not hold (run `veilio team unlock` again after a rotation) or a damaged
 one. "Refused" is a rule no tool applies, whoever wrote it: a replace

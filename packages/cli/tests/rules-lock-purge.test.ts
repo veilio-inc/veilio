@@ -148,8 +148,23 @@ describe('vault lock removes the personal rules from the cache', () => {
       expect(out).not.toContain('settleLedger')
       expect(out).toContain('return customerId') // the team whitelist still applies
     }
-    expect(s.scrubErr).toContain('2 custom rules not applied: vault locked')
+    // One line, not two: what applied and what did not, together.
+    expect(s.scrubErr).toContain(
+      'veilio: applied 1 custom rule pulled just now; 2 not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.\n'
+    )
+    expect(s.scrubErr.split('\n').filter((l) => /custom rule/.test(l))).toHaveLength(1)
     expect(s.mcp + s.scrubErr).toMatch(/vault locked/)
+  })
+
+  it('under --quiet, only what was not applied is said, in full', async () => {
+    await serveAndPull()
+    await run(['vault', 'lock'])
+    const s = await run(['scrub', '--quiet'], SOURCE)
+    expect(s.code, s.err).toBe(EXIT_OK)
+    expect(s.err).toContain(
+      'veilio: 2 custom rules not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.\n'
+    )
+    expect(s.err).not.toContain('applied 1 custom rule')
   })
 
   it('a rules pull while the vault is locked does not bring the personal rules back', async () => {
@@ -195,7 +210,9 @@ describe('team lock removes the team rules from the cache', () => {
       expect(out).not.toContain('return customerId')
       expect(out).toContain('__LEDGER__1')
     }
-    expect(s.scrubErr).toContain('1 custom rule not applied: team key locked')
+    expect(s.scrubErr).toContain(
+      'veilio: applied 2 custom rules pulled just now; 1 not applied: team key locked - run `veilio team unlock`, then `veilio rules pull`.\n'
+    )
   })
 
   it('a rules pull while the team key is locked does not bring the team rules back', async () => {
@@ -235,7 +252,9 @@ describe('readers apply only rules whose key is still held', () => {
       expect(out).not.toContain('__LEDGER__')
       expect(out).toContain('return customerId')
     }
-    expect(s.scrubErr).toContain('2 custom rules not applied: vault locked')
+    expect(s.scrubErr).toContain(
+      'veilio: applied 1 custom rule pulled just now; 2 not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.\n'
+    )
   })
 
   it('an expired team key drops the team rules and counts teamLocked=1', async () => {

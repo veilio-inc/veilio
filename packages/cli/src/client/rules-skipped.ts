@@ -25,9 +25,12 @@ export const NO_RULES_SKIPPED: RulesSkipped = {
 /**
  * One sentence per cause, each with what fixes it - the same words from
  * `rules pull`, `scrub` and the MCP server. Empty when nothing was skipped.
+ * `noun: false` drops "custom rule(s)", for `scrub`'s line that has just
+ * named them ("applied 2 custom rules ...; 1 not applied: ...").
  */
-export function rulesSkippedSentences(s: RulesSkipped): string[] {
-  const n = (count: number): string => `${count} custom rule${count === 1 ? '' : 's'} not applied`
+export function rulesSkippedSentences(s: RulesSkipped, { noun = true } = {}): string[] {
+  const n = (count: number): string =>
+    `${count}${noun ? ` custom rule${count === 1 ? '' : 's'}` : ''} not applied`
   const out: string[] = []
   if (s.vaultLocked > 0)
     out.push(

@@ -111,7 +111,13 @@ describe.each(cases)('vault open: $vault, team key open: $team, refused rule: $r
     const scrubbed = await run(['scrub'], SOURCE)
     expect(scrubbed.code, scrubbed.err).toBe(EXIT_OK)
     check(scrubbed.out)
-    if (sentences.length) expect(scrubbed.err).toContain(`veilio: ${sentences.join(' ')}\n`)
+    // Rules applied and rules skipped are said in one line; skipped alone, in full.
+    const short = rulesSkippedSentences(expected, { noun: false }).join(' ')
+    if (sentences.length && applied > 0)
+      expect(scrubbed.err).toContain(
+        `veilio: applied ${applied} custom rule${applied === 1 ? '' : 's'} pulled just now; ${short}\n`
+      )
+    else if (sentences.length) expect(scrubbed.err).toContain(`veilio: ${sentences.join(' ')}\n`)
     else expect(scrubbed.err).not.toMatch(/not applied/)
 
     const resolved = await primeRules(home)
