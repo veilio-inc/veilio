@@ -18,6 +18,7 @@ import {
   type CryptoKeyLike,
   type TeamMapEntry,
   type TeamMapEnvelope,
+  LOCAL_PREFIX,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
 import { readCredential, type Credential } from './credential.js'
@@ -220,14 +221,17 @@ async function attempt(
   // An older self-hosted Cloud may still merge server-side; that answer needs no
   // key. It carries no aliases or conflicts - it predates both.
   if (list.teamNamespace) {
+    // Dropped as analyzeTeamNamespace drops them (spec 066, code review).
+    const all = Object.entries(list.teamNamespace)
+    const namespace = Object.fromEntries(all.filter(([p]) => !p.startsWith(LOCAL_PREFIX)))
     return {
       status: 'team',
       analysis: {
-        namespace: list.teamNamespace,
+        namespace,
         aliases: {},
         conflicts: {},
         highest: {},
-        localDropped: 0,
+        localDropped: all.length - Object.keys(namespace).length,
       },
       conflictDetection: false,
       teamId: null,

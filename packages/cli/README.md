@@ -219,7 +219,8 @@ string:
   and draws a new tag.
 - **No team map ever holds one.** A team map is sealed on your machine, so the
   check is here too: a publish that would still seal one is refused, naming
-  them, and a reader drops one it finds.
+  them, and a reader drops one it finds - `maps pull` of a team map leaves
+  them out of `map.json` and says how many.
 
 ### Restoring a teammate's placeholders
 

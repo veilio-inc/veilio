@@ -240,7 +240,21 @@ describe('the same outcome as the CLI (SC-002)', () => {
     })
     const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
     expect(r.isError ?? false, r.text).toBe(false)
-    expect(r.text).toMatch(/Could not reserve team numbers/)
+    // The CLI's sentence (spec 066 R7).
+    expect(r.text).toMatch(/WARNING: could not reserve team numbers: this account's daily limit/)
+    expect(loadMap(mapPath())).toEqual({ __FN__40: 'chargeCard' })
+  })
+
+  it('maps_pull of a team map holding local-family keys leaves them out and says so (spec 066 code review)', async () => {
+    signIn(home, { team: true })
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      map_data: await sealTeam({ __FN__40: 'chargeCard', __LOCAL_ZZ9QQ1_FN__1: 'guess' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/left out 1 placeholder numbered on one machine/)
     expect(loadMap(mapPath())).toEqual({ __FN__40: 'chargeCard' })
   })
 

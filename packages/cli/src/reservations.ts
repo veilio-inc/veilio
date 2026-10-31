@@ -196,6 +196,14 @@ export function localNumbering(
   return teamNumbering(mapPath, { ...who, teamId })
 }
 
+/** Said by `maps pull` (CLI and MCP) when a team map held local-family keys. */
+export function localDroppedNote(n: number): string {
+  return (
+    `left out ${n} placeholder${n === 1 ? '' : 's'} numbered on one machine (__LOCAL_…) that the team map held: ` +
+    `${n === 1 ? 'it means' : 'they mean'} something only on the checkout that numbered ${n === 1 ? 'it' : 'them'}.`
+  )
+}
+
 /** HH:MM on this machine's clock. */
 function localTime(iso: string): string {
   const d = new Date(iso)

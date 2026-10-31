@@ -340,7 +340,15 @@ export async function pullCloudMap(
   id: string | null,
   opts: { mapPath: string; force?: boolean }
 ): Promise<
-  Outcome<{ id: string; name: string; count: number; path: string; blocks?: BlocksOutcome }>
+  Outcome<{
+    id: string
+    name: string
+    count: number
+    path: string
+    blocks?: BlocksOutcome
+    /** Local-family keys the team map held and the pull left out (spec 066). */
+    localDropped?: number
+  }>
 > {
   const credential = signedIn(ctx)
   if (!credential) return refuse('not_signed_in')
@@ -394,7 +402,15 @@ export async function pullCloudMap(
     opened = await openPersonal(keys.value, remote.map_data, label)
   }
   if (!opened.ok) return opened
-  const map = opened.value
+  // Spec 066 FR-003 (code review): every reader drops a local-family key from a
+  // team map - it means something only on the checkout that numbered it. A
+  // personal map is the member's own and keeps them.
+  const localKeys = teamId
+    ? Object.keys(opened.value).filter((p) => p.startsWith(LOCAL_PREFIX))
+    : []
+  const map = localKeys.length
+    ? Object.fromEntries(Object.entries(opened.value).filter(([p]) => !localKeys.includes(p)))
+    : opened.value
 
   // Only now is anything read from, let alone written to, disk.
   const existing = loadRemote(opts.mapPath)
@@ -436,6 +452,7 @@ export async function pullCloudMap(
     count: Object.keys(map).length,
     path: opts.mapPath,
     ...(blocks ? { blocks } : {}),
+    ...(localKeys.length ? { localDropped: localKeys.length } : {}),
   })
 }
 

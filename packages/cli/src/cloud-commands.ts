@@ -24,7 +24,7 @@ import {
 } from './cloud.js'
 import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { ensureBlocks } from './client/blocks.js'
-import { reservationRefusedSentence } from './reservations.js'
+import { localDroppedNote, reservationRefusedSentence } from './reservations.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   readTeamUnlock,
@@ -578,8 +578,9 @@ export async function runMapsPull(
 ): Promise<number> {
   const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
   if (!pulled.ok) return refused(pulled.refusal, io)
-  const { name, count, path, blocks } = pulled.value
+  const { name, count, path, blocks, localDropped } = pulled.value
   io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
+  if (localDropped) io.stdout(`veilio: ${localDroppedNote(localDropped)}\n`)
   // Spec 063: what the guard will number new names from.
   if (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length)
     io.stdout(
