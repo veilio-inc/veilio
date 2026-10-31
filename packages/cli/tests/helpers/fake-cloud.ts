@@ -135,8 +135,15 @@ export class FakeCloud {
   idOf(owner: string): string {
     return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
   }
-  /** The day's block ceiling is reached: block requests answer 429. */
+  /** The day's block ceiling is reached: block requests answer 429, with the
+   *  reason and the time the next block is possible (spec 066 contract). */
   blocksRefused = false
+  blocksRetryAt = '2026-10-21T09:14:00.000Z'
+  /** Every reserve request fails this way: a status and body, or the network. */
+  reserveFailure: { status: number; body: unknown } | 'network' | null = null
+  failWith(status: number | 'network', body: unknown = {}): void {
+    this.reserveFailure = status === 'network' ? 'network' : { status, body }
+  }
   private nextId = 1
   /** Per kind, as the server's team-wide counter. */
   counters = new Map<string, number>()
@@ -232,6 +239,10 @@ export class FakeCloud {
     )
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
     if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
+    if (this.reserveFailure && u.pathname.endsWith('/placeholders/reserve')) {
+      if (this.reserveFailure === 'network') throw new TypeError('fetch failed')
+      return json(this.reserveFailure.status, this.reserveFailure.body)
+    }
     if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }
@@ -453,7 +464,12 @@ export class FakeCloud {
       // Spec 063: a block's size is the server's (500), and every run is
       // recorded against the member who took it.
       const block = body?.block === true
-      if (block && this.blocksRefused) return json(429, { error: 'Too many blocks today' })
+      if (block && this.blocksRefused)
+        return json(429, {
+          error: `This account has reserved as many placeholder blocks as one day allows for this team; the next is possible at ${this.blocksRetryAt}.`,
+          reason: 'cap',
+          retry_at: this.blocksRetryAt,
+        })
       const ranges = asked.map(({ base, count: wanted, floor }) => {
         const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1

@@ -19,6 +19,7 @@ import {
   hasBlockingSecrets,
   LANGUAGE_LABELS,
   locallyNumberedNote,
+  localFamilyNote,
   restore,
   restoreLayers,
   type SecretFinding,
@@ -31,7 +32,7 @@ import {
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
-import { contestedNote, misattributedNote, ownWithAliases } from './reservations.js'
+import { contestedNote, misattributedNote, ownWithAliases, teamNumbering } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
 import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
@@ -122,6 +123,16 @@ export async function runScrub(
     io.stderr(found.refused)
     return EXIT_ERROR
   }
+  // Spec 066 R3: in a team, new names go inside this checkout's block, else
+  // into its local family - the guard's rule, from the same reserved.json.
+  const numbering =
+    found.team && found.teamId && credential
+      ? teamNumbering(mapPath, {
+          instance: credential.instance,
+          account: credential.account,
+          teamId: found.teamId,
+        })
+      : undefined
 
   // `--team`: take new numbers out of the team's SHARED allocation rather than
   // from a floor computed here, because this map is going to be published.
@@ -162,7 +173,13 @@ export async function runScrub(
         return null
       }
     }
-    return anonymizeOverTeam(source, map, found.team ?? { namespace: {}, highest: {} }, options)
+    return anonymizeOverTeam(
+      source,
+      map,
+      found.team ?? { namespace: {}, highest: {} },
+      options,
+      numbering
+    )
   }
 
   // Each file in its own language: the flag's, else its extension's, else a
@@ -320,6 +337,8 @@ export type TeamNamespaceSource = () => Promise<{
    * because the alternative is pretending the number is safe.
    */
   reserve?: Reserve | null
+  /** The team the namespace is, for matching `reserved.json` (spec 066). */
+  teamId?: string | null
   /**
    * The command is refused, in these words (a whole `veilio: ...` line):
    * VEILIO_PROJECT names no project the team works in (spec 052 FR-012a).
@@ -386,6 +405,8 @@ export async function runRestore(
   const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
   const disputed = disputedAll.filter((p) => !misattributed.includes(p))
   const localOnly = layers.locallyNumberedIn(source)
+  // Spec 066 R5: another checkout numbered these while it held no team numbers.
+  const otherLocal = layers.otherLocalIn(source)
   const contested = contestedAll.filter((p) =>
     new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(source)
   )
@@ -407,7 +428,8 @@ export async function runRestore(
       !disputed.includes(p) &&
       !localOnly.includes(p) &&
       !otherMembers.includes(p) &&
-      !contested.includes(p)
+      !contested.includes(p) &&
+      !otherLocal.includes(p)
   )
   const altered = result.report.altered
 
@@ -416,7 +438,15 @@ export async function runRestore(
   // holds one. A credential redacted on purpose is not a placeholder. The
   // team's maps failing needs no case of its own: a placeholder they were needed
   // for is unresolved.
-  const left = [...unresolved, ...disputed, ...otherMembers, ...contested, ...localOnly, ...altered]
+  const left = [
+    ...unresolved,
+    ...disputed,
+    ...otherMembers,
+    ...contested,
+    ...localOnly,
+    ...otherLocal,
+    ...altered,
+  ]
   const refused = args.strict && left.length > 0
   if (!refused) io.stdout(result.restored)
 
@@ -426,6 +456,7 @@ export async function runRestore(
   if (otherMembers.length > 0) io.stderr(`${BIN_NAME}: ${misattributedNote(otherMembers)}\n`)
   if (contested.length > 0) io.stderr(`${BIN_NAME}: ${contestedNote(contested)}\n`)
   if (localOnly.length > 0) io.stderr(`${BIN_NAME}: ${locallyNumberedNote(localOnly)}\n`)
+  if (otherLocal.length > 0) io.stderr(`${BIN_NAME}: ${localFamilyNote(otherLocal)}\n`)
 
   // A token the map cannot explain is a finding, not a summary line: the text on
   // stdout now contains something that means nothing, and the user is about to

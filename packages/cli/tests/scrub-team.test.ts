@@ -25,6 +25,8 @@ afterEach(() => vi.unstubAllGlobals())
 
 const TEAM = { __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' }
 const CODE = 'export class LedgerService { settleInvoice() {} reverseEntry() {} }\n'
+/** Spec 066: a checkout with no block numbers new names in its local family. */
+const LOCAL = '__LOCAL_[A-Z0-9]{6}_'
 
 async function scrub(
   stdin: string,
@@ -48,13 +50,17 @@ async function scrub(
 }
 
 describe('veilio scrub, signed in to a team', () => {
-  it("uses the team's placeholders for names the team knows, and numbers new ones above the team's", async () => {
+  it("uses the team's placeholders for names the team knows, and numbers new ones locally without a block (spec 066)", async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
     })
     const r = await scrub(CODE, home)
     expect(r.code).toBe(EXIT_OK)
-    expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__4() {} }\n')
+    expect(r.out).toMatch(
+      new RegExp(
+        `^export class __CLS__2 \\{ __FN__3\\(\\) \\{\\} ${LOCAL}FN__1\\(\\) \\{\\} \\}\\n$`
+      )
+    )
     expect(r.err).toMatch(/Namespace: team/)
   })
 
@@ -68,7 +74,12 @@ describe('veilio scrub, signed in to a team', () => {
     })
     const { home } = await teamScenario(fetchMock, { maps })
     const r = await scrub(CODE, home, ['scrub'], { __FN__4: 'localOnlyName' })
-    expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__5() {} }\n')
+    expect(r.out).toMatch(
+      new RegExp(
+        `^export class __CLS__2 \\{ __FN__3\\(\\) \\{\\} ${LOCAL}FN__1\\(\\) \\{\\} \\}\\n$`
+      )
+    )
+    expect(r.out).not.toContain('__FN__4')
   })
 
   it("never emits a placeholder the team's maps dispute: the name gets a fresh number", async () => {
@@ -81,7 +92,7 @@ describe('veilio scrub, signed in to a team', () => {
     })
     const { home } = await teamScenario(fetchMock, { maps })
     const r = await scrub('export class Foo {}\n', home)
-    expect(r.out).toBe('export class __CLS__6 {}\n')
+    expect(r.out).toMatch(new RegExp(`^export class ${LOCAL}CLS__1 \\{\\}\\n$`))
     expect(Object.keys(r.map)).not.toContain('__CLS__5')
   })
 
@@ -91,11 +102,11 @@ describe('veilio scrub, signed in to a team', () => {
       maps: mapsFor({ namespace: big, aliases: {}, conflicts: {} }),
     })
     const r = await scrub(CODE, home)
-    expect(r.map).toEqual({
-      __CLS__2: 'LedgerService',
-      __FN__3: 'settleInvoice',
-      __FN__10: 'reverseEntry',
-    })
+    const { __CLS__2, __FN__3, ...minted } = r.map
+    expect({ __CLS__2, __FN__3 }).toEqual({ __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' })
+    expect(Object.entries(minted)).toEqual([
+      [expect.stringMatching(new RegExp(`^${LOCAL}FN__1$`)), 'reverseEntry'],
+    ])
   })
 
   it('the team key is locked: masked from the project map, and says why - even under --quiet', async () => {

@@ -207,7 +207,8 @@ describe('scrub --team', () => {
 
     expect(code).toBe(EXIT_OK)
     expect(reserveCalls()).toBe(0)
-    expect(out).toContain('__CLS__1')
+    // Spec 066: no block held, so the new name is numbered locally.
+    expect(out).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__1/)
   })
 
   // ── negative ──────────────────────────────────────────────────────────────

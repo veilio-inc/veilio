@@ -60,9 +60,15 @@ export interface ResolvedNamespace {
   /** False for an older instance's server-merged namespace: usable to anonymize,
    *  never to restore - it cannot tell a disputed placeholder (spec 028). */
   conflictDetection: boolean
+  /** Spec 066: whose `reserved.json` this checkout numbers from - the signed-in
+   *  account in a team, its maps read. Null where no team numbering applies. */
+  owner: { instance: string; account: string; teamId: string } | null
 }
 
-function localFrom(found: TeamNamespaceResult): ResolvedNamespace {
+function localFrom(
+  found: TeamNamespaceResult,
+  owner: ResolvedNamespace['owner'] = null
+): ResolvedNamespace {
   return {
     source: 'local',
     namespace: {},
@@ -71,6 +77,7 @@ function localFrom(found: TeamNamespaceResult): ResolvedNamespace {
     highest: {},
     found,
     conflictDetection: true,
+    owner,
   }
 }
 
@@ -91,11 +98,17 @@ async function fetchNamespace(
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
   if (found.status !== 'team') return localFrom(found)
+  const credential = readCredential(home)
+  const owner =
+    credential && found.teamId
+      ? { instance: credential.instance, account: credential.account, teamId: found.teamId }
+      : null
   const { namespace, aliases, conflicts, highest } = found.analysis
   // A team with no maps yet has no namespace to share: 'local', as before. (A
   // team whose maps exist but none opened is 'unavailable', from the resolver.)
+  // Still a team: new names are numbered from this checkout's block (spec 066).
   if (Object.keys(namespace).length === 0 && Object.keys(conflicts).length === 0) {
-    return localFrom({ status: 'local' })
+    return localFrom({ status: 'local' }, owner)
   }
   return {
     source: 'team',
@@ -105,6 +118,7 @@ async function fetchNamespace(
     highest,
     found,
     conflictDetection: found.conflictDetection,
+    owner,
   }
 }
 

@@ -117,7 +117,14 @@ export function anonymizeOverTeam(
     /** Placeholders the team's maps give different names: never emitted (spec 028). */
     conflicts?: Record<string, number>
   },
-  options: Omit<AnonymizeOptions, 'existingMap'>
+  options: Omit<AnonymizeOptions, 'existingMap' | 'team'>,
+  /**
+   * This checkout's blocks and local tag (spec 066 R3, from `teamNumbering`):
+   * new names go inside a usable block, else into the local family - never
+   * above the team's highest, which is where the next teammate's block starts.
+   * Absent: no team numbering applies, and new names go above the floor.
+   */
+  numbering?: { blocks: Record<string, { start: number; end: number }>; tag: string }
 ): { result: ReturnType<typeof anonymize>; toPersist: Record<string, string> } {
   // A disputed placeholder keeps its first meaning in the engine's namespace
   // (for numbering); it is never emitted - the name gets a fresh number above
@@ -126,11 +133,13 @@ export function anonymizeOverTeam(
     Object.entries(team.namespace).filter(([p]) => !(p in (team.conflicts ?? {})))
   )
   const existingMap = mergeNamespace(local, settled)
-  const result = anonymizeAbove(
-    source,
-    { ...options, existingMap },
-    floorsWith(team.highest, local)
-  )
+  const result = numbering
+    ? anonymize(source, {
+        ...options,
+        existingMap,
+        team: { blocks: numbering.blocks, tag: numbering.tag },
+      })
+    : anonymizeAbove(source, { ...options, existingMap }, floorsWith(team.highest, local))
   return { result, toPersist: persisted(local, result, settled) }
 }
 

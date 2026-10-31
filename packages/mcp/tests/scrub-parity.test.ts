@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { main } from '../../cli/src/index.js'
 import { callTool } from '../src/tools.js'
 import { primeNamespace, resetNamespaceCache } from '../src/namespace.js'
-import { mapsFor, teamScenario } from '../../cli/tests/helpers/team-scenario.js'
+import { ACCOUNT, INSTANCE, mapsFor, teamScenario } from '../../cli/tests/helpers/team-scenario.js'
 
 /**
  * `veilio scrub` and the MCP server's `anonymize_text` give the same
@@ -25,6 +25,24 @@ afterEach(() => {
 })
 
 const fresh = () => mkdtempSync(join(tmpdir(), 'veilio-parity-'))
+/** A checkout with this member's reserved.json (spec 066): one block, one tag.
+ *  Both surfaces number from it, so they agree in both families. */
+const checkout = () => {
+  const dir = fresh()
+  mkdirSync(join(dir, '.veilio'))
+  writeFileSync(
+    join(dir, '.veilio', 'reserved.json'),
+    JSON.stringify({
+      version: 1,
+      instance: INSTANCE,
+      account: ACCOUNT,
+      teamId: 'team-1',
+      blocks: { __FN__: { start: 41, end: 540 } },
+      local: { tag: 'K7Q2XA' },
+    })
+  )
+  return dir
+}
 
 describe('scrub and anonymize_text, one team, one input', () => {
   it.each([
@@ -52,7 +70,7 @@ describe('scrub and anonymize_text, one team, one input', () => {
     const { home } = await teamScenario(fetchMock, { maps })
     let cli = ''
     const code1 = await main(['scrub', '--quiet'], {
-      cwd: fresh(),
+      cwd: checkout(),
       home,
       stdin: async () => code,
       stdout: (t) => (cli += t),
@@ -60,7 +78,7 @@ describe('scrub and anonymize_text, one team, one input', () => {
     })
     expect(code1).toBe(0)
     await primeNamespace(home)
-    const mcp = callTool('anonymize_text', { text: code }, { cwd: fresh(), mapPath: null })
+    const mcp = callTool('anonymize_text', { text: code }, { cwd: checkout(), mapPath: null })
     const masked = (mcp.text.split('--- masked code ---\n')[1] ?? '').trim()
     expect(mcp.text).toMatch(/Namespace: team/)
     expect(cli.trim()).toBe(masked)

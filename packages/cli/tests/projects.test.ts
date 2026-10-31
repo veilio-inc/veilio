@@ -196,11 +196,12 @@ describe('masking in one project uses none of another’s placeholders (SC-004)'
     writeFileSync(join(cwd, 'g.ts'), 'export class TarnGamma {}\n')
   })
 
-  it('in billing, TarnGamma is a new name, numbered above billing’s own', async () => {
+  it('in billing, TarnGamma is a new name, never tools’ placeholder', async () => {
     signIn(home, { team: true, project: 'p-billing' })
     const r = await run(['scrub', 'g.ts'])
     expect(r.code, r.err).toBe(EXIT_OK)
-    expect(r.out).toContain('__CLS__2')
+    // Spec 066: no block held, so numbered locally.
+    expect(r.out).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__1/)
     expect(r.out).not.toContain('__CLS__5')
   })
 

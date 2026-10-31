@@ -220,7 +220,13 @@ async function attempt(
   if (list.teamNamespace) {
     return {
       status: 'team',
-      analysis: { namespace: list.teamNamespace, aliases: {}, conflicts: {}, highest: {} },
+      analysis: {
+        namespace: list.teamNamespace,
+        aliases: {},
+        conflicts: {},
+        highest: {},
+        localDropped: 0,
+      },
       conflictDetection: false,
       teamId: null,
       unreadable: [],

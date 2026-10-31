@@ -168,10 +168,14 @@ removes all of them.
 
 Signed in to a team with the team key unlocked, `veilio scrub` numbers from the
 team's maps, as the web app and the MCP server do: a name the team already knows
-gets the team's placeholder, and a new name is numbered above the team's and
-this project's highest, so it can never take a number that means something else
-to a teammate. Only the team entries the output uses are kept in this project's
-map. The summary says `Namespace: team`.
+gets the team's placeholder, and a new name is numbered inside this checkout's
+block of team numbers (`.veilio/reserved.json`, below) - or, with no usable
+block, in this checkout's local family `__LOCAL_<TAG>_<KIND>__n` - so it can
+never take a number that means something else to a teammate. It is never
+numbered above the team's highest: that is where the next teammate's block
+starts. Only the team entries the output uses are kept in this project's map.
+The summary says `Namespace: team`. `scrub` only reads `reserved.json`; it never
+reserves, except with `--team`.
 
 - **Locked or unreachable, it still masks** — from this project's map — and says
   so on stderr, with the reason, even under `--quiet`: those placeholders may
@@ -187,9 +191,25 @@ each time it masks a new name. Instead, `veilio maps pull` of a team map (and
 of the team's numbers for you - 500 per kind - and keeps it in
 `.veilio/reserved.json`. The guard numbers new names inside it, so two members
 working at the same time never give one placeholder two meanings. A pull takes
-a new block whenever a teammate's newer numbers sit above yours. If no block can
-be reserved, the pull still succeeds and says so; new names are then numbered on
-this machine, and the next publish renumbers them.
+a new block whenever a teammate's newer numbers sit above yours.
+
+If no block can be reserved - the day's limit, offline, the plan, a server
+error - the pull still succeeds and says so, and `reserved.json` is still
+written, with the reason. Until a block is held, the guard, a signed-in
+`veilio scrub` and the MCP server number new names in this checkout's **local
+family**, `__LOCAL_<TAG>_<KIND>__n` (`__LOCAL_K7Q2XA_VAR__3`). The tag is six
+characters drawn for this checkout, so two checkouts never mint the same
+string:
+
+- **This machine restores them**, from its map.
+- **A teammate's restore leaves them as written** and names them: only the
+  checkout that numbered one knows what it means.
+- **The next team publish renumbers them** into reserved team numbers, keeps
+  the old placeholders in `.veilio/aliases.json` (they still restore here),
+  and draws a new tag.
+- **No team map ever holds one.** A team map is sealed on your machine, so the
+  check is here too: a publish that would still seal one is refused, naming
+  them, and a reader drops one it finds.
 
 ### Restoring a teammate's placeholders
 
@@ -202,6 +222,11 @@ with the real names:
   wins and the placeholder stays in the output with a line naming it. Same for
   one this project numbered on its own while the team was out of reach — a
   wrong name restored silently is worse than a placeholder left visibly.
+- **Another checkout's local placeholder is left.** `__LOCAL_<TAG>_…` was
+  numbered on a checkout that held no team numbers; only that checkout restores
+  it, so it stays in the output, is named, and counts as left for `--strict`.
+  Your own restore still reads it, through `.veilio/aliases.json` once a publish
+  renumbered it.
 - **Locked, and it says so.** With no team key on this machine it tells you to
   run `veilio team unlock` rather than restoring half the text.
 - **Signed out, it makes no request at all** — that restore is as offline as it

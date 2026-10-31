@@ -27,6 +27,7 @@ import {
   restoreLayers,
   disputedNote,
   locallyNumberedNote,
+  localFamilyNote,
   summarizeSecrets,
   withAiPreamble,
   BIN_NAME,
@@ -49,7 +50,7 @@ import {
   refreshNamespaceIfStale,
 } from './namespace.js'
 import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace'
-import { contestedNote, ownWithAliases } from '@veilio-inc/cli/reservations'
+import { contestedNote, ownWithAliases, teamNumbering } from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
@@ -308,9 +309,12 @@ function runAnonymize(
       })()
     : new Set<string>()
   const rules = getRules()
+  // Spec 066 R3: in a team, inside this checkout's block, else its local
+  // family - read from reserved.json, never written, never reserved here.
+  const numbering = resolved.owner ? teamNumbering(mapPath, resolved.owner) : undefined
   // The same composition `veilio scrub` uses (spec 030): the team's maps over
-  // this project's, new names above both, and only the team entries the output
-  // uses kept in the store.
+  // this project's, new names inside the block or local, and only the team
+  // entries the output uses kept in the store.
   const { result, toPersist } = anonymizeOverTeam(
     source,
     localMap,
@@ -325,7 +329,8 @@ function runAnonymize(
         ...(rules.rules ?? []),
         ...keepRule(keep, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
       ],
-    }
+    },
+    numbering
   )
   saveMap(mapPath, toPersist)
 
@@ -490,6 +495,8 @@ export const TOOLS: ToolDefinition[] = [
       const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
       const disputed = disputedAll.filter((p) => !misattributed.includes(p))
       const localOnly = layers.locallyNumberedIn(text)
+      // Spec 066 R5: another checkout numbered these while it held no team numbers.
+      const otherLocal = layers.otherLocalIn(text)
       const contested = contestedAll.filter((p) =>
         new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(text)
       )
@@ -507,7 +514,8 @@ export const TOOLS: ToolDefinition[] = [
             !disputed.includes(p) &&
             !localOnly.includes(p) &&
             !otherMembers.includes(p) &&
-            !contested.includes(p)
+            !contested.includes(p) &&
+            !otherLocal.includes(p)
         ),
       }
       const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
@@ -518,6 +526,7 @@ export const TOOLS: ToolDefinition[] = [
         ...otherMembers,
         ...contested,
         ...localOnly,
+        ...otherLocal,
         ...altered,
       ]
       const warnings = [
@@ -527,6 +536,7 @@ export const TOOLS: ToolDefinition[] = [
         ...(otherMembers.length ? [`WARNING: ${misattributedNote(otherMembers)}`] : []),
         ...(contested.length ? [`WARNING: ${contestedNote(contested)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
+        ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used

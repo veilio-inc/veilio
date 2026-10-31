@@ -8,8 +8,9 @@
 // the MCP server write them; the guard only reads `reserved.json`.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomInt } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import type { SymbolMap } from '@veilio-inc/engine'
+import { highestPerKind, isLocalTag, teamBaseOf, type SymbolMap } from '@veilio-inc/engine'
 
 export const RESERVED_FILE = 'reserved.json'
 export const ALIASES_FILE = 'aliases.json'
@@ -18,15 +19,32 @@ export const ALIASES_FILE = 'aliases.json'
 export const CORE_BASES = ['__VAR__', '__FN__', '__CLS__'] as const
 
 const BASE = /^__[A-Z][A-Z0-9_]*__$/
-const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 
 export type Block = { start: number; end: number }
+/** Why the last reservation failed (spec 066 R4). */
+export const REFUSAL_REASONS = ['cap', 'payment', 'offline', 'server'] as const
+export type RefusalReason = (typeof REFUSAL_REASONS)[number]
+export type Refused = { reason: RefusalReason; at: string; nextAt?: string; detail?: string }
 export type ReservedFile = {
   version: 1
   instance: string
   account: string
   teamId: string
   blocks: Record<string, Block>
+  /** Spec 066: the tag this checkout's local placeholders carry. Absent in a
+   *  file from an older CLI; the next `ensureBlocks` adds one. */
+  local?: { tag: string }
+  /** Spec 066: the last reservation failed. Removed by the next success. */
+  refused?: Refused
+}
+
+const isIsoTime = (v: unknown): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) && !Number.isNaN(Date.parse(v))
+
+const TAG_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+/** A fresh checkout tag: six of A-Z0-9, about 2.2e9 of them (spec 066 R1). */
+export function drawTag(): string {
+  return Array.from({ length: 6 }, () => TAG_ALPHABET[randomInt(TAG_ALPHABET.length)]).join('')
 }
 
 export class ReservedFileError extends Error {
@@ -73,21 +91,57 @@ export function loadReserved(mapPath: string): ReservedFile | null {
     if (!Number.isInteger(b?.start) || !Number.isInteger(b?.end) || b.start < 1 || b.end < b.start)
       throw new ReservedFileError(path, `the ${base} block is not a run of whole numbers`)
   }
+  if (r.local !== undefined && !isLocalTag(r.local?.tag))
+    throw new ReservedFileError(path, 'its local tag is not six of A-Z0-9')
+  if (r.refused !== undefined) {
+    const f = r.refused as Partial<Refused> | null
+    if (!REFUSAL_REASONS.includes(f?.reason as RefusalReason))
+      throw new ReservedFileError(path, 'its refusal has no known reason')
+    if (!isIsoTime(f?.at) || (f.nextAt !== undefined && !isIsoTime(f.nextAt)))
+      throw new ReservedFileError(path, 'its refusal time is not an ISO time')
+    if (f.detail !== undefined && (typeof f.detail !== 'string' || f.detail.length > 200))
+      throw new ReservedFileError(path, 'its refusal detail is not a short text')
+  }
   return r as ReservedFile
+}
+
+/** Drawn once per process, for a checkout whose file gives no tag. */
+let sessionTag: string | null = null
+
+/**
+ * What signed-in scrub and the MCP server number new names from (spec 066 R3):
+ * this checkout's blocks and tag, when `reserved.json` is this account's for
+ * this team. Anything else - no file, a malformed one, another account's - is
+ * no blocks, so every new name goes into the local family, under a tag held
+ * for this process. Read only: neither surface reserves (spec 011).
+ */
+export function teamNumbering(
+  mapPath: string,
+  owner: { instance: string; account: string; teamId: string }
+): { blocks: Record<string, Block>; tag: string; refused?: Refused } {
+  let held: ReservedFile | null = null
+  try {
+    held = loadReserved(mapPath)
+  } catch {
+    // malformed: no blocks, and never its tag
+  }
+  const tag = () => (sessionTag ??= drawTag())
+  if (
+    held &&
+    held.instance === owner.instance &&
+    held.account === owner.account &&
+    held.teamId === owner.teamId
+  )
+    return {
+      blocks: held.blocks,
+      tag: held.local?.tag ?? tag(),
+      ...(held.refused ? { refused: held.refused } : {}),
+    }
+  return { blocks: {}, tag: tag() }
 }
 
 export function saveReserved(mapPath: string, reserved: ReservedFile): void {
   writePrivate(reservedPath(mapPath), reserved)
-}
-
-/** Highest number per kind in a map. */
-function highest(map: SymbolMap): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const p of Object.keys(map)) {
-    const m = NUMBERED.exec(p)
-    if (m && Number(m[2]) > (out[m[1]] ?? 0)) out[m[1]] = Number(m[2])
-  }
-  return out
 }
 
 /**
@@ -95,15 +149,16 @@ function highest(map: SymbolMap): Record<string, number> {
  * with no block, a used-up one, or one below a number the map already holds.
  * The engine numbers above the map's highest number of a kind, never into a
  * gap, so a block under a teammate's newer number can no longer be used
- * (spec 063 research R1).
+ * (spec 063 research R1). A local kind (`__LOCAL_<tag>_FN__`) asks for its team
+ * kind, never for itself: the server refuses a local base (spec 066 R4).
  */
 export function basesNeedingBlocks(
   map: SymbolMap,
   blocks: Record<string, Block>,
   wanted: readonly string[]
 ): string[] {
-  const top = highest(map)
-  const bases = new Set([...wanted, ...Object.keys(top)])
+  const top = highestPerKind(map)
+  const bases = new Set([...wanted, ...Object.keys(top).map((b) => teamBaseOf(b) ?? b)])
   return [...bases].filter((base) => {
     const b = blocks[base]
     return !b || (top[base] ?? 0) >= b.end

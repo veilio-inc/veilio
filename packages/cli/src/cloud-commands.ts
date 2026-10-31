@@ -1059,6 +1059,7 @@ export async function teamNamespaceForScrub(
     return {
       team: found.analysis,
       note: null,
+      teamId,
       reserve: async (requests) => (await reservePlaceholders(credential, teamId, requests)).ranges,
     }
   }

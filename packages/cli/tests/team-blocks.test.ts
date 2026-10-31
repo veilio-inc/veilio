@@ -118,7 +118,8 @@ describe('pulling a team map reserves a block when the member needs one', () => 
     expect(existsSync(mapPath())).toBe(true)
     expect(res.err).toMatch(/could not reserve/i)
     expect(res.err).toMatch(/numbers? new names (on this machine|locally)/i)
-    expect(loadReserved(mapPath())).toBeNull()
+    // Spec 066 R4: written anyway, with no block, so the guard knows it is in a team.
+    expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'cap' } })
   })
 
   it('blocks reserved for another team or account are replaced, never numbered from', async () => {
@@ -146,7 +147,7 @@ describe('a block is taken only from a sane answer', () => {
     ['no ranges', {}],
     ['a run below the map', { ranges: [{ base: '__FN__', start: 3, end: 502 }] }],
     ['a run for a kind not asked for', { ranges: [{ base: '__X__', start: 100, end: 599 }] }],
-  ])('%s: no reserved.json, and the pull still succeeds', async (_why, body) => {
+  ])('%s: no block in reserved.json, and the pull still succeeds', async (_why, body) => {
     const real = cloud.fetch
     vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
       String(url).endsWith('/placeholders/reserve')
@@ -162,7 +163,7 @@ describe('a block is taken only from a sane answer', () => {
     const res = await run(['maps', 'pull', id])
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(res.err).toMatch(/could not reserve/i)
-    expect(loadReserved(mapPath())).toBeNull()
+    expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'server' } })
   })
 })
 
