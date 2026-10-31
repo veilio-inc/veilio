@@ -17,8 +17,10 @@ import {
   compileRulePattern,
   detectSecrets,
   isKeyword,
+  isLocalPlaceholder,
   isOrdinaryWord,
   isPlaceholder,
+  isRolePlaceholder,
   keepRule,
   restore,
   scanSecrets,
@@ -67,54 +69,9 @@ export const NO_CONTEXT: MaskContext = {
   kind: 'result',
 }
 
-// Spec 063: a marker entry at a block's floor moves the engine's counter
-// there - it numbers above the highest number of a kind in the map it is
-// given. The value holds a NUL no identifier contains, so it matches nothing in
-// the text, and it is stripped from what comes back (the CLI's anonymizeAbove).
-const FLOOR_MARKER = '\u0000veilio-guard-floor:'
-const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
-
-/** Highest number per kind in a map. */
-export function highestPerKind(map: SymbolMap): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const p of Object.keys(map)) {
-    const m = NUMBERED.exec(p)
-    if (!m) continue
-    const [, base = '', n = '0'] = m
-    if (Number(n) > (out[base] ?? 0)) out[base] = Number(n)
-  }
-  return out
-}
-
-/** A block is usable while nothing in the map sits at or above its end. */
-export function usableBlocks(map: SymbolMap, blocks: Record<string, Block>): Record<string, Block> {
-  const top = highestPerKind(map)
-  return Object.fromEntries(Object.entries(blocks).filter(([base, b]) => (top[base] ?? 0) < b.end))
-}
-
-/** Reserved numbers still free, over every usable block. */
-export function numbersLeft(map: SymbolMap, blocks: Record<string, Block>): number {
-  const top = highestPerKind(map)
-  return Object.entries(usableBlocks(map, blocks)).reduce(
-    (sum, [base, b]) => sum + b.end - Math.max(top[base] ?? 0, b.start - 1),
-    0
-  )
-}
-
-/** The map with a floor marker at each usable block's start, so the engine
- *  numbers new names of that kind inside it (spec 063). Shared by every path
- *  that mints: a source read and a name first met in output (team bench). */
-function seedBlocks(
-  map: SymbolMap,
-  blocks?: Record<string, Block>
-): { seeded: SymbolMap; usable: Record<string, Block> } {
-  const usable = blocks ? usableBlocks(map, blocks) : {}
-  const top = highestPerKind(map)
-  const seeded: SymbolMap = { ...map }
-  for (const [base, b] of Object.entries(usable))
-    if (b.start - 1 > (top[base] ?? 0)) seeded[`${base}${b.start - 1}`] = `${FLOOR_MARKER}${base}`
-  return { seeded, usable }
-}
+/** What new names are numbered from in a team checkout (spec 066): this
+ *  checkout's blocks, and the tag of its local family. */
+export type Numbering = { blocks: Record<string, Block>; tag: string }
 
 export function scrubSource(
   text: string,
@@ -122,7 +79,7 @@ export function scrubSource(
   language: LanguageOption = 'auto',
   keep: ReadonlySet<string> = new Set(),
   fileKind?: FileKind,
-  blocks?: Record<string, Block>,
+  team?: Numbering,
   custom: readonly CustomRule[] = []
 ): { text: string; additions: SymbolMap; outside: number } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
@@ -132,28 +89,23 @@ export function scrubSource(
     ...keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names'),
     ...custom,
   ]
-  // Inside the member's blocks where one is usable (spec 063); a kind without
-  // one numbers as it always did, and its new names are counted as outside.
-  const { seeded, usable } = seedBlocks(map, blocks)
+  // In a team, inside the member's usable block, else in the checkout's local
+  // family (spec 066): the engine decides, as it does for the CLI and the MCP.
   // The file's kind, never its path (engine spec 013 R19).
   const result = anonymize(text, {
-    existingMap: seeded,
+    existingMap: map,
     language,
     rules,
     ...(fileKind ? { fileKind } : {}),
+    ...(team ? { team } : {}),
   })
   const additions: SymbolMap = {}
   let outside = 0
   for (const [placeholder, name] of Object.entries(result.map)) {
-    if (name.startsWith(FLOOR_MARKER) || map[placeholder] === name) continue
+    if (map[placeholder] === name) continue
     additions[placeholder] = name
-    if (!blocks) continue
-    const [, base = '', n = '0'] = NUMBERED.exec(placeholder) ?? []
-    const b = usable[base]
-    // A rule's own kind with no block is not a team number the member missed:
-    // `veilio maps pull` would not give it one.
-    if (!b && custom.some((r) => r.type === 'replace' && r.placeholder === base)) continue
-    if (!b || Number(n) < b.start || Number(n) > b.end) outside++
+    // Numbered on this machine only, until the next publish renumbers it.
+    if (isLocalPlaceholder(placeholder)) outside++
   }
   return { text: result.anonymized, additions, outside }
 }
@@ -181,7 +133,7 @@ type Matcher = {
 // know when they are stale without counting its keys on every call (review of
 // 6e14ec6). Grow a map only through grow().
 const versions = new WeakMap<SymbolMap, number>()
-const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
+export const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
 
 /** A cheap fingerprint of a map's content: its size and a sum of its
  *  entries' hashes. grow() keeps it current; a change made any other way,
@@ -467,7 +419,6 @@ function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): Sy
 // Only the engine's own role placeholders are left out: an entry a custom
 // replace rule, a manual mask or a redaction made (any other base) was masked
 // on purpose and stays masked, whatever word it is (security review).
-const ROLE_PLACEHOLDER = /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/
 const views = new WeakMap<SymbolMap, { version: number; fingerprint: string; view: SymbolMap }>()
 function readableView(map: SymbolMap): SymbolMap {
   // Keyed on the map and its version, as the matcher is: grow() is the only
@@ -481,7 +432,7 @@ function readableView(map: SymbolMap): SymbolMap {
   }
   const view: SymbolMap = {}
   for (const [p, name] of Object.entries(map))
-    if (!(ROLE_PLACEHOLDER.test(p) && isOrdinaryWord(name))) view[p] = name
+    if (!(isRolePlaceholder(p) && isOrdinaryWord(name))) view[p] = name
   views.set(map, { version, fingerprint: strictMaps() ? fingerprintOf(map) : '', view })
   return view
 }
@@ -1116,7 +1067,7 @@ export function maskShaped(
   text: string,
   map: SymbolMap,
   ctx: MaskContext,
-  blocks?: Record<string, Block>
+  team?: Numbering
 ): { text: string; additions: SymbolMap } {
   // What the user typed is not shape-masked; a replace rule's names are
   // (spec 065), as everywhere else.
@@ -1127,7 +1078,7 @@ export function maskShaped(
     let working = map
     const additions: SymbolMap = {}
     const out = aroundTokens(text, (part) => {
-      const r = maskShapedPart(part, working, ctx, blocks)
+      const r = maskShapedPart(part, working, ctx, team)
       if (Object.keys(r.additions).length) {
         Object.assign(additions, r.additions)
         working = { ...working, ...r.additions }
@@ -1136,14 +1087,14 @@ export function maskShaped(
     })
     return { text: out, additions }
   }
-  return maskShapedPart(text, map, ctx, blocks)
+  return maskShapedPart(text, map, ctx, team)
 }
 
 function maskShapedPart(
   text: string,
   map: SymbolMap,
   ctx: MaskContext,
-  blocks?: Record<string, Block>
+  team?: Numbering
 ): { text: string; additions: SymbolMap } {
   const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
   const reused: SymbolMap = {}
@@ -1180,20 +1131,19 @@ function maskShapedPart(
   const source = [...found]
     .map((t) => (/^[A-Z]/.test(t) && !t.includes('_') ? `class ${t} {}` : `let ${t} = 0`))
     .join('\n')
-  // Inside this member's block, as a source read numbers (spec 063): a name met
-  // first in a test's output once took the next number above the map - a
-  // teammate's (team bench, 2026-10-30).
-  const { seeded } = seedBlocks(map, blocks)
+  // Numbered as a source read is (spec 063, 066): a name met first in a test's
+  // output once took the next number above the map - a teammate's (team
+  // bench, 2026-10-30).
   const minted = anonymize(source, {
-    existingMap: seeded,
+    existingMap: map,
     language: 'typescript',
     secrets: 'off',
     ...(ctx.rules?.length ? { rules: [...ctx.rules] } : {}),
+    ...(team ? { team } : {}),
   }).map
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(minted))
-    if (found.has(name) && !name.startsWith(FLOOR_MARKER) && map[placeholder] !== name)
-      additions[placeholder] = name
+    if (found.has(name) && map[placeholder] !== name) additions[placeholder] = name
   return { text: replaceNames(text, { ...reused, ...additions }, ctx), additions }
 }
 

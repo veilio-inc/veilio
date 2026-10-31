@@ -16,7 +16,6 @@ import {
   parseMapFile,
   parseReservedFile,
   serialiseMapFile,
-  type Block,
   type Reserved,
   type StoredMap,
   type SymbolMap,
@@ -46,8 +45,9 @@ import {
   restoreArgs,
   scrubSource,
   survivingSecrets,
+  versionOf,
 } from './scrub.ts'
-import type { MaskContext, ScanResult } from './scrub.ts'
+import type { MaskContext, Numbering, ScanResult } from './scrub.ts'
 import { fileKindOf, restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
@@ -171,10 +171,54 @@ export class Guard {
     return join(this.root, '.veilio', 'reserved.json')
   }
 
-  /** The blocks to number inside, when the file was read and is sound. */
-  get blocks(): Record<string, Block> | undefined {
-    return this.reserved?.ok ? this.reserved.blocks : undefined
+  /** What new names are numbered from (spec 066). No file: no team, numbered
+   *  as always. A file: its usable blocks, else the checkout's local family -
+   *  under the file's tag, or one held for this session when the file has
+   *  none (an older CLI's) or cannot be read (never numbered from). */
+  get numbering(): Numbering | undefined {
+    const r = this.reserved
+    if (!r) return undefined
+    if (!r.ok) return { blocks: {}, tag: this.sessionTag() }
+    return { blocks: r.blocks, tag: r.tag ?? this.sessionTag() }
   }
+
+  private drawnTag: string | null = null
+  private sessionTag(): string {
+    if (this.drawnTag === null) {
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      // Modulo bias of 2^32 % 36 is about 1e-9: immaterial for a tag.
+      const draw = globalThis.crypto.getRandomValues(new Uint32Array(6))
+      this.drawnTag = [...draw].map((n) => alphabet[n % alphabet.length]).join('')
+    }
+    return this.drawnTag
+  }
+
+  /** Spec 066 R5: the old placeholders a publish renumbered (.veilio/aliases.json),
+   *  read only, so an edit written with one still lands on the real name. */
+  private aliases: SymbolMap = {}
+
+  /** What a tool's arguments are restored from: the saved map, and the
+   *  renumbered old placeholders where the map does not give them another
+   *  name (a contested one is in neither, as in the CLI). Quarantine never. */
+  private get restoreMap(): SymbolMap {
+    const map = this.stored.map
+    const keys = Object.keys(this.aliases)
+    if (keys.length === 0) return map
+    // One object per (map, aliases): restoreArgs caches its matcher by map object.
+    const c = this.restoreCache
+    if (c && c.map === map && c.aliases === this.aliases && c.version === versionOf(map))
+      return c.out
+    const out: SymbolMap = { ...this.aliases, ...map }
+    for (const p of keys) if (p in map && map[p] !== this.aliases[p]) delete out[p]
+    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), out }
+    return out
+  }
+  private restoreCache: {
+    map: SymbolMap
+    aliases: SymbolMap
+    version: number
+    out: SymbolMap
+  } | null = null
 
   get mapPath(): string {
     return join(this.root, '.veilio', 'map.json')
@@ -235,7 +279,7 @@ export class Guard {
           language,
           undefined,
           undefined,
-          this.blocks,
+          this.numbering,
           this.rules.rules
         )
         this.counts.outsideReserved += outside
@@ -436,6 +480,7 @@ export class Guard {
 
   async reloadMap(): Promise<void> {
     await this.reloadReserved()
+    this.aliases = await this.readAliases()
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
       return
@@ -446,6 +491,22 @@ export class Guard {
       return
     }
     this.stored = parsed.stored
+  }
+
+  /** Never fatal: a missing or unreadable file restores nothing extra. */
+  private async readAliases(): Promise<SymbolMap> {
+    const path = join(this.root, '.veilio', 'aliases.json')
+    try {
+      if (!(await this.io.exists(path))) return {}
+      const parsed = JSON.parse(await this.io.read(path)) as { aliases?: unknown }
+      const a = parsed?.aliases
+      if (!a || typeof a !== 'object' || Array.isArray(a)) return {}
+      return Object.fromEntries(
+        Object.entries(a).filter((e): e is [string, string] => typeof e[1] === 'string')
+      )
+    } catch {
+      return {}
+    }
   }
 
   stop(reason: string): void {
@@ -503,7 +564,7 @@ export class Guard {
     const working = ownedMap(this.map)
     const additions = ownedMap()
     for (const t of texts) {
-      const r = maskShaped(this.maskText(t, 'prompt'), working, ctx, this.blocks)
+      const r = maskShaped(this.maskText(t, 'prompt'), working, ctx, this.numbering)
       grow(working, r.additions)
       grow(additions, r.additions)
     }
@@ -711,12 +772,12 @@ export class Guard {
     const altered = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
-      const r = restoreArgs(s, this.stored.map)
+      const r = restoreArgs(s, this.restoreMap)
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
-      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.stored.map)
+      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.restoreMap)
       return r.text
     }
 
@@ -861,7 +922,7 @@ export class Guard {
       applyMap(raw, this.map, ctx, { known: this.destroyed }),
       this.map,
       ctx,
-      this.blocks
+      this.numbering
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
@@ -976,7 +1037,7 @@ export class Guard {
               languageOf(filePath),
               ctx.external,
               fileKind,
-              this.blocks,
+              this.numbering,
               this.rules.rules
             )
             this.counts.outsideReserved += scrubbed.outside
@@ -1004,7 +1065,7 @@ export class Guard {
         // `status`, or a value deeper down, is masked like any other.
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c, this.blocks)
+          const shaped = maskShaped(t, working, c, this.numbering)
           grow(working, shaped.additions)
           grow(additions, shaped.additions)
           return shaped.text

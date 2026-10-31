@@ -1,7 +1,7 @@
 // What the developer reads: the band above the prompt and the /veilio reply
 // (spec 033, contracts/mod.md).
 import type { Guard } from './guard.ts'
-import { numbersLeft } from './scrub.ts'
+import { numbersLeft } from '../vendor/engine/index.js'
 
 export const COVERAGE_LINK =
   'https://github.com/veilio-inc/veilio/blob/main/plugins/veilio-guard/COVERAGE.md'

@@ -77,6 +77,8 @@ To run the guard for everyone, an administrator lists it in Claude Code's [manag
 
 When the organisation runs it, `/veilio` says so, and neither `/veilio off` nor a project's `guard.json` can switch it off. The team's shared map comes through the CLI: `veilio maps pull` writes it to the project's map, and the guard uses it as is.
 
+`veilio maps pull` also reserves you a block of the team's placeholder numbers (`.veilio/reserved.json`), and the guard numbers new names inside it, offline, so two teammates working at once never give one placeholder two meanings. When no block can be reserved (the day's limit, offline, the plan), the guard numbers new names in this checkout's local family, `__LOCAL_<TAG>_<KIND>__n`: your machine restores them, a teammate's restore leaves them as written, and your next team publish (`veilio maps push --team` or `veilio maps update`) renumbers them and keeps the old ones in `.veilio/aliases.json`, which the guard reads so edits written with them still land.
+
 ## Develop
 
 ```bash

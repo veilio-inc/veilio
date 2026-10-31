@@ -56,7 +56,7 @@ test('without a block, numbering is as it always was (signed out, Community Edit
   )
 })
 
-test('a block under a number the map already holds is not used: local numbering, and the band says so', async ($, on) => {
+test('a block under a number the map already holds is not used: the local family, and the band says so', async ($, on) => {
   const read = recorded('Read')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({
@@ -67,8 +67,9 @@ test('a block under a number the map already holds is not used: local numbering,
   })
   on('tool.call', () => read.r)
   const content = res(await $.tool.call(eventOf(read))).file.content as string
-  const cls = numbersOf(content, '__CLS__').filter((n) => n !== 6000)
-  expect(cls.every((n) => n > 6000)).toBe(true)
+  // Spec 066: never above the map - that is where the next teammate's block starts.
+  expect(content).not.toMatch(/(?<![A-Za-z0-9_])__CLS__(?!6000\b)\d+/)
+  expect(content).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__\d+/)
   const status = await $.command.run({ command: 'veilio', args: '' })
   expect(status.text).toMatch(/outside reserved team numbers/)
   expect(status.text).toMatch(/veilio maps pull/)
