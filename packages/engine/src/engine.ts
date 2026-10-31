@@ -889,6 +889,7 @@ const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
   root: true,
   fileKind: true,
   team: true,
+  ruleBudget: true,
 })
 const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 
@@ -1190,7 +1191,7 @@ export function anonymize(
   const rules = (opts.rules ?? []).filter(isRunnableRule)
   // One allowance of matching steps for every rule and name in this call
   // (security audit); once spent, rule tests answer no match.
-  const budget = ruleBudget()
+  const budget = opts.ruleBudget ?? ruleBudget()
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers

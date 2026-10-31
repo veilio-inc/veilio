@@ -48,7 +48,7 @@ import {
   versionOf,
 } from './scrub.ts'
 import type { MaskContext, Numbering, ScanResult } from './scrub.ts'
-import { fileKindOf, restore, scanSecrets } from '../vendor/engine/index.js'
+import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
@@ -148,6 +148,16 @@ export class Guard {
   mcpRestore: string[] = []
   /** rulesStopped: Reads whose custom rules ran out of matching budget (security audit). */
   counts = { withheld: 0, denied: 0, outsideReserved: 0, rulesStopped: 0 }
+  /** The current hook invocation's allowance of rule-matching steps, shared
+   *  by every file and tool output it masks (security review). */
+  budget = ruleBudget()
+
+  /** A new hook invocation: a fresh rule budget. A spent one is counted, so
+   *  the band still says rules stopped. */
+  invocation(): void {
+    if (this.budget.spent) this.counts.rulesStopped++
+    this.budget = ruleBudget()
+  }
   /** Spec 063: this member's blocks of team numbers (.veilio/reserved.json), or why there are none. */
   reserved: Reserved | null = null
   /** Credentials destroyed this session, in memory only: removed from
@@ -282,7 +292,8 @@ export class Guard {
           undefined,
           undefined,
           this.numbering,
-          this.rules.rules
+          this.rules.rules,
+          this.budget
         )
         this.counts.outsideReserved += outside
         if (rulesStopped) this.counts.rulesStopped++
@@ -738,11 +749,13 @@ export class Guard {
   /** What masking knows about a text of `language` (spec 050). */
   context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
     const rules = this.rules.rules
-    if (!this.index) return { ...NO_CONTEXT, language, kind, rules }
+    const budget = this.budget
+    if (!this.index) return { ...NO_CONTEXT, language, kind, rules, budget }
     return {
       language,
       kind,
       rules,
+      budget,
       projectLanguages: this.index.languages,
       // Less every name the project declares anywhere (spec 050 data-model).
       // Only once every file is indexed: before that, a name imported here may
@@ -1051,7 +1064,8 @@ export class Guard {
               ctx.external,
               fileKind,
               this.numbering,
-              this.rules.rules
+              this.rules.rules,
+              this.budget
             )
             this.counts.outsideReserved += scrubbed.outside
             if (scrubbed.rulesStopped) this.counts.rulesStopped++

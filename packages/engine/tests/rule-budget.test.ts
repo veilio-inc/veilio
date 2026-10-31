@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, type CustomRule } from '../src/index.js'
+import { anonymize, ruleBudget, type CustomRule } from '../src/index.js'
 
 // Security audit: MAX_WORK bounds one test of one rule against one name, but
 // nothing bounded a call testing every rule against every name - hostile
@@ -56,5 +56,21 @@ describe('the per-call rule budget', () => {
   it('a later call starts with a full budget', () => {
     const rules = [rule(1, 'replace', '^phoenix$')]
     expect(anonymize('const phoenix = 2\n', { rules }).anonymized).toContain('__CODENAME__1')
+  })
+})
+
+describe('a budget the caller shares across calls (security review of round 1)', () => {
+  it('a later call given the same budget starts where the first left it', () => {
+    const hostile = Array.from({ length: 20 }, (_, i) =>
+      rule(i, 'whitelist', `(\\w?\\w?){50}#|x${i}`)
+    )
+    const budget = ruleBudget()
+    expect(anonymize(CODE, { rules: hostile, ruleBudget: budget }).rulesStopped).toBe(true)
+    const rules = [rule(1, 'replace', '^phoenix$')]
+    const later = anonymize('const phoenix = 2\n', { rules, ruleBudget: budget })
+    expect(later.rulesStopped).toBe(true)
+    expect(later.anonymized).not.toMatch(/\bphoenix\b/)
+    // Without it, a fresh budget.
+    expect(anonymize('const phoenix = 2\n', { rules }).rulesStopped).toBeUndefined()
   })
 })

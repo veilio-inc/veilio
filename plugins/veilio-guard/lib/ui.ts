@@ -38,7 +38,10 @@ function customRules(g: Guard): string {
     .filter(([n]) => (n as number) > 0)
     .map(([n, why]) => `${n} ${why}`)
   // RULES_STOPPED_NOTE's opening words: what the band has room for.
-  const stopped = g.counts.rulesStopped ? ' - custom rules stopped matching: too much work' : ''
+  const stopped =
+    g.counts.rulesStopped || g.budget?.spent
+      ? ' - custom rules stopped matching: too much work'
+      : ''
   return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}${stopped}`
 }
 

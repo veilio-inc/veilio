@@ -174,6 +174,7 @@ export function register(on: On, options: Options = {}) {
 
   on('session.start', async ($, e, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     // Spec 050: index the project while the session starts, then in short
     // slices between calls. A timer runs outside any hook's budget, so each
     // slice stops itself after SLICE_MS to keep the mod free for tool results.
@@ -187,6 +188,7 @@ export function register(on: On, options: Options = {}) {
       await g.indexProject(deadline(next, START_MS)).catch(off)
       const slice = () => {
         if (g.index?.state !== 'indexing') return
+        g.invocation()
         g.indexProject(Date.now() + SLICE_MS).then(() => $.clock.after(0, slice), off)
       }
       $.clock.after(0, slice)
@@ -205,6 +207,7 @@ export function register(on: On, options: Options = {}) {
 
   on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { deny: `Veilio refused this call: ${g.stoppedReason}. Run /veilio.` }
@@ -223,6 +226,7 @@ export function register(on: On, options: Options = {}) {
 
   on('prompt.submit', async ($, e, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
@@ -248,6 +252,7 @@ export function register(on: On, options: Options = {}) {
 
   on('prompt.attachment', async ($, e, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
     if (g.state === 'stopped') return { text: null }
@@ -278,6 +283,7 @@ export function register(on: On, options: Options = {}) {
 
   on('prompt.context', async ($, e, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
@@ -295,6 +301,7 @@ export function register(on: On, options: Options = {}) {
 
   on('skill.prompt', async ($, e, next) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') {
@@ -344,6 +351,7 @@ export function register(on: On, options: Options = {}) {
 
   on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)
+    g.invocation() // one rule budget per hook invocation (security review)
     const managed = await isManaged($)
     const arg = String(e.args ?? '').trim()
     if (arg === 'off' && managed) {

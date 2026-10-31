@@ -33,6 +33,7 @@ import type {
   FileKind,
   Language,
   LanguageOption,
+  RuleBudget,
   RuleMatcher,
 } from '../vendor/engine/index.js'
 import type { Block } from './mapfile.ts'
@@ -60,6 +61,9 @@ export type MaskContext = {
   kind: 'result' | 'prompt'
   /** The account's custom rules (spec 065), in the CLI's order. */
   rules?: readonly CustomRule[]
+  /** The hook invocation's allowance of rule-matching steps, shared by every
+   *  file and tool output it masks (security review). */
+  budget?: RuleBudget
 }
 
 export const NO_CONTEXT: MaskContext = {
@@ -86,7 +90,8 @@ export function scrubSource(
   keep: ReadonlySet<string> = new Set(),
   fileKind?: FileKind,
   team?: Numbering,
-  custom: readonly CustomRule[] = []
+  custom: readonly CustomRule[] = [],
+  budget?: RuleBudget
 ): { text: string; additions: SymbolMap; outside: number; rulesStopped: boolean } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
   // through the engine's own whitelist rules, matched whole. It goes first,
@@ -104,6 +109,7 @@ export function scrubSource(
     rules,
     ...(fileKind ? { fileKind } : {}),
     ...(team ? { team } : {}),
+    ...(budget ? { ruleBudget: budget } : {}),
   })
   const additions: SymbolMap = {}
   let outside = 0
@@ -1064,19 +1070,25 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
 }
 
 // Custom-rule patterns run on the engine's linear-time matcher, compiled once
-// per pattern (a teammate's pattern cannot freeze the guard; spec 065).
+// per pattern (a teammate's pattern cannot freeze the guard; spec 065), and
+// draw on the invocation's budget. Once it is spent no rule keeps a name
+// readable and every name a replace rule might match is masked: the engine's
+// direction (security review).
 const ruleMatchers = new Map<string, RuleMatcher | null>()
 function ruleMatches(name: string, ctx: MaskContext, type: CustomRule['type']): boolean {
   if (!ctx.rules?.length) return false
-  return ctx.rules.some((r) => {
+  const stopped = () => ctx.budget?.spent === true && ctx.rules!.some((r) => r.type === type)
+  if (stopped()) return type === 'replace'
+  const hit = ctx.rules.some((r) => {
     if (r.type !== type) return false
     let m = ruleMatchers.get(r.pattern)
     if (m === undefined) {
       if (ruleMatchers.size > 1000) ruleMatchers.clear()
       ruleMatchers.set(r.pattern, (m = compileRulePattern(r.pattern)))
     }
-    return m?.test(name) ?? false
+    return m?.test(name, ctx.budget) ?? false
   })
+  return stopped() ? type === 'replace' : hit
 }
 
 const WORD_TOKEN = /(?<![\w$])[A-Za-z_$][\w$]*(?![\w$])/g
@@ -1163,6 +1175,7 @@ function maskShapedPart(
     secrets: 'off',
     ...(ctx.rules?.length ? { rules: [...ctx.rules] } : {}),
     ...(team ? { team } : {}),
+    ...(ctx.budget ? { ruleBudget: ctx.budget } : {}),
   }).map
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(minted))

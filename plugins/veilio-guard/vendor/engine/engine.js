@@ -733,6 +733,7 @@ const ANONYMIZE_OPTIONS = optionKeys({
     root: true,
     fileKind: true,
     team: true,
+    ruleBudget: true,
 });
 const RESTORE_OPTIONS = optionKeys({ strip: true });
 /** `map` without the entries whose real value is a credential: one that is a
@@ -994,7 +995,7 @@ export function anonymize(code, options = {}) {
     const rules = (opts.rules ?? []).filter(isRunnableRule);
     // One allowance of matching steps for every rule and name in this call
     // (security audit); once spent, rule tests answer no match.
-    const budget = ruleBudget();
+    const budget = opts.ruleBudget ?? ruleBudget();
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.

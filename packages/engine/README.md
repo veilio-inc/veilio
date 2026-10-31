@@ -332,6 +332,9 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     (`aliases.json`); numbering stays above them, so none is minted again for
     another name. A tag that is not six of `A-Z0-9` throws a TypeError.
     Without it, numbering is unchanged
+  - `options.ruleBudget` — a `ruleBudget()` the call draws its rule-matching
+    steps from, for a caller that shares one allowance across several calls
+    (the guard does, per hook invocation). Without it, each call gets its own
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
   - an unknown key throws a TypeError that names it and lists the valid

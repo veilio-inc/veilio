@@ -2,6 +2,7 @@
 // types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
 import type { Block } from './localFamily.js'
+import type { RuleBudget } from './rule-pattern.js'
 import type { Language, LanguageOption } from './languages.js'
 import type { SecretFinding, SecretPolicy, SecretSeverity } from './secrets.js'
 
@@ -221,4 +222,8 @@ export interface AnonymizeOptions {
    *  `path`: credentials assigned to environment-style names are found in
    *  dotenv, YAML and shell text. Never relaxes a test file. */
   fileKind?: 'dotenv' | 'yaml' | 'shell'
+  /** The allowance of rule-matching steps to draw on (`ruleBudget()`), when a
+   *  caller shares one across calls - the guard's, per hook invocation. Absent:
+   *  a fresh one for this call. */
+  ruleBudget?: RuleBudget
 }
