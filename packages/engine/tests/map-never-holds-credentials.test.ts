@@ -137,7 +137,10 @@ describe('an old map that already holds a credential found in the text', () => {
     it(`drops it and never writes its placeholder there (${c.name})`, () => {
       const result = anonymize(c.code, { existingMap: OLD, ...c.options })
       expect(result.anonymized).not.toContain('__VAR__1')
-      expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
+      // Round 4: under `redact` a credential is never readable, a fixture's
+      // too; under `warn` and `off` a rule's finding stays as written.
+      if (c.name.includes('redact')) expect(result.anonymized).not.toContain('Kx9_prodpw')
+      else expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
       expect(Object.values(result.map)).not.toContain('Kx9_prodpw')
       expect(result.map.__CLS__1).toBe('PaymentService')
     })

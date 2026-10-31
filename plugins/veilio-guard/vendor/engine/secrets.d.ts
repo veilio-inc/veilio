@@ -153,7 +153,7 @@ export declare function blocksPaste(type: SecretType): boolean;
 export declare const REDACTION_TOKENS: RegExp;
 /** A file kind whose assignment grammar the engine reads (spec 013 R17):
  *  credentials assigned to environment-style names are found in these. */
-export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'text';
+export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'pgpass' | 'text';
 export declare function fileKindOf(path: string): FileKind | undefined;
 /** Where the scanned text comes from. */
 export interface ScanOptions {

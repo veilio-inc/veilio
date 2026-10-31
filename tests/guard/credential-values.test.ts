@@ -225,3 +225,24 @@ describe('exemptions fail closed in command output (security review of round 2)'
     expect(applyMap('<li key="sunshine">x</li>', {})).not.toContain('sunshine')
   })
 })
+
+// Security review, round 4 (B): the credential net reads tool output with an
+// empty map too - a properties line, .netrc, a hyphenated flag.
+describe('the credential net in output, with an empty map', () => {
+  it.each([
+    'password sunshine\n',
+    'machine h login u password sunshine\n',
+    'app --db-password=sunshine\n',
+    '//registry.npmjs.org/:_authToken=sunshine\n',
+    'PASSWORD := sunshine\n',
+  ])('%j is redacted', (text) => {
+    const out = applyMap(text, {})
+    expect(out).not.toContain('sunshine')
+    expect(out).toContain('__REDACTED_')
+  })
+
+  it('a destructured pair in output is not a key and its value', () => {
+    const text = "const [token, setToken] = useState('')\n"
+    expect(applyMap(text, {})).toBe(text)
+  })
+})

@@ -1732,7 +1732,7 @@ export const REDACTION_TOKENS = new RegExp(
 )
 /** A file kind whose assignment grammar the engine reads (spec 013 R17):
  *  credentials assigned to environment-style names are found in these. */
-export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'text'
+export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'pgpass' | 'text'
 
 /**
  * The file kind of `path`, as the engine reads it, or undefined for any other
@@ -1746,10 +1746,11 @@ export type FileKind = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'text'
  * - shell: `.sh`, `.bash`, `.zsh`, `.ksh`, a Dockerfile, and shell rc files;
  * - ini: `.ini`, `.cfg`, `.conf`, `.properties`, `.toml`;
  * - xml: `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`;
+ * - pgpass: `.pgpass`, whose fifth field is a password;
  * - text: a document (`.md`, `.mdx`, `.rst`) and any file of none of these
  *   kinds and no code extension (`.txt`, `.tfvars`, `.bat`, `Makefile`,
  *   `.netrc`): every value grammar applies (security review, round 4).
- * The last three add no secret rules: they tell masking where values stand.
+ * The last four add no secret rules: they tell masking where values stand.
  */
 const CODE_EXTENSIONS =
   /^(?:[cm]?[jt]sx?|json|jsonc|toml|py|pyi|rb|go|java|kt|kts|scala|rs|swift|dart|exs?|lua|php|cs|fs|c|cc|cpp|h|hpp|m|mm|vue|svelte|md|mdx|rst|html|xml|sql|r|pl|ps1)$/i
@@ -1778,6 +1779,7 @@ export function fileKindOf(path: string): FileKind | undefined {
   if (/\.env$/i.test(name) || /^\.env\./i.test(name)) return 'dotenv'
   if (/^(?:ini|cfg|conf|properties)$/i.test(last)) return 'ini'
   if (/^(?:config|xaml|csproj|props|targets|plist)$/i.test(last)) return 'xml'
+  if (/^\.?pgpass$/i.test(name)) return 'pgpass'
   return 'text'
 }
 
@@ -1798,7 +1800,15 @@ export interface ScanOptions {
 
 const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true, fileKind: true })
 
-const FILE_KINDS: ReadonlySet<string> = new Set(['dotenv', 'yaml', 'shell', 'ini', 'xml', 'text'])
+const FILE_KINDS: ReadonlySet<string> = new Set([
+  'dotenv',
+  'yaml',
+  'shell',
+  'ini',
+  'xml',
+  'pgpass',
+  'text',
+])
 
 function scanContext(options: ScanOptions): ScanContext {
   const path = options.path

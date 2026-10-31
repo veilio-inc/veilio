@@ -116,7 +116,7 @@ test('a search over the project drops the lines and files of raw-only files', as
         numFiles: 0,
         filenames: [],
         content:
-          '.env:1:DB_PASSWORD=hunter2\nsrc/a.ts:3:const password = read()\nsecrets/prod.yaml:2:password: hunter2',
+          '.env:1:DB_PASSWORD=hunter2\nsrc/a.ts:3:if (password) check()\nsecrets/prod.yaml:2:password: hunter2',
         numLines: 3,
       },
     }
@@ -133,7 +133,7 @@ test('a search over the project drops the lines and files of raw-only files', as
     output_mode: 'files_with_matches',
   })
   const glob = await $.tool.call({ tool: 'Glob', pattern: '**/*' })
-  expect(res(content).content).toBe('src/a.ts:3:const password = read()')
+  expect(res(content).content).toBe('src/a.ts:3:if (password) check()')
   expect(JSON.stringify(content)).not.toContain('hunter2')
   expect(res(files).filenames).toEqual(['src/a.ts'])
   expect(res(glob).filenames).toEqual(['src/a.ts'])

@@ -59,18 +59,26 @@ Not masked:
   are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
   mask any word. This holds for names and path segments only, never for a
   value (above). A value whose key names a credential — the key contains
-  `pass`, `pwd`, `secret`, `token`, `key`, `auth`, `cred`, `private` or
-  `salt` (`password: sunshine`, `const DB_PASS = "Summer2024!"`,
-  `Password=sunshine;` inside a connection string) — is a secret: under the
-  default `secrets: 'redact'` it is redacted one-way, whole, as a detected
-  secret is, so the map never holds it; under `warn` and `off` it is masked
-  reversibly like any value. A number, a boolean, a value of one or two
-  characters, a placeholder (`<your password>`), an unquoted `$NAME` or
-  `${NAME}`, a CI expression (`${{ secrets.X }}`), a shell command (`$(...)`,
-  backticks), a URL without userinfo or a path under such a key is masked, not
-  redacted. A bare `key = word` in
-  code the engine cannot place in a language may name a variable and keeps a
-  reversible placeholder;
+  `pass`, `pwd`, `secret`, `token`, `key`, `auth`, `cred`, `private`, `salt`,
+  `jwt`, `bearer` or `mnemonic`, or a camel, snake or kebab segment of it
+  starts or ends with `pw`, `otp`, `pin`, `seed` or `cert` (`password:
+  sunshine`, `const DB_PASS = "Summer2024!"`, `dbPw`, `DBPW`, `--db-password=`,
+  `_authToken=`, `Password=sunshine;` inside a connection string) — is a
+  secret: it is redacted one-way, whole, in every `secrets` mode, so the map
+  never holds it. Outside code a credential net reads every line: the
+  credential-named name, any separator (whitespace, `=`, `:=`, `:`, `->`,
+  `=>`, quotes, a `\` continuation, `<![CDATA[`, a tag's `>`, and `(`, `[` or
+  `,` before a quoted value), and the value up to whitespace, a quote, `;`,
+  `,` or `<` - `password sunshine` in a properties file, `.netrc`'s `password
+  sunshine`, a Makefile's `PASSWORD := sunshine`. A `.pgpass` line's fifth
+  field is a password. Prose is over-masked on purpose: "password reset"
+  redacts "reset". A number, a boolean or another language keyword, a value
+  of one or two characters, a placeholder (`<your password>`), an unquoted
+  `$NAME` or `${NAME}`, a CI expression (`${{ secrets.X }}`), a shell command
+  (`$(...)`, backticks), a URL without userinfo or a path under such a key is
+  masked, not redacted; so, in a code file only, is a call or member access
+  that is the whole value (`os.getenv("KEY")`, `config.secret`). In code a
+  bare `key = word` may name a variable and keeps a reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
@@ -138,8 +146,10 @@ or `'report'` (the scan left it in place). `redacted` remains the coarse boolean
 a badge can read; `disposition` is the finer answer.
 
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
-Under `'warn'` nothing is redacted: findings come back with `disposition:
-'report'` and each credential is left in the text as written. Under `'off'`
+Under `'warn'` no rule's finding is redacted: findings come back with `disposition:
+'report'` and each credential a rule finds is left in the text as written. A
+value found by its credential-named key alone (above) is redacted one-way in
+every mode all the same: it is never readable and never mapped. Under `'off'`
 nothing is reported either. **In no mode does a credential go into the symbol
 map**: identifier masking leaves every credential the rules find alone. A name
 written exactly as a destroyed credential is replaced by that credential's
@@ -330,7 +340,7 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
-  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'text'`, for a caller that
+  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'pgpass'` | `'text'`, for a caller that
     knows the file but passes no `path` (`fileKindOf(path)`): turns on the
     environment-style credential rules for that kind (dotenv, YAML, shell) and
     where its grammar keeps values (every kind; `text` reads by every grammar) - it never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
@@ -448,12 +458,12 @@ thrown on. It stays in the map and applies again where it is valid.
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
-- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'text'` | `undefined`: the
+- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'pgpass'` | `'text'` | `undefined`: the
   file kind the engine reads a path as (`.env`, `.env.local`, `*.env`; `.yml`;
   `.sh`, a Dockerfile, shell rc files; `.ini`, `.cfg`, `.conf`, `.properties`,
   `.toml`; `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`;
   `text` for `.md`, `.mdx`, `.rst` and any other file with no code extension -
-  `.txt`, `.tfvars`, `.bat`, `Makefile`) - `undefined` for code and data such as
+  `.txt`, `.tfvars`, `.bat`, a Makefile; `pgpass` for `.pgpass`) - `undefined` for code and data such as
   `.env.ts` or `.env.example.json`
 - `detectCredentials(code, options?)` → `detectSecrets`, plus every value
   under a credential-named key that `anonymize` would redact and no rule

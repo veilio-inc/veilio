@@ -108,16 +108,18 @@ describe('identifiers and paths keep the 064 exemption', () => {
   })
 })
 
-describe('under warn and off values are as on main: masked reversibly, nothing one-way', () => {
+// Round 4 (founder ruling): under warn and off a credential-keyed value is
+// redacted one-way as under redact - it never enters the map in any mode.
+describe('under warn and off a credential-keyed value is redacted, never mapped', () => {
   it.each(['warn', 'off'] as const)('%s', (secrets) => {
     for (const [code, opts] of [
       ['const password: string = "sunshine"\n', { language: 'typescript' as const }],
       ['[db]\npassword = sunshine\n', { path: 'app.ini' }],
     ] as const) {
       const r = anonymize(code, { ...opts, secrets })
-      expect(r.anonymized).not.toContain('__REDACTED_')
+      expect(r.anonymized).toContain('__REDACTED_CREDENTIAL_')
       expect(r.anonymized).not.toContain('sunshine')
-      expect(restore(r.anonymized, r.map).restored).toBe(code)
+      expect(JSON.stringify(r.map)).not.toContain('sunshine')
     }
   })
 })

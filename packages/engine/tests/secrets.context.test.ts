@@ -467,7 +467,8 @@ describe('redaction by context (decision 6)', () => {
   })
 
   it('anonymize recognises { path } alone as options, not a symbol map', () => {
-    const code = 'PGPASSWORD=postgres\n'
+    // A rule's finding, not a credential word's: the URL's password.
+    const code = 'const url = "postgres://app:postgres@db/app"\n'
     expect(anonymize(code, { path: 'tests/x.test.ts' }).anonymized).not.toMatch(TOKEN)
     expect(anonymize(code, { path: 'src/x.ts' }).anonymized).toMatch(TOKEN)
   })

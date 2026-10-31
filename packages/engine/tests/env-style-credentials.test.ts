@@ -236,7 +236,6 @@ describe('engine 1.12.2: nothing new outside dotenv, YAML and shell files', () =
       'const c = {\n  DB_PASSWORD: getSecret("db"),\n}\n',
       undefined,
     ],
-    ['a ?? default in Markdown', '  GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? ""\n', 'README.md'],
     ['a Python call', 'SECRET_KEY=os.getenv("SECRET_KEY")\nAPI_KEY=get_key()\n', 'a.py'],
     ['a JS call', 'TOKEN=getToken();\n', 'a.js'],
     ['a string in code', 'run("PGPASSWORD=$PGPASS")\n', 'a.py'],
@@ -466,6 +465,13 @@ describe('engine 1.13.0: fileKindOf and the fileKind option', () => {
 
   // Round 4: prose over-masking is accepted - `API_KEY: Required.` reads as a
   // value under a credential word, so the sentence is redacted.
+  // Review of round 4: in a document a call or member access is not exempt
+  // either - only code reads one as a reference. Fails closed.
+  it('a ?? default in Markdown is redacted', () => {
+    const r = anonymize('  GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? ""\n', { path: 'README.md' })
+    expect(r.anonymized).toMatch(REDACTED)
+  })
+
   it('prose in Markdown under a credential word is over-masked, on purpose', () => {
     const r = anonymize('API_KEY: Required. Your key from the dashboard.\n', { path: 'README.md' })
     expect(r.anonymized).toMatch(REDACTED)

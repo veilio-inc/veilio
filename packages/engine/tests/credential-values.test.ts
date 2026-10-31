@@ -230,19 +230,15 @@ describe('a credential value is a secret under redact (security review)', () => 
     expect(Object.values(r.map)).not.toContain(c.word)
   })
 
-  it('under warn and off nothing is redacted one-way: as on main, a value is masked reversibly or left as asked', () => {
+  // Round 4 (founder ruling): a value found by its credential key is
+  // redacted one-way in every mode; one a rule reports stays as written under
+  // warn and off. Neither enters the map.
+  it('under warn and off a credential-keyed value is redacted too, never mapped', () => {
     for (const secrets of ['warn', 'off'] as const) {
-      for (const [code, opts] of [
-        ['password: sunshine\n', { fileKind: 'yaml' as const }],
-        ['const db = { password: "sunshine" }\n', {}],
-      ] as const) {
-        const r = anonymize(code, { ...opts, secrets })
-        expect(r.anonymized).not.toContain('__REDACTED_')
-        expect(restore(r.anonymized, r.map).restored).toBe(code)
-      }
-      // One the scanner does not flag is never shown: a reversible placeholder.
-      const plain = anonymize('password: sunshine\n', { fileKind: 'yaml', secrets })
-      expect(plain.anonymized).toMatch(/^password: __[A-Z]+__\d+\n$/)
+      const net = anonymize('password: sunshine\n', { fileKind: 'yaml', secrets })
+      expect(net.anonymized).toBe('password: __REDACTED_CREDENTIAL_1__\n')
+      const rule = anonymize('const db = { password: "sunshine" }\n', { secrets })
+      expect(JSON.stringify(rule.map)).not.toContain('sunshine')
     }
   })
 

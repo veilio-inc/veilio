@@ -2,7 +2,7 @@ import { type Language } from './languages.js';
 /** A single dictionary word, written lower-case, Capitalised or in capitals. */
 export declare function isOrdinaryWord(name: string): boolean;
 /** Where configuration keeps its values, by grammar (`fileKindOf`). */
-export type ValueGrammar = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml';
+export type ValueGrammar = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'pgpass';
 export interface ValueSpan {
     start: number;
     end: number;
@@ -28,6 +28,10 @@ export interface ValueScan {
      *  where every grammar applies, a bare name after a credential key too. */
     kind?: ValueGrammar | 'code';
     language?: Language;
+    /** The text came from a code file (by its path or its language), whatever
+     *  grammar it is read by: an unquoted call or member access there reads a
+     *  value (`os.getenv(...)`, `config.secret`). Never in configuration. */
+    code?: boolean;
 }
 /** Every value position in `text`, sorted by start. Spans may nest: a
  *  connection string's `password=...` lies inside its string. */

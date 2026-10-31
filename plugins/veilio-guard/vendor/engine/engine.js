@@ -954,23 +954,32 @@ function overlapsAny(spans, start, end) {
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 const WORDS = /[A-Za-z_$][\w$]*/g;
 /** The grammar values are read by: the file's kind; a file in a language
- *  the engine reads, a language the caller names, or text with no path that
- *  reads as code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
+ *  the engine reads, a language the caller names, or text that reads as
+ *  code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
  *  or pasted text no language claims has no grammar of its own, and every
  *  value grammar applies (security review, round 4). */
 function valueKind(code, opts) {
     const kind = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined);
     if (kind)
         return kind === 'text' ? undefined : kind;
-    if (opts.path)
-        return 'code';
+    // A path of no kind is code, unless nothing in it reads as code: a `.ts`
+    // holding configuration text keeps every grammar.
     return (opts.language ?? 'auto') !== 'auto' || !guessLanguage(code).fallback ? 'code' : undefined;
+}
+/** Whether the text came from code - a code file's path or a named
+ *  language - whatever grammar its content is read by. */
+function fromCode(opts) {
+    if ((opts.language ?? 'auto') !== 'auto')
+        return true;
+    return !opts.fileKind && !!opts.path && fileKindOf(opts.path) === undefined;
 }
 /** Where `code` holds values, as `anonymize` reads them (security review,
  *  round 3): an ordinary word there is masked, and a value under a
  *  credential key is redacted. */
 export function valuePositions(code, opts = {}) {
-    return valuesIn(code, describeLanguage(code, opts.language).language, valueKind(code, opts));
+    const kind = valueKind(code, opts);
+    const language = describeLanguage(code, opts.language).language;
+    return valuesIn(code, language, kind, kind === 'code' || fromCode(opts));
 }
 /** `detectSecrets`, and every credential value `anonymize` would redact that
  *  its rules do not report (security review, round 4): `password:
@@ -1005,7 +1014,7 @@ export function detectCredentials(code, options = {}) {
 }
 /** The value positions in `text` (ordinaryWords.ts), with the tokenizer's
  *  string literals: contents only, a module specifier as a path. */
-function valuesIn(text, language, kind) {
+function valuesIn(text, language, kind, code = kind === 'code') {
     const strings = [];
     let at = 0;
     for (const s of tokenizeForMasking(text, language)) {
@@ -1016,7 +1025,7 @@ function valuesIn(text, language, kind) {
         }
         at += s.text.length;
     }
-    return valueSpans(text, { strings, kind, language });
+    return valueSpans(text, { strings, kind, language, code });
 }
 /** Spans as sorted, disjoint ranges, for `covers`. */
 function mergedRanges(spans) {
@@ -1203,19 +1212,23 @@ export function anonymize(code, options = {}) {
     // Security review, round 3: under `redact` a value under a credential key
     // is a secret, replaced whole and one-way, as a detected secret is, so the
     // map never holds it - unless an older map already masks it reversibly,
-    // which the guard relies on. A bare name after a credential key in code
-    // may be a variable (`const apiKey = key`) and stays reversible, as every
-    // value does under `warn` and `off`. A distinctive value is replaced
-    // wherever it stands as a name too.
+    // which the guard relies on. A distinctive value is replaced wherever it
+    // stands as a name too. Round 4 (founder ruling): so under `warn` and
+    // `off` too - such a value is found by the credential words, not reported
+    // by a rule - except where a rule found it, which those modes leave as
+    // written by the user's choice.
     const kind = valueKind(code, opts);
-    let unvalued = marked;
-    if ((opts.secrets ?? 'redact') === 'redact') {
+    const calls = kind === 'code' || fromCode(opts);
+    const policy = opts.secrets ?? 'redact';
+    const reported = policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end]);
+    let unvalued;
+    {
         const mapped = new Set(Object.values(existingMap));
         const tokens = new Map();
         let out = '';
         let at = 0;
-        for (const { start, end, value, bare } of credentialsAmong(valuesIn(marked, language, kind))) {
-            if (bare || mapped.has(value) || destroyed.has(value))
+        for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, calls))) {
+            if (mapped.has(value) || destroyed.has(value) || overlapsAny(reported, start, end))
                 continue;
             if (!tokens.has(value))
                 tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`);
@@ -1232,7 +1245,7 @@ export function anonymize(code, options = {}) {
         if (words.length > 0) {
             out = '';
             at = 0;
-            for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind))) {
+            for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, calls))) {
                 let part = unvalued.slice(start, end);
                 for (const [value, token] of words)
                     part = replaceWholeWord(part, value, token);
@@ -1253,7 +1266,7 @@ export function anonymize(code, options = {}) {
     // in `source`, so the offsets are the ones substitution sees.
     const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end]);
     // Every value position but a path's: an ordinary word there is masked.
-    const valued = valuesIn(source, language, kind).filter((s) => !s.path);
+    const valued = valuesIn(source, language, kind, calls).filter((s) => !s.path);
     const values = mergedRanges(valued);
     // A name the existing map already holds may still be substituted inside one:
     // that writes nothing new, and the guard relies on it for a plain word

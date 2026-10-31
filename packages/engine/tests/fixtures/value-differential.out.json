@@ -1,10 +1,10 @@
 {
   "corpus": {
-    "inputs": 10206,
-    "maskedInValues": 3392,
+    "inputs": 10800,
+    "maskedInValues": 3534,
     "leaks": 0,
     "newlyReadable": {
-      "identifiers": 17092,
+      "identifiers": 16837,
       "paths": 61
     }
   },
@@ -13,8 +13,8 @@
     "maskedInValues": 2976,
     "leaks": 0,
     "newlyReadable": {
-      "identifiers": 17470,
-      "paths": 549
+      "identifiers": 17450,
+      "paths": 545
     },
     "dir": "veilio-bench-polyglot"
   }
