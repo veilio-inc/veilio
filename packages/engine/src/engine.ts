@@ -35,7 +35,7 @@ import {
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
-import { isLocalTag, localBaseOf, teamBaseOf } from './localFamily.js'
+import { isLocalTag, isRolePlaceholder, localBaseOf, teamBaseOf } from './localFamily.js'
 import {
   assertKnownOptions,
   assertObject,
@@ -154,7 +154,11 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
     }
   }
   for (const [base, count] of baseCounts) {
-    parts.push(`${base}* are project-specific identifiers (${count})`)
+    // Spec 066: a local base reads as its team kind, numbered on one machine.
+    const team = teamBaseOf(base)
+    const label =
+      (team && ROLE_LEGEND_LABELS.find(([b]) => b === team)?.[1]) || 'project-specific identifiers'
+    parts.push(`${base}* are ${label}${team ? ', numbered on one machine' : ''} (${count})`)
   }
   return `Placeholder legend: ${parts.join('; ')}.`
 }
@@ -1360,7 +1364,7 @@ export function anonymize(
     if (
       reverseExisting[name] &&
       !(
-        /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/.test(reverseExisting[name]) &&
+        isRolePlaceholder(reverseExisting[name]) &&
         isOrdinaryWord(name) &&
         replacers.some((r) => safeMatch(r.pattern, name))
       )
@@ -1630,9 +1634,11 @@ const MINTED_KINDS = [
  *  number, and up to three trailing underscores. Not preceded by a letter, digit
  *  or underscore, so it never starts inside a name (`tmp_fn_1`, `x__fn__1`); it
  *  may be followed by one, because a model gluing a word to a placeholder it
- *  mangled (`__cls__1Factory`) is still a placeholder nothing can restore. */
+ *  mangled (`__cls__1Factory`) is still a placeholder nothing can restore.
+ *  A local one (spec 066) is the same with `LOCAL` and its tag in front
+ *  (`__local_k7q2xa_var__3`). */
 const NEAR_PLACEHOLDER = new RegExp(
-  `(?<![A-Za-z0-9_$])_{1,3}(?:${MINTED_KINDS.join('|')})_{1,3}\\d+_{0,3}`,
+  `(?<![A-Za-z0-9_$])_{1,3}(?:LOCAL_{1,3}[A-Z0-9]{6}_{1,3})?(?:${MINTED_KINDS.join('|')})_{1,3}\\d+_{0,3}`,
   'gi'
 )
 
