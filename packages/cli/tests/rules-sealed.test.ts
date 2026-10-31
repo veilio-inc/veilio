@@ -345,7 +345,7 @@ describe('scrub with skipped rules', () => {
     serve({ rules: [await sealedPersonalRule('p1', 0, REPLACE)] })
     await run(['rules', 'pull'])
     const res = await run(['scrub'], SOURCE)
-    expect(res.out).toContain('__LEDGER__1')
+    expect(res.out).toMatch(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/) // signed in, maps unread: local (spec 066)
     expect(res.out).not.toContain('settleLedger')
   })
 })

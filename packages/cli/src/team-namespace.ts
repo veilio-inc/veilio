@@ -21,7 +21,7 @@ import {
   LOCAL_PREFIX,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
-import { readCredential, type Credential } from './credential.js'
+import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
 import {
   CloudError,
   getMap,
@@ -240,6 +240,10 @@ async function attempt(
   }
 
   const teamId = list.team?.id
+  // The team last seen, for a run that cannot reach Cloud (spec 066 FR-001).
+  if (teamId)
+    writeTeamRecord({ instance: credential.instance, account: credential.account, teamId }, home)
+  else removeTeamRecord(home)
   if (!teamId) return { status: 'local' }
   const keys = await heldTeamKeys(credential, home, teamId)
   if (keys.length === 0) return { status: 'locked', teamId }

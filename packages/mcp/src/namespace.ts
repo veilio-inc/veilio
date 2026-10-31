@@ -19,7 +19,7 @@
 // The namespace read is the MCP server's request too.
 import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
-import { readCredential } from '@veilio-inc/cli/credential'
+import { readCredential, readTeamRecord } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
@@ -106,7 +106,7 @@ async function fetchNamespace(
       found.status === 'locked'
         ? (found.teamId ?? null)
         : credential
-          ? (readTeamUnlock(credential, home)?.teamId ?? null)
+          ? (readTeamUnlock(credential, home)?.teamId ?? readTeamRecord(credential, home))
           : null
     return localFrom(
       found,

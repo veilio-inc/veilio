@@ -159,5 +159,60 @@ export function removeCredential(home: string = homedir()): boolean {
   // contradicts the whole reason this function is called before the file is
   // considered gone. The caller catches and reports the path.
   rmSync(path, { recursive: true, force: true })
+  removeTeamRecord(home)
   return true
+}
+
+// ─── the account's team, last seen (code review of spec 066) ─────────────────
+//
+// Which team this account was last seen in, kept beside the credential, so a
+// signed-in run that cannot reach Cloud - no team unlock, no reserved.json -
+// still numbers new names in the team's local family, never above the map.
+// Written whenever a listing names the team; removed on sign-out.
+
+export const TEAM_RECORD_FILE = 'team.json'
+const teamRecordPath = (home: string) => join(dirname(credentialPath(home)), TEAM_RECORD_FILE)
+
+export function readTeamRecord(
+  binding: { instance: string; account: string },
+  home: string = homedir()
+): string | null {
+  try {
+    const r = JSON.parse(readFileSync(teamRecordPath(home), 'utf8')) as Record<string, unknown>
+    return r.instance === binding.instance &&
+      r.account === binding.account &&
+      typeof r.teamId === 'string' &&
+      r.teamId
+      ? r.teamId
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Never throws: the record is a convenience, never a reason to fail a command. */
+export function writeTeamRecord(
+  record: { instance: string; account: string; teamId: string },
+  home: string = homedir()
+): void {
+  try {
+    const path = teamRecordPath(home)
+    if (readTeamRecord(record, home) === record.teamId) return
+    mkdirSync(dirname(path), { recursive: true })
+    const { instance, account, teamId } = record
+    writeFileSync(path, `${JSON.stringify({ instance, account, teamId }, null, 2)}\n`, {
+      mode: 0o600,
+    })
+    chmodSync(path, 0o600)
+  } catch {
+    // unwritable: the next run asks Cloud again
+  }
+}
+
+export function removeTeamRecord(home: string = homedir()): void {
+  try {
+    rmSync(teamRecordPath(home), { force: true })
+  } catch {
+    // nothing to remove, or not removable: it names a team id, nothing secret
+  }
 }

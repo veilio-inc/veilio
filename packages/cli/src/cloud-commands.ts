@@ -34,7 +34,14 @@ import {
   expiryFrom,
   type StoredTeamKey,
 } from './team-unlock.js'
-import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
+import {
+  readCredential,
+  readTeamRecord,
+  removeCredential,
+  writeCredential,
+  writeTeamRecord,
+  type Credential,
+} from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
@@ -740,6 +747,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
   try {
     const list = await listMaps(credential)
     const teamId = list.team?.id
+    if (teamId) writeTeamRecord({ ...credential, teamId }, io.home)
     if (!teamId) {
       io.stderr(
         'veilio: this account is not in a team, so there are no team keys to unlock. ' +
@@ -1073,8 +1081,11 @@ export async function teamNamespaceForScrub(
     const credential = readCredential(home)
     return {
       team: null,
-      // Which team, if this machine ever unlocked its key (spec 066 FR-001).
-      numberingTeam: credential ? (readTeamUnlock(credential, home)?.teamId ?? null) : undefined,
+      // Which team: the unlock's, else the one last seen; null when never seen,
+      // still numbered locally (spec 066 FR-001, code review).
+      numberingTeam: credential
+        ? (readTeamUnlock(credential, home)?.teamId ?? readTeamRecord(credential, home))
+        : undefined,
       note: `could not read the team's maps (${found.reason}), so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…), and the next team publish renumbers them.`,
     }
   }
