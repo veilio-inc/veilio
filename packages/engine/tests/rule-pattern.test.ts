@@ -176,7 +176,10 @@ describe('cost and failure bounds', () => {
   })
 
   it('a long chain of optional atoms does not overflow the stack: test never throws', () => {
-    const m = compileRulePattern('a?'.repeat(250))!
+    // 250 would pass the state cap now; the longest chain it allows still
+    // runs, and the closure stays iterative either way.
+    expect(compileRulePattern('a?'.repeat(250))).toBeNull()
+    const m = compileRulePattern('a?'.repeat(120))!
     expect(() => m.test('a'.repeat(10_000))).not.toThrow()
     expect(m.test('a'.repeat(10_000))).toBe(true)
   })
@@ -222,6 +225,34 @@ describe('compiling is bounded too', () => {
   })
 
   it('a large but honest pattern still compiles', () => {
-    expect(compileRulePattern('(?:[a-z]{50}){50}')).not.toBeNull()
+    expect(compileRulePattern('(?:[a-z]{40}){5}')).not.toBeNull()
+  })
+})
+
+// CE code review (measured): a legal 18-character pattern built ~4850 states,
+// all live at every position - 2.5 ms per 30-character name, anonymize 37x
+// slower on 5000 names, and the guard tests every token of a command's output.
+describe('a pattern cannot make masking slow', () => {
+  it('a pattern of thousands of states is refused', () => {
+    expect(compileRulePattern('(?:.{0,49}){0,49}#')).toBeNull()
+  })
+
+  it('the largest pattern still accepted keeps 5000 names under a second', () => {
+    const m = compileRulePattern('(?:.{0,7}){0,15}#')
+    expect(m).not.toBeNull()
+    const start = Date.now()
+    for (let i = 0; i < 5000; i++) m!.test(`quayward${i}ThrottleSkerryTariff`)
+    // About 0.4 s alone; the pattern this review found took about 12 s. The
+    // bound leaves room for a loaded machine and still tells the two apart.
+    expect(Date.now() - start).toBeLessThan(3000)
+  })
+
+  it('a name tested again is answered from the matcher cache', () => {
+    const m = compileRulePattern('(?:.{0,7}){0,15}#')!
+    const name = 'quaywardThrottleSkerryTariffAB'
+    m.test(name)
+    const start = Date.now()
+    for (let i = 0; i < 100_000; i++) m.test(name)
+    expect(Date.now() - start).toBeLessThan(200)
   })
 })

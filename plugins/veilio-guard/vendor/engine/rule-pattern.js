@@ -16,7 +16,15 @@
 // refused: `compileRulePattern` returns null, and the rule is skipped.
 /** Bounds on what a pattern may expand to. */
 const MAX_BOUND = 50;
-const MAX_STATES = 10_000;
+/** States, at most. Every state may be live at every position, so this bounds
+ *  the work per character. 10000 let an 18-character pattern cost 2.5 ms per
+ *  name and slow masking 37-fold, and 1000 still cost 1.6 s on 5000 distinct
+ *  names (CE code review, measured). Rule patterns describe names - ^phoenix$,
+ *  ^[a-z]+_id$, a 50-member class repeated a few times - and fit in 256. */
+const MAX_STATES = 256;
+/** Answers kept per matcher: the guard tests every token of a command's
+ *  output, and the same names come back again and again. */
+const CACHE_SIZE = 4096;
 /** Build steps, at most. Nested repeats of an empty group create no states,
  *  so the state cap alone never trips, while compiling them walks the tree
  *  50^depth times (fifth security review). */
@@ -387,15 +395,24 @@ export function compileRulePattern(pattern) {
         return null;
     }
     const { states, start } = program;
+    const answers = new Map();
     return {
         test(name) {
+            const known = answers.get(name);
+            if (known !== undefined)
+                return known;
+            let answer;
             try {
-                return run(states, start, name);
+                answer = run(states, start, name);
             }
             catch {
                 // Never thrown on purpose; were it, no match - the safe direction.
-                return false;
+                answer = false;
             }
+            if (answers.size >= CACHE_SIZE)
+                answers.clear();
+            answers.set(name, answer);
+            return answer;
         },
     };
 }
