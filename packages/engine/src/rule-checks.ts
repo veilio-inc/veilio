@@ -7,6 +7,7 @@
 // member or an old client sealed must not corrupt or freeze a teammate's tools.
 
 import { MANUAL_BASE, REGULATED_BASES, ROLE_BASES } from './engine.js'
+import { LOCAL_PREFIX } from './localFamily.js'
 import { REDACTION_PREFIX } from './product.js'
 import { compileRulePattern } from './rule-pattern.js'
 
@@ -22,7 +23,13 @@ export function isEngineBase(placeholder: string): boolean {
     ...(Object.values(REGULATED_BASES) as string[]),
     MANUAL_BASE,
   ])
-  return bases.has(placeholder) || placeholder.startsWith(REDACTION_PREFIX)
+  // The local family (spec 066) is the engine's too: a rule minting under it
+  // would read as names numbered on one machine, which teammates leave.
+  return (
+    bases.has(placeholder) ||
+    placeholder.startsWith(REDACTION_PREFIX) ||
+    placeholder.startsWith(LOCAL_PREFIX)
+  )
 }
 
 /**

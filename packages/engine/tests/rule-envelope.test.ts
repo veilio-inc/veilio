@@ -120,6 +120,7 @@ describe('what opening refuses', () => {
     ['a bad type', { ...base, type: 'delete' }, 'refused'],
     ['a bad enabled', { ...base, enabled: 'yes' }, 'refused'],
     ['an engine base', { ...base, placeholder: '__VAR__' }, 'refused'],
+    ['a local-family base', { ...base, placeholder: '__LOCAL_K7Q2XA_VAR__' }, 'refused'],
     ['__P<n>__', { ...base, placeholder: '__P7__' }, 'refused'],
     ['an unsupported pattern', { ...base, pattern: '(?=a)a' }, 'refused'],
     ['an empty name', { ...base, name: '' }, 'refused'],

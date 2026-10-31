@@ -520,7 +520,7 @@ your maps, so a server storing it cannot read it.
   may apply, or one sealed for another row)
 - `ruleRefusal(rule)` → the sentence why a rule may not be saved or applied,
   or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
-  for its own names) and `isSafeRegex(pattern)` are the checks it makes
+  for its own names, including anything under `__REDACTED_` or `__LOCAL_`) and `isSafeRegex(pattern)` are the checks it makes
 - `compileRulePattern(pattern)` → a matcher whose `test(name)` gives
   the platform regex's answer in time linear in the name's length, or `null` for a
   pattern outside its language. Rule patterns run on it, never on the platform regex, so

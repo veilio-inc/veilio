@@ -22,8 +22,16 @@ describe('isEngineBase', () => {
     expect(isEngineBase(`${REDACTION_PREFIX}TOKEN__`)).toBe(true)
   })
 
-  it.each(['__CODENAME__', '__SECRET__', '__PROJECT__'])('%s is not', (p) =>
-    expect(isEngineBase(p)).toBe(false)
+  // Spec 066: a rule under the local family would mint names a teammate leaves
+  // unrestored, and a publish would renumber them as the engine's.
+  it.each(['__LOCAL_X__', '__LOCAL_K7Q2XA_VAR__', '__LOCAL_K7Q2XA_CODENAME__'])(
+    '%s, under the local prefix, is too',
+    (p) => expect(isEngineBase(p)).toBe(true)
+  )
+
+  it.each(['__CODENAME__', '__SECRET__', '__PROJECT__', '__LOCALE__', '__LOCALX_VAR__'])(
+    '%s is not',
+    (p) => expect(isEngineBase(p)).toBe(false)
   )
 })
 
@@ -79,6 +87,15 @@ describe('ruleRefusal', () => {
     ['a replace rule with no placeholder', { ...replace, placeholder: undefined }],
   ])('refuses %s', (_label, rule) => {
     expect(ruleRefusal(rule as never)).toEqual(expect.any(String))
+  })
+
+  it('refuses a placeholder under the local prefix with the engine-base sentence', () => {
+    expect(ruleRefusal({ ...replace, placeholder: '__LOCAL_K7Q2XA_VAR__' })).toMatch(
+      /reserved for the engine's own names/
+    )
+    expect(ruleRefusal({ ...replace, placeholder: '__LOCAL_CODENAME__' })).toMatch(
+      /reserved for the engine's own names/
+    )
   })
 
   it('names the engine base in its sentence, as the server did', () => {
