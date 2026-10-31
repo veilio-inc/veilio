@@ -188,6 +188,10 @@ The other causes are `team key locked`, rules that could not be opened with the
 keys on this machine, and rules refused as unsafe to apply; the CLI README lists
 the exact sentences.
 
+The server reads the rules once, when it starts. After `veilio vault lock` or
+`veilio team lock` it keeps the rules it already loaded until it restarts;
+restart your agent to drop them.
+
 The cached rules apply only while their key is still on this machine:
 `veilio vault lock` and `veilio team lock` remove the personal or team rules
 from the cache, and a key that has expired counts as locked too, so the
