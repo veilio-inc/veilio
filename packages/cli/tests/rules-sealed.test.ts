@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { toBase64, type RuleBody } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
 import { EXIT_OK, type Io } from '../src/commands.js'
-import { readRules, rulesPath, writeRules } from '../src/rules.js'
+import { purgeRules, readRules, rulesPath, writeRules } from '../src/rules.js'
 import { writeTeamUnlock } from '../src/team-unlock.js'
 import { writePersonalMapsKey } from '../src/client/personal-maps-key.js'
 import { rulesSkippedSentences } from '../src/client/wording.js'
@@ -248,6 +248,22 @@ describe('rules pull, team rules', () => {
     const res = await run(['rules', 'pull'])
     expect(res.out).toMatch(/Pulled 1 custom rule \(0 personal, 1 team\)/)
     expect(cached()?.rules[0]).toMatchObject({ id: 't1', scope: 'team', team_id: TEAM_ID })
+  })
+
+  // Security audit: the scope is the list a row came in, never the row's own
+  // label - a team-sealed rule labelled personal is still the team's.
+  it('a team rule labelled personal is treated as team: key-held check and purge', async () => {
+    signIn(home, { pmk: true })
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW }])
+    const row = { ...(await sealedTeamRule('t1', 0, KEEP)), scope: 'personal' }
+    const mine = { ...(await sealedPersonalRule('p1', 1, REPLACE)), scope: 'team' }
+    serve({ rules: [mine], teamRules: [row] })
+    const res = await run(['rules', 'pull'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(cached()?.rules.find((r) => r.id === 't1')).toMatchObject({ scope: 'team' })
+    expect(cached()?.rules.find((r) => r.id === 'p1')).toMatchObject({ scope: 'personal' })
+    expect(purgeRules('team', home)).toBe(1)
+    expect(cached()?.rules.map((r) => r.id)).toEqual(['p1'])
   })
 
   it('with no team key, counted as teamLocked, and says how to fix it', async () => {

@@ -35,13 +35,19 @@ export async function openFetchedRules(
   const count = (opened: RuleOpened): void => {
     if (!opened.ok) skipped[opened.reason === 'refused' ? 'refused' : 'unopenable']++
   }
-  const toRule = (row: SealedRule, opened: RuleOpened): CustomRule | null => {
+  // The scope is the list the row came in, never the row's own label: a
+  // team-sealed rule labelled personal is the team's (security audit).
+  const toRule = (
+    row: SealedRule,
+    opened: RuleOpened,
+    scope: 'personal' | 'team'
+  ): CustomRule | null => {
     count(opened)
     if (!opened.ok) return null
     return {
       ...opened.rule,
       id: row.id,
-      scope: row.scope,
+      scope,
       team_id: row.team_id,
       sort_order: row.sort_order,
     } as CustomRule
@@ -54,7 +60,7 @@ export async function openFetchedRules(
   else if (raw) {
     const pmk = await importPersonalMapsKey(raw)
     for (const row of rows) {
-      const rule = toRule(row, await openPersonal(pmk, row))
+      const rule = toRule(row, await openPersonal(pmk, row), 'personal')
       if (rule) personal.push(rule)
     }
   }
@@ -70,7 +76,7 @@ export async function openFetchedRules(
       skipped.teamLocked++
       continue
     }
-    const rule = toRule(row, await openTeam(keys, row))
+    const rule = toRule(row, await openTeam(keys, row), 'team')
     if (rule) team.push(rule)
   }
   return { personal, team, skipped }
