@@ -163,3 +163,39 @@ describe('a comma at the start of the line before a value', () => {
     expect(anonymize(code, { language: 'ruby' }).anonymized).toContain(',')
   })
 })
+
+// Round 4 (A): text of no kind - no path, or a path no grammar or language
+// claims - is read by every value grammar.
+describe('text of no kind: every value grammar applies', () => {
+  const REDACTED: [string, AnonymizeOptions][] = [
+    ['DB_PASSWORD=Summer2024!', {}],
+    ['export API_TOKEN=sunshine\n', {}],
+    ['password: Summer2024!\n', {}],
+    ['# Setup\n\n```ts\nconst x = 1\n```\n\nDB_PASSWORD=Summer2024!\n', { path: 'README.md' }],
+    ['db_password = Summer2024!\n', { path: 'prod.tfvars' }],
+    ['set DB_PASSWORD=Summer2024!\r\n', { path: 'run.bat' }],
+    ['password: Summer2024!\n', { path: 'notes.txt' }],
+  ]
+  it.each(REDACTED)('%j %j: redacted whole, one-way', (code, opts) => {
+    const r = anonymize(code, opts)
+    expect(r.anonymized).not.toMatch(/Summer2024|sunshine/)
+    expect(r.anonymized).toContain('__REDACTED_CREDENTIAL_')
+    expect(JSON.stringify(r.map)).not.toMatch(/Summer2024|sunshine/)
+    expect(restore(r.anonymized, r.map).restored).not.toMatch(/Summer2024|sunshine/)
+  })
+
+  it.each([
+    ['GREETING=sunshine\n', 'sunshine'],
+    ['codename: falcon\n', 'falcon'],
+  ])('%j masks %s reversibly', (code, word) => {
+    const r = anonymize(code)
+    expect(r.anonymized).not.toMatch(new RegExp(`\\b${word}\\b`))
+    expect(r.anonymized).not.toContain('__REDACTED_')
+    expect(restore(r.anonymized, r.map).restored).toBe(code)
+  })
+
+  it('a named language is still code: only its strings are values', () => {
+    const r = anonymize('const apiKey = key\n', { language: 'typescript' })
+    expect(r.anonymized).not.toContain('__REDACTED_')
+  })
+})

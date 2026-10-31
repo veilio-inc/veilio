@@ -237,11 +237,6 @@ describe('engine 1.12.2: nothing new outside dotenv, YAML and shell files', () =
       undefined,
     ],
     ['a ?? default in Markdown', '  GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? ""\n', 'README.md'],
-    [
-      'prose in Markdown',
-      'API_KEY: Required. Your key from the dashboard.\nTOKEN: see the vault\n',
-      'README.md',
-    ],
     ['a Python call', 'SECRET_KEY=os.getenv("SECRET_KEY")\nAPI_KEY=get_key()\n', 'a.py'],
     ['a JS call', 'TOKEN=getToken();\n', 'a.js'],
     ['a string in code', 'run("PGPASSWORD=$PGPASS")\n', 'a.py'],
@@ -437,7 +432,12 @@ describe('engine 1.13.0: fileKindOf and the fileKind option', () => {
       ['/home/u/.bashrc', 'shell'],
       ['.envrc', 'shell'],
       ['src/config.ts', undefined],
-      ['README.md', undefined],
+      // Round 4: a document, or a file of no kind and no code extension, is text.
+      ['README.md', 'text'],
+      ['notes.txt', 'text'],
+      ['prod.tfvars', 'text'],
+      ['run.bat', 'text'],
+      ['Makefile', 'text'],
     ]
     for (const [path, kind] of cases) expect(fileKindOf(path), path).toBe(kind)
   })
@@ -459,8 +459,17 @@ describe('engine 1.13.0: fileKindOf and the fileKind option', () => {
     ).toBe(false)
   })
 
-  it('without a fileKind or a path, nothing changes from 1.12.1', () => {
-    expect(anonymize('DB_PASSWORD=Tr0ub4dor zebra91\n', {}).anonymized).not.toMatch(REDACTED)
+  // Round 4 (A): text of no kind is read by every value grammar.
+  it('without a fileKind or a path, a credential-named value is redacted', () => {
+    expect(anonymize('DB_PASSWORD=Tr0ub4dor zebra91\n', {}).anonymized).toMatch(REDACTED)
+  })
+
+  // Round 4: prose over-masking is accepted - `API_KEY: Required.` reads as a
+  // value under a credential word, so the sentence is redacted.
+  it('prose in Markdown under a credential word is over-masked, on purpose', () => {
+    const r = anonymize('API_KEY: Required. Your key from the dashboard.\n', { path: 'README.md' })
+    expect(r.anonymized).toMatch(REDACTED)
+    expect(r.anonymized).not.toContain('Required')
   })
 
   it('an explicit fileKind wins over the kind a path implies', () => {
@@ -666,9 +675,9 @@ describe('engine 1.13.0: review of f26b887', () => {
       '.env.rs',
       '.env.swift',
       '.env.lua',
-      '.env.md',
     ])
       expect(fileKindOf(p), p).toBeUndefined()
+    expect(fileKindOf('.env.md')).toBe('text')
     for (const p of ['Dockerfile', 'Dockerfile.prod', 'docker/Dockerfile.dev'])
       expect(fileKindOf(p), p).toBe('shell')
   })

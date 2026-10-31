@@ -23,11 +23,10 @@ export interface ValueScan {
         end: number;
         module?: boolean;
     }[];
-    /** `code`: only strings are values. `text`: code in no language the
-     *  engine recognised, where a bare name after a credential key may be the
-     *  value (`password: sunshine`). A grammar adds its own positions. Absent:
-     *  text of no known kind, such as command output - every grammar applies. */
-    kind?: ValueGrammar | 'code' | 'text';
+    /** `code`: only strings are values. A grammar adds its own positions.
+     *  Absent: text of no known kind - pasted text, a `.md`, command output -
+     *  where every grammar applies, a bare name after a credential key too. */
+    kind?: ValueGrammar | 'code';
     language?: Language;
 }
 /** Every value position in `text`, sorted by start. Spans may nest: a

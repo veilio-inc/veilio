@@ -49,9 +49,11 @@ describe('anonymize_file: the file kind reaches the engine', () => {
     expect(out).toContain('__REDACTED_')
   })
 
-  it('inline text has no file kind: read as before', () => {
+  // Round 4 (A): inline text has no file kind, so every value grammar applies.
+  it('inline text has no file kind: every value grammar applies', () => {
     const out = callTool('anonymize_text', { text: 'DB_PASSWORD=Tr0ub4dor zebra91\n' }, ctx).text
-    expect(out).not.toContain('__REDACTED_')
+    expect(out).toContain('__REDACTED_')
+    expect(out).not.toMatch(/Tr0ub4dor|zebra91/)
   })
 })
 

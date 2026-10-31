@@ -229,11 +229,10 @@ export interface ValueScan {
   /** String literals, as the tokenizer found them: contents only. Absent:
    *  quoted runs on one line are taken as strings. */
   strings?: readonly { start: number; end: number; module?: boolean }[]
-  /** `code`: only strings are values. `text`: code in no language the
-   *  engine recognised, where a bare name after a credential key may be the
-   *  value (`password: sunshine`). A grammar adds its own positions. Absent:
-   *  text of no known kind, such as command output - every grammar applies. */
-  kind?: ValueGrammar | 'code' | 'text'
+  /** `code`: only strings are values. A grammar adds its own positions.
+   *  Absent: text of no known kind - pasted text, a `.md`, command output -
+   *  where every grammar applies, a bare name after a credential key too. */
+  kind?: ValueGrammar | 'code'
   language?: Language
 }
 
@@ -295,10 +294,16 @@ function inCommand(text: string, at: number): boolean {
   return (before.match(/\$\(/g)?.length ?? 0) > (before.match(/\)/g)?.length ?? 0)
 }
 
+// An unquoted call or member access (`getToken()`, `settings.token`)
+// reads a value; it is not one.
+const CALL_OR_MEMBER = /^[A-Za-z_$][\w$]*(?:\(|\.[A-Za-z_$])/
+
 /** A value that may be a secret: one no shape above rules out. */
 function secretShaped(value: string, quoted: boolean): boolean {
   const v = value.trim()
-  return v !== '' && !NOT_SECRET.test(v) && (quoted || !REFERENCE.test(v))
+  return (
+    v !== '' && !NOT_SECRET.test(v) && (quoted || (!REFERENCE.test(v) && !CALL_OR_MEMBER.test(v)))
+  )
 }
 
 // `key=value` pairs inside a value: a connection string, a query string.
@@ -444,8 +449,8 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       add(v.start, v.end, credential, false)
     }
   }
-  // A bare name after a credential key, in code or text of no known kind.
-  if (any || kind === 'text') {
+  // A bare name after a credential key, in text of no known kind.
+  if (any) {
     for (const m of text.matchAll(BARE)) {
       const [s, e] = m.indices![2]!
       const value = m[2]!

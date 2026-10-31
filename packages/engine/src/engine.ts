@@ -36,11 +36,12 @@ import {
   credentialSpans,
   detectSecrets,
   hasBlockingSecrets,
+  previewSecret,
   redactionTokensOf,
   scanSecrets,
   fileKindOf,
 } from './secrets.js'
-import type { RegulatedSpan, SecretType } from './secrets.js'
+import type { RegulatedSpan, ScanOptions, SecretFinding, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
 import {
@@ -1120,17 +1121,19 @@ function overlapsAny(spans: readonly (readonly [number, number])[], start: numbe
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
 const WORDS = /[A-Za-z_$][\w$]*/g
 
-/** The grammar values are read by: the file's kind; code in no language the
- *  engine recognised may be configuration. */
+/** The grammar values are read by: the file's kind; a file in a language
+ *  the engine reads, a language the caller names, or text with no path that
+ *  reads as code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
+ *  or pasted text no language claims has no grammar of its own, and every
+ *  value grammar applies (security review, round 4). */
 function valueKind(
   code: string,
   opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>
-): ValueGrammar | 'code' | 'text' {
-  return (
-    opts.fileKind ??
-    (opts.path ? fileKindOf(opts.path) : undefined) ??
-    ((opts.language ?? 'auto') === 'auto' && guessLanguage(code).fallback ? 'text' : 'code')
-  )
+): ValueGrammar | 'code' | undefined {
+  const kind = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined)
+  if (kind) return kind === 'text' ? undefined : kind
+  if (opts.path) return 'code'
+  return (opts.language ?? 'auto') !== 'auto' || !guessLanguage(code).fallback ? 'code' : undefined
 }
 
 /** Where `code` holds values, as `anonymize` reads them (security review,
@@ -1143,12 +1146,43 @@ export function valuePositions(
   return valuesIn(code, describeLanguage(code, opts.language).language, valueKind(code, opts))
 }
 
+/** `detectSecrets`, and every credential value `anonymize` would redact that
+ *  its rules do not report (security review, round 4): `password:
+ *  Summer2024!` in text of no kind is reported, never passed over. */
+export function detectCredentials(
+  code: string,
+  options: ScanOptions & Pick<AnonymizeOptions, 'language'> = {}
+): SecretFinding[] {
+  const { language, ...scan } = options
+  const found = detectSecrets(code, scan)
+  const spans = credentialSpans(code, scan)
+  const starts = [0]
+  for (let i = 0; i < code.length; i++) if (code[i] === '\n') starts.push(i + 1)
+  for (const v of credentialsAmong(valuePositions(code, { ...scan, language }))) {
+    if (spans.some((s) => s.start < v.end && v.start < s.end)) continue
+    let line = 0
+    while (line + 1 < starts.length && starts[line + 1]! <= v.start) line++
+    found.push({
+      type: 'password-assignment',
+      severity: 'medium',
+      label: 'Value of a credential-named key',
+      line: line + 1,
+      column: v.start - starts[line]! + 1,
+      length: v.value.length,
+      preview: previewSecret(v.value),
+      redacted: false,
+      disposition: 'report',
+    })
+  }
+  return found
+}
+
 /** The value positions in `text` (ordinaryWords.ts), with the tokenizer's
  *  string literals: contents only, a module specifier as a path. */
 function valuesIn(
   text: string,
   language: Language,
-  kind: ValueGrammar | 'code' | 'text'
+  kind: ValueGrammar | 'code' | undefined
 ): ValueSpan[] {
   const strings: { start: number; end: number; module?: boolean }[] = []
   let at = 0

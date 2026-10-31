@@ -1,7 +1,7 @@
 import type { ValueSpan } from './ordinaryWords.js';
 import type { AnonymizeOptions, AnonymizeResult, CommentExposure, IdentifierRole, RestoreOptions, RestoreResult, StrippedItemType, SymbolMap } from './types.js';
 import { type Language, type LanguageOption } from './languages.js';
-import type { SecretType } from './secrets.js';
+import type { ScanOptions, SecretFinding, SecretType } from './secrets.js';
 export declare const AI_PREAMBLE: string;
 /** Human/AI-readable summary of what the placeholder bases in `map` mean.
  *  Derived purely from placeholder KEYS — real names never appear.
@@ -83,6 +83,10 @@ export declare function extractIdentifiers(code: string, language?: Language): s
  *  round 3): an ordinary word there is masked, and a value under a
  *  credential key is redacted. */
 export declare function valuePositions(code: string, opts?: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>): ValueSpan[];
+/** `detectSecrets`, and every credential value `anonymize` would redact that
+ *  its rules do not report (security review, round 4): `password:
+ *  Summer2024!` in text of no kind is reported, never passed over. */
+export declare function detectCredentials(code: string, options?: ScanOptions & Pick<AnonymizeOptions, 'language'>): SecretFinding[];
 /**
  * Anonymize source code, replacing real identifiers with role-typed
  * placeholders (__CLS__1, __FN__2, ...). Pass an existing map to continue

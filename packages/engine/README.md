@@ -330,10 +330,13 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
-  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'`, for a caller that
+  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'text'`, for a caller that
     knows the file but passes no `path` (`fileKindOf(path)`): turns on the
     environment-style credential rules for that kind (dotenv, YAML, shell) and
-    where its grammar keeps values (every kind) - it never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
+    where its grammar keeps values (every kind; `text` reads by every grammar) - it never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
+    Text of no kind - `text`, or no path and no language the text reads as -
+    is read by every value grammar: `DB_PASSWORD=Summer2024!` pasted on its own
+    is redacted whole.
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
   - `options.team` — `{ blocks, tag, retired? }`, a team checkout's numbering:
@@ -445,11 +448,17 @@ thrown on. It stays in the map and applies again where it is valid.
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
-- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `undefined`: the
+- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'text'` | `undefined`: the
   file kind the engine reads a path as (`.env`, `.env.local`, `*.env`; `.yml`;
   `.sh`, a Dockerfile, shell rc files; `.ini`, `.cfg`, `.conf`, `.properties`,
-  `.toml`; `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`) -
-  not `.env.ts` or `.env.example.json`
+  `.toml`; `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`;
+  `text` for `.md`, `.mdx`, `.rst` and any other file with no code extension -
+  `.txt`, `.tfvars`, `.bat`, `Makefile`) - `undefined` for code and data such as
+  `.env.ts` or `.env.example.json`
+- `detectCredentials(code, options?)` → `detectSecrets`, plus every value
+  under a credential-named key that `anonymize` would redact and no rule
+  reports (`password: Summer2024!` in text), as `password-assignment`
+  findings. Takes `language` too; what `veilio scan` and `scan_secrets` run
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`

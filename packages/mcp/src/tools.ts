@@ -21,7 +21,7 @@ import './identity.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
-  detectSecrets,
+  detectCredentials,
   isPlaceholder,
   restore,
   restoreLayers,
@@ -611,7 +611,11 @@ export const TOOLS: ToolDefinition[] = [
       const { text, label } = readTarget(args, ctx)
       const path = str(args, 'path')
       const fileKind = path ? fileKindOf(path) : undefined
-      const findings = detectSecrets(text, fileKind ? { fileKind } : {})
+      const language = path ? languageOfPath(path) : null
+      const findings = detectCredentials(text, {
+        ...(fileKind ? { fileKind } : {}),
+        ...(language ? { language } : {}),
+      })
       return { text: `Scanned ${label}.\n${secretSummary(findings)}` }
     },
   },

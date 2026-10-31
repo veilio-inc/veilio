@@ -12,7 +12,7 @@ import { homedir } from 'node:os'
 import {
   alteredNote,
   BIN_NAME,
-  detectSecrets,
+  detectCredentials,
   keepRule,
   type LanguageOption,
   languageOfPath,
@@ -533,7 +533,11 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
   const all: { file: string; finding: SecretFinding }[] = []
   for (const target of targets) {
     const fileKind = target.name === '<stdin>' ? undefined : fileKindOf(target.name)
-    for (const finding of detectSecrets(target.text, fileKind ? { fileKind } : {})) {
+    const language = target.name === '<stdin>' ? null : languageOfPath(target.name)
+    for (const finding of detectCredentials(target.text, {
+      ...(fileKind ? { fileKind } : {}),
+      ...(language ? { language } : {}),
+    })) {
       all.push({ file: target.name, finding })
     }
   }

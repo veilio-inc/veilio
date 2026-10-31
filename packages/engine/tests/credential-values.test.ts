@@ -60,7 +60,6 @@ describe('controls: 064 still leaves ordinary words readable elsewhere', () => {
   // Round 3: a string's contents are a value - `const mood = "sunshine"` and
   // `password_hint = "..."` no longer keep their words (value-positions.test.ts).
   it.each([
-    ['weather: sunshine\n', 'sunshine'],
     ['const monkey = ledger\n', 'ledger'],
     ['interface Env {\n  DB_PASSWORD: string\n}\n', 'string'],
     ['REQUIRE_PASSWORD=true\n', 'true'],
@@ -122,9 +121,19 @@ describe('more credential syntaxes (security review of round 1)', () => {
     expect(r.anonymized).not.toMatch(new RegExp(`\\b${c.word}\\b`))
   })
 
+  // Round 4: text of no kind is read by every value grammar, so these are
+  // values; under AUTHOR (it contains `auth`) a credential's.
   it.each([
-    ['ENV AUTHOR sunshine\n', 'sunshine'],
-    ['env:\n  - name: AUTHOR\n    value: sunshine\n', 'sunshine'],
+    ['weather: sunshine\n', 'sunshine', false],
+    ['ENV AUTHOR sunshine\n', 'sunshine', true],
+    ['env:\n  - name: AUTHOR\n    value: sunshine\n', 'sunshine', true],
+  ])('%j, of no kind, hides %s (redacted: %s)', (code, word, redacted) => {
+    const r = anonymize(code)
+    expect(r.anonymized).not.toMatch(new RegExp(`\\b${word}\\b`))
+    expect(r.anonymized.includes('__REDACTED_')).toBe(redacted)
+  })
+
+  it.each([
     ['const monkey = "monkey"\nconst animal = monkey\n', 'monkey'],
     ['PRIMARY_KEY=id\n', 'id'],
   ])('the control %j keeps %s', (code, word) => {

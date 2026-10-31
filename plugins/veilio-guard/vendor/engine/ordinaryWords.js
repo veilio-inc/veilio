@@ -258,10 +258,13 @@ function inCommand(text, at) {
     const before = lineBefore(text, at);
     return (before.match(/\$\(/g)?.length ?? 0) > (before.match(/\)/g)?.length ?? 0);
 }
+// An unquoted call or member access (`getToken()`, `settings.token`)
+// reads a value; it is not one.
+const CALL_OR_MEMBER = /^[A-Za-z_$][\w$]*(?:\(|\.[A-Za-z_$])/;
 /** A value that may be a secret: one no shape above rules out. */
 function secretShaped(value, quoted) {
     const v = value.trim();
-    return v !== '' && !NOT_SECRET.test(v) && (quoted || !REFERENCE.test(v));
+    return (v !== '' && !NOT_SECRET.test(v) && (quoted || (!REFERENCE.test(v) && !CALL_OR_MEMBER.test(v))));
 }
 // `key=value` pairs inside a value: a connection string, a query string.
 const INNER = /(?<![\w.$-])([A-Za-z_][\w.-]{0,100})[ \t]*[=:][ \t]*([^\s;&,'"<>]+)/dg;
@@ -407,8 +410,8 @@ export function valueSpans(text, scan = {}) {
             add(v.start, v.end, credential, false);
         }
     }
-    // A bare name after a credential key, in code or text of no known kind.
-    if (any || kind === 'text') {
+    // A bare name after a credential key, in text of no known kind.
+    if (any) {
         for (const m of text.matchAll(BARE)) {
             const [s, e] = m.indices[2];
             const value = m[2];
