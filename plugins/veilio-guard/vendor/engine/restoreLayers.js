@@ -45,8 +45,10 @@ function localTokensIn(text) {
             found.add(token);
     return [...found];
 }
-/** A whole placeholder token - not a piece of a longer identifier or number. */
-function appearsAsToken(text, placeholder) {
+/** A whole placeholder token - not a piece of a longer identifier or number.
+ *  Escaped, so a key read from a planted file is matched as text, never run
+ *  as a pattern (security audit). */
+export function appearsAsToken(text, placeholder) {
     const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).test(text);
 }

@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import {
   highestPerKind,
   isLocalTag,
+  isPlaceholder,
   isSaneBlock,
   teamBaseOf,
   type SymbolMap,
@@ -317,17 +318,28 @@ export function misattributedNote(placeholders: readonly string[]): string {
  * This member's own restore layer: the map, and the old placeholders a publish
  * renumbered (aliases.json). A placeholder the two give different names is
  * contested - text masked under either meaning could hold it - so it is in
- * neither, and the caller names it (code review).
+ * neither, and the caller names it (code review). Only placeholder-shaped
+ * keys are read from either file: anything else is dropped, and counted
+ * (`ignored`), so a planted key never reaches a pattern (security audit).
  */
 export function ownWithAliases(
   mapPath: string,
-  map: SymbolMap
-): { own: SymbolMap; contested: string[] } {
-  const aliases = loadAliases(mapPath)
+  given: SymbolMap
+): { own: SymbolMap; contested: string[]; ignored: number } {
+  let ignored = 0
+  const shaped = (m: SymbolMap): SymbolMap =>
+    Object.fromEntries(Object.entries(m).filter(([p]) => isPlaceholder(p) || (ignored++, false)))
+  const aliases = shaped(loadAliases(mapPath))
+  const map = shaped(given)
   const contested = Object.keys(aliases).filter((p) => p in map && map[p] !== aliases[p])
   const own: SymbolMap = { ...aliases, ...map }
   for (const p of contested) delete own[p]
-  return { own, contested }
+  return { own, contested, ignored }
+}
+
+/** Said by restore (CLI and MCP) when map.json or aliases.json held keys that are not placeholders. */
+export function ignoredKeysNote(n: number): string {
+  return `ignored ${n} ${n === 1 ? 'entry' : 'entries'} in map.json or ${ALIASES_FILE} whose key is not a placeholder.`
 }
 
 export function contestedNote(placeholders: readonly string[]): string {

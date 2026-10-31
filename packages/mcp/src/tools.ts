@@ -25,6 +25,7 @@ import {
   isPlaceholder,
   restore,
   restoreLayers,
+  appearsAsToken,
   disputedNote,
   locallyNumberedNote,
   localFamilyNote,
@@ -54,6 +55,7 @@ import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace
 import {
   contestedNote,
   ownWithAliases,
+  ignoredKeysNote,
   localNumbering,
   reservationRefusedSentence,
 } from '@veilio-inc/cli/reservations'
@@ -490,7 +492,7 @@ export const TOOLS: ToolDefinition[] = [
       const strict = bool(args, 'strict')
       // Spec 063: this member's renumbered old placeholders still read back here.
       const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
-      const { own, contested: contestedAll } = ownWithAliases(mapPath, loadMap(mapPath))
+      const { own, contested: contestedAll, ignored } = ownWithAliases(mapPath, loadMap(mapPath))
       // The one restore rule (spec 028), shared with the web app and the CLI:
       // the team's maps - aliases included, disputed placeholders left out -
       // then this project's map on top where it is in the team's numbering.
@@ -520,9 +522,7 @@ export const TOOLS: ToolDefinition[] = [
       const localOnly = layers.locallyNumberedIn(text)
       // Spec 066 R5: another checkout numbered these while it held no team numbers.
       const otherLocal = layers.otherLocalIn(text)
-      const contested = contestedAll.filter((p) =>
-        new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(text)
-      )
+      const contested = contestedAll.filter((p) => appearsAsToken(text, p))
       // A contested placeholder is in no layer: not this member's, not the team's.
       const restoreMap = { ...layers.map }
       for (const p of contestedAll) delete restoreMap[p]
@@ -561,6 +561,7 @@ export const TOOLS: ToolDefinition[] = [
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
+        ...(ignored ? [`WARNING: ${ignoredKeysNote(ignored)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used
       // (locked, unreadable): not a success, whatever else restored (FR-005).

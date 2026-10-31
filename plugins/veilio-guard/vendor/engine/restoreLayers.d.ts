@@ -34,6 +34,10 @@ export declare function restoreLayers(input: {
     own: SymbolMap;
     team: TeamLayer | null;
 }): RestoreLayers;
+/** A whole placeholder token - not a piece of a longer identifier or number.
+ *  Escaped, so a key read from a planted file is matched as text, never run
+ *  as a pattern (security audit). */
+export declare function appearsAsToken(text: string, placeholder: string): boolean;
 /** How the CLI and the MCP name the disputed placeholders they left - one wording. */
 export declare function disputedNote(placeholders: readonly string[]): string;
 /**

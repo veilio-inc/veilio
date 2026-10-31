@@ -23,6 +23,7 @@ import {
   localFamilyNote,
   restore,
   restoreLayers,
+  appearsAsToken,
   type SecretFinding,
   STRIPPABLE_TYPES,
   summarizeSecrets,
@@ -37,6 +38,7 @@ import {
   contestedNote,
   misattributedNote,
   ownWithAliases,
+  ignoredKeysNote,
   reservationRefusedSentence,
   localNumbering,
 } from './reservations.js'
@@ -382,7 +384,8 @@ export async function runRestore(
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
   // Spec 063: this member's old placeholders a publish renumbered still read
   // back here; the map wins where both name a placeholder.
-  const { own, contested: contestedAll } = ownWithAliases(mapPath, loadMap(mapPath))
+  const { own, contested: contestedAll, ignored } = ownWithAliases(mapPath, loadMap(mapPath))
+  if (ignored) io.stderr(`${BIN_NAME}: ${ignoredKeysNote(ignored)}\n`)
 
   // The one restore rule (spec 028): the team's maps, this project's map on
   // top where it is in the team's numbering. Asked whenever the text holds a
@@ -424,9 +427,7 @@ export async function runRestore(
   const localOnly = layers.locallyNumberedIn(source)
   // Spec 066 R5: another checkout numbered these while it held no team numbers.
   const otherLocal = layers.otherLocalIn(source)
-  const contested = contestedAll.filter((p) =>
-    new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(source)
-  )
+  const contested = contestedAll.filter((p) => appearsAsToken(source, p))
 
   // Without --keep-docs the default strips JSDoc along with the narration and
   // TODOs. That is right for noise, wrong when the model was asked to document
