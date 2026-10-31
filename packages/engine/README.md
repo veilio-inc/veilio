@@ -460,6 +460,26 @@ its numbering with both repositories green.
   it widens nothing about who can read the team's maps — which is why a
   terminal may do it.
 
+### Names numbered without a team block
+
+A team member whose tools hold no usable block of reserved team numbers
+(refused, offline, a lapsed plan) numbers new names in a family of its own,
+`__LOCAL_<TAG>_<KIND>__n` (`__LOCAL_K7Q2XA_VAR__3`). The tag names the
+checkout, so two checkouts never mint the same placeholder, and no team map
+ever holds one: a teammate leaves it as written, and the next publish gives it
+a team number.
+
+- `isLocalPlaceholder(token)` — a numbered placeholder of that family;
+  `LOCAL_PREFIX` is its prefix, `__LOCAL_`
+- `localBaseOf(base, tag)` / `teamBaseOf(localBase)` — `__VAR__` and
+  `K7Q2XA` to `__LOCAL_K7Q2XA_VAR__` and back; `isLocalTag(tag)` is the tag's
+  shape, six of `A-Z0-9`
+- `isRolePlaceholder(token)` — a role-typed name (`__CLS__n`, `__FN__n`,
+  `__PKG__n`, `__VAR__n`, `__STR__n`) in either family
+- `usableBlocks(map, blocks)` / `numbersLeft(map, blocks)` /
+  `highestPerKind(map)` — which reserved blocks (`Block`, `{ start, end }`)
+  a map can still number inside, and how many numbers they have left
+
 ### Encrypted `.veilio` files and the vault
 
 The crypto behind CE's export/import and Cloud's map sync lives here so both
