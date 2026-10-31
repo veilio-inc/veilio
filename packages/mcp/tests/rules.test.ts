@@ -13,6 +13,7 @@ import {
   signIn as sealedSignIn,
 } from '../../cli/tests/helpers/fake-cloud.js'
 import { callTool } from '../src/tools.js'
+import { holdKeys } from '../../cli/tests/helpers/fake-cloud.js'
 
 /**
  * Custom rules in the MCP server (found on staging, 2026-09-26: an agent
@@ -81,6 +82,7 @@ afterEach(() => {
 
 function signIn(): void {
   writeCredential({ token: 'session', account: ACCOUNT, instance: INSTANCE }, home)
+  holdKeys(home, ACCOUNT, INSTANCE)
 }
 
 describe('rules at startup', () => {

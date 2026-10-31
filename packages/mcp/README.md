@@ -188,6 +188,12 @@ The other causes are `team key locked`, rules that could not be opened with the
 keys on this machine, and rules refused as unsafe to apply; the CLI README lists
 the exact sentences.
 
+The cached rules apply only while their key is still on this machine:
+`veilio vault lock` and `veilio team lock` remove the personal or team rules
+from the cache, and a key that has expired counts as locked too, so the
+fallback never applies a rule whose key is gone. They come back with the next
+unlock and `veilio rules pull`.
+
 ### One restore rule, and what the server refuses to guess
 
 `restore_text` resolves the team's maps first — aliases included — and this

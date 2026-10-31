@@ -49,9 +49,9 @@ veilio maps rm <id>             # remove a map from Cloud
 veilio projects                 # the projects your team works in; * marks the one in use
 veilio projects use <name>      # work in that project (kept with the sign-in)
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
-veilio team lock                # remove the unlocked team key from this machine
+veilio team lock                # remove the unlocked team key, and the team rules, from this machine
 veilio vault unlock             # keep the personal-maps key here (7 days), for the MCP server
-veilio vault lock               # remove it from this machine
+veilio vault lock               # remove it, and the personal rules, from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
 veilio logout                   # revokes server-side, then removes the local credential
 ```
@@ -125,7 +125,16 @@ opens them on this machine, so it needs `veilio vault unlock` for personal rules
 and `veilio team unlock` for team rules. A rule it cannot open is skipped, never
 an error: `scrub` still masks, with the built-in engine and the rules that did
 open, and both commands say what was skipped and how to fix it, one sentence per
-cause (on every `scrub`, `--quiet` included):
+cause (on every `scrub`, `--quiet` included).
+
+The opened rules last only as long as the key they were opened with.
+`veilio vault lock` removes the personal rules from `rules.json`, and
+`veilio team lock` the team rules, until the next unlock and `rules pull`; both
+say how many they removed, and the copy counts them as vault locked or team key
+locked. A key that expires, or is deleted by hand, has the same effect without
+a lock: `scrub` and the MCP server apply a cached rule only while its key is
+still on this machine, unexpired and for this account. A `rules pull` while
+locked does not bring them back:
 
 ```
 2 custom rules not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.

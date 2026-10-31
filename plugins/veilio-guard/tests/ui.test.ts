@@ -213,6 +213,13 @@ async function band($: TestHost, on: TestOn, files: Record<string, string>): Pro
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   await loaded($, on, {
     [`${HOME}/.veilio/credential.json`]: JSON.stringify({ token: 't', ...ME }),
+    // The personal-maps key still held: without it the cached rules are not applied.
+    [`${HOME}/.veilio/personal-maps-key.json`]: JSON.stringify({
+      v: 1,
+      ...ME,
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      key: btoa(String.fromCharCode(...new Uint8Array(32).fill(5))),
+    }),
     ...files,
   })
   const seen: Fields[] = []

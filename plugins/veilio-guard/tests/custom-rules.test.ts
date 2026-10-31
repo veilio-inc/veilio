@@ -55,11 +55,40 @@ function home(on: TestOn): void {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
 }
 
+const PMK = `${HOME}/.veilio/personal-maps-key.json`
+const TEAM_KEYS = `${HOME}/.veilio/team-keys.json`
+const KEY32 = btoa(String.fromCharCode(...new Uint8Array(32).fill(5)))
+const FUTURE = '2999-01-01T00:00:00.000Z'
+const PAST = '2000-01-01T00:00:00.000Z'
+const pmk = (o: Record<string, unknown> = {}): string =>
+  JSON.stringify({ v: 1, ...ME, expiresAt: FUTURE, key: KEY32, ...o })
+const teamKeys = (o: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    v: 1,
+    ...ME,
+    teamId: 't1',
+    expiresAt: FUTURE,
+    keys: [{ version: 1, key: KEY32 }],
+    ...o,
+  })
+
+/** Signed in, the cache pulled, and both keys still held - as after
+ *  `veilio vault unlock`, `veilio team unlock` and `veilio rules pull`. */
 function signedIn(rules: unknown[], owner = ME): Record<string, string> {
   return {
     [CREDENTIAL]: JSON.stringify({ token: 't', ...ME }),
     [RULES]: cache(rules, owner),
+    [PMK]: pmk(),
+    [TEAM_KEYS]: teamKeys(),
   }
+}
+
+/** The same files with one key file replaced, or removed (null). */
+function withKey(path: string, file: string | null, rules: unknown[]): Record<string, string> {
+  const all = signedIn(rules)
+  if (file === null) delete all[path]
+  else all[path] = file
+  return all
 }
 
 function files(read: Record<string, string>) {
@@ -105,12 +134,98 @@ test('an unsupported pattern or an engine placeholder in a hand-edited cache is 
   const backref = { ...PHOENIX, id: 'bad1', pattern: '(a)\\1' }
   const engineBase = { ...PHOENIX, id: 'bad2', placeholder: '__CLS__' }
   const read = files({
-    [CREDENTIAL]: JSON.stringify({ token: 't', ...ME }),
+    ...signedIn([]),
     [RULES]: cache([PHOENIX, backref, engineBase], ME, { vaultLocked: 2, refused: 1 }),
   })
   const r = await readGuardRules(read, HOME)
   expect(r.rules.map((x) => x.id)).toEqual(['r1'])
   expect(r.skipped).toEqual({ vaultLocked: 2, teamLocked: 0, unopenable: 0, refused: 3 })
+})
+
+// ── only while the key is held (spec 065 FR-006) ───────────────────────────
+// The same table as the CLI's rules-lock-purge.test.ts: one definition of
+// "held" (keysHeld in packages/cli/src/rules.ts), mirrored in lib/rules.ts.
+
+const PERSONAL_TABLE: [string, boolean, string | null][] = [
+  ['absent', false, null],
+  ['damaged JSON', false, '{"v":'],
+  ['wrong version', false, pmk({ v: 2 })],
+  ['another account', false, pmk({ account: 'ada@example.test' })],
+  ['another instance', false, pmk({ instance: 'https://other.test' })],
+  ['expired', false, pmk({ expiresAt: PAST })],
+  ['unparseable expiry', false, pmk({ expiresAt: 'soon' })],
+  ['a key of the wrong length', false, pmk({ key: btoa('x'.repeat(16)) })],
+  ['a key that is not base64', false, pmk({ key: '***' })],
+  ['valid', true, pmk()],
+]
+for (const [name, held, file] of PERSONAL_TABLE) {
+  test(`personal-maps key ${name}: held = ${held}`, async () => {
+    const r = await readGuardRules(files(withKey(PMK, file, [PHOENIX, KEEP_CANARY])), HOME)
+    expect(r.rules.map((x) => x.id)).toEqual(held ? ['r1', 'r2'] : ['r2'])
+    expect(r.skipped.vaultLocked).toBe(held ? 0 : 1)
+  })
+}
+
+const TEAM_TABLE: [string, boolean, string | null][] = [
+  ['absent', false, null],
+  ['damaged JSON', false, '['],
+  ['another account', false, teamKeys({ account: 'ada@example.test' })],
+  ['expired', false, teamKeys({ expiresAt: PAST })],
+  ['another team', false, teamKeys({ teamId: 'team-2' })],
+  ['no keys', false, teamKeys({ keys: [] })],
+  ['only damaged keys', false, teamKeys({ keys: [{ version: 1, key: btoa('x'.repeat(8)) }] })],
+  [
+    'one damaged key and one good',
+    true,
+    teamKeys({
+      keys: [
+        { version: 1, key: '***' },
+        { version: 2, key: KEY32 },
+      ],
+    }),
+  ],
+  ['valid', true, teamKeys()],
+]
+for (const [name, held, file] of TEAM_TABLE) {
+  test(`team key ${name}: held = ${held}`, async () => {
+    const r = await readGuardRules(files(withKey(TEAM_KEYS, file, [PHOENIX, KEEP_CANARY])), HOME)
+    expect(r.rules.map((x) => x.id)).toEqual(held ? ['r1', 'r2'] : ['r1'])
+    expect(r.skipped.teamLocked).toBe(held ? 0 : 1)
+  })
+}
+
+test('after vault lock a cached personal rule is not applied, and counts as vaultLocked', async ($, on) => {
+  home(on)
+  // `veilio vault lock` removed the key; the cache still names the rule.
+  project(on, withKey(PMK, null, [PHOENIX]))
+  const bash = recordedRaw('Bash')
+  const r = bash.r as { result: Record<string, unknown> }
+  on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'deploying phoenix' } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+  expect(out).not.toContain('__CODENAME__')
+  expect((await readGuardRules(files(withKey(PMK, null, [PHOENIX])), HOME)).skipped).toMatchObject({
+    vaultLocked: 1,
+  })
+})
+
+test('an expired personal-maps key leaves a cached personal rule unapplied, with no lock command', async ($, on) => {
+  home(on)
+  project(on, withKey(PMK, pmk({ expiresAt: PAST }), [PHOENIX]))
+  const bash = recordedRaw('Bash')
+  const r = bash.r as { result: Record<string, unknown> }
+  on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'deploying phoenix' } }))
+  expect(JSON.stringify(await $.tool.call(eventOf(bash)))).not.toContain('__CODENAME__')
+})
+
+test('after team lock a cached team rule is not applied, and counts as teamLocked', async ($, on) => {
+  home(on)
+  project(on, { ...withKey(TEAM_KEYS, null, [KEEP_CANARY]), [MAP]: mapFile({ __CLS__1: CANARY }) })
+  const read = recorded('Read')
+  on('tool.call', () => read.r)
+  const fromRead: string = res(await $.tool.call(eventOf(read))).file.content
+  expect(fromRead).not.toContain(CANARY)
+  const r = await readGuardRules(files(withKey(TEAM_KEYS, null, [KEEP_CANARY])), HOME)
+  expect(r.skipped).toMatchObject({ teamLocked: 1, vaultLocked: 0 })
 })
 
 // ── applied wherever the guard masks ───────────────────────────────────────

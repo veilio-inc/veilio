@@ -577,3 +577,14 @@ export function signIn(
   if (opts.pmk)
     writePersonalMapsKey({ v: 1, instance, account: ME, expiresAt, key: toBase64(PMK_RAW) }, home)
 }
+
+/** Both keys on disk for `account` - what a cached rule needs to be applied
+ *  (spec 065 FR-006). For tests that write rules.json directly. */
+export function holdKeys(home: string, account: string, instance = INSTANCE, teamId = 't1'): void {
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
+  writeTeamUnlock(
+    { v: 1, instance, account, teamId, expiresAt, keys: [{ version: 1, key: toBase64(TEAM_RAW) }] },
+    home
+  )
+  writePersonalMapsKey({ v: 1, instance, account, expiresAt, key: toBase64(PMK_RAW) }, home)
+}

@@ -33,7 +33,7 @@ import {
   type StoredTeamKey,
 } from './team-unlock.js'
 import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
-import { mergeRules, removeRules, rulesPath, writeRules } from './rules.js'
+import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
@@ -889,13 +889,10 @@ async function isTeamOfOne(credential: Credential): Promise<boolean> {
   }
 }
 
-/** Remove the unlocked team keys. */
+/** Remove the unlocked team keys, and the team rules opened with them. */
 export function runTeamLock(io: Io): number {
   try {
-    if (!removeTeamUnlock(io.home)) {
-      io.stdout('No team keys were unlocked.\n')
-      return EXIT_OK
-    }
+    io.stdout(removeTeamUnlock(io.home) ? 'Team keys locked.\n' : 'No team keys were unlocked.\n')
   } catch (err) {
     io.stderr(
       `veilio: the unlocked team keys could not be removed ` +
@@ -904,7 +901,31 @@ export function runTeamLock(io: Io): number {
     )
     return EXIT_ERROR
   }
-  io.stdout('Team keys locked.\n')
+  // One team-keys file holds one team, so every cached team rule was that team's.
+  return purgeLockedRules('team', io)
+}
+
+/**
+ * Lock means the opened rules go too (spec 065 FR-006): purged from the cache
+ * even when no key was on disk - one that expired or was deleted by hand still
+ * left them readable there.
+ */
+function purgeLockedRules(scope: 'personal' | 'team', io: Io): number {
+  let n: number
+  try {
+    n = purgeRules(scope, io.home)
+  } catch (err) {
+    io.stderr(
+      `veilio: the cached ${scope} custom rules could not be removed ` +
+        `(${err instanceof Error ? err.message : String(err)}). Delete ${rulesPath(io.home)} by hand.\n`
+    )
+    return EXIT_ERROR
+  }
+  if (n > 0)
+    io.stdout(
+      `${n} ${scope} custom rule${n === 1 ? '' : 's'} removed from this machine until the next ` +
+        `\`veilio ${scope === 'team' ? 'team' : 'vault'} unlock\` and \`veilio rules pull\`.\n`
+    )
   return EXIT_OK
 }
 
@@ -961,13 +982,14 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
   return EXIT_OK
 }
 
-/** Remove the personal-maps key from this machine. */
+/** Remove the personal-maps key from this machine, and the personal rules opened with it. */
 export function runVaultLock(io: Io): number {
   try {
-    if (!vaultLock(clientContext(io))) {
-      io.stdout('No personal-maps key was unlocked.\n')
-      return EXIT_OK
-    }
+    io.stdout(
+      vaultLock(clientContext(io))
+        ? 'Personal-maps key locked.\n'
+        : 'No personal-maps key was unlocked.\n'
+    )
   } catch (err) {
     io.stderr(
       `veilio: the personal-maps key could not be removed ` +
@@ -976,8 +998,7 @@ export function runVaultLock(io: Io): number {
     )
     return EXIT_ERROR
   }
-  io.stdout('Personal-maps key locked.\n')
-  return EXIT_OK
+  return purgeLockedRules('personal', io)
 }
 
 // ─── restore: the team layer ────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import type { CustomRule } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential } from '../src/credential.js'
+import { holdKeys } from './helpers/fake-cloud.js'
 import { describeAge, mergeRules, readRules, rulesPath, writeRules } from '../src/rules.js'
 import {
   ME,
@@ -93,6 +94,7 @@ function rule(
 
 function signIn(account = ACCOUNT): void {
   writeCredential({ token: 'session', account, instance: INSTANCE }, home)
+  holdKeys(home, account, INSTANCE)
 }
 
 const SOURCE = 'export function settleLedger(customerId: string) {\n  return customerId\n}\n'

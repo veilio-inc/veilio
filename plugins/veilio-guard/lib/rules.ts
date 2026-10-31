@@ -47,13 +47,70 @@ function isRule(value: unknown): value is CustomRule {
   return r.type === 'replace' && typeof r.placeholder === 'string'
 }
 
+/**
+ * Which keys this machine still holds: the CLI's definition, mirrored
+ * (keysHeld in packages/cli/src/rules.ts - the one documented definition;
+ * this file cannot import the CLI). Personal: `personal-maps-key.json` is v1,
+ * the signed-in instance and account, unexpired, its key 32 bytes. Team T:
+ * `team-keys.json` likewise, teamId T, at least one key of 32 bytes. Absent,
+ * damaged, expired or somebody else's: not held. Both suites run the same
+ * table (custom-rules.test.ts here, rules-lock-purge.test.ts in the CLI).
+ */
+async function keysHeld(
+  read: (path: string) => Promise<string>,
+  dir: string,
+  credential: Json,
+  now: number
+): Promise<{ personal: boolean; team: string | null }> {
+  const usable = (key: unknown): boolean => {
+    try {
+      return typeof key === 'string' && key !== '' && atob(key).length === 32
+    } catch {
+      return false
+    }
+  }
+  const valid = (f: Json | null, fields: string[]): f is Json => {
+    if (!f || f.v !== 1) return false
+    if (!fields.every((k) => typeof f[k] === 'string' && f[k] !== '')) return false
+    if (f.instance !== credential.instance || f.account !== credential.account) return false
+    const expires = Date.parse(f.expiresAt as string)
+    return !Number.isNaN(expires) && expires > now
+  }
+  const pmk = await readJson(read, `${dir}/personal-maps-key.json`)
+  const team = await readJson(read, `${dir}/team-keys.json`)
+  const keys = team?.keys
+  // The CLI rejects the whole file when any entry is malformed (isTeamUnlock).
+  const wellFormed =
+    Array.isArray(keys) &&
+    keys.length > 0 &&
+    keys.every(
+      (k: unknown) =>
+        typeof k === 'object' &&
+        k !== null &&
+        typeof (k as Json).version === 'number' &&
+        typeof (k as Json).key === 'string' &&
+        (k as Json).key !== ''
+    )
+  return {
+    personal: valid(pmk, ['instance', 'account', 'expiresAt', 'key']) && usable(pmk.key),
+    team:
+      valid(team, ['instance', 'account', 'teamId', 'expiresAt']) &&
+      wellFormed &&
+      (keys as Json[]).some((k) => usable(k.key))
+        ? (team.teamId as string)
+        : null,
+  }
+}
+
 const count = (x: unknown): number =>
   Number.isInteger(x) && (x as number) >= 0 ? (x as number) : 0
 
-/** The signed-in account's cached rules, with what was not applied and why. */
+/** The signed-in account's cached rules, with what was not applied and why.
+ *  A rule whose key is no longer held (locked, expired) is not applied. */
 export async function readGuardRules(
   read: (path: string) => Promise<string>,
-  home: string | undefined
+  home: string | undefined,
+  now: number = Date.now()
 ): Promise<GuardRules> {
   if (!home) return NO_RULES
   const dir = `${home.replace(/[\\/]+$/, '')}/${STORE_DIR}`
@@ -78,9 +135,15 @@ export async function readGuardRules(
   }
   // What the engine would skip silently (a pattern its matcher refuses, a
   // replace rule under its own base) is counted, so the band says so.
+  const held = await keysHeld(read, dir, credential!, now)
   const rules: CustomRule[] = []
   for (const r of cache.rules as CustomRule[]) {
     if (!r.enabled) continue
+    // Anything not marked team is treated as personal, as the CLI does.
+    if (r.scope === 'team' ? r.team_id === null || r.team_id !== held.team : !held.personal) {
+      skipped[r.scope === 'team' ? 'teamLocked' : 'vaultLocked']++
+      continue
+    }
     if (!isSafeRegex(r.pattern) || (r.type === 'replace' && isEngineBase(r.placeholder)))
       skipped.refused++
     else rules.push(r)
