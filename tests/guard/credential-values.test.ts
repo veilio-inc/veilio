@@ -1,4 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { Guard, type GuardIO } from '../../plugins/veilio-guard/lib/guard.ts'
 import { applyMap, scrubSource, survivingSecrets } from '../../plugins/veilio-guard/lib/scrub.ts'
 import type { FileKind } from '../../plugins/veilio-guard/vendor/engine/index.js'
 
@@ -44,5 +56,74 @@ describe('applyMap: command output, with the word in the map', () => {
     expect(applyMap('a sunshine day; password_hint = "sunshine is a word"', MAP)).toBe(
       'a sunshine day; password_hint = "sunshine is a word"'
     )
+  })
+})
+
+// Security review of round 1: with an empty map, nothing could be written over
+// a credential value in command output - the rule must not depend on the map.
+const OUTPUT = [
+  ['DB_PASSWORD=sunshine', 'sunshine'],
+  ['{"password": "dragon"}', 'dragon'],
+  ['SECRET_KEY = "phoenix"', 'phoenix'],
+] as const
+
+describe('applyMap: command output, with an empty map', () => {
+  it.each(OUTPUT)('%j does not show %s', (text, word) => {
+    const out = applyMap(text, {})
+    expect(out).not.toMatch(new RegExp(`\\b${word}\\b`))
+    expect(out).toContain('__REDACTED_CREDENTIAL_')
+  })
+
+  it('the controls: prose, a hint and a reference stay as written', () => {
+    for (const text of [
+      'a sunshine day',
+      'password_hint = "sunshine is a word"',
+      'export DB_PASSWORD=$DB_PASSWORD',
+    ])
+      expect(applyMap(text, {})).toBe(text)
+  })
+})
+
+describe("the guard's command output, with no map", () => {
+  let root: string
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'veilio-guard-cv-')))
+  })
+  afterEach(() => rmSync(root, { recursive: true, force: true }))
+  const io: GuardIO = {
+    read: async (p) => readFileSync(p, 'utf8'),
+    write: async (p, t) => {
+      mkdirSync(dirname(p), { recursive: true })
+      writeFileSync(p, t)
+    },
+    exists: async (p) => existsSync(p),
+    realPath: async (p) => (existsSync(p) ? realpathSync(p) : undefined),
+  }
+  const stdout = OUTPUT.map(([t]) => t).join('\n')
+
+  it('a command result shows none of the values', async () => {
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await guard.load(root)
+    const out = JSON.stringify(
+      await guard.afterTool(
+        'Bash',
+        { tool: 'Bash', command: 'cat config' },
+        { result: { stdout, stderr: '', interrupted: false, isImage: false } }
+      )
+    )
+    for (const [, word] of OUTPUT) expect(out).not.toMatch(new RegExp(`\\b${word}\\b`))
+  })
+
+  it('a failed command (masked as a message) shows none of them either', async () => {
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await guard.load(root)
+    const out = JSON.stringify(
+      await guard.afterTool(
+        'Bash',
+        { tool: 'Bash', command: 'cat config' },
+        { result: `Error: Exit code 1\n${stdout}`, text: `Exit code 1\n${stdout}`, isError: true }
+      )
+    )
+    for (const [, word] of OUTPUT) expect(out).not.toMatch(new RegExp(`\\b${word}\\b`))
   })
 })

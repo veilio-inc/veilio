@@ -189,7 +189,8 @@ export function isOrdinaryWord(name) {
 const CREDENTIAL_KEY_END = /(?:api[_-]?key|pass(?:word|wd|phrase)?|pwd|secret|token|key|auth|credentials?)$/i;
 // A placeholder in the slot is text already masked, not a password.
 const PLACEHOLDER = /^__[A-Z][A-Z0-9_]*__\d*$/;
-const NOT_A_VALUE = /^(?:true|false|null|none|nil|undefined|yes|no|on|off)$/i;
+// A `$` value is a reference to another variable (`DB_PASSWORD=$DB_PASSWORD`).
+const NOT_A_VALUE = /^(?:true|false|null|none|nil|undefined|yes|no|on|off|\$.*)$/i;
 // `key = value`, `key: value`, `"key": "value"`, `key => value`, an env line:
 // the value is the whole value - one quoted word, or one bare word the line
 // or the entry ends after - so prose (`"sunshine is a word"`) is not one.

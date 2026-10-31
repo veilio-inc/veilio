@@ -1002,6 +1002,20 @@ export function applyMap(
     at = end
   }
   redacted += text.slice(at)
+  // The value of a credential-named key, whatever the map holds (security
+  // review: with an empty map nothing was written over `DB_PASSWORD=sunshine`).
+  // A map name keeps its placeholder (withCredentialWords); any other value is
+  // removed one-way, and an env-var name (a reference) is left. Not learned:
+  // the same word elsewhere is an ordinary word.
+  const held = namesOf(map)
+  let unvalued = ''
+  at = 0
+  for (const { start, end, value } of credentialValueSpans(redacted)) {
+    if (held.has(value) || referenceName(value, '')) continue
+    unvalued += redacted.slice(at, start) + known.tokenFor(value)
+    at = end
+  }
+  redacted = unvalued + redacted.slice(at)
   // Every credential the session has destroyed, wherever it stands as a word.
   if (!options.swept) redacted = redactKnown(redacted, known)
   let out = replaceAround(redacted, map, ctx)
