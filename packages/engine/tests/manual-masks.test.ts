@@ -127,7 +127,9 @@ describe('manual masks', () => {
 
   it('still masks a term sitting next to a placeholder', () => {
     // The placeholder guard must not swallow legitimate neighbouring matches.
-    const first = anonymize('// by Kowalska\nfunction settleBerthQuota(quayRate) { return quayRate }')
+    const first = anonymize(
+      '// by Kowalska\nfunction settleBerthQuota(quayRate) { return quayRate }'
+    )
     const second = anonymize(first.anonymized, {
       existingMap: first.map,
       manual: ['Kowalska'],
