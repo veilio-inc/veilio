@@ -164,3 +164,51 @@ describe('a replace rule base and the server', () => {
     expect(sent()).not.toMatch(/CODENAME/)
   })
 })
+
+// Security review of round 1: the server numbers per (team, base), so a block
+// reserved under the plain base (an older CLI) or under the old key's hash
+// (before a rotation) is invisible to the new hash's counter. A hashed
+// reservation is floored above every hashed and plain reservation the team holds.
+describe('a hashed base and the numbers the team already holds', () => {
+  const credential = { token: 'tok', account: ME, instance: INSTANCE }
+  const ask = (floor = 0) => [{ base: '__CODENAME__', count: 500, floor }]
+
+  it('after a rotation the new hash starts above the old hash’s block', async () => {
+    const a = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    expect(a.ranges[0]).toMatchObject({ start: 1, end: 500 })
+    const b = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [OTHER_RAW, TEAM_RAW],
+    })
+    expect(b.ranges[0]!.start).toBeGreaterThan(500)
+  })
+
+  it('a block an older CLI reserved under the plain base floors the hashed one', async () => {
+    cloud.reservations.push({ base: '__CODENAME__', start: 1, end: 500, member: 'old-cli' })
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    expect(r.ranges[0]!.start).toBeGreaterThan(500)
+    // The plain base is read from the listing, never sent.
+    expect(sent()).not.toMatch(/CODENAME/)
+  })
+
+  it('the reservations a caller already holds are used, not fetched again', async () => {
+    const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
+      keys: [TEAM_RAW],
+      reservations: [{ base: '__H_0000000000000000__', start: 1, end: 900, member: 'x' }],
+    })
+    expect(r.ranges[0]!.start).toBeGreaterThan(900)
+    expect(cloud.requests.some((q) => q.path.endsWith('/placeholders/reservations'))).toBe(false)
+  })
+
+  it('an engine base needs no listing', async () => {
+    await reservePlaceholders(credential, TEAM_ID, [{ base: '__FN__', count: 1, floor: 0 }])
+    expect(cloud.requests.some((q) => q.path.endsWith('/placeholders/reservations'))).toBe(false)
+  })
+
+  it('without the listing a hashed base is not reserved: nothing is sent to reserve', async () => {
+    cloud.recordsReservations = false
+    await expect(
+      reservePlaceholders(credential, TEAM_ID, ask(), undefined, { keys: [TEAM_RAW] })
+    ).rejects.toThrow()
+    expect(cloud.requests.some((q) => q.path.endsWith('/placeholders/reserve'))).toBe(false)
+  })
+})

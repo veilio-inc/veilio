@@ -575,6 +575,8 @@ export async function reservePlaceholders(
     /** The team's raw keys, newest first: a rule's base is sent as its hash
      *  under the newest (founder decision, Cloud audit M1). */
     keys?: readonly Uint8Array[]
+    /** The team's reservations, when the caller has already read them. */
+    reservations?: readonly PlaceholderReservation[]
   } = {}
 ): Promise<{ ranges: PlaceholderRange[] }> {
   const key = options.keys?.[0]
@@ -596,11 +598,29 @@ export async function reservePlaceholders(
       )
     }
   }
+  // Security review: the server counts per (team, base), so a rule base's
+  // numbers reserved under its plain name (an older CLI) or another key's hash
+  // (before a rotation) are invisible to this hash's counter. Floored above
+  // every hashed reservation the team holds, and the plain base's: too high a
+  // floor only spends numbers. No listing, no reservation for a rule base.
+  const hashed = requests.some((r) => !isEngineBase(r.base))
+  const held = hashed
+    ? (options.reservations ?? (await readReservations(credential, teamId, signal)))
+    : []
   const real = new Map<string, string>()
   const wire = requests.map((r) => {
     const sent = key ? wireBase(r.base, key) : r.base
     real.set(sent, r.base)
-    return { ...r, base: sent }
+    let floor = r.floor
+    if (!isEngineBase(r.base))
+      for (const h of held)
+        if (
+          typeof h?.base === 'string' &&
+          (h.base.startsWith('__H_') || h.base === r.base) &&
+          Number.isSafeInteger(h.end)
+        )
+          floor = Math.max(floor, h.end)
+    return { ...r, base: sent, floor }
   })
   const answer = await request<{ ranges: PlaceholderRange[] }>(
     `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
