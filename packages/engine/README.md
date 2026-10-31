@@ -64,8 +64,11 @@ Not masked:
   `Password=sunshine;` inside a connection string) — is a secret: under the
   default `secrets: 'redact'` it is redacted one-way, whole, as a detected
   secret is, so the map never holds it; under `warn` and `off` it is masked
-  reversibly like any value. A number, a boolean, a `$NAME` reference, a URL
-  or a path under such a key is masked, not redacted. A bare `key = word` in
+  reversibly like any value. A number, a boolean, a value of one or two
+  characters, a placeholder (`<your password>`), an unquoted `$NAME` or
+  `${NAME}`, a CI expression (`${{ secrets.X }}`), a shell command (`$(...)`,
+  backticks), a URL without userinfo or a path under such a key is masked, not
+  redacted. A bare `key = word` in
   code the engine cannot place in a language may name a variable and keeps a
   reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
@@ -327,10 +330,10 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
-  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'`, for a caller that
+  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'`, for a caller that
     knows the file but passes no `path` (`fileKindOf(path)`): turns on the
-    environment-style credential rules for that kind and nothing else - it
-    never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
+    environment-style credential rules for that kind (dotenv, YAML, shell) and
+    where its grammar keeps values (every kind) - it never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
   - `options.team` — `{ blocks, tag, retired? }`, a team checkout's numbering:
@@ -442,9 +445,11 @@ thrown on. It stays in the map and applies again where it is valid.
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
-- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `undefined`: the
+- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `undefined`: the
   file kind the engine reads a path as (`.env`, `.env.local`, `*.env`; `.yml`;
-  `.sh`, a Dockerfile, shell rc files) - not `.env.ts` or `.env.example.json`
+  `.sh`, a Dockerfile, shell rc files; `.ini`, `.cfg`, `.conf`, `.properties`,
+  `.toml`; `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`) -
+  not `.env.ts` or `.env.example.json`
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`

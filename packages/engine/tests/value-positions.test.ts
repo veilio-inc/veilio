@@ -39,6 +39,24 @@ const LEAKS: { code: string; leak: string; opts?: AnonymizeOptions }[] = [
     opts: { language: 'csharp' },
   },
   { code: 'const DB_PASS = "Summer2024!"\n', leak: 'Summer2024', opts: { language: 'typescript' } },
+  // A type between the key and the value (review of round 3).
+  {
+    code: 'password: Optional[str] = "sunshine"\n',
+    leak: 'sunshine',
+    opts: { language: 'python' },
+  },
+  { code: 'let password: &str = "sunshine";\n', leak: 'sunshine', opts: { language: 'rust' } },
+  {
+    code: 'private Map<String, String> secrets = Map.of("k", "sunshine");\n',
+    leak: 'sunshine',
+    opts: { language: 'java' },
+  },
+  {
+    code: 'public string Password { get; set; } = "sunshine";\n',
+    leak: 'sunshine',
+    opts: { language: 'csharp' },
+  },
+  { code: 'user.setPassword("sunshine")\n', leak: 'sunshine', opts: { language: 'java' } },
 ]
 
 describe('a credential-named value is redacted whole, one-way', () => {
@@ -137,4 +155,11 @@ describe('value scanning stays linear on adversarial lines', () => {
   it('8000-character lines finish well within a second', () => {
     for (const [t, o] of lines(8000)) expect(time(t, o)).toBeLessThan(1500)
   }, 60_000)
+})
+
+describe('a comma at the start of the line before a value', () => {
+  it('ends the key search (it once looped for ever)', () => {
+    const code = "x = 1\n, 'a', 'b'\n"
+    expect(anonymize(code, { language: 'ruby' }).anonymized).toContain(',')
+  })
 })

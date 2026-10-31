@@ -1,15 +1,16 @@
 {
   "corpus": {
-    "inputs": 10188,
+    "inputs": 10206,
+    "maskedInValues": 3392,
     "leaks": 0,
     "newlyReadable": {
-      "identifiers": 17032,
+      "identifiers": 17092,
       "paths": 61
-    },
-    "maskedInValues": 3392
+    }
   },
   "project": {
     "inputs": 485,
+    "maskedInValues": 2976,
     "leaks": 0,
     "newlyReadable": {
       "identifiers": 17470,

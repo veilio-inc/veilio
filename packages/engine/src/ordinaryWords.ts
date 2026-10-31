@@ -241,42 +241,59 @@ const QUOTED = /(?<![A-Za-z0-9])(["'`])([^\n]{0,4096}?)\1/g
 const KEY_TOKEN = /[A-Za-z_$][\w$]*/g
 const KEY_STRING = /["'`]([\w.$-]{1,100})["'`]/g
 
+// A language's own word names nothing (`private`, `const`, `str`) - but
+// `key`, a TypeScript keyword, is a key's name all the same.
 function keyword(word: string, language: Language | undefined): boolean {
-  if (CREDENTIAL.test(word)) return false
+  if (/^keys?$/i.test(word)) return false
   return language ? isKeyword(word, language) : LANGUAGES.some((l) => isKeyword(word, l))
 }
 
-/** Whether the value at `at` sits under a credential key: the last name, or
- *  the last key-shaped string, between it and the statement or argument
- *  boundary before it (`password: string = `, `<add key="DbPassword" value=`).
- *  Right after an argument's comma, only the string before it is the key
- *  (`define('DB_PASSWORD', `). At most 256 characters back. */
+/** Whether the value at `at` sits under a credential key: any name, or any
+ *  key-shaped string, between it and the start of its statement or pair, at
+ *  most 256 characters back on its line (`password: Optional[str] = `,
+ *  `define('DB_PASSWORD', `, `secrets = Map.of("k", `). A comma ends the
+ *  search only where a new pair starts after it (`"pass": "x", "color": `). */
 function credentialBefore(text: string, at: number, language: Language | undefined): boolean {
-  const from = Math.max(0, at - 256)
-  let i = at - 1
-  let words = false
-  let argument = false
-  for (; i >= from; i--) {
-    const c = text[i]!
-    if (c === '\n') break
-    if (';{}(,<>['.includes(c)) {
-      if (words || argument) break
-      argument = c === ','
-      if (!argument) break
-    } else if (/\w/.test(c)) words = true
-  }
-  const prefix = text.slice(i + 1, at)
-  let quoted: string | undefined
-  for (const m of prefix.matchAll(KEY_STRING)) quoted = m[1]
-  if (argument) return CREDENTIAL.test(quoted ?? '')
+  // A C# property's accessors stand between its name and its value.
+  let prefix = lineBefore(text, at).replace(ACCESSORS, ' ')
+  const statement = Math.max(
+    prefix.lastIndexOf(';'),
+    prefix.lastIndexOf('{'),
+    prefix.lastIndexOf('}')
+  )
+  prefix = prefix.slice(statement + 1)
+  // From the right; lastIndexOf(',', -1) would find index 0 again.
+  for (let c = prefix.lastIndexOf(','); c !== -1; c = c > 0 ? prefix.lastIndexOf(',', c - 1) : -1)
+    if (/[:=]/.test(prefix.slice(c + 1))) {
+      prefix = prefix.slice(c + 1)
+      break
+    }
+  // A call's first argument is keyed by the call: `setPassword("...")` is,
+  // `os.getenv("SECRET_KEY")` looks a name up.
+  const call = /([A-Za-z_$][\w$]*)[ \t]*\([ \t]*$/.exec(prefix)
+  if (call) return CREDENTIAL.test(call[1]!) && !keyword(call[1]!, language)
   // In a tag, `key="..."` names the entry (`<add key="Theme" value="dark"/>`).
-  if (text[i] === '<' && /(?:^|\s)(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix)) return false
-  let name: string | undefined
+  if (/<[\w.:-]+(?:\s[^<>]*)?\s(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix)) return false
+  for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return true
   for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
-    if (!keyword(t, language)) name = t
-  return CREDENTIAL.test(name ?? '') || CREDENTIAL.test(quoted ?? '')
+    if (CREDENTIAL.test(t) && !keyword(t, language)) return true
+  return false
 }
 const STRING = /(["'`])[^"'`]*\1/g
+const ACCESSORS = /\{\s*(?:get|set|init)\b[^{}]*\}/g
+
+/** The text before `at` on its line, at most 256 characters: bounded, so
+ *  many values on one long line stay linear. */
+function lineBefore(text: string, at: number): string {
+  const window = text.slice(Math.max(0, at - 256), at)
+  return window.slice(window.lastIndexOf('\n') + 1)
+}
+
+/** Inside a `$( ... )` its line opened and has not closed. */
+function inCommand(text: string, at: number): boolean {
+  const before = lineBefore(text, at)
+  return (before.match(/\$\(/g)?.length ?? 0) > (before.match(/\)/g)?.length ?? 0)
+}
 
 /** A value that may be a secret: one no shape above rules out. */
 function secretShaped(value: string, quoted: boolean): boolean {
@@ -352,7 +369,8 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     }))
   for (const s of strings) {
     // A module is a path; a shell's backticks run a command.
-    const command = text[s.start - 1] === '`' && (kind === 'shell' || kind === 'dotenv')
+    const shell = kind === 'shell' || kind === 'dotenv'
+    const command = shell && (text[s.start - 1] === '`' || inCommand(text, s.start))
     const keyed = !s.module && !command && credentialBefore(text, s.start - 1, scan.language)
     add(s.start, s.end, keyed, true, s.module)
   }

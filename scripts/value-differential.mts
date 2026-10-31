@@ -78,9 +78,8 @@ for (const file of files) {
   visit(ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true))
 }
 const KINDS = [undefined, '.env', 'c.yml', 'run.sh', 'app.ini', 'app.xml']
-const total = () => ({ inputs: 0, leaks: [] as object[], identifiers: 0, paths: 0 })
+const total = () => ({ inputs: 0, leaks: [] as object[], identifiers: 0, paths: 0, masked: 0 })
 const corpus = total()
-let masked = 0
 for (const text of literals)
   for (const path of KINDS) {
     const r = compare(text, path ? { path } : {})
@@ -88,7 +87,7 @@ for (const text of literals)
     corpus.identifiers += r.identifiers
     corpus.paths += r.paths
     for (const word of r.leaks) corpus.leaks.push({ text, path, word })
-    masked += r.mustMask.length
+    corpus.masked += r.mustMask.length
   }
 
 // (b) Every file of a project.
@@ -106,17 +105,20 @@ if (project) {
     bench.inputs++
     bench.identifiers += r.identifiers
     bench.paths += r.paths
+    bench.masked += r.mustMask.length
     for (const word of r.leaks) bench.leaks.push({ path, word })
   }
 }
 
 const report = (t: ReturnType<typeof total>) => ({
   inputs: t.inputs,
+  // Words the old engine masked in a value of the input, each checked.
+  maskedInValues: t.masked,
   leaks: t.leaks.length,
   newlyReadable: { identifiers: t.identifiers, paths: t.paths },
 })
 const summary = {
-  corpus: { ...report(corpus), maskedInValues: masked },
+  corpus: report(corpus),
   ...(project ? { project: { ...report(bench), dir: basename(resolve(project)) } } : {}),
 }
 console.log(JSON.stringify(summary, null, 2))
