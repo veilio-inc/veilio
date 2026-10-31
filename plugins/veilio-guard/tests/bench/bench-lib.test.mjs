@@ -16,6 +16,7 @@ import {
   schedule,
   sessionEnv,
   veilioFingerprint,
+  denied,
   teamTable,
 } from './bench-lib.mjs'
 
@@ -375,4 +376,15 @@ test('the ~/.veilio fingerprint changes when any file in it changes, and is empt
   } finally {
     rmSync(d, { recursive: true, force: true })
   }
+})
+
+test('every arm is denied reading or writing the developer ~/.veilio', () => {
+  assert.equal(
+    denied(null, '/h/.veilio'),
+    'Read(/h/.veilio/**),Edit(/h/.veilio/**),Write(/h/.veilio/**)'
+  )
+  assert.equal(
+    denied('Read,Grep', '/h/.veilio'),
+    'Read,Grep,Read(/h/.veilio/**),Edit(/h/.veilio/**),Write(/h/.veilio/**)'
+  )
 })

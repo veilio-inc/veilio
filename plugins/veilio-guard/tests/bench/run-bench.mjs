@@ -64,6 +64,7 @@ import {
   schedule,
   sessionEnv,
   veilioFingerprint,
+  denied,
 } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
@@ -129,6 +130,14 @@ function refuseSignedIn() {
   const who = spawnSync('node', [CLI, 'whoami'], { env: CLI_ENV, encoding: 'utf8' })
   if (!/Not signed in/.test(`${who.stdout}${who.stderr}`))
     throw new Error('the CLI the bench runs is signed in to Veilio Cloud: refusing to run')
+  // Sessions keep the developer's HOME (Claude Code's sign-in needs it), so the
+  // developer's own CLI must be signed out too: nothing a session reaches can
+  // speak for the developer's account.
+  const dev = spawnSync('node', [CLI, 'whoami'], { encoding: 'utf8' })
+  if (!/Not signed in/.test(`${dev.stdout}${dev.stderr}`))
+    throw new Error(
+      'your own ~/.veilio is signed in to Veilio Cloud: sign out (veilio logout) or move it, then run again'
+    )
 }
 
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|go|py|java|kt|cs|rb|php|rs|swift|c|cc|cpp|h|hpp)$/
@@ -400,7 +409,7 @@ async function session(task, arm, rep, outDir, member) {
     ]
     if (SETTINGS) args.push('--settings', SETTINGS)
     if (a.guard) args.push('--plugin-dir', GUARD)
-    if (a.disallowed) args.push('--disallowedTools', a.disallowed)
+    args.push('--disallowedTools', denied(a.disallowed, DEV_VEILIO))
     if (a.appendPrompt) args.push('--append-system-prompt', a.appendPrompt)
     if (a.mcpConfig) {
       const cfg = join(dir, 'mcp.json')

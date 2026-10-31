@@ -184,6 +184,12 @@ export function sessionEnv(a, { env = process.env, bin }) {
   return { ...env, VEILIO_PROJECT: '', PATH: `${bin}:${env.PATH}` }
 }
 
+/** An arm's denied tools plus reads of the developer's ~/.veilio, for every arm. */
+export function denied(armDenied, devVeilio) {
+  const own = ['Read', 'Edit', 'Write'].map((t) => `${t}(${devVeilio}/**)`)
+  return [...(armDenied ? armDenied.split(',') : []), ...own].join(',')
+}
+
 /** Every file under `dir` with its size and content hash; '' when absent. */
 export function veilioFingerprint(dir) {
   if (!existsSync(dir)) return ''
