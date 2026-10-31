@@ -472,6 +472,11 @@ export class FakeCloud {
           reason: 'cap',
           retry_at: this.blocksRetryAt,
         })
+      // Cloud 450a93ce: numbers stop at 1e8, and a floor more than 10000
+      // above the base's counter is refused.
+      for (const { base, floor } of asked)
+        if (floor > 1e8 || floor > (this.counters.get(base) ?? 0) + 10_000)
+          return json(400, { error: `the floor for ${base} is too far above the team's numbers` })
       const ranges = asked.map(({ base, count: wanted, floor }) => {
         const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1

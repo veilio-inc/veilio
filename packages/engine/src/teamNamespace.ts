@@ -95,7 +95,7 @@ export function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamName
       const numbered = NUMBERED.exec(placeholder)
       if (numbered) {
         const n = Number(numbered[2])
-        // Above 1e9 (a planted key) is never a floor (security audit).
+        // Above 1e8 (a planted key) is never a floor (security audit).
         if (n <= MAX_PLACEHOLDER_NUMBER && n > (highest[numbered[1]] ?? 0)) highest[numbered[1]] = n
       }
 

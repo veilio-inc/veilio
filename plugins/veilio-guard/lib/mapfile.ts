@@ -124,7 +124,7 @@ export function parseReservedFile(text: string): Reserved {
     // characters into the band (security review, 2026-10-30).
     if (!BASE.test(base))
       return { ok: false, reason: `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind` }
-    // At most 1e9 and 10000 long (security audit): near 2^53 two names share a number.
+    // At most 1e8 and 10000 long (security audit): near 2^53 two names share a number.
     if (!isSaneBlock(b))
       return { ok: false, reason: `the ${base} block is not a run of whole numbers` }
     blocks[base] = { start: b!.start!, end: b!.end! }

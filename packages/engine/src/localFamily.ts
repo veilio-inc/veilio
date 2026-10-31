@@ -15,13 +15,13 @@ export const LOCAL_PREFIX = '__LOCAL_'
 
 /** The highest placeholder number anything mints or trusts (security audit):
  *  near 2^53 adding one stops changing a number, and two names would share a
- *  placeholder. A number above it - a planted key, a server's answer - is
+ *  placeholder; the server caps its numbers here too (Cloud 450a93ce). A number above it - a planted key, a server's answer - is
  *  ignored for the highest, and never numbered after. */
-export const MAX_PLACEHOLDER_NUMBER = 1_000_000_000
+export const MAX_PLACEHOLDER_NUMBER = 100_000_000
 /** The most numbers one reservation may span (the server asks at most 5000). */
 export const MAX_BLOCK_SPAN = 10_000
 
-/** A run of numbers safe to number in: whole, in [1, 1e9], in order, short. */
+/** A run of numbers safe to number in: whole, in [1, 1e8], in order, short. */
 export function isSaneBlock(b: unknown): b is Block {
   const { start, end } = (b ?? {}) as Partial<Record<keyof Block, unknown>>
   return (

@@ -351,7 +351,7 @@ export async function pullCloudMap(
     blocks?: BlocksOutcome
     /** Local-family keys the team map held and the pull left out (spec 066). */
     localDropped?: number
-    /** Keys numbered above 1e9: kept, never numbered after (security audit). */
+    /** Keys numbered above 1e8: kept, never numbered after (security audit). */
     outOfRange?: number
   }>
 > {

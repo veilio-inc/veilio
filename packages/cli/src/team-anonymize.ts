@@ -97,7 +97,7 @@ export function anonymizeAbove(
   }
   const seeded = { ...options.existingMap }
   for (const [base, floor] of Object.entries(floors)) {
-    // Never above 1e9 (the engine ignores it there) and never over an entry
+    // Never above 1e8 (the engine ignores it there) and never over an entry
     // the map holds: the marker is dropped from the result, and the entry with it.
     if (
       floor > (inMap[base] ?? 0) &&
@@ -182,7 +182,7 @@ export function anonymizeOverTeam(
 // reserve. An agent that reserved numbers it then discarded would consume the
 // team's allocation on every tool call.
 
-/** A placeholder's number as a floor: one above 1e9 (planted) counts as none. */
+/** A placeholder's number as a floor: one above 1e8 (planted) counts as none. */
 function counted(digits: string): number {
   const n = Number(digits)
   return n <= MAX_PLACEHOLDER_NUMBER ? n : 0

@@ -861,7 +861,7 @@ function minter(
 ): Mint {
   return (base) => {
     if (team) {
-      // A block is trusted only while sane: whole, in order, at most 1e9
+      // A block is trusted only while sane: whole, in order, at most 1e8
       // (security audit) - past that, the name is numbered locally.
       const given = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined
       const block = isSaneBlock(given) ? given : undefined
@@ -875,6 +875,8 @@ function minter(
     }
     let n = (counters[base] ?? 0) + 1
     while (taken.has(`${base}${n}`)) n++
+    // Never past the cap (Cloud 450a93ce): the lowest number nothing holds.
+    if (n > MAX_PLACEHOLDER_NUMBER) for (n = 1; taken.has(`${base}${n}`);) n++
     counters[base] = n
     taken.add(`${base}${n}`)
     return `${base}${n}`

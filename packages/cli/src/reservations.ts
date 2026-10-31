@@ -95,7 +95,7 @@ export function loadReserved(mapPath: string): ReservedFile | null {
         path,
         `${JSON.stringify(base).slice(0, 40)} is not a placeholder kind`
       )
-    // At most 1e9 and 10000 long (security audit): near 2^53 two names share a number.
+    // At most 1e8 and 10000 long (security audit): near 2^53 two names share a number.
     if (!isSaneBlock(b))
       throw new ReservedFileError(path, `the ${base} block is not a run of whole numbers`)
   }
@@ -205,10 +205,10 @@ export function localNumbering(
   return teamNumbering(mapPath, { ...who, teamId })
 }
 
-/** Said by `maps pull` (CLI and MCP) when the map held numbers above 1e9. */
+/** Said by `maps pull` (CLI and MCP) when the map held numbers above 1e8. */
 export function outOfRangeNote(n: number): string {
   return (
-    `${n} placeholder${n === 1 ? '' : 's'} in this map ${n === 1 ? 'is' : 'are'} numbered above 1,000,000,000: ` +
+    `${n} placeholder${n === 1 ? '' : 's'} in this map ${n === 1 ? 'is' : 'are'} numbered above 100,000,000: ` +
     `kept for restore, but never numbered after - no Veilio client mints that high.`
   )
 }

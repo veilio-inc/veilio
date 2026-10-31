@@ -11,6 +11,8 @@ describe('the guard reads reserved.json', () => {
     [{ __VAR__: { start: 2 ** 53 - 1, end: 2 ** 53 + 99 } }],
     [{ __VAR__: { start: 1e21, end: 1e21 } }],
     [{ __VAR__: { start: 1e9, end: 1e9 + 1 } }],
+    // Cloud 450a93ce: the server's numbers stop at 1e8.
+    [{ __VAR__: { start: 1e8, end: 1e8 + 1 } }],
     [{ __VAR__: { start: 1, end: 20_000 } }],
   ])('%j is unreadable, never numbered from', (blocks) => {
     expect(parseReservedFile(file(blocks)).ok).toBe(false)
