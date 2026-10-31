@@ -35,6 +35,7 @@ import {
 import type { RegulatedSpan, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
+import { isLocalTag, localBaseOf, teamBaseOf } from './localFamily.js'
 import {
   assertKnownOptions,
   assertObject,
@@ -510,7 +511,7 @@ function applyManualMasks(
   fromMap: readonly string[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
-  namedCounters: Record<string, number>,
+  mint: Mint,
   language: Language
 ): string {
   // Replayed means "came from the map and was not asked for again". Deduping the
@@ -564,9 +565,7 @@ function applyManualMasks(
     }
     applicable.push(term)
     if (reverseExisting[term]) continue
-    const n = (namedCounters[MANUAL_BASE] ?? 0) + 1
-    namedCounters[MANUAL_BASE] = n
-    const placeholder = `${MANUAL_BASE}${n}`
+    const placeholder = mint(MANUAL_BASE)
     map[placeholder] = term
     reverseExisting[term] = placeholder
   }
@@ -631,7 +630,7 @@ function applyRegulatedMasks(
   spans: readonly RegulatedSpan[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
-  namedCounters: Record<string, number>
+  mint: Mint
 ): string {
   if (spans.length === 0) return code
 
@@ -641,9 +640,7 @@ function applyRegulatedMasks(
     if (base === undefined) continue
     applicable.push(span.value)
     if (reverseExisting[span.value]) continue
-    const n = (namedCounters[base] ?? 0) + 1
-    namedCounters[base] = n
-    const placeholder = `${base}${n}`
+    const placeholder = mint(base)
     map[placeholder] = span.value
     reverseExisting[span.value] = placeholder
   }
@@ -665,7 +662,12 @@ function applyRegulatedMasks(
  *  beside it would be the thing that goes missing. */
 export function manualTermsIn(map: SymbolMap): string[] {
   return Object.entries(map)
-    .filter(([placeholder]) => placeholder.startsWith(MANUAL_BASE))
+    .filter(
+      ([placeholder]) =>
+        placeholder.startsWith(MANUAL_BASE) ||
+        // A mark numbered locally (spec 066) is replayed the same way.
+        teamBaseOf(placeholder.replace(/\d+$/, '')) === MANUAL_BASE
+    )
     .map(([, term]) => term)
 }
 
@@ -825,6 +827,31 @@ function safeMatch(pattern: string, name: string): boolean {
   }
 }
 
+/** The next placeholder of a base. */
+type Mint = (base: string) => string
+
+/** Every new number, at all four mint sites (role, replace rule, regulated
+ *  value, manual mark), comes from here. Without `team`: above the highest of
+ *  the base. With it (spec 066 R3): inside the base's block while it has a
+ *  number left, else from the checkout's local family - never above the map,
+ *  which is where the next teammate's block starts. */
+function minter(counters: Record<string, number>, team?: AnonymizeOptions['team']): Mint {
+  return (base) => {
+    if (team) {
+      const block = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined
+      const n = block ? Math.max(counters[base] ?? 0, block.start - 1) + 1 : NaN
+      if (block && n <= block.end) {
+        counters[base] = n
+        return `${base}${n}`
+      }
+      base = localBaseOf(base, team.tag)
+    }
+    const n = (counters[base] ?? 0) + 1
+    counters[base] = n
+    return `${base}${n}`
+  }
+}
+
 const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
   existingMap: true,
   rules: true,
@@ -834,6 +861,7 @@ const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
   path: true,
   root: true,
   fileKind: true,
+  team: true,
 })
 const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 
@@ -1112,6 +1140,10 @@ export function anonymize(
 ): AnonymizeResult {
   // Unknown keys throw; see resolveAnonymizeOptions.
   const opts = resolveAnonymizeOptions(options)
+  if (opts.team !== undefined && !isLocalTag(opts.team?.tag))
+    throw new TypeError(
+      `anonymize: team.tag names the checkout, six of A-Z0-9 - got ${JSON.stringify(opts.team?.tag)}`
+    )
   const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind }
   // Every credential in the text as given, whatever the policy.
   const found = credentialSpans(code, where)
@@ -1190,6 +1222,7 @@ export function anonymize(
     // Digitless tokens (__DEV__) carry no counter to bump.
   }
 
+  const mint = minter(namedCounters, opts.team)
   const map: SymbolMap = { ...existingMap }
 
   // Manual marks run before extraction, so the extractor sees placeholders
@@ -1208,7 +1241,7 @@ export function anonymize(
     manualTermsIn(existingMap),
     map,
     reverseExisting,
-    namedCounters,
+    mint,
     language
   )
 
@@ -1242,7 +1275,7 @@ export function anonymize(
     regulated,
     map,
     reverseExisting,
-    namedCounters
+    mint
   )
 
   // What Node wrote in a pasted stack trace - V8's message wording, its own
@@ -1337,19 +1370,14 @@ export function anonymize(
     // 2. Replace: first match wins
     const matched = replacers.find((r) => safeMatch(r.pattern, name))
     if (matched) {
-      const n = (namedCounters[matched.placeholder] ?? 0) + 1
-      namedCounters[matched.placeholder] = n
-      const ph = `${matched.placeholder}${n}`
+      const ph = mint(matched.placeholder)
       map[ph] = name
       reverseExisting[name] = ph
       continue
     }
 
     // 3. Default: role-typed placeholder for the identifier's strongest role.
-    const base = ROLE_BASES[roleOf[name] ?? 'variable']
-    const num = (namedCounters[base] ?? 0) + 1
-    namedCounters[base] = num
-    const ph = `${base}${num}`
+    const ph = mint(ROLE_BASES[roleOf[name] ?? 'variable'])
     map[ph] = name
     reverseExisting[name] = ph
   }

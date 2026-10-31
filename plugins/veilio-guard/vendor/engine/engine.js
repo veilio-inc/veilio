@@ -5,6 +5,7 @@ import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeL
 import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
+import { isLocalTag, localBaseOf, teamBaseOf } from './localFamily.js';
 import { assertKnownOptions, assertObject, optionKeys, unknownKeys, unknownOptionError, } from './options.js';
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -411,7 +412,7 @@ export class ManualMaskError extends Error {
  *  secret, which is precisely what the one-way redaction path exists to stop.
  *  The credential has already been redacted irreversibly by the time we get
  *  here; there is nothing left for the user to usefully mark. */
-function applyManualMasks(code, requested, credentials, fromMap, map, reverseExisting, namedCounters, language) {
+function applyManualMasks(code, requested, credentials, fromMap, map, reverseExisting, mint, language) {
     // Replayed means "came from the map and was not asked for again". Deduping the
     // two lists into one and testing membership in the map would exempt a term the
     // user is marking right now just because a prior session had marked it — the
@@ -456,9 +457,7 @@ function applyManualMasks(code, requested, credentials, fromMap, map, reverseExi
         applicable.push(term);
         if (reverseExisting[term])
             continue;
-        const n = (namedCounters[MANUAL_BASE] ?? 0) + 1;
-        namedCounters[MANUAL_BASE] = n;
-        const placeholder = `${MANUAL_BASE}${n}`;
+        const placeholder = mint(MANUAL_BASE);
         map[placeholder] = term;
         reverseExisting[term] = placeholder;
     }
@@ -512,7 +511,7 @@ export const REGULATED_BASES = {
  *  Unlike manual marks there is no keyword check and no refusal path: these
  *  values are checksum-confirmed account, card and national-ID numbers, so they
  *  cannot collide with a language's grammar. */
-function applyRegulatedMasks(code, spans, map, reverseExisting, namedCounters) {
+function applyRegulatedMasks(code, spans, map, reverseExisting, mint) {
     if (spans.length === 0)
         return code;
     const applicable = [];
@@ -523,9 +522,7 @@ function applyRegulatedMasks(code, spans, map, reverseExisting, namedCounters) {
         applicable.push(span.value);
         if (reverseExisting[span.value])
             continue;
-        const n = (namedCounters[base] ?? 0) + 1;
-        namedCounters[base] = n;
-        const placeholder = `${base}${n}`;
+        const placeholder = mint(base);
         map[placeholder] = span.value;
         reverseExisting[span.value] = placeholder;
     }
@@ -542,7 +539,9 @@ function applyRegulatedMasks(code, spans, map, reverseExisting, namedCounters) {
  *  beside it would be the thing that goes missing. */
 export function manualTermsIn(map) {
     return Object.entries(map)
-        .filter(([placeholder]) => placeholder.startsWith(MANUAL_BASE))
+        .filter(([placeholder]) => placeholder.startsWith(MANUAL_BASE) ||
+        // A mark numbered locally (spec 066) is replayed the same way.
+        teamBaseOf(placeholder.replace(/\d+$/, '')) === MANUAL_BASE)
         .map(([, term]) => term);
 }
 /** Placeholder base per role — these ride the same named-counter machinery
@@ -693,6 +692,27 @@ function safeMatch(pattern, name) {
         return false; // never thrown on purpose; no match is the safe direction
     }
 }
+/** Every new number, at all four mint sites (role, replace rule, regulated
+ *  value, manual mark), comes from here. Without `team`: above the highest of
+ *  the base. With it (spec 066 R3): inside the base's block while it has a
+ *  number left, else from the checkout's local family - never above the map,
+ *  which is where the next teammate's block starts. */
+function minter(counters, team) {
+    return (base) => {
+        if (team) {
+            const block = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined;
+            const n = block ? Math.max(counters[base] ?? 0, block.start - 1) + 1 : NaN;
+            if (block && n <= block.end) {
+                counters[base] = n;
+                return `${base}${n}`;
+            }
+            base = localBaseOf(base, team.tag);
+        }
+        const n = (counters[base] ?? 0) + 1;
+        counters[base] = n;
+        return `${base}${n}`;
+    };
+}
 const ANONYMIZE_OPTIONS = optionKeys({
     existingMap: true,
     rules: true,
@@ -702,6 +722,7 @@ const ANONYMIZE_OPTIONS = optionKeys({
     path: true,
     root: true,
     fileKind: true,
+    team: true,
 });
 const RESTORE_OPTIONS = optionKeys({ strip: true });
 /** `map` without the entries whose real value is a credential: one that is a
@@ -944,6 +965,8 @@ function resolveAnonymizeOptions(options) {
 export function anonymize(code, options = {}) {
     // Unknown keys throw; see resolveAnonymizeOptions.
     const opts = resolveAnonymizeOptions(options);
+    if (opts.team !== undefined && !isLocalTag(opts.team?.tag))
+        throw new TypeError(`anonymize: team.tag names the checkout, six of A-Z0-9 - got ${JSON.stringify(opts.team?.tag)}`);
     const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind };
     // Every credential in the text as given, whatever the policy.
     const found = credentialSpans(code, where);
@@ -1016,6 +1039,7 @@ export function anonymize(code, options = {}) {
         }
         // Digitless tokens (__DEV__) carry no counter to bump.
     }
+    const mint = minter(namedCounters, opts.team);
     const map = { ...existingMap };
     // Manual marks run before extraction, so the extractor sees placeholders
     // rather than the terms — and a mark therefore wins over whatever role the
@@ -1027,7 +1051,7 @@ export function anonymize(code, options = {}) {
     // whatever the policy: a manual mark is written to the map, and a
     // credential never is (founder decision 2026-10-26). Only an ambiguous
     // word may be marked.
-    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))), manualTermsIn(existingMap), map, reverseExisting, namedCounters, language);
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))), manualTermsIn(existingMap), map, reverseExisting, mint, language);
     // AFTER manual marks, on purpose — a value the author marked by hand is
     // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
     // the entire implementation of "a manual mark wins over automatic detection";
@@ -1049,7 +1073,7 @@ export function anonymize(code, options = {}) {
     const keptCredentials = new Map(scan.regulated
         .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
         .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`]));
-    const source = applyRegulatedMasks(keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked, regulated, map, reverseExisting, namedCounters);
+    const source = applyRegulatedMasks(keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked, regulated, map, reverseExisting, mint);
     // What Node wrote in a pasted stack trace - V8's message wording, its own
     // frames - is neither extracted nor substituted (traces.ts). Blanked rather
     // than cut, so offsets and lines still match `source`.
@@ -1132,18 +1156,13 @@ export function anonymize(code, options = {}) {
         // 2. Replace: first match wins
         const matched = replacers.find((r) => safeMatch(r.pattern, name));
         if (matched) {
-            const n = (namedCounters[matched.placeholder] ?? 0) + 1;
-            namedCounters[matched.placeholder] = n;
-            const ph = `${matched.placeholder}${n}`;
+            const ph = mint(matched.placeholder);
             map[ph] = name;
             reverseExisting[name] = ph;
             continue;
         }
         // 3. Default: role-typed placeholder for the identifier's strongest role.
-        const base = ROLE_BASES[roleOf[name] ?? 'variable'];
-        const num = (namedCounters[base] ?? 0) + 1;
-        namedCounters[base] = num;
-        const ph = `${base}${num}`;
+        const ph = mint(ROLE_BASES[roleOf[name] ?? 'variable']);
         map[ph] = name;
         reverseExisting[name] = ph;
     }

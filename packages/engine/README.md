@@ -319,6 +319,11 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
+  - `options.team` — `{ blocks, tag }`, a team checkout's numbering: each new
+    number of a base comes from its reserved block while one is left, and
+    otherwise from the checkout's local family (see "Names numbered without a
+    team block"). A tag that is not six of `A-Z0-9` throws a TypeError.
+    Without it, numbering is unchanged
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
   - an unknown key throws a TypeError that names it and lists the valid

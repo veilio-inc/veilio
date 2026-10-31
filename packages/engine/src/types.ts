@@ -1,6 +1,7 @@
 // Public engine types for @veilio-inc/engine. Keep this engine-only — product
 // types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
+import type { Block } from './localFamily.js'
 import type { Language, LanguageOption } from './languages.js'
 import type { SecretFinding, SecretPolicy, SecretSeverity } from './secrets.js'
 
@@ -175,6 +176,11 @@ export type CustomRule = CustomRuleReplace | CustomRuleWhitelist
 
 export interface AnonymizeOptions {
   existingMap?: SymbolMap
+  /** A team checkout's numbering (spec 066): every new number of a base comes
+   *  from `blocks[base]` while that block has one left, and otherwise from the
+   *  local family `__LOCAL_<tag>_<KIND>__n`, which no team map holds. Without
+   *  it, new names are numbered above the map's highest, as always. */
+  team?: { blocks: Record<string, Block>; tag: string }
   rules?: CustomRule[]
   /** Literal strings the author marked sensitive by hand.
    *
