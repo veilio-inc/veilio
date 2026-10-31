@@ -381,9 +381,7 @@ describe('common weak passwords are default words', () => {
     expect(Object.values(result.map)).not.toContain('passport')
     expect(Object.values(result.map)).not.toContain('compass')
     // Distinctive names holding "pass" are masked and mapped whole.
-    expect(Object.values(result.map)).toEqual(
-      expect.arrayContaining(['quaypassage', 'skerrypass'])
-    )
+    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['quaypassage', 'skerrypass']))
     expect(result.anonymized).not.toMatch(/quaypassage|skerrypass/)
     expect(Object.values(result.map)).not.toContain('pass')
   })

@@ -214,7 +214,11 @@ describe('the namespace follows the project the variable names NOW, not the name
     // SkerryZeta is __CLS__5 in the NEW project. Under the old project's namespace
     // (TarnGamma is __CLS__5) it would be numbered above it: __CLS__6.
     vi.advanceTimersByTime(1)
-    const r = await callToolAsync('anonymize_text', { text: 'export class SkerryZeta {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class SkerryZeta {}' },
+      ctxWith(env)
+    )
     expect(r.isError ?? false, r.text).toBe(false)
     expect(r.text).toContain('__CLS__5')
     expect(r.text).not.toContain('__CLS__6')
@@ -251,7 +255,11 @@ describe('the namespace follows the project the variable names NOW, not the name
     await primeNamespace(home, { env })
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
     vi.advanceTimersByTime(TTL)
-    const r = await callToolAsync('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class TarnGamma {}' },
+      ctxWith(env)
+    )
     expect(r.isError).toBe(true)
     expect(r.text).toContain('VEILIO_PROJECT is "tools"')
     expect(r.text).not.toContain('__CLS__')
@@ -355,7 +363,11 @@ describe('the namespace follows the project the variable names NOW, not the name
     await primeNamespace(home, { env })
     vi.advanceTimersByTime(TTL)
     cloud.requests = []
-    const r = await callToolAsync('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class TarnGamma {}' },
+      ctxWith(env)
+    )
     expect(r.text).toContain('__CLS__5')
     expect(cloud.requests.map((x) => `${x.method} ${x.path}`)).toEqual(['GET /api/projects'])
   })
@@ -396,7 +408,11 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
     try {
       await primeNamespace(home, { env: { VEILIO_PROJECT: 'web' } })
       const webEnv = ctxWith({ VEILIO_PROJECT: 'web' })
-      const first = await callToolAsync('anonymize_text', { text: 'export class TarnGamma {}' }, webEnv)
+      const first = await callToolAsync(
+        'anonymize_text',
+        { text: 'export class TarnGamma {}' },
+        webEnv
+      )
       expect(first.isError).toBe(true)
       cloud.projects.push({ id: 'p-web', name: 'web' })
       // Inside the TTL it is not asked again.
