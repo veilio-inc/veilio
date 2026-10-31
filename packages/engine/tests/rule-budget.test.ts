@@ -23,14 +23,16 @@ const rule = (i: number, type: 'whitelist' | 'replace', pattern: string): Custom
   }) as CustomRule
 
 describe('the per-call rule budget', () => {
-  it('worst-case accepted patterns over 5000 names finish in under 2 s, and say so', () => {
+  it('worst-case accepted patterns over 5000 names stop early, and say so', () => {
     const rules = Array.from({ length: 20 }, (_, i) =>
       rule(i, i % 2 ? 'replace' : 'whitelist', `(\\w?\\w?){50}#|x${i}`)
     )
     const started = performance.now()
     const r = anonymize(CODE, { rules })
-    expect(performance.now() - started).toBeLessThan(2000)
+    // rulesStopped is the deterministic check. The time is a backstop sized for
+    // CI's emulated container (2.5-3x slower): budgeted 0.6 s locally, unbounded 11 s.
     expect(r.rulesStopped).toBe(true)
+    expect(performance.now() - started).toBeLessThan(6000)
     // No match is the safe direction: every name is still masked.
     expect(r.anonymized).not.toMatch(/identifier_name_number_/)
   })
