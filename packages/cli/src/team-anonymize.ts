@@ -124,7 +124,12 @@ export function anonymizeOverTeam(
    * above the team's highest, which is where the next teammate's block starts.
    * Absent: no team numbering applies, and new names go above the floor.
    */
-  numbering?: { blocks: Record<string, { start: number; end: number }>; tag: string }
+  numbering?: {
+    blocks: Record<string, { start: number; end: number }>
+    tag: string
+    /** Placeholders a publish retired (aliases.json): never minted again. */
+    retired?: readonly string[]
+  }
 ): { result: ReturnType<typeof anonymize>; toPersist: Record<string, string> } {
   // A disputed placeholder keeps its first meaning in the engine's namespace
   // (for numbering); it is never emitted - the name gets a fresh number above
@@ -137,7 +142,11 @@ export function anonymizeOverTeam(
     ? anonymize(source, {
         ...options,
         existingMap,
-        team: { blocks: numbering.blocks, tag: numbering.tag },
+        team: {
+          blocks: numbering.blocks,
+          tag: numbering.tag,
+          ...(numbering.retired?.length ? { retired: numbering.retired } : {}),
+        },
       })
     : anonymizeAbove(source, { ...options, existingMap }, floorsWith(team.highest, local))
   return { result, toPersist: persisted(local, result, settled) }

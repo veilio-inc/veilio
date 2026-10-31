@@ -124,7 +124,17 @@ export function resetSessionTag(): void {
 export function teamNumbering(
   mapPath: string,
   owner: { instance: string; account: string; teamId: string }
-): { blocks: Record<string, Block>; tag: string; refused?: Refused } {
+): { blocks: Record<string, Block>; tag: string; retired: string[]; refused?: Refused } {
+  // Read on every call (code review): a publish in another process retires
+  // local placeholders into aliases.json and may rewrite the tag.
+  let retired: string[] = []
+  try {
+    retired = Object.keys(loadAliases(mapPath))
+  } catch {
+    // unreadable: numbering is still floored by the map itself
+  }
+  const own = sessionTag
+  if (own && retired.some((p) => p.startsWith(`__LOCAL_${own}_`))) sessionTag = null
   let held: ReservedFile | null = null
   try {
     held = loadReserved(mapPath)
@@ -141,9 +151,10 @@ export function teamNumbering(
     return {
       blocks: held.blocks,
       tag: held.local?.tag ?? tag(),
+      retired,
       ...(held.refused ? { refused: held.refused } : {}),
     }
-  return { blocks: {}, tag: tag() }
+  return { blocks: {}, tag: tag(), retired }
 }
 
 /** HH:MM on this machine's clock. */

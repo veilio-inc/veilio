@@ -90,3 +90,65 @@ describe.each(['anonymize_text', 'anonymize_file'])('%s', (tool) => {
     expect(p).not.toContain('K7Q2XA')
   })
 })
+
+// Code review of spec 066: a long-running server held its session tag while
+// a CLI publish in another process retired its local placeholders into
+// aliases.json; the map no longer held them, so the next name took
+// __LOCAL_<tag>_VAR__1 again, with another meaning.
+describe('after a CLI publish in another process', () => {
+  const publish = (
+    cwd: string,
+    retired: string,
+    name: string,
+    reserved?: Record<string, unknown>
+  ) => {
+    const mapPath = resolveMapPath(null, cwd)
+    writeFileSync(
+      mapPath,
+      JSON.stringify({ version: 1, map: { __VAR__9: 'amount', __VAR__502: name } })
+    )
+    writeFileSync(
+      join(dirname(mapPath), 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { [retired]: name } })
+    )
+    if (reserved)
+      writeFileSync(
+        join(dirname(mapPath), 'reserved.json'),
+        JSON.stringify({
+          version: 1,
+          instance: INSTANCE,
+          account: ACCOUNT,
+          teamId: 'team-1',
+          blocks: {},
+          ...reserved,
+        })
+      )
+  }
+  const localOf = (text: string) => /__LOCAL_[A-Z0-9]{6}_VAR__\d+/.exec(text)?.[0]
+
+  it('with no reserved.json: the session tag is redrawn and no retired placeholder is minted again', () => {
+    const { ctx, cwd } = checkout()
+    const first = localOf(callTool('anonymize_text', { text: CODE }, ctx).text)!
+    expect(first).toBeDefined()
+    publish(cwd, first, 'holdbackDays')
+    const next = localOf(
+      callTool('anonymize_text', { text: 'export const payoutCutoff = amount' }, ctx).text
+    )!
+    expect(next).toBeDefined()
+    expect(next).not.toBe(first)
+    expect(next.slice(0, 15)).not.toBe(first.slice(0, 15))
+  })
+
+  it('with the file the publish rewrote: its new tag, read on the next call', () => {
+    const { ctx, cwd } = checkout({ blocks: {} })
+    const first = localOf(callTool('anonymize_text', { text: CODE }, ctx).text)!
+    expect(first).toBe('__LOCAL_K7Q2XA_VAR__1')
+    publish(cwd, first, 'holdbackDays', { local: { tag: 'B7B7B7' } })
+    const text = callTool(
+      'anonymize_text',
+      { text: 'export const payoutCutoff = amount' },
+      ctx
+    ).text
+    expect(localOf(text)).toBe('__LOCAL_B7B7B7_VAR__1')
+  })
+})
