@@ -63,6 +63,7 @@ import {
   loadTeam,
   schedule,
   sessionEnv,
+  veilioFingerprint,
 } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
@@ -158,7 +159,7 @@ function cleanup(dir) {
 temps.add(CLI_HOME)
 // The mcp and cli arms call `veilio` by name: a wrapper for this build, with
 // the signed-out HOME (a team arm's, the member's), first on their PATH. The
-// session itself runs in that home too (sessionEnv).
+// session keeps the runner's HOME for Claude Code's sign-in (sessionEnv).
 const bins = new Map()
 function veilioBin(home) {
   if (!bins.has(home)) {
@@ -175,9 +176,10 @@ function veilioBin(home) {
   }
   return bins.get(home)
 }
-// Where Claude Code keeps its sign-in, so a session run under the arm's CLI
-// home stays signed in to Claude.
-const CLAUDE_CONFIG = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+// The developer's own ~/.veilio: no session may change it (sessionEnv). Taken
+// once here and compared after every session.
+const DEV_VEILIO = join(homedir(), '.veilio')
+const DEV_VEILIO_PRINT = veilioFingerprint(DEV_VEILIO)
 const MCP_SERVER = { command: 'node', args: [MCP], env: { HOME: CLI_HOME, USERPROFILE: CLI_HOME } }
 process.on('exit', () => [...temps].forEach(cleanup))
 // After the temp HOME is registered, so a refusal still removes it.
@@ -411,11 +413,7 @@ async function session(task, arm, rep, outDir, member) {
     const started = Date.now()
     // Async, so the sessions of one wave run side by side.
     const run = await new Promise((done) => {
-      const env = sessionEnv(a, {
-        cliHome: CLI_HOME,
-        bin: a.veilioOnPath ? veilioBin(a.home ?? CLI_HOME) : '',
-        claudeConfig: CLAUDE_CONFIG,
-      })
+      const env = sessionEnv(a, { bin: a.veilioOnPath ? veilioBin(a.home ?? CLI_HOME) : '' })
       const child = spawn('claude', args, { cwd: repo, env, stdio: ['ignore', streamFd, errFd] })
       const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
       child.on('error', (error) => (clearTimeout(timer), done({ error })))
@@ -425,6 +423,10 @@ async function session(task, arm, rep, outDir, member) {
     })
     closeSync(streamFd)
     closeSync(errFd)
+    if (veilioFingerprint(DEV_VEILIO) !== DEV_VEILIO_PRINT)
+      throw new Error(
+        `${task.id} ${arm} #${rep} changed ${DEV_VEILIO}: the run stops; see ${base}.jsonl`
+      )
     const wallMs = (run.endedAt ?? Date.now()) - started
     const s = readStream(`${base}.jsonl`)
     // A session that never got to work (usage limit, signed out, timed out)

@@ -1,5 +1,8 @@
 // The parts of run-bench.mjs that decide what runs when, kept free of side
 // effects so they can be tested without spending a session.
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 // The same tools in every arm. A call outside them is denied, and the denial
 // costs every arm the same. Each language's test runner is here, so a task in
@@ -168,24 +171,35 @@ export function armArgs(arm, { armPrompts = {}, mcpServer, home } = {}) {
 }
 
 /**
- * The environment a session runs in. An mcp or cli arm's whole session has
- * the arm's CLI home (signed out, or the member's for a team arm), not only
- * the `veilio` wrapper first on its PATH: an agent that runs
- * `node packages/cli/dist/index.js` itself must not reach the developer's
- * ~/.veilio (code review). Claude Code keeps its own sign-in through
- * CLAUDE_CONFIG_DIR. Every other arm runs in the runner's environment.
+ * The environment a session runs in. An mcp or cli arm gets the `veilio`
+ * wrapper (the arm's CLI home) first on its PATH and no inherited project.
+ * The session keeps the runner's HOME: Claude Code signs in through it, and a
+ * session under another HOME is "Not logged in" (checked 2026-10-31, with
+ * CLAUDE_CONFIG_DIR as well). An agent that runs the CLI build directly would
+ * reach the developer's ~/.veilio, so the runner checks that directory is
+ * unchanged after every session (veilioFingerprint) and stops if it is not.
  */
-export function sessionEnv(a, { env = process.env, cliHome, bin, claudeConfig }) {
+export function sessionEnv(a, { env = process.env, bin }) {
   if (!a.veilioOnPath) return env
-  const home = a.home ?? cliHome
-  return {
-    ...env,
-    HOME: home,
-    USERPROFILE: home,
-    VEILIO_PROJECT: '',
-    CLAUDE_CONFIG_DIR: claudeConfig,
-    PATH: `${bin}:${env.PATH}`,
+  return { ...env, VEILIO_PROJECT: '', PATH: `${bin}:${env.PATH}` }
+}
+
+/** Every file under `dir` with its size and content hash; '' when absent. */
+export function veilioFingerprint(dir) {
+  if (!existsSync(dir)) return ''
+  const rows = []
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.isFile())
+        rows.push(
+          `${relative(dir, p)}\t${createHash('sha256').update(readFileSync(p)).digest('hex')}`
+        )
+    }
   }
+  walk(dir)
+  return rows.sort().join('\n')
 }
 
 const RESTORES = ['right', 'left', 'leftLocal', 'wrong']

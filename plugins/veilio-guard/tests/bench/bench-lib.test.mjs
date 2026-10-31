@@ -1,6 +1,9 @@
 // node --test plugins/veilio-guard/tests/bench/bench-lib.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   ARM_ORDER,
   TOOLS,
@@ -12,6 +15,7 @@ import {
   loadTeam,
   schedule,
   sessionEnv,
+  veilioFingerprint,
   teamTable,
 } from './bench-lib.mjs'
 
@@ -325,36 +329,50 @@ test('the score lists the seven arms in the run order', () => {
   )
 })
 
-// Code review (LOW): an agent that runs `node packages/cli/dist/index.js`
-// skips the wrapper on PATH, so the whole session, not only the wrapper, has
-// the arm's CLI home. Claude Code keeps its own sign-in through its config dir.
-test('the mcp and cli arms run the whole session in the arm CLI home', () => {
-  const runner = { HOME: '/dev-home', USERPROFILE: '/dev-home', PATH: '/usr/bin', OTHER: 'x' }
-  const opts = {
-    env: runner,
-    cliHome: '/signed-out',
-    bin: '/bin-dir',
-    claudeConfig: '/dev-home/.claude',
+// An mcp or cli arm's session keeps the runner's HOME: Claude Code is "Not
+// logged in" under any other (checked 2026-10-31). Its own `veilio` wrapper
+// comes first on PATH, and the runner checks the developer's ~/.veilio after
+// each session instead (veilioFingerprint).
+test('the mcp and cli arms keep HOME and put the arm wrapper first on PATH', () => {
+  const runner = {
+    HOME: '/dev-home',
+    USERPROFILE: '/dev-home',
+    PATH: '/usr/bin',
+    VEILIO_PROJECT: 'p',
+    OTHER: 'x',
   }
-  for (const [arm, home, want] of [
-    ['mcp', undefined, '/signed-out'],
-    ['cli', undefined, '/signed-out'],
-    ['mcp-team', '/member', '/member'],
-    ['cli-team', '/member', '/member'],
-  ]) {
+  for (const arm of ['mcp', 'cli', 'mcp-team', 'cli-team']) {
     const a = armArgs(arm, {
       armPrompts: { mcp: 'm', cli: 'c' },
       mcpServer: { command: 'node' },
-      home,
+      home: '/member',
     })
-    const env = sessionEnv(a, opts)
-    assert.equal(env.HOME, want, arm)
-    assert.equal(env.USERPROFILE, want, arm)
-    assert.equal(env.CLAUDE_CONFIG_DIR, '/dev-home/.claude', arm)
+    const env = sessionEnv(a, { env: runner, bin: '/bin-dir' })
+    assert.equal(env.HOME, '/dev-home', arm)
+    assert.equal(env.USERPROFILE, '/dev-home', arm)
+    assert.equal(env.CLAUDE_CONFIG_DIR, undefined, arm)
     assert.equal(env.VEILIO_PROJECT, '', arm)
     assert.equal(env.PATH, '/bin-dir:/usr/bin', arm)
     assert.equal(env.OTHER, 'x', arm)
   }
   for (const arm of ['plain', 'guard-warm', 'guard-team'])
-    assert.equal(sessionEnv(armArgs(arm, {}), opts), runner, arm)
+    assert.equal(sessionEnv(armArgs(arm, {}), { env: runner, bin: '' }), runner, arm)
+})
+
+test('the ~/.veilio fingerprint changes when any file in it changes, and is empty when absent', () => {
+  const d = mkdtempSync(join(tmpdir(), 'fp-'))
+  try {
+    assert.equal(veilioFingerprint(join(d, 'none')), '')
+    mkdirSync(join(d, 'v', 'maps'), { recursive: true })
+    writeFileSync(join(d, 'v', 'credential.json'), '{}')
+    const before = veilioFingerprint(join(d, 'v'))
+    assert.equal(veilioFingerprint(join(d, 'v')), before)
+    writeFileSync(join(d, 'v', 'maps', 'm.json'), '{}')
+    const added = veilioFingerprint(join(d, 'v'))
+    assert.notEqual(added, before)
+    writeFileSync(join(d, 'v', 'credential.json'), '{"t":1}')
+    assert.notEqual(veilioFingerprint(join(d, 'v')), added)
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+  }
 })
