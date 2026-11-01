@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.16.0](https://github.com/veilio-inc/veilio/compare/engine-v1.15.0...engine-v1.16.0) (2026-11-01)
+
+### Features
+
+* **engine:** the local placeholder family, and minting inside a member's team block ([40a823c](https://github.com/veilio-inc/veilio/commit/40a823cc8f69b234b2492de22bbce44f28b99efa))
+
+## [1.15.0](https://github.com/veilio-inc/veilio/compare/engine-v1.14.0...engine-v1.15.0) (2026-11-01)
+
+### Features
+
+* **engine:** rule envelopes sealed under customer keys, and a linear-time rule pattern matcher ([d2e24a5](https://github.com/veilio-inc/veilio/commit/d2e24a5c0dc2abc1607774c28359a257556d7d65))
+
+## [1.14.0](https://github.com/veilio-inc/veilio/compare/engine-v1.13.0...engine-v1.14.0) (2026-11-01)
+
+### Features
+
+* **engine:** ordinary English words stay readable inside identifiers and path segments ([6d942c0](https://github.com/veilio-inc/veilio/commit/6d942c06503268be6b1342035b22211863628339))
+
 ## [1.13.0](https://github.com/veilio-inc/veilio/compare/engine-v1.12.1...engine-v1.13.0) (2026-10-28)
 
 ### Features
