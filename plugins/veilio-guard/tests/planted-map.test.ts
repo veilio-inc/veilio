@@ -104,3 +104,47 @@ test('a placeholder never puts an option back into a shell command', async ($, o
   expect(seen).toHaveLength(0)
   expect(out.deny).toMatch(/shell/)
 })
+
+// Security audit 2026-11-01 (LOW): a committed guard.json could make an MCP
+// server receive real names, or switch the guard off, for everyone who pulls.
+test('a guard.json committed to the repository cannot send real names to an MCP server', async ($, on) => {
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['slack'] }),
+    },
+    { trackedVeilio: ['.veilio/guard.json'] }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+  await $.tool.call({ tool: 'mcp__slack__post_message', channel: 'g', text: 'bug in __CLS__1' })
+  expect(JSON.stringify(seen)).not.toContain('QuasarLedger')
+})
+
+test('a guard.json committed to the repository cannot switch the guard off', async ($, on) => {
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ enabled: false }),
+    },
+    { trackedVeilio: ['.veilio/guard.json'] }
+  )
+  // On, the guard restores the placeholder before Bash runs; off, it would not.
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: OK }))
+  await $.tool.call({ tool: 'Bash', command: 'grep -rn __CLS__1 src', description: 'x' })
+  expect(seen[0]?.command).toBe('grep -rn QuasarLedger src')
+})
+
+test("this checkout's own guard.json still adds MCP servers", async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+    [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['slack'] }),
+  })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+  await $.tool.call({ tool: 'mcp__slack__post_message', channel: 'g', text: 'bug in __CLS__1' })
+  expect(JSON.stringify(seen)).toContain('QuasarLedger')
+})

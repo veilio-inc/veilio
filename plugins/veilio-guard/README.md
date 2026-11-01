@@ -51,7 +51,7 @@ To clear the map (`veilio map --clear`), close Claude Code first: an open sessio
 
 ## Configure
 
-In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`):
+In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`). A `guard.json` committed to the repository is its author's, not yours: it can only add `rawOnly` paths, and its `mcpRestore` and `enabled` are ignored. A committed `.veilio/map.json` or `aliases.json` stops the guard until it is removed from git.
 
 ```json
 {

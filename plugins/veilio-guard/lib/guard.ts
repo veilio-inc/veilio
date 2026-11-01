@@ -285,12 +285,14 @@ export class Guard {
       }
       dir = parent(dir)
     }
-    await this.readSettings()
+    // Security audit 2026-11-01: files under .veilio/ committed to the
+    // repository are its author's, not this checkout's.
+    const committed = await this.trackedVeilioFiles()
+    await this.readSettings(committed.includes('.veilio/guard.json'))
     await this.reloadMap()
-    // Security audit 2026-11-01: a map or aliases file committed to the
-    // repository is the author's, not this checkout's - its values would be
-    // restored into commands the model only saw as placeholders.
-    const tracked = await this.trackedVeilioFiles()
+    // A committed map or aliases file: its values would be restored into
+    // commands the model only saw as placeholders.
+    const tracked = committed.filter((f) => f !== '.veilio/guard.json')
     if (tracked.length)
       this.stop(
         `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
@@ -488,7 +490,10 @@ export class Guard {
     return null
   }
 
-  private async readSettings(): Promise<void> {
+  /** `fromRepository`: guard.json is committed, so it may only tighten - add
+   *  raw-only paths - never widen what reaches an MCP server or switch the
+   *  guard off (security audit 2026-11-01). */
+  private async readSettings(fromRepository = false): Promise<void> {
     this.extraRawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
@@ -502,6 +507,7 @@ export class Guard {
     if (Array.isArray(settings.rawOnly)) {
       this.extraRawOnly.push(...settings.rawOnly.filter((p): p is string => typeof p === 'string'))
     }
+    if (fromRepository) return
     if (Array.isArray(settings.mcpRestore)) {
       this.mcpRestore.push(...settings.mcpRestore.filter((p): p is string => typeof p === 'string'))
     }
@@ -562,8 +568,8 @@ export class Guard {
     }
   }
 
-  /** `.veilio/map.json` and `aliases.json` when git tracks them; none when
-   *  the project is not a git checkout or cannot be listed. */
+  /** `.veilio/map.json`, `aliases.json` and `guard.json` when git tracks
+   *  them; none when the project is not a git checkout or cannot be listed. */
   private async trackedVeilioFiles(): Promise<string[]> {
     if (!this.io.list) return []
     let listed: string[] | null
@@ -581,7 +587,9 @@ export class Guard {
     // and a tracked `.veilio` entry is a committed link to somewhere else.
     const files = new Set((listed ?? []).map((f) => f.toLowerCase()))
     if (files.has('.veilio')) return ['.veilio']
-    return ['.veilio/map.json', '.veilio/aliases.json'].filter((f) => files.has(f))
+    return ['.veilio/map.json', '.veilio/aliases.json', '.veilio/guard.json'].filter((f) =>
+      files.has(f)
+    )
   }
 
   stop(reason: string): void {
@@ -1234,7 +1242,9 @@ export class Guard {
       out.content = record.content
         .split('\n')
         .filter((line) => {
-          // A path is at most PATH_MAX (4096): no longer prefix is one.
+          // shortcut: a path is at most PATH_MAX (4096) - git cannot check out a
+          // longer one, so a repository cannot plant it; scanning further would
+          // stall the hook on a minified line. Upgrade if a longer path is shown.
           for (let i = 1; i < Math.min(line.length, 4097); i++)
             if ((line[i] === ':' || line[i] === '-') && raw(line.slice(0, i))) return false
           return true
