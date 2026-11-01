@@ -56,7 +56,10 @@ test('without a block, numbering is as it always was (signed out, Community Edit
   )
 })
 
-test('a block under a number the map already holds is not used: the local family, and the band says so', async ($, on) => {
+// Security audit 2026-11-01 (round 4): a block is this member's alone, so a
+// number above it - a teammate's, or planted - leaves it usable (was: every
+// new name local, and the band said "outside reserved team numbers").
+test('a block under a number the map already holds is still used', async ($, on) => {
   const read = recorded('Read')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({
@@ -67,12 +70,10 @@ test('a block under a number the map already holds is not used: the local family
   })
   on('tool.call', () => read.r)
   const content = res(await $.tool.call(eventOf(read))).file.content as string
-  // Spec 066: never above the map - that is where the next teammate's block starts.
-  expect(content).not.toMatch(/(?<![A-Za-z0-9_])__CLS__(?!6000\b)\d+/)
-  expect(content).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__\d+/)
-  const status = await $.command.run({ command: 'veilio', args: '' })
-  expect(status.text).toMatch(/outside reserved team numbers/)
-  expect(status.text).toMatch(/veilio maps pull/)
+  const cls = numbersOf(content, '__CLS__').filter((n) => n !== 6000)
+  expect(cls.length).toBeGreaterThan(0)
+  for (const n of cls) expect(n >= 5001 && n <= 5500, `__CLS__${n} outside the block`).toBe(true)
+  expect(content).not.toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__\d+/)
 })
 
 test('the band says how many reserved numbers are left', async ($, on) => {
@@ -108,14 +109,15 @@ test('a planted reservation file cannot put control characters into the band', a
   expect(status.text).not.toMatch(/\u001b/)
 })
 
-test('a block the map has outgrown is reported as unusable, never as numbers left', async ($, on) => {
+// Security audit 2026-11-01 (round 4): a number above the block does not use
+// it up (was: "no usable team numbers").
+test('a number above the block leaves its numbers counted as left', async ($, on) => {
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__6000: 'SomeoneElsesClass' }),
     [`${ROOT}/.veilio/reserved.json`]: reservedFile({ __CLS__: { start: 5001, end: 5500 } }),
   })
   const status = await $.command.run({ command: 'veilio', args: '' })
-  expect(status.text).toMatch(/no usable team numbers \(run veilio maps pull\)/)
-  expect(status.text).not.toMatch(/team numbers: -?\d+ left/)
+  expect(status.text).toMatch(/team numbers: 500 left/)
 })
 
 test('a distinctive name first seen in command output is numbered inside the block too (team bench, 2026-10-30)', async ($, on) => {

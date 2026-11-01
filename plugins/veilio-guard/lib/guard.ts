@@ -105,6 +105,10 @@ export type ToolOutcome = { deny: string } | { result: unknown; isError?: true }
 
 // Keys Claude Code adds to a tool call's event; none of them is the tool's own.
 const RESERVED = new Set(['tool', 'tool_use_id', 'consent', 'agentId'])
+
+/** Characters that change what a shell command does: never put back into one
+ *  from a placeholder (security audit 2026-11-01). */
+const SHELL_SYNTAX = /[\s;|&$`<>(){}[\]\\'"*?!#~]/
 const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
@@ -282,6 +286,14 @@ export class Guard {
     }
     await this.readSettings()
     await this.reloadMap()
+    // Security audit 2026-11-01: a map or aliases file committed to the
+    // repository is the author's, not this checkout's - its values would be
+    // restored into commands the model only saw as placeholders.
+    const tracked = await this.trackedVeilioFiles()
+    if (tracked.length)
+      this.stop(
+        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
+      )
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
@@ -547,6 +559,25 @@ export class Guard {
     } catch {
       return {}
     }
+  }
+
+  /** `.veilio/map.json` and `aliases.json` when git tracks them; none when
+   *  the project is not a git checkout or cannot be listed. */
+  private async trackedVeilioFiles(): Promise<string[]> {
+    if (!this.io.list) return []
+    let listed: string[] | null
+    // shortcut: a git that answers in no 5 s skips the check (as a project that
+    // is not a checkout does), never wedges the session; upgrade to failing
+    // closed if a slow-git bypass is ever shown.
+    const late = this.io.sleep ? this.io.sleep(5000).then(() => null) : null
+    try {
+      const listing = this.io.list(this.root)
+      listed = await (late ? Promise.race([listing, late]) : listing)
+    } catch {
+      return []
+    }
+    const files = new Set(listed ?? [])
+    return ['.veilio/map.json', '.veilio/aliases.json'].filter((f) => files.has(f))
   }
 
   stop(reason: string): void {
@@ -846,9 +877,11 @@ export class Guard {
     const policy = argumentPolicy(e.tool, this.mcpRestore)
     const unresolved = new Set<string>()
     const altered = new Set<string>()
+    const resolved = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
       const r = restoreArgs(s, this.restoreMap)
+      r.resolved.forEach((p) => resolved.add(p))
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
@@ -889,6 +922,13 @@ export class Guard {
     if (restoresWhat)
       return this.deny(
         `a placeholder in it stands for ${withheldText(restoresWhat)}, which is never written back. Ask the user`
+      )
+    // Security audit 2026-11-01: the model chose the command seeing only the
+    // placeholder, so a value that is itself shell syntax (a planted or pulled
+    // map) would run unseen. Identifiers and paths never need these characters.
+    if (policy.command && [...resolved].some((p) => SHELL_SYNTAX.test(this.restoreMap[p] ?? '')))
+      return this.deny(
+        'a placeholder in it stands for text with spaces or shell syntax, which is never put back into a shell command. Ask the user to run it'
       )
 
     for (const field of policy.paths) {

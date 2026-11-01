@@ -39,6 +39,8 @@ export type Options = {
   policy?: Record<string, unknown>
   /** `git ls-files` is refused, as in a project that is not a git checkout. */
   noGit?: boolean
+  /** Files under .veilio/ that git tracks (committed to the repository). */
+  trackedVeilio?: string[]
   /** Leave $.clock to the test (mock.clock): no never-ending sleep, no
    *  recorded timers. */
   ownClock?: boolean
@@ -118,6 +120,7 @@ export function project(
     const tracked = Object.keys(p.files)
       .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
       .map((f) => f.slice(ROOT.length + 1))
+      .concat(opts.trackedVeilio ?? [])
     return {
       value: {
         exitCode: 0,
