@@ -16,7 +16,6 @@ import {
   schedule,
   sessionEnv,
   veilioFingerprint,
-  denied,
   teamTable,
 } from './bench-lib.mjs'
 
@@ -319,7 +318,10 @@ test('the team table has a column per team arm: publish, refusals, restores, min
   ])
   assert.deepEqual(row('minted outside the local family after a refusal'), ['0', '1'])
   assert.deepEqual(row('new names minted in sessions'), ['3', '2'])
-  assert.deepEqual(row('Cloud requests by the CLI (sessions’ pull and publish)'), ['4', '6'])
+  assert.deepEqual(
+    row('Cloud requests by the team module (pull and publish; not the sessions’ own)'),
+    ['4', '6']
+  )
   assert.deepEqual(teamTable([{ arm: 'plain' }]), { arms: [], rows: [] })
 })
 
@@ -376,15 +378,4 @@ test('the ~/.veilio fingerprint changes when any file in it changes, and is empt
   } finally {
     rmSync(d, { recursive: true, force: true })
   }
-})
-
-test('every arm is denied reading or writing the developer ~/.veilio', () => {
-  assert.equal(
-    denied(null, '/h/.veilio'),
-    'Read(/h/.veilio/**),Edit(/h/.veilio/**),Write(/h/.veilio/**)'
-  )
-  assert.equal(
-    denied('Read,Grep', '/h/.veilio'),
-    'Read,Grep,Read(/h/.veilio/**),Edit(/h/.veilio/**),Write(/h/.veilio/**)'
-  )
 })

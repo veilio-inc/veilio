@@ -270,6 +270,10 @@ for (const r of runs) {
   if (mcpArm ? r.mcpServers.join() !== 'veilio' : r.mcpServers.length)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: MCP servers loaded (${r.mcpServers.join(', ')})`)
   if (r.subtype === 'no-result') warnings.push(`${r.task} ${r.arm} #${r.rep}: no result line`)
+  if (r.rateLimited)
+    warnings.push(
+      `${r.task} ${r.arm} #${r.rep}: ${r.rateLimited} tool result(s) met Cloud's rate limit (429)`
+    )
   if (r.arm !== 'plain' && r.leakedNames?.length)
     warnings.push(
       `${r.task} ${r.arm} #${r.rep}: project names reached the model (${r.leakedNames.slice(0, 5).join(', ')})`

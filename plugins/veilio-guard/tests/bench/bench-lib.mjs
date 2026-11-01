@@ -176,18 +176,12 @@ export function armArgs(arm, { armPrompts = {}, mcpServer, home } = {}) {
  * The session keeps the runner's HOME: Claude Code signs in through it, and a
  * session under another HOME is "Not logged in" (checked 2026-10-31, with
  * CLAUDE_CONFIG_DIR as well). An agent that runs the CLI build directly would
- * reach the developer's ~/.veilio, so the runner checks that directory is
- * unchanged after every session (veilioFingerprint) and stops if it is not.
+ * reach the developer's ~/.veilio, so the runner refuses to start while that
+ * directory exists (nothing there to read) and stops if a session creates it.
  */
 export function sessionEnv(a, { env = process.env, bin }) {
   if (!a.veilioOnPath) return env
   return { ...env, VEILIO_PROJECT: '', PATH: `${bin}:${env.PATH}` }
-}
-
-/** An arm's denied tools plus reads of the developer's ~/.veilio, for every arm. */
-export function denied(armDenied, devVeilio) {
-  const own = ['Read', 'Edit', 'Write'].map((t) => `${t}(${devVeilio}/**)`)
-  return [...(armDenied ? armDenied.split(',') : []), ...own].join(',')
 }
 
 /** Every file under `dir` with its size and content hash; '' when absent. */
@@ -244,7 +238,7 @@ export function teamTable(runs) {
         sum(rs, (t) => t.regressed?.length)
       ),
       row('new names minted in sessions', (rs) => sum(rs, (t) => t.minted)),
-      row('Cloud requests by the CLI (sessions’ pull and publish)', (rs) =>
+      row('Cloud requests by the team module (pull and publish; not the sessions’ own)', (rs) =>
         sum(rs, (t) => t.requests)
       ),
     ],

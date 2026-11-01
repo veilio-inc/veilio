@@ -64,7 +64,6 @@ import {
   schedule,
   sessionEnv,
   veilioFingerprint,
-  denied,
 } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
@@ -121,8 +120,9 @@ if (TEAM && CONCURRENCY > MEMBERS.length)
 // developer is signed in to (a staging account's rate limit was exhausted
 // that way). The bench measures the local guard; it never touches Cloud.
 // The guard arms' sessions keep the developer's HOME (the guard plugin makes
-// no network request and does not read ~/.veilio); the mcp and cli arms' run
-// in this home, with Claude Code signed in through its config dir.
+// no network request and does not read ~/.veilio). The mcp and cli arms' CLI
+// and MCP server run in this home; their Claude sessions keep the developer's
+// HOME too (Claude Code's sign-in needs it), so ~/.veilio must not exist.
 const CLI_HOME = mkdtempSync(join(tmpdir(), 'veilio-bench-home-'))
 const CLI_ENV = { ...process.env, HOME: CLI_HOME, USERPROFILE: CLI_HOME }
 function refuseSignedIn() {
@@ -130,13 +130,13 @@ function refuseSignedIn() {
   const who = spawnSync('node', [CLI, 'whoami'], { env: CLI_ENV, encoding: 'utf8' })
   if (!/Not signed in/.test(`${who.stdout}${who.stderr}`))
     throw new Error('the CLI the bench runs is signed in to Veilio Cloud: refusing to run')
-  // Sessions keep the developer's HOME (Claude Code's sign-in needs it), so the
-  // developer's own CLI must be signed out too: nothing a session reaches can
-  // speak for the developer's account.
-  const dev = spawnSync('node', [CLI, 'whoami'], { encoding: 'utf8' })
-  if (!/Not signed in/.test(`${dev.stdout}${dev.stderr}`))
+  // Sessions keep the developer's HOME (Claude Code's sign-in needs it), and a
+  // deny list cannot cover every way to read a directory (cat, grep, a script).
+  // So the developer's ~/.veilio must not exist: no credential, team key or map
+  // for a session to read. A resume after a session wrote it is refused too.
+  if (DEV_VEILIO_PRINT !== '')
     throw new Error(
-      'your own ~/.veilio is signed in to Veilio Cloud: sign out (veilio logout) or move it, then run again'
+      `${DEV_VEILIO} exists: move it aside for the run (mv ~/.veilio ~/.veilio.aside) and back after`
     )
 }
 
@@ -363,6 +363,9 @@ function readStream(path) {
     guardRefused: toolResults.filter((t) => /Veilio refused this call|away from the model/.test(t))
       .length,
     guardWithheld: toolResults.filter((t) => /Veilio withheld this result/.test(t)).length,
+    // A team arm's in-session `veilio scrub` or MCP call that met Cloud's rate
+    // limit (300 / 15 min): a cost of the arm, not a product failure.
+    rateLimited: toolResults.filter((t) => /Too many requests|\b429\b/.test(t)).length,
     // In `claude -p` the reply is not restored, so a placeholder in it is one
     // the reader would have to look up.
     finalHasPlaceholders: /__[A-Z]+__\d+/.test(final),
@@ -409,7 +412,7 @@ async function session(task, arm, rep, outDir, member) {
     ]
     if (SETTINGS) args.push('--settings', SETTINGS)
     if (a.guard) args.push('--plugin-dir', GUARD)
-    args.push('--disallowedTools', denied(a.disallowed, DEV_VEILIO))
+    if (a.disallowed) args.push('--disallowedTools', a.disallowed)
     if (a.appendPrompt) args.push('--append-system-prompt', a.appendPrompt)
     if (a.mcpConfig) {
       const cfg = join(dir, 'mcp.json')
@@ -434,7 +437,7 @@ async function session(task, arm, rep, outDir, member) {
     closeSync(errFd)
     if (veilioFingerprint(DEV_VEILIO) !== DEV_VEILIO_PRINT)
       throw new Error(
-        `${task.id} ${arm} #${rep} changed ${DEV_VEILIO}: the run stops; see ${base}.jsonl`
+        `${DEV_VEILIO} appeared during a wave with ${task.id} ${arm} #${rep} (any session of the wave may have written it): the run stops; look at it, remove it, then resume`
       )
     const wallMs = (run.endedAt ?? Date.now()) - started
     const s = readStream(`${base}.jsonl`)
