@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
@@ -105,6 +105,18 @@ describe('the hostile map', () => {
       for (const r of body.requests) expect(r.floor).toBeLessThanOrEqual(500)
     }
     expect(res.out).toMatch(/1 placeholder in this map is numbered outside every run/)
+  })
+
+  // Security audit (round 4): the block was saved but unusable - the engine
+  // numbered above the planted 60000, past the block, so every name went local.
+  it('a scrub after that pull numbers inside the block, not in the local family', async () => {
+    const id = await teamMap({ __VAR__60000: 'planted', __VAR__7: 'amount', __FN__3: 'settle' })
+    expect((await run(['maps', 'pull', id])).code).toBe(EXIT_OK)
+    writeFileSync(join(cwd, 'a.ts'), 'function quaywardSettle(skerryTotal: number) {}\n')
+    const res = await run(['scrub', 'a.ts'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(res.out).toMatch(/__VAR__5\d\d\b/)
+    expect(res.out).not.toContain('__LOCAL_')
   })
 
   it('the namespace floors nothing on it, and restore leaves it', async () => {

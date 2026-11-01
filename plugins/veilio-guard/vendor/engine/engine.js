@@ -5,7 +5,7 @@ import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeL
 import { credentialSpans, detectSecrets, hasBlockingSecrets, previewSecret, redactionTokensOf, scanSecrets, fileKindOf, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
-import { isLocalTag, isRolePlaceholder, isSaneBlock, localBaseOf, MAX_PLACEHOLDER_NUMBER, teamBaseOf, } from './localFamily.js';
+import { isLocalTag, isRolePlaceholder, isSaneBlock, localBaseOf, MAX_PLACEHOLDER_NUMBER, teamBaseOf, usedInBlock, } from './localFamily.js';
 import { assertKnownOptions, assertObject, optionKeys, unknownKeys, unknownOptionError, } from './options.js';
 // Keyword sets, comment syntax and detection live in ./languages.ts. Standalone
 // helpers default to TypeScript so existing callers keep their exact behavior;
@@ -699,17 +699,27 @@ function safeMatch(pattern, name, budget) {
  *  value, manual mark), comes from here. Without `team`: above the highest of
  *  the base. With it (spec 066 R3): inside the base's block while it has a
  *  number left, else from the checkout's local family - never above the map,
- *  which is where the next teammate's block starts. */
+ *  which is where the next teammate's block starts. Inside the block it
+ *  continues above the highest number used inside it (usedInBlock). */
 function minter(counters, team, taken) {
+    // The highest number used inside each base's block, found once per base.
+    const inBlock = {};
     return (base) => {
         if (team) {
             // A block is trusted only while sane: whole, in order, at most 1e8
             // (security audit) - past that, the name is numbered locally.
             const given = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined;
             const block = isSaneBlock(given) ? given : undefined;
-            const n = block ? Math.max(counters[base] ?? 0, block.start - 1) + 1 : NaN;
+            // Security audit (round 4): only numbers inside the block count, so a
+            // teammate's planted __VAR__60000 cannot push every name past the block.
+            if (block && !Object.hasOwn(inBlock, base))
+                inBlock[base] = usedInBlock(taken, base, block);
+            let n = block ? inBlock[base] + 1 : NaN;
+            while (block && n <= block.end && taken.has(`${base}${n}`))
+                n++;
             if (block && n <= block.end) {
-                counters[base] = n;
+                inBlock[base] = n;
+                counters[base] = Math.max(counters[base] ?? 0, n);
                 taken.add(`${base}${n}`);
                 return `${base}${n}`;
             }

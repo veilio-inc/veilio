@@ -16,6 +16,7 @@ import {
   isPlaceholder,
   isSaneBlock,
   teamBaseOf,
+  usedInBlock,
   type SymbolMap,
 } from '@veilio-inc/engine'
 
@@ -287,10 +288,10 @@ export function saveReserved(mapPath: string, reserved: ReservedFile): void {
 
 /**
  * The kinds that need a fresh block: those asked for or present in the map,
- * with no block, a used-up one, or one below a number the map already holds.
- * The engine numbers above the map's highest number of a kind, never into a
- * gap, so a block under a teammate's newer number can no longer be used
- * (spec 063 research R1). A local kind (`__LOCAL_<tag>_FN__`) asks for its team
+ * with no block or a used-up one. Only numbers inside the block count
+ * (usedInBlock): a teammate's newer number above it leaves it usable, since the
+ * server issued it to this member alone (security audit, round 4; spec 063 R1's
+ * "above the map" came from the old marker technique). A local kind (`__LOCAL_<tag>_FN__`) asks for its team
  * kind, never for itself: the server refuses a local base (spec 066 R4).
  */
 export function basesNeedingBlocks(
@@ -298,11 +299,12 @@ export function basesNeedingBlocks(
   blocks: Record<string, Block>,
   wanted: readonly string[]
 ): string[] {
+  const keys = Object.keys(map)
   const top = highestPerKind(map)
   const bases = new Set([...wanted, ...Object.keys(top).map((b) => teamBaseOf(b) ?? b)])
   return [...bases].filter((base) => {
     const b = blocks[base]
-    return !b || (top[base] ?? 0) >= b.end
+    return !b || usedInBlock(keys, base, b) >= b.end
   })
 }
 

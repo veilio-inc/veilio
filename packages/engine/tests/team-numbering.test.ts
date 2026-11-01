@@ -81,14 +81,16 @@ describe('`team`: a usable block', () => {
 })
 
 describe('`team`: no usable block', () => {
-  it('the map’s highest above the block’s end: every new name is local', () => {
+  // Security audit (round 4): the block was issued to this member alone, so a
+  // teammate's higher number above it leaves it usable (was: every name local).
+  it('the map’s highest above the block’s end: the block is still used', () => {
     const existingMap = { __VAR__6000: 'teammatesName' }
     const { map } = anonymize(vars(3), {
       language: 'typescript',
       existingMap,
       team: team({ __VAR__: { start: 5001, end: 5500 } }),
     })
-    expect(keysOf(map, existingMap)).toEqual(numbered(LOCAL_VAR, [1, 2, 3]))
+    expect(keysOf(map, existingMap)).toEqual(numbered('__VAR__', [5001, 5002, 5003]))
   })
 
   it('no block for the kind: local, while a kind with one numbers inside it', () => {
@@ -252,5 +254,36 @@ describe('`team`: the option itself', () => {
       team: team({ __VAR__: { start: 1, end: 2 } }),
     })
     expect(restore(anonymized, map).restored).toBe(code)
+  })
+})
+
+describe('a number outside the block does not move the in-block counter (security audit, round 4)', () => {
+  // A teammate planted __VAR__60000 in a team map: numbering above it would
+  // overrun the member's block 501-1000 and send every name to the local family.
+  it('numbers inside the block from its start, past a planted higher number', () => {
+    const existingMap = { __VAR__60000: 'plantedName' }
+    const { map } = anonymize(vars(2), {
+      existingMap,
+      team: team({ __VAR__: { start: 501, end: 1000 } }),
+    })
+    expect(keysOf(map, existingMap)).toEqual(numbered('__VAR__', [501, 502]))
+  })
+
+  it('continues after the highest number already inside the block, skipping taken ones', () => {
+    const existingMap = { __VAR__60000: 'plantedName', __VAR__501: 'mineA', __VAR__503: 'mineB' }
+    const { map } = anonymize(vars(2), {
+      existingMap,
+      team: team({ __VAR__: { start: 501, end: 1000 } }),
+    })
+    expect(keysOf(map, existingMap)).toEqual(numbered('__VAR__', [504, 505]))
+  })
+
+  it('still falls to the local family once the block is used up', () => {
+    const existingMap = { __VAR__501: 'mineA', __VAR__502: 'mineB' }
+    const { map } = anonymize(vars(1), {
+      existingMap,
+      team: team({ __VAR__: { start: 501, end: 502 } }),
+    })
+    expect(keysOf(map, existingMap)).toEqual([`${LOCAL_VAR}1`])
   })
 })

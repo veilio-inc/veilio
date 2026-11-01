@@ -27,7 +27,14 @@ export declare function teamBaseOf(localBase: string): string | null;
 export declare function isRolePlaceholder(token: string): boolean;
 /** Highest number per base in a map. */
 export declare function highestPerKind(map: SymbolMap): Record<string, number>;
-/** A block is usable while nothing in the map sits at or above its end. */
+/**
+ * The highest number of `base` inside `block`, or `start - 1` when none is.
+ * Only numbers inside count: the server issued the block to this member alone,
+ * so a teammate's higher number - or a planted __VAR__60000 (security audit,
+ * round 4) - says nothing about which of its numbers are free.
+ */
+export declare function usedInBlock(keys: Iterable<string>, base: string, block: Block): number;
+/** A block is usable while it has a number above the highest used inside it. */
 export declare function usableBlocks(map: SymbolMap, blocks: Record<string, Block>): Record<string, Block>;
 /** Reserved numbers still free, over every usable block. */
 export declare function numbersLeft(map: SymbolMap, blocks: Record<string, Block>): number;

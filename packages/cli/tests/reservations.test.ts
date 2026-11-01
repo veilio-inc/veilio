@@ -77,9 +77,11 @@ describe('when a member needs a new block', () => {
     expect(basesNeedingBlocks(map, reserved.blocks, ['__FN__'])).toEqual([])
   })
 
-  it('a teammate’s number above the block makes it unusable: the engine numbers above the highest', () => {
+  // Security audit (round 4): the block is this member's alone, so a number
+  // above it needs no new block (was: a new one, against the daily cap).
+  it('a teammate’s number above the block leaves it usable: no new block', () => {
     const map = { __FN__1200: 'pulled from a teammate' }
-    expect(basesNeedingBlocks(map, reserved.blocks, ['__FN__'])).toEqual(['__FN__'])
+    expect(basesNeedingBlocks(map, reserved.blocks, ['__FN__'])).toEqual([])
   })
 
   it('a block used to its last number needs a new one', () => {

@@ -149,9 +149,13 @@ describe('usableBlocks / numbersLeft / highestPerKind', () => {
     expect(numbersLeft({ __CLS__5499: 'x' }, { __CLS__: BLOCKS.__CLS__ })).toBe(1)
   })
 
-  it('a block the map has outgrown is not usable, and never counts as numbers left', () => {
-    expect(usableBlocks({ __CLS__6000: 'x' }, BLOCKS)).toEqual({ __FN__: BLOCKS.__FN__ })
-    expect(numbersLeft({ __CLS__6000: 'x' }, { __CLS__: BLOCKS.__CLS__ })).toBe(0)
+  // Security audit (round 4): only numbers inside a block use it up; one above
+  // it (a teammate's, or planted) leaves it usable (was: not usable, 0 left).
+  it('a number above the block leaves it usable; one at its end uses it up', () => {
+    expect(usableBlocks({ __CLS__6000: 'x' }, BLOCKS)).toEqual(BLOCKS)
+    expect(numbersLeft({ __CLS__6000: 'x' }, { __CLS__: BLOCKS.__CLS__ })).toBe(
+      BLOCKS.__CLS__.end - BLOCKS.__CLS__.start + 1
+    )
     // At the end itself the block is used up.
     expect(usableBlocks({ __CLS__5500: 'x' }, BLOCKS)).toEqual({ __FN__: BLOCKS.__FN__ })
   })

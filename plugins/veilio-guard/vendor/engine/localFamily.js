@@ -61,13 +61,31 @@ export function highestPerKind(map) {
     }
     return out;
 }
-/** A block is usable while nothing in the map sits at or above its end. */
+/**
+ * The highest number of `base` inside `block`, or `start - 1` when none is.
+ * Only numbers inside count: the server issued the block to this member alone,
+ * so a teammate's higher number - or a planted __VAR__60000 (security audit,
+ * round 4) - says nothing about which of its numbers are free.
+ */
+export function usedInBlock(keys, base, block) {
+    let top = block.start - 1;
+    for (const key of keys) {
+        if (!key.startsWith(base))
+            continue;
+        const rest = key.slice(base.length);
+        const n = /^\d+$/.test(rest) ? Number(rest) : 0;
+        if (n >= block.start && n <= block.end && n > top)
+            top = n;
+    }
+    return top;
+}
+/** A block is usable while it has a number above the highest used inside it. */
 export function usableBlocks(map, blocks) {
-    const top = highestPerKind(map);
-    return Object.fromEntries(Object.entries(blocks).filter(([base, b]) => (top[base] ?? 0) < b.end));
+    const keys = Object.keys(map);
+    return Object.fromEntries(Object.entries(blocks).filter(([base, b]) => usedInBlock(keys, base, b) < b.end));
 }
 /** Reserved numbers still free, over every usable block. */
 export function numbersLeft(map, blocks) {
-    const top = highestPerKind(map);
-    return Object.entries(usableBlocks(map, blocks)).reduce((sum, [base, b]) => sum + b.end - Math.max(top[base] ?? 0, b.start - 1), 0);
+    const keys = Object.keys(map);
+    return Object.entries(usableBlocks(map, blocks)).reduce((sum, [base, b]) => sum + b.end - usedInBlock(keys, base, b), 0);
 }

@@ -88,19 +88,18 @@ describe('pulling a team map reserves a block when the member needs one', () => 
     expect(blockRequests()).toHaveLength(before)
   })
 
-  it('a teammate’s number above the block gets that kind a new block, above it', async () => {
+  // Security audit (round 4): the block is this member's alone, so a
+  // teammate's number above it keeps it (was: a new block, against the cap).
+  it('a teammate’s number above the block keeps the block: no new reservation', async () => {
     const id = await teamMap({ __FN__40: 'chargeCard' })
     await run(['maps', 'pull', id])
     const first = loadReserved(mapPath())!.blocks.__FN__
+    const asked = blockRequests().length
     const newer = await teamMap({ __FN__40: 'chargeCard', [`__FN__${first.end + 20}`]: 'refund' })
     const res = await run(['maps', 'pull', newer, '--force'])
     expect(res.code, res.err).toBe(EXIT_OK)
-    const second = loadReserved(mapPath())!.blocks.__FN__
-    expect(second.start).toBeGreaterThan(first.end + 20)
-    // Only the kind that needed it.
-    expect(
-      (blockRequests().at(-1)!.body!.requests as { base: string }[]).map((x) => x.base)
-    ).toEqual(['__FN__'])
+    expect(loadReserved(mapPath())!.blocks.__FN__).toEqual(first)
+    expect(blockRequests()).toHaveLength(asked)
   })
 
   it('a personal map reserves nothing', async () => {
