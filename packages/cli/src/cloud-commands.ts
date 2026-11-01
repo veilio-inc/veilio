@@ -24,7 +24,12 @@ import {
 } from './cloud.js'
 import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { ensureBlocks } from './client/blocks.js'
-import { localDroppedNote, outOfRangeNote, reservationRefusedSentence } from './reservations.js'
+import {
+  localDroppedNote,
+  outOfRangeNote,
+  reservationRefusedSentence,
+  unvouchedNote,
+} from './reservations.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
   readTeamUnlock,
@@ -586,10 +591,11 @@ export async function runMapsPull(
 ): Promise<number> {
   const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
   if (!pulled.ok) return refused(pulled.refusal, io)
-  const { name, count, path, blocks, localDropped, outOfRange } = pulled.value
+  const { name, count, path, blocks, localDropped, outOfRange, unvouched } = pulled.value
   io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
   if (localDropped) io.stdout(`veilio: ${localDroppedNote(localDropped)}\n`)
   if (outOfRange) io.stdout(`veilio: ${outOfRangeNote(outOfRange)}\n`)
+  if (unvouched) io.stdout(`veilio: ${unvouchedNote(unvouched)}\n`)
   // Spec 063: what the guard will number new names from.
   if (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length)
     io.stdout(
@@ -1027,6 +1033,7 @@ export async function teamLayerFor(
   note: string | null
   refused?: string
   misattributed?: string[]
+  unissued?: string[]
 }> {
   // Signed out, the resolver answers 'local' without a request. At most 5 s: a
   // hung instance must not stall a `... | veilio restore > file` pipeline.
@@ -1034,7 +1041,12 @@ export async function teamLayerFor(
   if (found.status === 'refused')
     return { team: null, note: null, refused: renderRefusal(found.refusal) }
   if (found.status === 'team' && found.conflictDetection)
-    return { team: found.analysis, note: null, misattributed: found.misattributed ?? [] }
+    return {
+      team: found.analysis,
+      note: null,
+      misattributed: found.misattributed ?? [],
+      unissued: found.unissued ?? [],
+    }
   return { team: null, note: teamLayerNote(found, missing) }
 }
 
@@ -1075,6 +1087,7 @@ export async function teamNamespaceForScrub(
         const r = await reservePlaceholders(credential, teamId, requests, undefined, {
           keys: teamKeyBytes(credential, home, teamId),
           keyVersion: teamKeyVersion(credential, home, teamId),
+          ...(found.reservations ? { reservations: found.reservations } : {}),
         })
         if (r.refused) throw new CloudError('forbidden', r.refused.detail)
         return r.ranges

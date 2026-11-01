@@ -52,7 +52,7 @@ import {
   namespaceLine,
   refreshNamespaceIfStale,
 } from './namespace.js'
-import { misattributedNote, teamLayerNote } from '@veilio-inc/cli/team-namespace'
+import { misattributedNote, teamLayerNote, unissuedNote } from '@veilio-inc/cli/team-namespace'
 import {
   contestedNote,
   ownWithAliases,
@@ -518,9 +518,16 @@ export const TOOLS: ToolDefinition[] = [
       const layers = restoreLayers({ own, team })
       // Spec 063: a number another member reserved is left with its own reason.
       const misattributed = team && found.status === 'team' ? (found.misattributed ?? []) : []
+      // Round 4 (D): above every number the server issued for its kind.
+      const unissued = team && found.status === 'team' ? (found.unissued ?? []) : []
       const disputedAll = layers.disputedIn(text)
       const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
-      const disputed = disputedAll.filter((p) => !misattributed.includes(p))
+      const notIssued = disputedAll.filter(
+        (p) => unissued.includes(p) && !misattributed.includes(p)
+      )
+      const disputed = disputedAll.filter(
+        (p) => !misattributed.includes(p) && !unissued.includes(p)
+      )
       const localOnly = layers.locallyNumberedIn(text)
       // Spec 066 R5: another checkout numbered these while it held no team numbers.
       const otherLocal = layers.otherLocalIn(text)
@@ -539,6 +546,7 @@ export const TOOLS: ToolDefinition[] = [
             !disputed.includes(p) &&
             !localOnly.includes(p) &&
             !otherMembers.includes(p) &&
+            !notIssued.includes(p) &&
             !contested.includes(p) &&
             !otherLocal.includes(p)
         ),
@@ -549,6 +557,7 @@ export const TOOLS: ToolDefinition[] = [
         ...report.unresolved,
         ...disputed,
         ...otherMembers,
+        ...notIssued,
         ...contested,
         ...localOnly,
         ...otherLocal,
@@ -559,6 +568,7 @@ export const TOOLS: ToolDefinition[] = [
         ...(note ? [`WARNING: ${note}`] : []),
         ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
         ...(otherMembers.length ? [`WARNING: ${misattributedNote(otherMembers)}`] : []),
+        ...(notIssued.length ? [`WARNING: ${unissuedNote(notIssued)}`] : []),
         ...(contested.length ? [`WARNING: ${contestedNote(contested)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),

@@ -189,15 +189,17 @@ describe('a hashed base and the numbers the team already holds', () => {
     expect(b.ranges[0]!.start).toBeGreaterThan(500)
   })
 
-  it('a block an older CLI reserved under the plain base floors the hashed one', async () => {
+  // Round 4: a rule's plain-base reservations exist only from before hashing,
+  // on staging. They floor nothing, and the plain base is never asked for.
+  it('a block an older CLI reserved under the plain base floors nothing', async () => {
     cloud.reservations.push({ base: '__CODENAME__', start: 1, end: 500, member: 'old-cli' })
     const r = await reservePlaceholders(credential, TEAM_ID, ask(), undefined, {
       keys: [TEAM_RAW],
       keyVersion: 1,
     })
-    expect(r.ranges[0]!.start).toBeGreaterThan(500)
-    // The plain base is read from the listing, never sent.
+    expect(r.ranges[0]!.start).toBe(1)
     expect(sent()).not.toMatch(/CODENAME/)
+    for (const q of cloud.requests) expect(q.query.toString()).not.toMatch(/CODENAME/)
   })
 
   it('the reservations a caller already holds are used, not fetched again', async () => {

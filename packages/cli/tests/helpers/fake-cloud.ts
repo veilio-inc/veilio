@@ -133,6 +133,15 @@ export class FakeCloud {
   recordsReservations = false
   /** This account's id, as the reservations record it. */
   memberId = 'u-me'
+  /** Round 4 (D): the server answers a `partial: true` reserve per base, a
+   *  refused base as `{ base, refused, message }`. Off: the old 400 for all. */
+  partialReserve = true
+  /** Bases the server refuses whatever their floor: per base under
+   *  `partial`, else the old 400 naming the first. */
+  refuseBases = new Set<string>()
+  /** Round 4 (E): the listing honours `?bases=` and says each base's highest.
+   *  Off: an older server, which ignores the parameter. */
+  filteredListing = true
   /** An account id for an owner address: this account's, or `u-<local part>`. */
   idOf(owner: string): string {
     return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
@@ -474,10 +483,25 @@ export class FakeCloud {
         })
       // Cloud 450a93ce: numbers stop at 1e8, and a floor more than 10000
       // above the base's counter is refused.
-      for (const { base, floor } of asked)
-        if (floor > 1e8 || floor > (this.counters.get(base) ?? 0) + 10_000)
-          return json(400, { error: `the floor for ${base} is too far above the team's numbers` })
+      const tooFar = (base: string, floor: number) =>
+        this.refuseBases.has(base) || floor > 1e8 || floor > (this.counters.get(base) ?? 0) + 10_000
+      const partial = body?.partial === true && this.partialReserve
+      // Cloud 86772272: refused as a whole, the 400 lists every refused base.
+      const refusal = (base: string) => ({
+        base,
+        refused: 'floor_too_far',
+        message: `the floor for ${base} is too far above the team's numbers`,
+      })
+      if (!partial) {
+        const refused = asked.filter(({ base, floor }) => tooFar(base, floor))
+        if (refused.length)
+          return json(400, {
+            error: refused[0]!.base + ": the floor is too far above the team's numbers",
+            refused: refused.map(({ base }) => refusal(base)),
+          })
+      }
       const ranges = asked.map(({ base, count: wanted, floor }) => {
+        if (tooFar(base, floor)) return refusal(base)
         const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
         this.counters.set(base, start + count - 1)
@@ -489,6 +513,22 @@ export class FakeCloud {
     if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
       // An instance from before spec 063 has no such route.
       if (!this.recordsReservations) return json(404, { error: 'Not found' })
+      const bases = q.get('bases')
+      if (bases !== null && this.filteredListing) {
+        // Cloud 86772272: 1-50 bases; `highest` is the greater of the counter
+        // and the highest run end, 0 for a base with none, never truncated.
+        const wanted = [...new Set(bases.split(','))]
+        if (wanted.length < 1 || wanted.length > 50)
+          return json(400, { error: 'between 1 and 50 bases' })
+        const rows = this.reservations.filter((r) => wanted.includes(r.base))
+        const highest: Record<string, number> = {}
+        for (const b of wanted)
+          highest[b] = Math.max(
+            this.counters.get(b) ?? 0,
+            ...rows.filter((r) => r.base === b).map((r) => r.end)
+          )
+        return json(200, { reservations: rows, truncated: [], highest, next: null })
+      }
       return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {

@@ -27,6 +27,7 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  isEngineBase,
   isSaneBlock,
   parseVaultEnvelope,
   LOCAL_PREFIX,
@@ -36,7 +37,7 @@ import {
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
-import { servedAs, teamKeyBytes, teamKeyVersion } from '../hashed-bases.js'
+import { servedAs, teamKeyBytes, teamKeyVersion, wireBase } from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -45,10 +46,12 @@ import {
   getPersonalMapsKeyWrap,
   listMaps,
   listProjects,
+  readReservationsFor,
   reservePlaceholders,
   updateMapContent,
   type CloudMap,
   type CloudMapList,
+  type PlaceholderReservation,
 } from '../cloud.js'
 import {
   addAliases,
@@ -65,7 +68,7 @@ import { readCredential, type Credential } from '../credential.js'
 import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
 import { readTeamUnlock } from '../team-unlock.js'
-import { describeMaps, resolveTeamNamespace } from '../team-namespace.js'
+import { describeMaps, resolveTeamNamespace, vouchNumbers } from '../team-namespace.js'
 import {
   importPersonalMapsKey,
   readPersonalMapsKey,
@@ -353,6 +356,8 @@ export async function pullCloudMap(
     localDropped?: number
     /** Keys numbered above 1e8: kept, never numbered after (security audit). */
     outOfRange?: number
+    /** Round 4 (D): keys outside every run the server issued: no floor. */
+    unvouched?: number
   }>
 > {
   const credential = signedIn(ctx)
@@ -448,9 +453,32 @@ export async function pullCloudMap(
     force: true,
     remote: { id: remote.id, updatedAt: remote.updated_at, pulledAt: new Date().toISOString() },
   })
+  // Round 4 (D): the map's numbers, judged against the runs the server
+  // issued for their bases - one listing, which the block's floor reuses.
+  let listed: PlaceholderReservation[] | null | undefined
+  let unvouched = 0
+  if (teamId) {
+    const keys = teamKeyBytes(credential, ctx.home, teamId)
+    const bases = new Set(
+      Object.keys(map).flatMap((p) => /^(__[A-Z][A-Z0-9_]*__)\d+$/.exec(p)?.[1] ?? [])
+    )
+    const names = [...bases].flatMap((b) =>
+      isEngineBase(b) ? [b] : keys.map((k) => wireBase(b, k))
+    )
+    if (names.length) {
+      try {
+        listed = (await readReservationsFor(credential, teamId, names))?.reservations ?? null
+      } catch {
+        // unreachable: the block's own call reports it
+      }
+      if (listed) unvouched = vouchNumbers([map], listed, keys).unvouched
+    }
+  }
   // Spec 063: a team map comes with a block of the team's numbers, so the
   // guard numbers where no teammate can. A refusal there does not undo the pull.
-  const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath, ctx.home) : undefined
+  const blocks = teamId
+    ? await ensureBlocks(credential, teamId, opts.mapPath, ctx.home, listed)
+    : undefined
   const outOfRange = Object.keys(map).filter(
     (p) => Number(/\d+$/.exec(p)?.[0] ?? 0) > MAX_PLACEHOLDER_NUMBER
   ).length
@@ -462,6 +490,7 @@ export async function pullCloudMap(
     ...(blocks ? { blocks } : {}),
     ...(localKeys.length ? { localDropped: localKeys.length } : {}),
     ...(outOfRange ? { outOfRange } : {}),
+    ...(unvouched ? { unvouched } : {}),
   })
 }
 
@@ -610,9 +639,12 @@ async function renumberUnreserved(
       const r = await reservePlaceholders(credential, found.teamId, asked, undefined, {
         keys,
         keyVersion: teamKeyVersion(credential, home, found.teamId),
+        ...(found.reservations ? { reservations: found.reservations } : {}),
       })
       if (r.refused) return refuseNumbers(r.refused.detail)
       ranges = r.ranges
+      // Round 4 (D): the floor the server was sent, once vouched.
+      for (const a of asked) a.floor = r.floors?.[a.base] ?? a.floor
     } catch (err) {
       return refuseNumbers(err instanceof Error ? err.message : String(err))
     }

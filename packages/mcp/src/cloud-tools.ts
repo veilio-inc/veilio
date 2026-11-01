@@ -42,6 +42,7 @@ import { resolveMapPath } from '@veilio-inc/cli/store'
 import {
   localDroppedNote,
   outOfRangeNote,
+  unvouchedNote,
   reservationRefusedSentence,
 } from '@veilio-inc/cli/reservations'
 import { PRODUCT_NAME } from '@veilio-inc/engine'
@@ -158,10 +159,11 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         return refusalResult(refusal('destructive_off'))
       return answered(
         pulled,
-        ({ name, count, path, blocks, localDropped, outOfRange }) =>
+        ({ name, count, path, blocks, localDropped, outOfRange, unvouched }) =>
           `Pulled "${name}" (${count} symbols) into ${path}` +
           (localDropped ? `\nNote: ${localDroppedNote(localDropped)}` : '') +
           (outOfRange ? `\nNote: ${outOfRangeNote(outOfRange)}` : '') +
+          (unvouched ? `\nNote: ${unvouchedNote(unvouched)}` : '') +
           // Spec 063: the numbers this member's guard will mint new names from.
           (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length
             ? `\nReserved team numbers for new names: ${Object.entries(blocks.blocks)

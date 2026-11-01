@@ -213,6 +213,25 @@ export function outOfRangeNote(n: number): string {
   )
 }
 
+/** Said by `maps pull` (CLI and MCP) when the map held numbers no run the
+ *  server issued vouches for (round 4). */
+export function unvouchedNote(n: number): string {
+  return (
+    `${n} placeholder${n === 1 ? '' : 's'} in this map ${n === 1 ? 'is' : 'are'} numbered outside every run of numbers the server issued: ` +
+    `kept, but never a floor for new numbers, and restore leaves ${n === 1 ? 'one' : 'any'} above the highest number issued for its kind.`
+  )
+}
+
+/** Said by restore (CLI and MCP) for placeholders above every number the
+ *  server issued for their kind (round 4). */
+export function unissuedNote(placeholders: readonly string[]): string {
+  const one = placeholders.length === 1
+  return (
+    `left as is: ${placeholders.join(', ')}. ${one ? 'Its number is' : 'Their numbers are'} above every number the server ` +
+    `has issued for ${one ? 'its' : 'their'} kind, so no reservation vouches for ${one ? 'it' : 'them'} and restoring would be a guess.`
+  )
+}
+
 /** Said by `maps pull` (CLI and MCP) when a team map held local-family keys. */
 export function localDroppedNote(n: number): string {
   return (

@@ -38,6 +38,7 @@ import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import {
   contestedNote,
   misattributedNote,
+  unissuedNote,
   ownWithAliases,
   ignoredKeysNote,
   reservationRefusedSentence,
@@ -377,6 +378,8 @@ export type TeamLayerSource = (missing: readonly string[]) => Promise<{
   refused?: string
   /** Spec 063: placeholders whose number another member reserved. */
   misattributed?: string[]
+  /** Round 4 (D): placeholders above every number the server issued for their kind. */
+  unissued?: string[]
 }>
 
 export async function runRestore(
@@ -402,6 +405,7 @@ export async function runRestore(
   let team: TeamLayer | null = null
   let teamNote: string | null = null
   let misattributed: string[] = []
+  let unissued: string[] = []
   if (hasPlaceholders && teamLayer) {
     const found = await teamLayer(unexplained)
     if (found.refused) {
@@ -411,6 +415,7 @@ export async function runRestore(
     team = found.team
     teamNote = found.note
     misattributed = found.misattributed ?? []
+    unissued = found.unissued ?? []
   }
 
   if (Object.keys(own).length === 0 && !team && !teamNote) {
@@ -427,7 +432,8 @@ export async function runRestore(
   // left with its own reason, apart from the maps disputing one.
   const disputedAll = layers.disputedIn(source)
   const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
-  const disputed = disputedAll.filter((p) => !misattributed.includes(p))
+  const notIssued = disputedAll.filter((p) => unissued.includes(p) && !misattributed.includes(p))
+  const disputed = disputedAll.filter((p) => !misattributed.includes(p) && !unissued.includes(p))
   const localOnly = layers.locallyNumberedIn(source)
   // Spec 066 R5: another checkout numbered these while it held no team numbers.
   const otherLocal = layers.otherLocalIn(source)
@@ -450,6 +456,7 @@ export async function runRestore(
       !disputed.includes(p) &&
       !localOnly.includes(p) &&
       !otherMembers.includes(p) &&
+      !notIssued.includes(p) &&
       !contested.includes(p) &&
       !otherLocal.includes(p)
   )
@@ -464,6 +471,7 @@ export async function runRestore(
     ...unresolved,
     ...disputed,
     ...otherMembers,
+    ...notIssued,
     ...contested,
     ...localOnly,
     ...otherLocal,
@@ -476,6 +484,7 @@ export async function runRestore(
   if (teamNote) io.stderr(`${BIN_NAME}: ${teamNote}\n`)
   if (disputed.length > 0) io.stderr(`${BIN_NAME}: ${disputedNote(disputed)}\n`)
   if (otherMembers.length > 0) io.stderr(`${BIN_NAME}: ${misattributedNote(otherMembers)}\n`)
+  if (notIssued.length > 0) io.stderr(`${BIN_NAME}: ${unissuedNote(notIssued)}\n`)
   if (contested.length > 0) io.stderr(`${BIN_NAME}: ${contestedNote(contested)}\n`)
   if (localOnly.length > 0) io.stderr(`${BIN_NAME}: ${locallyNumberedNote(localOnly)}\n`)
   if (otherLocal.length > 0) io.stderr(`${BIN_NAME}: ${localFamilyNote(otherLocal)}\n`)

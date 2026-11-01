@@ -7,7 +7,7 @@
 // highest number of a kind and never into a gap below it.
 
 import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
-import { reservePlaceholders, CloudError } from '../cloud.js'
+import { reservePlaceholders, CloudError, type PlaceholderReservation } from '../cloud.js'
 import { teamKeyBytes, teamKeyVersion } from '../hashed-bases.js'
 import type { Credential } from '../credential.js'
 import { loadMap } from '../store.js'
@@ -49,7 +49,10 @@ export async function ensureBlocks(
   teamId: string,
   mapPath: string,
   /** Where the team keys are: a rule's base is reserved under its hash. */
-  home?: string
+  home?: string,
+  /** The team's reservations of the map's bases, when the caller listed
+   *  them; null when the instance keeps no record. */
+  reservations?: PlaceholderReservation[] | null
 ): Promise<BlocksOutcome> {
   let held: ReservedFile | null
   try {
@@ -102,7 +105,12 @@ export async function ensureBlocks(
   let refused: { bases: string[]; detail: string } | undefined
   if (need.length) {
     try {
-      ;({ ranges, refused } = await reservePlaceholders(
+      let sent: Record<string, number> | undefined
+      ;({
+        ranges,
+        refused,
+        floors: sent,
+      } = await reservePlaceholders(
         credential,
         teamId,
         need.map((base) => ({ base, count: 1, floor: floors[base] ?? 0 })),
@@ -111,8 +119,11 @@ export async function ensureBlocks(
           block: true,
           keys: teamKeyBytes(credential, home, teamId),
           keyVersion: teamKeyVersion(credential, home, teamId),
+          ...(reservations !== undefined ? { reservations } : {}),
         }
       ))
+      // Round 4 (D): the floor the server was sent, once vouched.
+      Object.assign(floors, sent ?? {})
     } catch (err) {
       const retry = err instanceof CloudError ? err.body?.retry_at : undefined
       const nextAt =

@@ -205,16 +205,18 @@ describe('the server caps numbers at 1e8 (Cloud 450a93ce)', () => {
     expect(floorsWith({}, { __FN__100000001: 'pasted' }).__FN__ ?? 0).toBe(0)
   })
 
-  it('a pasted __FN__99999999: the floor the server refuses falls back to the local family, visibly', async () => {
+  // Round 4 (D): a number no run the server issued vouches for floors
+  // nothing; a base never reserved keeps at most 10000 of it.
+  it('a pasted __FN__99999999 is unvouched: it floors nothing, and the block is reserved', async () => {
     const { ensureBlocks } = await import('../src/client/blocks.js')
     saveMap(mapPath(), { __FN__99999999: 'pasted' }, { force: true })
     const outcome = await ensureBlocks(credential, TEAM, mapPath(), home)
-    expect(outcome).toMatchObject({ status: 'failed', tag: expect.stringMatching(/^[A-Z0-9]{6}$/) })
+    expect(outcome).toMatchObject({ status: 'reserved' })
     for (const body of reserveBodies())
-      for (const r of body.requests) expect(r.floor).toBeLessThanOrEqual(1e8)
+      for (const r of body.requests) expect(r.floor).toBeLessThanOrEqual(10_000)
     const file = loadReserved(mapPath())!
-    expect(file.refused).toBeDefined()
-    expect(file.blocks.__FN__).toBeUndefined()
+    expect(file.refused).toBeUndefined()
+    expect(file.blocks.__FN__!.start).toBeLessThanOrEqual(10_001)
   })
 
   it('no block reaching past 1e8 is trusted', async () => {

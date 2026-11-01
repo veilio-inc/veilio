@@ -578,10 +578,16 @@ export async function reservePlaceholders(
     /** The newest key's version (`teamKeyVersion`): a rule base is reserved
      *  only while the server's current version is this one. */
     keyVersion?: number
-    /** The team's reservations, when the caller has already read them. */
-    reservations?: readonly PlaceholderReservation[]
+    /** The team's reservations, when the caller has already read them;
+     *  null when it asked and the instance keeps no record (404). */
+    reservations?: readonly PlaceholderReservation[] | null
   } = {}
-): Promise<{ ranges: PlaceholderRange[]; refused?: { bases: string[]; detail: string } }> {
+): Promise<{
+  ranges: PlaceholderRange[]
+  refused?: { bases: string[]; detail: string }
+  /** The floor sent per real base, once vouched (round 4): a run must start above it. */
+  floors?: Record<string, number>
+}> {
   const key = options.keys?.[0]
   for (const { base, count } of requests) {
     if (!PLACEHOLDER_BASE.test(base)) {
@@ -604,10 +610,11 @@ export async function reservePlaceholders(
   // Security review: the server counts per (team, base), so a rule base's
   // numbers reserved under its plain name (an older CLI) or an older key's
   // hash (before a rotation) are invisible to this hash's counter. Floored
-  // above every sane reservation under the plain base or its hash under any
-  // key version held here - never another hash, so one rule's (or a hostile
-  // teammate's) huge block cannot floor every other base. No old key held:
-  // the map's floor only. No listing, no reservation for a rule base.
+  // above every sane reservation under its hash under any key version held
+  // here - never its plain name (round 4: those exist only from before
+  // hashing, on staging) and never another hash, so one rule's (or a hostile
+  // teammate's) huge block cannot floor every other base. No listing, no
+  // reservation for a rule base.
   // Security review (Cloud 809444d0): a rule base is hashed under the newest
   // key held here, and only while the server's current version is that one.
   // A server reporting an older one (a downgrade), a newer one or none gets
@@ -627,39 +634,184 @@ export async function reservePlaceholders(
           ),
       }
   }
-  const asked = refused ? requests.filter((r) => isEngineBase(r.base)) : requests
+  const refusedBases = new Set(refused?.bases ?? [])
+  const refuse = (base: string, detail: string) => {
+    refusedBases.add(base)
+    refused = {
+      bases: [...refusedBases],
+      detail: (refused ? `${refused.detail}; ${detail}` : detail).slice(0, 200),
+    }
+  }
+  const asked = requests.filter((r) => !refusedBases.has(r.base))
   if (asked.length === 0) return { ranges: [], refused }
-  const hashed = asked.some((r) => !isEngineBase(r.base))
-  const held = hashed
-    ? (options.reservations ?? (await readReservations(credential, teamId, signal)))
-    : []
+  // The names a base is listed under: as written for an engine base; a rule
+  // base only under its hash with each held key version, never in plain text
+  // - a rule's plain reservations exist only from before hashing, on staging.
+  const servedNames = (base: string) =>
+    isEngineBase(base) ? [base] : (options.keys ?? []).map((k) => wireBase(base, k))
+  // Round 4 (D): a floor counts only numbers the server issued. One no known
+  // run vouches for (a map holding a planted __VAR__60000) is checked against
+  // the team's listing for its base; still unvouched, it falls to the base's
+  // highest issued number - a no-op, the counter is there already - or, for a
+  // base never reserved, to at most 10000: the server's own margin, so a map
+  // numbered before the team existed still floors its first run.
+  const known = options.reservations ?? []
+  const unrecorded = options.reservations === null
+  const vouches = (rows: readonly PlaceholderReservation[], names: string[], n: number) =>
+    rows.some((h) => names.includes(h?.base) && isSaneBlock(h) && n >= h.start && n <= h.end)
+  const topOf = (rows: readonly PlaceholderReservation[], names: string[]) =>
+    Math.max(0, ...rows.filter((h) => names.includes(h?.base) && isSaneBlock(h)).map((h) => h.end))
+  const unsure = asked.filter((r) => {
+    const names = servedNames(r.base)
+    if (!isEngineBase(r.base) && !options.reservations && !unrecorded) return true
+    return r.floor > topOf(known, names) && !vouches(known, names, r.floor)
+  })
+  // An instance that keeps no record (404) vouches for nothing and refuses
+  // nothing for it: floors stay as the maps say, as before spec 063.
+  const listing =
+    unsure.length && !unrecorded
+      ? await readReservationsFor(
+          credential,
+          teamId,
+          unsure.flatMap((r) => servedNames(r.base)),
+          signal
+        )
+      : null
+  if (listing === null && asked.some((r) => !isEngineBase(r.base)) && (unsure.length || unrecorded))
+    await readReservations(credential, teamId, signal) // throws: no listing, no rule base
+  const listed = listing ?? { reservations: [], highest: {}, truncated: [] }
   const real = new Map<string, string>()
-  const wire = asked.map((r) => {
+  let wire = asked.map((r) => {
     const sent = key ? wireBase(r.base, key) : r.base
     real.set(sent, r.base)
+    const names = servedNames(r.base)
     let floor = r.floor
-    if (!isEngineBase(r.base)) {
-      const names = new Set([r.base, ...(options.keys ?? []).map((k) => wireBase(r.base, k))])
-      for (const h of held) if (names.has(h?.base) && isSaneBlock(h)) floor = Math.max(floor, h.end)
-    }
+    const rows = unsure.includes(r) ? listed.reservations : known
+    const top = Math.max(topOf(rows, names), ...names.map((n) => listed.highest[n] ?? 0))
+    if (listing && unsure.includes(r) && !vouches(rows, names, floor))
+      floor = top > 0 ? Math.min(floor, top) : Math.min(floor, 10_000)
+    // Security review: a rule base's numbers reserved under an older key's
+    // hash are another counter: floored above every one of them.
+    if (!isEngineBase(r.base)) floor = Math.max(floor, top)
     return { ...r, base: sent, floor }
   })
-  const answer = await request<{ ranges: PlaceholderRange[] }>(
-    `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
-    {
-      credential,
-      method: 'POST',
-      // Spec 063: a block, whose size the server sets, for the guard to number in offline.
-      body: options.block ? { requests: wire, block: true } : { requests: wire },
-      signal,
+  // Round 4 (D): the server answers per base with `partial: true`. One that
+  // answers all or nothing (an older server) and names the base it refuses
+  // is asked again without it; that base alone falls to the local family.
+  let answer: { ranges: (PlaceholderRange & { refused?: string; message?: string })[] } | null =
+    null
+  while (wire.length > 0) {
+    try {
+      answer = await request<{
+        ranges: (PlaceholderRange & { refused?: string; message?: string })[]
+      }>(`/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`, {
+        credential,
+        method: 'POST',
+        // Spec 063: a block, whose size the server sets, for the guard to number in offline.
+        body: { requests: wire, ...(options.block ? { block: true } : {}), partial: true },
+        signal,
+      })
+      break
+    } catch (err) {
+      // Cloud 86772272: the 400 lists the refused bases; an older one only
+      // names one in its message.
+      const said = err instanceof CloudError && err.status === 400 ? err.message : ''
+      const body = err instanceof CloudError ? err.body : undefined
+      const listedRefused: unknown[] = said && Array.isArray(body?.refused) ? body.refused : []
+      const refusedNames = listedRefused.map((x: unknown) =>
+        typeof x === 'string' ? x : (x as { base?: unknown })?.base
+      )
+      const named = said
+        ? wire.filter((w) => refusedNames.includes(w.base) || said.includes(w.base))
+        : []
+      if (named.length === 0) throw err
+      for (const w of named) refuse(real.get(w.base)!, printableDetail(said))
+      wire = wire.filter((w) => !named.includes(w))
     }
-  )
+  }
+  const floors = Object.fromEntries(wire.map((w) => [real.get(w.base)!, w.floor]))
+  if (!answer) return { ranges: [], refused, floors }
   // Read back under the real base; a base the request did not send stays as
-  // served, and the caller's check refuses it.
+  // served, and the caller's check refuses it. A refused base is no range.
   const ranges = Array.isArray(answer?.ranges)
-    ? answer.ranges.map((r) => ({ ...r, base: real.get(r?.base) ?? r?.base }))
+    ? answer.ranges.flatMap((r) => {
+        const base = real.get(r?.base) ?? r?.base
+        if (r && typeof r.refused === 'string') {
+          refuse(base, printableDetail(`${base}: ${r.message ?? r.refused}`))
+          return []
+        }
+        return [{ ...r, base }]
+      })
     : answer?.ranges
-  return { ...answer, ranges, ...(refused ? { refused } : {}) }
+  return { ...answer, ranges, floors, ...(refused ? { refused } : {}) }
+}
+
+/** A server's words, as a refusal's detail: one line, no control characters. */
+function printableDetail(text: string): string {
+  // eslint-disable-next-line no-control-regex -- matching them is the point
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?').slice(0, 200)
+}
+
+/**
+ * Round 4 (E): the team's reservations of these bases only - the server
+ * answers `?bases=` with every row of each, never cut short for one, and each
+ * base's `highest`. An older server ignores the parameter or refuses it (400):
+ * the whole listing then, read here and filtered, as before. Null: the
+ * instance keeps no record of reservations (404).
+ */
+export async function readReservationsFor(
+  credential: Credential,
+  teamId: string,
+  bases: readonly string[],
+  signal?: AbortSignal
+): Promise<{
+  reservations: PlaceholderReservation[]
+  highest: Record<string, number>
+  /** Bases whose rows the server cut short; their `highest` still stands. */
+  truncated: string[]
+} | null> {
+  const wanted = [...new Set(bases)]
+  const rows: PlaceholderReservation[] = []
+  let highest: Record<string, number> = {}
+  const truncated: string[] = []
+  try {
+    // At most 50 bases a request (Cloud 86772272).
+    for (let i = 0; i < wanted.length; i += 50) {
+      const chunk = wanted.slice(i, i + 50)
+      let after = 0
+      for (let page = 0; ; page++) {
+        if (page >= 1000)
+          throw new CloudError('server', "the team's reservations did not end after 1000 pages")
+        const r = await request<{
+          reservations: PlaceholderReservation[]
+          highest?: Record<string, number>
+          truncated?: string[]
+          next: number | null
+        }>(
+          `/api/teams/${encodeURIComponent(teamId)}/placeholders/reservations?bases=${encodeURIComponent(chunk.join(','))}&limit=1000&after=${after}`,
+          { credential, signal }
+        )
+        if (Array.isArray(r?.reservations)) rows.push(...r.reservations)
+        if (r?.highest && typeof r.highest === 'object') highest = { ...highest, ...r.highest }
+        if (Array.isArray(r?.truncated)) truncated.push(...r.truncated)
+        if (typeof r?.next !== 'number') break
+        after = r.next
+      }
+    }
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404) return null
+    if (!(err instanceof CloudError && err.status === 400)) throw err
+    rows.splice(0, rows.length, ...(await readReservations(credential, teamId, signal)))
+    highest = {}
+  }
+  const sane = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 1e8
+  return {
+    reservations: rows.filter((r) => wanted.includes(r?.base)),
+    highest: Object.fromEntries(
+      Object.entries(highest).filter(([b, n]) => wanted.includes(b) && sane(n))
+    ),
+    truncated: truncated.filter((b) => wanted.includes(b)),
+  }
 }
 
 /** One run of the team's numbers and the member who reserved it (spec 063). */

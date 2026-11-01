@@ -230,6 +230,26 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(r.text).not.toContain('chargeCard')
   })
 
+  // Round 4 (D, E): the pull lists the map's bases to vouch for its numbers;
+  // a rule base goes only as its hash, in the URL as in any body.
+  it('maps_pull never sends a rule base in plain text, the listing included', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.usedVersions = 1
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'shared',
+      map_data: await sealTeam({ __CODENAME__3: 'Falcon', __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(cloud.requests.some((q) => q.query.get('bases') !== null)).toBe(true)
+    const sent = cloud.requests.map((q) => `${q.path}?${q.query} ${q.raw}`).join('\n')
+    expect(sent).not.toMatch(/CODENAME/)
+    expect(sent).toMatch(/partial/)
+  })
+
   it('maps_pull of a team map whose block is refused still pulls, and says new names are numbered here', async () => {
     signIn(home, { team: true })
     cloud.blocksRefused = true

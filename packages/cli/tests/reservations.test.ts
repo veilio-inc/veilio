@@ -136,9 +136,11 @@ describe('the Cloud calls', () => {
       }
     )
     expect(r.ranges[0]).toEqual({ base: '__FN__', start: 1, end: 500 })
+    // Round 4 (D): every reserve asks for a per-base answer.
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
       requests: [{ base: '__FN__', count: 1, floor: 0 }],
       block: true,
+      partial: true,
     })
   })
 
