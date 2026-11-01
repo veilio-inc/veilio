@@ -275,7 +275,7 @@ export const FLAGS: readonly FlagSpec[] = [
     short: '-m',
     value: '<path>',
     help: 'Use a specific map file',
-    commands: ['scrub', 'restore', 'map', 'maps pull', 'maps push', 'maps update'],
+    commands: ['scrub', 'restore', 'map', 'maps pull', 'maps push', 'maps update', 'team unlock'],
     field: 'mapPath',
   },
   {

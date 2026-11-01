@@ -179,6 +179,71 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(r.text).not.toContain('Ledger')
   })
 
+  it('restore_text leaves a number another member reserved, naming why, and restores the reserver’s own (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.reservations.push(
+      { base: '__FN__', start: 1, end: 100, member: 'u-bob' },
+      { base: '__FN__', start: 101, end: 200, member: 'u-ada' }
+    )
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__12: 'refund', __FN__150: 'settle' }),
+    })
+    saveMap(mapPath(), { __VAR__1: 'amount' }, { force: true })
+    await primeNamespace(home)
+    const r = callTool('restore_text', { text: 'a(__FN__12) b(__FN__150)' }, ctx)
+    expect(r.text).toContain('a(__FN__12) b(settle)')
+    expect(r.text).toMatch(/reserved by another member/)
+    expect(r.text).not.toContain('refund')
+  })
+
+  it('maps_create renumbers entries outside this member’s reserved numbers instead of refusing them (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__41: 'refund' }),
+    })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const r = await callToolAsync('maps_create', { name: 'mine', scope: 'team' }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Renumbered 1 entry/)
+    expect(Object.keys(loadMap(mapPath()))).not.toContain('__FN__41')
+  })
+
+  it('maps_pull of a team map says which team numbers this member now holds (spec 063)', async () => {
+    signIn(home, { team: true })
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'shared',
+      map_data: await sealTeam({ __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Reserved team numbers for new names: .*__FN__\d+-\d+/)
+    expect(r.text).not.toContain('chargeCard')
+  })
+
+  it('maps_pull of a team map whose block is refused still pulls, and says new names are numbered here', async () => {
+    signIn(home, { team: true })
+    cloud.blocksRefused = true
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      map_data: await sealTeam({ __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Could not reserve team numbers/)
+    expect(loadMap(mapPath())).toEqual({ __FN__40: 'chargeCard' })
+  })
+
   it('maps_pull of a personal map with no personal-maps key: refused, naming `veilio vault unlock`', async () => {
     signIn(home)
     await cloud.withVault()

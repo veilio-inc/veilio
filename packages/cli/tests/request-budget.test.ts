@@ -129,6 +129,16 @@ describe('each command stays within its request budget', () => {
     expect(r.paths.filter((p) => p === 'GET /api/maps')).toHaveLength(1)
   })
 
+  it('maps update (team) that renumbers unreserved entries: at most 4 - one reservation more (spec 063)', async () => {
+    cloud.recordsReservations = true
+    const { mine } = await teamWorld()
+    local({ __CLS__1: 'Ledger', __FN__2: 'settle', __FN__90: 'settleQuayFees' })
+    const r = await measure(['maps', 'update', mine])
+    expect(r.code, r.err).toBe(0)
+    expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(4)
+    expect(r.paths.filter((p) => p.endsWith('/placeholders/reserve'))).toHaveLength(1)
+  })
+
   it('maps push --team: at most 3', async () => {
     await teamWorld()
     local({ __CLS__2: 'Fresh' })

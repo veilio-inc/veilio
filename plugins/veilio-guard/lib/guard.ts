@@ -14,7 +14,10 @@ import { deepRewrite, deepRewritePaths, rewriteFields } from './fields.ts'
 import {
   mergeAdditions,
   parseMapFile,
+  parseReservedFile,
   serialiseMapFile,
+  type Block,
+  type Reserved,
   type StoredMap,
   type SymbolMap,
 } from './mapfile.ts'
@@ -142,7 +145,9 @@ export class Guard {
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
-  counts = { withheld: 0, denied: 0 }
+  counts = { withheld: 0, denied: 0, outsideReserved: 0 }
+  /** Spec 063: this member's blocks of team numbers (.veilio/reserved.json), or why there are none. */
+  reserved: Reserved | null = null
   /** Credentials destroyed this session, in memory only: removed from
    *  everything masked after, under one token each (review of 8aed5e8). */
   readonly destroyed = new Destroyed()
@@ -158,6 +163,15 @@ export class Guard {
     private readonly io: GuardIO,
     private readonly config: GuardConfig
   ) {}
+
+  get reservedPath(): string {
+    return join(this.root, '.veilio', 'reserved.json')
+  }
+
+  /** The blocks to number inside, when the file was read and is sound. */
+  get blocks(): Record<string, Block> | undefined {
+    return this.reserved?.ok ? this.reserved.blocks : undefined
+  }
 
   get mapPath(): string {
     return join(this.root, '.veilio', 'map.json')
@@ -211,7 +225,15 @@ export class Guard {
         wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
       },
       async (rel, text, language) => {
-        const { additions } = scrubSource(text, { ...this.map, ...this.unsaved }, language)
+        const { additions, outside } = scrubSource(
+          text,
+          { ...this.map, ...this.unsaved },
+          language,
+          undefined,
+          undefined,
+          this.blocks
+        )
+        this.counts.outsideReserved += outside
         grow(this.unsaved, additions)
         this.batch.push(rel)
       },
@@ -394,7 +416,21 @@ export class Guard {
     if (settings.enabled === false) this.state = 'off'
   }
 
+  /** Spec 063: read the member's blocks. Never fatal: without them the guard numbers as it always did. */
+  async reloadReserved(): Promise<void> {
+    if (!(await this.io.exists(this.reservedPath))) {
+      this.reserved = null
+      return
+    }
+    try {
+      this.reserved = parseReservedFile(await this.io.read(this.reservedPath))
+    } catch (err) {
+      this.reserved = { ok: false, reason: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   async reloadMap(): Promise<void> {
+    await this.reloadReserved()
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
       return
@@ -798,7 +834,8 @@ export class Guard {
     const shaped = maskShaped(
       applyMap(raw, this.map, ctx, { known: this.destroyed }),
       this.map,
-      ctx
+      ctx,
+      this.blocks
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
@@ -907,7 +944,15 @@ export class Guard {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
             if (field.mode === 'apply') return apply(s)
-            const scrubbed = scrubSource(s, working, languageOf(filePath), ctx.external, fileKind)
+            const scrubbed = scrubSource(
+              s,
+              working,
+              languageOf(filePath),
+              ctx.external,
+              fileKind,
+              this.blocks
+            )
+            this.counts.outsideReserved += scrubbed.outside
             grow(working, scrubbed.additions)
             grow(additions, scrubbed.additions)
             return scrubbed.text
@@ -932,7 +977,7 @@ export class Guard {
         // `status`, or a value deeper down, is masked like any other.
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c)
+          const shaped = maskShaped(t, working, c, this.blocks)
           grow(working, shaped.additions)
           grow(additions, shaped.additions)
           return shaped.text
