@@ -2,14 +2,21 @@
 // per arm, how many sessions fixed the bug, and what it took (turns, cost,
 // tokens, time), against the no-guard arm.
 //
-//   node plugins/veilio-guard/tests/bench/score-bench.mjs <results-dir>
+//   node plugins/veilio-guard/tests/bench/score-bench.mjs <results-dir> [--baseline <text>]
+//
+// --baseline names an earlier run's figures to read the new ones against,
+// printed under the result as given.
 //
 // Pass rate leads. A placeholder costs about as many tokens as the name it
 // hides, so the token count can stay flat while the model does worse.
 import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { ARM_ORDER, byLanguage, teamTable } from './bench-lib.mjs'
 
 const dir = process.argv[2]
+const bi = process.argv.indexOf('--baseline')
+const baselineNote = bi > 0 ? process.argv[bi + 1] : null
 const meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8'))
 const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .split('\n')
@@ -18,7 +25,7 @@ const runs = readFileSync(join(dir, 'results.jsonl'), 'utf8')
   .map((r) => ({ ...r, contextTokens: r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens }))
 
 // From the results, not meta.json: a resumed run can cover more than it began with.
-const arms = ['plain', 'guard-cold', 'guard-warm'].filter((a) => runs.some((r) => r.arm === a))
+const arms = ARM_ORDER.filter((a) => runs.some((r) => r.arm === a))
 const tasks = [...new Set(runs.map((r) => r.task))]
 const reps = Math.max(...runs.map((r) => r.rep))
 const METRICS = [
@@ -41,9 +48,13 @@ const pct = (x) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(0)}%`
 
 // Tasks differ in size, so the guard's overhead is the geometric mean of its
 // per-task ratio to the no-guard arm, not a ratio of pooled medians.
-function pairedRatio(arm, key) {
+function pairedRatio(arm, key, pool = runs) {
+  const among = (a, t) => pool.filter((r) => r.arm === a && r.task === t)
   const ratios = tasks
-    .map((t) => [median(of(arm, t).map((r) => r[key])), median(of('plain', t).map((r) => r[key]))])
+    .map((t) => [
+      median(among(arm, t).map((r) => r[key])),
+      median(among('plain', t).map((r) => r[key])),
+    ])
     .filter(([a, b]) => a != null && b)
     .map(([a, b]) => a / b)
   if (!ratios.length) return null
@@ -62,11 +73,24 @@ if (meta.settings?.enabledPlugins)
     ''
   )
 out.push(
-  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has.',
+  'Arms: **plain** has no guard. **guard-cold** has the guard on an empty map, which grows as Claude reads. **guard-warm** has the guard on a map `veilio scrub` built from the whole repository first, which is what a project already using Veilio has. **guard-team** has the guard on the map a team member pulled from the team, published back after the session. **mcp** has no guard: Claude reads code only through the Veilio MCP server and restores its fix with `veilio restore`. **cli** has no guard: Claude reads code only through `veilio scrub` and restores with `veilio restore`. Both work on the warm map. **mcp-team** and **cli-team** are mcp and cli with the CLI and MCP server signed in as a team member, on the map that member pulled, published back after the session, like guard-team.',
   ''
 )
+if (meta.concurrency > 1)
+  out.push(
+    `Sessions ran ${meta.concurrency} at a time, one arm per wave${meta.team ? `; the team arm's members: ${meta.team.members.join(', ')}` : ''}.`,
+    ''
+  )
 
 out.push('## Result', '')
+// The time box can stop a run inside a group, leaving arms with different
+// tasks behind them: the raw counts are then not like for like.
+const covered = arms.map((a) => of(a).length)
+if (new Set(covered).size > 1)
+  out.push(
+    `_The arms ran different numbers of sessions (${arms.map((a, i) => `${a} ${covered[i]}`).join(', ')}). The percentages pair tasks both arms ran; the "bug fixed" and "What went wrong" counts do not._`,
+    ''
+  )
 out.push(`| | ${arms.join(' | ')} |`, `|---|${arms.map(() => '---').join('|')}|`)
 const passRow = arms.map((a) => {
   const rs = of(a)
@@ -99,6 +123,57 @@ out.push(
   ''
 )
 
+if (baselineNote) out.push(`Read against: ${baselineNote}`, '')
+
+const langs = byLanguage(runs)
+if (Object.keys(langs).length > 1 || !langs.unknown) {
+  out.push('## Per language', '')
+  out.push(`| language | ${arms.map((a) => `${a}: fixed · cost · input`).join(' | ')} |`)
+  out.push(`|---|${arms.map(() => '---').join('|')}|`)
+  for (const [lang, byArm] of Object.entries(langs).sort()) {
+    const pool = Object.values(byArm).flat()
+    const cells = arms.map((a) => {
+      const rs = byArm[a] ?? []
+      if (!rs.length) return '–'
+      const fixed = `${rs.filter((r) => r.passed).length}/${rs.length}`
+      if (a === 'plain') {
+        const c = median(rs.map((r) => r.costUsd))
+        return `${fixed} · ${c == null ? '–' : `$${c.toFixed(3)}`} · ${(median(rs.map((r) => r.contextTokens)) / 1000).toFixed(0)}k`
+      }
+      const rc = pairedRatio(a, 'costUsd', pool)
+      const rt = pairedRatio(a, 'contextTokens', pool)
+      return `${fixed} · ${rc == null ? '–' : pct(rc - 1)} · ${rt == null ? '–' : pct(rt - 1)}`
+    })
+    out.push(`| ${lang} | ${cells.join(' | ')} |`)
+  }
+  out.push(
+    '',
+    'Plain shows its median cost and input; a guarded arm, its paired difference from plain within that language.',
+    ''
+  )
+}
+
+const teamRuns = runs.filter((r) => r.team)
+if (teamRuns.length) {
+  out.push('## The team', '')
+  const t = teamTable(runs)
+  out.push(`| | ${t.arms.join(' | ')} |`, `|---|${t.arms.map(() => '---').join('|')}|`)
+  for (const [label, ...cells] of t.rows) out.push(`| ${label} | ${cells.join(' | ')} |`)
+  out.push('')
+  const wavesPath = join(dir, 'waves.jsonl')
+  if (existsSync(wavesPath)) {
+    const waves = readFileSync(wavesPath, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    const last = waves.findLast((w) => !w.error) ?? {}
+    out.push(
+      `After ${waves.length} team waves the team's ${last.maps != null ? `${last.maps} maps hold` : 'namespace holds'} ${last.placeholders ?? '?'} placeholders: ${last.placeholderTwoNames ?? '?'} naming two different names, and ${last.nameTwoPlaceholders ?? '?'} names under two placeholders (each restores).${last.misattributed != null ? ` ${last.misattributed} numbered by one member and published by another.` : ''} A refused publish keeps its clashes out of these maps; the restore probe above is where they show.`,
+      ''
+    )
+  }
+}
+
 out.push('## What reached the model (spec 050 FR-011)', '')
 out.push(
   'A project name here is one of its distinctive declared names (a variable, function or class name with an inner capital or underscore, four characters or more) found as a whole word in anything the model was sent. A masked keyword is a placeholder the model was sent whose real name is a keyword of a language the repository source is written in.',
@@ -120,6 +195,9 @@ else {
   )
   out.push(
     `| it stopped to ask for the prompt again | ${arms.map((a) => of(a).filter((r) => r.askedAgain).length).join(' | ')} |`
+  )
+  out.push(
+    `| it printed a file past its reading tool (shell one-liner) | ${arms.map((a) => of(a).filter((r) => r.rawReadCalls?.length).length).join(' | ')} |`
   )
   out.push('')
 }
@@ -165,14 +243,15 @@ const baseline = (runs[0]?.plugins ?? [])
   .join(', ')
 for (const r of runs) {
   const guarded = r.plugins.some((p) => /veilio/i.test(p))
-  if (r.arm === 'plain' && guarded)
-    warnings.push(`${r.task} #${r.rep}: plain session loaded the guard`)
-  if (r.arm !== 'plain' && !guarded)
+  const wantsGuard = r.arm.startsWith('guard-')
+  if (!wantsGuard && guarded)
+    warnings.push(`${r.task} ${r.arm} #${r.rep}: an unguarded session loaded the guard`)
+  if (wantsGuard && !guarded)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: guarded session did not list the guard`)
-  if (r.arm !== 'plain' && r.mapAfter === 0)
+  if (r.arm !== 'plain' && r.mapAfter === 0 && wantsGuard)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: the map is empty after the session`)
-  if (r.arm === 'guard-warm' && r.mapBefore === 0)
-    warnings.push(`${r.task} #${r.rep}: guard-warm started on an empty map`)
+  if (r.arm !== 'plain' && r.arm !== 'guard-cold' && r.mapBefore === 0)
+    warnings.push(`${r.task} ${r.arm} #${r.rep}: started on an empty map`)
   // Claude Code loads a few plugins of its own whatever the settings say; what
   // matters is that every session loads the same ones.
   const others = r.plugins
@@ -183,9 +262,18 @@ for (const r of runs) {
     warnings.push(
       `${r.task} ${r.arm} #${r.rep}: other plugins differ (${others || 'none'}, not ${baseline || 'none'})`
     )
-  if (r.mcpServers.length)
+  const mcpArm = r.arm === 'mcp' || r.arm === 'mcp-team'
+  if (mcpArm && (r.mcpStatus ?? []).join() !== 'veilio:connected')
+    warnings.push(
+      `${r.task} ${r.arm} #${r.rep}: the MCP server was not connected (${(r.mcpStatus ?? []).join(', ') || 'none'})`
+    )
+  if (mcpArm ? r.mcpServers.join() !== 'veilio' : r.mcpServers.length)
     warnings.push(`${r.task} ${r.arm} #${r.rep}: MCP servers loaded (${r.mcpServers.join(', ')})`)
   if (r.subtype === 'no-result') warnings.push(`${r.task} ${r.arm} #${r.rep}: no result line`)
+  if (r.rateLimited)
+    warnings.push(
+      `${r.task} ${r.arm} #${r.rep}: ${r.rateLimited} tool result(s) met Cloud's rate limit (429)`
+    )
   if (r.arm !== 'plain' && r.leakedNames?.length)
     warnings.push(
       `${r.task} ${r.arm} #${r.rep}: project names reached the model (${r.leakedNames.slice(0, 5).join(', ')})`
@@ -199,7 +287,7 @@ out.push('## Checks on the run itself', '')
 out.push(
   warnings.length
     ? warnings.map((w) => `- ${w}`).join('\n')
-    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own) and no MCP server, and every guarded session had a map.`
+    : `Every arm was what it says: the guard loaded only where it should, every session loaded the same other plugins (${baseline || 'none'}: Claude Code's own), no MCP server outside the mcp arms (where only Veilio's, connected), and every masked session had a map.`
 )
 out.push('')
 
