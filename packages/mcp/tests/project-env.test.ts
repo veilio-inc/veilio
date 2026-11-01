@@ -210,9 +210,10 @@ describe('the namespace follows the project the variable names NOW, not the name
       { text: 'export class SkerryZeta {}' },
       ctxWith(env)
     )
-    expect(inside.text).toContain('__CLS__6')
     // SkerryZeta is __CLS__5 in the NEW project. Under the old project's namespace
-    // (TarnGamma is __CLS__5) it would be numbered above it: __CLS__6.
+    // it is a new name, numbered locally: this checkout holds no block (spec 066).
+    expect(inside.text).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__1/)
+    expect(inside.text).not.toContain('__CLS__5')
     vi.advanceTimersByTime(1)
     const r = await callToolAsync(
       'anonymize_text',

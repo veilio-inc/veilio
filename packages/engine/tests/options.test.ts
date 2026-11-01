@@ -12,7 +12,8 @@ import type { AnonymizeOptions, RestoreOptions, SymbolMap } from '../src/types.j
 // options, anything else throws.
 
 const CODE = 'class PaymentService { charge(amount) { return amount } }'
-const VALID = 'existingMap, rules, manual, language, secrets, path, root, fileKind'
+const VALID =
+  'existingMap, rules, manual, language, secrets, path, root, fileKind, team, ruleBudget'
 
 /** Call with an object the type system would refuse, as a JS caller can. */
 const loose = (o: object) => o as unknown as AnonymizeOptions
@@ -118,6 +119,7 @@ describe('anonymize still accepts what it accepted', () => {
     ['secrets', 'warn'],
     ['path', 'src/payment.ts'],
     ['root', '/repo'],
+    ['team', { blocks: {}, tag: 'K7Q2XA' }],
   ]
   for (const [key, value] of each) {
     it(`{ ${key} } alone is options`, () => {

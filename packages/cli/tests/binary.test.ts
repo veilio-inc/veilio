@@ -20,8 +20,18 @@ import { tmpdir } from 'node:os'
  */
 const DIST = resolve(import.meta.dirname, '..', 'dist', 'index.js')
 
+// Its own HOME, never the developer's: a signed-in ~/.veilio changes what the
+// CLI does (spec 066 numbers a signed-in account's new names locally), so the
+// test passed on CI and failed on any machine with a credential.
+const HOME = mkdtempSync(join(tmpdir(), 'veilio-binary-home-'))
+const ENV = { ...process.env, HOME, USERPROFILE: HOME }
+// ...and its own working directory: `scrub` saves its map (and, since spec 066,
+// reserved.json) in the project it runs in. Run from the repository, it wrote
+// .veilio/ into the repository root and read it back on the next run.
+const CWD = mkdtempSync(join(tmpdir(), 'veilio-binary-cwd-'))
+
 function run(bin: string, args: string[], input?: string): string {
-  return execFileSync(bin, args, { input: input ?? '', encoding: 'utf8' })
+  return execFileSync(bin, args, { input: input ?? '', encoding: 'utf8', env: ENV, cwd: CWD })
 }
 
 describe('the binary, executed as a binary', () => {
@@ -83,7 +93,13 @@ describe('the binary, executed as a binary', () => {
     const result = spawnSync(
       process.execPath,
       [DIST, 'login', '--instance', 'http://localhost:1'],
-      { input: 'someone@example.com\nhunter2\n', encoding: 'utf8', timeout: 10_000 }
+      {
+        input: 'someone@example.com\nhunter2\n',
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: ENV,
+        cwd: CWD,
+      }
     )
     expect(result.status, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).not.toBe(0)
     expect(result.stderr).not.toMatch(/no password given/)

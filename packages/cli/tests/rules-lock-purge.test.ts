@@ -208,7 +208,7 @@ describe('team lock removes the team rules from the cache', () => {
     expect(s.mcpSource).toBe('cached')
     for (const out of [s.scrub, s.mcp]) {
       expect(out).not.toContain('return customerId')
-      expect(out).toContain('__LEDGER__1')
+      expect(out).toMatch(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/) // signed in, maps unread: local (spec 066)
     }
     expect(s.scrubErr).toContain(
       'veilio: applied 2 custom rules pulled just now; 1 not applied: team key locked - run `veilio team unlock`, then `veilio rules pull`.\n'

@@ -8,6 +8,7 @@
 // is a choice somebody made (ledgerEntry, berth_quorum, invoice2). Neither is a
 // mixed-case word no dictionary spells (lEdger). Custom rules still win.
 
+import { isKeyword, LANGUAGES, type Language } from './languages.js'
 import { ENGLISH_WORDS } from './words.js'
 
 /** Words every codebase shares and toolchain names, beyond the dictionary. */
@@ -183,4 +184,446 @@ function dictionary(): Set<string> {
 export function isOrdinaryWord(name: string): boolean {
   if (!/^(?:[a-z]+|[A-Z][a-z]+|[A-Z]+)$/.test(name)) return false
   return dictionary().has(name.toLowerCase())
+}
+
+// Security review, round 3 (an amendment to spec 064): an ordinary word is
+// readable only as an identifier or a path segment. In a value position - a
+// string literal; in configuration the text after `=` or `:`, or on the line
+// below an empty one; XML element text; a command's `KEY=val` prefix - it is
+// masked, whatever its key is called. A list of dangerous credential syntaxes
+// could never be complete, so the value positions are listed instead.
+// The unit is the whole value up to its delimiter: `"Summer2024!"` is one.
+
+/** A key that names a credential (security review, round 4): one of these
+ *  anywhere in it, or a camel, snake or kebab segment that starts or ends with
+ *  a short one - `dbPw`, `userPW`, `DBPW`, `--db-password`, `DB_PIN`. */
+const CREDENTIAL_WORD = /pass|pwd|secret|token|key|auth|cred|private|salt|jwt|bearer|mnemonic/i
+const CREDENTIAL_SEGMENT = /^(?:pw|otp|pin|seed|cert)|(?:pw|otp|pin|seed|cert)$/
+const CREDENTIAL = {
+  test(name: string): boolean {
+    if (CREDENTIAL_WORD.test(name)) return true
+    for (const segment of name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/))
+      if (CREDENTIAL_SEGMENT.test(segment.toLowerCase())) return true
+    return false
+  },
+}
+// Shapes no credential has, as the secret scanner reads them (engine
+// 1.12.2): text already masked, a flag's word, a number, a placeholder, a
+// command, a CI expression, a YAML alias, a URL without userinfo, a path
+// that reads as one (two segments, an extension, or `~/`, `./`, `$HOME/`).
+// Such a value is still a value: masked reversibly, never shown.
+const NOT_SECRET =
+  /^(?:.{1,2}|(?:__[A-Z][A-Z0-9_]*__\d*)+|true|false|null|none|nil|undefined|yes|no|on|off|~|\d+|<[^<>]*>|\$\(.*|`.*|\$\{\{.*\}\}|\*[\w-]+|[a-z][\w+.-]*:\/\/[^\s@]*|(?:~|\.{1,2}|\$\{?\w+\}?)?(?:\/[\w.@~+-]+){2,}\/?|(?:~|\.{1,2}|\$\{?\w+\}?)?\/[\w@~+-]+\.\w{1,8}|(?:~|\.{1,2}|\$\{?\w+\}?)\/[\w.@~+-]+)$/i
+// An unquoted `$NAME` or `${NAME}` is a reference to another variable; a
+// quoted one (`"$unshine"`) is a value.
+const REFERENCE = /^\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})$/
+// A path keeps 064's readable segments: no space, no scheme, a separator.
+const PATH = /^[\w.@~+-]*[\\/][\w.@~+\\/-]*$/
+
+/** Where configuration keeps its values, by grammar (`fileKindOf`). */
+export type ValueGrammar = 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'pgpass'
+
+export interface ValueSpan {
+  start: number
+  end: number
+  value: string
+  /** Its key names a credential: under `redact` it is removed one-way. */
+  credential: boolean
+  /** A path: its ordinary segments stay readable. Never a credential. */
+  path: boolean
+  /** A bare name after a credential key in code (`password = sunshine`):
+   *  perhaps a variable, so masked reversibly, never removed. */
+  bare?: boolean
+}
+
+export interface ValueScan {
+  /** String literals, as the tokenizer found them: contents only. Absent:
+   *  quoted runs on one line are taken as strings. */
+  strings?: readonly { start: number; end: number; module?: boolean }[]
+  /** `code`: only strings are values. A grammar adds its own positions.
+   *  Absent: text of no known kind - pasted text, a `.md`, command output -
+   *  where every grammar applies, a bare name after a credential key too. */
+  kind?: ValueGrammar | 'code'
+  language?: Language
+  /** Code only guessed at - pasted with no path and no language: the
+   *  credential net reads it too, as it reads text of no kind. */
+  net?: boolean
+}
+
+const QUOTED = /(?<![A-Za-z0-9])(["'`])([^\n]{0,4096}?)\1/g
+const KEY_TOKEN = /[A-Za-z_$][\w$]*/g
+const KEY_STRING = /["'`]([\w.$-]{1,100})["'`]/g
+
+// A language's own word names nothing (`private`, `const`, `str`) - but
+// `key`, a TypeScript keyword, is a key's name all the same.
+function keyword(word: string, language: Language | undefined): boolean {
+  if (/^keys?$/i.test(word)) return false
+  return language ? isKeyword(word, language) : LANGUAGES.some((l) => isKeyword(word, l))
+}
+
+/** Whether the value at `at` sits under a credential key: any name, or any
+ *  key-shaped string, between it and the start of its statement or pair, at
+ *  most 256 characters back on its line (`password: Optional[str] = `,
+ *  `define('DB_PASSWORD', `, `secrets = Map.of("k", `). A comma ends the
+ *  search only where a new pair starts after it (`"pass": "x", "color": `). */
+function credentialBefore(text: string, at: number, language: Language | undefined): boolean {
+  // A C# property's accessors stand between its name and its value.
+  let prefix = lineBefore(text, at).replace(ACCESSORS, ' ')
+  const statement = Math.max(
+    prefix.lastIndexOf(';'),
+    prefix.lastIndexOf('{'),
+    prefix.lastIndexOf('}')
+  )
+  prefix = prefix.slice(statement + 1)
+  // From the right; lastIndexOf(',', -1) would find index 0 again.
+  for (let c = prefix.lastIndexOf(','); c !== -1; c = c > 0 ? prefix.lastIndexOf(',', c - 1) : -1)
+    if (/[:=]/.test(prefix.slice(c + 1))) {
+      prefix = prefix.slice(c + 1)
+      break
+    }
+  // A call's first argument is keyed by the call: `setPassword("...")` is,
+  // `os.getenv("SECRET_KEY")` looks a name up.
+  const call = /([A-Za-z_$][\w$]*)[ \t]*\([ \t]*$/.exec(prefix)
+  if (call) return CREDENTIAL.test(call[1]!) && !keyword(call[1]!, language)
+  // In a tag, `key="..."` names the entry (`<add key="Theme" value="dark"/>`).
+  if (/<[\w.:-]+(?:\s[^<>]*)?\s(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix)) return false
+  for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return true
+  for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
+    if (CREDENTIAL.test(t) && !keyword(t, language)) return true
+  return false
+}
+const STRING = /(["'`])[^"'`]*\1/g
+const ACCESSORS = /\{\s*(?:get|set|init)\b[^{}]*\}/g
+
+/** The text before `at` on its line, at most 256 characters: bounded, so
+ *  many values on one long line stay linear. */
+function lineBefore(text: string, at: number): string {
+  const window = text.slice(Math.max(0, at - 256), at)
+  return window.slice(window.lastIndexOf('\n') + 1)
+}
+
+/** Inside a `$( ... )` its line opened and has not closed. */
+function inCommand(text: string, at: number): boolean {
+  const before = lineBefore(text, at)
+  return (before.match(/\$\(/g)?.length ?? 0) > (before.match(/\)/g)?.length ?? 0)
+}
+
+// In code, an unquoted call or member access (`getToken()`, `settings.token`)
+// reads a value; it is not one. The whole value, and only in code: in
+// configuration `Xk9m.Q2v` is a password (security review, round 4).
+const CALL_OR_MEMBER =
+  /^[A-Za-z_$][\w$]*(?:(?:\.[A-Za-z_$][\w$]*)+(?:\([^()]*\))?|\([^()]*\))[,;]?$/
+
+/** A value that may be a secret: one no shape above rules out. */
+function secretShaped(value: string, quoted: boolean, code = false): boolean {
+  const v = value.trim()
+  return (
+    v !== '' &&
+    !NOT_SECRET.test(v) &&
+    (quoted || (!REFERENCE.test(v) && !(code && CALL_OR_MEMBER.test(v))))
+  )
+}
+
+// The credential net (security review, round 4): in every file that is not
+// code, a name holding a credential word, any separator, and the value up to
+// its delimiter (netValueEnd). Fail closed: only netExempt's shapes are left.
+// A name is a whole token (`--db-password`, `_authToken`, `db.password`); a
+// `(`, `[` or `,` separates only a quoted value, so `[token, setToken]` in
+// command output is not a pair.
+const NET_KEY = /(?<![\w$.-])-{0,2}([A-Za-z_$][\w$.-]{0,100})/g
+const NET_TAIL = /(?:[ \t]|\\\r?\n|=>|->|:=|[=:"'`>]|<!\[CDATA\[|[([,](?=[ \t]*["'`])){1,40}(?=\S)/y
+// The start of a line of code, for the net over code only guessed at.
+const CODE_START = /(?:^|\n)[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/
+const CODE_LINE = /\n[ \t]*(?:(?:export|set)[ \t]+)?-{0,2}$/
+const PGPASS_SHAPE = /^[^:\s]+:(?:\d{1,5}|\*):[^:\s]+:[^:\s]+:(\S+)$/dgm
+// `.pgpass`: host:port:database:user:password, one entry a line.
+const PGPASS_LINE = /^(?![ \t]*#)(?:[^:\n]*:){4}([^\n]+)$/dgm
+
+// `key=value` pairs inside a value: a connection string, a query string.
+const INNER = /(?<![\w.$-])([A-Za-z_][\w.-]{0,100})[ \t]*[=:][ \t]*([^\s;&,'"<>]+)/dg
+// Configuration lines. Each starts at a line start, every run is bounded or
+// ends at the line's end, and no quantified group nests another: linear.
+const ENV_LINE = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]{0,200})[ \t]*=([^\n]*)$/dgm
+const INI_LINE = /^[ \t]*["']?([A-Za-z_$][\w.$-]{0,200})["']?[ \t]*(?:[:?+]?=|:)([^\n]*)$/dgm
+const YAML_LINE =
+  /^([ \t]*)(?:-[ \t]+)?["']?([^\s:"'#-][^:"'\n]{0,200}?)["']?[ \t]*:((?:[ \t][^\n]*)?)$/dgm
+const YAML_SCALAR = /^[ \t]*(?!-[ \t]|-$|#|---|\.\.\.)([^\n]+)$/dgm
+const YAML_ITEM = /^[ \t]*-[ \t]+([^\n]*)$/dgm
+const SHELL_PAIR =
+  /(?<![^\s;&|(])(?:export[ \t]+)?([A-Za-z_]\w{0,200})=("[^"\n]*"|'[^'\n]*'|[^\s;&|]*)/dg
+const DOCKER_ENV = /^[ \t]*ENV[ \t]+([A-Za-z_]\w{0,200})[ \t]+([^\n=]+)$/dgm
+const XML_TEXT = /<([A-Za-z_][\w.:-]{0,100})([^<>]{0,2000})>([^<]+)<\//dg
+// A comment starts after a space; a glued `#` is part of the value.
+const HASH = /[ \t]#/
+const HASH_OR_SEMICOLON = /[ \t][#;]/
+const XML_KEY_ATTR = /(?:^|\s)(?:key|name|id)[ \t]*=[ \t]*["']([^"']*)["']/g
+
+/** The value in `raw` at `offset`: its comment and quotes taken off, and in
+ *  YAML its anchor and tag; a block header has its value on the lines below. */
+function trimmed(
+  raw: string,
+  offset: number,
+  comment: RegExp | null,
+  yaml = false,
+  stop: RegExp | null = null
+): { start: number; end: number; quoted: boolean } | null {
+  let end = raw.length
+  for (const re of [comment, stop]) {
+    const at = re ? raw.slice(0, end).search(re) : -1
+    if (at !== -1) end = at
+  }
+  let start = 0
+  while (start < end && /\s/.test(raw[start]!)) start++
+  while (end > start && /\s/.test(raw[end - 1]!)) end--
+  if (yaml) {
+    const props = /^(?:[&!]\S*[ \t]+)*(?:[&!]\S*$)?/.exec(raw.slice(start, end))![0]
+    start += props.length
+    if (/^[|>][-+]?\d?[-+]?$/.test(raw.slice(start, end))) return null
+  }
+  const quoted = end - start >= 2 && /["'`]/.test(raw[start]!) && raw[end - 1] === raw[start]
+  if (quoted) {
+    // A TOML or Python triple-quoted string is quoted by all three.
+    const q = raw[start]!.repeat(3)
+    const triple = end - start >= 6 && raw.startsWith(q, start) && raw.startsWith(q, end - 3)
+    start += triple ? 3 : 1
+    end -= triple ? 3 : 1
+  }
+  return end > start ? { start: offset + start, end: offset + end, quoted } : null
+}
+
+/** The net's only exemptions (ruling, round 4): text already masked, one
+ *  or two characters, a `$NAME` reference, a language keyword, and in code a
+ *  call or member access that is the whole value. */
+function netExempt(value: string, calls: boolean, language: Language | undefined): boolean {
+  return (
+    value.length <= 2 ||
+    /^(?:__[A-Z][A-Z0-9_]*__\d*)+$/.test(value) ||
+    REFERENCE.test(value) ||
+    keyword(value, language) ||
+    (calls && CALL_OR_MEMBER.test(value))
+  )
+}
+
+/** Where a net value starting at `s` ends. In quotes, at the closing quote;
+ *  as element text, at `<`; in CDATA, at `]]>`. Otherwise at the next
+ *  whitespace - or at a quote, brace (or its pair's comma) or paren opened
+ *  before the key on its line and still open (a `"KEY=value"` string, an
+ *  object, a call). However long: each character is read once. */
+function netValueEnd(text: string, key: number, s: number, sep: string): number {
+  const end = netValueStop(text, key, s, sep)
+  // A command, a CI expression or a `<placeholder>` is one value however many
+  // words it holds: redacted to its close, never cut at a space inside it.
+  const limit = text.length
+  const opener = /^(?:\$\(|\$\{\{|<|`)/.exec(text.slice(s, s + 3))?.[0]
+  if (!opener) return end
+  let depth = 0
+  let n = s
+  for (; n < limit && text[n] !== '\n'; n++) {
+    const c = text[n]!
+    if (opener === '$(') {
+      if (c === '(') depth++
+      else if (c === ')' && --depth === 0) return Math.max(end, n + 1)
+    } else if (opener === '${{') {
+      if (c === '}' && text[n + 1] === '}' && n > s + 2) return Math.max(end, n + 2)
+    } else if (c === (opener === '<' ? '>' : '`') && n > s) return Math.max(end, n + 1)
+  }
+  // Never closed: to the end of the line, failing closed.
+  return Math.max(end, n)
+}
+
+function netValueStop(text: string, key: number, s: number, sep: string): number {
+  const limit = text.length
+  // Character by character: the cost is the value's own length.
+  const until = (stop: string) => {
+    let n = s
+    while (n < limit && text[n] !== '\n' && !stop.includes(text[n]!)) n++
+    return n
+  }
+  const last = sep[sep.length - 1]!
+  if (/["'`]/.test(last)) return until(last)
+  if (sep.endsWith('<![CDATA[')) {
+    const end = until('')
+    const close = text.slice(s, end).indexOf(']]>')
+    return close === -1 ? end : s + close
+  }
+  if (last === '>') return until('<')
+  const line = lineBefore(text, key)
+  const open = (o: string, c: string) => line.split(o).length > line.split(c).length
+  let stop = ' \t\r\f\v'
+  for (const q of ['"', "'", '`']) if ((line.split(q).length - 1) % 2 === 1) stop += q
+  if (open('{', '}')) stop += '},'
+  if (open('(', ')')) stop += ')'
+  if (open('[', ']')) stop += ']'
+  return until(stop)
+}
+
+/** Every value position in `text`, sorted by start. Spans may nest: a
+ *  connection string's `password=...` lies inside its string. */
+export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
+  const out: ValueSpan[] = []
+  const kind = scan.kind
+  // In code an unquoted call or member access reads a value; never elsewhere.
+  const calls = kind === 'code'
+  // Under a credential key a value is never a readable path.
+  const add = (start: number, end: number, keyed: boolean, quoted: boolean, module = false) => {
+    const value = text.slice(start, end)
+    const credential = keyed && secretShaped(value, quoted, calls)
+    out.push({ start, end, value, credential, path: !keyed && (module || PATH.test(value)) })
+  }
+  const strings: readonly { start: number; end: number; module?: boolean }[] =
+    scan.strings ??
+    [...text.matchAll(QUOTED)].map((m) => ({
+      start: m.index! + 1,
+      end: m.index! + 1 + m[2]!.length,
+    }))
+  for (const s of strings) {
+    // A module is a path; a shell's backticks run a command.
+    const shell = kind === 'shell' || kind === 'dotenv'
+    const command = shell && (text[s.start - 1] === '`' || inCommand(text, s.start))
+    const keyed = !s.module && !command && credentialBefore(text, s.start - 1, scan.language)
+    add(s.start, s.end, keyed, true, s.module)
+  }
+
+  const any = kind === undefined
+  // In text of no known kind a line holds several pairs: `,` and `;` end one.
+  const end = any ? /[,;]/ : null
+  const line = (re: RegExp, key: number, value: number, comment: RegExp | null) => {
+    for (const m of text.matchAll(re)) {
+      const raw = m[value]
+      if (raw === undefined) continue
+      const at = m.indices![value]![0]
+      const v = trimmed(raw, at, comment, false, end)
+      if (v) add(v.start, v.end, key > 0 && CREDENTIAL.test(m[key]!), v.quoted)
+    }
+  }
+  // A config file written in its neighbour's syntax keeps its values too: a
+  // `key: value` in a dotenv file, a `KEY=value` in YAML.
+  if (any || kind === 'dotenv' || kind === 'yaml') line(ENV_LINE, 1, 2, HASH)
+  if (any || kind === 'ini' || kind === 'dotenv') line(INI_LINE, 1, 2, HASH_OR_SEMICOLON)
+  if (any || kind === 'shell') {
+    line(SHELL_PAIR, 1, 2, null)
+    line(DOCKER_ENV, 1, 2, HASH)
+  }
+  if (any || kind === 'yaml') {
+    // A list item is a value; a `KEY=value` in it is found as a pair inside.
+    line(YAML_ITEM, 0, 1, HASH)
+    // A key with nothing after it may have its value on the line below; a
+    // k8s env entry's `value:` belongs to the `name:` above it.
+    let previous: { indent: number; key: string; value: string } | null = null
+    const keys = new Set<number>()
+    for (const m of text.matchAll(YAML_LINE)) {
+      keys.add(m.index!)
+      const indent = m[1]!.length
+      const key = m[2]!
+      const named = previous && /^value$/i.test(key) && /^name$/i.test(previous.key)
+      const credential =
+        CREDENTIAL.test(key) || (named === true && CREDENTIAL.test(previous!.value))
+      const raw = m[3] ?? ''
+      const v = trimmed(raw, m.indices![3]?.[0] ?? m.index! + m[0].length, HASH, true, end)
+      if (v) add(v.start, v.end, credential, v.quoted)
+      else {
+        const next = m.index! + m[0].length + 1
+        const nl = text.indexOf('\n', next)
+        const below = text.slice(next, nl === -1 ? text.length : nl)
+        const lead = below.length - below.trimStart().length
+        if (lead > indent && !/^[ \t]*(?:-|#|[^\s:]+:(?:\s|$))/.test(below)) {
+          const w = trimmed(below, next, HASH, true)
+          if (w) add(w.start, w.end, credential, w.quoted)
+        }
+      }
+      previous = { indent, key, value: v ? text.slice(v.start, v.end) : '' }
+    }
+    // Any other line of a YAML file is a scalar: a block's body, a plain
+    // value over several lines, a document that is one value.
+    if (kind === 'yaml')
+      for (const m of text.matchAll(YAML_SCALAR)) {
+        if (keys.has(m.index!)) continue
+        const v = trimmed(m[1]!, m.indices![1]![0], HASH, true)
+        if (v) add(v.start, v.end, false, v.quoted)
+      }
+  }
+  // Element text, in every kind: XML embedded in code, JSX.
+  {
+    for (const m of text.matchAll(XML_TEXT)) {
+      const [s] = m.indices![3]!
+      const v = trimmed(m[3]!, s, null)
+      if (!v) continue
+      let credential = CREDENTIAL.test(m[1]!)
+      for (const a of m[2]!.matchAll(XML_KEY_ATTR)) credential ||= CREDENTIAL.test(a[1]!)
+      add(v.start, v.end, credential, false)
+    }
+  }
+  // A bare name after a credential key, in text of no known kind.
+  if (any) {
+    for (const m of text.matchAll(BARE)) {
+      const [s, e] = m.indices![2]!
+      const value = m[2]!
+      if (!CREDENTIAL.test(m[1]!) || !secretShaped(value, false) || keyword(value, scan.language))
+        continue
+      out.push({ start: s, end: e, value, credential: true, path: false, bare: true })
+    }
+  }
+  if (kind !== 'code' || scan.net) {
+    // In code only guessed at, the net reads a line's own `KEY=value` (a
+    // Makefile, a pasted .env); a name's type (`DB_PASSWORD: Optional[str]`)
+    // and a statement (`const monkey = ledger`) are code's.
+    const guessed = kind === 'code'
+    let covered = 0
+    for (const k of text.matchAll(NET_KEY)) {
+      const at = k.index!
+      const keyEnd = at + k[0].length
+      // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
+      if (at < covered || /__[A-Z]/.test(k[1]!) || !CREDENTIAL.test(k[1]!)) continue
+      if (guessed && !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at)))
+        continue
+      NET_TAIL.lastIndex = keyEnd
+      const m = NET_TAIL.exec(text)
+      if (!m) continue
+      const s = keyEnd + m[0].length
+      const sep = m[0]
+      if (guessed && !sep.includes('=')) continue
+      const e = netValueEnd(text, at, s, sep)
+      const value = text.slice(s, e)
+      covered = e
+      if (netExempt(value, calls, scan.language)) continue
+      out.push({ start: s, end: e, value, credential: true, path: false })
+    }
+  }
+  // `host:port:db:user:password` in text of no kind: a .pgpass line.
+  if (kind === undefined || scan.net)
+    for (const m of text.matchAll(PGPASS_SHAPE)) {
+      const [s, e] = m.indices![1]!
+      if (secretShaped(m[1]!, false))
+        out.push({ start: s, end: e, value: m[1]!, credential: true, path: false })
+    }
+  if (kind === 'pgpass')
+    for (const m of text.matchAll(PGPASS_LINE)) {
+      const [s, e] = m.indices![1]!
+      if (!netExempt(m[1]!, false, scan.language))
+        out.push({ start: s, end: e, value: m[1]!, credential: true, path: false })
+    }
+  // Pairs inside every value found so far.
+  for (const span of out.slice()) {
+    if (span.credential) continue
+    for (const m of span.value.matchAll(INNER)) {
+      if (!CREDENTIAL.test(m[1]!)) continue
+      const [s, e] = m.indices![2]!
+      add(span.start + s, span.start + e, true, false)
+    }
+  }
+  // A value written as one wins over the same text read as a bare name.
+  return out.sort(
+    (a, b) => a.start - b.start || b.end - a.end || Number(!!a.bare) - Number(!!b.bare)
+  )
+}
+
+const BARE =
+  /(?<![\w$.-])["'`]?([A-Za-z_$][\w$.-]{0,100})["'`]?\]?[ \t]*(?:=>|:=|=(?![=~>])|:(?!:))[ \t]*([A-Za-z_$][\w$]{0,255})(?=[ \t]*(?:[,;})\]#<]|\/\/|\r?$))/dgm
+
+/** The credential values among `spans`, never overlapping: the first wins. */
+export function credentialsAmong(spans: readonly ValueSpan[]): ValueSpan[] {
+  const out: ValueSpan[] = []
+  for (const s of spans)
+    if (s.credential && (!out.length || s.start >= out[out.length - 1]!.end)) out.push(s)
+  return out
 }

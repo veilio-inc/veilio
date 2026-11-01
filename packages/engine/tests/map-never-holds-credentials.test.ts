@@ -94,11 +94,14 @@ describe('a name the map already holds', () => {
     const result = anonymize(code, { existingMap: { __STR__1290: 'disabled' } })
     expect(result.anonymized).toContain('"__STR__1290"')
   })
-  it('a new name inside a credential slot is not extracted', () => {
+  it('a new name inside a credential slot is not extracted: it is redacted (security audit)', () => {
+    // Not mapped, and - since the CE security audit - not left readable either:
+    // the value of a credential-named key is a password, never shown as written.
     const code = 'export const auth = { client_secret: "disabled" }\n'
     const result = anonymize(code)
     expect(Object.values(result.map)).not.toContain('disabled')
-    expect(result.anonymized).toContain('"disabled"')
+    expect(result.anonymized).toContain('"__REDACTED_CREDENTIAL_1__"')
+    expect(anonymize(code, { secrets: 'warn' }).anonymized).toContain('"disabled"')
   })
 })
 
@@ -134,7 +137,10 @@ describe('an old map that already holds a credential found in the text', () => {
     it(`drops it and never writes its placeholder there (${c.name})`, () => {
       const result = anonymize(c.code, { existingMap: OLD, ...c.options })
       expect(result.anonymized).not.toContain('__VAR__1')
-      expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
+      // Round 4: under `redact` a credential is never readable, a fixture's
+      // too; under `warn` and `off` a rule's finding stays as written.
+      if (c.name.includes('redact')) expect(result.anonymized).not.toContain('Kx9_prodpw')
+      else expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
       expect(Object.values(result.map)).not.toContain('Kx9_prodpw')
       expect(result.map.__CLS__1).toBe('PaymentService')
     })

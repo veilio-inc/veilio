@@ -24,17 +24,32 @@ import {
 } from './cloud.js'
 import { unwrapTeamKey, exportTeamKey, type TeamLayer } from '@veilio-inc/engine'
 import { ensureBlocks } from './client/blocks.js'
+import {
+  localDroppedNote,
+  outOfRangeNote,
+  reservationRefusedSentence,
+  unvouchedNote,
+} from './reservations.js'
 import { resolveTeamNamespace, teamLayerNote } from './team-namespace.js'
 import {
+  readTeamUnlock,
   removeTeamUnlock,
   writeTeamUnlock,
   teamUnlockPath,
   expiryFrom,
   type StoredTeamKey,
 } from './team-unlock.js'
-import { readCredential, removeCredential, writeCredential, type Credential } from './credential.js'
+import {
+  readCredential,
+  readTeamRecord,
+  removeCredential,
+  writeCredential,
+  writeTeamRecord,
+  type Credential,
+} from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
+import { teamKeyBytes, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -576,8 +591,11 @@ export async function runMapsPull(
 ): Promise<number> {
   const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
   if (!pulled.ok) return refused(pulled.refusal, io)
-  const { name, count, path, blocks } = pulled.value
+  const { name, count, path, blocks, localDropped, outOfRange, unvouched } = pulled.value
   io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
+  if (localDropped) io.stdout(`veilio: ${localDroppedNote(localDropped)}\n`)
+  if (outOfRange) io.stdout(`veilio: ${outOfRangeNote(outOfRange)}\n`)
+  if (unvouched) io.stdout(`veilio: ${unvouchedNote(unvouched)}\n`)
   // Spec 063: what the guard will number new names from.
   if (blocks?.status === 'reserved' && Object.keys(blocks.blocks).length)
     io.stdout(
@@ -585,10 +603,9 @@ export async function runMapsPull(
         .map(([base, b]) => `${base}${b.start}-${b.end}`)
         .join(', ')}\n`
     )
+  // Spec 066 R8: on the normal output - in the 065 benchmark nobody read stderr.
   if (blocks?.status === 'failed')
-    io.stderr(
-      `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
-    )
+    io.stdout(`veilio: ${reservationRefusedSentence(blocks, blocks.tag)}\n`)
   return EXIT_OK
 }
 
@@ -738,6 +755,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
   try {
     const list = await listMaps(credential)
     const teamId = list.team?.id
+    if (teamId) writeTeamRecord({ ...credential, teamId }, io.home)
     if (!teamId) {
       io.stderr(
         'veilio: this account is not in a team, so there are no team keys to unlock. ' +
@@ -860,7 +878,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       existsSync(mapPath) &&
       dirname(mapPath) !== join(io.home ?? homedir(), '.veilio')
     ) {
-      const blocks = await ensureBlocks(credential, teamId, mapPath)
+      const blocks = await ensureBlocks(credential, teamId, mapPath, io.home)
       if (blocks.status === 'reserved' && Object.keys(blocks.blocks).length)
         io.stdout(
           `Reserved team numbers for new names: ${Object.entries(blocks.blocks)
@@ -868,9 +886,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
             .join(', ')}\n`
         )
       if (blocks.status === 'failed')
-        io.stderr(
-          `veilio: could not reserve team numbers (${blocks.detail}); until it can, the guard numbers new names on this machine, and a publish renumbers them.\n`
-        )
+        io.stdout(`veilio: ${reservationRefusedSentence(blocks, blocks.tag)}\n`)
     }
     return EXIT_OK
   } catch (err) {
@@ -1017,6 +1033,7 @@ export async function teamLayerFor(
   note: string | null
   refused?: string
   misattributed?: string[]
+  unissued?: string[]
 }> {
   // Signed out, the resolver answers 'local' without a request. At most 5 s: a
   // hung instance must not stall a `... | veilio restore > file` pipeline.
@@ -1024,7 +1041,12 @@ export async function teamLayerFor(
   if (found.status === 'refused')
     return { team: null, note: null, refused: renderRefusal(found.refusal) }
   if (found.status === 'team' && found.conflictDetection)
-    return { team: found.analysis, note: null, misattributed: found.misattributed ?? [] }
+    return {
+      team: found.analysis,
+      note: null,
+      misattributed: found.misattributed ?? [],
+      unissued: found.unissued ?? [],
+    }
   return { team: null, note: teamLayerNote(found, missing) }
 }
 
@@ -1059,19 +1081,37 @@ export async function teamNamespaceForScrub(
     return {
       team: found.analysis,
       note: null,
-      reserve: async (requests) => (await reservePlaceholders(credential, teamId, requests)).ranges,
+      numberingTeam: teamId,
+      // A refused rule base refuses the scrub, as any failed reservation does.
+      reserve: async (requests) => {
+        const r = await reservePlaceholders(credential, teamId, requests, undefined, {
+          keys: teamKeyBytes(credential, home, teamId),
+          keyVersion: teamKeyVersion(credential, home, teamId),
+          ...(found.reservations ? { reservations: found.reservations } : {}),
+        })
+        if (r.refused) throw new CloudError('forbidden', r.refused.detail)
+        return r.ranges
+      },
     }
   }
   if (found.status === 'locked')
     return {
       team: null,
-      note: "the team key is locked on this machine, so this was numbered from this project's map only and may clash with the team's placeholders. Run `veilio team unlock`, then scrub again.",
+      numberingTeam: found.teamId ?? null,
+      note: 'the team key is locked on this machine, so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…). Run `veilio team unlock`, then scrub again.',
     }
-  if (found.status === 'unavailable')
+  if (found.status === 'unavailable') {
+    const credential = readCredential(home)
     return {
       team: null,
-      note: `could not read the team's maps (${found.reason}), so this was numbered from this project's map only and may clash with the team's placeholders.`,
+      // Which team: the unlock's, else the one last seen; null when never seen,
+      // still numbered locally (spec 066 FR-001, code review).
+      numberingTeam: credential
+        ? (readTeamUnlock(credential, home)?.teamId ?? readTeamRecord(credential, home))
+        : undefined,
+      note: `could not read the team's maps (${found.reason}), so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…), and the next team publish renumbers them.`,
     }
+  }
   return { team: null, note: null }
 }
 

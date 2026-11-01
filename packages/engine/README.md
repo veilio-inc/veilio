@@ -39,8 +39,12 @@ Masked:
   variables, properties, and the words of import paths — as `__CLS__n`,
   `__FN__n`, `__VAR__n`, `__PKG__n`, unless it is a single ordinary word
   (below);
-- the words inside string literals — URL paths, error messages, the table and
-  column names in SQL — as `__STR__n`, with the same exception;
+- every word of a value — inside a string literal (URL paths, error
+  messages, the table and column names in SQL), after `=` or `:` in a
+  dotenv, INI, properties, TOML or YAML file, in XML attribute values and
+  element text, in a shell command's `KEY=val` — as `__STR__n` and the like,
+  ordinary words included; only a path-shaped string (`'./src/utils'`) keeps
+  them readable;
 - bank account, card and PESEL numbers (reversibly), and credentials
   (irreversibly — see below).
 
@@ -53,7 +57,33 @@ Not masked:
   with an inner capital, an underscore or a digit (`refundInvoice`,
   `customer_invoices`, `invoice2`) is a choice somebody made and is masked, as
   are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
-  mask any word;
+  mask any word. This holds for names and path segments only, never for a
+  value (above). A value whose key names a credential — the key contains
+  `pass`, `pwd`, `secret`, `token`, `key`, `auth`, `cred`, `private`, `salt`,
+  `jwt`, `bearer` or `mnemonic`, or a camel, snake or kebab segment of it
+  starts or ends with `pw`, `otp`, `pin`, `seed` or `cert` (`password:
+  sunshine`, `const DB_PASS = "Summer2024!"`, `dbPw`, `DBPW`, `--db-password=`,
+  `_authToken=`, `Password=sunshine;` inside a connection string) — is a
+  secret: it is redacted one-way, whole, in every `secrets` mode, so the map
+  never holds it. Outside code a credential net reads every line: the
+  credential-named name, any separator (whitespace, `=`, `:=`, `:`, `->`,
+  `=>`, quotes, a `\` continuation, `<![CDATA[`, a tag's `>`, and `(`, `[` or
+  `,` before a quoted value), and the value - `password sunshine` in a
+  properties file, `.netrc`'s `password sunshine`, a Makefile's `PASSWORD :=
+  sunshine`. A quoted value ends at its closing quote, element text at `<`,
+  CDATA at `]]>`. A `.pgpass` line's fifth
+  field is a password. Prose is over-masked on purpose: "password reset"
+  redacts "reset". The net fails closed: only a value of one or two
+  characters, an unquoted `$NAME` or `${NAME}`, a language keyword (`null`,
+  `true`, `None`), text already masked, and - in code only, as the whole value
+  - a call or member access (`os.getenv("KEY")`, `config.secret`) is left; a
+  path, a URL, a number, a CI expression or a shell command under a
+  credential word is redacted. An unquoted value runs to the next whitespace
+  (`sun,shine` is one); a quote, brace or paren ends it only when it was
+  opened before the key (a `"KEY=value"` string, an object, a call). Text
+  pasted with no path whose language is only guessed is read by the
+  net too, for a line's own `KEY=value` or `KEY := value`. In code a
+  bare `key = word` may name a variable and keeps a reversible placeholder;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
@@ -65,8 +95,8 @@ Not masked:
   its SQL and URLs.
 
 So what holds is: no mixed- or lower-case internal identifier other than a
-single ordinary word, no string contents beyond such words, and no credential
-reaches the model. Not "the model cannot tell what
+single ordinary word, no word of a value other than a path's ordinary
+segments, and no credential reaches the model. Not "the model cannot tell what
 this code does" — the shape and one comment will often say it is billing code.
 
 ## Ten languages, not one
@@ -121,8 +151,10 @@ or `'report'` (the scan left it in place). `redacted` remains the coarse boolean
 a badge can read; `disposition` is the finer answer.
 
 Policy is configurable: `{ secrets: 'redact' }` (default), `'warn'`, or `'off'`.
-Under `'warn'` nothing is redacted: findings come back with `disposition:
-'report'` and each credential is left in the text as written. Under `'off'`
+Under `'warn'` no rule's finding is redacted: findings come back with `disposition:
+'report'` and each credential a rule finds is left in the text as written. A
+value found by its credential-named key alone (above) is redacted one-way in
+every mode all the same: it is never readable and never mapped. Under `'off'`
 nothing is reported either. **In no mode does a credential go into the symbol
 map**: identifier masking leaves every credential the rules find alone. A name
 written exactly as a destroyed credential is replaced by that credential's
@@ -307,18 +339,31 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 
 ## API
 
-- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments }`
+- `anonymize(code, options?)` → `{ anonymized, map, identifierCount, language, languageFallback, secrets, comments, rulesStopped }`
   - `options.language` — a language name or `'auto'` (default)
   - `options.secrets` — `'redact'` (default) | `'warn'` | `'off'`
   - `options.path` — the file the code came from; a weak password in a secret
     position is only reported in a test, fixture or example file (see above)
   - `options.root` — the project root, for an absolute `path`
-  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'`, for a caller that
+  - `options.fileKind` — `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'pgpass'` | `'text'`, for a caller that
     knows the file but passes no `path` (`fileKindOf(path)`): turns on the
-    environment-style credential rules for that kind and nothing else - it
-    never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
+    environment-style credential rules for that kind (dotenv, YAML, shell) and
+    where its grammar keeps values (every kind; `text` reads by every grammar) - it never relaxes a test file. Adds to the kind a `path` implies; it never replaces it.
+    Text of no kind - `text`, or no path and no language the text reads as -
+    is read by every value grammar: `DB_PASSWORD=Summer2024!` pasted on its own
+    is redacted whole.
   - `options.existingMap` — continue numbering from a previous session:
     `anonymize(next, { existingMap: map })`
+  - `options.team` — `{ blocks, tag, retired? }`, a team checkout's numbering:
+    each new number of a base comes from its reserved block while one is left,
+    and otherwise from the checkout's local family (see "Names numbered without
+    a team block"). `retired` lists placeholders a publish moved out of the map
+    (`aliases.json`); numbering stays above them, so none is minted again for
+    another name. A tag that is not six of `A-Z0-9` throws a TypeError.
+    Without it, numbering is unchanged
+  - `options.ruleBudget` — a `ruleBudget()` the call draws its rule-matching
+    steps from, for a caller that shares one allowance across several calls
+    (the guard does, per hook invocation). Without it, each call gets its own
   - `options.rules` — whitelist / named-replacement rules
   - `options.manual` — literal strings to mask by hand (see below)
   - an unknown key throws a TypeError that names it and lists the valid
@@ -418,9 +463,17 @@ thrown on. It stays in the map and applies again where it is valid.
 - `REGULATED_BASES` — the placeholder base per regulated format
 - `hasBlockingSecrets(findings)` / `summarizeSecrets(findings)`
 - `isExamplePath(path, root?)` → whether a path is a test, fixture or example file
-- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `undefined`: the
+- `fileKindOf(path)` → `'dotenv'` | `'yaml'` | `'shell'` | `'ini'` | `'xml'` | `'pgpass'` | `'text'` | `undefined`: the
   file kind the engine reads a path as (`.env`, `.env.local`, `*.env`; `.yml`;
-  `.sh`, a Dockerfile, shell rc files) - not `.env.ts` or `.env.example.json`
+  `.sh`, a Dockerfile, shell rc files; `.ini`, `.cfg`, `.conf`, `.properties`,
+  `.toml`; `.xml`, `.config`, `.xaml`, `.csproj`, `.props`, `.targets`, `.plist`;
+  `text` for `.md`, `.mdx`, `.rst` and any other file with no code extension -
+  `.txt`, `.tfvars`, `.bat`, a Makefile; `pgpass` for `.pgpass`) - `undefined` for code and data such as
+  `.env.ts` or `.env.example.json`
+- `detectCredentials(code, options?)` → `detectSecrets`, plus every value
+  under a credential-named key that `anonymize` would redact and no rule
+  reports (`password: Summer2024!` in text), as `password-assignment`
+  findings. Takes `language` too; what `veilio scan` and `scan_secrets` run
 - `credentialSpans(code, options?)` → `{ start, end, ambiguous }[]`, every
   credential the rules find, whatever the policy: what `anonymize` keeps out
   of the map. `ambiguous` marks a single word after `password =`
@@ -441,15 +494,18 @@ its numbering with both repositories green.
 - `mergeTeamNamespace(entries)` / `TeamMapEntry` — merge team maps into one
   namespace, oldest first, so an edited map cannot steal a placeholder an older
   one already claimed
-- `analyzeTeamNamespace(entries)` → `{ namespace, aliases, conflicts, highest }`
+- `analyzeTeamNamespace(entries)` → `{ namespace, aliases, conflicts, highest, localDropped }`
   — the same merge, plus what the merge had to decide: the placeholders two maps
   disagree about, the aliases that still restore, and the highest number per
-  base so new names are minted above the team's
+  base so new names are minted above the team's. A `__LOCAL_` key is dropped
+  before any of it and counted in `localDropped`: no team map should hold one
 - `restoreLayers({ own, team })` → the one restore rule, shared by the web app,
   the CLI and the MCP server: the team's layer under this project's own, with
   `disputedIn(text)` and `locallyNumberedIn(text)` naming the placeholders that
   must be left alone rather than guessed. `disputedNote` / `locallyNumberedNote`
-  render the message each caller shows
+  render the message each caller shows. The team layer never gives a
+  `__LOCAL_` placeholder a meaning; `otherLocalIn(text)` names the ones the
+  own map lacks (another checkout numbered them), and `localFamilyNote` says so
 - `unwrapPrivateKey`, `deriveWrappingKey`, `importPublicKey`, `unwrapTeamKey`,
   `importTeamKey` / `exportTeamKey`, `decryptTeamMap`,
   `decryptTeamMapWithAny`, `encryptTeamMap`, `TeamKeyError` — opening team-key
@@ -459,6 +515,26 @@ its numbering with both repositories green.
   has no business handing out access to them. Sealing a map is not a grant —
   it widens nothing about who can read the team's maps — which is why a
   terminal may do it.
+
+### Names numbered without a team block
+
+A team member whose tools hold no usable block of reserved team numbers
+(refused, offline, a lapsed plan) numbers new names in a family of its own,
+`__LOCAL_<TAG>_<KIND>__n` (`__LOCAL_K7Q2XA_VAR__3`). The tag names the
+checkout, so two checkouts never mint the same placeholder, and no team map
+ever holds one: a teammate leaves it as written, and the next publish gives it
+a team number.
+
+- `isLocalPlaceholder(token)` — a numbered placeholder of that family;
+  `LOCAL_PREFIX` is its prefix, `__LOCAL_`
+- `localBaseOf(base, tag)` / `teamBaseOf(localBase)` — `__VAR__` and
+  `K7Q2XA` to `__LOCAL_K7Q2XA_VAR__` and back; `isLocalTag(tag)` is the tag's
+  shape, six of `A-Z0-9`
+- `isRolePlaceholder(token)` — a role-typed name (`__CLS__n`, `__FN__n`,
+  `__PKG__n`, `__VAR__n`, `__STR__n`) in either family
+- `usableBlocks(map, blocks)` / `numbersLeft(map, blocks)` /
+  `highestPerKind(map)` — which reserved blocks (`Block`, `{ start, end }`)
+  a map can still number inside, and how many numbers they have left
 
 ### Encrypted `.veilio` files and the vault
 
@@ -500,11 +576,17 @@ your maps, so a server storing it cannot read it.
   may apply, or one sealed for another row)
 - `ruleRefusal(rule)` → the sentence why a rule may not be saved or applied,
   or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
-  for its own names) and `isSafeRegex(pattern)` are the checks it makes
+  for its own names, including anything under `__REDACTED_` or `__LOCAL_`) and `isSafeRegex(pattern)` are the checks it makes
 - `compileRulePattern(pattern)` → a matcher whose `test(name)` gives
   the platform regex's answer in time linear in the name's length, or `null` for a
   pattern outside its language. Rule patterns run on it, never on the platform regex, so
   a teammate's pattern such as `(a+)+$` cannot freeze the tool applying it.
+  `test(name, budget?)` takes its steps from a `ruleBudget()` when given one.
+  One `anonymize` call shares a budget of `RULE_WORK_BUDGET` (50,000,000)
+  steps across all its rules and names; once spent, every rule test answers
+  "no match" (no name is kept readable or given a rule's placeholder, and an
+  ordinary word a replace rule might have matched is masked), and the result
+  carries `rulesStopped: true` - `RULES_STOPPED_NOTE` is the sentence to show.
   The language: literals, `.`, classes, `\d \w \s` and their negations,
   `^ $`, groups, alternation, and quantifiers with bounds up to 50.
   Backreferences, lookaround and `\b` are refused; `isSafeRegex` is true

@@ -40,8 +40,12 @@ that the masking did not cover something: one when no language marker matched
 are still real. Names written entirely in capitals are not masked either
 (`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
 English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
-toolchain's name (`vitest`, `junit`): only distinctive names are masked. A codename
-that is an ordinary word stays masked only with a custom replace rule.
+toolchain's name (`vitest`, `junit`) as a name or a path segment: only distinctive
+names are masked. A codename that is an ordinary word stays masked only with a custom
+replace rule. In a value - a string literal, a config value, XML text - every word is
+masked, and a value whose key contains a credential word (`password: sunshine`,
+`const DB_PASS = "Summer2024!"`) is redacted one-way, whole, under the default
+`redact`, so the map never holds it.
 
 ## Tools
 
@@ -154,6 +158,18 @@ result from this server states which namespace produced its placeholders:
 There is no separate sign-in for the MCP server; it reads the same credential
 file `veilio login` already wrote.
 
+In a team, a new name is numbered inside this checkout's block of team numbers
+in `.veilio/reserved.json`, written by `veilio maps pull` and `veilio team
+unlock`. This server only reads that file: it never writes it and never
+reserves. With no usable block, a new name goes into this checkout's local
+family, `__LOCAL_<TAG>_<KIND>__n`, which no team map holds and the next team
+publish renumbers (see the CLI README). The same holds with the team key locked
+or Cloud unreachable: still a team, so new names are never numbered above the
+map. While the last reservation is refused,
+every anonymize result says so beside the rules line, in the CLI's words
+(`WARNING: could not reserve team numbers: …`), and a call that numbered names
+locally says how many (`2 names numbered locally`).
+
 The merge happens **here, not in Cloud**: team maps arrive sealed under the team
 key, which the server cannot read. So on a Team plan the namespace is `team` only
 once `veilio team unlock` has opened that key on this machine — it is kept for
@@ -186,7 +202,9 @@ the fix, for example:
 
 The other causes are `team key locked`, rules that could not be opened with the
 keys on this machine, and rules refused as unsafe to apply; the CLI README lists
-the exact sentences.
+the exact sentences. A call whose rules would take more matching work than one
+call allows stops applying them part-way (the rest is masked as usual) and says
+`WARNING: custom rules stopped matching: too much work. …`.
 
 The server reads the rules once, when it starts. After `veilio vault lock` or
 `veilio team lock` it keeps the rules it already loaded until it restarts;
@@ -205,7 +223,9 @@ project's map on top of them. Two kinds of placeholder are deliberately left in
 the output, each named in a warning rather than substituted:
 
 - one this project's store and the team use for **different** identifiers, and
-- one this project **numbered on its own** while the team was out of reach.
+- one this project **numbered on its own** while the team was out of reach, and
+- one **another checkout** numbered in its local family while it held no team
+  numbers (`__LOCAL_<TAG>_…`): only that checkout restores it.
 
 Two more are left because nothing can restore them, and are named too: one no
 map explains (`__FN__9`, "invented or altered by the AI"), and one whose **shape**
@@ -225,7 +245,7 @@ restoring: it cannot tell a disputed placeholder from a first-written one.
 
 ### `strict`: refuse instead of returning half-restored text
 
-With `strict: true`, if any of those four would be left in the text, the call
+With `strict: true`, if any of those five would be left in the text, the call
 comes back as an **error result** carrying the report and the warnings, and
 **without** the text:
 
@@ -254,8 +274,8 @@ fails it. Without `strict`, the text comes back with the warnings, as before.
 
 Anonymizing while signed out, or while Cloud was unreachable, numbers new names
 locally. Once the team's maps are back, an identifier the team already knows
-takes the **team's** placeholder, and anything new is numbered above both the
-team's highest and this project's own. The entries minted during the lapse stay
+takes the **team's** placeholder, and anything new is numbered inside this
+checkout's block, or locally (`__LOCAL_<TAG>_…`) without one. The entries minted during the lapse stay
 in the local store — text was already sent with them, so they are still needed
 to restore it — but they are not handed to a teammate as the team's meaning.
 

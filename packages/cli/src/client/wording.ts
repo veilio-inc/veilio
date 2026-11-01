@@ -53,6 +53,7 @@ export const REFUSAL_CODES = [
   'team_map_unopenable',
   'clash',
   'unreserved_numbers',
+  'local_entry_unpublishable',
   'would_drop',
   'pull_would_drop',
   'diverged',
@@ -274,6 +275,10 @@ export const WORDING: Record<RefusalCode, Words> = {
       `and new numbers could not be reserved for ${plural(p.count, 'it', 'them')} (${sentence(p.detail)}). Nothing was uploaded.`,
     resolve:
       'Try again in a few minutes; if it keeps failing, run `veilio maps pull` for a fresh block of team numbers, then push again.',
+  }),
+  local_entry_unpublishable: (p) => ({
+    message: `this team map still holds placeholders numbered on one machine (${p.list}). Nothing was uploaded.`,
+    resolve: 'Run the publish again so they are renumbered, or report this as a bug.',
   }),
   would_drop: (p) => ({
     message: `updating ${label(p)} would drop ${p.count} ${plural(p.count, 'entry', 'entries')} the Cloud map holds and this project's map does not (${p.list}). Nothing was written.`,

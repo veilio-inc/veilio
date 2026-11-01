@@ -26,11 +26,18 @@ export interface RestoreLayers {
     disputedIn(text: string): string[];
     /** Own entries the team layer contradicts - locally numbered - in the text. */
     locallyNumberedIn(text: string): string[];
+    /** Local-family placeholders in the text the own map lacks: numbered on
+     *  another checkout, so only that checkout restores them (spec 066). */
+    otherLocalIn(text: string): string[];
 }
 export declare function restoreLayers(input: {
     own: SymbolMap;
     team: TeamLayer | null;
 }): RestoreLayers;
+/** A whole placeholder token - not a piece of a longer identifier or number.
+ *  Escaped, so a key read from a planted file is matched as text, never run
+ *  as a pattern (security audit). */
+export declare function appearsAsToken(text: string, placeholder: string): boolean;
 /** How the CLI and the MCP name the disputed placeholders they left - one wording. */
 export declare function disputedNote(placeholders: readonly string[]): string;
 /**
@@ -41,5 +48,8 @@ export declare function disputedNote(placeholders: readonly string[]): string;
  * 2026-10-01).
  */
 export declare function locallyNumberedNote(placeholders: readonly string[]): string;
+/** How the CLI and the MCP name the local-family placeholders they left
+ *  (spec 066): another checkout numbered them while it held no team numbers. */
+export declare function localFamilyNote(placeholders: readonly string[]): string;
 /** How the CLI and the MCP name the altered placeholders they left (spec 029). */
 export declare function alteredNote(placeholders: readonly string[]): string;

@@ -16,7 +16,6 @@ import {
   parseMapFile,
   parseReservedFile,
   serialiseMapFile,
-  type Block,
   type Reserved,
   type StoredMap,
   type SymbolMap,
@@ -46,9 +45,11 @@ import {
   restoreArgs,
   scrubSource,
   survivingSecrets,
+  versionOf,
 } from './scrub.ts'
-import type { MaskContext, ScanResult } from './scrub.ts'
-import { fileKindOf, restore, scanSecrets } from '../vendor/engine/index.js'
+import type { MaskContext, Numbering, ScanResult } from './scrub.ts'
+import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
+import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
@@ -104,6 +105,11 @@ export type ToolOutcome = { deny: string } | { result: unknown; isError?: true }
 
 // Keys Claude Code adds to a tool call's event; none of them is the tool's own.
 const RESERVED = new Set(['tool', 'tool_use_id', 'consent', 'agentId'])
+
+/** What a placeholder may put back into a shell command: an identifier- or
+ *  path-shaped ASCII word, never an option (security audit 2026-11-01; an
+ *  allowlist, after the review of 638edbf showed `--output=...` passing). */
+const SHELL_SAFE = /^(?!-)[A-Za-z0-9_./@+:-]+$/
 const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
@@ -142,11 +148,29 @@ const withheldText = (w: Withheld) =>
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
+  /** guard.json is the repository's, or cannot be shown to be this checkout's. */
+  private settingsFromRepository = false
   root = ''
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
-  counts = { withheld: 0, denied: 0, outsideReserved: 0 }
+  /** rulesStopped: Reads whose custom rules ran out of matching budget (security audit). */
+  counts = { withheld: 0, denied: 0, outsideReserved: 0, rulesStopped: 0 }
+  /** The newest hook invocation's rule budget, read by the band only: work
+   *  draws on the budget it is handed, never on this. */
+  latest: RuleBudget = ruleBudget()
+  /** What the running index batch draws on: the budget of the hook (or the
+   *  background slice) that started it. Batches run one at a time. */
+  private indexBudget: RuleBudget = ruleBudget()
+
+  /** A new hook invocation's allowance of rule-matching steps, shared by every
+   *  file and tool output it masks and threaded through its calls, so nothing
+   *  else - a background index slice, another hook - can refill it (security
+   *  review). A spent one before it is counted, for the band. */
+  invocation(): RuleBudget {
+    if (this.latest.spent) this.counts.rulesStopped++
+    return (this.latest = ruleBudget())
+  }
   /** Spec 063: this member's blocks of team numbers (.veilio/reserved.json), or why there are none. */
   reserved: Reserved | null = null
   /** Credentials destroyed this session, in memory only: removed from
@@ -171,10 +195,55 @@ export class Guard {
     return join(this.root, '.veilio', 'reserved.json')
   }
 
-  /** The blocks to number inside, when the file was read and is sound. */
-  get blocks(): Record<string, Block> | undefined {
-    return this.reserved?.ok ? this.reserved.blocks : undefined
+  /** What new names are numbered from (spec 066). No file: no team, numbered
+   *  as always. A file: its usable blocks, else the checkout's local family -
+   *  under the file's tag, or one held for this session when the file has
+   *  none (an older CLI's) or cannot be read (never numbered from). */
+  get numbering(): Numbering | undefined {
+    const r = this.reserved
+    if (!r) return undefined
+    const retired = Object.keys(this.aliases)
+    if (!r.ok) return { blocks: {}, tag: this.sessionTag(), retired }
+    return { blocks: r.blocks, tag: r.tag ?? this.sessionTag(), retired }
   }
+
+  private drawnTag: string | null = null
+  private sessionTag(): string {
+    if (this.drawnTag === null) {
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      // Modulo bias of 2^32 % 36 is about 1e-9: immaterial for a tag.
+      const draw = globalThis.crypto.getRandomValues(new Uint32Array(6))
+      this.drawnTag = [...draw].map((n) => alphabet[n % alphabet.length]).join('')
+    }
+    return this.drawnTag
+  }
+
+  /** Spec 066 R5: the old placeholders a publish renumbered (.veilio/aliases.json),
+   *  read only, so an edit written with one still lands on the real name. */
+  private aliases: SymbolMap = {}
+
+  /** What a tool's arguments are restored from: the saved map, and the
+   *  renumbered old placeholders where the map does not give them another
+   *  name (a contested one is in neither, as in the CLI). Quarantine never. */
+  private get restoreMap(): SymbolMap {
+    const map = this.stored.map
+    const keys = Object.keys(this.aliases)
+    if (keys.length === 0) return map
+    // One object per (map, aliases): restoreArgs caches its matcher by map object.
+    const c = this.restoreCache
+    if (c && c.map === map && c.aliases === this.aliases && c.version === versionOf(map))
+      return c.out
+    const out: SymbolMap = { ...this.aliases, ...map }
+    for (const p of keys) if (p in map && map[p] !== this.aliases[p]) delete out[p]
+    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), out }
+    return out
+  }
+  private restoreCache: {
+    map: SymbolMap
+    aliases: SymbolMap
+    version: number
+    out: SymbolMap
+  } | null = null
 
   get mapPath(): string {
     return join(this.root, '.veilio', 'map.json')
@@ -218,8 +287,21 @@ export class Guard {
       }
       dir = parent(dir)
     }
+    // Security audit 2026-11-01: files under .veilio/ committed to the
+    // repository are its author's, not this checkout's.
+    const committed = await this.trackedVeilioFiles()
+    // Unknown (no git listing, or a late one): nobody can tell whose
+    // guard.json it is, so it may only tighten (review of a7b6a1b).
+    this.settingsFromRepository = committed === null || committed.includes('.veilio/guard.json')
     await this.readSettings()
     await this.reloadMap()
+    // A committed map or aliases file: its values would be restored into
+    // commands the model only saw as placeholders.
+    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
+    if (tracked.length)
+      this.stop(
+        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
+      )
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
@@ -229,16 +311,18 @@ export class Guard {
         wait: this.io.sleep ? (ms) => this.io.sleep!(ms) : undefined,
       },
       async (rel, text, language) => {
-        const { additions, outside } = scrubSource(
+        const { additions, outside, rulesStopped } = scrubSource(
           text,
           { ...this.map, ...this.unsaved },
           language,
           undefined,
           undefined,
-          this.blocks,
-          this.rules.rules
+          this.numbering,
+          this.rules.rules,
+          this.indexBudget
         )
         this.counts.outsideReserved += outside
+        if (rulesStopped) this.counts.rulesStopped++
         grow(this.unsaved, additions)
         this.batch.push(rel)
       },
@@ -251,9 +335,13 @@ export class Guard {
   /** Indexes `paths` before `deadline` and saves what they add, in one write.
    *  Returns the paths it could not index. One batch at a time: the map's
    *  placeholders are numbered from what the last batch saved. */
-  indexFiles(paths: readonly string[], deadline: number): Promise<string[]> {
+  indexFiles(
+    paths: readonly string[],
+    deadline: number,
+    budget: RuleBudget = ruleBudget()
+  ): Promise<string[]> {
     const run = this.indexing.then(() =>
-      this.indexBatch(deadline, () => this.index!.index(paths, deadline))
+      this.indexBatch(deadline, budget, () => this.index!.index(paths, deadline))
     )
     this.indexing = run.catch(() => undefined)
     // Waiting for the batch ahead counts against this deadline too: late, every
@@ -269,9 +357,9 @@ export class Guard {
   }
 
   /** Continues through the project's files not indexed yet, until `deadline`. */
-  indexProject(deadline: number): Promise<string[]> {
+  indexProject(deadline: number, budget: RuleBudget = ruleBudget()): Promise<string[]> {
     const run = this.indexing.then(() =>
-      this.indexBatch(deadline, async () => {
+      this.indexBatch(deadline, budget, async () => {
         await this.index!.run(deadline)
         return []
       })
@@ -280,8 +368,13 @@ export class Guard {
     return run
   }
 
-  private async indexBatch(deadline: number, work: () => Promise<string[]>): Promise<string[]> {
+  private async indexBatch(
+    deadline: number,
+    budget: RuleBudget,
+    work: () => Promise<string[]>
+  ): Promise<string[]> {
     if (!this.index) return []
+    this.indexBudget = budget
     // The listing gives the project's shape (what is external); a late one
     // only means fewer names are exempt, so the batch goes on without it.
     await bounded(this.index.start(), deadline, this.clock)
@@ -354,7 +447,8 @@ export class Guard {
   private async indexNamed(
     args: ToolEvent,
     texts: string[],
-    deadline: number
+    deadline: number,
+    budget: RuleBudget
   ): Promise<string | null> {
     if (!this.index) return null
     // Paths resolve against the listing, so it comes first (bounded: a late
@@ -371,11 +465,11 @@ export class Guard {
       // 2947c81). Only a complete index then lets the result through.
       if (onDisk !== rel) missing++
     }
-    const missed = exist.length ? await this.indexFiles(exist, deadline) : []
+    const missed = exist.length ? await this.indexFiles(exist, deadline, budget) : []
     // A path the guard could not find may be in a file it has not indexed yet
     // (a name with a space, a form it does not read): the index is finished
     // first, or the result waits.
-    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline)
+    if (missing > 0 && this.index.state === 'indexing') await this.indexProject(deadline, budget)
     const files = (n: number) => `${n} source file${n === 1 ? '' : 's'}`
     const unread = missed.filter((rel) => this.index!.failed.has(rel)).length
     if (unread) return `it names ${files(unread)} Veilio could not read to check`
@@ -401,7 +495,10 @@ export class Guard {
     return null
   }
 
-  private async readSettings(): Promise<void> {
+  /** `fromRepository`: guard.json is committed, so it may only tighten - add
+   *  raw-only paths - never widen what reaches an MCP server or switch the
+   *  guard off (security audit 2026-11-01). */
+  private async readSettings(fromRepository = this.settingsFromRepository): Promise<void> {
     this.extraRawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
@@ -415,6 +512,7 @@ export class Guard {
     if (Array.isArray(settings.rawOnly)) {
       this.extraRawOnly.push(...settings.rawOnly.filter((p): p is string => typeof p === 'string'))
     }
+    if (fromRepository) return
     if (Array.isArray(settings.mcpRestore)) {
       this.mcpRestore.push(...settings.mcpRestore.filter((p): p is string => typeof p === 'string'))
     }
@@ -434,8 +532,19 @@ export class Guard {
     }
   }
 
-  async reloadMap(): Promise<void> {
+  /** reserved.json and aliases.json, re-read whenever the map is: a CLI
+   *  publish rewrites all three at once (code review of spec 066). */
+  private async reloadSideFiles(): Promise<void> {
     await this.reloadReserved()
+    this.aliases = await this.readAliases()
+    // A session tag whose placeholders a publish retired is not used again.
+    const tag = this.drawnTag
+    if (tag && Object.keys(this.aliases).some((p) => p.startsWith(`__LOCAL_${tag}_`)))
+      this.drawnTag = null
+  }
+
+  async reloadMap(): Promise<void> {
+    await this.reloadSideFiles()
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
       return
@@ -446,6 +555,48 @@ export class Guard {
       return
     }
     this.stored = parsed.stored
+  }
+
+  /** Never fatal: a missing or unreadable file restores nothing extra. */
+  private async readAliases(): Promise<SymbolMap> {
+    const path = join(this.root, '.veilio', 'aliases.json')
+    try {
+      if (!(await this.io.exists(path))) return {}
+      const parsed = JSON.parse(await this.io.read(path)) as { aliases?: unknown }
+      const a = parsed?.aliases
+      if (!a || typeof a !== 'object' || Array.isArray(a)) return {}
+      return Object.fromEntries(
+        Object.entries(a).filter((e): e is [string, string] => typeof e[1] === 'string')
+      )
+    } catch {
+      return {}
+    }
+  }
+
+  /** `.veilio/map.json`, `aliases.json` and `guard.json` when git tracks
+   *  them; null when that cannot be known (not a git checkout, no listing in
+   *  time, or no way to list). */
+  private async trackedVeilioFiles(): Promise<string[] | null> {
+    if (!this.io.list) return null
+    let listed: string[] | null
+    // shortcut: a git that answers in no 5 s counts as no listing - guard.json
+    // may then only tighten, but a committed map is not detected (the shell
+    // allowlist still holds); upgrade if a slow-git bypass of that is shown.
+    const late = this.io.sleep ? this.io.sleep(5000).then(() => null) : null
+    try {
+      const listing = this.io.list(this.root)
+      listed = await (late ? Promise.race([listing, late]) : listing)
+    } catch {
+      return null
+    }
+    // Case-insensitive (a macOS checkout reads .Veilio/Map.json as the map),
+    // and a tracked `.veilio` entry is a committed link to somewhere else.
+    if (listed === null) return null
+    const files = new Set(listed.map((f) => f.toLowerCase()))
+    if (files.has('.veilio')) return ['.veilio']
+    return ['.veilio/map.json', '.veilio/aliases.json', '.veilio/guard.json'].filter((f) =>
+      files.has(f)
+    )
   }
 
   stop(reason: string): void {
@@ -488,8 +639,13 @@ export class Guard {
   // ── text ──────────────────────────────────────────────────────────────────
 
   /** Prompts, reminders, output: known names replaced, credentials removed. */
-  applyText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    return this.gate(this.maskText(text, kind, scan))
+  applyText(
+    text: string,
+    kind: MaskContext['kind'] = 'result',
+    scan?: ScanResult,
+    budget: RuleBudget = ruleBudget()
+  ): string {
+    return this.gate(this.maskText(text, kind, scan, budget))
   }
 
   /** Spec 065: the names a replace rule matches in text bound for the model
@@ -497,13 +653,18 @@ export class Guard {
    *  minted under the rule's placeholder and saved before the text is masked,
    *  so the masking that follows writes them over and an edit restores them.
    *  Found in the masked text, so a credential is never minted. */
-  async learnRuleNames(texts: readonly string[]): Promise<void> {
+  async learnRuleNames(texts: readonly string[], budget: RuleBudget = ruleBudget()): Promise<void> {
     if (!this.rules.rules.some((r) => r.type === 'replace')) return
-    const ctx = this.context('unknown', 'prompt')
+    const ctx = this.context('unknown', 'prompt', budget)
     const working = ownedMap(this.map)
     const additions = ownedMap()
     for (const t of texts) {
-      const r = maskShaped(this.maskText(t, 'prompt'), working, ctx, this.blocks)
+      const r = maskShaped(
+        this.maskText(t, 'prompt', undefined, budget),
+        working,
+        ctx,
+        this.numbering
+      )
       grow(working, r.additions)
       grow(additions, r.additions)
     }
@@ -512,8 +673,16 @@ export class Guard {
   }
 
   /** Masks without the last gate: for a caller that has a fallback. */
-  maskText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
-    return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
+  maskText(
+    text: string,
+    kind: MaskContext['kind'] = 'result',
+    scan?: ScanResult,
+    budget: RuleBudget = ruleBudget()
+  ): string {
+    return applyMap(text, this.map, this.context('unknown', kind, budget), {
+      known: this.destroyed,
+      scan,
+    })
   }
 
   /** The same last gate as a tool's result: a credential still here fails the
@@ -561,7 +730,7 @@ export class Guard {
    *  nothing written against it joins it, and a secret laid across it is
    *  still one match (review of d18b5c5). A text that already holds a mark's
    *  characters gets no exemption. */
-  applyContext(text: string, scan?: ScanResult): string {
+  applyContext(text: string, scan?: ScanResult, budget: RuleBudget = ruleBudget()): string {
     // Every copy is held as one opaque mark while the text is masked, so a
     // secret laid across one is still one match. Only a copy that is a whole
     // section (a body that is the held text, or starts with it before a
@@ -569,7 +738,7 @@ export class Guard {
     // the text around it (security review of 933156e).
     const held = [MODEL_NOTE, ...this.produced].filter((h) => text.includes(h))
     if (held.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
-      return this.applyText(text, 'result', scan)
+      return this.applyText(text, 'result', scan, budget)
     const isWhole = (at: number, h: string) =>
       (at === 0 || text[at - 1] === '\n') &&
       (at + h.length === text.length ||
@@ -603,13 +772,18 @@ export class Guard {
     // The whole, read back, scanned once more: anything a hold let through
     // sends the text through full masking first; only if that too leaves a
     // credential does the text fail (review of 6e14ec6).
-    return this.holdAndMask(text, spans, (key) => {
+    return this.holdAndMask(text, spans, budget, (key) => {
       const h = held[Number(key.slice(0, key.indexOf(':')))]!
-      if (!key.endsWith(':1')) return this.maskText(h)
+      if (!key.endsWith(':1')) return this.maskText(h, 'result', undefined, budget)
       if (h === MODEL_NOTE) return h
-      return applyMap(redactKnown(h, this.destroyed), this.map, this.context('unknown'), {
-        scanned: true,
-      })
+      return applyMap(
+        redactKnown(h, this.destroyed),
+        this.map,
+        this.context('unknown', 'result', budget),
+        {
+          scanned: true,
+        }
+      )
     })
   }
 
@@ -617,15 +791,19 @@ export class Guard {
    *  entry (lib/listings.ts) where it stands whole is held while the listing
    *  is masked as a whole, then put back as written, less any credential
    *  this session destroyed. Everything else is masked as any reminder is. */
-  applyListing(text: string, entries: readonly string[]): string {
+  applyListing(
+    text: string,
+    entries: readonly string[],
+    budget: RuleBudget = ruleBudget()
+  ): string {
     if (entries.length === 0 || text.includes('\u0000') || text.includes('\u0001'))
-      return this.applyText(text)
+      return this.applyText(text, 'result', undefined, budget)
     const spans = wholeEntries(text, entries).map(({ at, entry }) => ({
       at,
       length: entry.length,
       key: entry,
     }))
-    return this.holdAndMask(text, spans, (entry) => redactKnown(entry, this.destroyed))
+    return this.holdAndMask(text, spans, budget, (entry) => redactKnown(entry, this.destroyed))
   }
 
   /** Masks `text` as a whole with each span held as one opaque mark, and puts
@@ -639,9 +817,10 @@ export class Guard {
   private holdAndMask(
     text: string,
     spans: readonly HeldSpan[],
+    budget: RuleBudget,
     back: (key: string) => string
   ): string {
-    const full = () => this.gate(this.maskText(text))
+    const full = () => this.gate(this.maskText(text, 'result', undefined, budget))
     if (text.includes('\u0000') || text.includes('\u0001')) return full()
     const marks = new Map<string, string>()
     let marked = ''
@@ -654,7 +833,7 @@ export class Guard {
       at = span.at + span.length
     }
     marked += text.slice(at)
-    let out = this.maskText(marked)
+    let out = this.maskText(marked, 'result', undefined, budget)
     for (const [key, mark] of marks) out = out.split(mark).join(back(key))
     if (out.includes('\u0000') || out.includes('\u0001')) return full()
     if (survivingSecrets(out, this.map).length > 0) return full()
@@ -662,13 +841,18 @@ export class Guard {
   }
 
   /** What masking knows about a text of `language` (spec 050). */
-  context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
+  context(
+    language: MaskContext['language'],
+    kind: MaskContext['kind'] = 'result',
+    budget: RuleBudget
+  ): MaskContext {
     const rules = this.rules.rules
-    if (!this.index) return { ...NO_CONTEXT, language, kind, rules }
+    if (!this.index) return { ...NO_CONTEXT, language, kind, rules, budget }
     return {
       language,
       kind,
       rules,
+      budget,
       projectLanguages: this.index.languages,
       // Less every name the project declares anywhere (spec 050 data-model).
       // Only once every file is indexed: before that, a name imported here may
@@ -705,18 +889,23 @@ export class Guard {
   }
 
   /** Before the tool runs: the raw-only check, then the arguments restored. */
-  async beforeTool(e: ToolEvent): Promise<{ deny: string } | { args: ToolEvent }> {
+  async beforeTool(
+    e: ToolEvent,
+    budget: RuleBudget = ruleBudget()
+  ): Promise<{ deny: string } | { args: ToolEvent }> {
     const policy = argumentPolicy(e.tool, this.mcpRestore)
     const unresolved = new Set<string>()
     const altered = new Set<string>()
+    const resolved = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
-      const r = restoreArgs(s, this.stored.map)
+      const r = restoreArgs(s, this.restoreMap)
+      r.resolved.forEach((p) => resolved.add(p))
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
-      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.stored.map)
+      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.restoreMap)
       return r.text
     }
 
@@ -753,12 +942,19 @@ export class Guard {
       return this.deny(
         `a placeholder in it stands for ${withheldText(restoresWhat)}, which is never written back. Ask the user`
       )
+    // Security audit 2026-11-01: the model chose the command seeing only the
+    // placeholder, so a value that is itself shell syntax (a planted or pulled
+    // map) would run unseen. Identifiers and paths never need these characters.
+    if (policy.command && [...resolved].some((p) => !SHELL_SAFE.test(this.restoreMap[p] ?? '')))
+      return this.deny(
+        'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
+      )
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
         if (typeof p === 'string' && (await this.rawOnlyHit(p))) {
           return this.deny(
-            `Veilio keeps ${this.applyText(p)} away from the model. Ask the user for what you need from it`,
+            `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
             false
           )
         }
@@ -770,7 +966,7 @@ export class Guard {
         for (const word of pathsInCommand(c)) {
           if (await this.rawOnlyHit(word)) {
             return this.deny(
-              `Veilio keeps ${this.applyText(word)} away from the model. Ask the user for what you need from it`,
+              `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
             )
           }
@@ -790,7 +986,7 @@ export class Guard {
           // A path, not prose that mentions one: no whitespace.
           if (isPathLike(s) && (await this.rawOnlyHit(s))) {
             return this.deny(
-              `Veilio keeps ${this.applyText(s)} away from the model. Ask the user for what you need from it`,
+              `Veilio keeps ${this.applyText(s, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
             )
           }
@@ -850,18 +1046,19 @@ export class Guard {
     raw: string,
     args: ToolEvent,
     deadline: number,
+    budget: RuleBudget,
     indexed = false
   ): Promise<ToolOutcome> {
     if (!indexed) {
-      const unchecked = await this.indexNamed(args, [raw], deadline)
+      const unchecked = await this.indexNamed(args, [raw], deadline, budget)
       if (unchecked) return this.withhold(unchecked)
     }
-    const ctx = this.context('unknown')
+    const ctx = this.context('unknown', 'result', budget)
     const shaped = maskShaped(
       applyMap(raw, this.map, ctx, { known: this.destroyed }),
       this.map,
       ctx,
-      this.blocks
+      this.numbering
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
@@ -881,11 +1078,12 @@ export class Guard {
     tool: string,
     args: ToolEvent,
     received: { deny?: string; result?: unknown; text?: string; isError?: boolean },
-    deadline = Date.now() + 6_000
+    deadline = Date.now() + 6_000,
+    budget: RuleBudget = ruleBudget()
   ): Promise<ToolOutcome> {
     let outcome = received
     // A denial reaches the model as text, like an error's: masked the same way.
-    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline)
+    if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
@@ -893,7 +1091,7 @@ export class Guard {
       texts.push(s)
       return s
     })
-    const unchecked = await this.indexNamed(args, texts, deadline)
+    const unchecked = await this.indexNamed(args, texts, deadline, budget)
     if (unchecked) return this.withhold(unchecked)
     // What any scan of this result destroys is removed from all of it, as
     // written, before anything is masked: no repeat of a credential on
@@ -909,7 +1107,7 @@ export class Guard {
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
       this.destroyed.learn(destroyedValues([raw], this.map))
-      return this.maskMessage(strip(raw), args, deadline, true)
+      return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
     // The file's kind, never its path (engine spec 013 R19): the
@@ -941,13 +1139,13 @@ export class Guard {
       const working: SymbolMap = ownedMap(this.map)
       const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
-      const ctx = this.context(this.resultLanguage(tool, args, filePath))
+      const ctx = this.context(this.resultLanguage(tool, args, filePath), 'result', budget)
       // A Grep result mixes files: each line is masked in its own file's language.
       const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
         tool === 'Grep'
           ? s
               .split('\n')
-              .map((line) => fn(line, this.context(languageOfGrepLine(line))))
+              .map((line) => fn(line, this.context(languageOfGrepLine(line), 'result', budget)))
               .join('\n')
           : fn(s, ctx)
       // Swept already, above: each string is scanned once here.
@@ -976,10 +1174,12 @@ export class Guard {
               languageOf(filePath),
               ctx.external,
               fileKind,
-              this.blocks,
-              this.rules.rules
+              this.numbering,
+              this.rules.rules,
+              budget
             )
             this.counts.outsideReserved += scrubbed.outside
+            if (scrubbed.rulesStopped) this.counts.rulesStopped++
             grow(working, scrubbed.additions)
             grow(additions, scrubbed.additions)
             return scrubbed.text
@@ -1004,7 +1204,7 @@ export class Guard {
         // `status`, or a value deeper down, is masked like any other.
         if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
         return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c, this.blocks)
+          const shaped = maskShaped(t, working, c, this.numbering)
           grow(working, shaped.additions)
           grow(additions, shaped.additions)
           return shaped.text
@@ -1041,13 +1241,20 @@ export class Guard {
       out.filenames = record.filenames.filter((f) => typeof f !== 'string' || !raw(f))
     }
     if (typeof record.content === 'string') {
-      // `path:12:text` for a match, `path-12-text` for a context line.
+      // `path:12:text` for a match, `path-12-text` for a context line, and
+      // without -n `path:text` / `path-text`. Where the path ends cannot be
+      // told from the line (a dated directory has `-31-` in it, a Windows
+      // drive a ':'), so the prefix before every ':' and '-' is checked
+      // (security audit 2026-11-01; review of aac1f66).
       out.content = record.content
         .split('\n')
         .filter((line) => {
-          const colon = line.indexOf(':')
-          const context = /^(.+?)-\d+-/.exec(line)
-          return !((colon > 0 && raw(line.slice(0, colon))) || (context?.[1] && raw(context[1])))
+          // shortcut: a path is at most PATH_MAX (4096) - git cannot check out a
+          // longer one, so a repository cannot plant it; scanning further would
+          // stall the hook on a minified line. Upgrade if a longer path is shown.
+          for (let i = 1; i < Math.min(line.length, 4097); i++)
+            if ((line[i] === ':' || line[i] === '-') && raw(line.slice(0, i))) return false
+          return true
         })
         .join('\n')
     }
@@ -1093,6 +1300,7 @@ export class Guard {
         }
         onDisk = parsed.stored
       }
+      await this.reloadSideFiles()
       // Everything this guard knows, not only the new entries: a writer that
       // dropped ours (two programs saving at once) gets them back.
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })

@@ -1,0 +1,113 @@
+[
+  {
+    "name": "typescript, plain",
+    "anonymized": "import { __VAR__4 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__4) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__VAR__2: string, __VAR__5: number) {\n    const __VAR__3 = this.__VAR__1.get(__VAR__2) ?? 0\n    const message = `__STR__1 ${__VAR__2} for ${__VAR__5}`\n    await this.ledger.__FN__2(__VAR__2, __VAR__3 + __VAR__5, message)\n    return { __VAR__2, total: __VAR__3 + __VAR__5 }\n  }\n}\n",
+    "map": {
+      "__CLS__1": "SettlementPlanner",
+      "__VAR__1": "pendingBatches",
+      "__FN__1": "planSettlement",
+      "__VAR__2": "counterpartyId",
+      "__VAR__3": "existingBatch",
+      "__VAR__4": "ledgerClient",
+      "__FN__2": "recordIntent",
+      "__VAR__5": "amountMinor",
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
+    }
+  },
+  {
+    "name": "typescript over an existing map",
+    "anonymized": "import { __VAR__11 } from './__PKG__1/ledger'\n\nexport class __CLS__41 {\n  private __VAR__8: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__11) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__91(__VAR__9: string, __VAR__12: number) {\n    const __VAR__10 = this.__VAR__8.get(__VAR__9) ?? 0\n    const message = `__STR__1 ${__VAR__9} for ${__VAR__12}`\n    await this.ledger.__FN__92(__VAR__9, __VAR__10 + __VAR__12, message)\n    return { __VAR__9, total: __VAR__10 + __VAR__12 }\n  }\n}\n",
+    "map": {
+      "__CLS__41": "SettlementPlanner",
+      "__VAR__7": "ledger",
+      "__FN__90": "elsewhere",
+      "__VAR__8": "pendingBatches",
+      "__FN__91": "planSettlement",
+      "__VAR__9": "counterpartyId",
+      "__VAR__10": "existingBatch",
+      "__VAR__11": "ledgerClient",
+      "__FN__92": "recordIntent",
+      "__VAR__12": "amountMinor",
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
+    }
+  },
+  {
+    "name": "typescript with a replace rule",
+    "anonymized": "import { __VAR__3 } from './__PKG__1/ledger'\n\nexport class __CLS__1 {\n  private __VAR__1: Map<string, number> = new Map()\n\n  constructor(private readonly ledger = __VAR__3) {}\n\n  /** Plans the next settlement for one counterparty. */\n  async __FN__1(__CODENAME__1: string, __VAR__4: number) {\n    const __VAR__2 = this.__VAR__1.get(__CODENAME__1) ?? 0\n    const message = `__STR__1 ${__CODENAME__1} for ${__VAR__4}`\n    await this.ledger.__FN__2(__CODENAME__1, __VAR__2 + __VAR__4, message)\n    return { __CODENAME__1, total: __VAR__2 + __VAR__4 }\n  }\n}\n",
+    "map": {
+      "__CLS__1": "SettlementPlanner",
+      "__VAR__1": "pendingBatches",
+      "__FN__1": "planSettlement",
+      "__CODENAME__1": "counterpartyId",
+      "__VAR__2": "existingBatch",
+      "__VAR__3": "ledgerClient",
+      "__FN__2": "recordIntent",
+      "__VAR__4": "amountMinor",
+      "__PKG__1": "quayward",
+      "__STR__1": "settling"
+    }
+  },
+  {
+    "name": "python with a regulated value and a manual mark",
+    "anonymized": "from __VAR__5.billing import __VAR__1\n\nIBAN_ON_FILE = \"__IBAN__1\"\n\ndef __FN__1(__VAR__2, __VAR__3=30):\n    \"\"\"Reconcile open invoices for __MANUAL__1's account.\"\"\"\n    __VAR__4 = __VAR__1.__FN__3(__VAR__2)\n    stale = [item for item in __VAR__4 if item.__VAR__6 > __VAR__3]\n    return __FN__2(stale, account=\"__IBAN__1\")\n",
+    "map": {
+      "__MANUAL__1": "Janina Kowalska",
+      "__IBAN__1": "DE89370400440532013000",
+      "__FN__1": "reconcile_invoices",
+      "__FN__2": "summarise_stale",
+      "__VAR__1": "invoice_store",
+      "__VAR__2": "customer_ref",
+      "__VAR__3": "cutoff_days",
+      "__VAR__4": "open_items",
+      "__FN__3": "fetch_open",
+      "__VAR__5": "quayward",
+      "__VAR__6": "age_days"
+    }
+  },
+  {
+    "name": "python over a map holding a manual mark and an IBAN",
+    "anonymized": "from __VAR__5.billing import __VAR__1\n\nIBAN_ON_FILE = \"__IBAN__3\"\n\ndef __FN__1(__VAR__2, __VAR__3=30):\n    \"\"\"Reconcile open invoices for __MANUAL__3's account.\"\"\"\n    __VAR__4 = __VAR__1.__FN__3(__VAR__2)\n    stale = [item for item in __VAR__4 if item.__VAR__6 > __VAR__3]\n    return __FN__2(stale, account=\"__IBAN__3\")\n",
+    "map": {
+      "__MANUAL__3": "Janina Kowalska",
+      "__IBAN__2": "GB82WEST12345698765432",
+      "__IBAN__3": "DE89370400440532013000",
+      "__FN__1": "reconcile_invoices",
+      "__FN__2": "summarise_stale",
+      "__VAR__1": "invoice_store",
+      "__VAR__2": "customer_ref",
+      "__VAR__3": "cutoff_days",
+      "__VAR__4": "open_items",
+      "__FN__3": "fetch_open",
+      "__VAR__5": "quayward",
+      "__VAR__6": "age_days"
+    }
+  },
+  {
+    "name": "java, plain",
+    "anonymized": "package com.__VAR__4.routing;\n\npublic final class __CLS__1 {\n    private final int __VAR__1;\n\n    public __CLS__1(int __VAR__1) {\n        this.__VAR__1 = __VAR__1;\n    }\n\n    public int __FN__1(int __VAR__2) {\n        int __VAR__3 = Math.__FN__2(__VAR__2, __VAR__1);\n        return __VAR__3;\n    }\n}\n",
+    "map": {
+      "__CLS__1": "SkerryRouteBalancer",
+      "__VAR__1": "harbourCapacity",
+      "__FN__1": "rebalanceBerths",
+      "__VAR__2": "requestedBerths",
+      "__VAR__3": "clampedBerths",
+      "__VAR__4": "quayward",
+      "__FN__2": "min"
+    }
+  },
+  {
+    "name": "java, text already holding placeholders",
+    "anonymized": "package com.__VAR__304.routing;\n\npublic final class __CLS__13 {\n    private final int __VAR__301;\n\n    public __CLS__13(int __VAR__301) {\n        this.__VAR__301 = __VAR__301;\n    }\n\n    public int __FN__1(int __VAR__302) {\n        int __VAR__303 = Math.__FN__2(__VAR__302, __VAR__301);\n        return __VAR__303;\n    }\n}\n\n// see __CLS__12 and __VAR__300\n",
+    "map": {
+      "__CLS__13": "SkerryRouteBalancer",
+      "__VAR__301": "harbourCapacity",
+      "__FN__1": "rebalanceBerths",
+      "__VAR__302": "requestedBerths",
+      "__VAR__303": "clampedBerths",
+      "__VAR__304": "quayward",
+      "__FN__2": "min"
+    }
+  }
+]

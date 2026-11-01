@@ -1,0 +1,28 @@
+{
+  "corpus": {
+    "inputs": 11778,
+    "maskedInValues": 3856,
+    "leaks": 0,
+    "newlyReadable": {
+      "identifiers": 17683,
+      "paths": 61
+    }
+  },
+  "syntax": {
+    "formats": 58,
+    "cases": 348,
+    "checks": 2088,
+    "readable": 0,
+    "inMap": 0
+  },
+  "project": {
+    "inputs": 485,
+    "maskedInValues": 2976,
+    "leaks": 0,
+    "newlyReadable": {
+      "identifiers": 17450,
+      "paths": 545
+    },
+    "dir": "veilio-bench-polyglot"
+  }
+}

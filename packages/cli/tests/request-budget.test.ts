@@ -105,11 +105,13 @@ describe('each command stays within its request budget', () => {
     expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(2)
   })
 
-  it('maps pull (team): at most 2', async () => {
+  // Round 4 (D): a block's floor counts only numbers the server issued, so
+  // the map's numbers are checked against the team's listing of their bases.
+  it('maps pull (team): at most 3 - the map, the listing of its bases, the block', async () => {
     const { mine } = await teamWorld()
     const r = await measure(['maps', 'pull', mine])
     expect(r.code, r.err).toBe(0)
-    expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(2)
+    expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(3)
   })
 
   it('maps update (personal): at most 3', async () => {
@@ -129,13 +131,14 @@ describe('each command stays within its request budget', () => {
     expect(r.paths.filter((p) => p === 'GET /api/maps')).toHaveLength(1)
   })
 
-  it('maps update (team) that renumbers unreserved entries: at most 4 - one reservation more (spec 063)', async () => {
+  // Round 4 (D): plus the listing that vouches for the local numbers' floor.
+  it('maps update (team) that renumbers unreserved entries: at most 5 - a listing and a reservation more', async () => {
     cloud.recordsReservations = true
     const { mine } = await teamWorld()
     local({ __CLS__1: 'Ledger', __FN__2: 'settle', __FN__90: 'settleQuayFees' })
     const r = await measure(['maps', 'update', mine])
     expect(r.code, r.err).toBe(0)
-    expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(4)
+    expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(5)
     expect(r.paths.filter((p) => p.endsWith('/placeholders/reserve'))).toHaveLength(1)
   })
 

@@ -21,6 +21,11 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+# Read-only by default (security audit 2026-11-01); the release job asks for
+# what it writes.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
 

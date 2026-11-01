@@ -11,20 +11,27 @@
 // namespace looked exactly like one that used the team's, until a teammate's
 // placeholders came back unrestored (Constitution V).
 
+import { servedAs, teamKeyBytes, wireBase } from './hashed-bases.js'
 import {
   analyzeTeamNamespace,
   decryptTeamMapWithAny,
   importTeamKey,
+  isEngineBase,
+  isSaneBlock,
+  MAX_PLACEHOLDER_NUMBER,
   type CryptoKeyLike,
   type TeamMapEntry,
   type TeamMapEnvelope,
+  LOCAL_PREFIX,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
-import { readCredential, type Credential } from './credential.js'
+import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
+import { printable } from './reservations.js'
 import {
   CloudError,
   getMap,
   getTeamEnvelopes,
+  readReservationsFor,
   listMaps,
   type CloudMapList,
   type CloudMapSummary,
@@ -70,11 +77,23 @@ export type TeamNamespaceResult =
        * `map: null` when it did not open; absent when it was not among them.
        */
       excluded?: { map: Record<string, string> | null }
+      /** Spec 063: who holds which of the team's numbers, as the read listed
+       *  them. Absent on an instance that keeps no record. */
+      reservations?: PlaceholderReservation[]
+      /** Round 4 (D): placeholders numbered outside every run the server
+       *  issued for their base: no floor, and above the base's highest issued
+       *  number, left by restore. */
+      unvouched?: number
+      /** Round 4 (D): those above the base's highest issued number (also in
+       *  analysis.conflicts): restore leaves them. */
+      unissued?: string[]
     }
   /** Nothing to read: signed out, or not in a team. The local namespace is right. */
   | { status: 'local' }
-  /** In a team, but no team key on this machine: `veilio team unlock`. */
-  | { status: 'locked' }
+  /** In a team, but no team key on this machine: `veilio team unlock`.
+   *  `teamId`: which team, so new names can still be numbered from this
+   *  checkout's reserved.json (spec 066). */
+  | { status: 'locked'; teamId?: string }
   /** In a team, and the maps could not be read. `reason` says why. */
   | { status: 'unavailable'; reason: string }
   /**
@@ -190,9 +209,11 @@ export async function resolveTeamNamespace(
   }
 }
 
+/** The reason, shown on a terminal and to a model: never raw server text. */
 function describe(err: unknown): string {
-  if (err instanceof CloudError) return `${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`
-  return err instanceof Error ? err.message : String(err)
+  if (err instanceof CloudError)
+    return printable(`${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`)
+  return printable(err instanceof Error ? err.message : String(err))
 }
 
 async function attempt(
@@ -218,9 +239,18 @@ async function attempt(
   // An older self-hosted Cloud may still merge server-side; that answer needs no
   // key. It carries no aliases or conflicts - it predates both.
   if (list.teamNamespace) {
+    // Dropped as analyzeTeamNamespace drops them (spec 066, code review).
+    const all = Object.entries(list.teamNamespace)
+    const namespace = Object.fromEntries(all.filter(([p]) => !p.startsWith(LOCAL_PREFIX)))
     return {
       status: 'team',
-      analysis: { namespace: list.teamNamespace, aliases: {}, conflicts: {}, highest: {} },
+      analysis: {
+        namespace,
+        aliases: {},
+        conflicts: {},
+        highest: {},
+        localDropped: all.length - Object.keys(namespace).length,
+      },
       conflictDetection: false,
       teamId: null,
       unreadable: [],
@@ -228,9 +258,13 @@ async function attempt(
   }
 
   const teamId = list.team?.id
+  // The team last seen, for a run that cannot reach Cloud (spec 066 FR-001).
+  if (teamId)
+    writeTeamRecord({ instance: credential.instance, account: credential.account, teamId }, home)
+  else removeTeamRecord(home)
   if (!teamId) return { status: 'local' }
   const keys = await heldTeamKeys(credential, home, teamId)
-  if (keys.length === 0) return { status: 'locked' }
+  if (keys.length === 0) return { status: 'locked', teamId }
 
   const scoped = teamScopedMaps(list)
   const read = await readTeamEntries(credential, keys, scoped, signal)
@@ -259,12 +293,46 @@ async function attempt(
   // reserved was not numbered by the map that publishes it. It joins the
   // disputed set - scrub never emits it, a publish treats it as taken, restore
   // leaves it and names it - rather than be restored as a guess.
-  const misattributed = read.reservations ? misattributedIn(analysis, kept, read.reservations) : []
+  const misattributed = read.reservations
+    ? misattributedIn(analysis, kept, read.reservations, teamKeyBytes(credential, home, teamId))
+    : []
   for (const p of misattributed) analysis.conflicts[p] = Math.max(analysis.conflicts[p] ?? 0, 2)
+  const teamKeys = teamKeyBytes(credential, home, teamId)
+  let vouched = read.reservations
+    ? vouchNumbers(
+        kept.map((e) => e.map),
+        read.reservations,
+        teamKeys
+      )
+    : null
+  // Round 4 (D): a number above every run listed here is judged against the
+  // server's own `highest` for its base (the counter or the highest run end,
+  // never cut short): asked only for those bases, only when there are some.
+  if (vouched?.beyond.length) {
+    const bases = [...new Set(vouched.beyond.map((p) => NUMBERED.exec(p)![1]!))]
+    const names = bases.flatMap((b) =>
+      isEngineBase(b) ? [b] : teamKeys.map((k) => wireBase(b, k))
+    )
+    const listed = await readReservationsFor(credential, teamId, names, signal).catch(() => null)
+    if (listed)
+      vouched = vouchNumbers(
+        kept.map((e) => e.map),
+        [...read.reservations!, ...listed.reservations],
+        teamKeys,
+        listed.highest
+      )
+  }
+  if (vouched) {
+    analysis.highest = vouched.highest
+    for (const p of vouched.beyond) analysis.conflicts[p] = Math.max(analysis.conflicts[p] ?? 0, 2)
+  }
   return {
     status: 'team',
     analysis,
     misattributed,
+    ...(read.reservations ? { reservations: read.reservations } : {}),
+    ...(vouched?.unvouched ? { unvouched: vouched.unvouched } : {}),
+    ...(vouched?.beyond.length ? { unissued: vouched.beyond } : {}),
     conflictDetection: true,
     teamId,
     unreadable,
@@ -282,7 +350,9 @@ const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 export function misattributedIn(
   analysis: { namespace: Record<string, string>; aliases: Record<string, string> },
   entries: readonly { owner?: string; map: Record<string, string> | null }[],
-  reservations: readonly PlaceholderReservation[]
+  reservations: readonly PlaceholderReservation[],
+  /** The team's raw keys: a rule's base is listed under its hash (Cloud audit M1). */
+  keys: readonly Uint8Array[] = []
 ): string[] {
   const out: string[] = []
   const named = { ...analysis.aliases, ...analysis.namespace }
@@ -290,14 +360,60 @@ export function misattributedIn(
     const [, base = '', digits = ''] = NUMBERED.exec(p) ?? []
     if (!base) continue
     const n = Number(digits)
-    const reserver = reservations.find((r) => r.base === base && n >= r.start && n <= r.end)?.member
+    const reserver = reservations.find(
+      (r) => servedAs(r.base, base, keys) && n >= r.start && n <= r.end
+    )?.member
     if (!reserver) continue
     if (!entries.some((e) => e.owner === reserver && e.map?.[p] === name)) out.push(p)
   }
   return out
 }
 
-export { misattributedNote } from './reservations.js'
+export { misattributedNote, unissuedNote } from './reservations.js'
+
+/**
+ * Round 4 (D): a team's numbers, judged against the runs the server issued.
+ * Only a number inside an issued run of its base floors it (`highest`); a
+ * base never reserved keeps its maps' floor up to 10000, the server's own
+ * margin, so maps numbered before the team existed still floor its first
+ * run. A number outside every run is unvouched, and `beyond` holds those
+ * above the base's highest issued number: restore leaves them, as it leaves
+ * a disputed one. At or below it, a number from before spec 063 restores as
+ * before. (A legacy number above 10000 on a base never reserved floors
+ * nothing: teams from before spec 063 exist only on staging.)
+ */
+export function vouchNumbers(
+  maps: readonly (Record<string, string> | null)[],
+  reservations: readonly PlaceholderReservation[],
+  keys: readonly Uint8Array[],
+  /** The server's highest per listed base, when it said: the restore threshold. */
+  served: Record<string, number> = {}
+): { highest: Record<string, number>; beyond: string[]; unvouched: number } {
+  const names = (base: string) => (isEngineBase(base) ? [base] : keys.map((k) => wireBase(base, k)))
+  const runs = (base: string) =>
+    reservations.filter((r) => isSaneBlock(r) && names(base).includes(r.base))
+  const highest: Record<string, number> = {}
+  const beyond = new Set<string>()
+  let unvouched = 0
+  const seen = new Set<string>()
+  for (const map of maps)
+    for (const p of Object.keys(map ?? {})) {
+      const m = NUMBERED.exec(p)
+      if (!m || seen.has(p)) continue
+      seen.add(p)
+      const [, base = '', digits = ''] = m
+      const n = Number(digits)
+      if (n > MAX_PLACEHOLDER_NUMBER) continue
+      const held = runs(base)
+      const top = Math.max(0, ...held.map((r) => r.end), ...names(base).map((b) => served[b] ?? 0))
+      const inside = held.some((r) => n >= r.start && n <= r.end)
+      if (!inside) unvouched++
+      if (inside || (held.length === 0 && n <= 10_000))
+        highest[base] = Math.max(highest[base] ?? 0, n)
+      if (!inside && top > 0 && n > top) beyond.add(p)
+    }
+  return { highest, beyond: [...beyond], unvouched }
+}
 
 /** `"billing" (m-1), m-2` - the names a person recognises, beside the ids they
  *  would type to remove one. Five at most, then a count. */

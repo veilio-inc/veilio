@@ -88,19 +88,18 @@ describe('pulling a team map reserves a block when the member needs one', () => 
     expect(blockRequests()).toHaveLength(before)
   })
 
-  it('a teammate’s number above the block gets that kind a new block, above it', async () => {
+  // Security audit (round 4): the block is this member's alone, so a
+  // teammate's number above it keeps it (was: a new block, against the cap).
+  it('a teammate’s number above the block keeps the block: no new reservation', async () => {
     const id = await teamMap({ __FN__40: 'chargeCard' })
     await run(['maps', 'pull', id])
     const first = loadReserved(mapPath())!.blocks.__FN__
+    const asked = blockRequests().length
     const newer = await teamMap({ __FN__40: 'chargeCard', [`__FN__${first.end + 20}`]: 'refund' })
     const res = await run(['maps', 'pull', newer, '--force'])
     expect(res.code, res.err).toBe(EXIT_OK)
-    const second = loadReserved(mapPath())!.blocks.__FN__
-    expect(second.start).toBeGreaterThan(first.end + 20)
-    // Only the kind that needed it.
-    expect(
-      (blockRequests().at(-1)!.body!.requests as { base: string }[]).map((x) => x.base)
-    ).toEqual(['__FN__'])
+    expect(loadReserved(mapPath())!.blocks.__FN__).toEqual(first)
+    expect(blockRequests()).toHaveLength(asked)
   })
 
   it('a personal map reserves nothing', async () => {
@@ -116,9 +115,11 @@ describe('pulling a team map reserves a block when the member needs one', () => 
     const res = await run(['maps', 'pull', id])
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(existsSync(mapPath())).toBe(true)
-    expect(res.err).toMatch(/could not reserve/i)
-    expect(res.err).toMatch(/numbers? new names (on this machine|locally)/i)
-    expect(loadReserved(mapPath())).toBeNull()
+    // Spec 066: on the normal output.
+    expect(res.out).toMatch(/could not reserve/i)
+    expect(res.out).toMatch(/new names are numbered on this machine/i)
+    // Spec 066 R4: written anyway, with no block, so the guard knows it is in a team.
+    expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'cap' } })
   })
 
   it('blocks reserved for another team or account are replaced, never numbered from', async () => {
@@ -146,7 +147,7 @@ describe('a block is taken only from a sane answer', () => {
     ['no ranges', {}],
     ['a run below the map', { ranges: [{ base: '__FN__', start: 3, end: 502 }] }],
     ['a run for a kind not asked for', { ranges: [{ base: '__X__', start: 100, end: 599 }] }],
-  ])('%s: no reserved.json, and the pull still succeeds', async (_why, body) => {
+  ])('%s: no block in reserved.json, and the pull still succeeds', async (_why, body) => {
     const real = cloud.fetch
     vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
       String(url).endsWith('/placeholders/reserve')
@@ -161,8 +162,8 @@ describe('a block is taken only from a sane answer', () => {
     // answers above are short or wrong either way.
     const res = await run(['maps', 'pull', id])
     expect(res.code, res.err).toBe(EXIT_OK)
-    expect(res.err).toMatch(/could not reserve/i)
-    expect(loadReserved(mapPath())).toBeNull()
+    expect(res.out).toMatch(/could not reserve/i)
+    expect(loadReserved(mapPath())).toMatchObject({ blocks: {}, refused: { reason: 'server' } })
   })
 })
 

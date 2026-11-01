@@ -19,7 +19,7 @@
 // The namespace read is the MCP server's request too.
 import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
-import { readCredential } from '@veilio-inc/cli/credential'
+import { readCredential, readTeamRecord } from '@veilio-inc/cli/credential'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
@@ -60,9 +60,16 @@ export interface ResolvedNamespace {
   /** False for an older instance's server-merged namespace: usable to anonymize,
    *  never to restore - it cannot tell a disputed placeholder (spec 028). */
   conflictDetection: boolean
+  /** Spec 066: whose `reserved.json` this checkout numbers from - the signed-in
+   *  account in a team, its maps read or not (FR-001). `teamId` null: in a team
+   *  whose id is unknown here. Null where no team numbering applies. */
+  owner: { instance: string; account: string; teamId: string | null } | null
 }
 
-function localFrom(found: TeamNamespaceResult): ResolvedNamespace {
+function localFrom(
+  found: TeamNamespaceResult,
+  owner: ResolvedNamespace['owner'] = null
+): ResolvedNamespace {
   return {
     source: 'local',
     namespace: {},
@@ -71,6 +78,7 @@ function localFrom(found: TeamNamespaceResult): ResolvedNamespace {
     highest: {},
     found,
     conflictDetection: true,
+    owner,
   }
 }
 
@@ -90,12 +98,32 @@ async function fetchNamespace(
   }
 ): Promise<ResolvedNamespace> {
   const found = await resolveTeamNamespace(home, opts)
+  const credential = readCredential(home)
+  // Locked or unreadable is still a team (code review of spec 066, FR-001):
+  // new names go into the local family, never above the map.
+  if (found.status === 'locked' || found.status === 'unavailable') {
+    const teamId =
+      found.status === 'locked'
+        ? (found.teamId ?? null)
+        : credential
+          ? (readTeamUnlock(credential, home)?.teamId ?? readTeamRecord(credential, home))
+          : null
+    return localFrom(
+      found,
+      credential ? { instance: credential.instance, account: credential.account, teamId } : null
+    )
+  }
   if (found.status !== 'team') return localFrom(found)
+  const owner =
+    credential && found.teamId
+      ? { instance: credential.instance, account: credential.account, teamId: found.teamId }
+      : null
   const { namespace, aliases, conflicts, highest } = found.analysis
   // A team with no maps yet has no namespace to share: 'local', as before. (A
   // team whose maps exist but none opened is 'unavailable', from the resolver.)
+  // Still a team: new names are numbered from this checkout's block (spec 066).
   if (Object.keys(namespace).length === 0 && Object.keys(conflicts).length === 0) {
-    return localFrom({ status: 'local' })
+    return localFrom({ status: 'local' }, owner)
   }
   return {
     source: 'team',
@@ -105,6 +133,7 @@ async function fetchNamespace(
     highest,
     found,
     conflictDetection: found.conflictDetection,
+    owner,
   }
 }
 

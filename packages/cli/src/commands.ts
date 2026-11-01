@@ -7,11 +7,12 @@
 //      corrupting that pipe.
 
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import {
   alteredNote,
   BIN_NAME,
-  detectSecrets,
+  detectCredentials,
   keepRule,
   type LanguageOption,
   languageOfPath,
@@ -19,8 +20,11 @@ import {
   hasBlockingSecrets,
   LANGUAGE_LABELS,
   locallyNumberedNote,
+  localFamilyNote,
   restore,
   restoreLayers,
+  RULES_STOPPED_NOTE,
+  appearsAsToken,
   type SecretFinding,
   STRIPPABLE_TYPES,
   summarizeSecrets,
@@ -31,7 +35,15 @@ import {
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
-import { contestedNote, misattributedNote, ownWithAliases } from './reservations.js'
+import {
+  contestedNote,
+  misattributedNote,
+  unissuedNote,
+  ownWithAliases,
+  ignoredKeysNote,
+  reservationRefusedSentence,
+  localNumbering,
+} from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
 import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
@@ -122,6 +134,18 @@ export async function runScrub(
     io.stderr(found.refused)
     return EXIT_ERROR
   }
+  // Spec 066 R3, FR-001: in a team - its maps read or not - new names go
+  // inside this checkout's block, else into its local family: the guard's
+  // rule, from the same reserved.json. Never the home store's directory.
+  const numbering =
+    credential && found.numberingTeam !== undefined
+      ? localNumbering(
+          mapPath,
+          { instance: credential.instance, account: credential.account },
+          found.numberingTeam,
+          { write: dirname(mapPath) !== join(io.home ?? homedir(), '.veilio') }
+        )
+      : undefined
 
   // `--team`: take new numbers out of the team's SHARED allocation rather than
   // from a floor computed here, because this map is going to be published.
@@ -162,7 +186,13 @@ export async function runScrub(
         return null
       }
     }
-    return anonymizeOverTeam(source, map, found.team ?? { namespace: {}, highest: {} }, options)
+    return anonymizeOverTeam(
+      source,
+      map,
+      found.team ?? { namespace: {}, highest: {} },
+      options,
+      numbering
+    )
   }
 
   // Each file in its own language: the flag's, else its extension's, else a
@@ -215,6 +245,10 @@ export async function runScrub(
   // must not swallow.
   // A finding, not the summary: the placeholders may clash with the team's.
   if (found.note) io.stderr(`${BIN_NAME}: ${found.note}\n`)
+  // Spec 066 R8: survives --quiet. New names were numbered locally because the
+  // last reservation failed; stderr is scrub's normal channel for findings.
+  if (numbering?.refused)
+    io.stderr(`${BIN_NAME}: ${reservationRefusedSentence(numbering.refused, numbering.tag)}\n`)
   // `--team` asked for the team's numbers, and with nobody signed in there is
   // no team to ask - the Community Edition's case. Numbering locally is right
   // (there is nobody to clash with), but only if it is said: a flag that
@@ -237,6 +271,9 @@ export async function runScrub(
   if (skipped.length && !appliedLine) io.stderr(`${BIN_NAME}: ${skipped.join(' ')}\n`)
 
   for (const { name, result } of results) {
+    // Survives --quiet: the rules the account set stopped applying part-way.
+    if (result.rulesStopped)
+      io.stderr(`${BIN_NAME}: ${name ? `${name}: ` : ''}${RULES_STOPPED_NOTE}\n`)
     if (!result.languageFallback) continue
     io.stderr(
       `${BIN_NAME}: ${name ? `${name}: ` : ''}no language marker matched — masked as ${LANGUAGE_LABELS[result.language]}, which may be wrong. ` +
@@ -321,6 +358,12 @@ export type TeamNamespaceSource = () => Promise<{
    */
   reserve?: Reserve | null
   /**
+   * Spec 066: new names are numbered from this checkout's reserved.json -
+   * the team's id, or null in a team (or maybe one) whose id is unknown.
+   * Undefined: no team numbering (signed out, in no team, an older instance).
+   */
+  numberingTeam?: string | null
+  /**
    * The command is refused, in these words (a whole `veilio: ...` line):
    * VEILIO_PROJECT names no project the team works in (spec 052 FR-012a).
    * Nothing is masked - numbering from the local map instead is the quiet
@@ -335,6 +378,8 @@ export type TeamLayerSource = (missing: readonly string[]) => Promise<{
   refused?: string
   /** Spec 063: placeholders whose number another member reserved. */
   misattributed?: string[]
+  /** Round 4 (D): placeholders above every number the server issued for their kind. */
+  unissued?: string[]
 }>
 
 export async function runRestore(
@@ -346,7 +391,8 @@ export async function runRestore(
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
   // Spec 063: this member's old placeholders a publish renumbered still read
   // back here; the map wins where both name a placeholder.
-  const { own, contested: contestedAll } = ownWithAliases(mapPath, loadMap(mapPath))
+  const { own, contested: contestedAll, ignored } = ownWithAliases(mapPath, loadMap(mapPath))
+  if (ignored) io.stderr(`${BIN_NAME}: ${ignoredKeysNote(ignored)}\n`)
 
   // The one restore rule (spec 028): the team's maps, this project's map on
   // top where it is in the team's numbering. Asked whenever the text holds a
@@ -359,6 +405,7 @@ export async function runRestore(
   let team: TeamLayer | null = null
   let teamNote: string | null = null
   let misattributed: string[] = []
+  let unissued: string[] = []
   if (hasPlaceholders && teamLayer) {
     const found = await teamLayer(unexplained)
     if (found.refused) {
@@ -368,6 +415,7 @@ export async function runRestore(
     team = found.team
     teamNote = found.note
     misattributed = found.misattributed ?? []
+    unissued = found.unissued ?? []
   }
 
   if (Object.keys(own).length === 0 && !team && !teamNote) {
@@ -384,11 +432,12 @@ export async function runRestore(
   // left with its own reason, apart from the maps disputing one.
   const disputedAll = layers.disputedIn(source)
   const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
-  const disputed = disputedAll.filter((p) => !misattributed.includes(p))
+  const notIssued = disputedAll.filter((p) => unissued.includes(p) && !misattributed.includes(p))
+  const disputed = disputedAll.filter((p) => !misattributed.includes(p) && !unissued.includes(p))
   const localOnly = layers.locallyNumberedIn(source)
-  const contested = contestedAll.filter((p) =>
-    new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(source)
-  )
+  // Spec 066 R5: another checkout numbered these while it held no team numbers.
+  const otherLocal = layers.otherLocalIn(source)
+  const contested = contestedAll.filter((p) => appearsAsToken(source, p))
 
   // Without --keep-docs the default strips JSDoc along with the narration and
   // TODOs. That is right for noise, wrong when the model was asked to document
@@ -407,7 +456,9 @@ export async function runRestore(
       !disputed.includes(p) &&
       !localOnly.includes(p) &&
       !otherMembers.includes(p) &&
-      !contested.includes(p)
+      !notIssued.includes(p) &&
+      !contested.includes(p) &&
+      !otherLocal.includes(p)
   )
   const altered = result.report.altered
 
@@ -416,7 +467,16 @@ export async function runRestore(
   // holds one. A credential redacted on purpose is not a placeholder. The
   // team's maps failing needs no case of its own: a placeholder they were needed
   // for is unresolved.
-  const left = [...unresolved, ...disputed, ...otherMembers, ...contested, ...localOnly, ...altered]
+  const left = [
+    ...unresolved,
+    ...disputed,
+    ...otherMembers,
+    ...notIssued,
+    ...contested,
+    ...localOnly,
+    ...otherLocal,
+    ...altered,
+  ]
   const refused = args.strict && left.length > 0
   if (!refused) io.stdout(result.restored)
 
@@ -424,8 +484,10 @@ export async function runRestore(
   if (teamNote) io.stderr(`${BIN_NAME}: ${teamNote}\n`)
   if (disputed.length > 0) io.stderr(`${BIN_NAME}: ${disputedNote(disputed)}\n`)
   if (otherMembers.length > 0) io.stderr(`${BIN_NAME}: ${misattributedNote(otherMembers)}\n`)
+  if (notIssued.length > 0) io.stderr(`${BIN_NAME}: ${unissuedNote(notIssued)}\n`)
   if (contested.length > 0) io.stderr(`${BIN_NAME}: ${contestedNote(contested)}\n`)
   if (localOnly.length > 0) io.stderr(`${BIN_NAME}: ${locallyNumberedNote(localOnly)}\n`)
+  if (otherLocal.length > 0) io.stderr(`${BIN_NAME}: ${localFamilyNote(otherLocal)}\n`)
 
   // A token the map cannot explain is a finding, not a summary line: the text on
   // stdout now contains something that means nothing, and the user is about to
@@ -480,7 +542,11 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
   const all: { file: string; finding: SecretFinding }[] = []
   for (const target of targets) {
     const fileKind = target.name === '<stdin>' ? undefined : fileKindOf(target.name)
-    for (const finding of detectSecrets(target.text, fileKind ? { fileKind } : {})) {
+    const language = target.name === '<stdin>' ? null : languageOfPath(target.name)
+    for (const finding of detectCredentials(target.text, {
+      ...(fileKind ? { fileKind } : {}),
+      ...(language ? { language } : {}),
+    })) {
       all.push({ file: target.name, finding })
     }
   }

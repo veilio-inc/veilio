@@ -158,6 +158,15 @@ placeholder that reuses an engine base such as `__FN__`, a pattern the rule
 matcher does not support (a backreference, lookaround, `\b`, or a bound over
 50), or a sealed body moved to another rule's row.
 
+One `scrub` of one input spends a bounded amount of matching work on custom
+rules, all rules and names together. Rules that would take more stop matching
+part-way - the names after that point are masked as usual, none kept readable
+or given a rule's placeholder - and `scrub` says so, under `--quiet` too:
+
+```
+veilio: custom rules stopped matching: too much work. Names after that point were masked as usual, and no rule kept one readable or gave it a rule placeholder.
+```
+
 Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
 and the chosen project, removed by `logout`), `rules.json` (the rules copy),
 `team-keys.json` (the keys `team unlock` opened, kept seven days) and
@@ -168,14 +177,23 @@ removes all of them.
 
 Signed in to a team with the team key unlocked, `veilio scrub` numbers from the
 team's maps, as the web app and the MCP server do: a name the team already knows
-gets the team's placeholder, and a new name is numbered above the team's and
-this project's highest, so it can never take a number that means something else
-to a teammate. Only the team entries the output uses are kept in this project's
-map. The summary says `Namespace: team`.
+gets the team's placeholder, and a new name is numbered inside this checkout's
+block of team numbers (`.veilio/reserved.json`, below) - or, with no usable
+block, in this checkout's local family `__LOCAL_<TAG>_<KIND>__n` - so it can
+never take a number that means something else to a teammate. It is never
+numbered above the team's highest: that is where the next teammate's block
+starts. Only the team entries the output uses are kept in this project's map.
+The summary says `Namespace: team`. `scrub` only reads `reserved.json`; it never
+reserves, except with `--team`.
 
 - **Locked or unreachable, it still masks** — from this project's map — and says
-  so on stderr, with the reason, even under `--quiet`: those placeholders may
-  clash with the team's.
+  so on stderr, with the reason, even under `--quiet`. It is still a team, so
+  new names go into the local family (`__LOCAL_<TAG>_…`), never above the
+  map. The team comes from the team unlock, else from `~/.veilio/team.json`
+  (the team this account was last seen in, written by any command that lists
+  it and removed by `veilio logout`); with no `reserved.json` yet, scrub writes
+  one holding a fresh tag. With no team ever seen, new names still go into a
+  local family, under a tag for that run only.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 
@@ -187,9 +205,61 @@ each time it masks a new name. Instead, `veilio maps pull` of a team map (and
 of the team's numbers for you - 500 per kind - and keeps it in
 `.veilio/reserved.json`. The guard numbers new names inside it, so two members
 working at the same time never give one placeholder two meanings. A pull takes
-a new block whenever a teammate's newer numbers sit above yours. If no block can
-be reserved, the pull still succeeds and says so; new names are then numbered on
-this machine, and the next publish renumbers them.
+a new block whenever a teammate's newer numbers sit above yours.
+
+A reservation sends Cloud a kind, a count and a floor - never a name. The
+engine's own kinds (`__VAR__`, `__FN__`, `__CLS__`, ...) go as they are; a
+custom replace rule's placeholder (`__ACME_ACQUISITION_TARGET__`) names what
+the team considers sensitive, so it is sent as `__H_<16 hex>__`, an HMAC of it
+under the newest team key, and read back locally. Teammates holding the same
+key send the same hash. Cloud counts each hash on its own, so a rule's kind is
+floored above the team's reservations of it under its hash with every team key
+version this machine holds (read from the team's reservations, which are only
+ever asked for by hash): after a key rotation new numbers stay above the old
+hash's while the old key is still held; without it, the floor is the map's.
+Without the team key unlocked, or without that listing (an older instance),
+numbers for a rule's kind are not reserved at all.
+
+Only numbers Cloud issued count toward a floor. A number in a map that no run
+of the team's reservations holds - one numbered on this machine, or planted -
+is checked against the team's listing of its kind (`?bases=`, with each kind's
+highest number) and floors nothing; for a kind never reserved yet, a map's
+numbers floor its first run up to 10000. A pull says how many such numbers the
+map held, and restore leaves one above the highest number Cloud has issued for
+its kind. (A map from before team numbering with numbers above 10000, in a kind
+never reserved, therefore floors nothing; such teams existed only on staging.)
+Every reservation asks for an answer per kind: a kind Cloud refuses is numbered
+on this machine (`__LOCAL_…`), with the refusal shown, and the others are
+reserved. An older Cloud that refuses the whole call names the kinds it
+refuses, and is asked again without them.
+
+If no block can be reserved - the day's limit, offline, the plan, a server
+error - the pull (or the unlock) still succeeds, exits 0, and says so on its
+normal output, with the reason and, for the day's limit, when the next block is
+possible:
+
+```
+veilio: could not reserve team numbers: this account's daily limit for this team is reached; the next block is possible at 09:14 (local time). New names are numbered on this machine as __LOCAL_K7Q2XA_… until a block is held; your next publish gives them team numbers.
+```
+
+`reserved.json` is still written, with the reason, and a signed-in
+`veilio scrub` repeats the sentence on stderr - even under `--quiet` - for as
+long as it holds. Until a block is held, the guard, a signed-in
+`veilio scrub` and the MCP server number new names in this checkout's **local
+family**, `__LOCAL_<TAG>_<KIND>__n` (`__LOCAL_K7Q2XA_VAR__3`). The tag is six
+characters drawn for this checkout, so two checkouts never mint the same
+string:
+
+- **This machine restores them**, from its map.
+- **A teammate's restore leaves them as written** and names them: only the
+  checkout that numbered one knows what it means.
+- **The next team publish renumbers them** into reserved team numbers, keeps
+  the old placeholders in `.veilio/aliases.json` (they still restore here),
+  and draws a new tag.
+- **No team map ever holds one.** A team map is sealed on your machine, so the
+  check is here too: a publish that would still seal one is refused, naming
+  them, and a reader drops one it finds - `maps pull` of a team map leaves
+  them out of `map.json` and says how many.
 
 ### Restoring a teammate's placeholders
 
@@ -202,6 +272,11 @@ with the real names:
   wins and the placeholder stays in the output with a line naming it. Same for
   one this project numbered on its own while the team was out of reach — a
   wrong name restored silently is worse than a placeholder left visibly.
+- **Another checkout's local placeholder is left.** `__LOCAL_<TAG>_…` was
+  numbered on a checkout that held no team numbers; only that checkout restores
+  it, so it stays in the output, is named, and counts as left for `--strict`.
+  Your own restore still reads it, through `.veilio/aliases.json` once a publish
+  renumbered it.
 - **Locked, and it says so.** With no team key on this machine it tells you to
   run `veilio team unlock` rather than restoring half the text.
 - **Signed out, it makes no request at all** — that restore is as offline as it
@@ -329,10 +404,14 @@ Distinctive names - `quaywardThrottle`, `SkerryTariff`, `berth_quorum`, an inven
 `tarnwick` - become placeholders. A name that is a single common English word
 (`total`, `ledger`, `invoice`), shared vocabulary every codebase has (`src`,
 `util`, `com`, `java`) or a toolchain's name (`vitest`, `junit`, `mvn`) is left as
-written: it is nobody's secret, and masking it made paths and test output
-unreadable. A codename that is an ordinary word (`phoenix`) is therefore readable;
-a custom replace rule (`veilio rules pull`) keeps it masked. Credentials are
-redacted whatever they are called.
+written as a name or a path segment: it is nobody's secret, and masking it made
+paths and test output unreadable. A codename that is an ordinary word (`phoenix`)
+is therefore readable as a name; a custom replace rule (`veilio rules pull`) keeps
+it masked. In a value - a string literal, a config value, XML text - every word is
+masked. A value whose key contains a credential word (`password: sunshine`,
+`DB_PASSWORD_PROD="sunshine"`, `const DB_PASS = "Summer2024!"`) is redacted one-way,
+whole, under the default `--secrets redact`, so the map never holds it. Credentials
+are redacted whatever they are called.
 
 ## The symbol map
 

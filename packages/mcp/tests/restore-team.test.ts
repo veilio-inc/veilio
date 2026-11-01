@@ -190,8 +190,9 @@ describe('a project numbered during a lapse, after the team is back (spec 028 R5
     )
     expect(a.text).toContain('__FN__2()')
     expect(a.text).not.toMatch(/__FN__1\b/)
-    // A new name is numbered above the team's AND this project's own numbers.
-    expect(a.text).toMatch(/__FN__3\(\)/)
+    // A new name never takes a team number this checkout holds no block for:
+    // it is numbered locally (spec 066).
+    expect(a.text).toMatch(/__LOCAL_[A-Z0-9]{6}_FN__1\(\)/)
     // The lapse entry is kept: text already sent with it must not be lost.
     const stored = loadMap(resolveMapPath(null, ctx.cwd))
     expect(stored).toMatchObject({ __FN__1: 'createInvoice', __FN__2: 'createInvoice' })
@@ -209,7 +210,7 @@ describe('a project numbered during a lapse, after the team is back (spec 028 R5
 })
 
 describe('new numbers stay clear of the project store (spec 028 R5)', () => {
-  it("a new identifier is numbered above a lapse-era number higher than the team's", async () => {
+  it("a new identifier is numbered locally, clear of a lapse-era number higher than the team's", async () => {
     const ns = Object.fromEntries(
       Array.from({ length: 24 }, (_, i) => [`__FN__${i + 1}`, `fn${i + 1}`])
     )
@@ -225,10 +226,12 @@ describe('new numbers stay clear of the project store (spec 028 R5)', () => {
     const a = callTool('anonymize_text', { text: 'createInvoice(); brandNewThing()' }, ctx)
     expect(a.isError ?? false, a.text).toBe(false)
     expect(a.text).toContain('__FN__2()')
-    expect(a.text).toMatch(/__FN__26\(\)/)
-    expect(loadMap(resolveMapPath(null, ctx.cwd))).toMatchObject({
-      __FN__25: 'createInvoice',
-      __FN__26: 'brandNewThing',
-    })
+    expect(a.text).toMatch(/__LOCAL_[A-Z0-9]{6}_FN__1\(\)/)
+    expect(a.text).not.toMatch(/__FN__2[56]\b/)
+    const stored = loadMap(resolveMapPath(null, ctx.cwd))
+    expect(stored.__FN__25).toBe('createInvoice')
+    expect(Object.entries(stored).find(([, n]) => n === 'brandNewThing')?.[0]).toMatch(
+      /^__LOCAL_[A-Z0-9]{6}_FN__1$/
+    )
   })
 })

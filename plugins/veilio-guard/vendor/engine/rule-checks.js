@@ -6,6 +6,7 @@
 // opens a rule makes them again before applying it - a rule a hostile team
 // member or an old client sealed must not corrupt or freeze a teammate's tools.
 import { MANUAL_BASE, REGULATED_BASES, ROLE_BASES } from './engine.js';
+import { LOCAL_PREFIX } from './localFamily.js';
 import { REDACTION_PREFIX } from './product.js';
 import { compileRulePattern } from './rule-pattern.js';
 let bases = null;
@@ -19,7 +20,11 @@ export function isEngineBase(placeholder) {
         ...Object.values(REGULATED_BASES),
         MANUAL_BASE,
     ]);
-    return bases.has(placeholder) || placeholder.startsWith(REDACTION_PREFIX);
+    // The local family (spec 066) is the engine's too: a rule minting under it
+    // would read as names numbered on one machine, which teammates leave.
+    return (bases.has(placeholder) ||
+        placeholder.startsWith(REDACTION_PREFIX) ||
+        placeholder.startsWith(LOCAL_PREFIX));
 }
 /**
  * Whether a custom rule's pattern may be applied: the engine's own linear-time

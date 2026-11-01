@@ -496,16 +496,18 @@ describe('placeholders the team disagrees about', () => {
     homes.push(cwd)
     const ctx = { cwd, mapPath: null }
     const out = callTool('anonymize_text', { text: 'function chargeCard() {}' }, ctx).text
-    expect(out).toContain('function __FN__7()')
+    // No block held: numbered locally (spec 066), never the disputed __FN__6.
+    const minted = /function (__LOCAL_[A-Z0-9]{6}_FN__1)\(\)/.exec(out)?.[1]
+    expect(minted, out).toBeDefined()
     expect(out).not.toContain('__FN__6')
     expect(out).not.toContain('\u0000')
-    const back = callTool('restore_text', { text: '__FN__7()' }, ctx).text
+    const back = callTool('restore_text', { text: `${minted}()` }, ctx).text
     expect(back).toContain('chargeCard()')
     expect(back).not.toContain('left as is')
     // The floor marker never reaches the saved store.
     const stored = loadMap(resolveMapPath(null, cwd))
     expect(Object.values(stored).some((v) => v.includes('\u0000'))).toBe(false)
-    // At the map's own highest (__CLS__1) no marker is added over the real entry.
+    // The team's own name keeps the team's placeholder.
     expect(callTool('anonymize_text', { text: 'class QuayLedger {}' }, ctx).text).toContain(
       'class __CLS__1'
     )

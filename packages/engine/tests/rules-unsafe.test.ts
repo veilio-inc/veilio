@@ -46,6 +46,19 @@ describe('anonymize skips a rule it must not run', () => {
     expect(anonymized).not.toContain('quaywardPlan')
   })
 
+  it('a replace rule under the local prefix: skipped, so it cannot mint local entries', () => {
+    const { anonymized, map } = anonymize('deploy(quaywardPlan)\n', {
+      language: 'typescript',
+      rules: [
+        rule({ type: 'replace', pattern: '^quaywardPlan$', placeholder: '__LOCAL_K7Q2XA_FN__' }),
+      ],
+    })
+    const placeholder = Object.entries(map).find(([, name]) => name === 'quaywardPlan')?.[0]
+    expect(placeholder).toBeDefined()
+    expect(placeholder).not.toMatch(/^__LOCAL_/)
+    expect(anonymized).not.toContain('quaywardPlan')
+  })
+
   it('a long name is matched in linear time, with no length cap', () => {
     const long = 'q' + 'w'.repeat(250)
     const { anonymized } = anonymize(`const ${long} = 1\n`, {

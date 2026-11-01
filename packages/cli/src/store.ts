@@ -9,7 +9,15 @@
 // directory carries a .gitignore. Committing it would undo the anonymization
 // for anyone reading the repo.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
 
@@ -144,6 +152,9 @@ export function saveMap(
     }
   }
   const dir = dirname(path)
+  // Security audit 2026-11-01: a store that is a link (one a repository
+  // committed) would put the real names in a file outside the project.
+  refuseLinks('the map', dir, path)
   mkdirSync(dir, { recursive: true })
   // A store directory inside a repo must never be committed — it holds the real
   // names the anonymization exists to hide.
@@ -159,6 +170,20 @@ export function saveMap(
   // writeFileSync only applies `mode` when creating the file; enforce it on
   // rewrite too so a pre-existing world-readable map gets locked down.
   chmodSync(path, 0o600)
+}
+
+/** Throws when any of `paths` is a link: the store's files are written only
+ *  where they appear to be (security audit 2026-11-01). */
+export function refuseLinks(what: string, ...paths: string[]): void {
+  for (const p of paths) if (isLink(p)) throw new Error(`refusing to write ${what}: ${p} is a link`)
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false // not there yet
+  }
 }
 
 export function clearMap(path: string): boolean {

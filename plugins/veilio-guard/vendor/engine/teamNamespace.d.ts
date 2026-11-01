@@ -45,12 +45,19 @@ export interface TeamMapEntry {
  * - `highest`: per placeholder base, the highest number in ANY readable map,
  *   dropped entries included - the floor for the next reservation, so a number
  *   in use anywhere is never handed out again.
+ * - `localDropped`: keys under `__LOCAL_` found in the maps and ignored before
+ *   all of the above (spec 066). A local placeholder means something only on
+ *   the checkout that numbered it; no client seals one into a team map, so one
+ *   found there came from an old or hostile client.
  */
 export interface TeamNamespaceAnalysis {
     namespace: Record<string, string>;
     aliases: Record<string, string>;
     conflicts: Record<string, number>;
     highest: Record<string, number>;
+    /** Local-family keys dropped; 0 for an older instance's server-merged
+     *  namespace, which predates the family. */
+    localDropped: number;
 }
 export declare function analyzeTeamNamespace(entries: readonly TeamMapEntry[]): TeamNamespaceAnalysis;
 export declare function mergeTeamNamespace(entries: readonly TeamMapEntry[]): Record<string, string>;

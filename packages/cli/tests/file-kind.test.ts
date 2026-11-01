@@ -63,9 +63,11 @@ describe('veilio scrub: the file kind reaches the engine', () => {
     expect(r.out).toMatch(/^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__/)
   })
 
-  it('stdin has no file kind: read as before', async () => {
+  // Round 4 (A): text of no kind is read by every value grammar.
+  it('stdin has no file kind: every value grammar applies', async () => {
     const r = await run(['scrub', '--map', 'm.json'], 'DB_PASSWORD=Tr0ub4dor zebra91\n')
-    expect(r.out).not.toMatch(/__REDACTED_/)
+    expect(r.out).toMatch(/__REDACTED_/)
+    expect(r.out).not.toMatch(/Tr0ub4dor|zebra91/)
   })
 })
 

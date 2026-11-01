@@ -109,6 +109,8 @@ export class FakeCloud {
   legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
   failing = new Set<string>()
+  /** What a failing path answers with. */
+  failingBody: unknown = { error: 'Service Unavailable' }
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
   /** This account's keypair, as the web app makes it; null until made. */
@@ -131,12 +133,28 @@ export class FakeCloud {
   recordsReservations = false
   /** This account's id, as the reservations record it. */
   memberId = 'u-me'
+  /** Round 4 (D): the server answers a `partial: true` reserve per base, a
+   *  refused base as `{ base, refused, message }`. Off: the old 400 for all. */
+  partialReserve = true
+  /** Bases the server refuses whatever their floor: per base under
+   *  `partial`, else the old 400 naming the first. */
+  refuseBases = new Set<string>()
+  /** Round 4 (E): the listing honours `?bases=` and says each base's highest.
+   *  Off: an older server, which ignores the parameter. */
+  filteredListing = true
   /** An account id for an owner address: this account's, or `u-<local part>`. */
   idOf(owner: string): string {
     return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
   }
-  /** The day's block ceiling is reached: block requests answer 429. */
+  /** The day's block ceiling is reached: block requests answer 429, with the
+   *  reason and the time the next block is possible (spec 066 contract). */
   blocksRefused = false
+  blocksRetryAt = '2026-10-21T09:14:00.000Z'
+  /** Every reserve request fails this way: a status and body, or the network. */
+  reserveFailure: { status: number; body: unknown } | 'network' | null = null
+  failWith(status: number | 'network', body: unknown = {}): void {
+    this.reserveFailure = status === 'network' ? 'network' : { status, body }
+  }
   private nextId = 1
   /** Per kind, as the server's team-wide counter. */
   counters = new Map<string, number>()
@@ -231,7 +249,11 @@ export class FakeCloud {
       ])
     )
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
-    if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
+    if (this.failing.has(u.pathname)) return json(503, this.failingBody)
+    if (this.reserveFailure && u.pathname.endsWith('/placeholders/reserve')) {
+      if (this.reserveFailure === 'network') throw new TypeError('fetch failed')
+      return json(this.reserveFailure.status, this.reserveFailure.body)
+    }
     if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }
@@ -453,8 +475,33 @@ export class FakeCloud {
       // Spec 063: a block's size is the server's (500), and every run is
       // recorded against the member who took it.
       const block = body?.block === true
-      if (block && this.blocksRefused) return json(429, { error: 'Too many blocks today' })
+      if (block && this.blocksRefused)
+        return json(429, {
+          error: `This account has reserved as many placeholder blocks as one day allows for this team; the next is possible at ${this.blocksRetryAt}.`,
+          reason: 'cap',
+          retry_at: this.blocksRetryAt,
+        })
+      // Cloud 450a93ce: numbers stop at 1e8, and a floor more than 10000
+      // above the base's counter is refused.
+      const tooFar = (base: string, floor: number) =>
+        this.refuseBases.has(base) || floor > 1e8 || floor > (this.counters.get(base) ?? 0) + 10_000
+      const partial = body?.partial === true && this.partialReserve
+      // Cloud 86772272: refused as a whole, the 400 lists every refused base.
+      const refusal = (base: string) => ({
+        base,
+        refused: 'floor_too_far',
+        message: `the floor for ${base} is too far above the team's numbers`,
+      })
+      if (!partial) {
+        const refused = asked.filter(({ base, floor }) => tooFar(base, floor))
+        if (refused.length)
+          return json(400, {
+            error: refused[0]!.base + ": the floor is too far above the team's numbers",
+            refused: refused.map(({ base }) => refusal(base)),
+          })
+      }
       const ranges = asked.map(({ base, count: wanted, floor }) => {
+        if (tooFar(base, floor)) return refusal(base)
         const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
         this.counters.set(base, start + count - 1)
@@ -466,6 +513,22 @@ export class FakeCloud {
     if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
       // An instance from before spec 063 has no such route.
       if (!this.recordsReservations) return json(404, { error: 'Not found' })
+      const bases = q.get('bases')
+      if (bases !== null && this.filteredListing) {
+        // Cloud 86772272: 1-50 bases; `highest` is the greater of the counter
+        // and the highest run end, 0 for a base with none, never truncated.
+        const wanted = [...new Set(bases.split(','))]
+        if (wanted.length < 1 || wanted.length > 50)
+          return json(400, { error: 'between 1 and 50 bases' })
+        const rows = this.reservations.filter((r) => wanted.includes(r.base))
+        const highest: Record<string, number> = {}
+        for (const b of wanted)
+          highest[b] = Math.max(
+            this.counters.get(b) ?? 0,
+            ...rows.filter((r) => r.base === b).map((r) => r.end)
+          )
+        return json(200, { reservations: rows, truncated: [], highest, next: null })
+      }
       return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {

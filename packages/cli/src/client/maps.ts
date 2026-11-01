@@ -27,11 +27,17 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  isEngineBase,
+  isSaneBlock,
   parseVaultEnvelope,
+  LOCAL_PREFIX,
+  MAX_PLACEHOLDER_NUMBER,
+  teamBaseOf,
   type CryptoKeyLike,
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
+import { servedAs, teamKeyBytes, teamKeyVersion, wireBase } from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -40,12 +46,21 @@ import {
   getPersonalMapsKeyWrap,
   listMaps,
   listProjects,
+  readReservationsFor,
   reservePlaceholders,
   updateMapContent,
   type CloudMap,
   type CloudMapList,
+  type PlaceholderReservation,
 } from '../cloud.js'
-import { addAliases, loadAliases } from '../reservations.js'
+import {
+  addAliases,
+  drawTag,
+  loadAliases,
+  loadReserved,
+  resetSessionTag,
+  saveReserved,
+} from '../reservations.js'
 import { highestPerBase } from '../team-anonymize.js'
 
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
@@ -53,7 +68,7 @@ import { readCredential, type Credential } from '../credential.js'
 import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
 import { readTeamUnlock } from '../team-unlock.js'
-import { describeMaps, resolveTeamNamespace } from '../team-namespace.js'
+import { describeMaps, resolveTeamNamespace, vouchNumbers } from '../team-namespace.js'
 import {
   importPersonalMapsKey,
   readPersonalMapsKey,
@@ -331,7 +346,19 @@ export async function pullCloudMap(
   id: string | null,
   opts: { mapPath: string; force?: boolean }
 ): Promise<
-  Outcome<{ id: string; name: string; count: number; path: string; blocks?: BlocksOutcome }>
+  Outcome<{
+    id: string
+    name: string
+    count: number
+    path: string
+    blocks?: BlocksOutcome
+    /** Local-family keys the team map held and the pull left out (spec 066). */
+    localDropped?: number
+    /** Keys numbered above 1e8: kept, never numbered after (security audit). */
+    outOfRange?: number
+    /** Round 4 (D): keys outside every run the server issued: no floor. */
+    unvouched?: number
+  }>
 > {
   const credential = signedIn(ctx)
   if (!credential) return refuse('not_signed_in')
@@ -385,7 +412,15 @@ export async function pullCloudMap(
     opened = await openPersonal(keys.value, remote.map_data, label)
   }
   if (!opened.ok) return opened
-  const map = opened.value
+  // Spec 066 FR-003 (code review): every reader drops a local-family key from a
+  // team map - it means something only on the checkout that numbered it. A
+  // personal map is the member's own and keeps them.
+  const localKeys = teamId
+    ? Object.keys(opened.value).filter((p) => p.startsWith(LOCAL_PREFIX))
+    : []
+  const map = localKeys.length
+    ? Object.fromEntries(Object.entries(opened.value).filter(([p]) => !localKeys.includes(p)))
+    : opened.value
 
   // Only now is anything read from, let alone written to, disk.
   const existing = loadRemote(opts.mapPath)
@@ -418,15 +453,44 @@ export async function pullCloudMap(
     force: true,
     remote: { id: remote.id, updatedAt: remote.updated_at, pulledAt: new Date().toISOString() },
   })
+  // Round 4 (D): the map's numbers, judged against the runs the server
+  // issued for their bases - one listing, which the block's floor reuses.
+  let listed: PlaceholderReservation[] | null | undefined
+  let unvouched = 0
+  if (teamId) {
+    const keys = teamKeyBytes(credential, ctx.home, teamId)
+    const bases = new Set(
+      Object.keys(map).flatMap((p) => /^(__[A-Z][A-Z0-9_]*__)\d+$/.exec(p)?.[1] ?? [])
+    )
+    const names = [...bases].flatMap((b) =>
+      isEngineBase(b) ? [b] : keys.map((k) => wireBase(b, k))
+    )
+    if (names.length) {
+      try {
+        listed = (await readReservationsFor(credential, teamId, names))?.reservations ?? null
+      } catch {
+        // unreachable: the block's own call reports it
+      }
+      if (listed) unvouched = vouchNumbers([map], listed, keys).unvouched
+    }
+  }
   // Spec 063: a team map comes with a block of the team's numbers, so the
   // guard numbers where no teammate can. A refusal there does not undo the pull.
-  const blocks = teamId ? await ensureBlocks(credential, teamId, opts.mapPath) : undefined
+  const blocks = teamId
+    ? await ensureBlocks(credential, teamId, opts.mapPath, ctx.home, listed)
+    : undefined
+  const outOfRange = Object.keys(map).filter(
+    (p) => Number(/\d+$/.exec(p)?.[0] ?? 0) > MAX_PLACEHOLDER_NUMBER
+  ).length
   return ok({
     id: remote.id,
     name: remote.name,
     count: Object.keys(map).length,
     path: opts.mapPath,
     ...(blocks ? { blocks } : {}),
+    ...(localKeys.length ? { localDropped: localKeys.length } : {}),
+    ...(outOfRange ? { outOfRange } : {}),
+    ...(unvouched ? { unvouched } : {}),
   })
 }
 
@@ -501,8 +565,13 @@ async function teamForWrite(
  * in aliases.json, so this member's own restore still reads text masked with
  * it; teammates never saw it, because it was never published.
  *
+ * A local-family entry (spec 066 R6) is always one of these: it is never the
+ * team's and never inside a reservation, and it takes a number of its team
+ * kind (`__LOCAL_<tag>_FN__3` -> `__FN__n`).
+ *
  * Before anything is sealed. An instance that keeps no reservations record
- * (older self-hosted, 404) publishes as before; the clash check still runs.
+ * (older self-hosted, 404) publishes as before; the clash check still runs,
+ * and a local entry is then refused by `localEntriesRefusal`.
  */
 async function renumberUnreserved(
   credential: Credential,
@@ -511,7 +580,8 @@ async function renumberUnreserved(
   map: Record<string, string>,
   mapPath: string,
   /** What this member's own map being updated already holds: published, so never moved. */
-  published: Record<string, string> = {}
+  published: Record<string, string> = {},
+  home?: string
 ): Promise<
   Outcome<{ map: Record<string, string>; renumbered: number; aliases: Record<string, string> }>
 > {
@@ -522,16 +592,23 @@ async function renumberUnreserved(
   const mine = list.team?.reservations
   if (!found.teamId || !mine) return unchanged
   const { namespace, highest } = found.analysis
+  // A rule's base is reserved, and listed back, under its hash (Cloud audit M1).
+  const keys = teamKeyBytes(credential, home, found.teamId)
 
   const moves: Record<string, string> = {} // old placeholder -> new
   const needs: { placeholder: string; base: string; n: number }[] = []
   for (const [p, name] of Object.entries(map)) {
-    if (namespace[p] === name || published[p] === name) continue // already the team's, as it is
+    const local = p.startsWith(LOCAL_PREFIX)
+    if (!local && (namespace[p] === name || published[p] === name)) continue // already the team's, as it is
     const m = NUMBERED.exec(p)
     if (!m) continue
-    const [, base = '', digits = '0'] = m
+    const [, own = '', digits = '0'] = m
+    // A malformed local base has no team kind: left for the check before sealing.
+    const base = local ? teamBaseOf(own) : own
+    if (!base) continue
     const n = Number(digits)
-    if (mine.some((r) => r.base === base && n >= r.start && n <= r.end)) continue
+    if (!local && mine.some((r) => servedAs(r.base, base, keys) && n >= r.start && n <= r.end))
+      continue
     // Always a fresh number, even for a name the team already holds under
     // another placeholder (it then holds both, an alias). A fresh number is
     // above everything in this map, so the map's highest never falls below a
@@ -559,7 +636,15 @@ async function renumberUnreserved(
     }))
     let ranges: { base: string; start: number; end: number }[]
     try {
-      ranges = (await reservePlaceholders(credential, found.teamId, asked)).ranges
+      const r = await reservePlaceholders(credential, found.teamId, asked, undefined, {
+        keys,
+        keyVersion: teamKeyVersion(credential, home, found.teamId),
+        ...(found.reservations ? { reservations: found.reservations } : {}),
+      })
+      if (r.refused) return refuseNumbers(r.refused.detail)
+      ranges = r.ranges
+      // Round 4 (D): the floor the server was sent, once vouched.
+      for (const a of asked) a.floor = r.floors?.[a.base] ?? a.floor
     } catch (err) {
       return refuseNumbers(err instanceof Error ? err.message : String(err))
     }
@@ -570,13 +655,7 @@ async function renumberUnreserved(
       ranges.length === asked.length &&
       asked.every(({ base, count, floor }) => {
         const r = ranges.find((x) => x?.base === base)
-        return (
-          r !== undefined &&
-          Number.isInteger(r.start) &&
-          Number.isInteger(r.end) &&
-          r.start > floor &&
-          r.end - r.start + 1 >= count
-        )
+        return r !== undefined && isSaneBlock(r) && r.start > floor && r.end - r.start + 1 >= count
       })
     if (!sane) return refuseNumbers('the server answered without a usable run of numbers')
     const next = new Map(ranges.map((r) => [r.base, r.start]))
@@ -625,6 +704,30 @@ function keepRenumbering(
   if (r.renumbered === 0) return
   addAliases(mapPath, r.aliases)
   saveMap(mapPath, r.map, { force: true })
+  // Spec 066 R6: a retired local placeholder is in aliases.json now. A fresh
+  // tag means this checkout can never mint that string again for another name.
+  if (Object.keys(r.aliases).some((p) => p.startsWith(LOCAL_PREFIX))) {
+    let held: ReturnType<typeof loadReserved> = null
+    try {
+      held = loadReserved(mapPath)
+    } catch {
+      // malformed: the next pull replaces it, with a new tag
+    }
+    if (held) saveReserved(mapPath, { ...held, local: { tag: drawTag() } })
+    resetSessionTag() // a long-running MCP server with no file holds one too
+  }
+}
+
+/**
+ * Spec 066 FR-003, the chokepoint: no team map is sealed holding a local-family
+ * key, numbered or not. The server cannot open a team map to refuse one, and a
+ * reader that met one would drop it - so it would mean nothing to anyone.
+ */
+function localEntriesRefusal(map: SymbolMap): { ok: false; refusal: Refusal } | null {
+  const stuck = Object.keys(map).filter((p) => p.startsWith(LOCAL_PREFIX))
+  return stuck.length
+    ? refuse('local_entry_unpublishable', { count: stuck.length, list: shortList(stuck) })
+    : null
 }
 
 function renumberNote(n: number): string[] {
@@ -755,12 +858,16 @@ export async function createCloudMap(
       listed.value,
       found.value,
       map,
-      opts.mapPath
+      opts.mapPath,
+      {},
+      ctx.home
     )
     if (!numbered.ok) return numbered
     map = numbered.value.map
     const check = checkAgainstTeam(found.value, map)
     if (!check.ok) return check
+    const stuck = localEntriesRefusal(map)
+    if (stuck) return stuck
     keepRenumbering(opts.mapPath, numbered.value)
     // Nothing above this line has sent a map (only the reservation, if any).
     const envelope = await encryptTeamMap(keys.value.newest.key, map)
@@ -964,7 +1071,8 @@ export async function updateCloudMap(
       found.value,
       local,
       opts.mapPath,
-      current
+      current,
+      ctx.home
     )
     if (!numbered.ok) return numbered
     local = numbered.value.map
@@ -974,6 +1082,8 @@ export async function updateCloudMap(
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })
     const check = checkAgainstTeam(found.value, local)
     if (!check.ok) return check
+    const stuck = localEntriesRefusal(local)
+    if (stuck) return stuck
     keepRenumbering(opts.mapPath, numbered.value)
     notes = [...renumberNote(numbered.value.renumbered), ...check.value.notes]
     sealed = {
