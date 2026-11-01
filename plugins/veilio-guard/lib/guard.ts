@@ -106,9 +106,10 @@ export type ToolOutcome = { deny: string } | { result: unknown; isError?: true }
 // Keys Claude Code adds to a tool call's event; none of them is the tool's own.
 const RESERVED = new Set(['tool', 'tool_use_id', 'consent', 'agentId'])
 
-/** Characters that change what a shell command does: never put back into one
- *  from a placeholder (security audit 2026-11-01). */
-const SHELL_SYNTAX = /[\s;|&$`<>(){}[\]\\'"*?!#~]/
+/** What a placeholder may put back into a shell command: an identifier- or
+ *  path-shaped ASCII word, never an option (security audit 2026-11-01; an
+ *  allowlist, after the review of 638edbf showed `--output=...` passing). */
+const SHELL_SAFE = /^(?!-)[A-Za-z0-9_./@+:-]+$/
 const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
@@ -576,7 +577,10 @@ export class Guard {
     } catch {
       return []
     }
-    const files = new Set(listed ?? [])
+    // Case-insensitive (a macOS checkout reads .Veilio/Map.json as the map),
+    // and a tracked `.veilio` entry is a committed link to somewhere else.
+    const files = new Set((listed ?? []).map((f) => f.toLowerCase()))
+    if (files.has('.veilio')) return ['.veilio']
     return ['.veilio/map.json', '.veilio/aliases.json'].filter((f) => files.has(f))
   }
 
@@ -926,9 +930,9 @@ export class Guard {
     // Security audit 2026-11-01: the model chose the command seeing only the
     // placeholder, so a value that is itself shell syntax (a planted or pulled
     // map) would run unseen. Identifiers and paths never need these characters.
-    if (policy.command && [...resolved].some((p) => SHELL_SYNTAX.test(this.restoreMap[p] ?? '')))
+    if (policy.command && [...resolved].some((p) => !SHELL_SAFE.test(this.restoreMap[p] ?? '')))
       return this.deny(
-        'a placeholder in it stands for text with spaces or shell syntax, which is never put back into a shell command. Ask the user to run it'
+        'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
       )
 
     for (const field of policy.paths) {

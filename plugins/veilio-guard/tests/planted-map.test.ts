@@ -71,3 +71,36 @@ test('an identifier still restores into a shell command', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'grep -n __CLS__1 __VAR__2', description: 'x' })
   expect(seen[0]?.command).toBe('grep -n QuasarLedger src/ledger-v2.ts')
 })
+
+// Automated review of 638edbf: case-insensitive filesystems read
+// .Veilio/Map.json as the map, and a committed .veilio link leads elsewhere.
+test('a map committed under another spelling stops the guard', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'settledTotal' }) },
+    { trackedVeilio: ['.Veilio/Map.json'] }
+  )
+  on('tool.call', () => ({ result: OK }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  expect(out.deny).toMatch(/tracked by git/)
+})
+
+test('a committed .veilio link stops the guard', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'settledTotal' }) },
+    { trackedVeilio: ['.veilio'] }
+  )
+  on('tool.call', () => ({ result: OK }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  expect(out.deny).toMatch(/tracked by git/)
+})
+
+test('a placeholder never puts an option back into a shell command', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: '--output=/etc/cron.d/x' }) })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: OK }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'curl __VAR__9', description: 'x' })
+  expect(seen).toHaveLength(0)
+  expect(out.deny).toMatch(/shell/)
+})
