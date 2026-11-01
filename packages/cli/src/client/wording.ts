@@ -52,6 +52,7 @@ export const REFUSAL_CODES = [
   'team_maps_unreadable',
   'team_map_unopenable',
   'clash',
+  'unreserved_numbers',
   'would_drop',
   'pull_would_drop',
   'diverged',
@@ -266,6 +267,13 @@ export const WORDING: Record<RefusalCode, Words> = {
       `${plural(p.count, 'it', 'them')} unrestorable for every member, so nothing was uploaded.`,
     resolve:
       'Re-run `veilio scrub --team` to number this project out of the team’s own allocation, then push the result.',
+  }),
+  unreserved_numbers: (p) => ({
+    message:
+      `${p.count} ${plural(p.count, 'entry', 'entries')} in this map ${plural(p.count, 'is', 'are')} numbered outside the team numbers this account reserved (${p.list}), ` +
+      `and new numbers could not be reserved for ${plural(p.count, 'it', 'them')} (${sentence(p.detail)}). Nothing was uploaded.`,
+    resolve:
+      'Try again in a few minutes; if it keeps failing, run `veilio maps pull` for a fresh block of team numbers, then push again.',
   }),
   would_drop: (p) => ({
     message: `updating ${label(p)} would drop ${p.count} ${plural(p.count, 'entry', 'entries')} the Cloud map holds and this project's map does not (${p.list}). Nothing was written.`,

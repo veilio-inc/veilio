@@ -120,8 +120,22 @@ export class FakeCloud {
   servedPublicKey: string | null = null
   /** A dishonest server: the wrap it hands back instead of the one stored. */
   servedWrap: string | null = null
+  /** Spec 063: who holds which numbers. Tests may add a teammate's run. */
+  reservations: { base: string; start: number; end: number; member: string }[] = []
+  /** Spec 063's record of who holds which numbers. Off by default: the
+   *  tests written before it describe an instance that keeps none. */
+  recordsReservations = false
+  /** This account's id, as the reservations record it. */
+  memberId = 'u-me'
+  /** An account id for an owner address: this account's, or `u-<local part>`. */
+  idOf(owner: string): string {
+    return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
+  }
+  /** The day's block ceiling is reached: block requests answer 429. */
+  blocksRefused = false
   private nextId = 1
-  private counters = new Map<string, number>()
+  /** Per kind, as the server's team-wide counter. */
+  counters = new Map<string, number>()
 
   /** Install the vault for PASSPHRASE. */
   async withVault(): Promise<CryptoKeyLike> {
@@ -256,7 +270,18 @@ export class FakeCloud {
               .filter((m) => m.scope === 'team' && m.owner !== ME && inProject(m))
               .map((m) => this.listed(m))
           : [],
-        team: this.teamId ? { id: this.teamId } : null,
+        team: this.teamId
+          ? {
+              id: this.teamId,
+              ...(this.recordsReservations
+                ? {
+                    reservations: this.reservations
+                      .filter((r) => r.member === this.memberId)
+                      .map(({ base, start, end }) => ({ base, start, end })),
+                  }
+                : {}),
+            }
+          : null,
         plan: 'team',
         ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
       })
@@ -270,8 +295,16 @@ export class FakeCloud {
       return json(200, {
         maps: rows
           .filter((m) => !this.serverUnreadable.has(m.id))
-          .map((m) => ({ id: m.id, created_at: m.created_at, map_data: m.map_data })),
+          .map((m) => ({
+            id: m.id,
+            created_at: m.created_at,
+            map_data: m.map_data,
+            // Spec 063: the publisher, and the team's reservations, as the
+            // server sends them; an instance from before it sends neither.
+            ...(this.recordsReservations ? { owner_id: this.idOf(m.owner) } : {}),
+          })),
         unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
+        ...(this.recordsReservations ? { reservations: this.reservations } : {}),
       })
     }
     if (path === '/api/maps' && method === 'POST') {
@@ -413,12 +446,23 @@ export class FakeCloud {
     }
     if (path === `/api/teams/${TEAM_ID}/placeholders/reserve` && method === 'POST') {
       const asked = (body?.requests ?? []) as { base: string; count: number; floor: number }[]
-      const ranges = asked.map(({ base, count, floor }) => {
+      // Spec 063: a block's size is the server's (500), and every run is
+      // recorded against the member who took it.
+      const block = body?.block === true
+      if (block && this.blocksRefused) return json(429, { error: 'Too many blocks today' })
+      const ranges = asked.map(({ base, count: wanted, floor }) => {
+        const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
         this.counters.set(base, start + count - 1)
+        this.reservations.push({ base, start, end: start + count - 1, member: this.memberId })
         return { base, start, end: start + count - 1 }
       })
       return json(200, { ranges })
+    }
+    if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
+      // An instance from before spec 063 has no such route.
+      if (!this.recordsReservations) return json(404, { error: 'Not found' })
+      return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {
       return json(200, {

@@ -102,7 +102,11 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
       case 'team': {
         switch (args.teamAction) {
           case 'unlock':
-            return await runTeamUnlock(io, args.days ?? undefined)
+            return await runTeamUnlock(
+              io,
+              args.days ?? undefined,
+              resolveMapPath(args.mapPath, io.cwd)
+            )
           case 'lock':
             return runTeamLock(io)
           default:

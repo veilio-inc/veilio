@@ -31,6 +31,7 @@ import {
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
 import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
+import { contestedNote, misattributedNote, ownWithAliases } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
 import { anonymizeOverTeam, reservedAnonymizeOverTeam, type Reserve } from './team-anonymize.js'
@@ -318,9 +319,13 @@ export type TeamNamespaceSource = () => Promise<{
   refused?: string
 }>
 
-export type TeamLayerSource = (
-  missing: readonly string[]
-) => Promise<{ team: TeamLayer | null; note: string | null; refused?: string }>
+export type TeamLayerSource = (missing: readonly string[]) => Promise<{
+  team: TeamLayer | null
+  note: string | null
+  refused?: string
+  /** Spec 063: placeholders whose number another member reserved. */
+  misattributed?: string[]
+}>
 
 export async function runRestore(
   args: ParsedArgs,
@@ -329,7 +334,9 @@ export async function runRestore(
 ): Promise<number> {
   const source = await readInput(args, io)
   const mapPath = resolveMapPath(args.mapPath, io.cwd)
-  const own = loadMap(mapPath)
+  // Spec 063: this member's old placeholders a publish renumbered still read
+  // back here; the map wins where both name a placeholder.
+  const { own, contested: contestedAll } = ownWithAliases(mapPath, loadMap(mapPath))
 
   // The one restore rule (spec 028): the team's maps, this project's map on
   // top where it is in the team's numbering. Asked whenever the text holds a
@@ -341,6 +348,7 @@ export async function runRestore(
   const unexplained = restore(source, own).report.unresolved
   let team: TeamLayer | null = null
   let teamNote: string | null = null
+  let misattributed: string[] = []
   if (hasPlaceholders && teamLayer) {
     const found = await teamLayer(unexplained)
     if (found.refused) {
@@ -349,6 +357,7 @@ export async function runRestore(
     }
     team = found.team
     teamNote = found.note
+    misattributed = found.misattributed ?? []
   }
 
   if (Object.keys(own).length === 0 && !team && !teamNote) {
@@ -358,9 +367,18 @@ export async function runRestore(
     return EXIT_ERROR
   }
   const layers = restoreLayers({ own, team })
-  const map = layers.map
-  const disputed = layers.disputedIn(source)
+  // A contested placeholder is in no layer: not this member's, not the team's.
+  const map = { ...layers.map }
+  for (const p of contestedAll) delete map[p]
+  // Spec 063: a number reserved by another member than its map's publisher is
+  // left with its own reason, apart from the maps disputing one.
+  const disputedAll = layers.disputedIn(source)
+  const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
+  const disputed = disputedAll.filter((p) => !misattributed.includes(p))
   const localOnly = layers.locallyNumberedIn(source)
+  const contested = contestedAll.filter((p) =>
+    new RegExp(`(?<![A-Za-z0-9_$])${p}(?![A-Za-z0-9_$])`).test(source)
+  )
 
   // Without --keep-docs the default strips JSDoc along with the narration and
   // TODOs. That is right for noise, wrong when the model was asked to document
@@ -375,7 +393,11 @@ export async function runRestore(
   const counted = new Set([...Object.keys(own), ...resolved]).size
   // Left for a named reason - disputed, or numbered locally - is not "invented".
   const unresolved = result.report.unresolved.filter(
-    (p) => !disputed.includes(p) && !localOnly.includes(p)
+    (p) =>
+      !disputed.includes(p) &&
+      !localOnly.includes(p) &&
+      !otherMembers.includes(p) &&
+      !contested.includes(p)
   )
   const altered = result.report.altered
 
@@ -384,13 +406,15 @@ export async function runRestore(
   // holds one. A credential redacted on purpose is not a placeholder. The
   // team's maps failing needs no case of its own: a placeholder they were needed
   // for is unresolved.
-  const left = [...unresolved, ...disputed, ...localOnly, ...altered]
+  const left = [...unresolved, ...disputed, ...otherMembers, ...contested, ...localOnly, ...altered]
   const refused = args.strict && left.length > 0
   if (!refused) io.stdout(result.restored)
 
   // Findings, never under --quiet: the output still holds these placeholders.
   if (teamNote) io.stderr(`${BIN_NAME}: ${teamNote}\n`)
   if (disputed.length > 0) io.stderr(`${BIN_NAME}: ${disputedNote(disputed)}\n`)
+  if (otherMembers.length > 0) io.stderr(`${BIN_NAME}: ${misattributedNote(otherMembers)}\n`)
+  if (contested.length > 0) io.stderr(`${BIN_NAME}: ${contestedNote(contested)}\n`)
   if (localOnly.length > 0) io.stderr(`${BIN_NAME}: ${locallyNumberedNote(localOnly)}\n`)
 
   // A token the map cannot explain is a finding, not a summary line: the text on
