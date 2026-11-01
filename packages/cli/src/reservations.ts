@@ -9,7 +9,8 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { refuseLinks } from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -68,6 +69,7 @@ const reservedPath = (mapPath: string) => join(dirname(mapPath), RESERVED_FILE)
 const aliasesPath = (mapPath: string) => join(dirname(mapPath), ALIASES_FILE)
 
 function writePrivate(path: string, value: unknown): void {
+  refuseLinks(basename(path), dirname(path), path)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
