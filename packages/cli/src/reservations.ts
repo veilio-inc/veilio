@@ -16,6 +16,7 @@ import {
   isLocalTag,
   isPlaceholder,
   isSaneBlock,
+  REDACTION_TOKENS,
   teamBaseOf,
   usedInBlock,
   type SymbolMap,
@@ -419,5 +420,29 @@ export function contestedNote(placeholders: readonly string[]): string {
   return (
     `left as is: ${placeholders.join(', ')}. This project's map and its renumbered old placeholders ` +
     `(.veilio/aliases.json) give ${one ? 'it' : 'them'} different identifiers, so restoring would be a guess.`
+  )
+}
+
+// The engine's redaction tokens, not inside a longer identifier (the guard
+// reads them the same way, plugins/veilio-guard/lib/scrub.ts).
+const REDACTION = new RegExp(
+  `(?<![A-Za-z0-9_$])(?:${REDACTION_TOKENS.source})(?![A-Za-z0-9_$])`,
+  'g'
+)
+
+/** The one-way redactions (`__REDACTED_CREDENTIAL_1__`, `__REDACTED_IBAN__`)
+ *  in a text, once each, in order of first appearance (spec 067). */
+export function redactionsIn(text: string): string[] {
+  return [...new Set(text.match(REDACTION) ?? [])]
+}
+
+/** Said by restore (CLI and MCP) for the redactions it left (spec 067): a
+ *  redacted value is gone for good, so the text is not the original file. */
+export function redactedNote(tokens: readonly string[]): string {
+  const one = tokens.length === 1
+  return (
+    `left as is: ${tokens.join(', ')}. ${one ? 'It was' : 'They were'} redacted one-way as ` +
+    `${one ? 'a credential' : 'credentials'} and cannot be restored, so this text is not the original: ` +
+    'do not write it over the file. Make the change in the file itself instead.'
   )
 }

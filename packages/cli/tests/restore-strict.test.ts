@@ -50,6 +50,17 @@ async function run(
 }
 
 describe('restore, without --strict', () => {
+  it('names a redacted value, even under --quiet, and still writes the text', async () => {
+    for (const argv of [['restore'], ['restore', '--quiet']]) {
+      const r = await run("throw new __CLS__1('__REDACTED_CREDENTIAL_1__')", argv)
+      expect(r.code).toBe(EXIT_OK)
+      expect(r.out).toBe("throw new PaymentGateway('__REDACTED_CREDENTIAL_1__')")
+      expect(r.err).toMatch(
+        /__REDACTED_CREDENTIAL_1__[\s\S]*cannot be restored[\s\S]*do not write/i
+      )
+    }
+  })
+
   it('names an altered placeholder instead of passing it silently, and still writes the text', async () => {
     const r = await run('new __CLS__1().__fn__1()')
     expect(r.code).toBe(EXIT_OK)
@@ -91,10 +102,14 @@ describe('restore --strict', () => {
     expect(r.out).toBe('_str_1 = PaymentGateway()')
   })
 
-  it('a credential redacted on purpose is not a failure', async () => {
+  // Spec 067 benchmark: a file restored with a redaction in it was written over
+  // the original, and its tests failed - a redacted value is gone for good, so
+  // the restored text is not the file. --strict withholds it.
+  it('a redacted value: nothing written, exit 1, and the redaction named', async () => {
     const r = await run('new __CLS__1(__REDACTED_STRIPE_KEY_1__)', ['restore', '--strict'])
-    expect(r.code).toBe(EXIT_OK)
-    expect(r.out).toBe('new PaymentGateway(__REDACTED_STRIPE_KEY_1__)')
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.out).toBe('')
+    expect(r.err).toMatch(/__REDACTED_STRIPE_KEY_1__[\s\S]*cannot be restored/)
   })
 
   it("a placeholder the team's maps disagree on: nothing written, exit 1", async () => {
@@ -129,5 +144,18 @@ describe('restore --strict', () => {
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.out).toBe('')
     expect(r.err).toMatch(/veilio team unlock/)
+  })
+})
+
+describe('redactionsIn (spec 067)', () => {
+  it('finds numbered and un-numbered redactions, once each, in order', async () => {
+    const { redactionsIn } = await import('../src/reservations.js')
+    expect(
+      redactionsIn('a __REDACTED_IBAN__ b __REDACTED_AWS_KEY_1__ c __REDACTED_AWS_KEY_1__')
+    ).toEqual(['__REDACTED_IBAN__', '__REDACTED_AWS_KEY_1__'])
+  })
+  it('not inside a longer identifier', async () => {
+    const { redactionsIn } = await import('../src/reservations.js')
+    expect(redactionsIn('MY__REDACTED_CREDENTIAL_1__VAR x__REDACTED_IBAN__')).toEqual([])
   })
 })

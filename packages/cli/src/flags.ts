@@ -286,7 +286,7 @@ export const FLAGS: readonly FlagSpec[] = [
   },
   {
     long: '--strict',
-    help: 'scan: also fail on advisory findings. restore: write nothing and exit 1 if a placeholder would be left',
+    help: 'scan: also fail on advisory findings. restore: write nothing and exit 1 if a placeholder or a redaction would be left',
     commands: ['scan', 'restore'],
     field: 'strict',
   },

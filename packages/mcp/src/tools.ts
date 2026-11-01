@@ -59,6 +59,8 @@ import {
   ignoredKeysNote,
   localNumbering,
   reservationRefusedSentence,
+  redactedNote,
+  redactionsIn,
 } from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
@@ -484,7 +486,8 @@ export const TOOLS: ToolDefinition[] = [
           type: 'boolean',
           description:
             'Refuse instead of returning text that still holds a placeholder (invented, ' +
-            "altered, disputed, or the team's maps unreadable): an error naming them, and no text.",
+            "altered, disputed, or the team's maps unreadable) or a redaction, which cannot be " +
+            'restored: an error naming them, and no text.',
         },
       },
       required: ['text'],
@@ -564,6 +567,9 @@ export const TOOLS: ToolDefinition[] = [
         ...otherLocal,
         ...altered,
       ]
+      // Spec 067: a redaction cannot be restored, so text holding one is not
+      // the file - written over it, the file loses those values for good.
+      const redacted = redactionsIn(result.restored)
       const warnings = [
         ...(refreshing ? [loadingNote(refreshing)] : []),
         ...(note ? [`WARNING: ${note}`] : []),
@@ -574,22 +580,23 @@ export const TOOLS: ToolDefinition[] = [
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
+        ...(redacted.length ? [`WARNING: ${redactedNote(redacted)}`] : []),
         ...(ignored ? [`WARNING: ${ignoredKeysNote(ignored)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used
       // (locked, unreadable): not a success, whatever else restored (FR-005).
       const failed = found.status === 'locked' || found.status === 'unavailable'
       // strict: nothing that still holds a placeholder is handed back (the CLI's
-      // --strict, the same rule). A credential redacted on purpose is not one.
-      // A placeholder the team's maps were needed for is in `left` already.
-      if (strict && left.length > 0) {
+      // --strict, the same rule), nor a redaction. A placeholder the team's
+      // maps were needed for is in `left` already.
+      if (strict && (left.length > 0 || redacted.length > 0)) {
         return {
           isError: true,
           text:
             `Restored ${result.report.resolved.length} of ${counted} placeholders.` +
             `${restoreReportLines(report)}` +
             `${warnings.length ? `\n\n${warnings.join('\n')}` : ''}\n\n` +
-            `strict: the restored text is withheld - ${left.join(', ')} would have been left in it.`,
+            `strict: the restored text is withheld - ${[...left, ...redacted].join(', ')} would have been left in it.`,
         }
       }
       return {

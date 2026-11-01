@@ -115,7 +115,7 @@
                 },
                 "strict": {
                   "type": "boolean",
-                  "description": "Refuse instead of returning text that still holds a placeholder (invented, altered, disputed, or the team's maps unreadable): an error naming them, and no text."
+                  "description": "Refuse instead of returning text that still holds a placeholder (invented, altered, disputed, or the team's maps unreadable) or a redaction, which cannot be restored: an error naming them, and no text."
                 }
               },
               "required": [

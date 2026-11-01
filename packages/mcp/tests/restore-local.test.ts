@@ -111,3 +111,20 @@ describe('restore_text and the local family', () => {
     expect(r.text).toContain(localFamilyNote([OTHER]))
   })
 })
+
+// Spec 067 benchmark: a file restored with a redaction in it was written over
+// the original and its tests failed. The redaction is named; strict withholds.
+describe('restore_text and a redacted value (spec 067)', () => {
+  const body = "throw new GatewayFault(__STR__1, '__REDACTED_CREDENTIAL_1__')"
+  it('names it and still hands the text back', () => {
+    const r = callTool('restore_text', { text: body }, ctxWith({ __STR__1: "'unauthorized'" }))
+    expect(r.text).toMatch(/__REDACTED_CREDENTIAL_1__[\s\S]*cannot be restored[\s\S]*do not write/i)
+    expect(restoredPart(r.text)).toContain('__REDACTED_CREDENTIAL_1__')
+  })
+  it('strict withholds the text', () => {
+    const r = callTool('restore_text', { text: body, strict: true }, ctxWith({ __STR__1: "'x'" }))
+    expect(r.isError).toBe(true)
+    expect(restoredPart(r.text)).toBe('')
+    expect(r.text).toMatch(/strict: the restored text is withheld - __REDACTED_CREDENTIAL_1__/)
+  })
+})
