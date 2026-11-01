@@ -21,9 +21,13 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  sealRuleForVault,
+  sealTeamRule,
   toBase64,
   type CryptoKeyLike,
+  type RuleBody,
 } from '@veilio-inc/engine'
+import type { SealedRule } from '../../src/cloud.js'
 import { writeCredential } from '../../src/credential.js'
 import { writeTeamUnlock } from '../../src/team-unlock.js'
 import {
@@ -493,6 +497,54 @@ export async function sealTeam(map: Record<string, string>, raw = TEAM_RAW): Pro
   return JSON.stringify(await encryptTeamMap(await importTeamKey(toBase64(raw)), map))
 }
 
+/** How a rule row is sealed, for the cases a tool must skip. `key`: the raw
+ *  key to seal under (another one makes it unopenable). `bindId`: the row id
+ *  the body names (another one makes it refused). `record`: sealed as-is
+ *  instead of the rule, for bodies the engine refuses to seal. */
+export interface RuleSealing {
+  key?: Uint8Array
+  bindId?: string
+  record?: Record<string, string>
+}
+
+/** A personal rule row as GET /api/rules serves it (spec 065). */
+export async function sealedPersonalRule(
+  id: string,
+  sortOrder: number,
+  body: RuleBody,
+  opts: RuleSealing = {}
+): Promise<SealedRule> {
+  const key = await importPersonalMapsKey(opts.key ?? PMK_RAW)
+  const bind = { id: opts.bindId ?? id, teamId: null }
+  const env = opts.record
+    ? await encryptMapForVault(key, opts.record)
+    : await sealRuleForVault(key, body, bind)
+  return { id, scope: 'personal', team_id: null, sort_order: sortOrder, data: JSON.stringify(env) }
+}
+
+/** A team rule row as GET /api/rules serves it (spec 065). */
+export async function sealedTeamRule(
+  id: string,
+  sortOrder: number,
+  body: RuleBody,
+  opts: RuleSealing & { teamId?: string; version?: number } = {}
+): Promise<SealedRule> {
+  const teamId = opts.teamId ?? TEAM_ID
+  const key = await importTeamKey(toBase64(opts.key ?? TEAM_RAW))
+  const bind = { id: opts.bindId ?? id, teamId }
+  const env = opts.record
+    ? await encryptTeamMap(key, opts.record)
+    : await sealTeamRule(key, body, bind)
+  return {
+    id,
+    scope: 'team',
+    team_id: teamId,
+    sort_order: sortOrder,
+    key_version: opts.version ?? 1,
+    data: JSON.stringify(env),
+  }
+}
+
 /** Sign in under `home`, optionally with the team key and/or the PMK unlocked. */
 export function signIn(
   home: string,
@@ -524,4 +576,15 @@ export function signIn(
     )
   if (opts.pmk)
     writePersonalMapsKey({ v: 1, instance, account: ME, expiresAt, key: toBase64(PMK_RAW) }, home)
+}
+
+/** Both keys on disk for `account` - what a cached rule needs to be applied
+ *  (spec 065 FR-006). For tests that write rules.json directly. */
+export function holdKeys(home: string, account: string, instance = INSTANCE, teamId = 't1'): void {
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
+  writeTeamUnlock(
+    { v: 1, instance, account, teamId, expiresAt, keys: [{ version: 1, key: toBase64(TEAM_RAW) }] },
+    home
+  )
+  writePersonalMapsKey({ v: 1, instance, account, expiresAt, key: toBase64(PMK_RAW) }, home)
 }

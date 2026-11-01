@@ -19,7 +19,25 @@ export function bandText(g: Guard): string {
       : index?.state === 'unavailable'
         ? ` · index off (${index.reason})`
         : ''
-  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${customRules(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+}
+
+/** Spec 065: whether the account's custom rules apply, and why not - the
+ *  short form of the CLI's rules-skipped sentences. */
+function customRules(g: Guard): string {
+  const { state, rules, skipped } = g.rules
+  if (state === 'none-pulled') return 'custom rules: none pulled - run `veilio rules pull`'
+  if (state === 'other-account')
+    return 'custom rules: none for this account - run `veilio rules pull`'
+  const not = [
+    [skipped.vaultLocked, 'vault locked'],
+    [skipped.teamLocked, 'team key locked'],
+    [skipped.unopenable, 'unopenable'],
+    [skipped.refused, 'refused'],
+  ]
+    .filter(([n]) => (n as number) > 0)
+    .map(([n, why]) => `${n} ${why}`)
+  return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}`
 }
 
 /** Spec 063: what the guard numbers new names from, when a team is involved. */

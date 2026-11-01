@@ -37,18 +37,31 @@ export function parseMapFile(text: string): Parsed {
   return { ok: true, stored }
 }
 
+const ROLE = /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/
+
 export function mergeAdditions(
   onDisk: SymbolMap,
   additions: SymbolMap
 ): { merged: SymbolMap; conflicts: string[] } {
   const merged: SymbolMap = { ...onDisk }
-  const byName = new Map(Object.entries(onDisk).map(([p, v]) => [v, p]))
+  // A name's non-role placeholder wins the lookup, so a second rule
+  // placeholder for it is still a clash whatever the key order.
+  const entries = Object.entries(onDisk)
+  const byName = new Map(
+    [...entries.filter(([p]) => ROLE.test(p)), ...entries.filter(([p]) => !ROLE.test(p))].map(
+      ([p, v]) => [v, p]
+    )
+  )
   const conflicts: string[] = []
   for (const [placeholder, name] of Object.entries(additions)) {
     const there = onDisk[placeholder]
     if (there === name) continue
     const other = byName.get(name)
-    if (there !== undefined || (other !== undefined && other !== placeholder)) {
+    // Spec 064/065: a custom rule's placeholder for a name the engine once
+    // gave a role placeholder (an ordinary word, now readable) is the engine's
+    // own behaviour, not a clash: the old entry stays, so old text restores.
+    const ruleOverEngine = other !== undefined && ROLE.test(other) && !ROLE.test(placeholder)
+    if (there !== undefined || (other !== undefined && other !== placeholder && !ruleOverEngine)) {
       conflicts.push(placeholder)
       continue
     }

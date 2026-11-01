@@ -481,6 +481,35 @@ only, no dependency added.
 - `webCryptoSubtle()`, `randomBytes(n)`, `toBase64` / `fromBase64` — the small
   platform layer the above are built on
 
+### Custom rules sealed under your keys
+
+A custom rule (a name to keep readable, or a pattern to mask under your own
+placeholder) is sealed before it leaves your machine, under the same keys as
+your maps, so a server storing it cannot read it.
+
+- `sealRuleForVault(key, rule, bind)` / `openRuleFromVault(key, envelope, bind)` — a
+  personal rule under the personal-maps key
+- `sealTeamRule(teamKey, rule, bind)` / `openTeamRule(keys, envelope, bind)` — a team rule
+  under the team key, opened with whichever held version fits
+- the last argument names the rule's row, `{ id, teamId }` (a `RuleBinding`);
+  it is sealed into the body and checked on opening, so a server that cannot
+  read a rule cannot move it to another row either
+- opening returns `{ ok: true, rule }` or `{ ok: false, reason }`, never
+  throws on bad content. The reason is "unopenable" (wrong key, damaged),
+  "not-a-rule" (something else was sealed there) or "refused" (a rule no tool
+  may apply, or one sealed for another row)
+- `ruleRefusal(rule)` → the sentence why a rule may not be saved or applied,
+  or `null`; `isEngineBase(placeholder)` (a placeholder base the engine uses
+  for its own names) and `isSafeRegex(pattern)` are the checks it makes
+- `compileRulePattern(pattern)` → a matcher whose `test(name)` gives
+  the platform regex's answer in time linear in the name's length, or `null` for a
+  pattern outside its language. Rule patterns run on it, never on the platform regex, so
+  a teammate's pattern such as `(a+)+$` cannot freeze the tool applying it.
+  The language: literals, `.`, classes, `\d \w \s` and their negations,
+  `^ $`, groups, alternation, and quantifiers with bounds up to 50.
+  Backreferences, lookaround and `\b` are refused; `isSafeRegex` is true
+  exactly when this compiles
+
 A lost `.veilio` passphrase is not recoverable, by construction. Nothing here
 holds an escrow copy and nothing in the format allows one.
 

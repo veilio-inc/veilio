@@ -38,12 +38,14 @@ If the project already has a map (`veilio scrub` builds one), the guard uses it 
 A line above the prompt says what the guard is doing:
 
 ```text
-Veilio guard on · 42 names in the map · 0 withheld · 0 refused
+Veilio guard on · 42 names in the map · custom rules: 3 · 0 withheld · 0 refused
 ```
 
 - `/veilio` shows the state, the map, and what is covered.
 - `/veilio off` switches the guard off for this project. Claude then reads raw code, and the line above the prompt says so on every turn.
 - `/veilio on` switches it back on.
+
+Your account's custom rules apply too. The guard reads the rules `veilio rules pull` keeps on this machine, for the account you are signed in as, and never fetches them itself: run `veilio rules pull` after a rule changes, then start a new session. Replace rules mask what they match, an ordinary word such as `phoenix` included, in files Claude reads, command output and your prompts; whitelist rules keep their names readable. The line above the prompt says how many apply (`custom rules: 3`), or that none are pulled, and how many were not applied and why (vault locked, team key locked, refused). A cached rule applies only while the key it was opened with is still on this machine: after `veilio vault lock` or `veilio team lock`, or once the key expires, those rules are not applied and count as vault locked or team key locked. A session already running keeps the rules it loaded until you start a new one.
 
 To clear the map (`veilio map --clear`), close Claude Code first: an open session puts back the entries it knows on its next save.
 

@@ -86,10 +86,10 @@ veilio maps rm <id>           # remove a map from Cloud
 veilio projects               # your team's projects; * marks the one in use
 veilio projects use <name>    # work in that project (the MCP server follows)
 veilio vault unlock           # keep the personal-maps key here (7 days) - for the MCP server
-veilio vault lock             # remove it from this machine
+veilio vault lock             # remove it, and the personal rules, from this machine
 veilio rules pull             # fetch your custom rules (personal and team)
 veilio team unlock            # open your team key with your vault passphrase (kept 7 days)
-veilio team lock              # remove the unlocked team key from this machine
+veilio team lock              # remove the unlocked team key, and the team rules, from this machine
 veilio logout                 # revoke the session and remove local credentials
 ```
 

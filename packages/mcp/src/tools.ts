@@ -64,7 +64,7 @@ import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 import { thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
-import { projectOverride, refusal } from '@veilio-inc/cli/client'
+import { projectOverride, refusal, rulesSkippedSentences } from '@veilio-inc/cli/client'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -364,6 +364,9 @@ function runAnonymize(
     // Stated every time, like the namespace: an agent whose masking ignored the
     // team's rules must be able to tell.
     rulesLine(rules),
+    // Beside the source, on every result while it holds: rules the account set
+    // were not applied, so the masking is less than its owner expects.
+    ...rulesSkippedSentences(rules.skipped),
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')

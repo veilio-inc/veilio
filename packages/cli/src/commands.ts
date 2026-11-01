@@ -34,6 +34,7 @@ import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import { contestedNote, misattributedNote, ownWithAliases } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
+import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
 import { anonymizeOverTeam, reservedAnonymizeOverTeam, type Reserve } from './team-anonymize.js'
 import { thirdPartyNames } from './third-party.js'
 
@@ -227,6 +228,14 @@ export async function runScrub(
     )
   }
 
+  // Survives --quiet, like the language warning below: rules the account set
+  // were not applied, so the output masks less than its owner expects.
+  const skippedCounts = cached?.skipped ?? NO_RULES_SKIPPED
+  const skipped = rulesSkippedSentences(skippedCounts)
+  // Said below, in the same line as the rules that did apply, when that is printed.
+  const appliedLine = !args.quiet && cached !== null && cached.rules.length > 0
+  if (skipped.length && !appliedLine) io.stderr(`${BIN_NAME}: ${skipped.join(' ')}\n`)
+
   for (const { name, result } of results) {
     if (!result.languageFallback) continue
     io.stderr(
@@ -243,11 +252,12 @@ export async function runScrub(
     io.stderr(`${BIN_NAME}: ${parts.join('; ')}, ${Object.keys(toPersist).length} in map\n`)
     // Said every time, with the age: a whitelist rule the team has since
     // removed would still leave that name readable until the next pull.
-    if (cached && cached.rules.length > 0) {
+    if (appliedLine) {
       const n = cached.rules.length
+      const notApplied = rulesSkippedSentences(skippedCounts, { noun: false }).join(' ')
       io.stderr(
-        `${BIN_NAME}: applied ${n} custom rule${n === 1 ? '' : 's'} pulled ${describeAge(cached.pulledAt)} ` +
-          `(\`${BIN_NAME} rules pull\` to refresh)\n`
+        `${BIN_NAME}: applied ${n} custom rule${n === 1 ? '' : 's'} pulled ${describeAge(cached.pulledAt)}` +
+          (notApplied ? `; ${notApplied}\n` : ` (\`${BIN_NAME} rules pull\` to refresh)\n`)
       )
     }
     // Under --quiet, unlike the language warning above. Nearly every real file

@@ -1,4 +1,6 @@
 import { isOrdinaryWord } from './ordinaryWords.js'
+import { isEngineBase } from './rule-checks.js'
+import { compileRulePattern, type RuleMatcher } from './rule-pattern.js'
 import type {
   AnonymizeOptions,
   AnonymizeResult,
@@ -799,11 +801,27 @@ export function extractIdentifiers(code: string, language: Language = DEFAULT_LA
   return Array.from(seen).sort((a, b) => b.length - a.length)
 }
 
+function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
+  return r.type !== 'replace' || !isEngineBase(r.placeholder)
+}
+
+// Custom-rule patterns run on the engine's linear-time matcher, never on
+// RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
+// Compiled once per pattern.
+const ruleMatchers = new Map<string, RuleMatcher | null>()
+
 function safeMatch(pattern: string, name: string): boolean {
+  let m = ruleMatchers.get(pattern)
+  if (m === undefined) {
+    m = compileRulePattern(pattern)
+    if (ruleMatchers.size > 1000) ruleMatchers.clear()
+    ruleMatchers.set(pattern, m)
+  }
+  if (m === null) return false
   try {
-    return new RegExp(pattern).test(name)
+    return m.test(name)
   } catch {
-    return false
+    return false // never thrown on purpose; no match is the safe direction
   }
 }
 
@@ -1106,7 +1124,11 @@ export function anonymize(
     // mapped as a name, and the guard relies on it round-tripping.
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)))
   )
-  const rules = opts.rules ?? []
+  // Spec 065: a rule the server could once refuse is now sealed where it
+  // cannot see it, so the engine skips a replace rule under an engine base,
+  // whoever sealed it. A pattern its matcher cannot run never matches
+  // (safeMatch), so it needs no filter here.
+  const rules = (opts.rules ?? []).filter(isRunnableRule)
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers

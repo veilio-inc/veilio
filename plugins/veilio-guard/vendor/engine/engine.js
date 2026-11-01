@@ -1,4 +1,6 @@
 import { isOrdinaryWord } from './ordinaryWords.js';
+import { isEngineBase } from './rule-checks.js';
+import { compileRulePattern } from './rule-pattern.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
 import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
@@ -667,12 +669,28 @@ export function extractIdentifiers(code, language = DEFAULT_LANGUAGE) {
     }
     return Array.from(seen).sort((a, b) => b.length - a.length);
 }
+function isRunnableRule(r) {
+    return r.type !== 'replace' || !isEngineBase(r.placeholder);
+}
+// Custom-rule patterns run on the engine's linear-time matcher, never on
+// RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
+// Compiled once per pattern.
+const ruleMatchers = new Map();
 function safeMatch(pattern, name) {
+    let m = ruleMatchers.get(pattern);
+    if (m === undefined) {
+        m = compileRulePattern(pattern);
+        if (ruleMatchers.size > 1000)
+            ruleMatchers.clear();
+        ruleMatchers.set(pattern, m);
+    }
+    if (m === null)
+        return false;
     try {
-        return new RegExp(pattern).test(name);
+        return m.test(name);
     }
     catch {
-        return false;
+        return false; // never thrown on purpose; no match is the safe direction
     }
 }
 const ANONYMIZE_OPTIONS = optionKeys({
@@ -936,7 +954,11 @@ export function anonymize(code, options = {}) {
     // An ambiguous word an older map already holds keeps its entry: it was
     // mapped as a name, and the guard relies on it round-tripping.
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))));
-    const rules = opts.rules ?? [];
+    // Spec 065: a rule the server could once refuse is now sealed where it
+    // cannot see it, so the engine skips a replace rule under an engine base,
+    // whoever sealed it. A pattern its matcher cannot run never matches
+    // (safeMatch), so it needs no filter here.
+    const rules = (opts.rules ?? []).filter(isRunnableRule);
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.

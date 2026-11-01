@@ -316,7 +316,7 @@ function teamScopedMaps(list: CloudMapList): CloudMapSummary[] {
  * The team keys this machine has unlocked. Absent, expired, for another
  * account or another team all read the same way: none.
  */
-async function heldTeamKeys(
+export async function heldTeamKeys(
   credential: Credential,
   home: string | undefined,
   teamId: string

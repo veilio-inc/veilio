@@ -50,6 +50,7 @@ import {
 import type { MaskContext, ScanResult } from './scrub.ts'
 import { fileKindOf, restore, scanSecrets } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
+import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
 
 export interface GuardIO {
@@ -154,6 +155,8 @@ export class Guard {
   /** The project's source files, indexed so a result is masked by what it
    *  contains (spec 050). Created when the guard loads. */
   index: ProjectIndex | null = null
+  /** The account's custom rules, read once when the guard loads (spec 065). */
+  rules: GuardRules = NO_RULES
   private writes: Promise<unknown> = Promise.resolve()
   private indexing: Promise<unknown> = Promise.resolve()
   private unsaved: SymbolMap = ownedMap()
@@ -202,7 +205,7 @@ export class Guard {
   }
 
   /** The project root: the nearest directory with .veilio or .git, as the CLI finds it. */
-  async load(cwd: string): Promise<void> {
+  async load(cwd: string, home?: string): Promise<void> {
     let dir: string | null = cwd
     this.root = cwd
     while (dir) {
@@ -217,6 +220,7 @@ export class Guard {
     }
     await this.readSettings()
     await this.reloadMap()
+    this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
         list: () => (this.io.list ? this.io.list(this.root) : Promise.resolve(null)),
@@ -231,7 +235,8 @@ export class Guard {
           language,
           undefined,
           undefined,
-          this.blocks
+          this.blocks,
+          this.rules.rules
         )
         this.counts.outsideReserved += outside
         grow(this.unsaved, additions)
@@ -487,6 +492,25 @@ export class Guard {
     return this.gate(this.maskText(text, kind, scan))
   }
 
+  /** Spec 065: the names a replace rule matches in text bound for the model
+   *  that the map does not mask yet - a prompt, a reminder, a skill's text -
+   *  minted under the rule's placeholder and saved before the text is masked,
+   *  so the masking that follows writes them over and an edit restores them.
+   *  Found in the masked text, so a credential is never minted. */
+  async learnRuleNames(texts: readonly string[]): Promise<void> {
+    if (!this.rules.rules.some((r) => r.type === 'replace')) return
+    const ctx = this.context('unknown', 'prompt')
+    const working = ownedMap(this.map)
+    const additions = ownedMap()
+    for (const t of texts) {
+      const r = maskShaped(this.maskText(t, 'prompt'), working, ctx, this.blocks)
+      grow(working, r.additions)
+      grow(additions, r.additions)
+    }
+    if (Object.keys(additions).length > 0 && (await this.save(additions)).status === 'conflict')
+      throw new Error('another program changed .veilio/map.json while Veilio was writing to it')
+  }
+
   /** Masks without the last gate: for a caller that has a fallback. */
   maskText(text: string, kind: MaskContext['kind'] = 'result', scan?: ScanResult): string {
     return applyMap(text, this.map, this.context('unknown', kind), { known: this.destroyed, scan })
@@ -639,10 +663,12 @@ export class Guard {
 
   /** What masking knows about a text of `language` (spec 050). */
   context(language: MaskContext['language'], kind: MaskContext['kind'] = 'result'): MaskContext {
-    if (!this.index) return { ...NO_CONTEXT, language, kind }
+    const rules = this.rules.rules
+    if (!this.index) return { ...NO_CONTEXT, language, kind, rules }
     return {
       language,
       kind,
+      rules,
       projectLanguages: this.index.languages,
       // Less every name the project declares anywhere (spec 050 data-model).
       // Only once every file is indexed: before that, a name imported here may
@@ -950,7 +976,8 @@ export class Guard {
               languageOf(filePath),
               ctx.external,
               fileKind,
-              this.blocks
+              this.blocks,
+              this.rules.rules
             )
             this.counts.outsideReserved += scrubbed.outside
             grow(working, scrubbed.additions)
