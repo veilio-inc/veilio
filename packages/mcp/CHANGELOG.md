@@ -1,5 +1,20 @@
 # @veilio-inc/mcp
 
+## 0.7.0
+
+### Minor Changes
+
+- [#184](https://github.com/veilio-inc/veilio/pull/184) [`2a6b082`](https://github.com/veilio-inc/veilio/commit/2a6b082f3bf701fd4c3893e4b48c71f14d680bfc) Thanks [@DlgSHi](https://github.com/DlgSHi)! - A team member who cannot reserve numbers (the daily allowance, offline, the plan) now numbers new names in a local family, `__LOCAL_<tag>_<KIND>__n`, which never reaches the team's maps and is renumbered into team numbers on publish, so a teammate's restore is never wrong. Reservations are answered per kind, and a refusal is shown. Security fixes: a map's numbers floor a reservation only when Cloud issued them; a number planted above a member's block no longer forces every name local; the map and its side files are never written through a link; `restore_text` says plainly that its result puts the real names into the model's context.
+
+- [#183](https://github.com/veilio-inc/veilio/pull/183) [`8733daa`](https://github.com/veilio-inc/veilio/commit/8733daa067a888a565c6e91a3d5f67bbdd1c01ac) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Custom rules are sealed under your own keys: personal rules under your personal-maps key, team rules under the team key, re-sealed on rotation. The server stores them but cannot read them. A rule's placeholder base is sent only as a hash when numbers are reserved. A locked vault or team key masks without rules and says so, with the number of rules skipped.
+
+- [#181](https://github.com/veilio-inc/veilio/pull/181) [`da3c723`](https://github.com/veilio-inc/veilio/commit/da3c7236613fe0a0de4d997f1ff93c9f1a248738) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Team numbering: `veilio maps pull` and `veilio team unlock` reserve a block of the team's placeholder numbers for this checkout, so the guard and `veilio scrub` number new names where no teammate can. A restore names a placeholder only when its number was issued to the member who wrote it; a disputed one is left as written and said so.
+
+### Patch Changes
+
+- Updated dependencies [[`2a6b082`](https://github.com/veilio-inc/veilio/commit/2a6b082f3bf701fd4c3893e4b48c71f14d680bfc), [`8733daa`](https://github.com/veilio-inc/veilio/commit/8733daa067a888a565c6e91a3d5f67bbdd1c01ac), [`da3c723`](https://github.com/veilio-inc/veilio/commit/da3c7236613fe0a0de4d997f1ff93c9f1a248738)]:
+  - @veilio-inc/cli@0.8.0
+
 ## 0.6.3
 
 ### Patch Changes
