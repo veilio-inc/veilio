@@ -761,3 +761,30 @@ test('a Windows path: every line of a raw-only file is dropped', async ($, on) =
   expect(out).not.toContain('hunter2hunter2')
   expect(out).toContain('const ok = 1')
 })
+
+// Automated review of aac1f66: without -n, ripgrep prints a context line as
+// `path-text`, with no number to split on.
+test('a context line printed without a line number is dropped too', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/config/.env-DB_PASSWORD=hunter2hunter2`,
+    `${ROOT}/config/.env:PLAIN=hello world`,
+    `${ROOT}/src/a.ts:const ok = 1`,
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(grep)))
+  expect(out).not.toContain('hunter2hunter2')
+  expect(out).not.toContain('hello world')
+  expect(out).toContain('const ok = 1')
+})
+
+test('a very long line of separators is filtered in bounded time', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = `${ROOT}/dist/app.min.js:1:${'-'.repeat(200_000)}`
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 1 } }))
+  const started = Date.now()
+  await $.tool.call(eventOf(grep))
+  expect(Date.now() - started).toBeLessThan(5000)
+})
