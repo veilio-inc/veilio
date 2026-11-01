@@ -148,3 +148,37 @@ test("this checkout's own guard.json still adds MCP servers", async ($, on) => {
   await $.tool.call({ tool: 'mcp__slack__post_message', channel: 'g', text: 'bug in __CLS__1' })
   expect(JSON.stringify(seen)).toContain('QuasarLedger')
 })
+
+// Automated review of a7b6a1b: with no git listing (a project unpacked from
+// an archive, or a git that does not answer) nobody can tell whose guard.json
+// it is, so it is treated as the repository's.
+test('without a git listing, guard.json cannot widen MCP restores', async ($, on) => {
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['slack'] }),
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+  await $.tool.call({ tool: 'mcp__slack__post_message', channel: 'g', text: 'bug in __CLS__1' })
+  expect(seen).toHaveLength(1)
+  expect(JSON.stringify(seen)).not.toContain('QuasarLedger')
+})
+
+test('without a git listing, guard.json cannot switch the guard off', async ($, on) => {
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ enabled: false }),
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: OK }))
+  await $.tool.call({ tool: 'Bash', command: 'grep -rn __CLS__1 src', description: 'x' })
+  expect(seen[0]?.command).toBe('grep -rn QuasarLedger src')
+})

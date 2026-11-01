@@ -148,6 +148,8 @@ const withheldText = (w: Withheld) =>
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
+  /** guard.json is the repository's, or cannot be shown to be this checkout's. */
+  private settingsFromRepository = false
   root = ''
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
@@ -288,11 +290,14 @@ export class Guard {
     // Security audit 2026-11-01: files under .veilio/ committed to the
     // repository are its author's, not this checkout's.
     const committed = await this.trackedVeilioFiles()
-    await this.readSettings(committed.includes('.veilio/guard.json'))
+    // Unknown (no git listing, or a late one): nobody can tell whose
+    // guard.json it is, so it may only tighten (review of a7b6a1b).
+    this.settingsFromRepository = committed === null || committed.includes('.veilio/guard.json')
+    await this.readSettings()
     await this.reloadMap()
     // A committed map or aliases file: its values would be restored into
     // commands the model only saw as placeholders.
-    const tracked = committed.filter((f) => f !== '.veilio/guard.json')
+    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
     if (tracked.length)
       this.stop(
         `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
@@ -493,7 +498,7 @@ export class Guard {
   /** `fromRepository`: guard.json is committed, so it may only tighten - add
    *  raw-only paths - never widen what reaches an MCP server or switch the
    *  guard off (security audit 2026-11-01). */
-  private async readSettings(fromRepository = false): Promise<void> {
+  private async readSettings(fromRepository = this.settingsFromRepository): Promise<void> {
     this.extraRawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
@@ -569,23 +574,25 @@ export class Guard {
   }
 
   /** `.veilio/map.json`, `aliases.json` and `guard.json` when git tracks
-   *  them; none when the project is not a git checkout or cannot be listed. */
-  private async trackedVeilioFiles(): Promise<string[]> {
-    if (!this.io.list) return []
+   *  them; null when that cannot be known (not a git checkout, no listing in
+   *  time, or no way to list). */
+  private async trackedVeilioFiles(): Promise<string[] | null> {
+    if (!this.io.list) return null
     let listed: string[] | null
-    // shortcut: a git that answers in no 5 s skips the check (as a project that
-    // is not a checkout does), never wedges the session; upgrade to failing
-    // closed if a slow-git bypass is ever shown.
+    // shortcut: a git that answers in no 5 s counts as no listing - guard.json
+    // may then only tighten, but a committed map is not detected (the shell
+    // allowlist still holds); upgrade if a slow-git bypass of that is shown.
     const late = this.io.sleep ? this.io.sleep(5000).then(() => null) : null
     try {
       const listing = this.io.list(this.root)
       listed = await (late ? Promise.race([listing, late]) : listing)
     } catch {
-      return []
+      return null
     }
     // Case-insensitive (a macOS checkout reads .Veilio/Map.json as the map),
     // and a tracked `.veilio` entry is a committed link to somewhere else.
-    const files = new Set((listed ?? []).map((f) => f.toLowerCase()))
+    if (listed === null) return null
+    const files = new Set(listed.map((f) => f.toLowerCase()))
     if (files.has('.veilio')) return ['.veilio']
     return ['.veilio/map.json', '.veilio/aliases.json', '.veilio/guard.json'].filter((f) =>
       files.has(f)
