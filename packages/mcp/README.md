@@ -1,12 +1,14 @@
 # @veilio-inc/mcp
 
-MCP server that lets a coding agent read your code **without the real identifiers entering its context.** What masking does and does not hide: [the engine's README](../engine/README.md#what-it-hides-and-what-it-does-not).
+MCP server that lets a coding agent read your code **masked**: a file read through it reaches the agent with its identifiers as placeholders. What masking does and does not hide: [the engine's README](../engine/README.md#what-it-hides-and-what-it-does-not).
+
+**What it does not do:** it masks what the agent reads *through it*. It does not stop the agent reading files or command output with its own tools, and those reach the model as written - in the spec 067 benchmark, project names reached the model in 93-96 of 96 MCP and CLI sessions, as often as with no Veilio at all. In Claude Code, [veilio-guard](../../plugins/veilio-guard/README.md) enforces masking for everything the model sees. In another agent, turn off its own file and shell tools so this server is the only way to your code.
 
 ## Why path-based tools
 
 A naive MCP anonymizer takes source code as a tool argument. That is self-defeating: to call it, the agent must already hold the real code — so the identifiers are already in the model's context and nothing was protected.
 
-The primary tools here take a **file path**. The server reads the file in its own process and returns only the masked text. The agent learns `__CLS__1.__FN__2()` and never sees `PaymentGateway.chargeCard()`.
+The primary tools here take a **file path**. The server reads the file in its own process and returns only the masked text. From that call the agent learns `__CLS__1.__FN__2()`, not `PaymentGateway.chargeCard()`.
 
 That holds on the way in. On the way back, `restore_text` returns the restored
 text — the real names in it — to whoever called it. When the agent calls it, the

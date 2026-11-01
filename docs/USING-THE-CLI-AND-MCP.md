@@ -6,7 +6,17 @@ Veilio ships two command-line packages:
   pipe, a pre-commit hook or CI.
 - **`@veilio-inc/mcp`** (`veilio-mcp`): the same engine as an MCP server, so an AI
   coding assistant (Claude Code, Claude Desktop, Xcode, Cursor, VS Code) can
-  anonymize files before it reads them and restore its own answers.
+  read files masked through it and restore its own answers.
+
+> **What MCP and the CLI do not do inside an agent.** They mask what passes
+> through them. An agent that also has its own file, search and shell tools reads
+> files and test output with those, and that reaches the model as written: in the
+> spec 067 benchmark, project names reached the model in 93-96 of 96 MCP and CLI
+> sessions, as often as with no Veilio at all. In Claude Code, install
+> [veilio-guard](../plugins/veilio-guard/README.md), which masks everything the
+> model sees. In another agent, turn off its own file and shell tools so Veilio is
+> the only way to your code. Pasting into a chat with `veilio scrub | pbcopy`, and
+> `veilio scan` in a hook or CI, need neither.
 
 Both work **offline and without an account**. A Veilio Cloud subscription adds
 your saved maps, your team's shared placeholders and your custom rules.
@@ -271,7 +281,7 @@ Veilio is a standard **stdio** MCP server: command `npx`, arguments
 ## 6. A typical session
 
 1. In the assistant: *"Anonymize `src/payments/refund.ts` with veilio and review it."*
-   The assistant calls `anonymize_file` and only ever sees placeholders.
+   The assistant calls `anonymize_file` and gets placeholders back (what it reads with its own tools is not masked - see the note at the top).
 2. It answers in placeholders.
 3. *"Restore that answer with veilio."* - `restore_text` gives back real names.
    Anything it could not restore is listed, never guessed. Ask for `strict` when
