@@ -38,18 +38,20 @@ If the project already has a map (`veilio scrub` builds one), the guard uses it 
 A line above the prompt says what the guard is doing:
 
 ```text
-Veilio guard on · 42 names in the map · 0 withheld · 0 refused
+Veilio guard on · 42 names in the map · custom rules: 3 · 0 withheld · 0 refused
 ```
 
 - `/veilio` shows the state, the map, and what is covered.
 - `/veilio off` switches the guard off for this project. Claude then reads raw code, and the line above the prompt says so on every turn.
 - `/veilio on` switches it back on.
 
+Your account's custom rules apply too. The guard reads the rules `veilio rules pull` keeps on this machine, for the account you are signed in as, and never fetches them itself: run `veilio rules pull` after a rule changes, then start a new session. Replace rules mask what they match, an ordinary word such as `phoenix` included, in files Claude reads, command output and your prompts; whitelist rules keep their names readable. The line above the prompt says how many apply (`custom rules: 3`), or that none are pulled, and how many were not applied and why (vault locked, team key locked, refused). A cached rule applies only while the key it was opened with is still on this machine: after `veilio vault lock` or `veilio team lock`, or once the key expires, those rules are not applied and count as vault locked or team key locked. A session already running keeps the rules it loaded until you start a new one.
+
 To clear the map (`veilio map --clear`), close Claude Code first: an open session puts back the entries it knows on its next save.
 
 ## Configure
 
-In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`):
+In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`). A `guard.json` committed to the repository is its author's, not yours: it can only add `rawOnly` paths, and its `mcpRestore` and `enabled` are ignored. The same holds in a project that is not a git checkout, where whose file it is cannot be told: put `mcpRestore` in the plugin's settings there. A committed `.veilio/map.json` or `aliases.json` stops the guard until it is removed from git.
 
 ```json
 {
@@ -74,6 +76,8 @@ To run the guard for everyone, an administrator lists it in Claude Code's [manag
 ```
 
 When the organisation runs it, `/veilio` says so, and neither `/veilio off` nor a project's `guard.json` can switch it off. The team's shared map comes through the CLI: `veilio maps pull` writes it to the project's map, and the guard uses it as is.
+
+`veilio maps pull` also reserves you a block of the team's placeholder numbers (`.veilio/reserved.json`), and the guard numbers new names inside it, offline, so two teammates working at once never give one placeholder two meanings. When no block can be reserved (the day's limit, offline, the plan), the line above the prompt says so for the whole session (`team numbers refused (cap): new names numbered here, next block 09:14`), and the guard numbers new names in this checkout's local family, `__LOCAL_<TAG>_<KIND>__n`: your machine restores them, a teammate's restore leaves them as written, and your next team publish (`veilio maps push --team` or `veilio maps update`) renumbers them and keeps the old ones in `.veilio/aliases.json`, which the guard reads so edits written with them still land.
 
 ## Develop
 

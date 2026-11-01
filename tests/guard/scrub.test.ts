@@ -82,8 +82,8 @@ describe('applyMap: output, search results and prompts', () => {
     // git log into placeholders. Inside a source file the engine masks them
     // where they sit in a literal.
     expect(
-      applyMap('keep the total and Placeholder', {
-        __VAR__1: 'total',
+      applyMap('keep the tarnwick and Placeholder', {
+        __VAR__1: 'tarnwick',
         __STR__1: 'the',
         __STR__2: 'keep',
         __STR__3: 'Placeholder',
@@ -604,14 +604,16 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
     ])
       expect(highSignal(v)).toBe(false)
   })
-  it('an environment variable name used as a value is left as written', () => {
-    expect(applyMap(`const kinds = { 'google-api-key': 'GOOGLE_KEY' }`, {})).toContain(
-      "'GOOGLE_KEY'"
+  // Round 3: under a credential key only `$NAME` and `${NAME}` are references;
+  // a bare or quoted SCREAMING_CASE value is masked.
+  it('an environment variable name used as a credential value is masked', () => {
+    expect(applyMap(`const kinds = { 'google-api-key': 'GOOGLE_KEY' }`, {})).not.toContain(
+      'GOOGLE_KEY'
     )
-    expect(applyMap(`password = "AWS_SECRET_ACCESS_KEY"`, {})).toContain('"AWS_SECRET_ACCESS_KEY"')
+    expect(applyMap(`password = "AWS_SECRET_ACCESS_KEY"`, {})).not.toContain('AWS_SECRET')
     expect(survivingSecrets(`password = "AWS_SECRET_ACCESS_KEY"`)).toEqual([])
-    expect(applyMap(`password = "DATABASE_URL"`, {})).toContain('"DATABASE_URL"')
-    expect(applyMap(`secret = "STRIPE_SECRET_KEY"`, {})).toContain('"STRIPE_SECRET_KEY"')
+    expect(applyMap(`password = "DATABASE_URL"`, {})).not.toContain('DATABASE_URL')
+    expect(applyMap(`secret = "STRIPE_SECRET_KEY"`, {})).not.toContain('STRIPE_SECRET_KEY')
     // Narrowed (review of f19df80): all caps alone is not a name.
     expect(applyMap(`password = "QXZRTPLMKWVBNHGF"`, {})).not.toContain('QXZRTPLMKWVBNHGF')
     expect(applyMap(`password = "ABCDEFGHQWERTZ"`, {})).not.toContain('ABCDEFGHQWERTZ')
@@ -621,8 +623,8 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
     // Review of 968b3b2: digits only at a segment's end, and it must not look random.
     expect(applyMap(`password = "X7K9A2_Q2LE4M8P"`, {})).not.toContain('X7K9A2_Q2LE4M8P')
     expect(applyMap(`password = "XA_QE_ZI_PO_KU_VE"`, {})).not.toContain('XA_QE_ZI_PO_KU_VE')
-    expect(applyMap(`password = "AWS_REGION_2"`, {})).toContain('"AWS_REGION_2"')
-    expect(applyMap(`secret = "API_KEY2"`, {})).toContain('"API_KEY2"')
+    expect(applyMap(`password = "AWS_REGION_2"`, {})).not.toContain('AWS_REGION_2')
+    expect(applyMap(`secret = "API_KEY2"`, {})).not.toContain('API_KEY2')
     // A bearer token shaped like a name is a token still. (The engine's bearer
     // rule needs twenty characters; `Bearer ABCDEF_GHIJKL` it does not find.)
     expect(applyMap(`Authorization: Bearer ABCDEF_GHIJKL_MNOPQR`, {})).not.toContain(
@@ -637,7 +639,7 @@ describe('punctuated tokens and references (review of 6b5d4b0, founder decision 
       '83749201847362910473'
     )
     expect(applyMap(`password = "API_2024_0917_KEY"`, {})).not.toContain('API_2024_0917_KEY')
-    expect(applyMap(`password = "PORT_8080"`, {})).toContain('"PORT_8080"')
+    expect(applyMap(`password = "PORT_8080"`, {})).not.toContain('PORT_8080')
     // One value per rule, each refused by that rule alone: a number segment
     // longer than four digits, two number segments, mostly digits.
     expect(applyMap(`password = "DATABASE_PASSWORD_839201"`, {})).not.toContain(
@@ -677,6 +679,7 @@ describe('final review of 0ef312b..d55d9e2: reproduced leaks', () => {
   it('3: an env-var name is made of known words; random letter blocks are redacted', () => {
     for (const v of ['XQAE_ZPOW_KIVR_TUYM', 'KXEQ_ZUVW_PYOT_RAIM_QOEX'])
       expect(applyMap(`password = "${v}"`, {})).not.toContain(v)
+    // Round 3: a value under a credential key, a name's shape or not.
     for (const v of [
       'GOOGLE_KEY',
       'DATABASE_URL',
@@ -684,7 +687,7 @@ describe('final review of 0ef312b..d55d9e2: reproduced leaks', () => {
       'AWS_REGION_2',
       'PORT_8080',
     ])
-      expect(applyMap(`password = "${v}"`, {})).toContain(`"${v}"`)
+      expect(applyMap(`password = "${v}"`, {})).not.toContain(v)
     expect(ENV_NAME_WORDS.has('SECRET')).toBe(true)
     expect(ENV_NAME_WORDS.size).toBeGreaterThanOrEqual(150)
   })

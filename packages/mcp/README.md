@@ -38,7 +38,14 @@ that the masking did not cover something: one when no language marker matched
 (the file was masked as TypeScript, which may be wrong), and one counting the
 **comment prose left exactly as written** — names and ticket numbers in comments
 are still real. Names written entirely in capitals are not masked either
-(`ACME_TENANT_ID`); nothing counts those.
+(`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
+English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
+toolchain's name (`vitest`, `junit`) as a name or a path segment: only distinctive
+names are masked. A codename that is an ordinary word stays masked only with a custom
+replace rule. In a value - a string literal, a config value, XML text - every word is
+masked, and a value whose key contains a credential word (`password: sunshine`,
+`const DB_PASS = "Summer2024!"`) is redacted one-way, whole, under the default
+`redact`, so the map never holds it.
 
 ## Tools
 
@@ -57,16 +64,16 @@ always, in the Community Edition - the server offers the five tools above and
 nothing else. Each is the `veilio` CLI's own command, through the same code, so
 it refuses in the same words for the same reasons.
 
-| Tool            | Purpose                                                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `maps_list`     | The maps in Cloud - personal, and the team's in the project in use - with id, scope, count, name and whose each is.            |
-| `maps_pull`     | Fetch a map into this project's local map. `force: true` to replace local entries it would drop.                               |
-| `maps_create`   | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first.      |
-| `maps_update`   | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only.                        |
-| `maps_remove`   | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name.                                   |
-| `team_status`   | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed. |
-| `projects_list` | The projects the team works in; `*` marks the one in use.                                                                      |
-| `projects_use`  | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too.                                                      |
+| Tool            | Purpose                                                                                                                                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maps_list`     | The maps in Cloud - personal, and the team's in the project in use - with id, scope, count, name and whose each is.                                                                                                  |
+| `maps_pull`     | Fetch a map into this project's local map. `force: true` to replace local entries it would drop. A team map also reserves this member's block of team numbers (`.veilio/reserved.json`), as `veilio maps pull` does. |
+| `maps_create`   | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first.                                                                                            |
+| `maps_update`   | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only.                                                                                                              |
+| `maps_remove`   | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name.                                                                                                                         |
+| `team_status`   | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed.                                                                                       |
+| `projects_list` | The projects the team works in; `*` marks the one in use.                                                                                                                                                            |
+| `projects_use`  | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too.                                                                                                                                            |
 
 **One project per repository: `VEILIO_PROJECT`.** Set it in a repository's
 `.mcp.json` `env` (see [Install](#install)) and that repository's server works
@@ -151,6 +158,18 @@ result from this server states which namespace produced its placeholders:
 There is no separate sign-in for the MCP server; it reads the same credential
 file `veilio login` already wrote.
 
+In a team, a new name is numbered inside this checkout's block of team numbers
+in `.veilio/reserved.json`, written by `veilio maps pull` and `veilio team
+unlock`. This server only reads that file: it never writes it and never
+reserves. With no usable block, a new name goes into this checkout's local
+family, `__LOCAL_<TAG>_<KIND>__n`, which no team map holds and the next team
+publish renumbers (see the CLI README). The same holds with the team key locked
+or Cloud unreachable: still a team, so new names are never numbered above the
+map. While the last reservation is refused,
+every anonymize result says so beside the rules line, in the CLI's words
+(`WARNING: could not reserve team numbers: …`), and a call that numbered names
+locally says how many (`2 names numbered locally`).
+
 The merge happens **here, not in Cloud**: team maps arrive sealed under the team
 key, which the server cannot read. So on a Team plan the namespace is `team` only
 once `veilio team unlock` has opened that key on this machine — it is kept for
@@ -170,6 +189,33 @@ every anonymize call. Each result states their source: `from Cloud`, `cached`
 (Cloud did not answer, so the last `veilio rules pull` is used, with its age),
 or `none`.
 
+Cloud holds the rules sealed under your keys and cannot read them. The server
+has no passphrase, so it opens them with the keys `veilio vault unlock`
+(personal rules) and `veilio team unlock` (team rules) left on this machine. A
+rule it cannot open is skipped and masking goes on; while any are skipped, every
+anonymize result says so beside the source line, one sentence per cause, with
+the fix, for example:
+
+```
+1 custom rule not applied: vault locked - run `veilio vault unlock`, then `veilio rules pull`.
+```
+
+The other causes are `team key locked`, rules that could not be opened with the
+keys on this machine, and rules refused as unsafe to apply; the CLI README lists
+the exact sentences. A call whose rules would take more matching work than one
+call allows stops applying them part-way (the rest is masked as usual) and says
+`WARNING: custom rules stopped matching: too much work. …`.
+
+The server reads the rules once, when it starts. After `veilio vault lock` or
+`veilio team lock` it keeps the rules it already loaded until it restarts;
+restart your agent to drop them.
+
+The cached rules apply only while their key is still on this machine:
+`veilio vault lock` and `veilio team lock` remove the personal or team rules
+from the cache, and a key that has expired counts as locked too, so the
+fallback never applies a rule whose key is gone. They come back with the next
+unlock and `veilio rules pull`.
+
 ### One restore rule, and what the server refuses to guess
 
 `restore_text` resolves the team's maps first — aliases included — and this
@@ -177,7 +223,9 @@ project's map on top of them. Two kinds of placeholder are deliberately left in
 the output, each named in a warning rather than substituted:
 
 - one this project's store and the team use for **different** identifiers, and
-- one this project **numbered on its own** while the team was out of reach.
+- one this project **numbered on its own** while the team was out of reach, and
+- one **another checkout** numbered in its local family while it held no team
+  numbers (`__LOCAL_<TAG>_…`): only that checkout restores it.
 
 Two more are left because nothing can restore them, and are named too: one no
 map explains (`__FN__9`, "invented or altered by the AI"), and one whose **shape**
@@ -197,7 +245,7 @@ restoring: it cannot tell a disputed placeholder from a first-written one.
 
 ### `strict`: refuse instead of returning half-restored text
 
-With `strict: true`, if any of those four would be left in the text, the call
+With `strict: true`, if any of those five would be left in the text, the call
 comes back as an **error result** carrying the report and the warnings, and
 **without** the text:
 
@@ -226,8 +274,8 @@ fails it. Without `strict`, the text comes back with the warnings, as before.
 
 Anonymizing while signed out, or while Cloud was unreachable, numbers new names
 locally. Once the team's maps are back, an identifier the team already knows
-takes the **team's** placeholder, and anything new is numbered above both the
-team's highest and this project's own. The entries minted during the lapse stay
+takes the **team's** placeholder, and anything new is numbered inside this
+checkout's block, or locally (`__LOCAL_<TAG>_…`) without one. The entries minted during the lapse stay
 in the local store — text was already sent with them, so they are still needed
 to restore it — but they are not handed to a teammate as the team's meaning.
 

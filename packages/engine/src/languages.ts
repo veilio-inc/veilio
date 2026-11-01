@@ -1492,6 +1492,85 @@ const RAW_KEYWORDS: Record<Language, string[]> = {
 /** SQL is case-insensitive in practice, so its keywords are matched lowercased. */
 const CASE_INSENSITIVE: ReadonlySet<Language> = new Set<Language>(['sql'])
 
+// Spec 064 FR-003 (F4): the standard test frameworks' own names, per language.
+// They are the framework's API, not the project's: masked, they reached the
+// model as __FN__ placeholders in every test run of spec 062.
+const TEST_FRAMEWORK: Partial<Record<Language, readonly string[]>> = {
+  python: [
+    'assertEqual',
+    'assertNotEqual',
+    'assertTrue',
+    'assertFalse',
+    'assertRaises',
+    'assertIn',
+    'assertNotIn',
+    'assertIsNone',
+    'assertIsNotNone',
+    'assertAlmostEqual',
+    'assertGreater',
+    'assertLess',
+    'assertIsInstance',
+    'setUp',
+    'tearDown',
+    'setUpClass',
+    'tearDownClass',
+    'subTest',
+    'TestCase',
+  ],
+  typescript: [
+    'toBe',
+    'toEqual',
+    'toStrictEqual',
+    'toThrow',
+    'toHaveLength',
+    'toContain',
+    'toMatch',
+    'toBeTruthy',
+    'toBeFalsy',
+    'toBeNull',
+    'toBeUndefined',
+    'toBeDefined',
+    'toBeGreaterThan',
+    'toBeLessThan',
+    'toHaveBeenCalled',
+    'toHaveBeenCalledWith',
+    'toHaveProperty',
+    'toMatchObject',
+    'beforeEach',
+    'afterEach',
+    'beforeAll',
+    'afterAll',
+    'mockResolvedValue',
+    'mockReturnValue',
+  ],
+  java: [
+    'assertEquals',
+    'assertNotEquals',
+    'assertTrue',
+    'assertFalse',
+    'assertNull',
+    'assertNotNull',
+    'assertThrows',
+    'assertSame',
+    'assertArrayEquals',
+    'RoundingMode',
+    'BeforeEach',
+    'AfterEach',
+  ],
+  ruby: [
+    'assert_equal',
+    'assert_raises',
+    'assert_nil',
+    'assert_includes',
+    'assert_empty',
+    'assert_in_delta',
+    'refute_equal',
+    'refute_nil',
+    'assert_match',
+    'assert_predicate',
+  ],
+}
+
 const KEYWORD_CACHE = new Map<Language, ReadonlySet<string>>()
 
 /** Words the engine must never mask for `language`: COMMON plus that language's
@@ -1501,6 +1580,7 @@ export function keywordsFor(language: Language): ReadonlySet<string> {
   if (cached) return cached
   const set = new Set<string>(COMMON)
   for (const word of RAW_KEYWORDS[language]) set.add(word)
+  for (const word of TEST_FRAMEWORK[language] ?? []) set.add(word)
   KEYWORD_CACHE.set(language, set)
   return set
 }

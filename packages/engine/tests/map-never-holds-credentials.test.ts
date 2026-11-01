@@ -94,11 +94,14 @@ describe('a name the map already holds', () => {
     const result = anonymize(code, { existingMap: { __STR__1290: 'disabled' } })
     expect(result.anonymized).toContain('"__STR__1290"')
   })
-  it('a new name inside a credential slot is not extracted', () => {
+  it('a new name inside a credential slot is not extracted: it is redacted (security audit)', () => {
+    // Not mapped, and - since the CE security audit - not left readable either:
+    // the value of a credential-named key is a password, never shown as written.
     const code = 'export const auth = { client_secret: "disabled" }\n'
     const result = anonymize(code)
     expect(Object.values(result.map)).not.toContain('disabled')
-    expect(result.anonymized).toContain('"disabled"')
+    expect(result.anonymized).toContain('"__REDACTED_CREDENTIAL_1__"')
+    expect(anonymize(code, { secrets: 'warn' }).anonymized).toContain('"disabled"')
   })
 })
 
@@ -134,7 +137,10 @@ describe('an old map that already holds a credential found in the text', () => {
     it(`drops it and never writes its placeholder there (${c.name})`, () => {
       const result = anonymize(c.code, { existingMap: OLD, ...c.options })
       expect(result.anonymized).not.toContain('__VAR__1')
-      expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
+      // Round 4: under `redact` a credential is never readable, a fixture's
+      // too; under `warn` and `off` a rule's finding stays as written.
+      if (c.name.includes('redact')) expect(result.anonymized).not.toContain('Kx9_prodpw')
+      else expect(result.anonymized).toContain('PGPASSWORD=Kx9_prodpw')
       expect(Object.values(result.map)).not.toContain('Kx9_prodpw')
       expect(result.map.__CLS__1).toBe('PaymentService')
     })
@@ -169,10 +175,10 @@ describe('a name next to a credential', () => {
     expect(result.anonymized).not.toContain('acmeCorp_2024')
   })
   it('a part of a credential is masked and mapped like any name, in every mode', () => {
-    const code = 'const secret = 1\nconst admin = 2\nPGPASSWORD=admin-secret-pw1 psql\n'
+    const code = 'const tarnwick = 1\nconst admin = 2\nPGPASSWORD=admin-tarnwick-pw1 psql\n'
     for (const secrets of MODES) {
       const result = anonymize(code, { secrets })
-      expect(Object.values(result.map), secrets).toContain('secret')
+      expect(Object.values(result.map), secrets).toContain('tarnwick')
       expect(Object.values(result.map), secrets).toContain('admin')
       expect(result.anonymized, secrets).toMatch(/^const __[A-Z]+__\d+ = 1\n/)
     }
@@ -367,12 +373,23 @@ describe('common weak passwords are default words', () => {
     })
   }
   it('pass inside passport and compass is left alone; --password pass is redacted', () => {
-    const code = 'PGPASSWORD=pass psql\nconst passport = compass\n$ deploy --password pass\n'
+    const code =
+      'PGPASSWORD=pass psql\nconst passport = compass\nconst quaypassage = skerrypass\n$ deploy --password pass\n'
     const scanned = scanSecrets(code).code
     expect(scanned).toMatch(/^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__ psql\n/)
     expect(scanned).toMatch(/--password __REDACTED_[A-Z_]+_\d+__\n$/)
+    expect(scanned).toContain('const passport = compass\n')
+    expect(scanned).toContain('const quaypassage = skerrypass\n')
     const result = anonymize(code)
-    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['passport', 'compass']))
+    // Spec 064: ordinary words stay readable. passport and compass go out as
+    // written - not redacted, not cut at "pass", and not in the map.
+    expect(result.anonymized).toContain('\nconst passport = compass\n')
+    expect(Object.values(result.map)).not.toContain('passport')
+    expect(Object.values(result.map)).not.toContain('compass')
+    // Distinctive names holding "pass" are masked and mapped whole.
+    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['quaypassage', 'skerrypass']))
+    expect(result.anonymized).not.toMatch(/quaypassage|skerrypass/)
+    expect(Object.values(result.map)).not.toContain('pass')
   })
   it('P@ssw0rd keeps its word boundaries', () => {
     const code = 'PGPASSWORD=P@ssw0rd psql\nconst note = "xP@ssw0rdx"\n'

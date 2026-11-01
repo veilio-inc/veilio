@@ -18,15 +18,15 @@ const SECTION = README.slice(
   README.indexOf('\n## ', README.indexOf('## What it hides, and what it does not') + 1)
 )
 
-const SOURCE = `import { refund } from './billing/stripe-refunds'
+const SOURCE = `import { refund } from './billing/tarnwick-refunds'
 // Retries a failed Stripe refund for Acme
 export class PaymentGateway {
   async refundInvoice(invoiceId: string, ab: number) {
     const ACME_TENANT_ID = 4411
     const key = process.env.ACME_API_KEY
-    const url = \`/api/refunds/\${invoiceId}\`
-    if (!url) throw new Error('Refund failed for customer')
-    return db.query('SELECT amount FROM customer_invoices WHERE id = $1', [invoiceId, ab, key, ACME_TENANT_ID])
+    const url = \`/api/quayward/\${invoiceId}\`
+    if (!url) throw new Error('Refund failed for Skerryvale')
+    return db.query('SELECT refund_amount FROM customer_invoices WHERE id = $1', [invoiceId, ab, key, ACME_TENANT_ID])
   }
 }`
 const out = anonymize(SOURCE).anonymized
@@ -42,21 +42,29 @@ describe('what it says is masked, is', () => {
     expect(out).not.toContain(name)
   })
 
-  it.each(['billing', 'stripe', 'refunds'])('the import path word %s', (word) => {
+  it.each(['tarnwick'])('the import path word %s', (word) => {
     expect(out).not.toMatch(new RegExp(`from '[^']*${word}`))
   })
 
   it.each([
-    ['a URL path', 'refunds/'],
-    ['an error message', 'Refund failed'],
+    ['a URL path', 'quayward'],
+    ['an error message', 'Skerryvale'],
     ['a SQL table name', 'customer_invoices'],
-    ['a SQL column name', 'SELECT amount'],
+    ['a SQL column name', 'refund_amount'],
   ])('the words of %s', (_what, text) => {
     expect(out).not.toContain(text)
   })
 })
 
 describe('what it says goes out as written, does', () => {
+  // Spec 064: ordinary words stay readable.
+  it('single ordinary words, in identifiers and import paths, not in strings', () => {
+    expect(SECTION).toMatch(/\*\*single ordinary words\*\*/)
+    expect(out).toContain("import { refund } from './billing/__PKG__")
+    expect(out).toMatch(/-refunds'/)
+    expect(out).toMatch(/'__STR__\d+ __STR__\d+ for __STR__\d+'/)
+  })
+
   it('comments', () => {
     expect(SECTION).toMatch(/\*\*comments\*\*/)
     expect(out).toContain('// Retries a failed Stripe refund for Acme')

@@ -23,8 +23,8 @@ const SAMPLES: Record<Language, { code: string; keep: string[]; mask: string[] }
     code: `import { Router } from 'express'
 export class PaymentGateway {
   async chargeCard(amount: number): Promise<boolean> {
-    const receipt = await this.processor.settle(amount)
-    return receipt !== null
+    const quayReceipt = await this.berthProcessor.settle(amount)
+    return quayReceipt !== null
   }
 }`,
     keep: [
@@ -41,7 +41,7 @@ export class PaymentGateway {
       'null',
       'this',
     ],
-    mask: ['PaymentGateway', 'chargeCard', 'receipt', 'processor'],
+    mask: ['PaymentGateway', 'chargeCard', 'quayReceipt', 'berthProcessor'],
   },
   python: {
     code: `from decimal import Decimal
@@ -71,13 +71,13 @@ class InvoiceService:
 
 import "fmt"
 
-type Invoice struct { Total float64 }
+type SkerryInvoice struct { NetTotal float64 }
 
-func (i *Invoice) Apply(rate float64) error {
+func (i *SkerryInvoice) ApplyRate(rate float64) error {
 	if rate < 0 {
 		return fmt.Errorf("bad rate")
 	}
-	i.Total = i.Total * (1 - rate)
+	i.NetTotal = i.NetTotal * (1 - rate)
 	return nil
 }`,
     keep: [
@@ -94,19 +94,19 @@ func (i *Invoice) Apply(rate float64) error {
       'fmt',
       'Errorf',
     ],
-    mask: ['Invoice', 'Total', 'Apply'],
+    mask: ['SkerryInvoice', 'NetTotal', 'ApplyRate'],
   },
   java: {
     code: `import java.util.List;
 
 public class OrderProcessor {
     @Override
-    public void settleBatch(List<Order> pending) {
-        System.out.println(pending.size());
+    public void settleBatch(List<Order> pendingOrders) {
+        System.out.println(pendingOrders.size());
     }
 }`,
     keep: ['import', 'public', 'class', 'void', 'List', 'System', 'Override'],
-    mask: ['OrderProcessor', 'settleBatch', 'pending'],
+    mask: ['OrderProcessor', 'settleBatch', 'pendingOrders'],
   },
   csharp: {
     code: `using System;
@@ -116,7 +116,7 @@ namespace Acme.Billing
     public class LedgerWriter
     {
         public string TenantSlug { get; set; }
-        public void Flush() => Console.WriteLine(TenantSlug);
+        public void FlushLedger() => Console.WriteLine(TenantSlug);
     }
 }`,
     keep: [
@@ -131,7 +131,7 @@ namespace Acme.Billing
       'get',
       'set',
     ],
-    mask: ['LedgerWriter', 'TenantSlug', 'Flush'],
+    mask: ['LedgerWriter', 'TenantSlug', 'FlushLedger'],
   },
   rust: {
     code: `use crate::billing::Invoice;
@@ -175,16 +175,16 @@ class InvoiceService {
     code: `#include <stdio.h>
 #include <stdlib.h>
 
-typedef struct { double total; } Invoice;
+typedef struct { double total; } SkerryInvoice;
 
-int apply_discount(Invoice *inv, double rate) {
+int apply_discount(SkerryInvoice *inv, double rate) {
     if (rate < 0) { return -1; }
     inv->total *= (1 - rate);
     printf("%f", inv->total);
     return 0;
 }`,
     keep: ['include', 'typedef', 'struct', 'double', 'int', 'if', 'return', 'printf'],
-    mask: ['Invoice', 'apply_discount'],
+    mask: ['SkerryInvoice', 'apply_discount'],
   },
   sql: {
     code: `SELECT tenant_slug, SUM(net_amount) AS revenue
@@ -212,6 +212,20 @@ ORDER BY revenue DESC;`,
     ],
     mask: ['tenant_slug', 'billing_invoices', 'customer_accounts', 'settled_at'],
   },
+}
+
+// Spec 064: single ordinary words in each sample that the engine leaves readable.
+const READABLE: Record<Language, string[]> = {
+  typescript: ['settle', 'amount'],
+  python: ['rate'],
+  go: ['rate'],
+  java: ['Order'],
+  csharp: ['Billing'],
+  rust: ['invoice', 'rate', 'total'],
+  ruby: ['rate'],
+  php: ['Billing'],
+  c: ['rate', 'total'],
+  sql: ['revenue'],
 }
 
 describe('detectLanguage', () => {
@@ -326,6 +340,18 @@ describe('anonymize — per-language masking', () => {
           false
         )
         expect(Object.values(map)).toContain(word)
+      }
+    })
+
+    // Spec 064: ordinary words stay readable as names. Round 3: one that is
+    // also in a string (`"missing rate"`) is masked there, so it is mapped.
+    it(`leaves ${language} single ordinary words as written`, () => {
+      const { anonymized } = anonymize(code, { language })
+      for (const word of READABLE[language]) {
+        expect(
+          new RegExp(`(?<![a-zA-Z0-9_$])${word}(?![a-zA-Z0-9_$])`).test(anonymized),
+          `${language}: expected "${word}" to stay readable`
+        ).toBe(true)
       }
     })
 

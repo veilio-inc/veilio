@@ -179,6 +179,105 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(r.text).not.toContain('Ledger')
   })
 
+  it('restore_text leaves a number another member reserved, naming why, and restores the reserver’s own (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.reservations.push(
+      { base: '__FN__', start: 1, end: 100, member: 'u-bob' },
+      { base: '__FN__', start: 101, end: 200, member: 'u-ada' }
+    )
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__12: 'refund', __FN__150: 'settle' }),
+    })
+    saveMap(mapPath(), { __VAR__1: 'amount' }, { force: true })
+    await primeNamespace(home)
+    const r = callTool('restore_text', { text: 'a(__FN__12) b(__FN__150)' }, ctx)
+    expect(r.text).toContain('a(__FN__12) b(settle)')
+    expect(r.text).toMatch(/reserved by another member/)
+    expect(r.text).not.toContain('refund')
+  })
+
+  it('maps_create renumbers entries outside this member’s reserved numbers instead of refusing them (spec 063)', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'theirs',
+      map_data: await sealTeam({ __FN__41: 'refund' }),
+    })
+    saveMap(mapPath(), { __FN__41: 'payout' }, { force: true })
+    const r = await callToolAsync('maps_create', { name: 'mine', scope: 'team' }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Renumbered 1 entry/)
+    expect(Object.keys(loadMap(mapPath()))).not.toContain('__FN__41')
+  })
+
+  it('maps_pull of a team map says which team numbers this member now holds (spec 063)', async () => {
+    signIn(home, { team: true })
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'shared',
+      map_data: await sealTeam({ __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/Reserved team numbers for new names: .*__FN__\d+-\d+/)
+    expect(r.text).not.toContain('chargeCard')
+  })
+
+  // Round 4 (D, E): the pull lists the map's bases to vouch for its numbers;
+  // a rule base goes only as its hash, in the URL as in any body.
+  it('maps_pull never sends a rule base in plain text, the listing included', async () => {
+    signIn(home, { team: true })
+    cloud.recordsReservations = true
+    cloud.usedVersions = 1
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'shared',
+      map_data: await sealTeam({ __CODENAME__3: 'Falcon', __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(cloud.requests.some((q) => q.query.get('bases') !== null)).toBe(true)
+    const sent = cloud.requests.map((q) => `${q.path}?${q.query} ${q.raw}`).join('\n')
+    expect(sent).not.toMatch(/CODENAME/)
+    expect(sent).toMatch(/partial/)
+  })
+
+  it('maps_pull of a team map whose block is refused still pulls, and says new names are numbered here', async () => {
+    signIn(home, { team: true })
+    cloud.blocksRefused = true
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      map_data: await sealTeam({ __FN__40: 'chargeCard' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    // The CLI's sentence (spec 066 R7).
+    expect(r.text).toMatch(/WARNING: could not reserve team numbers: this account's daily limit/)
+    expect(loadMap(mapPath())).toEqual({ __FN__40: 'chargeCard' })
+  })
+
+  it('maps_pull of a team map holding local-family keys leaves them out and says so (spec 066 code review)', async () => {
+    signIn(home, { team: true })
+    const row = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      map_data: await sealTeam({ __FN__40: 'chargeCard', __LOCAL_ZZ9QQ1_FN__1: 'guess' }),
+    })
+    const r = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(r.isError ?? false, r.text).toBe(false)
+    expect(r.text).toMatch(/left out 1 placeholder numbered on one machine/)
+    expect(loadMap(mapPath())).toEqual({ __FN__40: 'chargeCard' })
+  })
+
   it('maps_pull of a personal map with no personal-maps key: refused, naming `veilio vault unlock`', async () => {
     signIn(home)
     await cloud.withVault()
@@ -448,30 +547,30 @@ describe('the namespace follows the project while the server runs', () => {
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-billing',
-      map_data: await sealTeam({ __CLS__4: 'Alpha' }),
+      map_data: await sealTeam({ __CLS__4: 'Skerrify' }),
     })
     cloud.add({
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-tools',
-      map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+      map_data: await sealTeam({ __CLS__5: 'TarnGamma' }),
     })
     await primeNamespace(home)
-    expect(getNamespace().namespace).toEqual({ __CLS__4: 'Alpha' })
+    expect(getNamespace().namespace).toEqual({ __CLS__4: 'Skerrify' })
 
     expect((await cli(['projects', 'use', 'tools'])).code).toBe(0)
     // The call that notices the change must not number with the OLD
     // project's maps: billing's __CLS__4 never reaches a tools session.
-    const first = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    const first = callTool('anonymize_text', { text: 'export class Skerrify {}' }, ctx)
     expect(first.text).toMatch(/another project chosen/)
     expect(first.text).not.toContain('__CLS__4')
     // Nor does a call made while the new project's maps are still loading.
-    const during = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    const during = callTool('anonymize_text', { text: 'export class Skerrify {}' }, ctx)
     expect(during.text).not.toContain('__CLS__4')
     await namespaceSettled()
-    expect(getNamespace().namespace).toEqual({ __CLS__5: 'Gamma' })
+    expect(getNamespace().namespace).toEqual({ __CLS__5: 'TarnGamma' })
     expect(refreshNamespaceIfStale()).toBeNull()
-    const next = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctx)
+    const next = callTool('anonymize_text', { text: 'export class TarnGamma {}' }, ctx)
     expect(next.text).toContain('__CLS__5')
   })
 
@@ -517,13 +616,13 @@ describe('a prime in flight when the project changes (SC-004, security review)',
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-billing',
-      map_data: await sealTeam({ __CLS__4: 'Alpha' }),
+      map_data: await sealTeam({ __CLS__4: 'Skerrify' }),
     })
     cloud.add({
       scope: 'team',
       owner: TEAMMATE,
       project: 'p-tools',
-      map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+      map_data: await sealTeam({ __CLS__5: 'TarnGamma' }),
     })
   }
 
@@ -533,13 +632,13 @@ describe('a prime in flight when the project changes (SC-004, security review)',
     const billing = primeNamespace(home)
     signIn(home, { team: true, project: 'p-tools' })
     expect(refreshNamespaceIfStale()).toBe('changed')
-    const during = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    const during = callTool('anonymize_text', { text: 'export class Skerrify {}' }, ctx)
     expect(during.text).not.toContain('__CLS__4')
     release()
     await billing
     await namespaceSettled()
-    expect(getNamespace().namespace).toEqual({ __CLS__5: 'Gamma' })
-    const after = callTool('anonymize_text', { text: 'export class Alpha {}' }, ctx)
+    expect(getNamespace().namespace).toEqual({ __CLS__5: 'TarnGamma' })
+    const after = callTool('anonymize_text', { text: 'export class Skerrify {}' }, ctx)
     expect(after.text).not.toContain('__CLS__4')
   })
 

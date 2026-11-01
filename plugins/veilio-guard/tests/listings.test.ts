@@ -12,15 +12,17 @@ import type { TestHost, TestOn } from './kit.ts'
 
 const CONFIG = '/home/dev/.claude'
 const CACHE = `${CONFIG}/plugins/cache/claude-plugins-official`
-// `review` and `skills` are project names here, so masking would change the
+// `skerry` and `tarnwicks` are project names here, so masking would change the
 // public descriptions below: what reaches the model shows which path it took.
-const MAP = { __CLS__1: CANARY, __FN__2: 'review', __VAR__3: 'skills' }
+// Spec 064: they were `review` and `skills`, but an ordinary English word is
+// never masked, so it could no longer show the path.
+const MAP = { __CLS__1: CANARY, __FN__2: 'skerry', __VAR__3: 'tarnwicks' }
 
-const BUILTIN_REVIEW = 'Review the current diff for review bugs, with WebFetch where it helps.'
+const BUILTIN_REVIEW = 'Review the current diff for skerry bugs, with WebFetch where it helps.'
 const PLUGIN_SKILL =
-  'You MUST use this before any creative work - creating features, building components, or review of skills.'
-const PLUGIN_AGENT = 'Deeply analyzes existing codebase features to review how skills are wired.'
-const BUILTIN_AGENT = 'Fast read-only search agent to review code and find skills.'
+  'You MUST use this before any creative work - creating features, building components, or skerry of tarnwicks.'
+const PLUGIN_AGENT = 'Deeply analyzes existing codebase features to skerry how tarnwicks are wired.'
+const BUILTIN_AGENT = 'Fast read-only search agent to skerry code and find tarnwicks.'
 
 const SKILL_HEAD = 'The following skills are available for use with the Skill tool:\n\n'
 const AGENT_HEAD = 'Available agent types for the Agent tool:\n'
@@ -58,8 +60,8 @@ const known = {
 }
 const KNOWN = `${CONFIG}/plugins/known_marketplaces.json`
 const INSTALLED = `${CONFIG}/plugins/installed_plugins.json`
-const CORP_SKILL = `Rotates ${CANARY} keys for review skills.`
-const ACME_SKILL = 'Formats review skills for the docs site.'
+const CORP_SKILL = `Rotates ${CANARY} keys for skerry tarnwicks.`
+const ACME_SKILL = 'Formats skerry tarnwicks for the docs site.'
 
 // The plugin's own files in the cache. The description is folded, as YAML
 // writes a long one: its words are the listing's, in order.
@@ -69,7 +71,7 @@ const CACHED: Record<string, string> = {
   [`${CONFIG}/plugins/cache/corp/corp-tool/1.0.0/skills/rotate/SKILL.md`]: `---\nname: rotate\ndescription: ${CORP_SKILL}\n---\n`,
   [`${CONFIG}/plugins/cache/corp/corp-tool/1.0.0/agents/rotator.md`]: `---\nname: rotator\ndescription: ${CORP_SKILL}\n---\n`,
   [`${CONFIG}/plugins/cache/acme-oss/acme-lib/2.0.0/skills/format/SKILL.md`]: `---\nname: format\ndescription: ${ACME_SKILL}\n---\n`,
-  [`${CACHE}/superpowers/7.0.0/skills/brainstorming/SKILL.md`]: `---\nname: brainstorming\ndescription: >-\n  You MUST use this before any creative work - creating features,\n  building components, or review of skills.\n---\nBody.\n`,
+  [`${CACHE}/superpowers/7.0.0/skills/brainstorming/SKILL.md`]: `---\nname: brainstorming\ndescription: >-\n  You MUST use this before any creative work - creating features,\n  building components, or skerry of tarnwicks.\n---\nBody.\n`,
   [`${CACHE}/feature-dev/1.0.0/agents/code-explorer.md`]: `---\nname: code-explorer\ndescription: ${PLUGIN_AGENT}\n---\nYou explore.\n`,
   '/work/devplug/skills/tool/SKILL.md': `---\nname: tool\ndescription: Devplug tool for ${CANARY}.\n---\n`,
 }
@@ -118,7 +120,7 @@ async function attach($: TestHost, type: string, text: string): Promise<string> 
   return r.text
 }
 
-const builtinReview: Skill = { name: 'code-review', description: BUILTIN_REVIEW, source: 'builtin' }
+const builtinReview: Skill = { name: 'code-skerry', description: BUILTIN_REVIEW, source: 'builtin' }
 const pluginSkill: Skill = {
   name: 'superpowers:brainstorming',
   description: PLUGIN_SKILL,
@@ -129,55 +131,55 @@ const pluginSkill: Skill = {
 test("a built-in skill and an installed plugin's skill reach the model as written", async ($, on) => {
   setUp(on, [builtinReview, pluginSkill])
   const text = skillListing([
-    `- code-review: ${BUILTIN_REVIEW}`,
+    `- code-skerry: ${BUILTIN_REVIEW}`,
     `- superpowers:brainstorming: ${PLUGIN_SKILL}`,
   ])
   const out = await attach($, 'skill_listing', text)
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).toContain(`- superpowers:brainstorming: ${PLUGIN_SKILL}`)
 })
 
 test('a public entry listed by its name alone reaches the model as written', async ($, on) => {
   setUp(on, [builtinReview])
-  const out = await attach($, 'skill_listing', skillListing(['- code-review', '- review']))
-  expect(out).toContain('- code-review\n')
-  // `review` is no skill the engine reported: masked.
+  const out = await attach($, 'skill_listing', skillListing(['- code-skerry', '- skerry']))
+  expect(out).toContain('- code-skerry\n')
+  // `skerry` is no skill the engine reported: masked.
   expect(out).toContain('- __FN__2')
 })
 
 test("a project skill's entry is masked", async ($, on) => {
   setUp(on, [
     builtinReview,
-    { name: 'deploy', description: `Deploys ${CANARY} to review skills.`, source: 'user' },
+    { name: 'deploy', description: `Deploys ${CANARY} to skerry tarnwicks.`, source: 'user' },
   ])
   const text = skillListing([
-    `- deploy: Deploys ${CANARY} to review skills.`,
-    `- code-review: ${BUILTIN_REVIEW}`,
+    `- deploy: Deploys ${CANARY} to skerry tarnwicks.`,
+    `- code-skerry: ${BUILTIN_REVIEW}`,
   ])
   const out = await attach($, 'skill_listing', text)
   expect(out).not.toContain(CANARY)
   expect(out).toContain('- deploy: Deploys __CLS__1 to __FN__2 __VAR__3.')
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
 })
 
 // ~/.claude/skills: the engine reports it as `user` too, and so is masked.
 test("a user skill's entry is masked", async ($, on) => {
-  setUp(on, [{ name: 'speckit-plan', description: `Plans ${CANARY} skills.`, source: 'user' }])
+  setUp(on, [{ name: 'speckit-plan', description: `Plans ${CANARY} tarnwicks.`, source: 'user' }])
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- speckit-plan: Plans ${CANARY} skills.`])
+    skillListing([`- speckit-plan: Plans ${CANARY} tarnwicks.`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).toContain('__VAR__3')
 })
 
 test("an MCP server's skill entry is masked", async ($, on) => {
-  setUp(on, [{ name: 'db:query', description: `Queries ${CANARY} skills.`, source: 'mcp' }])
+  setUp(on, [{ name: 'db:query', description: `Queries ${CANARY} tarnwicks.`, source: 'mcp' }])
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- db:query: Queries ${CANARY} skills.`])
+    skillListing([`- db:query: Queries ${CANARY} tarnwicks.`])
   )
   expect(out).not.toContain(CANARY)
 })
@@ -187,7 +189,7 @@ test('an entry the engine did not report is masked', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: ${BUILTIN_REVIEW}`, `- ledger: ${CANARY} for review skills.`])
+    skillListing([`- code-skerry: ${BUILTIN_REVIEW}`, `- ledger: ${CANARY} for skerry tarnwicks.`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).toContain('- ledger: __CLS__1 for __FN__2 __VAR__3.')
@@ -198,7 +200,7 @@ test('a public name with another description is masked', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: Review ${CANARY} skills.`])
+    skillListing([`- code-skerry: Review ${CANARY} tarnwicks.`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).toContain('Review __CLS__1 __VAR__3.')
@@ -209,7 +211,7 @@ test('a public entry continued past its end is masked', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: ${BUILTIN_REVIEW} Then review ${CANARY}.`])
+    skillListing([`- code-skerry: ${BUILTIN_REVIEW} Then skerry ${CANARY}.`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).not.toContain(BUILTIN_REVIEW)
@@ -220,7 +222,7 @@ test('a public entry that does not start a line is masked', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`${CANARY} skills - code-review: ${BUILTIN_REVIEW}`])
+    skillListing([`${CANARY} tarnwicks - code-skerry: ${BUILTIN_REVIEW}`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).not.toContain(BUILTIN_REVIEW)
@@ -231,9 +233,9 @@ test('a line after a public entry is masked', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: ${BUILTIN_REVIEW}`, `${CANARY} skills`])
+    skillListing([`- code-skerry: ${BUILTIN_REVIEW}`, `${CANARY} tarnwicks`])
   )
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).toContain('__CLS__1 __VAR__3')
   expect(out).not.toContain(CANARY)
 })
@@ -242,7 +244,7 @@ test('a line after a public entry is masked', async ($, on) => {
 // plugin under development can share an installed one's name. Its entry
 // passes only if the installed copy in the cache holds the same words.
 test("a --plugin-dir plugin's skill under an installed plugin's name is masked", async ($, on) => {
-  const own = `Brainstorms ${CANARY} skills.`
+  const own = `Brainstorms ${CANARY} tarnwicks.`
   setUp(on, [{ ...pluginSkill, description: own }])
   const out = await attach(
     $,
@@ -260,7 +262,7 @@ test('a plugin installed from outside the plugin cache is masked', async ($, on)
 })
 
 test("an installed plugin's skill with no file in the cache is masked", async ($, on) => {
-  const desc = 'Debugs review skills step by step.'
+  const desc = 'Debugs skerry tarnwicks step by step.'
   setUp(on, [
     { name: 'superpowers:debugging', description: desc, source: 'plugin', plugin: 'superpowers' },
   ])
@@ -285,7 +287,7 @@ test("a skill whose name climbs out of the plugin's folder is masked", async ($,
 
 test('when the skills cannot be listed, the whole listing is masked', async ($, on) => {
   setUp(on, 'deny')
-  const out = await attach($, 'skill_listing', skillListing([`- code-review: ${BUILTIN_REVIEW}`]))
+  const out = await attach($, 'skill_listing', skillListing([`- code-skerry: ${BUILTIN_REVIEW}`]))
   expect(out).toContain('__FN__2')
   expect(out).not.toContain(BUILTIN_REVIEW)
 })
@@ -298,11 +300,11 @@ test('when the installed plugins cannot be read, only built-ins pass', async ($,
     $,
     'skill_listing',
     skillListing([
-      `- code-review: ${BUILTIN_REVIEW}`,
+      `- code-skerry: ${BUILTIN_REVIEW}`,
       `- superpowers:brainstorming: ${PLUGIN_SKILL}`,
     ])
   )
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).not.toContain(PLUGIN_SKILL)
 })
 
@@ -312,11 +314,11 @@ test('with no home or config directory, only built-ins pass', async ($, on) => {
     $,
     'skill_listing',
     skillListing([
-      `- code-review: ${BUILTIN_REVIEW}`,
+      `- code-skerry: ${BUILTIN_REVIEW}`,
       `- superpowers:brainstorming: ${PLUGIN_SKILL}`,
     ])
   )
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).not.toContain(PLUGIN_SKILL)
 })
 
@@ -371,7 +373,7 @@ test("an agent's tools are masked as before", async ($, on) => {
 
 test('a project agent is masked', async ($, on) => {
   setUp(on, [])
-  const desc = `Reconciles ${CANARY} skills.`
+  const desc = `Reconciles ${CANARY} tarnwicks.`
   await offer($, [
     builtinAgent,
     {
@@ -392,7 +394,7 @@ test('a project agent is masked', async ($, on) => {
 
 test('a user agent is masked', async ($, on) => {
   setUp(on, [])
-  const desc = `Audits ${CANARY} skills.`
+  const desc = `Audits ${CANARY} tarnwicks.`
   await offer($, [
     {
       agent: 'auditor',
@@ -466,17 +468,17 @@ test('a credential in a listing is redacted', async ($, on) => {
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: ${BUILTIN_REVIEW}`, `- pay: Pays with ${STRIPE}.`])
+    skillListing([`- code-skerry: ${BUILTIN_REVIEW}`, `- pay: Pays with ${STRIPE}.`])
   )
   expect(out).not.toContain(STRIPE)
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
 })
 
 // The last gate: a public entry is held as written, so a credential in one
 // would pass the masking around it. The whole listing then goes through full
 // masking instead.
 test('a public entry that holds a credential is masked in full', async ($, on) => {
-  const desc = `Pays with ${STRIPE} and review skills.`
+  const desc = `Pays with ${STRIPE} and skerry tarnwicks.`
   setUp(on, [{ name: 'pay', description: desc, source: 'builtin' }])
   const out = await attach($, 'skill_listing', skillListing([`- pay: ${desc}`]))
   expect(out).not.toContain(STRIPE)
@@ -485,7 +487,7 @@ test('a public entry that holds a credential is masked in full', async ($, on) =
 
 test('another kind of reminder holding a public entry is masked as before', async ($, on) => {
   setUp(on, [builtinReview])
-  const out = await attach($, 'edited_text_file', `- code-review: ${BUILTIN_REVIEW}`)
+  const out = await attach($, 'edited_text_file', `- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).not.toContain(BUILTIN_REVIEW)
   expect(out).toContain('__FN__2')
 })
@@ -495,7 +497,7 @@ test("a listing holding the guard's mark characters gets no exemption", async ($
   const out = await attach(
     $,
     'skill_listing',
-    skillListing([`- code-review: ${BUILTIN_REVIEW}`, `\u00000\u0001 ${CANARY}`])
+    skillListing([`- code-skerry: ${BUILTIN_REVIEW}`, `\u00000\u0001 ${CANARY}`])
   )
   expect(out).not.toContain(CANARY)
   expect(out).not.toContain(BUILTIN_REVIEW)
@@ -607,11 +609,11 @@ test("when the marketplaces' sources cannot be read, only built-ins pass", async
     $,
     'skill_listing',
     skillListing([
-      `- code-review: ${BUILTIN_REVIEW}`,
+      `- code-skerry: ${BUILTIN_REVIEW}`,
       `- superpowers:brainstorming: ${PLUGIN_SKILL}`,
     ])
   )
-  expect(out).toContain(`- code-review: ${BUILTIN_REVIEW}`)
+  expect(out).toContain(`- code-skerry: ${BUILTIN_REVIEW}`)
   expect(out).not.toContain(PLUGIN_SKILL)
 })
 
@@ -693,7 +695,7 @@ test('a listing whose provenance is slow to read arrives masked, within the dead
   const many: Skill[] = []
   const files: Record<string, string> = {}
   for (let i = 0; i < 150; i++) {
-    const description = `Skill ${i} for review skills.`
+    const description = `Skill ${i} for skerry tarnwicks.`
     many.push({ name: `superpowers:s${i}`, description, source: 'plugin', plugin: 'superpowers' })
     files[`${CACHE}/superpowers/7.0.0/skills/s${i}/SKILL.md`] =
       `---\nname: s${i}\ndescription: ${description}\n---\n`
@@ -712,7 +714,7 @@ test('a listing whose provenance is slow to read arrives masked, within the dead
   ).then((t) => (out = t))
   await clock.advance(400)
   expect(typeof out).toBe('string')
-  expect(out).not.toContain('Skill 0 for review skills.')
+  expect(out).not.toContain('Skill 0 for skerry tarnwicks.')
   expect(out).toContain('__VAR__3')
   await clock.advance(200_000)
   await pending
@@ -722,7 +724,7 @@ test('when reading the provenance fails, the listing is masked, never left out',
   setUp(on, [builtinReview], { env: 'deny' })
   const r = await $.prompt.attachment({
     type: 'skill_listing',
-    text: skillListing([`- code-review: ${BUILTIN_REVIEW}`]),
+    text: skillListing([`- code-skerry: ${BUILTIN_REVIEW}`]),
     origin: { kind: 'engine' },
   })
   expect(r.text).not.toBe(null)
@@ -784,11 +786,11 @@ test(
 // 3. The description is compared with the frontmatter's value as YAML reads
 // it, not searched for in the file's text.
 test('a double-quoted description with escapes is read as YAML reads it', async ($, on) => {
-  const description = 'Says "hi" to review skills, with a \\ and a tab:\t.'
+  const description = 'Says "hi" to skerry tarnwicks, with a \\ and a tab:\t.'
   setUp(on, [{ name: 'superpowers:greet', description, source: 'plugin', plugin: 'superpowers' }], {
     files: {
       [`${CACHE}/superpowers/7.0.0/skills/greet/SKILL.md`]:
-        '---\nname: greet\ndescription: "Says \\"hi\\" to review skills, with a \\\\ and a tab:\\t."\n---\n',
+        '---\nname: greet\ndescription: "Says \\"hi\\" to skerry tarnwicks, with a \\\\ and a tab:\\t."\n---\n',
     },
   })
   const out = await attach(
@@ -800,11 +802,11 @@ test('a double-quoted description with escapes is read as YAML reads it', async 
 })
 
 test('a single-quoted description with an escaped quote is read as YAML reads it', async ($, on) => {
-  const description = "It's for review skills."
+  const description = "It's for skerry tarnwicks."
   setUp(on, [{ name: 'superpowers:quote', description, source: 'plugin', plugin: 'superpowers' }], {
     files: {
       [`${CACHE}/superpowers/7.0.0/skills/quote/SKILL.md`]:
-        "---\nname: quote\ndescription: 'It''s for review skills.'\n---\n",
+        "---\nname: quote\ndescription: 'It''s for skerry tarnwicks.'\n---\n",
     },
   })
   const out = await attach(
@@ -816,7 +818,7 @@ test('a single-quoted description with an escaped quote is read as YAML reads it
 })
 
 test("a description found only in the cached file's body is masked", async ($, on) => {
-  const description = 'Lists review skills.'
+  const description = 'Lists skerry tarnwicks.'
   setUp(
     on,
     [{ name: 'superpowers:lister', description, source: 'plugin', plugin: 'superpowers' }],
@@ -863,7 +865,7 @@ test("an attachment type named like an object's own property is masked as before
     const out = await attach(
       $,
       type,
-      `- Explore: ${BUILTIN_AGENT}\n- code-review: ${BUILTIN_REVIEW}`
+      `- Explore: ${BUILTIN_AGENT}\n- code-skerry: ${BUILTIN_REVIEW}`
     )
     expect(out).not.toContain(BUILTIN_AGENT)
     expect(out).not.toContain(BUILTIN_REVIEW)
@@ -877,7 +879,7 @@ test('a public plugin skill with no description is listed by its name', async ($
     on,
     [
       {
-        name: 'superpowers:requesting-code-review',
+        name: 'superpowers:requesting-code-skerry',
         description: '',
         source: 'plugin',
         plugin: 'superpowers',
@@ -885,23 +887,23 @@ test('a public plugin skill with no description is listed by its name', async ($
     ],
     {
       files: {
-        [`${CACHE}/superpowers/7.0.0/skills/requesting-code-review/SKILL.md`]:
-          '---\nname: requesting-code-review\n---\nBody.\n',
+        [`${CACHE}/superpowers/7.0.0/skills/requesting-code-skerry/SKILL.md`]:
+          '---\nname: requesting-code-skerry\n---\nBody.\n',
       },
     }
   )
   const out = await attach(
     $,
     'skill_listing',
-    skillListing(['- superpowers:requesting-code-review'])
+    skillListing(['- superpowers:requesting-code-skerry'])
   )
-  expect(out).toContain('- superpowers:requesting-code-review')
+  expect(out).toContain('- superpowers:requesting-code-skerry')
 })
 
 test('a plugin skill with no description and no cached file stays masked', async ($, on) => {
   setUp(on, [
-    { name: 'superpowers:code-review', description: '', source: 'plugin', plugin: 'superpowers' },
+    { name: 'superpowers:code-skerry', description: '', source: 'plugin', plugin: 'superpowers' },
   ])
-  const out = await attach($, 'skill_listing', skillListing(['- superpowers:code-review']))
+  const out = await attach($, 'skill_listing', skillListing(['- superpowers:code-skerry']))
   expect(out).toContain('code-__FN__2')
 })

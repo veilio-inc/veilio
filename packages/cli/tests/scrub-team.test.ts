@@ -25,6 +25,11 @@ afterEach(() => vi.unstubAllGlobals())
 
 const TEAM = { __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' }
 const CODE = 'export class LedgerService { settleInvoice() {} reverseEntry() {} }\n'
+/** Spec 066: a checkout with no block numbers new names in its local family. */
+const LOCAL = '__LOCAL_[A-Z0-9]{6}_'
+const LOCAL_ONLY = new RegExp(
+  `^export class ${LOCAL}CLS__1 \\{ ${LOCAL}FN__1\\(\\) \\{\\} ${LOCAL}FN__2\\(\\) \\{\\} \\}\\n$`
+)
 
 async function scrub(
   stdin: string,
@@ -48,13 +53,17 @@ async function scrub(
 }
 
 describe('veilio scrub, signed in to a team', () => {
-  it("uses the team's placeholders for names the team knows, and numbers new ones above the team's", async () => {
+  it("uses the team's placeholders for names the team knows, and numbers new ones locally without a block (spec 066)", async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
     })
     const r = await scrub(CODE, home)
     expect(r.code).toBe(EXIT_OK)
-    expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__4() {} }\n')
+    expect(r.out).toMatch(
+      new RegExp(
+        `^export class __CLS__2 \\{ __FN__3\\(\\) \\{\\} ${LOCAL}FN__1\\(\\) \\{\\} \\}\\n$`
+      )
+    )
     expect(r.err).toMatch(/Namespace: team/)
   })
 
@@ -68,7 +77,12 @@ describe('veilio scrub, signed in to a team', () => {
     })
     const { home } = await teamScenario(fetchMock, { maps })
     const r = await scrub(CODE, home, ['scrub'], { __FN__4: 'localOnlyName' })
-    expect(r.out).toBe('export class __CLS__2 { __FN__3() {} __FN__5() {} }\n')
+    expect(r.out).toMatch(
+      new RegExp(
+        `^export class __CLS__2 \\{ __FN__3\\(\\) \\{\\} ${LOCAL}FN__1\\(\\) \\{\\} \\}\\n$`
+      )
+    )
+    expect(r.out).not.toContain('__FN__4')
   })
 
   it("never emits a placeholder the team's maps dispute: the name gets a fresh number", async () => {
@@ -81,7 +95,7 @@ describe('veilio scrub, signed in to a team', () => {
     })
     const { home } = await teamScenario(fetchMock, { maps })
     const r = await scrub('export class Foo {}\n', home)
-    expect(r.out).toBe('export class __CLS__6 {}\n')
+    expect(r.out).toMatch(new RegExp(`^export class ${LOCAL}CLS__1 \\{\\}\\n$`))
     expect(Object.keys(r.map)).not.toContain('__CLS__5')
   })
 
@@ -91,32 +105,33 @@ describe('veilio scrub, signed in to a team', () => {
       maps: mapsFor({ namespace: big, aliases: {}, conflicts: {} }),
     })
     const r = await scrub(CODE, home)
-    expect(r.map).toEqual({
-      __CLS__2: 'LedgerService',
-      __FN__3: 'settleInvoice',
-      __FN__10: 'reverseEntry',
-    })
+    const { __CLS__2, __FN__3, ...minted } = r.map
+    expect({ __CLS__2, __FN__3 }).toEqual({ __CLS__2: 'LedgerService', __FN__3: 'settleInvoice' })
+    expect(Object.entries(minted)).toEqual([
+      [expect.stringMatching(new RegExp(`^${LOCAL}FN__1$`)), 'reverseEntry'],
+    ])
   })
 
-  it('the team key is locked: masked from the project map, and says why - even under --quiet', async () => {
+  it('the team key is locked: new names numbered locally, and it says why - even under --quiet', async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
       locked: true,
     })
     const r = await scrub(CODE, home, ['scrub', '--quiet'])
     expect(r.code).toBe(EXIT_OK)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    // Spec 066 FR-001: still a team, so new names take the local family.
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/team key is locked[\s\S]*veilio team unlock/)
   })
 
-  it('Cloud cannot be read: masked from the project map, with the reason', async () => {
+  it('Cloud cannot be read: new names numbered locally, with the reason', async () => {
     const { home } = await teamScenario(fetchMock, {
       maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
       failures: 5,
       failStatus: 503,
     })
     const r = await scrub(CODE, home)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/could not read the team's maps/)
   })
 
@@ -128,7 +143,7 @@ describe('veilio scrub, signed in to a team', () => {
     const started = Date.now()
     const r = await scrub(CODE, home)
     expect(Date.now() - started).toBeLessThan(7000)
-    expect(r.out).toBe('export class __CLS__1 { __FN__1() {} __FN__2() {} }\n')
+    expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/did not wait for Cloud/)
   }, 10000)
 
@@ -156,7 +171,7 @@ describe('veilio scrub, signed out', () => {
 describe('veilio scrub, a third-party name the team holds as code', () => {
   it('stays masked', async () => {
     const { home } = await teamScenario(fetchMock, {
-      maps: mapsFor({ namespace: { __FN__30: 'describe' }, aliases: {}, conflicts: {} }),
+      maps: mapsFor({ namespace: { __FN__30: 'tarnwickSuite' }, aliases: {}, conflicts: {} }),
     })
     const { mkdirSync, writeFileSync } = await import('node:fs')
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-held-'))
@@ -164,12 +179,12 @@ describe('veilio scrub, a third-party name the team holds as code', () => {
     mkdirSync(join(cwd, 'src'))
     writeFileSync(
       join(cwd, 'src/a.test.ts'),
-      "import { describe, expect } from 'vitest'\nexport function settleLedger() {}\n"
+      "import { tarnwickSuite, expect } from 'vitest'\nexport function settleLedger() {}\n"
     )
     let out = ''
     const io: Io = { cwd, home, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
     expect(await main(['scrub', 'src/a.test.ts'], io)).toBe(EXIT_OK)
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })
 
@@ -184,11 +199,11 @@ describe('veilio scrub, the same placeholder in the project map and the team', (
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-scrub-team-clash-'))
     mkdirSync(join(cwd, '.git'))
     mkdirSync(join(cwd, 'src'))
-    saveMap(resolveMapPath(null, cwd), { __FN__30: 'describe' })
-    writeFileSync(join(cwd, 'src/a.test.ts'), "import { describe, expect } from 'vitest'\n")
+    saveMap(resolveMapPath(null, cwd), { __FN__30: 'tarnwickSuite' })
+    writeFileSync(join(cwd, 'src/a.test.ts'), "import { tarnwickSuite, expect } from 'vitest'\n")
     let out = ''
     const io: Io = { cwd, home, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
     await main(['scrub', 'src/a.test.ts'], io)
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })

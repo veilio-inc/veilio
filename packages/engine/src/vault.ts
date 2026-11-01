@@ -127,6 +127,18 @@ export async function decryptMapFromVault(
   key: CryptoKeyLike,
   envelope: VaultEnvelope
 ): Promise<SymbolMap> {
+  return parseSymbolMap(await openVaultEnvelope(key, envelope))
+}
+
+/**
+ * The JSON a vault envelope holds, unvalidated - for a caller that checks its
+ * own shape (a sealed custom rule, spec 065). Same version and algorithm check
+ * first, for the same reason as above.
+ */
+export async function openVaultEnvelope(
+  key: CryptoKeyLike,
+  envelope: VaultEnvelope
+): Promise<unknown> {
   if (envelope.v !== 1 || envelope.alg !== VAULT_ENVELOPE_ALG) {
     throw new VaultEnvelopeError()
   }
@@ -135,7 +147,7 @@ export async function decryptMapFromVault(
     key,
     fromBase64(envelope.data)
   )
-  return parseSymbolMap(JSON.parse(new TextDecoder().decode(plaintext)))
+  return JSON.parse(new TextDecoder().decode(plaintext)) as unknown
 }
 
 /** Parse a stored envelope string, or say plainly that it is not one. */

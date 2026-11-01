@@ -45,9 +45,12 @@ function write(name: string, content: string): string {
   return path
 }
 
-const TS = 'export class PaymentGateway {\n  chargeCard(amount: number) { return amount }\n}\n'
+// Spec 064: ordinary words (amount, client, init) stay readable, so the
+// identifiers these fixtures mask are compounds.
+const TS =
+  'export class PaymentGateway {\n  chargeCard(amountDue: number) { return amountDue }\n}\n'
 const GO = 'package billing\n\nfunc Apply(rate float64) error {\n\treturn nil\n}\n'
-const WITH_KEY = 'const client = init("sk_live_51H8xQ2ABCDEFGHIJKLMNOP")\n'
+const WITH_KEY = 'const stripeClient = initStripe("sk_live_51H8xQ2ABCDEFGHIJKLMNOP")\n'
 
 describe('argument handling', () => {
   it('shows help with no arguments', async () => {

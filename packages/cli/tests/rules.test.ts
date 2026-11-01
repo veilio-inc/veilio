@@ -6,7 +6,14 @@ import type { CustomRule } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential } from '../src/credential.js'
+import { holdKeys } from './helpers/fake-cloud.js'
 import { describeAge, mergeRules, readRules, rulesPath, writeRules } from '../src/rules.js'
+import {
+  ME,
+  sealedPersonalRule,
+  sealedTeamRule,
+  signIn as sealedSignIn,
+} from './helpers/fake-cloud.js'
 
 /**
  * Custom rules outside the browser.
@@ -87,6 +94,7 @@ function rule(
 
 function signIn(account = ACCOUNT): void {
   writeCredential({ token: 'session', account, instance: INSTANCE }, home)
+  holdKeys(home, account, INSTANCE)
 }
 
 const SOURCE = 'export function settleLedger(customerId: string) {\n  return customerId\n}\n'
@@ -143,18 +151,26 @@ describe('veilio rules pull', () => {
   })
 
   it('writes the merged rules 0600, tied to this account', async () => {
-    signIn()
+    // Sealed under this account's keys since spec 065 (rules-sealed.test.ts).
+    sealedSignIn(home, { pmk: true, team: true })
+    const pattern = (p: string) => ({ name: p, pattern: p, enabled: true })
     fetchMock.mockResolvedValue(
       json(200, {
-        rules: [rule('pr', 'replace', 'personal', 0, '^settle')],
-        teamRules: [rule('tw', 'whitelist', 'team', 0, '^customer')],
+        rules: [
+          await sealedPersonalRule('pr', 0, {
+            ...pattern('^settle'),
+            type: 'replace',
+            placeholder: '__NAME__',
+          }),
+        ],
+        teamRules: [await sealedTeamRule('tw', 0, { ...pattern('^customer'), type: 'whitelist' })],
       })
     )
     const res = await run(['rules', 'pull'])
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(res.out).toMatch(/Pulled 2 custom rules \(1 personal, 1 team\)/)
     expect(String(fetchMock.mock.calls[0][0])).toBe(`${INSTANCE}/api/rules`)
-    const cached = readRules({ instance: INSTANCE, account: ACCOUNT }, home)
+    const cached = readRules({ instance: INSTANCE, account: ME }, home)
     expect(cached?.rules.map((r) => r.id)).toEqual(['tw', 'pr'])
     expect((statSync(rulesPath(home)).mode & 0o777).toString(8)).toBe('600')
   })
@@ -220,7 +236,9 @@ describe('scrub with cached rules', () => {
     const res = await run(['scrub'], SOURCE)
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(res.out).toContain('customerId') // whitelisted: left readable
-    expect(res.out).toContain('__LEDGER__1') // replaced with the rule's placeholder
+    // Replaced with the rule's placeholder - in the local family, as the team's
+    // maps were not read (spec 066 FR-001).
+    expect(res.out).toMatch(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/)
     expect(res.out).not.toContain('settleLedger')
     expect(res.err).toMatch(/applied 2 custom rules pulled just now/)
     // Rules come from the cache, never fetched by scrub. (Signed in, scrub does

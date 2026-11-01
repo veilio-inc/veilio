@@ -14,16 +14,30 @@ import {
   REDACTION_TOKENS,
   REGULATED_BASES,
   anonymize,
+  compileRulePattern,
+  credentialsAmong,
   detectSecrets,
   isKeyword,
+  isLocalPlaceholder,
+  isOrdinaryWord,
   isPlaceholder,
+  isRolePlaceholder,
   keepRule,
   restore,
   scanSecrets,
   SECRET_DISPOSITIONS,
   shannonEntropy,
+  valueSpans,
 } from '../vendor/engine/index.js'
-import type { FileKind, Language, LanguageOption } from '../vendor/engine/index.js'
+import type {
+  CustomRule,
+  FileKind,
+  Language,
+  LanguageOption,
+  RuleBudget,
+  RuleMatcher,
+} from '../vendor/engine/index.js'
+import type { Block } from './mapfile.ts'
 
 export type SymbolMap = Record<string, string>
 
@@ -46,6 +60,11 @@ export type MaskContext = {
   external: ReadonlySet<string>
   declared: ReadonlySet<string>
   kind: 'result' | 'prompt'
+  /** The account's custom rules (spec 065), in the CLI's order. */
+  rules?: readonly CustomRule[]
+  /** The hook invocation's allowance of rule-matching steps, shared by every
+   *  file and tool output it masks (security review). */
+  budget?: RuleBudget
 }
 
 export const NO_CONTEXT: MaskContext = {
@@ -56,28 +75,52 @@ export const NO_CONTEXT: MaskContext = {
   kind: 'result',
 }
 
+/** What new names are numbered from in a team checkout (spec 066): this
+ *  checkout's blocks, and the tag of its local family. */
+export type Numbering = {
+  blocks: Record<string, Block>
+  tag: string
+  /** Placeholders a publish retired (aliases.json): never minted again. */
+  retired?: readonly string[]
+}
+
 export function scrubSource(
   text: string,
   map: SymbolMap,
   language: LanguageOption = 'auto',
   keep: ReadonlySet<string> = new Set(),
-  fileKind?: FileKind
-): { text: string; additions: SymbolMap } {
+  fileKind?: FileKind,
+  team?: Numbering,
+  custom: readonly CustomRule[] = [],
+  budget?: RuleBudget
+): { text: string; additions: SymbolMap; outside: number; rulesStopped: boolean } {
   // `keep`: names left as written - a third-party package's (spec 050 R4) -
-  // through the engine's own whitelist rules, matched whole.
-  const rules = keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names')
+  // through the engine's own whitelist rules, matched whole. It goes first,
+  // then the account's rules (spec 065 R10).
+  const rules = [
+    ...keepRule(keep, 'veilio-guard-keep', 'veilio-guard: third-party names'),
+    ...custom,
+  ]
+  // In a team, inside the member's usable block, else in the checkout's local
+  // family (spec 066): the engine decides, as it does for the CLI and the MCP.
   // The file's kind, never its path (engine spec 013 R19).
   const result = anonymize(text, {
     existingMap: map,
     language,
     rules,
     ...(fileKind ? { fileKind } : {}),
+    ...(team ? { team } : {}),
+    ...(budget ? { ruleBudget: budget } : {}),
   })
   const additions: SymbolMap = {}
+  let outside = 0
   for (const [placeholder, name] of Object.entries(result.map)) {
-    if (map[placeholder] !== name) additions[placeholder] = name
+    if (map[placeholder] === name) continue
+    additions[placeholder] = name
+    // Numbered on this machine only, until the next publish renumbers it.
+    if (isLocalPlaceholder(placeholder)) outside++
   }
-  return { text: result.anonymized, additions }
+  return { text: result.anonymized, additions, outside, rulesStopped: result.rulesStopped === true }
 }
 
 const WORD = /[A-Za-z0-9_$]/
@@ -103,7 +146,7 @@ type Matcher = {
 // know when they are stale without counting its keys on every call (review of
 // 6e14ec6). Grow a map only through grow().
 const versions = new WeakMap<SymbolMap, number>()
-const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
+export const versionOf = (map: SymbolMap) => versions.get(map) ?? 0
 
 /** A cheap fingerprint of a map's content: its size and a sum of its
  *  entries' hashes. grow() keeps it current; a change made any other way,
@@ -240,6 +283,8 @@ function leftAsWritten(
   m: Matcher,
   ctx: MaskContext
 ): boolean {
+  // A whitelist rule first, as the engine checks it (spec 065).
+  if (ruleMatches(name, ctx, 'whitelist')) return true
   if (reserved(name, ctx)) return true
   if (ctx.declared.has(name)) return false
   if (ctx.external.has(name)) return true
@@ -358,7 +403,70 @@ function aroundTokens(text: string, fn: (part: string) => string): string {
 }
 
 function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
-  return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
+  const shown = withCredentialWords(text, map, readableView(map))
+  return aroundTokens(dropResidue(text), (part) => inValues(part, map, shown, ctx))
+}
+
+/** Security review, round 3: an ordinary word is readable as a name, never in
+ *  a value. Where output shows one - a quoted string, a `KEY=val` - the whole
+ *  map is written over it; elsewhere, the readable view. */
+function inValues(text: string, map: SymbolMap, shown: SymbolMap, ctx: MaskContext): string {
+  if (shown === map) return replaceNames(text, map, ctx)
+  let out = ''
+  let at = 0
+  for (const s of valueSpans(text, { kind: 'shell' })) {
+    if (s.path || s.start < at) continue
+    out += replaceNames(text.slice(at, s.start), shown, ctx)
+    out += replaceNames(text.slice(s.start, s.end), map, ctx)
+    at = s.end
+  }
+  return out + replaceNames(text.slice(at), shown, ctx)
+}
+
+/** An ordinary word the map holds that this text shows as a credential, or a
+ *  possible one, is written over after all (code review: `client_secret:
+ *  "sunshine"` with `sunshine` in an older map), as the engine does inside a
+ *  credential span - and so is one that is the value of a credential-named
+ *  key the scanner does not flag (`PASSWORD=sunshine`, security audit).
+ *  Errs towards masking: the word is masked throughout. */
+function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): SymbolMap {
+  const found = detectSecrets(text)
+  const lines = text.split('\n')
+  const values = new Set([
+    ...found.map((f) => (lines[f.line - 1] ?? '').slice(f.column - 1, f.column - 1 + f.length)),
+    ...credentialsAmong(valueSpans(text)).map((s) => s.value),
+  ])
+  if (values.size === 0) return shown
+  let out: SymbolMap | null = null
+  for (const [p, name] of Object.entries(map))
+    if (!(p in shown) && values.has(name)) (out ??= { ...shown })[p] = name
+  return out ?? shown
+}
+
+// Spec 064: an entry whose name is an ordinary word (a common English word,
+// shared vocabulary, a toolchain's name) is never written over in what the
+// model is sent - a traceback's "most recent call last", a path's `src/main`,
+// Claude Code's own messages. The map keeps the entry, so text masked with it
+// before still restores. Cached per map object: the map can hold thousands.
+// Only the engine's own role placeholders are left out: an entry a custom
+// replace rule, a manual mask or a redaction made (any other base) was masked
+// on purpose and stays masked, whatever word it is (security review).
+const views = new WeakMap<SymbolMap, { version: number; fingerprint: string; view: SymbolMap }>()
+function readableView(map: SymbolMap): SymbolMap {
+  // Keyed on the map and its version, as the matcher is: grow() is the only
+  // mutator, so nothing is counted on each call (code review). The matcher is
+  // then built on the view, not the map, so the strict check runs here.
+  const version = versionOf(map)
+  const cached = views.get(map)
+  if (cached && cached.version === version) {
+    checkGrown(map, cached.fingerprint)
+    return cached.view
+  }
+  const view: SymbolMap = {}
+  for (const [p, name] of Object.entries(map))
+    if (!(isRolePlaceholder(p) && isOrdinaryWord(name))) view[p] = name
+  views.set(map, { version, fingerprint: strictMaps() ? fingerprintOf(map) : '', view })
+  return view
 }
 
 // Short words that camelCase identifiers are made of: a piece this short is
@@ -901,8 +1009,12 @@ export function applyMap(
   const scan =
     options.scan ??
     scanSecrets(text, 'redact', options.fileKind ? { fileKind: options.fileKind } : {})
-  known.learn(learnable(text, scan, map))
-  const names = namesOf(map)
+  // The exemption below ("a value the map holds is masked reversibly") is true
+  // only of names the masking will actually write over: an ordinary word is
+  // left as written now, so a credential that is one is redacted (code review).
+  const shown = readableView(map)
+  known.learn(learnable(text, scan, shown))
+  const names = namesOf(shown)
   let redacted = ''
   let at = 0
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
@@ -913,6 +1025,22 @@ export function applyMap(
     at = end
   }
   redacted += text.slice(at)
+  // The value of a credential-named key - one CONTAINS a credential word -
+  // whole, up to its delimiter, whatever the map holds (security review: with
+  // an empty map nothing was written over `DB_PASSWORD=sunshine`). A map name
+  // keeps its placeholder (withCredentialWords); any other value is removed
+  // one-way. Only `$NAME` and `${NAME}` are references: `DB_PASSWORD=
+  // ADMIN_PASSWORD` is a value (round 3). Not learned: the same word
+  // elsewhere is an ordinary word.
+  const held = namesOf(map)
+  let unvalued = ''
+  at = 0
+  for (const { start, end, value } of credentialsAmong(valueSpans(redacted))) {
+    if (held.has(value)) continue
+    unvalued += redacted.slice(at, start) + known.tokenFor(value)
+    at = end
+  }
+  redacted = unvalued + redacted.slice(at)
   // Every credential the session has destroyed, wherever it stands as a word.
   if (!options.swept) redacted = redactKnown(redacted, known)
   let out = replaceAround(redacted, map, ctx)
@@ -960,6 +1088,30 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
   return languages.some((language) => isKeyword(name, language))
 }
 
+// Custom-rule patterns run on the engine's linear-time matcher, compiled once
+// per pattern (a teammate's pattern cannot freeze the guard; spec 065), and
+// draw on the invocation's budget. Once it is spent no rule keeps a name
+// readable and every name a replace rule might match is masked: the engine's
+// direction (security review).
+const ruleMatchers = new Map<string, RuleMatcher | null>()
+function ruleMatches(name: string, ctx: MaskContext, type: CustomRule['type']): boolean {
+  if (!ctx.rules?.length) return false
+  const stopped = () => ctx.budget?.spent === true && ctx.rules!.some((r) => r.type === type)
+  if (stopped()) return type === 'replace'
+  const hit = ctx.rules.some((r) => {
+    if (r.type !== type) return false
+    let m = ruleMatchers.get(r.pattern)
+    if (m === undefined) {
+      if (ruleMatchers.size > 1000) ruleMatchers.clear()
+      ruleMatchers.set(r.pattern, (m = compileRulePattern(r.pattern)))
+    }
+    return m?.test(name, ctx.budget) ?? false
+  })
+  return stopped() ? type === 'replace' : hit
+}
+
+const WORD_TOKEN = /(?<![\w$])[A-Za-z_$][\w$]*(?![\w$])/g
+
 /** Masks the names shaped like identifiers that are still in `text` after the
  *  map was applied, minting their placeholders through the engine so the
  *  numbering is the map's, and returns them for the map file. Not for what the
@@ -968,15 +1120,19 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
 export function maskShaped(
   text: string,
   map: SymbolMap,
-  ctx: MaskContext
+  ctx: MaskContext,
+  team?: Numbering
 ): { text: string; additions: SymbolMap } {
-  if (ctx.kind === 'prompt') return { text, additions: {} }
+  // What the user typed is not shape-masked; a replace rule's names are
+  // (spec 065), as everywhere else.
+  if (ctx.kind === 'prompt' && !ctx.rules?.some((r) => r.type === 'replace'))
+    return { text, additions: {} }
   // A name written against a redaction token is masked like any other.
   if (text.includes('__REDACTED_')) {
     let working = map
     const additions: SymbolMap = {}
     const out = aroundTokens(text, (part) => {
-      const r = maskShapedPart(part, working, ctx)
+      const r = maskShapedPart(part, working, ctx, team)
       if (Object.keys(r.additions).length) {
         Object.assign(additions, r.additions)
         working = { ...working, ...r.additions }
@@ -985,18 +1141,36 @@ export function maskShaped(
     })
     return { text: out, additions }
   }
-  return maskShapedPart(text, map, ctx)
+  return maskShapedPart(text, map, ctx, team)
 }
 
 function maskShapedPart(
   text: string,
   map: SymbolMap,
-  ctx: MaskContext
+  ctx: MaskContext,
+  team?: Numbering
 ): { text: string; additions: SymbolMap } {
   const placeholderOf = new Map(Object.entries(map).map(([p, name]) => [name, p]))
   const reused: SymbolMap = {}
   const found = new Set<string>()
-  for (const [token] of text.matchAll(SHAPED)) {
+  // Spec 065: a name a replace rule matches that is still here - not in the
+  // map, or held only under an engine placeholder 064 shows - is minted with
+  // the rule's placeholder. A whitelisted or third-party name is left.
+  if (ctx.rules?.some((r) => r.type === 'replace')) {
+    const shown = namesOf(readableView(map))
+    for (const [token] of text.matchAll(WORD_TOKEN))
+      if (
+        !shown.has(token) &&
+        !isPlaceholder(token) &&
+        !ctx.external.has(token) &&
+        !keywordIn(token, ctx) &&
+        !ruleMatches(token, ctx, 'whitelist') &&
+        ruleMatches(token, ctx, 'replace')
+      )
+        found.add(token)
+  }
+  for (const [token] of ctx.kind === 'prompt' ? [] : text.matchAll(SHAPED)) {
+    if (found.has(token)) continue
     const known = placeholderOf.get(token)
     if (known) {
       reused[known] = token
@@ -1011,7 +1185,17 @@ function maskShapedPart(
   const source = [...found]
     .map((t) => (/^[A-Z]/.test(t) && !t.includes('_') ? `class ${t} {}` : `let ${t} = 0`))
     .join('\n')
-  const minted = anonymize(source, { existingMap: map, language: 'typescript', secrets: 'off' }).map
+  // Numbered as a source read is (spec 063, 066): a name met first in a test's
+  // output once took the next number above the map - a teammate's (team
+  // bench, 2026-10-30).
+  const minted = anonymize(source, {
+    existingMap: map,
+    language: 'typescript',
+    secrets: 'off',
+    ...(ctx.rules?.length ? { rules: [...ctx.rules] } : {}),
+    ...(team ? { team } : {}),
+    ...(ctx.budget ? { ruleBudget: ctx.budget } : {}),
+  }).map
   const additions: SymbolMap = {}
   for (const [placeholder, name] of Object.entries(minted))
     if (found.has(name) && map[placeholder] !== name) additions[placeholder] = name
@@ -1050,8 +1234,9 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
   const found = detectSecrets(real).filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
   if (found.length === 0) return []
   // A value that is one of the map's names is masked reversibly, not a
-  // credential left behind (review of 99325ba).
-  const names = namesOf(map)
+  // credential left behind (review of 99325ba) - unless it is an ordinary word,
+  // which is not written over (spec 064, code review).
+  const names = namesOf(readableView(map))
   const starts = lineStarts(real)
   return found
     .filter((f) => {

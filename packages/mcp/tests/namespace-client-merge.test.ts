@@ -431,12 +431,12 @@ describe('placeholders the team disagrees about', () => {
     {
       id: 'm1',
       createdAt: '2026-09-26T10:00:00Z',
-      map: { __FN__6: 'settleLedger', __CLS__1: 'Ledger' },
+      map: { __FN__6: 'settleLedger', __CLS__1: 'QuayLedger' },
     },
     {
       id: 'm2',
       createdAt: '2026-09-26T10:00:05Z',
-      map: { __FN__6: 'voidLedger', __CLS__1: 'Ledger' },
+      map: { __FN__6: 'voidLedger', __CLS__1: 'QuayLedger' },
     },
   ]
 
@@ -445,7 +445,7 @@ describe('placeholders the team disagrees about', () => {
     const resolved = await primeNamespace(home)
     expect(resolved.source).toBe('team')
     expect(resolved.conflicts).toEqual({ __FN__6: 2 })
-    expect(resolved.namespace).toEqual({ __CLS__1: 'Ledger' })
+    expect(resolved.namespace).toEqual({ __CLS__1: 'QuayLedger' })
   })
 
   // Spec 028 changed this deliberately. It used to leave a disputed placeholder
@@ -457,22 +457,22 @@ describe('placeholders the team disagrees about', () => {
     await primeNamespace(home)
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
-    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'QuayLedger' })
     const left = callTool(
       'restore_text',
       { text: 'new __CLS__1().__FN__6()' },
       { cwd, mapPath: null }
     )
-    expect(left.text).toContain('new Ledger().__FN__6()')
+    expect(left.text).toContain('new QuayLedger().__FN__6()')
     expect(left.text).toContain('WARNING: left as is: __FN__6')
 
-    saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'Ledger' })
+    saveMap(resolveMapPath(null, cwd), { __FN__6: 'settleLedger', __CLS__1: 'QuayLedger' })
     const settled = callTool(
       'restore_text',
       { text: 'new __CLS__1().__FN__6()' },
       { cwd, mapPath: null }
     )
-    expect(settled.text).toContain('new Ledger().settleLedger()')
+    expect(settled.text).toContain('new QuayLedger().settleLedger()')
     expect(settled.text).not.toContain('left as is')
   })
 
@@ -481,7 +481,7 @@ describe('placeholders the team disagrees about', () => {
     await primeNamespace(home)
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
-    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'Ledger' })
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'QuayLedger' })
     expect(
       callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text
     ).not.toContain('left as is')
@@ -496,17 +496,19 @@ describe('placeholders the team disagrees about', () => {
     homes.push(cwd)
     const ctx = { cwd, mapPath: null }
     const out = callTool('anonymize_text', { text: 'function chargeCard() {}' }, ctx).text
-    expect(out).toContain('function __FN__7()')
+    // No block held: numbered locally (spec 066), never the disputed __FN__6.
+    const minted = /function (__LOCAL_[A-Z0-9]{6}_FN__1)\(\)/.exec(out)?.[1]
+    expect(minted, out).toBeDefined()
     expect(out).not.toContain('__FN__6')
     expect(out).not.toContain('\u0000')
-    const back = callTool('restore_text', { text: '__FN__7()' }, ctx).text
+    const back = callTool('restore_text', { text: `${minted}()` }, ctx).text
     expect(back).toContain('chargeCard()')
     expect(back).not.toContain('left as is')
     // The floor marker never reaches the saved store.
     const stored = loadMap(resolveMapPath(null, cwd))
     expect(Object.values(stored).some((v) => v.includes('\u0000'))).toBe(false)
-    // At the map's own highest (__CLS__1) no marker is added over the real entry.
-    expect(callTool('anonymize_text', { text: 'class Ledger {}' }, ctx).text).toContain(
+    // The team's own name keeps the team's placeholder.
+    expect(callTool('anonymize_text', { text: 'class QuayLedger {}' }, ctx).text).toContain(
       'class __CLS__1'
     )
   })

@@ -1,6 +1,8 @@
 // Public engine types for @veilio-inc/engine. Keep this engine-only — product
 // types (plans, billing, teams, SSO) belong to the consuming app, not here.
 
+import type { Block } from './localFamily.js'
+import type { RuleBudget } from './rule-pattern.js'
 import type { Language, LanguageOption } from './languages.js'
 import type { SecretFinding, SecretPolicy, SecretSeverity } from './secrets.js'
 
@@ -75,6 +77,10 @@ export interface AnonymizeResult {
   /** Comment prose that was left as written. The largest thing this engine
    *  does not mask, stated rather than left to be discovered. */
   comments: CommentExposure
+  /** Present when custom rules stopped matching part-way: the call's budget of
+   *  matching steps was spent, and every later rule test answered "no match"
+   *  (security audit). See RULES_STOPPED_NOTE for the wording to show. */
+  rulesStopped?: true
 }
 
 export type StrippedItemType =
@@ -175,6 +181,14 @@ export type CustomRule = CustomRuleReplace | CustomRuleWhitelist
 
 export interface AnonymizeOptions {
   existingMap?: SymbolMap
+  /** A team checkout's numbering (spec 066): every new number of a base comes
+   *  from `blocks[base]` while that block has one left, and otherwise from the
+   *  local family `__LOCAL_<tag>_<KIND>__n`, which no team map holds. Without
+   *  it, new names are numbered above the map's highest, as always.
+   *  `retired`: placeholders a publish moved out of the map (aliases.json).
+   *  Numbering stays above them, so a retired one is never minted again for
+   *  another name (code review). */
+  team?: { blocks: Record<string, Block>; tag: string; retired?: readonly string[] }
   rules?: CustomRule[]
   /** Literal strings the author marked sensitive by hand.
    *
@@ -206,6 +220,13 @@ export interface AnonymizeOptions {
   root?: string
   /** The file's kind (`fileKindOf(path)`), for a caller that passes no
    *  `path`: credentials assigned to environment-style names are found in
-   *  dotenv, YAML and shell text. Never relaxes a test file. */
-  fileKind?: 'dotenv' | 'yaml' | 'shell'
+   *  dotenv, YAML and shell text, and values are found by each kind's
+   *  grammar (INI and XML too); `pgpass`: its fifth field;
+   *  `text`: every value grammar. Never relaxes a
+   *  test file. */
+  fileKind?: 'dotenv' | 'yaml' | 'shell' | 'ini' | 'xml' | 'pgpass' | 'text'
+  /** The allowance of rule-matching steps to draw on (`ruleBudget()`), when a
+   *  caller shares one across calls - the guard's, per hook invocation. Absent:
+   *  a fresh one for this call. */
+  ruleBudget?: RuleBudget
 }

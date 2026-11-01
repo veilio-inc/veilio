@@ -12,7 +12,7 @@ import { EXIT_OK, type Io } from '../src/commands.js'
 
 const FILES: Record<string, string> = {
   'src/ledger.ts': [
-    "import { describe, expect } from 'vitest'",
+    "import { tarnwickSuite, expect } from 'vitest'",
     'export function settleLedger(batchTotal: number): number {',
     '  const remainder = batchTotal % 97',
     '  return remainder',
@@ -86,7 +86,7 @@ describe('veilio scrub with several files', () => {
       'const',
       'return',
       'vitest',
-      'describe',
+      'tarnwickSuite',
       'expect',
     ])
       expect(names, word).not.toContain(word)
@@ -109,12 +109,12 @@ describe('veilio scrub with several files', () => {
 describe('a shell script among the inputs (security review of ce30398)', () => {
   it('what it declares stays masked, though a TypeScript file imports the same word', async () => {
     mkdirSync(join(cwd, 'scripts'), { recursive: true })
-    writeFileSync(join(cwd, 'scripts/run.sh'), 'describe() { echo "$1"; }\n')
+    writeFileSync(join(cwd, 'scripts/run.sh'), 'tarnwickSuite() { echo "$1"; }\n')
     const { out, map } = await scrub(['src/ledger.ts', 'scripts/run.sh'], 'map.json')
     const ledger = out.split('\n').find((l) => l.includes('vitest')) ?? ''
-    // The import line: vitest and expect as written, describe masked.
+    // The import line: vitest and expect as written, tarnwickSuite masked.
     expect(ledger).toMatch(/^import \{ __\w+__\d+, expect \} from 'vitest'/)
-    expect(Object.values(map)).toContain('describe')
+    expect(Object.values(map)).toContain('tarnwickSuite')
   })
 })
 
@@ -123,13 +123,13 @@ describe('a shell script among the inputs (security review of ce30398)', () => {
 describe('what scrub may leave as written, when it cannot see everything', () => {
   it('a name the map already holds as a project name stays masked', async () => {
     const mapPath = join(cwd, 'held.json')
-    writeFileSync(mapPath, JSON.stringify({ version: 1, map: { __FN__90: 'describe' } }))
+    writeFileSync(mapPath, JSON.stringify({ version: 1, map: { __FN__90: 'tarnwickSuite' } }))
     const { out } = await scrub(['src/ledger.ts'], 'held.json')
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 
   it('--language does not decide which files are parsed: their extensions do', async () => {
-    writeFileSync(join(cwd, 'src/Ledger.java'), 'class Ledger { int describe; }\n')
+    writeFileSync(join(cwd, 'src/Ledger.java'), 'class Ledger { int tarnwickSuite; }\n')
     let out = ''
     const io: Io = { cwd, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
     await main(
@@ -144,12 +144,12 @@ describe('what scrub may leave as written, when it cannot see everything', () =>
       ],
       io
     )
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 
   it('outside a project root nothing is left as written', async () => {
     rmSync(join(cwd, '.git'), { recursive: true, force: true })
     const { out } = await scrub(['src/ledger.ts'], 'noroot.json')
-    expect(out).not.toMatch(/import \{ describe\b/)
+    expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })

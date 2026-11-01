@@ -83,7 +83,7 @@ jobs:
       # the same reason publish-engine.yml pins it: a release pipeline should not
       # adopt breaking CLI changes on the day they ship.
       - name: Update npm
-        run: npm install -g npm@12
+        run: npm install -g npm@12.2.1
 
       - run: npm ci
 

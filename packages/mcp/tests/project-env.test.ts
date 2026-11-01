@@ -56,14 +56,14 @@ beforeEach(async () => {
     owner: TEAMMATE,
     name: 'billing-names',
     project: 'p-billing',
-    map_data: await sealTeam({ __CLS__1: 'Alpha' }),
+    map_data: await sealTeam({ __CLS__1: 'Skerrify' }),
   }).id
   toolsMap = cloud.add({
     scope: 'team',
     owner: TEAMMATE,
     name: 'tools-names',
     project: 'p-tools',
-    map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+    map_data: await sealTeam({ __CLS__5: 'TarnGamma' }),
   }).id
 })
 
@@ -147,16 +147,16 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
     expect(r.text).toContain('VEILIO_PROJECT (=tools) is in use here')
   })
 
-  it('anonymize_text numbers from the variable’s project: Gamma is tools’ __CLS__5', async () => {
+  it('anonymize_text numbers from the variable’s project: TarnGamma is tools’ __CLS__5', async () => {
     await primeNamespace(home, { env })
-    const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    const r = callTool('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
     expect(r.isError ?? false, r.text).toBe(false)
     expect(r.text).toContain('__CLS__5')
     expect(r.text).toContain('Namespace: team')
   })
 
   it('maps_update of a map outside the variable’s project: one clause, the same as the CLI', async () => {
-    saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
+    saveMap(storePath(), { __CLS__1: 'Skerrify' }, { force: true })
     const r = await callToolAsync('maps_update', { id: billingMap }, ctxWith(env))
     expect(r.isError).toBe(true)
     expect(r.text).toContain(`No map ${billingMap} in project tools (set by VEILIO_PROJECT).`)
@@ -169,7 +169,7 @@ describe('with VEILIO_PROJECT set in the server’s env', () => {
     // `veilio projects use tools` in a terminal, while this server runs.
     signIn(home, { team: true, project: 'p-tools' })
     expect(refreshNamespaceIfStale()).toBeNull()
-    const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    const r = callTool('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
     expect(r.text).toContain('__CLS__5')
   })
 })
@@ -196,7 +196,7 @@ describe('the namespace follows the project the variable names NOW, not the name
       owner: TEAMMATE,
       name: 'new-tools-names',
       project: 'p-tools-2',
-      map_data: await sealTeam({ __CLS__5: 'Zeta' }),
+      map_data: await sealTeam({ __CLS__5: 'SkerryZeta' }),
     })
   }
 
@@ -207,23 +207,28 @@ describe('the namespace follows the project the variable names NOW, not the name
     vi.advanceTimersByTime(TTL - 1)
     const inside = await callToolAsync(
       'anonymize_text',
-      { text: 'export class Zeta {}' },
+      { text: 'export class SkerryZeta {}' },
       ctxWith(env)
     )
-    expect(inside.text).toContain('__CLS__6')
-    // Zeta is __CLS__5 in the NEW project. Under the old project's namespace
-    // (Gamma is __CLS__5) it would be numbered above it: __CLS__6.
+    // SkerryZeta is __CLS__5 in the NEW project. Under the old project's namespace
+    // it is a new name, numbered locally: this checkout holds no block (spec 066).
+    expect(inside.text).toMatch(/__LOCAL_[A-Z0-9]{6}_CLS__1/)
+    expect(inside.text).not.toContain('__CLS__5')
     vi.advanceTimersByTime(1)
-    const r = await callToolAsync('anonymize_text', { text: 'export class Zeta {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class SkerryZeta {}' },
+      ctxWith(env)
+    )
     expect(r.isError ?? false, r.text).toBe(false)
     expect(r.text).toContain('__CLS__5')
     expect(r.text).not.toContain('__CLS__6')
     expect(r.text).toContain('Namespace: team')
-    // And the old project's names are not in it: Gamma is no longer __CLS__5
+    // And the old project's names are not in it: TarnGamma is no longer __CLS__5
     // (the earlier call inside the TTL took __CLS__6 in the local map).
     const again = await callToolAsync(
       'anonymize_text',
-      { text: 'export class Gamma {}' },
+      { text: 'export class TarnGamma {}' },
       ctxWith(env)
     )
     expect(again.text).not.toContain('__CLS__5')
@@ -235,8 +240,8 @@ describe('the namespace follows the project the variable names NOW, not the name
     vi.advanceTimersByTime(TTL)
     const r = await callToolAsync('restore_text', { text: 'new __CLS__5 here' }, ctxWith(env))
     expect(r.isError ?? false, r.text).toBe(false)
-    expect(r.text).toContain('new Zeta here')
-    expect(r.text).not.toContain('Gamma')
+    expect(r.text).toContain('new SkerryZeta here')
+    expect(r.text).not.toContain('TarnGamma')
   })
 
   it('restore_text inside the TTL trusts the confirmation, as anonymize does', async () => {
@@ -244,14 +249,18 @@ describe('the namespace follows the project the variable names NOW, not the name
     await renameToolsAndGiveItsNameToANewProject()
     vi.advanceTimersByTime(TTL - 1)
     const r = await callToolAsync('restore_text', { text: 'new __CLS__5 here' }, ctxWith(env))
-    expect(r.text).toContain('new Gamma here')
+    expect(r.text).toContain('new TarnGamma here')
   })
 
   it('renamed, and nothing given the old name: refused after the TTL, naming the variable', async () => {
     await primeNamespace(home, { env })
     cloud.projects.find((p) => p.id === 'p-tools')!.name = 'tools-old'
     vi.advanceTimersByTime(TTL)
-    const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class TarnGamma {}' },
+      ctxWith(env)
+    )
     expect(r.isError).toBe(true)
     expect(r.text).toContain('VEILIO_PROJECT is "tools"')
     expect(r.text).not.toContain('__CLS__')
@@ -265,7 +274,7 @@ describe('the namespace follows the project the variable names NOW, not the name
     for (let i = 0; i < 5; i++) {
       const r = await callToolAsync(
         'anonymize_text',
-        { text: 'export class Gamma {}' },
+        { text: 'export class TarnGamma {}' },
         ctxWith(env)
       )
       expect(r.isError ?? false, r.text).toBe(false)
@@ -292,7 +301,7 @@ describe('the namespace follows the project the variable names NOW, not the name
     let done = false
     const call = callToolAsync(
       'anonymize_text',
-      { text: 'export class Gamma {}' },
+      { text: 'export class TarnGamma {}' },
       ctxWith(env)
     ).then((r) => ((done = true), r))
     await vi.advanceTimersByTimeAsync(CONFIRM_DEADLINE_MS - 1)
@@ -309,7 +318,7 @@ describe('the namespace follows the project the variable names NOW, not the name
     cloud.requests = []
     const all = await Promise.all(
       Array.from({ length: 5 }, () =>
-        callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+        callToolAsync('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
       )
     )
     for (const r of all) expect(r.text).toContain('__CLS__5')
@@ -324,7 +333,7 @@ describe('the namespace follows the project the variable names NOW, not the name
     cloud.requests = []
     const all = await Promise.all(
       Array.from({ length: 5 }, () =>
-        callToolAsync('anonymize_text', { text: 'export class Zeta {}' }, ctxWith(env))
+        callToolAsync('anonymize_text', { text: 'export class SkerryZeta {}' }, ctxWith(env))
       )
     )
     for (const r of all) expect(r.isError ?? false, r.text).toBe(false)
@@ -342,7 +351,7 @@ describe('the namespace follows the project the variable names NOW, not the name
       jsonrpc: '2.0',
       id: 7,
       method: 'tools/call',
-      params: { name: 'anonymize_text', arguments: { text: 'export class Gamma {}' } },
+      params: { name: 'anonymize_text', arguments: { text: 'export class TarnGamma {}' } },
     }
     const answer = respond(call, ctxWith(env))
     expect(answer).toBeInstanceOf(Promise)
@@ -355,7 +364,11 @@ describe('the namespace follows the project the variable names NOW, not the name
     await primeNamespace(home, { env })
     vi.advanceTimersByTime(TTL)
     cloud.requests = []
-    const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    const r = await callToolAsync(
+      'anonymize_text',
+      { text: 'export class TarnGamma {}' },
+      ctxWith(env)
+    )
     expect(r.text).toContain('__CLS__5')
     expect(cloud.requests.map((x) => `${x.method} ${x.path}`)).toEqual(['GET /api/projects'])
   })
@@ -384,7 +397,7 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
   it('anonymize_text refuses - nothing masked from the local map, nothing stored', async () => {
     await primeNamespace(home, { env })
     onlyTheListing()
-    const r = callTool('anonymize_text', { text: 'export class Gamma {}' }, ctxWith(env))
+    const r = callTool('anonymize_text', { text: 'export class TarnGamma {}' }, ctxWith(env))
     expect(r.isError).toBe(true)
     expect(r.text).toContain('VEILIO_PROJECT is "payroll"')
     expect(r.text).not.toContain('__CLS__')
@@ -396,19 +409,23 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
     try {
       await primeNamespace(home, { env: { VEILIO_PROJECT: 'web' } })
       const webEnv = ctxWith({ VEILIO_PROJECT: 'web' })
-      const first = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
+      const first = await callToolAsync(
+        'anonymize_text',
+        { text: 'export class TarnGamma {}' },
+        webEnv
+      )
       expect(first.isError).toBe(true)
       cloud.projects.push({ id: 'p-web', name: 'web' })
       // Inside the TTL it is not asked again.
       vi.advanceTimersByTime(29_999)
       const inside = await callToolAsync(
         'anonymize_text',
-        { text: 'export class Gamma {}' },
+        { text: 'export class TarnGamma {}' },
         webEnv
       )
       expect(inside.isError).toBe(true)
       vi.advanceTimersByTime(1)
-      const r = await callToolAsync('anonymize_text', { text: 'export class Gamma {}' }, webEnv)
+      const r = await callToolAsync('anonymize_text', { text: 'export class TarnGamma {}' }, webEnv)
       expect(r.isError ?? false, r.text).toBe(false)
     } finally {
       vi.useRealTimers()
@@ -416,12 +433,12 @@ describe('a VEILIO_PROJECT naming no project: errors that name it', () => {
   })
 
   it('restore_text refuses too', async () => {
-    saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
+    saveMap(storePath(), { __CLS__1: 'Skerrify' }, { force: true })
     await primeNamespace(home, { env })
     const r = callTool('restore_text', { text: 'class __CLS__1 {}' }, ctxWith(env))
     expect(r.isError).toBe(true)
     expect(r.text).toContain('VEILIO_PROJECT is "payroll"')
-    expect(r.text).not.toContain('Alpha')
+    expect(r.text).not.toContain('Skerrify')
   })
 })
 

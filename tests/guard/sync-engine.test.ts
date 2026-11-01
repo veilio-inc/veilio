@@ -89,3 +89,13 @@ describe('sync-guard-engine.mjs', () => {
     expect(readdirSync(join(tmp, 'plugins/veilio-guard/vendor/engine'))).not.toContain('stale.js')
   })
 })
+
+// Round 4 (D, E): the guard never makes a request, so it never sends a rule
+// base anywhere; it only reads reserved.json.
+it('the guard makes no network request', () => {
+  const lib = new URL('../../plugins/veilio-guard/lib/', import.meta.url)
+  for (const f of readdirSync(lib).filter((n) => n.endsWith('.ts'))) {
+    const code = readFileSync(new URL(f, lib), 'utf8').replace(/\/\/.*$/gm, '')
+    expect(code, f).not.toMatch(/\bfetch\s*\(|node:https?|XMLHttpRequest/)
+  }
+})

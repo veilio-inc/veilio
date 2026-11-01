@@ -1,6 +1,7 @@
 // What the developer reads: the band above the prompt and the /veilio reply
 // (spec 033, contracts/mod.md).
 import type { Guard } from './guard.ts'
+import { numbersLeft } from '../vendor/engine/index.js'
 
 export const COVERAGE_LINK =
   'https://github.com/veilio-inc/veilio/blob/main/plugins/veilio-guard/COVERAGE.md'
@@ -18,7 +19,65 @@ export function bandText(g: Guard): string {
       : index?.state === 'unavailable'
         ? ` · index off (${index.reason})`
         : ''
-  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${customRules(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+}
+
+/** Spec 065: whether the account's custom rules apply, and why not - the
+ *  short form of the CLI's rules-skipped sentences. */
+function customRules(g: Guard): string {
+  const { state, rules, skipped } = g.rules
+  if (state === 'none-pulled') return 'custom rules: none pulled - run `veilio rules pull`'
+  if (state === 'other-account')
+    return 'custom rules: none for this account - run `veilio rules pull`'
+  const not = [
+    [skipped.vaultLocked, 'vault locked'],
+    [skipped.teamLocked, 'team key locked'],
+    [skipped.unopenable, 'unopenable'],
+    [skipped.refused, 'refused'],
+  ]
+    .filter(([n]) => (n as number) > 0)
+    .map(([n, why]) => `${n} ${why}`)
+  // RULES_STOPPED_NOTE's opening words: what the band has room for.
+  const stopped =
+    g.counts.rulesStopped || g.latest?.spent
+      ? ' - custom rules stopped matching: too much work'
+      : ''
+  return `custom rules: ${rules.length}${not.length ? ` (not applied: ${not.join(', ')})` : ''}${stopped}`
+}
+
+/** A planted file's text must not put control characters, nor Unicode format
+ *  characters such as bidi overrides, into the band (security review,
+ *  2026-10-30; code review of spec 066). */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const printable = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?')
+
+/** HH:MM on this machine's clock. */
+function hhmm(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** Spec 063: what the guard numbers new names from, when a team is involved. */
+function teamNumbers(g: Guard): string {
+  const r = g.reserved
+  if (!r) return ''
+  if (!r.ok)
+    return ` · .veilio/reserved.json unreadable (${printable(r.reason)}): new names numbered here`
+  // Spec 066 R8: for the whole session, ahead of the numbers left - new names
+  // go into this checkout's local family until a pull holds a block.
+  if (r.refused) {
+    const f = r.refused
+    const why =
+      f.reason === 'server' && f.detail ? `server: ${printable(f.detail).slice(0, 80)}` : f.reason
+    return ` · team numbers refused (${why}): new names numbered here${f.nextAt ? `, next block ${hhmm(f.nextAt)}` : ''}`
+  }
+  const outside = g.counts.outsideReserved
+  const left = numbersLeft(g.map, r.blocks)
+  if (outside > 0)
+    return ` · ${outside} name${outside === 1 ? '' : 's'} outside reserved team numbers (run veilio maps pull)`
+  return left > 0
+    ? ` · team numbers: ${left} left`
+    : ' · no usable team numbers (run veilio maps pull)'
 }
 
 export function statusText(g: Guard, managed: boolean): string {

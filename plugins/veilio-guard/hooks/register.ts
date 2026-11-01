@@ -116,8 +116,15 @@ async function ready($: Host): Promise<Guard> {
         ),
     }
     const g = new Guard(io, config)
+    // Where the CLI keeps its rules cache (spec 065); none known, no rules.
+    const home = Promise.resolve()
+      .then(() => Promise.all([$.env.get('HOME'), $.env.get('USERPROFILE')]))
+      .then(
+        ([h, p]) => (typeof h === 'string' && h) || (typeof p === 'string' && p) || undefined,
+        () => undefined
+      )
     loading = $.session.cwd().then(async (cwd) => {
-      await g.load(cwd)
+      await g.load(cwd, await home)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
       guard = g
@@ -167,6 +174,8 @@ export function register(on: On, options: Options = {}) {
 
   on('session.start', async ($, e, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     // Spec 050: index the project while the session starts, then in short
     // slices between calls. A timer runs outside any hook's budget, so each
     // slice stops itself after SLICE_MS to keep the mod free for tool results.
@@ -177,7 +186,7 @@ export function register(on: On, options: Options = {}) {
         if (g.index) g.index.state = 'unavailable'
         if (g.index) g.index.reason = String(err instanceof Error ? err.message : err)
       }
-      await g.indexProject(deadline(next, START_MS)).catch(off)
+      await g.indexProject(deadline(next, START_MS), budget).catch(off)
       const slice = () => {
         if (g.index?.state !== 'indexing') return
         g.indexProject(Date.now() + SLICE_MS).then(() => $.clock.after(0, slice), off)
@@ -198,17 +207,19 @@ export function register(on: On, options: Options = {}) {
 
   on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { deny: `Veilio refused this call: ${g.stoppedReason}. Run /veilio.` }
-    const before = await g.beforeTool(e)
+    const before = await g.beforeTool(e, budget)
     if ('deny' in before) {
       $.ui.log(before.deny)
       $.ui.invalidate('ui.render')
       return before
     }
     const outcome = await next(before.args)
-    const after = await g.afterTool(e.tool, before.args, outcome, deadline(next))
+    const after = await g.afterTool(e.tool, before.args, outcome, deadline(next), budget)
     if ('deny' in after && after.deny.startsWith('Veilio withheld')) $.ui.log(after.deny)
     $.ui.invalidate('ui.render')
     return after
@@ -216,6 +227,8 @@ export function register(on: On, options: Options = {}) {
 
   on('prompt.submit', async ($, e, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
@@ -223,7 +236,7 @@ export function register(on: On, options: Options = {}) {
     // budget to reach a few more files first (spec 050).
     const state = g.index?.state
     if (state === 'new' || state === 'indexing')
-      await g.indexProject(deadline(next)).catch(() => undefined)
+      await g.indexProject(deadline(next), budget).catch(() => undefined)
     // A credential with its key in one is removed from the others too; each
     // text is scanned once.
     // Context the guard cannot read as text cannot be checked: the prompt is
@@ -232,14 +245,18 @@ export function register(on: On, options: Options = {}) {
     if (raw !== undefined && !isTexts(raw)) throw new Error('a context entry is not text')
     const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
-    const text = g.applyText(e.text, 'prompt', scan)
-    const context = raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i])) : undefined
+    await g.learnRuleNames([e.text, ...given], budget)
+    const text = g.applyText(e.text, 'prompt', scan, budget)
+    const context =
+      raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined
     if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
 
   on('prompt.attachment', async ($, e, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     const r = await next(e)
     if (g.state === 'off' || r.text === null) return r
     if (g.state === 'stopped') return { text: null }
@@ -249,11 +266,12 @@ export function register(on: On, options: Options = {}) {
     const first = e.type === 'context_sections' || e.type === 'session_context'
     // Guard decision 1: a listing's public entries go as written.
     const listing = listingKind(e.type)
+    await g.learnRuleNames([r.text], budget)
     const text = first
-      ? g.applyContext(r.text)
+      ? g.applyContext(r.text, undefined, budget)
       : listing
-        ? g.applyListing(r.text, await listingEntries($, listing))
-        : g.applyText(r.text)
+        ? g.applyListing(r.text, await listingEntries($, listing), budget)
+        : g.applyText(r.text, 'result', undefined, budget)
     return { ...r, text }
   }).catch(async () => ({ text: null }))
 
@@ -269,28 +287,34 @@ export function register(on: On, options: Options = {}) {
 
   on('prompt.context', async ($, e, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') return { ...r, blocks: [] }
     const raw = r.blocks.map((b) => b.text)
     const scans = g.learnTogether(raw)
+    await g.learnRuleNames(raw, budget)
     // Remembered, so the copy Claude Code passes back as an attachment is
     // not judged a second time.
     const blocks = r.blocks.map((b, i) => ({
       ...b,
-      text: g.remember(g.applyText(raw[i]!, 'result', scans[i])),
+      text: g.remember(g.applyText(raw[i]!, 'result', scans[i], budget)),
     }))
     return { ...r, blocks: [...blocks, { name: 'veilioGuard', text: MODEL_NOTE }] }
   }).catch(async () => ({ blocks: [] }))
 
   on('skill.prompt', async ($, e, next) => {
     const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
     const r = await next(e)
     if (g.state === 'off') return r
     if (g.state === 'stopped') {
       return { text: `Veilio guard stopped: ${g.stoppedReason}. The skill's text was left out.` }
     }
-    return { ...r, text: g.applyText(r.text) }
+    await g.learnRuleNames([r.text], budget)
+    return { ...r, text: g.applyText(r.text, 'result', undefined, budget) }
   }).catch(async () => ({ text: 'Veilio could not check this skill, so its text was left out.' }))
 
   // What the developer sees: the real names, drawn on this machine only. The

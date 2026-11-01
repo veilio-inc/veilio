@@ -1,3 +1,12 @@
+import { credentialsAmong, isOrdinaryWord, valueSpans } from './ordinaryWords.js'
+import type { ValueGrammar, ValueSpan } from './ordinaryWords.js'
+import { isEngineBase } from './rule-checks.js'
+import {
+  compileRulePattern,
+  ruleBudget,
+  type RuleBudget,
+  type RuleMatcher,
+} from './rule-pattern.js'
 import type {
   AnonymizeOptions,
   AnonymizeResult,
@@ -18,6 +27,7 @@ import {
   fnKeywordsFor,
   isKeyword,
   describeLanguage,
+  guessLanguage,
   type CommentSyntax,
   type Language,
   type LanguageOption,
@@ -26,12 +36,23 @@ import {
   credentialSpans,
   detectSecrets,
   hasBlockingSecrets,
+  previewSecret,
   redactionTokensOf,
   scanSecrets,
+  fileKindOf,
 } from './secrets.js'
-import type { RegulatedSpan, SecretType } from './secrets.js'
+import type { RegulatedSpan, ScanOptions, SecretFinding, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
+import {
+  isLocalTag,
+  isRolePlaceholder,
+  isSaneBlock,
+  localBaseOf,
+  MAX_PLACEHOLDER_NUMBER,
+  teamBaseOf,
+  usedInBlock,
+} from './localFamily.js'
 import {
   assertKnownOptions,
   assertObject,
@@ -150,7 +171,11 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
     }
   }
   for (const [base, count] of baseCounts) {
-    parts.push(`${base}* are project-specific identifiers (${count})`)
+    // Spec 066: a local base reads as its team kind, numbered on one machine.
+    const team = teamBaseOf(base)
+    const label =
+      (team && ROLE_LEGEND_LABELS.find(([b]) => b === team)?.[1]) || 'project-specific identifiers'
+    parts.push(`${base}* are ${label}${team ? ', numbered on one machine' : ''} (${count})`)
   }
   return `Placeholder legend: ${parts.join('; ')}.`
 }
@@ -507,7 +532,7 @@ function applyManualMasks(
   fromMap: readonly string[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
-  namedCounters: Record<string, number>,
+  mint: Mint,
   language: Language
 ): string {
   // Replayed means "came from the map and was not asked for again". Deduping the
@@ -561,9 +586,7 @@ function applyManualMasks(
     }
     applicable.push(term)
     if (reverseExisting[term]) continue
-    const n = (namedCounters[MANUAL_BASE] ?? 0) + 1
-    namedCounters[MANUAL_BASE] = n
-    const placeholder = `${MANUAL_BASE}${n}`
+    const placeholder = mint(MANUAL_BASE)
     map[placeholder] = term
     reverseExisting[term] = placeholder
   }
@@ -628,7 +651,7 @@ function applyRegulatedMasks(
   spans: readonly RegulatedSpan[],
   map: SymbolMap,
   reverseExisting: Record<string, string>,
-  namedCounters: Record<string, number>
+  mint: Mint
 ): string {
   if (spans.length === 0) return code
 
@@ -638,9 +661,7 @@ function applyRegulatedMasks(
     if (base === undefined) continue
     applicable.push(span.value)
     if (reverseExisting[span.value]) continue
-    const n = (namedCounters[base] ?? 0) + 1
-    namedCounters[base] = n
-    const placeholder = `${base}${n}`
+    const placeholder = mint(base)
     map[placeholder] = span.value
     reverseExisting[span.value] = placeholder
   }
@@ -662,7 +683,12 @@ function applyRegulatedMasks(
  *  beside it would be the thing that goes missing. */
 export function manualTermsIn(map: SymbolMap): string[] {
   return Object.entries(map)
-    .filter(([placeholder]) => placeholder.startsWith(MANUAL_BASE))
+    .filter(
+      ([placeholder]) =>
+        placeholder.startsWith(MANUAL_BASE) ||
+        // A mark numbered locally (spec 066) is replayed the same way.
+        teamBaseOf(placeholder.replace(/\d+$/, '')) === MANUAL_BASE
+    )
     .map(([, term]) => term)
 }
 
@@ -798,11 +824,72 @@ export function extractIdentifiers(code: string, language: Language = DEFAULT_LA
   return Array.from(seen).sort((a, b) => b.length - a.length)
 }
 
-function safeMatch(pattern: string, name: string): boolean {
+function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
+  return r.type !== 'replace' || !isEngineBase(r.placeholder)
+}
+
+// Custom-rule patterns run on the engine's linear-time matcher, never on
+// RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
+// Compiled once per pattern.
+const ruleMatchers = new Map<string, RuleMatcher | null>()
+
+function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean {
+  let m = ruleMatchers.get(pattern)
+  if (m === undefined) {
+    m = compileRulePattern(pattern)
+    if (ruleMatchers.size > 1000) ruleMatchers.clear()
+    ruleMatchers.set(pattern, m)
+  }
+  if (m === null) return false
   try {
-    return new RegExp(pattern).test(name)
+    return m.test(name, budget)
   } catch {
-    return false
+    return false // never thrown on purpose; no match is the safe direction
+  }
+}
+
+/** The next placeholder of a base. */
+type Mint = (base: string) => string
+
+/** Every new number, at all four mint sites (role, replace rule, regulated
+ *  value, manual mark), comes from here. Without `team`: above the highest of
+ *  the base. With it (spec 066 R3): inside the base's block while it has a
+ *  number left, else from the checkout's local family - never above the map,
+ *  which is where the next teammate's block starts. Inside the block it
+ *  continues above the highest number used inside it (usedInBlock). */
+function minter(
+  counters: Record<string, number>,
+  team: AnonymizeOptions['team'],
+  taken: Set<string>
+): Mint {
+  // The highest number used inside each base's block, found once per base.
+  const inBlock: Record<string, number> = {}
+  return (base) => {
+    if (team) {
+      // A block is trusted only while sane: whole, in order, at most 1e8
+      // (security audit) - past that, the name is numbered locally.
+      const given = Object.hasOwn(team.blocks, base) ? team.blocks[base] : undefined
+      const block = isSaneBlock(given) ? given : undefined
+      // Security audit (round 4): only numbers inside the block count, so a
+      // teammate's planted __VAR__60000 cannot push every name past the block.
+      if (block && !Object.hasOwn(inBlock, base)) inBlock[base] = usedInBlock(taken, base, block)
+      let n = block ? inBlock[base] + 1 : NaN
+      while (block && n <= block.end && taken.has(`${base}${n}`)) n++
+      if (block && n <= block.end) {
+        inBlock[base] = n
+        counters[base] = Math.max(counters[base] ?? 0, n)
+        taken.add(`${base}${n}`)
+        return `${base}${n}`
+      }
+      base = localBaseOf(base, team.tag)
+    }
+    let n = (counters[base] ?? 0) + 1
+    while (taken.has(`${base}${n}`)) n++
+    // Never past the cap (Cloud 450a93ce): the lowest number nothing holds.
+    if (n > MAX_PLACEHOLDER_NUMBER) for (n = 1; taken.has(`${base}${n}`);) n++
+    counters[base] = n
+    taken.add(`${base}${n}`)
+    return `${base}${n}`
   }
 }
 
@@ -815,6 +902,8 @@ const ANONYMIZE_OPTIONS = optionKeys<AnonymizeOptions>({
   path: true,
   root: true,
   fileKind: true,
+  team: true,
+  ruleBudget: true,
 })
 const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 
@@ -1038,6 +1127,118 @@ function overlapsAny(spans: readonly (readonly [number, number])[], start: numbe
   return spans.some(([a, b]) => start < b && a < end)
 }
 
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
+const WORDS = /[A-Za-z_$][\w$]*/g
+
+/** The grammar values are read by: the file's kind; a file in a language
+ *  the engine reads, a language the caller names, or text that reads as
+ *  code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
+ *  or pasted text no language claims has no grammar of its own, and every
+ *  value grammar applies (security review, round 4). */
+/** Code whose language is only guessed: no path, no kind, no language named. */
+function guessedCode(opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>): boolean {
+  return !opts.fileKind && !opts.path && (opts.language ?? 'auto') === 'auto'
+}
+
+function valueKind(
+  code: string,
+  opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'>
+): ValueGrammar | 'code' | undefined {
+  const kind = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined)
+  if (kind) return kind === 'text' ? undefined : kind
+  // A path of no kind is code, unless nothing in it reads as code: a `.ts`
+  // holding configuration text keeps every grammar.
+  return (opts.language ?? 'auto') !== 'auto' || !guessLanguage(code).fallback ? 'code' : undefined
+}
+
+/** Where `code` holds values, as `anonymize` reads them (security review,
+ *  round 3): an ordinary word there is masked, and a value under a
+ *  credential key is redacted. */
+export function valuePositions(
+  code: string,
+  opts: Pick<AnonymizeOptions, 'fileKind' | 'path' | 'language'> = {}
+): ValueSpan[] {
+  const kind = valueKind(code, opts)
+  const language = describeLanguage(code, opts.language).language
+  return valuesIn(code, language, kind, guessedCode(opts))
+}
+
+/** `detectSecrets`, and every credential value `anonymize` would redact that
+ *  its rules do not report (security review, round 4): `password:
+ *  Summer2024!` in text of no kind is reported, never passed over. */
+export function detectCredentials(
+  code: string,
+  options: ScanOptions & Pick<AnonymizeOptions, 'language'> = {}
+): SecretFinding[] {
+  const { language, ...scan } = options
+  const found = detectSecrets(code, scan)
+  const spans = credentialSpans(code, scan)
+  const starts = [0]
+  for (let i = 0; i < code.length; i++) if (code[i] === '\n') starts.push(i + 1)
+  for (const v of credentialsAmong(valuePositions(code, { ...scan, language }))) {
+    if (spans.some((s) => s.start < v.end && v.start < s.end)) continue
+    let line = 0
+    while (line + 1 < starts.length && starts[line + 1]! <= v.start) line++
+    found.push({
+      type: 'password-assignment',
+      severity: 'medium',
+      label: 'Value of a credential-named key',
+      line: line + 1,
+      column: v.start - starts[line]! + 1,
+      length: v.value.length,
+      preview: previewSecret(v.value),
+      redacted: false,
+      disposition: 'report',
+    })
+  }
+  return found
+}
+
+/** The value positions in `text` (ordinaryWords.ts), with the tokenizer's
+ *  string literals: contents only, a module specifier as a path. */
+function valuesIn(
+  text: string,
+  language: Language,
+  kind: ValueGrammar | 'code' | undefined,
+  net = false
+): ValueSpan[] {
+  const strings: { start: number; end: number; module?: boolean }[] = []
+  let at = 0
+  for (const s of tokenizeForMasking(text, language)) {
+    if (s.isString) {
+      const closed = s.text.length > 1 && s.text.endsWith(s.text[0]!)
+      const end = at + s.text.length - (closed ? 1 : 0)
+      strings.push({ start: at + 1, end, ...(s.isModuleSpecifier ? { module: true } : {}) })
+    }
+    at += s.text.length
+  }
+  return valueSpans(text, { strings, kind, language, net })
+}
+
+/** Spans as sorted, disjoint ranges, for `covers`. */
+function mergedRanges(spans: readonly { start: number; end: number }[]): [number, number][] {
+  const out: [number, number][] = []
+  for (const { start, end } of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1]
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
+    else out.push([start, end])
+  }
+  return out
+}
+
+/** Whether `[start, end)` overlaps one of `ranges` (sorted, disjoint), by
+ *  binary search: a file holds thousands of strings. */
+function covers(ranges: readonly [number, number][], start: number, end: number): boolean {
+  let lo = 0
+  let hi = ranges.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (ranges[mid]![1] <= start) lo = mid + 1
+    else hi = mid
+  }
+  return lo < ranges.length && ranges[lo]![0] < end
+}
+
 /**
  * Options, or the positional existing map, decided by the keys.
  *
@@ -1093,6 +1294,10 @@ export function anonymize(
 ): AnonymizeResult {
   // Unknown keys throw; see resolveAnonymizeOptions.
   const opts = resolveAnonymizeOptions(options)
+  if (opts.team !== undefined && !isLocalTag(opts.team?.tag))
+    throw new TypeError(
+      `anonymize: team.tag names the checkout, six of A-Z0-9 - got ${JSON.stringify(opts.team?.tag)}`
+    )
   const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind }
   // Every credential in the text as given, whatever the policy.
   const found = credentialSpans(code, where)
@@ -1105,7 +1310,14 @@ export function anonymize(
     // mapped as a name, and the guard relies on it round-tripping.
     new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end)))
   )
-  const rules = opts.rules ?? []
+  // Spec 065: a rule the server could once refuse is now sealed where it
+  // cannot see it, so the engine skips a replace rule under an engine base,
+  // whoever sealed it. A pattern its matcher cannot run never matches
+  // (safeMatch), so it needs no filter here.
+  const rules = (opts.rules ?? []).filter(isRunnableRule)
+  // One allowance of matching steps for every rule and name in this call
+  // (security audit); once spent, rule tests answer no match.
+  const budget = opts.ruleBudget ?? ruleBudget()
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
@@ -1140,7 +1352,7 @@ export function anonymize(
     if (namedMatch) {
       const [, base, nStr] = namedMatch
       const n = parseInt(nStr, 10)
-      if (!isNaN(n) && n > (namedCounters[base] ?? 0)) {
+      if (!isNaN(n) && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[base] ?? 0)) {
         namedCounters[base] = n
       }
     }
@@ -1160,13 +1372,30 @@ export function anonymize(
     if (namedMatch) {
       const [, base, nStr] = namedMatch
       const n = parseInt(nStr, 10)
-      if (!isNaN(n) && n > (namedCounters[base] ?? 0)) {
+      if (!isNaN(n) && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[base] ?? 0)) {
         namedCounters[base] = n
       }
     }
     // Digitless tokens (__DEV__) carry no counter to bump.
   }
 
+  // Spec 066 (code review): placeholders a publish retired into aliases.json
+  // are gone from the map but still mean their old name in text already sent.
+  for (const placeholder of opts.team?.retired ?? []) {
+    const m = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/.exec(placeholder)
+    const n = m ? Number(m[2]) : 0
+    if (m && n <= MAX_PLACEHOLDER_NUMBER && n > (namedCounters[m[1]] ?? 0)) namedCounters[m[1]] = n
+  }
+
+  // Every placeholder already meaning something: a number above
+  // MAX_PLACEHOLDER_NUMBER counts towards no highest, so one minted that high
+  // must still step over them.
+  const taken = new Set([
+    ...Object.keys(givenMap),
+    ...(opts.team?.retired ?? []),
+    ...(redacted.match(codePlaceholderRegex) ?? []),
+  ])
+  const mint = minter(namedCounters, opts.team, taken)
   const map: SymbolMap = { ...existingMap }
 
   // Manual marks run before extraction, so the extractor sees placeholders
@@ -1185,7 +1414,7 @@ export function anonymize(
     manualTermsIn(existingMap),
     map,
     reverseExisting,
-    namedCounters,
+    mint,
     language
   )
 
@@ -1214,12 +1443,56 @@ export function anonymize(
       .filter((r) => credentialValues.has(r.value) && !destroyed.has(r.value))
       .map((r) => [r.value, `__REDACTED_CREDENTIAL_${++generic}__`] as const)
   )
+  // Security review, round 3: under `redact` a value under a credential key
+  // is a secret, replaced whole and one-way, as a detected secret is, so the
+  // map never holds it - unless an older map already masks it reversibly,
+  // which the guard relies on. A distinctive value is replaced wherever it
+  // stands as a name too. Round 4 (founder ruling): so under `warn` and
+  // `off` too - such a value is found by the credential words, not reported
+  // by a rule - except where a rule found it, which those modes leave as
+  // written by the user's choice.
+  const kind = valueKind(code, opts)
+  const net = guessedCode(opts)
+  const policy = opts.secrets ?? 'redact'
+  const reported =
+    policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end] as const)
+  let unvalued: string
+  {
+    const mapped = new Set(Object.values(existingMap))
+    const tokens = new Map<string, string>()
+    let out = ''
+    let at = 0
+    for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, net))) {
+      if (mapped.has(value) || destroyed.has(value) || overlapsAny(reported, start, end)) continue
+      if (!tokens.has(value)) tokens.set(value, `__REDACTED_CREDENTIAL_${++generic}__`)
+      out += marked.slice(at, start) + tokens.get(value)
+      at = end
+    }
+    unvalued = out + marked.slice(at)
+    for (const [value, token] of tokens)
+      if (value.length > 2 && !isOrdinaryWord(value) && !isKeyword(value, language))
+        unvalued = replaceWholeWord(unvalued, value, token)
+    // An ordinary word stays readable as a name, but in another value it would
+    // be minted into the map: there it is the credential's token too.
+    const words = [...tokens].filter(([value]) => isOrdinaryWord(value))
+    if (words.length > 0) {
+      out = ''
+      at = 0
+      for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, net))) {
+        let part = unvalued.slice(start, end)
+        for (const [value, token] of words) part = replaceWholeWord(part, value, token)
+        out += unvalued.slice(at, start) + part
+        at = end
+      }
+      unvalued = out + unvalued.slice(at)
+    }
+  }
   const source = applyRegulatedMasks(
-    keptCredentials.size > 0 ? spreadRedactions(marked, keptCredentials, trusted) : marked,
+    keptCredentials.size > 0 ? spreadRedactions(unvalued, keptCredentials, trusted) : unvalued,
     regulated,
     map,
     reverseExisting,
-    namedCounters
+    mint
   )
 
   // What Node wrote in a pasted stack trace - V8's message wording, its own
@@ -1231,6 +1504,9 @@ export function anonymize(
   // extracted nor substituted, so no part of it reaches the map. Found again
   // in `source`, so the offsets are the ones substitution sees.
   const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end] as const)
+  // Every value position but a path's: an ordinary word there is masked.
+  const valued = valuesIn(source, language, kind, net).filter((s) => !s.path)
+  const values = mergedRanges(valued)
   // A name the existing map already holds may still be substituted inside one:
   // that writes nothing new, and the guard relies on it for a plain word
   // (`client_secret: "disabled"`) its map already masks.
@@ -1250,7 +1526,20 @@ export function anonymize(
   // round 3).
   const secretValues = new Set(found.map((f) => code.slice(f.start, f.end)))
   const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans)
-  const identifiers = extractIdentifiers(scannable, language)
+  // A credential value the extractor passes over (`PASSWORD=SUNSHINE` reads as
+  // a constant) is a name here all the same, where it is still in the text.
+  const extractedNames = extractIdentifiers(scannable, language)
+  const missed = credentialsAmong(valued)
+    .filter((s) => IDENTIFIER.test(s.value) && scannable.slice(s.start, s.end) === s.value)
+    .map((s) => s.value)
+    .filter((v) => !extractedNames.includes(v) && !isKeyword(v, language))
+  const valueWords = new Set<string>()
+  for (const [start, end] of values)
+    for (const [w] of scannable.slice(start, end).matchAll(WORDS)) valueWords.add(w)
+  const identifiers =
+    missed.length === 0
+      ? extractedNames
+      : [...new Set([...extractedNames, ...missed])].sort((a, b) => b.length - a.length)
   const roleOf = classifyIdentifiers(scannable, language)
 
   // Split rules by type, sort by sort_order ASC (lower = earlier)
@@ -1263,6 +1552,10 @@ export function anonymize(
 
   // Track whitelisted identifiers so the substitution loop knows to skip them
   const whitelisted = new Set<string>()
+  // Spec 064: ordinary words, minted only for their value positions. An older
+  // map's entry for one is substituted inside a credential or a value, and
+  // nowhere else.
+  const ordinary = new Set<string>()
 
   for (const name of identifiers) {
     // 1. Whitelist: skip - checked BEFORE "already mapped". A name a team map
@@ -1278,29 +1571,54 @@ export function anonymize(
     // still used (1.12.1 review: fail closed for what is new).
     if (secretValues.has(name) && !alreadyMapped.has(name)) continue
 
-    if (whitelist.some((r) => safeMatch(r.pattern, name))) {
+    if (whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
       whitelisted.add(name)
       continue
     }
 
-    if (reverseExisting[name]) continue // already mapped
+    // Spec 064: a single common word, shared vocabulary or a toolchain's name
+    // is left as written - unless a custom replace rule asks for it. Like a
+    // whitelisted name, an older map's entry for it is kept (old text still
+    // restores) but no longer substituted.
+    // In a value position it is masked (security review, round 3): given a
+    // placeholder, written there and left readable elsewhere.
+    // With the budget spent, a replace rule can no longer say a word is not
+    // its codename: the word is masked rather than shown.
+    if (
+      isOrdinaryWord(name) &&
+      !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
+      !(replacers.length > 0 && budget.spent)
+    ) {
+      ordinary.add(name)
+      if (!valueWords.has(name)) continue
+    }
+
+    // Already mapped - unless it is an ordinary word the engine itself mapped
+    // before a team's replace rule for it existed: the rule then gives it a
+    // placeholder of its own (the old entry still restores old text). Without
+    // this the engine's entry would win, and a masking that leaves ordinary
+    // words readable would show the codename (code review, spec 064).
+    if (
+      reverseExisting[name] &&
+      !(
+        isRolePlaceholder(reverseExisting[name]) &&
+        isOrdinaryWord(name) &&
+        replacers.some((r) => safeMatch(r.pattern, name, budget))
+      )
+    )
+      continue // already mapped
 
     // 2. Replace: first match wins
-    const matched = replacers.find((r) => safeMatch(r.pattern, name))
+    const matched = replacers.find((r) => safeMatch(r.pattern, name, budget))
     if (matched) {
-      const n = (namedCounters[matched.placeholder] ?? 0) + 1
-      namedCounters[matched.placeholder] = n
-      const ph = `${matched.placeholder}${n}`
+      const ph = mint(matched.placeholder)
       map[ph] = name
       reverseExisting[name] = ph
       continue
     }
 
     // 3. Default: role-typed placeholder for the identifier's strongest role.
-    const base = ROLE_BASES[roleOf[name] ?? 'variable']
-    const num = (namedCounters[base] ?? 0) + 1
-    namedCounters[base] = num
-    const ph = `${base}${num}`
+    const ph = mint(ROLE_BASES[roleOf[name] ?? 'variable'])
     map[ph] = name
     reverseExisting[name] = ph
   }
@@ -1334,7 +1652,9 @@ export function anonymize(
     language
   ).filter(
     (n) =>
-      reverseExisting[n] && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n))
+      reverseExisting[n] &&
+      !extracted.has(n) &&
+      !whitelist.some((r) => safeMatch(r.pattern, n, budget))
   )
   // Likewise inside a credential: only names the existing map already holds.
   const knownInSecrets = extractIdentifiers(
@@ -1342,7 +1662,9 @@ export function anonymize(
     language
   ).filter(
     (n) =>
-      alreadyMapped.has(n) && !extracted.has(n) && !whitelist.some((r) => safeMatch(r.pattern, n))
+      alreadyMapped.has(n) &&
+      !extracted.has(n) &&
+      !whitelist.some((r) => safeMatch(r.pattern, n, budget))
   )
   const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
     .sort((a, b) => b.length - a.length)
@@ -1371,7 +1693,10 @@ export function anonymize(
               : text.replace(pattern, (m, offset: number) =>
                   inSpan(verbatim, start + offset) ||
                   (!alreadyMapped.has(m) &&
-                    overlapsAny(secretSpans, start + offset, start + offset + m.length))
+                    overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
+                  (ordinary.has(m) &&
+                    !overlapsAny(secretSpans, start + offset, start + offset + m.length) &&
+                    !covers(values, start + offset, start + offset + m.length))
                     ? m
                     : (reverseExisting[m] ?? m)
                 )
@@ -1404,6 +1729,7 @@ export function anonymize(
     // is the text whose comments are copied into `anonymized`. Measuring the
     // raw input would keep charging for a name the user has already marked.
     comments: summarizeComments(segments),
+    ...(budget.spent ? { rulesStopped: true as const } : {}),
   }
 }
 
@@ -1551,9 +1877,11 @@ const MINTED_KINDS = [
  *  number, and up to three trailing underscores. Not preceded by a letter, digit
  *  or underscore, so it never starts inside a name (`tmp_fn_1`, `x__fn__1`); it
  *  may be followed by one, because a model gluing a word to a placeholder it
- *  mangled (`__cls__1Factory`) is still a placeholder nothing can restore. */
+ *  mangled (`__cls__1Factory`) is still a placeholder nothing can restore.
+ *  A local one (spec 066) is the same with `LOCAL` and its tag in front
+ *  (`__local_k7q2xa_var__3`). */
 const NEAR_PLACEHOLDER = new RegExp(
-  `(?<![A-Za-z0-9_$])_{1,3}(?:${MINTED_KINDS.join('|')})_{1,3}\\d+_{0,3}`,
+  `(?<![A-Za-z0-9_$])_{1,3}(?:LOCAL_{1,3}[A-Z0-9]{6}_{1,3})?(?:${MINTED_KINDS.join('|')})_{1,3}\\d+_{0,3}`,
   'gi'
 )
 

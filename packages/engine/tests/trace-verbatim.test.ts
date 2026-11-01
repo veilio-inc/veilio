@@ -122,28 +122,36 @@ describe('V8 error messages keep their wording', () => {
 
 describe('what stays masked', () => {
   it('a message the user’s own code throws', () => {
-    const masked = mask('Error: missing paymentMethod for Acme')
-    for (const word of ['missing', 'paymentMethod', 'Acme']) {
+    const masked = mask('Error: missing quayward paymentMethod for Acme')
+    for (const word of ['quayward', 'paymentMethod', 'Acme']) {
       expect(masked.anonymized).not.toContain(word)
     }
+    // Spec 064: ordinary words stay readable.
+    expect(masked.anonymized).toMatch(/^Error: missing __/)
   })
 
+  // V8's own words are mostly ordinary English, which stays readable anyway
+  // (spec 064); `iterable` and `destructure` are not, so they show whether a
+  // line was taken as V8's wording or masked as the user's.
   it('a message that only starts like V8’s', () => {
-    const masked = mask(
-      "TypeError: Cannot read properties of undefined (reading 'chargeCard') for customerAcme"
-    )
-    expect(masked.anonymized).not.toContain('properties')
+    const masked = mask('TypeError: chargeCard is not iterable for customerAcme')
+    expect(masked.anonymized).not.toContain('iterable')
     expect(masked.anonymized).not.toContain('customerAcme')
+    const destructured = mask(
+      "TypeError: Cannot destructure property 'chargeCard' of 'customerRecord' as it is undefined. for customerAcme"
+    )
+    expect(destructured.anonymized).not.toContain('destructure')
+    expect(destructured.anonymized).not.toContain('customerAcme')
   })
 
   it('V8 wording that is not at the start of a line', () => {
-    const masked = mask("log('TypeError: chargeCard is not defined')")
-    expect(masked.anonymized).not.toContain('defined')
+    const masked = mask("log('TypeError: chargeCard is not iterable')")
+    expect(masked.anonymized).not.toContain('iterable')
   })
 
   it('a frame in the user’s own file, path included', () => {
-    const masked = mask('    at chargeCustomer (/srv/app/src/billing/invoice.js:6:10)')
-    for (const word of ['chargeCustomer', 'billing', 'invoice']) {
+    const masked = mask('    at chargeCustomer (/srv/app/src/quayward/tarnwick.js:6:10)')
+    for (const word of ['chargeCustomer', 'quayward', 'tarnwick']) {
       expect(masked.anonymized).not.toContain(word)
     }
     expect(masked.anonymized).toContain(':6:10)')
@@ -165,25 +173,25 @@ describe('the spans are positions in the whole text', () => {
   })
 
   it('V8’s word stays even when the code uses the same word as a name', () => {
-    const own = anonymize('const defined = isReady(properties)', { language: 'typescript' })
+    const own = anonymize('const iterable = isReady(destructure)', { language: 'typescript' })
     const masked = anonymize(
       [
-        'ReferenceError: chargeCard is not defined',
-        "TypeError: Cannot read properties of null (reading 'chargeCard')",
-        'const ready = defined && properties',
+        'TypeError: chargeCard is not iterable',
+        "TypeError: Cannot destructure property 'chargeCard' of 'customerRecord' as it is undefined.",
+        'const ready = iterable && destructure',
       ].join('\n'),
       { existingMap: own.map, language: 'typescript' }
     )
     const [first, second, third] = masked.anonymized.split('\n')
-    expect(first).toMatch(/ is not defined$/)
-    expect(second).toMatch(/^TypeError: Cannot read properties of null/)
-    expect(third).not.toContain('defined')
-    expect(third).not.toContain('properties')
+    expect(first).toMatch(/ is not iterable$/)
+    expect(second).toMatch(/^TypeError: Cannot destructure property '__/)
+    expect(third).not.toContain('iterable')
+    expect(third).not.toContain('destructure')
   })
 
   it('an unquoted slot is one expression, not a phrase', () => {
-    const masked = mask('TypeError: customer Acme is not defined')
-    expect(masked.anonymized).not.toContain('defined')
+    const masked = mask('TypeError: customer Acme is not iterable')
+    expect(masked.anonymized).not.toContain('iterable')
     expect(masked.anonymized).not.toContain('Acme')
   })
 })
@@ -219,9 +227,9 @@ describe('Node’s own frames stay as Node wrote them', () => {
   })
 
   it('keeps <anonymous> on a user frame and masks the path', () => {
-    const masked = mask('    at Object.<anonymous> (/srv/app/src/billing/invoice.js:8:1)')
+    const masked = mask('    at Object.<anonymous> (/srv/app/src/quayward/invoice.js:8:1)')
     expect(masked.anonymized).toContain('Object.<anonymous> (/')
-    expect(masked.anonymized).not.toContain('billing')
+    expect(masked.anonymized).not.toContain('quayward')
   })
 })
 

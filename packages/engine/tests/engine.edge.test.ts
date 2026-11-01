@@ -70,13 +70,13 @@ describe('determinism', () => {
   })
 
   it('placeholder numbering is stable across runs (longest-first ordering)', () => {
-    const code = 'class A_long_name_class { short() {} medium_length() {} }'
+    const code = 'class A_long_name_class { skerry() {} medium_length() {} }'
     const { map } = anonymize(code)
     // The longest identifier is processed first and so takes __CLS__1; the two
     // methods take __FN__1/__FN__2 in longest-first order.
     expect(map['__CLS__1']).toBe('A_long_name_class')
     expect(map['__FN__1']).toBe('medium_length')
-    expect(map['__FN__2']).toBe('short')
+    expect(map['__FN__2']).toBe('skerry')
     expect(anonymize(code).map).toEqual(map)
   })
 

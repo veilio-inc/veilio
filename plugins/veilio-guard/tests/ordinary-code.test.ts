@@ -43,9 +43,13 @@ test('a TypeScript Read keeps the language, with a map that holds its keywords',
     file_path: `${ROOT}/src/secrets.ts`,
   })
   const seen: string = res(out).file.content
-  // `value` is the project's own parameter, masked; the keywords stay.
-  expect(seen).toMatch(/export function __FN__1\(__VAR__\d+: string\): boolean \{/)
-  expect(seen).toMatch(/const __VAR__\d+ =/)
+  // Spec 064: ordinary words stay readable. `value` and `digits` are English
+  // words, left as written; the project's distinctive names are masked, and
+  // the keywords stay.
+  expect(seen).toContain('export function __FN__1(value: string): boolean {')
+  expect(seen).toMatch(/const digits = __FN__\d+\(value\)/)
+  expect(seen).not.toMatch(/\bdigitsOf\b|\btarnplot\b/)
+  expect(seen).toMatch(/export function __FN__\d+\(batch: number\[\]\): number \{/)
   expect(seen).not.toMatch(/__VAR__1009|__VAR__690|__FN__1006/)
 })
 
@@ -53,7 +57,10 @@ test('a search over TypeScript keeps the keywords on every line', async ($, on) 
   project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
   on('tool.call', () => GREP.r)
   const out = await $.tool.call(eventOf(GREP))
-  expect(res(out).content).toContain('export function __FN__1(')
+  // Ruling, round 4: `src/secrets.ts:3:export` reads as a credential word and
+  // its value, and is redacted - an accepted false positive in search output.
+  expect(res(out).content).toContain('function __FN__1(')
+  expect(res(out).content).toMatch(/src\/secrets\.ts:__REDACTED_CREDENTIAL_\d+__ function/)
   expect(res(out).content).not.toMatch(/__VAR__690|__FN__1006/)
 })
 
@@ -88,7 +95,9 @@ test('a test file reads with its third-party names, and the project name is mask
 })
 
 test('a typed command keeps the runner, its flag and the test directory', async ($, on) => {
-  project(on, { ...COLD_FILES, [MAP]: mapFile({ ...POISONED, __PKG__77: 'tenant' }) })
+  // Spec 064: the flag was `--tenant`, an ordinary word never masked; a
+  // distinctive one the map holds shows the flag is still kept as typed.
+  project(on, { ...COLD_FILES, [MAP]: mapFile({ ...POISONED, __PKG__77: 'tarnwick' }) })
   const sent: Fields[] = []
   on('prompt.submit', (_, e) => {
     sent.push(e)
@@ -96,16 +105,22 @@ test('a typed command keeps the runner, its flag and the test directory', async 
   })
   await $.prompt.submit({
     ...recordedPrompt('prompt.submit').e,
-    text: 'The command `npx vitest run --tenant tests/secrets.test.ts` fails. Fix luhnValid.',
+    text: 'The command `npx vitest run --tarnwick tests/secrets.test.ts` fails. Fix luhnValid.',
   })
-  expect(sent[0].text).toContain('npx vitest run --tenant tests/')
+  expect(sent[0].text).toContain('npx vitest run --tarnwick tests/')
   expect(sent[0].text).not.toContain('luhnValid')
 })
 
+// The test file, importing a distinctive name from the package as well.
+const IMPORTS_SKERRIFY = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!.replace(
+  "import { describe, expect, it } from 'vitest'",
+  "import { describe, expect, it, skerrify } from 'vitest'"
+)
+
 test('while the index is incomplete, a name imported from a package is still masked', async ($, on) => {
-  // Not every file is indexed yet: the one that declares `expect` might be next.
+  // Not every file is indexed yet: the one that declares `skerrify` might be next.
   project(on, { ...COLD_FILES, [MAP]: mapFile(POISONED) })
-  const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
+  const content = IMPORTS_SKERRIFY
   on('tool.call', () => ({
     ref: 1,
     result: {
@@ -125,19 +140,22 @@ test('while the index is incomplete, a name imported from a package is still mas
     tool_use_id: 't_partial',
     file_path: `${ROOT}/tests/secrets.test.ts`,
   })
-  expect(res(out).file.content).not.toContain('expect,')
+  expect(res(out).file.content).not.toContain('skerrify')
+  // Spec 064: ordinary words stay readable. `expect` is an English word.
+  expect(res(out).file.content).toContain('expect,')
 })
 
 // Final review of b0dded9: claims that had no test of their own.
 test('a word the project declares stays masked though a package it imports exports it', async ($, on) => {
   const files = {
     ...COLD_FILES,
-    // The project's own `expect`, beside the test that imports vitest's.
-    [`${ROOT}/src/expectations.ts`]: 'export function expect(total: number) { return total }\n',
+    // The project's own `skerrify`, beside the test that imports vitest's.
+    [`${ROOT}/tests/secrets.test.ts`]: IMPORTS_SKERRIFY,
+    [`${ROOT}/src/expectations.ts`]: 'export function skerrify(total: number) { return total }\n',
   }
   project(on, { ...files, [MAP]: mapFile(POISONED) })
   on('session.start', () => ({ cwd: ROOT }))
-  const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
+  const content = IMPORTS_SKERRIFY
   on('tool.call', () => ({
     ref: 1,
     result: {
@@ -160,18 +178,56 @@ test('a word the project declares stays masked though a package it imports expor
   })
   const seen: string = res(out).file.content
   expect(seen).toContain('describe')
-  expect(seen).not.toMatch(/\bexpect\b/)
+  expect(seen).not.toMatch(/\bskerrify\b/)
+})
+
+test('a project declaring an ordinary word a package also exports leaves it readable', async ($, on) => {
+  // Spec 064: ordinary words stay readable. The project's own `expect` is an
+  // English word: no placeholder is minted for it, wherever it is declared.
+  const files = {
+    ...COLD_FILES,
+    [`${ROOT}/src/expectations.ts`]: 'export function expect(total: number) { return total }\n',
+  }
+  project(on, { ...files, [MAP]: mapFile(POISONED) })
+  on('session.start', () => ({ cwd: ROOT }))
+  const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
+  on('tool.call', () => ({
+    ref: 1,
+    result: {
+      type: 'text',
+      file: {
+        filePath: `${ROOT}/tests/secrets.test.ts`,
+        content,
+        numLines: 7,
+        startLine: 1,
+        totalLines: 7,
+      },
+    },
+    isReadOnly: true,
+  }))
+  await $.session.start({ surface: 'terminal', isInteractive: false, cwd: ROOT })
+  const out = await $.tool.call({
+    tool: 'Read',
+    tool_use_id: 't_own_word',
+    file_path: `${ROOT}/tests/secrets.test.ts`,
+  })
+  const seen: string = res(out).file.content
+  expect(seen).toContain("import { describe, expect, it } from 'vitest'")
+  expect(seen).not.toContain('luhnValid')
 })
 
 test('a word that is a keyword in one language and a name in another is masked only where it is a name', async ($, on) => {
-  project(on, { ...COLD_FILES, [MAP]: mapFile({ __VAR__1016: 'new' }) })
+  // Spec 064: `new` is an ordinary word and never masked; `instanceof` is a
+  // TypeScript keyword, a plain name in Python, and no English word.
+  project(on, { ...COLD_FILES, [MAP]: mapFile({ __VAR__1016: 'instanceof' }) })
   on('tool.call', () => ({
     ref: 1,
     result: {
       mode: 'content',
       numFiles: 0,
       filenames: [],
-      content: 'app/models.py:3:new = settle(1)\nsrc/batch.ts:4:  const card = new Card()',
+      content:
+        'app/models.py:3:instanceof = settle(1)\nsrc/batch.ts:4:  const ok = card instanceof Card',
       numLines: 2,
       totalLines: 2,
     },
@@ -181,10 +237,10 @@ test('a word that is a keyword in one language and a name in another is masked o
   const out = await $.tool.call({
     tool: 'Grep',
     tool_use_id: 't_mix',
-    pattern: 'new',
+    pattern: 'instanceof',
     output_mode: 'content',
   })
   const [py, tsLine] = String(res(out).content).split('\n')
   expect(py).toContain('__VAR__1016 = ')
-  expect(tsLine).toContain('= new Card()')
+  expect(tsLine).toContain('card instanceof Card')
 })

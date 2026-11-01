@@ -52,6 +52,8 @@ export const REFUSAL_CODES = [
   'team_maps_unreadable',
   'team_map_unopenable',
   'clash',
+  'unreserved_numbers',
+  'local_entry_unpublishable',
   'would_drop',
   'pull_would_drop',
   'diverged',
@@ -267,6 +269,17 @@ export const WORDING: Record<RefusalCode, Words> = {
     resolve:
       'Re-run `veilio scrub --team` to number this project out of the team’s own allocation, then push the result.',
   }),
+  unreserved_numbers: (p) => ({
+    message:
+      `${p.count} ${plural(p.count, 'entry', 'entries')} in this map ${plural(p.count, 'is', 'are')} numbered outside the team numbers this account reserved (${p.list}), ` +
+      `and new numbers could not be reserved for ${plural(p.count, 'it', 'them')} (${sentence(p.detail)}). Nothing was uploaded.`,
+    resolve:
+      'Try again in a few minutes; if it keeps failing, run `veilio maps pull` for a fresh block of team numbers, then push again.',
+  }),
+  local_entry_unpublishable: (p) => ({
+    message: `this team map still holds placeholders numbered on one machine (${p.list}). Nothing was uploaded.`,
+    resolve: 'Run the publish again so they are renumbered, or report this as a bug.',
+  }),
   would_drop: (p) => ({
     message: `updating ${label(p)} would drop ${p.count} ${plural(p.count, 'entry', 'entries')} the Cloud map holds and this project's map does not (${p.list}). Nothing was written.`,
     resolve:
@@ -443,3 +456,8 @@ export function refusalFromCloudError(
       return refusal('server', { detail: err.message })
   }
 }
+
+// The custom-rules sentences live in their own module, with no import of the
+// cloud boundary, because `veilio scrub` prints them and must stay offline
+// (offline.test.ts). Re-exported so every renderer finds them here.
+export * from './rules-skipped.js'

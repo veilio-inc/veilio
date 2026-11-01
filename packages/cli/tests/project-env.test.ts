@@ -56,16 +56,16 @@ beforeEach(async () => {
     owner: TEAMMATE,
     name: 'billing-names',
     project: 'p-billing',
-    map_data: await sealTeam({ __CLS__1: 'Alpha' }),
+    map_data: await sealTeam({ __CLS__1: 'Skerrify' }),
   }).id
   toolsMap = cloud.add({
     scope: 'team',
     owner: TEAMMATE,
     name: 'tools-names',
     project: 'p-tools',
-    map_data: await sealTeam({ __CLS__5: 'Gamma' }),
+    map_data: await sealTeam({ __CLS__5: 'TarnGamma' }),
   }).id
-  writeFileSync(join(cwd, 'g.ts'), 'export class Gamma {}\n')
+  writeFileSync(join(cwd, 'g.ts'), 'export class TarnGamma {}\n')
 })
 
 afterEach(() => {
@@ -126,7 +126,7 @@ describe('VEILIO_PROJECT wins over the stored choice', () => {
     expect(r.out).not.toContain(billingMap)
   })
 
-  it('scrub numbers from the variable’s project: Gamma is tools’ __CLS__5', async () => {
+  it('scrub numbers from the variable’s project: TarnGamma is tools’ __CLS__5', async () => {
     signIn(home, { team: true, project: 'p-billing' })
     const r = await run(['scrub', 'g.ts'], { VEILIO_PROJECT: 'tools' })
     expect(r.code, r.err).toBe(EXIT_OK)
@@ -138,8 +138,8 @@ describe('VEILIO_PROJECT wins over the stored choice', () => {
   it('a team push lands in the variable’s project - and the stored choice is untouched', async () => {
     signIn(home, { team: true, project: 'p-billing' })
     const before = readFileSync(credentialPath(home), 'utf8')
-    saveMap(storePath(), { __CLS__1: 'Gamma' }, { force: true })
-    // __CLS__1 is billing's Alpha; in tools it is free. Pushed into tools,
+    saveMap(storePath(), { __CLS__1: 'TarnGamma' }, { force: true })
+    // __CLS__1 is billing's Skerrify; in tools it is free. Pushed into tools,
     // it is accepted - which it would not be in billing.
     const r = await run(['maps', 'push', '--team', 'mine'], { VEILIO_PROJECT: 'tools' })
     expect(r.code, r.err).toBe(EXIT_OK)
@@ -212,7 +212,7 @@ describe('a value that names no project is refused, naming it (never a fallback)
 
   it('restore of text holding a placeholder: refused', async () => {
     signIn(home, { team: true, project: 'p-billing' })
-    saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
+    saveMap(storePath(), { __CLS__1: 'Skerrify' }, { force: true })
     const r = await run(['restore'], { VEILIO_PROJECT: 'payroll' }, 'class __CLS__1 {}\n')
     expect(r.code).toBe(EXIT_ERROR)
     expect(r.out).toBe('')
@@ -319,9 +319,9 @@ describe('the wording says when the variable chose the project', () => {
       scope: 'team',
       name: 'mine',
       project: 'p-billing',
-      map_data: await sealTeam({ __CLS__1: 'Alpha' }),
+      map_data: await sealTeam({ __CLS__1: 'Skerrify' }),
     }).id
-    saveMap(storePath(), { __CLS__1: 'Alpha' }, { force: true })
+    saveMap(storePath(), { __CLS__1: 'Skerrify' }, { force: true })
     const r = await run(['maps', 'update', mine], { VEILIO_PROJECT: 'tools' })
     expect(r.code).toBe(EXIT_ERROR)
     // One clause, not "(from VEILIO_PROJECT) (the project in use)".
@@ -432,7 +432,7 @@ describe('the variable applies to team maps only: a personal map is never refuse
 
   it('maps update of a team map: the bad value is still refused, naming it', async () => {
     signIn(home, { team: true })
-    saveMap(storePath(), { __CLS__5: 'Gamma', __FN__2: 'b' }, { force: true })
+    saveMap(storePath(), { __CLS__5: 'TarnGamma', __FN__2: 'b' }, { force: true })
     const r = await run(['maps', 'update', toolsMap], bad)
     expect(r.code).toBe(EXIT_ERROR)
     expect(r.err).toContain('VEILIO_PROJECT is "payroll"')
@@ -453,7 +453,7 @@ describe('the variable applies to team maps only: a personal map is never refuse
       scope: 'team',
       name: 'mine',
       project: 'p-tools',
-      map_data: await sealTeam({ __CLS__6: 'Delta' }),
+      map_data: await sealTeam({ __CLS__6: 'QuayDelta' }),
     })
     const r = await run(['maps', 'rm', mine.id], { VEILIO_PROJECT: 'tools' })
     expect(r.code, r.err).toBe(EXIT_OK)
@@ -467,7 +467,7 @@ describe('maps pull under the variable', () => {
     const r = await run(['maps', 'pull', toolsMap], { VEILIO_PROJECT: 'tools' })
     expect(r.code, r.err).toBe(EXIT_OK)
     expect(JSON.parse(readFileSync(storePath(), 'utf8'))).toMatchObject({
-      map: { __CLS__5: 'Gamma' },
+      map: { __CLS__5: 'TarnGamma' },
     })
   })
 

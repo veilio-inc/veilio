@@ -21,12 +21,15 @@ import './identity.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
-  detectSecrets,
+  detectCredentials,
   isPlaceholder,
   restore,
   restoreLayers,
+  RULES_STOPPED_NOTE,
+  appearsAsToken,
   disputedNote,
   locallyNumberedNote,
+  localFamilyNote,
   summarizeSecrets,
   withAiPreamble,
   BIN_NAME,
@@ -40,6 +43,7 @@ import {
   languageOfPath,
   type LanguageOption,
   fileKindOf,
+  isLocalPlaceholder,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -48,7 +52,14 @@ import {
   namespaceLine,
   refreshNamespaceIfStale,
 } from './namespace.js'
-import { teamLayerNote } from '@veilio-inc/cli/team-namespace'
+import { misattributedNote, teamLayerNote, unissuedNote } from '@veilio-inc/cli/team-namespace'
+import {
+  contestedNote,
+  ownWithAliases,
+  ignoredKeysNote,
+  localNumbering,
+  reservationRefusedSentence,
+} from '@veilio-inc/cli/reservations'
 import { anonymizeOverTeam } from '@veilio-inc/cli/team-anonymize'
 
 /** Said when a tool call has just started reloading the team's maps. */
@@ -63,7 +74,7 @@ import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
 import { thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
-import { projectOverride, refusal } from '@veilio-inc/cli/client'
+import { projectOverride, refusal, rulesSkippedSentences } from '@veilio-inc/cli/client'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -307,9 +318,15 @@ function runAnonymize(
       })()
     : new Set<string>()
   const rules = getRules()
+  // Spec 066 R3: in a team, inside this checkout's block, else its local
+  // family - read from reserved.json, never written, never reserved here.
+  const owner = resolved.owner
+  const numbering = owner
+    ? localNumbering(mapPath, owner, owner.teamId, { write: false })
+    : undefined
   // The same composition `veilio scrub` uses (spec 030): the team's maps over
-  // this project's, new names above both, and only the team entries the output
-  // uses kept in the store.
+  // this project's, new names inside the block or local, and only the team
+  // entries the output uses kept in the store.
   const { result, toPersist } = anonymizeOverTeam(
     source,
     localMap,
@@ -324,9 +341,13 @@ function runAnonymize(
         ...(rules.rules ?? []),
         ...keepRule(keep, 'veilio-scrub-third-party', 'veilio scrub: third-party names'),
       ],
-    }
+    },
+    numbering
   )
   saveMap(mapPath, toPersist)
+  const localMints = Object.keys(result.map).filter(
+    (p) => isLocalPlaceholder(p) && !(p in localMap)
+  ).length
 
   const body =
     args.preamble === true ? withAiPreamble(result.anonymized, result.map) : result.anonymized
@@ -336,6 +357,7 @@ function runAnonymize(
   // to decide for itself; dropping them here would leave an agent believing the
   // output is clean when a name is sitting in a comment inside it.
   const caveats: string[] = []
+  if (result.rulesStopped) caveats.push(`WARNING: ${RULES_STOPPED_NOTE}`)
   if (result.languageFallback) {
     caveats.push(
       `WARNING: no language marker matched. Masked as ${LANGUAGE_LABELS[result.language]}, ` +
@@ -363,6 +385,20 @@ function runAnonymize(
     // Stated every time, like the namespace: an agent whose masking ignored the
     // team's rules must be able to tell.
     rulesLine(rules),
+    // Beside the source, on every result while it holds: rules the account set
+    // were not applied, so the masking is less than its owner expects.
+    ...rulesSkippedSentences(rules.skipped),
+    // Spec 066 R8: on every result while this checkout's last reservation is
+    // refused, and whenever this call numbered names on this machine only.
+    ...(numbering?.refused
+      ? [`WARNING: ${reservationRefusedSentence(numbering.refused, numbering.tag)}`]
+      : []),
+    ...(localMints > 0
+      ? [
+          `${localMints} name${localMints === 1 ? '' : 's'} numbered locally (__LOCAL_${numbering?.tag}_…): ` +
+            "teammates' restores leave them as written until this checkout's next publish.",
+        ]
+      : []),
     secretSummary(result.secrets),
     ...caveats,
   ].join('\n')
@@ -436,9 +472,10 @@ export const TOOLS: ToolDefinition[] = [
     title: 'Restore real identifiers',
     description:
       `Swap placeholders back to the real identifiers using the stored symbol map, and strip ` +
-      `AI-generated noise (JSDoc, TODO comments, narration). Use this on a reply that came back ` +
-      `containing placeholders. Note that irreversibly redacted credentials stay redacted — ` +
-      `that is deliberate.`,
+      `AI-generated noise (JSDoc, TODO comments, narration). Its result puts the real names ` +
+      `into your context, which undoes the masking for whatever it restores: call it only ` +
+      `when the developer asks for restored text for their own use, never to read the ` +
+      `project. Irreversibly redacted credentials stay redacted - that is deliberate.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -456,7 +493,9 @@ export const TOOLS: ToolDefinition[] = [
     handler: (args, ctx) => {
       const text = str(args, 'text', true)
       const strict = bool(args, 'strict')
-      const own = loadMap(resolveMapPath(ctx.mapPath, ctx.cwd))
+      // Spec 063: this member's renumbered old placeholders still read back here.
+      const mapPath = resolveMapPath(ctx.mapPath, ctx.cwd)
+      const { own, contested: contestedAll, ignored } = ownWithAliases(mapPath, loadMap(mapPath))
       // The one restore rule (spec 028), shared with the web app and the CLI:
       // the team's maps - aliases included, disputed placeholders left out -
       // then this project's map on top where it is in the team's numbering.
@@ -478,27 +517,64 @@ export const TOOLS: ToolDefinition[] = [
         throw new ToolError(`no symbol map yet — run anonymize_file (or "${BIN_NAME} scrub") first`)
       }
       const layers = restoreLayers({ own, team })
-      const disputed = layers.disputedIn(text)
+      // Spec 063: a number another member reserved is left with its own reason.
+      const misattributed = team && found.status === 'team' ? (found.misattributed ?? []) : []
+      // Round 4 (D): above every number the server issued for its kind.
+      const unissued = team && found.status === 'team' ? (found.unissued ?? []) : []
+      const disputedAll = layers.disputedIn(text)
+      const otherMembers = disputedAll.filter((p) => misattributed.includes(p))
+      const notIssued = disputedAll.filter(
+        (p) => unissued.includes(p) && !misattributed.includes(p)
+      )
+      const disputed = disputedAll.filter(
+        (p) => !misattributed.includes(p) && !unissued.includes(p)
+      )
       const localOnly = layers.locallyNumberedIn(text)
-      const result = restore(text, layers.map)
+      // Spec 066 R5: another checkout numbered these while it held no team numbers.
+      const otherLocal = layers.otherLocalIn(text)
+      const contested = contestedAll.filter((p) => appearsAsToken(text, p))
+      // A contested placeholder is in no layer: not this member's, not the team's.
+      const restoreMap = { ...layers.map }
+      for (const p of contestedAll) delete restoreMap[p]
+      const result = restore(text, restoreMap)
       // Measured against this project's map, not the whole team layer (review),
       // and a placeholder left for a named reason is not "invented".
       const report: RestoreReport = {
         ...result.report,
         missing: result.report.missing.filter((p) => p in own),
         unresolved: result.report.unresolved.filter(
-          (p) => !disputed.includes(p) && !localOnly.includes(p)
+          (p) =>
+            !disputed.includes(p) &&
+            !localOnly.includes(p) &&
+            !otherMembers.includes(p) &&
+            !notIssued.includes(p) &&
+            !contested.includes(p) &&
+            !otherLocal.includes(p)
         ),
       }
       const counted = new Set([...Object.keys(own), ...result.report.resolved]).size
       const altered = result.report.altered
-      const left = [...report.unresolved, ...disputed, ...localOnly, ...altered]
+      const left = [
+        ...report.unresolved,
+        ...disputed,
+        ...otherMembers,
+        ...notIssued,
+        ...contested,
+        ...localOnly,
+        ...otherLocal,
+        ...altered,
+      ]
       const warnings = [
         ...(refreshing ? [loadingNote(refreshing)] : []),
         ...(note ? [`WARNING: ${note}`] : []),
         ...(disputed.length ? [`WARNING: ${disputedNote(disputed)}`] : []),
+        ...(otherMembers.length ? [`WARNING: ${misattributedNote(otherMembers)}`] : []),
+        ...(notIssued.length ? [`WARNING: ${unissuedNote(notIssued)}`] : []),
+        ...(contested.length ? [`WARNING: ${contestedNote(contested)}`] : []),
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
+        ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
+        ...(ignored ? [`WARNING: ${ignoredKeysNote(ignored)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used
       // (locked, unreadable): not a success, whatever else restored (FR-005).
@@ -546,7 +622,11 @@ export const TOOLS: ToolDefinition[] = [
       const { text, label } = readTarget(args, ctx)
       const path = str(args, 'path')
       const fileKind = path ? fileKindOf(path) : undefined
-      const findings = detectSecrets(text, fileKind ? { fileKind } : {})
+      const language = path ? languageOfPath(path) : null
+      const findings = detectCredentials(text, {
+        ...(fileKind ? { fileKind } : {}),
+        ...(language ? { language } : {}),
+      })
       return { text: `Scanned ${label}.\n${secretSummary(findings)}` }
     },
   },

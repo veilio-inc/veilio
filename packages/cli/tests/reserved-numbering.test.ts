@@ -55,7 +55,14 @@ describe('reservePlaceholders (the client call)', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const out = await reservePlaceholders(CRED, 'team-1', [{ base: '__CLS__', count: 2, floor: 3 }])
+    // The floor is vouched for by a run the team holds, so nothing is listed.
+    const out = await reservePlaceholders(
+      CRED,
+      'team-1',
+      [{ base: '__CLS__', count: 2, floor: 3 }],
+      undefined,
+      { reservations: [{ base: '__CLS__', start: 1, end: 3, member: 'u-me' }] }
+    )
 
     expect(out.ranges).toEqual([{ base: '__CLS__', start: 4, end: 5 }])
     const [url, init] = fetchMock.mock.calls[0]!
@@ -63,6 +70,7 @@ describe('reservePlaceholders (the client call)', () => {
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body as string)).toEqual({
       requests: [{ base: '__CLS__', count: 2, floor: 3 }],
+      partial: true,
     })
     vi.unstubAllGlobals()
   })

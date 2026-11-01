@@ -38,6 +38,10 @@ const NOT_TOOLS = new Set([
   // masks, quoted to show their shape.
   'snake_case_identifier_name',
   'team_layers',
+  // Spec 064 examples of snake_case names that stay masked: packages/engine/
+  // README.md (`customer_invoices`) and packages/cli/README.md (`berth_quorum`).
+  'customer_invoices',
+  'berth_quorum',
 ])
 
 describe('MCP tools named in the public docs', () => {

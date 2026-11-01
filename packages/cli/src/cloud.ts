@@ -23,9 +23,10 @@
 // anything crosses it, and so the tests that police it are written against
 // something real. Phase 4 (`login`, `logout`, `whoami`) is what consumes it.
 
+import { isEngineBase, isSaneBlock } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
+import { wireBase } from './hashed-bases.js'
 import { VERSION } from './version.js'
-import type { CustomRule } from '@veilio-inc/engine'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
@@ -285,7 +286,12 @@ export interface CloudMapList {
   teamNamespace?: Record<string, string> | null
   /** The active team, when the account has one. Needed to ask for that team's
    *  key wraps. */
-  team: { id: string } | null
+  team: {
+    id: string
+    /** Spec 063: the runs of team numbers this account holds. Absent on an
+     *  instance from before it, which keeps no such record. */
+    reservations?: { base: string; start: number; end: number }[]
+  } | null
   plan: string
 }
 
@@ -335,11 +341,28 @@ export function listMaps(credential: Credential, signal?: AbortSignal): Promise<
   return request<CloudMapList>(`/api/maps${projectQuery(credential)}`, { credential, signal })
 }
 
-/** The account's custom rules: its own, and those of the teams it is in. */
-export function listRules(
-  credential: Credential
-): Promise<{ rules: CustomRule[]; teamRules: CustomRule[] }> {
-  return request<{ rules: CustomRule[]; teamRules: CustomRule[] }>('/api/rules', { credential })
+/** A custom rule as Cloud holds it (spec 065): only what it needs to store and
+ *  order it is readable. `data` is the customer's envelope as a JSON string - a
+ *  vault envelope under the personal-maps key, or a team envelope under the team
+ *  key - holding the name, type, pattern, placeholder and enabled state. */
+export interface SealedRule {
+  id: string
+  scope: 'personal' | 'team'
+  team_id: string | null
+  sort_order: number
+  key_version?: number
+  data: string
+  updated_at?: string
+}
+
+export interface SealedRuleList {
+  rules: SealedRule[]
+  teamRules: SealedRule[]
+}
+
+/** The account's custom rules, sealed: its own, and those of the teams it is in. */
+export function listRules(credential: Credential): Promise<SealedRuleList> {
+  return request<SealedRuleList>('/api/rules', { credential })
 }
 
 /**
@@ -351,7 +374,12 @@ export function listRules(
 export function getTeamEnvelopes(
   credential: Credential,
   signal?: AbortSignal
-): Promise<{ maps: { id: string; created_at: string; map_data: string }[]; unreadable: string[] }> {
+): Promise<{
+  maps: { id: string; created_at: string; map_data: string; owner_id?: string }[]
+  unreadable: string[]
+  /** Spec 063: who holds which of the team's numbers. Absent on an older instance. */
+  reservations?: PlaceholderReservation[]
+}> {
   return request(`/api/maps/team-envelopes${projectQuery(credential)}`, { credential, signal })
 }
 
@@ -483,7 +511,7 @@ export function listProjects(
 export function getTeamKeyPending(
   credential: Credential,
   teamId: string
-): Promise<{ rotationNeededSince?: string | null; nextVersion?: number }> {
+): Promise<{ rotationNeededSince?: string | null; nextVersion?: number; version?: number }> {
   return request(`/api/teams/${encodeURIComponent(teamId)}/key/pending`, { credential })
 }
 
@@ -541,8 +569,26 @@ export async function reservePlaceholders(
   credential: Credential,
   teamId: string,
   requests: readonly { base: string; count: number; floor: number }[],
-  signal?: AbortSignal
-): Promise<{ ranges: PlaceholderRange[] }> {
+  signal?: AbortSignal,
+  options: {
+    block?: boolean
+    /** The team's raw keys, newest first: a rule's base is sent as its hash
+     *  under the newest (founder decision, Cloud audit M1). */
+    keys?: readonly Uint8Array[]
+    /** The newest key's version (`teamKeyVersion`): a rule base is reserved
+     *  only while the server's current version is this one. */
+    keyVersion?: number
+    /** The team's reservations, when the caller has already read them;
+     *  null when it asked and the instance keeps no record (404). */
+    reservations?: readonly PlaceholderReservation[] | null
+  } = {}
+): Promise<{
+  ranges: PlaceholderRange[]
+  refused?: { bases: string[]; detail: string }
+  /** The floor sent per real base, once vouched (round 4): a run must start above it. */
+  floors?: Record<string, number>
+}> {
+  const key = options.keys?.[0]
   for (const { base, count } of requests) {
     if (!PLACEHOLDER_BASE.test(base)) {
       throw new CloudError(
@@ -553,11 +599,246 @@ export async function reservePlaceholders(
     if (!Number.isInteger(count) || count < 1) {
       throw new CloudError('forbidden', `cannot reserve ${count} numbers for ${base}`)
     }
+    // Never in plain text: with no key to hash it, nothing is sent.
+    if (!isEngineBase(base) && !key) {
+      throw new CloudError(
+        'forbidden',
+        `numbers for ${base} are reserved under its hash with the team key, and the team key is not unlocked on this machine - run \`veilio team unlock\``
+      )
+    }
   }
-  return request<{ ranges: PlaceholderRange[] }>(
-    `/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`,
-    { credential, method: 'POST', body: { requests }, signal }
-  )
+  // Security review: the server counts per (team, base), so a rule base's
+  // numbers reserved under its plain name (an older CLI) or an older key's
+  // hash (before a rotation) are invisible to this hash's counter. Floored
+  // above every sane reservation under its hash under any key version held
+  // here - never its plain name (round 4: those exist only from before
+  // hashing, on staging) and never another hash, so one rule's (or a hostile
+  // teammate's) huge block cannot floor every other base. No listing, no
+  // reservation for a rule base.
+  // Security review (Cloud 809444d0): a rule base is hashed under the newest
+  // key held here, and only while the server's current version is that one.
+  // A server reporting an older one (a downgrade), a newer one or none gets
+  // nothing for it; the caller numbers it in the local family and says so.
+  // Asked only when a rule base is in the request.
+  let refused: { bases: string[]; detail: string } | undefined
+  const rules = requests.filter((r) => !isEngineBase(r.base)).map((r) => r.base)
+  if (rules.length) {
+    const served = (await getTeamKeyPending(credential, teamId))?.version
+    if (!Number.isInteger(served) || served !== options.keyVersion)
+      refused = {
+        bases: rules,
+        detail:
+          `numbers for ${rules.join(', ')} were not reserved: the team key is at version ${Number.isInteger(served) ? served : 'unknown'} on the server and ${options.keyVersion ?? 'none'} on this machine, so they are numbered on this machine (__LOCAL_…) - run \`veilio team unlock\``.slice(
+            0,
+            200
+          ),
+      }
+  }
+  const refusedBases = new Set(refused?.bases ?? [])
+  const refuse = (base: string, detail: string) => {
+    refusedBases.add(base)
+    refused = {
+      bases: [...refusedBases],
+      detail: (refused ? `${refused.detail}; ${detail}` : detail).slice(0, 200),
+    }
+  }
+  const asked = requests.filter((r) => !refusedBases.has(r.base))
+  if (asked.length === 0) return { ranges: [], refused }
+  // The names a base is listed under: as written for an engine base; a rule
+  // base only under its hash with each held key version, never in plain text
+  // - a rule's plain reservations exist only from before hashing, on staging.
+  const servedNames = (base: string) =>
+    isEngineBase(base) ? [base] : (options.keys ?? []).map((k) => wireBase(base, k))
+  // Round 4 (D): a floor counts only numbers the server issued. One no known
+  // run vouches for (a map holding a planted __VAR__60000) is checked against
+  // the team's listing for its base; still unvouched, it falls to the base's
+  // highest issued number - a no-op, the counter is there already - or, for a
+  // base never reserved, to at most 10000: the server's own margin, so a map
+  // numbered before the team existed still floors its first run.
+  const known = options.reservations ?? []
+  const unrecorded = options.reservations === null
+  const vouches = (rows: readonly PlaceholderReservation[], names: string[], n: number) =>
+    rows.some((h) => names.includes(h?.base) && isSaneBlock(h) && n >= h.start && n <= h.end)
+  const topOf = (rows: readonly PlaceholderReservation[], names: string[]) =>
+    Math.max(0, ...rows.filter((h) => names.includes(h?.base) && isSaneBlock(h)).map((h) => h.end))
+  const unsure = asked.filter((r) => {
+    const names = servedNames(r.base)
+    if (!isEngineBase(r.base) && !options.reservations && !unrecorded) return true
+    return r.floor > topOf(known, names) && !vouches(known, names, r.floor)
+  })
+  // An instance that keeps no record (404) vouches for nothing and refuses
+  // nothing for it: floors stay as the maps say, as before spec 063.
+  const listing =
+    unsure.length && !unrecorded
+      ? await readReservationsFor(
+          credential,
+          teamId,
+          unsure.flatMap((r) => servedNames(r.base)),
+          signal
+        )
+      : null
+  if (listing === null && asked.some((r) => !isEngineBase(r.base)) && (unsure.length || unrecorded))
+    await readReservations(credential, teamId, signal) // throws: no listing, no rule base
+  const listed = listing ?? { reservations: [], highest: {}, truncated: [] }
+  const real = new Map<string, string>()
+  let wire = asked.map((r) => {
+    const sent = key ? wireBase(r.base, key) : r.base
+    real.set(sent, r.base)
+    const names = servedNames(r.base)
+    let floor = r.floor
+    const rows = unsure.includes(r) ? listed.reservations : known
+    const top = Math.max(topOf(rows, names), ...names.map((n) => listed.highest[n] ?? 0))
+    if (listing && unsure.includes(r) && !vouches(rows, names, floor))
+      floor = top > 0 ? Math.min(floor, top) : Math.min(floor, 10_000)
+    // Security review: a rule base's numbers reserved under an older key's
+    // hash are another counter: floored above every one of them.
+    if (!isEngineBase(r.base)) floor = Math.max(floor, top)
+    return { ...r, base: sent, floor }
+  })
+  // Round 4 (D): the server answers per base with `partial: true`. One that
+  // answers all or nothing (an older server) and names the base it refuses
+  // is asked again without it; that base alone falls to the local family.
+  let answer: { ranges: (PlaceholderRange & { refused?: string; message?: string })[] } | null =
+    null
+  while (wire.length > 0) {
+    try {
+      answer = await request<{
+        ranges: (PlaceholderRange & { refused?: string; message?: string })[]
+      }>(`/api/teams/${encodeURIComponent(teamId)}/placeholders/reserve`, {
+        credential,
+        method: 'POST',
+        // Spec 063: a block, whose size the server sets, for the guard to number in offline.
+        body: { requests: wire, ...(options.block ? { block: true } : {}), partial: true },
+        signal,
+      })
+      break
+    } catch (err) {
+      // Cloud 86772272: the 400 lists the refused bases; an older one only
+      // names one in its message.
+      const said = err instanceof CloudError && err.status === 400 ? err.message : ''
+      const body = err instanceof CloudError ? err.body : undefined
+      const listedRefused: unknown[] = said && Array.isArray(body?.refused) ? body.refused : []
+      const refusedNames = listedRefused.map((x: unknown) =>
+        typeof x === 'string' ? x : (x as { base?: unknown })?.base
+      )
+      const named = said
+        ? wire.filter((w) => refusedNames.includes(w.base) || said.includes(w.base))
+        : []
+      if (named.length === 0) throw err
+      for (const w of named) refuse(real.get(w.base)!, printableDetail(said))
+      wire = wire.filter((w) => !named.includes(w))
+    }
+  }
+  const floors = Object.fromEntries(wire.map((w) => [real.get(w.base)!, w.floor]))
+  if (!answer) return { ranges: [], refused, floors }
+  // Read back under the real base; a base the request did not send stays as
+  // served, and the caller's check refuses it. A refused base is no range.
+  const ranges = Array.isArray(answer?.ranges)
+    ? answer.ranges.flatMap((r) => {
+        const base = real.get(r?.base) ?? r?.base
+        if (r && typeof r.refused === 'string') {
+          refuse(base, printableDetail(`${base}: ${r.message ?? r.refused}`))
+          return []
+        }
+        return [{ ...r, base }]
+      })
+    : answer?.ranges
+  return { ...answer, ranges, floors, ...(refused ? { refused } : {}) }
+}
+
+/** A server's words, as a refusal's detail: one line, no control characters. */
+function printableDetail(text: string): string {
+  // eslint-disable-next-line no-control-regex -- matching them is the point
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?').slice(0, 200)
+}
+
+/**
+ * Round 4 (E): the team's reservations of these bases only - the server
+ * answers `?bases=` with every row of each, never cut short for one, and each
+ * base's `highest`. An older server ignores the parameter or refuses it (400):
+ * the whole listing then, read here and filtered, as before. Null: the
+ * instance keeps no record of reservations (404).
+ */
+export async function readReservationsFor(
+  credential: Credential,
+  teamId: string,
+  bases: readonly string[],
+  signal?: AbortSignal
+): Promise<{
+  reservations: PlaceholderReservation[]
+  highest: Record<string, number>
+  /** Bases whose rows the server cut short; their `highest` still stands. */
+  truncated: string[]
+} | null> {
+  const wanted = [...new Set(bases)]
+  const rows: PlaceholderReservation[] = []
+  let highest: Record<string, number> = {}
+  const truncated: string[] = []
+  try {
+    // At most 50 bases a request (Cloud 86772272).
+    for (let i = 0; i < wanted.length; i += 50) {
+      const chunk = wanted.slice(i, i + 50)
+      let after = 0
+      for (let page = 0; ; page++) {
+        if (page >= 1000)
+          throw new CloudError('server', "the team's reservations did not end after 1000 pages")
+        const r = await request<{
+          reservations: PlaceholderReservation[]
+          highest?: Record<string, number>
+          truncated?: string[]
+          next: number | null
+        }>(
+          `/api/teams/${encodeURIComponent(teamId)}/placeholders/reservations?bases=${encodeURIComponent(chunk.join(','))}&limit=1000&after=${after}`,
+          { credential, signal }
+        )
+        if (Array.isArray(r?.reservations)) rows.push(...r.reservations)
+        if (r?.highest && typeof r.highest === 'object') highest = { ...highest, ...r.highest }
+        if (Array.isArray(r?.truncated)) truncated.push(...r.truncated)
+        if (typeof r?.next !== 'number') break
+        after = r.next
+      }
+    }
+  } catch (err) {
+    if (err instanceof CloudError && err.status === 404) return null
+    if (!(err instanceof CloudError && err.status === 400)) throw err
+    rows.splice(0, rows.length, ...(await readReservations(credential, teamId, signal)))
+    highest = {}
+  }
+  const sane = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 1e8
+  return {
+    reservations: rows.filter((r) => wanted.includes(r?.base)),
+    highest: Object.fromEntries(
+      Object.entries(highest).filter(([b, n]) => wanted.includes(b) && sane(n))
+    ),
+    truncated: truncated.filter((b) => wanted.includes(b)),
+  }
+}
+
+/** One run of the team's numbers and the member who reserved it (spec 063). */
+export type PlaceholderReservation = { base: string; start: number; end: number; member: string }
+
+/**
+ * Who holds which of the team's numbers: every page. Numbers, kinds and
+ * account ids only - restore reads it to leave in place a placeholder whose
+ * map was published by someone other than its number's reserver.
+ */
+export async function readReservations(
+  credential: Credential,
+  teamId: string,
+  signal?: AbortSignal
+): Promise<PlaceholderReservation[]> {
+  const all: PlaceholderReservation[] = []
+  let after = 0
+  for (let page = 0; page < 1000; page++) {
+    const r = await request<{ reservations: PlaceholderReservation[]; next: number | null }>(
+      `/api/teams/${encodeURIComponent(teamId)}/placeholders/reservations?limit=1000&after=${after}`,
+      { credential, signal }
+    )
+    all.push(...r.reservations)
+    if (r.next === null) return all
+    after = r.next
+  }
+  throw new CloudError('server', "the team's reservations did not end after 1000 pages")
 }
 
 /**

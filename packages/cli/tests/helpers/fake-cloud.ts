@@ -21,9 +21,13 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  sealRuleForVault,
+  sealTeamRule,
   toBase64,
   type CryptoKeyLike,
+  type RuleBody,
 } from '@veilio-inc/engine'
+import type { SealedRule } from '../../src/cloud.js'
 import { writeCredential } from '../../src/credential.js'
 import { writeTeamUnlock } from '../../src/team-unlock.js'
 import {
@@ -105,6 +109,8 @@ export class FakeCloud {
   legacyNamespace: Record<string, string> | null = null
   /** Paths that answer 503, for transient-failure tests. */
   failing = new Set<string>()
+  /** What a failing path answers with. */
+  failingBody: unknown = { error: 'Service Unavailable' }
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
   /** This account's keypair, as the web app makes it; null until made. */
@@ -120,8 +126,38 @@ export class FakeCloud {
   servedPublicKey: string | null = null
   /** A dishonest server: the wrap it hands back instead of the one stored. */
   servedWrap: string | null = null
+  /** Spec 063: who holds which numbers. Tests may add a teammate's run. */
+  reservations: { base: string; start: number; end: number; member: string }[] = []
+  /** Spec 063's record of who holds which numbers. Off by default: the
+   *  tests written before it describe an instance that keeps none. */
+  recordsReservations = false
+  /** This account's id, as the reservations record it. */
+  memberId = 'u-me'
+  /** Round 4 (D): the server answers a `partial: true` reserve per base, a
+   *  refused base as `{ base, refused, message }`. Off: the old 400 for all. */
+  partialReserve = true
+  /** Bases the server refuses whatever their floor: per base under
+   *  `partial`, else the old 400 naming the first. */
+  refuseBases = new Set<string>()
+  /** Round 4 (E): the listing honours `?bases=` and says each base's highest.
+   *  Off: an older server, which ignores the parameter. */
+  filteredListing = true
+  /** An account id for an owner address: this account's, or `u-<local part>`. */
+  idOf(owner: string): string {
+    return owner === ME ? this.memberId : `u-${owner.split('@')[0]}`
+  }
+  /** The day's block ceiling is reached: block requests answer 429, with the
+   *  reason and the time the next block is possible (spec 066 contract). */
+  blocksRefused = false
+  blocksRetryAt = '2026-10-21T09:14:00.000Z'
+  /** Every reserve request fails this way: a status and body, or the network. */
+  reserveFailure: { status: number; body: unknown } | 'network' | null = null
+  failWith(status: number | 'network', body: unknown = {}): void {
+    this.reserveFailure = status === 'network' ? 'network' : { status, body }
+  }
   private nextId = 1
-  private counters = new Map<string, number>()
+  /** Per kind, as the server's team-wide counter. */
+  counters = new Map<string, number>()
 
   /** Install the vault for PASSPHRASE. */
   async withVault(): Promise<CryptoKeyLike> {
@@ -213,7 +249,11 @@ export class FakeCloud {
       ])
     )
     this.requests.push({ method, path: u.pathname, query: u.searchParams, body, raw, headers })
-    if (this.failing.has(u.pathname)) return json(503, { error: 'Service Unavailable' })
+    if (this.failing.has(u.pathname)) return json(503, this.failingBody)
+    if (this.reserveFailure && u.pathname.endsWith('/placeholders/reserve')) {
+      if (this.reserveFailure === 'network') throw new TypeError('fetch failed')
+      return json(this.reserveFailure.status, this.reserveFailure.body)
+    }
     if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
     return this.answer(method, u.pathname, u.searchParams, body)
   }
@@ -256,7 +296,18 @@ export class FakeCloud {
               .filter((m) => m.scope === 'team' && m.owner !== ME && inProject(m))
               .map((m) => this.listed(m))
           : [],
-        team: this.teamId ? { id: this.teamId } : null,
+        team: this.teamId
+          ? {
+              id: this.teamId,
+              ...(this.recordsReservations
+                ? {
+                    reservations: this.reservations
+                      .filter((r) => r.member === this.memberId)
+                      .map(({ base, start, end }) => ({ base, start, end })),
+                  }
+                : {}),
+            }
+          : null,
         plan: 'team',
         ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
       })
@@ -270,8 +321,16 @@ export class FakeCloud {
       return json(200, {
         maps: rows
           .filter((m) => !this.serverUnreadable.has(m.id))
-          .map((m) => ({ id: m.id, created_at: m.created_at, map_data: m.map_data })),
+          .map((m) => ({
+            id: m.id,
+            created_at: m.created_at,
+            map_data: m.map_data,
+            // Spec 063: the publisher, and the team's reservations, as the
+            // server sends them; an instance from before it sends neither.
+            ...(this.recordsReservations ? { owner_id: this.idOf(m.owner) } : {}),
+          })),
         unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
+        ...(this.recordsReservations ? { reservations: this.reservations } : {}),
       })
     }
     if (path === '/api/maps' && method === 'POST') {
@@ -413,12 +472,64 @@ export class FakeCloud {
     }
     if (path === `/api/teams/${TEAM_ID}/placeholders/reserve` && method === 'POST') {
       const asked = (body?.requests ?? []) as { base: string; count: number; floor: number }[]
-      const ranges = asked.map(({ base, count, floor }) => {
+      // Spec 063: a block's size is the server's (500), and every run is
+      // recorded against the member who took it.
+      const block = body?.block === true
+      if (block && this.blocksRefused)
+        return json(429, {
+          error: `This account has reserved as many placeholder blocks as one day allows for this team; the next is possible at ${this.blocksRetryAt}.`,
+          reason: 'cap',
+          retry_at: this.blocksRetryAt,
+        })
+      // Cloud 450a93ce: numbers stop at 1e8, and a floor more than 10000
+      // above the base's counter is refused.
+      const tooFar = (base: string, floor: number) =>
+        this.refuseBases.has(base) || floor > 1e8 || floor > (this.counters.get(base) ?? 0) + 10_000
+      const partial = body?.partial === true && this.partialReserve
+      // Cloud 86772272: refused as a whole, the 400 lists every refused base.
+      const refusal = (base: string) => ({
+        base,
+        refused: 'floor_too_far',
+        message: `the floor for ${base} is too far above the team's numbers`,
+      })
+      if (!partial) {
+        const refused = asked.filter(({ base, floor }) => tooFar(base, floor))
+        if (refused.length)
+          return json(400, {
+            error: refused[0]!.base + ": the floor is too far above the team's numbers",
+            refused: refused.map(({ base }) => refusal(base)),
+          })
+      }
+      const ranges = asked.map(({ base, count: wanted, floor }) => {
+        if (tooFar(base, floor)) return refusal(base)
+        const count = block ? 500 : wanted
         const start = Math.max(this.counters.get(base) ?? 0, floor) + 1
         this.counters.set(base, start + count - 1)
+        this.reservations.push({ base, start, end: start + count - 1, member: this.memberId })
         return { base, start, end: start + count - 1 }
       })
       return json(200, { ranges })
+    }
+    if (path === `/api/teams/${TEAM_ID}/placeholders/reservations` && method === 'GET') {
+      // An instance from before spec 063 has no such route.
+      if (!this.recordsReservations) return json(404, { error: 'Not found' })
+      const bases = q.get('bases')
+      if (bases !== null && this.filteredListing) {
+        // Cloud 86772272: 1-50 bases; `highest` is the greater of the counter
+        // and the highest run end, 0 for a base with none, never truncated.
+        const wanted = [...new Set(bases.split(','))]
+        if (wanted.length < 1 || wanted.length > 50)
+          return json(400, { error: 'between 1 and 50 bases' })
+        const rows = this.reservations.filter((r) => wanted.includes(r.base))
+        const highest: Record<string, number> = {}
+        for (const b of wanted)
+          highest[b] = Math.max(
+            this.counters.get(b) ?? 0,
+            ...rows.filter((r) => r.base === b).map((r) => r.end)
+          )
+        return json(200, { reservations: rows, truncated: [], highest, next: null })
+      }
+      return json(200, { reservations: this.reservations, next: null })
     }
     if (path === `/api/teams/${TEAM_ID}/key/pending`) {
       return json(200, {
@@ -447,6 +558,54 @@ export async function sealPersonal(
 
 export async function sealTeam(map: Record<string, string>, raw = TEAM_RAW): Promise<string> {
   return JSON.stringify(await encryptTeamMap(await importTeamKey(toBase64(raw)), map))
+}
+
+/** How a rule row is sealed, for the cases a tool must skip. `key`: the raw
+ *  key to seal under (another one makes it unopenable). `bindId`: the row id
+ *  the body names (another one makes it refused). `record`: sealed as-is
+ *  instead of the rule, for bodies the engine refuses to seal. */
+export interface RuleSealing {
+  key?: Uint8Array
+  bindId?: string
+  record?: Record<string, string>
+}
+
+/** A personal rule row as GET /api/rules serves it (spec 065). */
+export async function sealedPersonalRule(
+  id: string,
+  sortOrder: number,
+  body: RuleBody,
+  opts: RuleSealing = {}
+): Promise<SealedRule> {
+  const key = await importPersonalMapsKey(opts.key ?? PMK_RAW)
+  const bind = { id: opts.bindId ?? id, teamId: null }
+  const env = opts.record
+    ? await encryptMapForVault(key, opts.record)
+    : await sealRuleForVault(key, body, bind)
+  return { id, scope: 'personal', team_id: null, sort_order: sortOrder, data: JSON.stringify(env) }
+}
+
+/** A team rule row as GET /api/rules serves it (spec 065). */
+export async function sealedTeamRule(
+  id: string,
+  sortOrder: number,
+  body: RuleBody,
+  opts: RuleSealing & { teamId?: string; version?: number } = {}
+): Promise<SealedRule> {
+  const teamId = opts.teamId ?? TEAM_ID
+  const key = await importTeamKey(toBase64(opts.key ?? TEAM_RAW))
+  const bind = { id: opts.bindId ?? id, teamId }
+  const env = opts.record
+    ? await encryptTeamMap(key, opts.record)
+    : await sealTeamRule(key, body, bind)
+  return {
+    id,
+    scope: 'team',
+    team_id: teamId,
+    sort_order: sortOrder,
+    key_version: opts.version ?? 1,
+    data: JSON.stringify(env),
+  }
 }
 
 /** Sign in under `home`, optionally with the team key and/or the PMK unlocked. */
@@ -480,4 +639,15 @@ export function signIn(
     )
   if (opts.pmk)
     writePersonalMapsKey({ v: 1, instance, account: ME, expiresAt, key: toBase64(PMK_RAW) }, home)
+}
+
+/** Both keys on disk for `account` - what a cached rule needs to be applied
+ *  (spec 065 FR-006). For tests that write rules.json directly. */
+export function holdKeys(home: string, account: string, instance = INSTANCE, teamId = 't1'): void {
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
+  writeTeamUnlock(
+    { v: 1, instance, account, teamId, expiresAt, keys: [{ version: 1, key: toBase64(TEAM_RAW) }] },
+    home
+  )
+  writePersonalMapsKey({ v: 1, instance, account, expiresAt, key: toBase64(PMK_RAW) }, home)
 }
