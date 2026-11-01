@@ -1226,13 +1226,17 @@ export class Guard {
       out.filenames = record.filenames.filter((f) => typeof f !== 'string' || !raw(f))
     }
     if (typeof record.content === 'string') {
-      // `path:12:text` for a match, `path-12-text` for a context line.
+      // `path:12:text` for a match, `path-12-text` for a context line. Where
+      // the path ends cannot be told from the line (a dated directory has
+      // `-31-` in it, a Windows drive a ':'), so every prefix that could be
+      // the path is checked (security audit 2026-11-01).
+      const SPLIT = /:\d+:|-\d+-|:/g
       out.content = record.content
         .split('\n')
         .filter((line) => {
-          const colon = line.indexOf(':')
-          const context = /^(.+?)-\d+-/.exec(line)
-          return !((colon > 0 && raw(line.slice(0, colon))) || (context?.[1] && raw(context[1])))
+          for (const m of line.matchAll(SPLIT))
+            if (m.index > 0 && raw(line.slice(0, m.index))) return false
+          return true
         })
         .join('\n')
     }

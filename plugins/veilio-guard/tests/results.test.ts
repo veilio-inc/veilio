@@ -726,3 +726,38 @@ test('a heuristic finding still defers to a value the map holds', async ($, on) 
   const out = await $.tool.call(eventOf(bash))
   expect(res(out).stdout).toContain('"__STR__9"')
 })
+
+// Security audit 2026-11-01 (MEDIUM): the raw-only filter split a Grep line
+// at its first ':' and its first '-N-', so a dated directory such as
+// backups/2026-10-31/ - or a Windows drive letter - kept .env lines.
+test('context and match lines of a raw-only file are dropped whatever its directory is called', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/backups/2026-10-31/.env-1-DB_HOST=db.internal.acme-corp.example`,
+    `${ROOT}/backups/2026-10-31/.env:2:PLAIN=hello world`,
+    `${ROOT}/backups/2026-10-31/.env-3-DB_PASSWORD=hunter2hunter2`,
+    `${ROOT}/src/app-v2-1-3/a.ts:4:const ok = 1`,
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 4 } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(grep)))
+  expect(out).not.toContain('hunter2hunter2')
+  expect(out).not.toContain('hello world')
+  expect(out).not.toContain('.env')
+  expect(out).toContain('const ok = 1')
+})
+
+test('a Windows path: every line of a raw-only file is dropped', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    'C:\\work\\project\\.env:1:DB_HOST=db.internal.acme-corp.example',
+    'C:\\work\\project\\.env-2-DB_PASSWORD=hunter2hunter2',
+    'C:\\work\\project\\src\\a.ts:3:const ok = 1',
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }))
+  const out = JSON.stringify(await $.tool.call(eventOf(grep)))
+  expect(out).not.toContain('acme-corp')
+  expect(out).not.toContain('hunter2hunter2')
+  expect(out).toContain('const ok = 1')
+})
