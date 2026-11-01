@@ -109,7 +109,9 @@ describe('restore --strict', () => {
     const r = await run('new __CLS__1(__REDACTED_STRIPE_KEY_1__)', ['restore', '--strict'])
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.out).toBe('')
-    expect(r.err).toMatch(/__REDACTED_STRIPE_KEY_1__[\s\S]*cannot be restored/)
+    expect(r.err).toMatch(/--strict: nothing written - __REDACTED_STRIPE_KEY_1__/)
+    // Nothing was written, so no advice about writing it.
+    expect(r.err).not.toMatch(/do not write/)
   })
 
   it("a placeholder the team's maps disagree on: nothing written, exit 1", async () => {
@@ -154,8 +156,16 @@ describe('redactionsIn (spec 067)', () => {
       redactionsIn('a __REDACTED_IBAN__ b __REDACTED_AWS_KEY_1__ c __REDACTED_AWS_KEY_1__')
     ).toEqual(['__REDACTED_IBAN__', '__REDACTED_AWS_KEY_1__'])
   })
-  it('not inside a longer identifier', async () => {
+  it("inside a longer name too: a rule's residue is still a value gone for good", async () => {
     const { redactionsIn } = await import('../src/reservations.js')
-    expect(redactionsIn('MY__REDACTED_CREDENTIAL_1__VAR x__REDACTED_IBAN__')).toEqual([])
+    expect(redactionsIn('k = "__REDACTED_AWS_SECRET_1__3"')).toEqual(['__REDACTED_AWS_SECRET_1__'])
+  })
+})
+
+describe('redactedNote (spec 067)', () => {
+  it('does not call personal data a credential', async () => {
+    const { redactedNote } = await import('../src/reservations.js')
+    expect(redactedNote(['__REDACTED_EMAIL_1__'])).not.toMatch(/as a credential/)
+    expect(redactedNote(['__REDACTED_EMAIL_1__'])).toMatch(/cannot be restored/)
   })
 })

@@ -349,8 +349,9 @@ command.
 placeholder would be left in it — one the AI invented, one whose shape it changed
 (`__fn__1`), one the team's maps disagree on, or one the team's maps could not be
 read for — nothing goes to stdout and it exits 1. Without it, restore writes the
-text, placeholders and all, names each one on stderr and exits 0. A credential
-redacted on purpose is not a placeholder and never fails it.
+text, placeholders and all, names each one on stderr and exits 0. A value
+redacted one-way (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so the text is
+not the original file: restore names it every time, and `--strict` refuses it.
 
 `--keep-docs` is worth knowing about: the default strip removes JSDoc along with
 the narration and TODOs, which is wrong when the model was _asked_ to document

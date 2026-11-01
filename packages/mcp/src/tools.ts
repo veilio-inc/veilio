@@ -580,7 +580,9 @@ export const TOOLS: ToolDefinition[] = [
         ...(localOnly.length ? [`WARNING: ${locallyNumberedNote(localOnly)}`] : []),
         ...(otherLocal.length ? [`WARNING: ${localFamilyNote(otherLocal)}`] : []),
         ...(altered.length ? [`WARNING: ${alteredNote(altered)}`] : []),
-        ...(redacted.length ? [`WARNING: ${redactedNote(redacted)}`] : []),
+        ...(redacted.length && !(strict && (left.length > 0 || redacted.length > 0))
+          ? [`WARNING: ${redactedNote(redacted)}`]
+          : []),
         ...(ignored ? [`WARNING: ${ignoredKeysNote(ignored)}`] : []),
       ]
       // Unrestored team placeholders because the team's maps could not be used

@@ -423,12 +423,10 @@ export function contestedNote(placeholders: readonly string[]): string {
   )
 }
 
-// The engine's redaction tokens, not inside a longer identifier (the guard
-// reads them the same way, plugins/veilio-guard/lib/scrub.ts).
-const REDACTION = new RegExp(
-  `(?<![A-Za-z0-9_$])(?:${REDACTION_TOKENS.source})(?![A-Za-z0-9_$])`,
-  'g'
-)
+// The engine's redaction tokens wherever they stand - inside a longer name too
+// (a rule's residue, `"__REDACTED_AWS_SECRET_1__3"`): a fragment is still a
+// value that cannot be restored, so it fails closed.
+const REDACTION = new RegExp(REDACTION_TOKENS.source, 'g')
 
 /** The one-way redactions (`__REDACTED_CREDENTIAL_1__`, `__REDACTED_IBAN__`)
  *  in a text, once each, in order of first appearance (spec 067). */
@@ -441,8 +439,8 @@ export function redactionsIn(text: string): string[] {
 export function redactedNote(tokens: readonly string[]): string {
   const one = tokens.length === 1
   return (
-    `left as is: ${tokens.join(', ')}. ${one ? 'It was' : 'They were'} redacted one-way as ` +
-    `${one ? 'a credential' : 'credentials'} and cannot be restored, so this text is not the original: ` +
+    `left as is: ${tokens.join(', ')}. ${one ? 'It was' : 'They were'} redacted one-way ` +
+    '(a credential or personal data) and cannot be restored, so this text is not the original: ' +
     'do not write it over the file. Make the change in the file itself instead.'
   )
 }

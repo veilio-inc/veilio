@@ -508,7 +508,7 @@ export async function runRestore(
     )
   }
   if (altered.length > 0) io.stderr(`${BIN_NAME}: ${alteredNote(altered)}\n`)
-  if (redacted.length > 0) io.stderr(`${BIN_NAME}: ${redactedNote(redacted)}\n`)
+  if (redacted.length > 0 && !refused) io.stderr(`${BIN_NAME}: ${redactedNote(redacted)}\n`)
 
   if (refused) {
     io.stderr(
