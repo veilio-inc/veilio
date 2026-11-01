@@ -472,9 +472,10 @@ export const TOOLS: ToolDefinition[] = [
     title: 'Restore real identifiers',
     description:
       `Swap placeholders back to the real identifiers using the stored symbol map, and strip ` +
-      `AI-generated noise (JSDoc, TODO comments, narration). Use this on a reply that came back ` +
-      `containing placeholders. Note that irreversibly redacted credentials stay redacted — ` +
-      `that is deliberate.`,
+      `AI-generated noise (JSDoc, TODO comments, narration). Its result puts the real names ` +
+      `into your context, which undoes the masking for whatever it restores: call it only ` +
+      `when the developer asks for restored text for their own use, never to read the ` +
+      `project. Irreversibly redacted credentials stay redacted - that is deliberate.`,
     inputSchema: {
       type: 'object',
       properties: {

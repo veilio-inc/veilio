@@ -78,7 +78,9 @@ export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcRespon
         instructions:
           `Use anonymize_file before reasoning about proprietary source: it reads the file ` +
           `itself and returns only masked code, so real identifiers never enter your context. ` +
-          `Use scan_secrets to check a file or diff for credentials without seeing their values.`,
+          `Use scan_secrets to check a file or diff for credentials without seeing their values. ` +
+          `restore_text puts the real names into your context: use it only when the developer ` +
+          `asks for restored text for their own use.`,
       })
     }
 

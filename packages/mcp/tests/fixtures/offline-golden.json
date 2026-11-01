@@ -14,7 +14,7 @@
           "name": "Veilio MCP",
           "version": "<VERSION>"
         },
-        "instructions": "Use anonymize_file before reasoning about proprietary source: it reads the file itself and returns only masked code, so real identifiers never enter your context. Use scan_secrets to check a file or diff for credentials without seeing their values."
+        "instructions": "Use anonymize_file before reasoning about proprietary source: it reads the file itself and returns only masked code, so real identifiers never enter your context. Use scan_secrets to check a file or diff for credentials without seeing their values. restore_text puts the real names into your context: use it only when the developer asks for restored text for their own use."
       }
     }
   ],
@@ -105,7 +105,7 @@
           {
             "name": "restore_text",
             "title": "Restore real identifiers",
-            "description": "Swap placeholders back to the real identifiers using the stored symbol map, and strip AI-generated noise (JSDoc, TODO comments, narration). Use this on a reply that came back containing placeholders. Note that irreversibly redacted credentials stay redacted — that is deliberate.",
+            "description": "Swap placeholders back to the real identifiers using the stored symbol map, and strip AI-generated noise (JSDoc, TODO comments, narration). Its result puts the real names into your context, which undoes the masking for whatever it restores: call it only when the developer asks for restored text for their own use, never to read the project. Irreversibly redacted credentials stay redacted - that is deliberate.",
             "inputSchema": {
               "type": "object",
               "properties": {
