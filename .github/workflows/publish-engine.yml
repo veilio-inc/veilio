@@ -63,7 +63,7 @@ jobs:
       # below. A release pipeline should not adopt breaking CLI changes the day
       # they ship.
       - name: Update npm
-        run: npm install -g npm@12
+        run: npm install -g npm@12.2.1
 
       # Root install also builds the engine via the postinstall script.
       - name: Install (pinned, deterministic)
