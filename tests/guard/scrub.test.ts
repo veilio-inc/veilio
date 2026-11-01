@@ -82,8 +82,8 @@ describe('applyMap: output, search results and prompts', () => {
     // git log into placeholders. Inside a source file the engine masks them
     // where they sit in a literal.
     expect(
-      applyMap('keep the total and Placeholder', {
-        __VAR__1: 'total',
+      applyMap('keep the tarnwick and Placeholder', {
+        __VAR__1: 'tarnwick',
         __STR__1: 'the',
         __STR__2: 'keep',
         __STR__3: 'Placeholder',

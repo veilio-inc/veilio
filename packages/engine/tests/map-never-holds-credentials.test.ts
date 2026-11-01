@@ -169,10 +169,10 @@ describe('a name next to a credential', () => {
     expect(result.anonymized).not.toContain('acmeCorp_2024')
   })
   it('a part of a credential is masked and mapped like any name, in every mode', () => {
-    const code = 'const secret = 1\nconst admin = 2\nPGPASSWORD=admin-secret-pw1 psql\n'
+    const code = 'const tarnwick = 1\nconst admin = 2\nPGPASSWORD=admin-tarnwick-pw1 psql\n'
     for (const secrets of MODES) {
       const result = anonymize(code, { secrets })
-      expect(Object.values(result.map), secrets).toContain('secret')
+      expect(Object.values(result.map), secrets).toContain('tarnwick')
       expect(Object.values(result.map), secrets).toContain('admin')
       expect(result.anonymized, secrets).toMatch(/^const __[A-Z]+__\d+ = 1\n/)
     }
@@ -367,12 +367,23 @@ describe('common weak passwords are default words', () => {
     })
   }
   it('pass inside passport and compass is left alone; --password pass is redacted', () => {
-    const code = 'PGPASSWORD=pass psql\nconst passport = compass\n$ deploy --password pass\n'
+    const code =
+      'PGPASSWORD=pass psql\nconst passport = compass\nconst quaypassage = skerrypass\n$ deploy --password pass\n'
     const scanned = scanSecrets(code).code
     expect(scanned).toMatch(/^PGPASSWORD=__REDACTED_[A-Z_]+_\d+__ psql\n/)
     expect(scanned).toMatch(/--password __REDACTED_[A-Z_]+_\d+__\n$/)
+    expect(scanned).toContain('const passport = compass\n')
+    expect(scanned).toContain('const quaypassage = skerrypass\n')
     const result = anonymize(code)
-    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['passport', 'compass']))
+    // Spec 064: ordinary words stay readable. passport and compass go out as
+    // written - not redacted, not cut at "pass", and not in the map.
+    expect(result.anonymized).toContain('\nconst passport = compass\n')
+    expect(Object.values(result.map)).not.toContain('passport')
+    expect(Object.values(result.map)).not.toContain('compass')
+    // Distinctive names holding "pass" are masked and mapped whole.
+    expect(Object.values(result.map)).toEqual(expect.arrayContaining(['quaypassage', 'skerrypass']))
+    expect(result.anonymized).not.toMatch(/quaypassage|skerrypass/)
+    expect(Object.values(result.map)).not.toContain('pass')
   })
   it('P@ssw0rd keeps its word boundaries', () => {
     const code = 'PGPASSWORD=P@ssw0rd psql\nconst note = "xP@ssw0rdx"\n'

@@ -1,3 +1,4 @@
+import { isOrdinaryWord } from './ordinaryWords.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, } from './languages.js';
 import { credentialSpans, detectSecrets, hasBlockingSecrets, redactionTokensOf, scanSecrets, } from './secrets.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
@@ -1066,6 +1067,10 @@ export function anonymize(code, options = {}) {
         .sort((a, b) => a.sort_order - b.sort_order);
     // Track whitelisted identifiers so the substitution loop knows to skip them
     const whitelisted = new Set();
+    // Spec 064: ordinary words, never minted. An older map's entry for one is
+    // still substituted inside a credential (security review: a weak password
+    // that is a dictionary word), and nowhere else.
+    const ordinary = new Set();
     for (const name of identifiers) {
         // 1. Whitelist: skip - checked BEFORE "already mapped". A name a team map
         //    or an earlier session already holds would otherwise stay masked for
@@ -1084,7 +1089,23 @@ export function anonymize(code, options = {}) {
             whitelisted.add(name);
             continue;
         }
-        if (reverseExisting[name])
+        // Spec 064: a single common word, shared vocabulary or a toolchain's name
+        // is left as written - unless a custom replace rule asks for it. Like a
+        // whitelisted name, an older map's entry for it is kept (old text still
+        // restores) but no longer substituted.
+        if (isOrdinaryWord(name) && !replacers.some((r) => safeMatch(r.pattern, name))) {
+            ordinary.add(name);
+            continue;
+        }
+        // Already mapped - unless it is an ordinary word the engine itself mapped
+        // before a team's replace rule for it existed: the rule then gives it a
+        // placeholder of its own (the old entry still restores old text). Without
+        // this the engine's entry would win, and a masking that leaves ordinary
+        // words readable would show the codename (code review, spec 064).
+        if (reverseExisting[name] &&
+            !(/^__(?:CLS|FN|PKG|VAR|STR)__\d+$/.test(reverseExisting[name]) &&
+                isOrdinaryWord(name) &&
+                replacers.some((r) => safeMatch(r.pattern, name))))
             continue; // already mapped
         // 2. Replace: first match wins
         const matched = replacers.find((r) => safeMatch(r.pattern, name));
@@ -1149,7 +1170,9 @@ export function anonymize(code, options = {}) {
                 ? text
                 : text.replace(pattern, (m, offset) => inSpan(verbatim, start + offset) ||
                     (!alreadyMapped.has(m) &&
-                        overlapsAny(secretSpans, start + offset, start + offset + m.length))
+                        overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
+                    (ordinary.has(m) &&
+                        !overlapsAny(secretSpans, start + offset, start + offset + m.length))
                     ? m
                     : (reverseExisting[m] ?? m));
             for (const name of oversized) {

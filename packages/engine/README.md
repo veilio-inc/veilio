@@ -7,7 +7,7 @@ then restore them in the reply.
 ```ts
 import { anonymize, restore } from '@veilio-inc/engine'
 
-const { anonymized, map } = anonymize('class PaymentService { charge(orderId) {} }')
+const { anonymized, map } = anonymize('class PaymentService { chargeOrder(orderId) {} }')
 // anonymized → "class __CLS__1 { __FN__1(__VAR__1) {} }"
 // ...send `anonymized` to an AI, get a reply that still contains the tokens...
 const { restored } = restore(aiReply, map)
@@ -37,14 +37,23 @@ Masked:
 
 - every identifier the language does not define — classes, functions,
   variables, properties, and the words of import paths — as `__CLS__n`,
-  `__FN__n`, `__VAR__n`, `__PKG__n`;
+  `__FN__n`, `__VAR__n`, `__PKG__n`, unless it is a single ordinary word
+  (below);
 - the words inside string literals — URL paths, error messages, the table and
-  column names in SQL — as `__STR__n`;
+  column names in SQL — as `__STR__n`, with the same exception;
 - bank account, card and PESEL numbers (reversibly), and credentials
   (irreversibly — see below).
 
 Not masked:
 
+- **single ordinary words** — a name that is one common English word, a word
+  every codebase shares, or a toolchain's name, written lower-case, Capitalised
+  or in capitals: `refund`, `Ledger`, `TOTAL`, `billing`, `src`, `vitest`. They
+  are nobody's secret, and they let a model find its way around the code. A name
+  with an inner capital, an underscore or a digit (`refundInvoice`,
+  `customer_invoices`, `invoice2`) is a choice somebody made and is masked, as
+  are invented and rare words (`tarnwick`, `quayward`). A custom rule can still
+  mask any word;
 - **comments**, on purpose (below). The result's `comments` counts how much
   prose goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
@@ -55,8 +64,9 @@ Not masked:
 - numbers, and the shape of the program: its control flow and the structure of
   its SQL and URLs.
 
-So what holds is: no mixed- or lower-case internal identifier, no string
-contents and no credential reaches the model. Not "the model cannot tell what
+So what holds is: no mixed- or lower-case internal identifier other than a
+single ordinary word, no string contents beyond such words, and no credential
+reaches the model. Not "the model cannot tell what
 this code does" — the shape and one comment will often say it is billing code.
 
 ## Ten languages, not one

@@ -70,7 +70,10 @@ afterEach(() => {
   rmSync(cwd, { recursive: true, force: true })
 })
 
-const TS = 'export class PaymentGateway {\n  chargeCard(amount: number) { return amount }\n}\n'
+// Spec 064: an ordinary word (amount) stays readable, so the parameter this
+// fixture masks is a compound.
+const TS =
+  'export class PaymentGateway {\n  chargeCard(amountDue: number) { return amountDue }\n}\n'
 const KEY = 'sk_live_51H8xQ2ABCDEFGHIJKLMNOP'
 
 function write(name: string, content: string): void {

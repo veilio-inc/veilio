@@ -16,6 +16,7 @@ import {
   anonymize,
   detectSecrets,
   isKeyword,
+  isOrdinaryWord,
   isPlaceholder,
   keepRule,
   restore,
@@ -418,7 +419,52 @@ function aroundTokens(text: string, fn: (part: string) => string): string {
 }
 
 function replaceAround(text: string, map: SymbolMap, ctx: MaskContext): string {
-  return aroundTokens(dropResidue(text), (part) => replaceNames(part, map, ctx))
+  const shown = withCredentialWords(text, map, readableView(map))
+  return aroundTokens(dropResidue(text), (part) => replaceNames(part, shown, ctx))
+}
+
+/** An ordinary word the map holds that this text shows as a credential, or a
+ *  possible one, is written over after all (code review: `client_secret:
+ *  "sunshine"` with `sunshine` in an older map), as the engine does inside a
+ *  credential span. Errs towards masking: the word is masked throughout. */
+function withCredentialWords(text: string, map: SymbolMap, shown: SymbolMap): SymbolMap {
+  const found = detectSecrets(text)
+  if (found.length === 0) return shown
+  const lines = text.split('\n')
+  const values = new Set(
+    found.map((f) => (lines[f.line - 1] ?? '').slice(f.column - 1, f.column - 1 + f.length))
+  )
+  let out: SymbolMap | null = null
+  for (const [p, name] of Object.entries(map))
+    if (!(p in shown) && values.has(name)) (out ??= { ...shown })[p] = name
+  return out ?? shown
+}
+
+// Spec 064: an entry whose name is an ordinary word (a common English word,
+// shared vocabulary, a toolchain's name) is never written over in what the
+// model is sent - a traceback's "most recent call last", a path's `src/main`,
+// Claude Code's own messages. The map keeps the entry, so text masked with it
+// before still restores. Cached per map object: the map can hold thousands.
+// Only the engine's own role placeholders are left out: an entry a custom
+// replace rule, a manual mask or a redaction made (any other base) was masked
+// on purpose and stays masked, whatever word it is (security review).
+const ROLE_PLACEHOLDER = /^__(?:CLS|FN|PKG|VAR|STR)__\d+$/
+const views = new WeakMap<SymbolMap, { version: number; fingerprint: string; view: SymbolMap }>()
+function readableView(map: SymbolMap): SymbolMap {
+  // Keyed on the map and its version, as the matcher is: grow() is the only
+  // mutator, so nothing is counted on each call (code review). The matcher is
+  // then built on the view, not the map, so the strict check runs here.
+  const version = versionOf(map)
+  const cached = views.get(map)
+  if (cached && cached.version === version) {
+    checkGrown(map, cached.fingerprint)
+    return cached.view
+  }
+  const view: SymbolMap = {}
+  for (const [p, name] of Object.entries(map))
+    if (!(ROLE_PLACEHOLDER.test(p) && isOrdinaryWord(name))) view[p] = name
+  views.set(map, { version, fingerprint: strictMaps() ? fingerprintOf(map) : '', view })
+  return view
 }
 
 // Short words that camelCase identifiers are made of: a piece this short is
@@ -961,8 +1007,12 @@ export function applyMap(
   const scan =
     options.scan ??
     scanSecrets(text, 'redact', options.fileKind ? { fileKind: options.fileKind } : {})
-  known.learn(learnable(text, scan, map))
-  const names = namesOf(map)
+  // The exemption below ("a value the map holds is masked reversibly") is true
+  // only of names the masking will actually write over: an ordinary word is
+  // left as written now, so a credential that is one is redacted (code review).
+  const shown = readableView(map)
+  known.learn(learnable(text, scan, shown))
+  const names = namesOf(shown)
   let redacted = ''
   let at = 0
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
@@ -1121,8 +1171,9 @@ export function survivingSecrets(text: string, map: SymbolMap = {}): string[] {
   const found = detectSecrets(real).filter((f) => SECRET_DISPOSITIONS[f.type] !== 'report')
   if (found.length === 0) return []
   // A value that is one of the map's names is masked reversibly, not a
-  // credential left behind (review of 99325ba).
-  const names = namesOf(map)
+  // credential left behind (review of 99325ba) - unless it is an ordinary word,
+  // which is not written over (spec 064, code review).
+  const names = namesOf(readableView(map))
   const starts = lineStarts(real)
   return found
     .filter((f) => {

@@ -73,8 +73,14 @@ test("a skill's text is masked", async ($, on) => {
   expect(out.text).toBe('Review __CLS__1 carefully.')
 })
 
-test('a prompt naming a plain-word method still gets its placeholder, so it matches the code', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __FN__1: 'reconcile', __STR__1: 'the' }) })
+test('a prompt naming a one-word method still gets its placeholder, so it matches the code', async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({
+      __FN__1: 'skerrify',
+      __FN__2: 'reconcile',
+      __STR__1: 'the',
+    }),
+  })
   const sent: Fields[] = []
   on('prompt.submit', (_, e) => {
     sent.push(e)
@@ -82,9 +88,11 @@ test('a prompt naming a plain-word method still gets its placeholder, so it matc
   })
   await $.prompt.submit({
     ...recordedPrompt('prompt.submit').e,
-    text: 'Rename the method reconcile to settle',
+    text: 'Rename the method skerrify to reconcile',
   })
-  expect(sent[0].text).toBe('Rename the method __FN__1 to settle')
+  // Spec 064: ordinary words stay readable. `reconcile` is an English word,
+  // left as written though the map holds it; `skerrify` is not.
+  expect(sent[0].text).toBe('Rename the method __FN__1 to reconcile')
 })
 
 // Guard follow-up d08: the note is the guard's own constant and holds no
@@ -97,26 +105,31 @@ test("the guard's own note reaches the model as written, and the text around it 
       ...MAP,
       __STR__28: 'Veilio',
       __VAR__48: 'files',
-      __VAR__249: 'user',
+      __VAR__249: 'tarnwick',
       __FN__18: 'match',
     }),
   })
   on('prompt.attachment', (_, e) => ({ text: e.text }))
-  const text = `# claudeMd\nThe user files name ${CANARY}.\n\n# veilioGuard\n${MODEL_NOTE}\n\nThis is ambient context for the user.`
+  const text = `# claudeMd\nThe tarnwick files name ${CANARY} for Veilio.\n\n# veilioGuard\n${MODEL_NOTE}\n\nThis is ambient context for the tarnwick.`
   const out = await $.prompt.attachment({ type: 'context_sections', text })
   expect(out.text).toContain(MODEL_NOTE)
   expect(out.text).not.toContain(CANARY)
-  expect(out.text).toContain('The __VAR__249 __VAR__48 name __CLS__1.')
+  // Spec 064: ordinary words stay readable. `files` stays as written though
+  // the map holds it; `Veilio`, which the note holds too, is masked outside it.
+  expect(out.text).toContain('The __VAR__249 files name __CLS__1 for __STR__28.')
   expect(out.text).toContain('ambient context for the __VAR__249.')
 })
 
 test('a text that only resembles the note is masked as usual', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__48: 'files' }) })
+  // Spec 064: `files`, the word this test once masked, is ordinary and stays
+  // readable; `Veilio` is the note's one distinctive word.
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio' }) })
   on('prompt.attachment', (_, e) => ({ text: e.text }))
-  const near = MODEL_NOTE.replace('Veilio guard is on', `${CANARY} guard is on`)
+  const near = MODEL_NOTE.replace('on in this project', `on in ${CANARY}`)
+  expect(near).not.toBe(MODEL_NOTE)
   const out = await $.prompt.attachment({ type: 'context_sections', text: near })
   expect(out.text).not.toContain(CANARY)
-  expect(out.text).toContain('__VAR__48')
+  expect(out.text).toContain('__STR__28 guard is on')
 })
 
 // Review of d18b5c5: cutting a text at a copy of the note let a secret or a
@@ -182,10 +195,10 @@ test('a typed password under a key that is a project name is redacted', async ($
 
 test("an earlier build's context type carries the note as written too", async ($, on) => {
   project(on, {
-    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio', __VAR__249: 'user' }),
+    [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __STR__28: 'Veilio', __VAR__249: 'tarnwick' }),
   })
   on('prompt.attachment', (_, e) => ({ text: e.text }))
-  const text = `# gitStatus\nbranch of the user: ${CANARY}\n\n# veilioGuard\n${MODEL_NOTE}`
+  const text = `# gitStatus\nbranch of the tarnwick: ${CANARY}\n\n# veilioGuard\n${MODEL_NOTE}`
   const out = await $.prompt.attachment({ type: 'session_context', text })
   expect(out.text).toContain(MODEL_NOTE)
   expect(out.text).toContain('branch of the __VAR__249: __CLS__1')
@@ -256,9 +269,9 @@ test('a credential in a context block masked earlier is removed from the typed p
 })
 
 test('the first message context masked once is not judged again when it comes back as an attachment', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'quayward' }) })
   on('prompt.context', () => ({
-    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "quayward"' }],
   }))
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   const ctx = await $.prompt.context(recordedPrompt('prompt.context').e)
@@ -290,9 +303,9 @@ test('a secret inside a copy of the note in the context is redacted', async ($, 
 })
 
 test('a copy of a masked block that is not a whole section is masked in full', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'quayward' }) })
   on('prompt.context', () => ({
-    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "quayward"' }],
   }))
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   const ctx = await $.prompt.context(recordedPrompt('prompt.context').e)
@@ -326,9 +339,9 @@ test('a block remembered before a credential was learned loses it when it comes 
 })
 
 test('one whole copy of a block does not let a mid-line copy through', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'quayward' }) })
   on('prompt.context', () => ({
-    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "quayward"' }],
   }))
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   const ctx = await $.prompt.context(recordedPrompt('prompt.context').e)
@@ -342,7 +355,7 @@ test('one whole copy of a block does not let a mid-line copy through', async ($,
 })
 
 test('a placeholder in context already masked is never learned', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'quayward' }) })
   const sent: Fields[] = []
   on('prompt.submit', (_, e) => {
     sent.push(e)
@@ -355,9 +368,9 @@ test('a placeholder in context already masked is never learned', async ($, on) =
 })
 
 test('a context with thousands of copies of a masked block is held in one pass', async ($, on) => {
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'disabled' }) })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ ...MAP, __VAR__1290: 'quayward' }) })
   on('prompt.context', () => ({
-    blocks: [{ name: 'claudeMd', text: 'client_secret: "disabled"' }],
+    blocks: [{ name: 'claudeMd', text: 'client_secret: "quayward"' }],
   }))
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   const ctx = await $.prompt.context(recordedPrompt('prompt.context').e)
