@@ -1,5 +1,17 @@
 # @veilio-inc/mcp
 
+## 0.8.0
+
+### Minor Changes
+
+- [#189](https://github.com/veilio-inc/veilio/pull/189) [`e9dec9a`](https://github.com/veilio-inc/veilio/commit/e9dec9a491edc605f01534fa7f191b6d85e91246) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `restore` and `restore_text` now name every redaction left in the text (`__REDACTED_CREDENTIAL_1__`): a redacted value is gone for good, so the restored text is not the original file and must not be written over it. `--strict` (and `strict` in `restore_text`) now withholds such text.
+
+### Patch Changes
+
+- [#190](https://github.com/veilio-inc/veilio/pull/190) [`85fbb66`](https://github.com/veilio-inc/veilio/commit/85fbb661fceb359b5520d16a707719f1ad50c05f) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The package description and README no longer say an agent never sees the real names: the server masks what the agent reads through it, and does not stop the agent reading files or command output with its own tools. In Claude Code, veilio-guard enforces masking for everything the model sees.
+- Updated dependencies [[`e9dec9a`](https://github.com/veilio-inc/veilio/commit/e9dec9a491edc605f01534fa7f191b6d85e91246)]:
+  - @veilio-inc/cli@0.9.0
+
 ## 0.7.0
 
 ### Minor Changes
