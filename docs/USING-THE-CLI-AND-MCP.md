@@ -8,6 +8,8 @@ Veilio ships two command-line packages:
   coding assistant (Claude Code, Claude Desktop, Xcode, Cursor, VS Code) can
   read files masked through it and restore its own answers.
 
+> **With a coding agent, use the guard.** Inside an agent, only [veilio-guard](../plugins/veilio-guard/README.md) keeps your names from the model: it masks everything the agent reads. Today that means Claude Code; other agents are in progress. The MCP server and the CLI mask only what passes through them - use them for pasting into a chat, for scanning in CI, or with an agent whose own file and shell tools are turned off.
+
 > **What MCP and the CLI do not do inside an agent.** They mask what passes
 > through them. An agent that also has its own file, search and shell tools reads
 > files and test output with those, and that reaches the model as written: in the
