@@ -471,13 +471,16 @@ describe('restore_text — altered placeholders and strict', () => {
     expect(res.text).not.toContain('PaymentGateway')
   })
 
-  it('strict: a credential redacted on purpose is not a failure', () => {
+  // Spec 067 (founder, 1 Nov): a redaction cannot be restored, so text holding
+  // one is not the file. strict withholds it, as the CLI's --strict does.
+  it('strict: a redacted credential withholds the text', () => {
     seedMap()
     const res = call('restore_text', {
       text: 'new __CLS__1(__REDACTED_STRIPE_KEY_1__)',
       strict: true,
     })
-    expect(res.isError).toBeFalsy()
+    expect(res.isError).toBe(true)
+    expect(res.text).toMatch(/withheld - __REDACTED_STRIPE_KEY_1__/)
   })
 })
 
@@ -523,17 +526,20 @@ describe('restore_text — round-trip report', () => {
     expect(res.text).not.toMatch(/never appeared/)
   })
 
-  it('does not flag a redacted credential as an invented token', () => {
-    // __REDACTED_*__ is never written to the map by design, so it remaining in
-    // the text is correct. Warning about it would fire the alarm on every
-    // restore involving a credential.
+  it('does not flag a redacted credential as an invented token, and says it cannot be restored', () => {
+    // __REDACTED_*__ is never written to the map by design, so it is not an
+    // invented token. But the restored text is not the file (spec 067): it says
+    // so once, as its own note.
     write('cfg.ts', `const stripeClient = init("${KEY}")\n`)
     const masked = call('anonymize_file', { path: 'cfg.ts' })
     const body = masked.text.split('--- masked code ---\n')[1]
     const res = call('restore_text', { text: body })
 
     expect(res.text).toContain('__REDACTED_STRIPE_KEY_1__')
-    expect(res.text).not.toContain('WARNING')
+    expect(res.text).not.toMatch(/invented or altered/)
+    expect(res.text).toMatch(
+      /WARNING: left as is: __REDACTED_STRIPE_KEY_1__[^\n]*cannot be restored/
+    )
   })
 
   it('still returns the restored text alongside the warning', () => {

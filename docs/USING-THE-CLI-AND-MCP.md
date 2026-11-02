@@ -72,7 +72,7 @@ veilio map                               # show the current symbol map (--clear 
 
 Exit codes: `0` clean, `1` findings (use it to stop a commit or a CI job): a
 credential from `scan` (with `--strict`, any finding, emails and private IPs
-included), or a placeholder `restore --strict` would have left; `2` usage or
+included), or a placeholder or redaction `restore --strict` would have left; `2` usage or
 I/O error.
 
 `restore` names every placeholder it could not put back, on stderr: one no map
@@ -143,7 +143,7 @@ Veilio Cloud, eight more for maps, the team and projects (below):
 |---|---|
 | `anonymize_file` | Reads a file inside the project root and returns it anonymized - the real code never enters the assistant's context. |
 | `anonymize_text` | Anonymizes text you or the assistant pass in. |
-| `restore_text` | Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder. |
+| `restore_text` | Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder or a redaction. A redacted value (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so it is always named: that text is not the original file. |
 | `scan_secrets` | Reports credentials without putting their values in context. |
 | `symbol_map_summary` | Counts and categories in the current map, never the names. |
 
@@ -305,5 +305,5 @@ with `restore_text`."*
 | The client says the server failed to start | The client cannot find `npx`/`node`: use absolute paths (section 5). |
 | A placeholder is "left as is" on restore | Two of your team's saved maps give it different names; restoring would be a guess. Load the map the text was anonymized with. |
 | Restore names `__fn__1` as a placeholder "whose shape the AI changed" | The model re-cased or re-underscored `__FN__1`, so no map matches it. Ask it to use the placeholders exactly as given, or fix that spot by hand. |
-| `restore --strict` wrote nothing and exited 1 | A placeholder would have been left in the text; stderr names it. Fix the answer (or restore without `--strict` and fix it by hand). |
+| `restore --strict` wrote nothing and exited 1 | A placeholder or a redaction would have been left in the text; stderr names it. Fix the answer (or restore without `--strict` and fix it by hand). A redaction cannot be restored at all: make that change in the file itself. |
 | `veilio scrub` did not apply a new rule | Run `veilio rules pull`; `scrub` uses the saved copy and prints its age. |
