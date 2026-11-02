@@ -1,5 +1,7 @@
 # @veilio-inc/mcp
 
+> **With a coding agent, use the guard.** Inside an agent, only [veilio-guard](../../plugins/veilio-guard/README.md) keeps your names from the model: it masks everything the agent reads. Today that means Claude Code; other agents are in progress. The MCP server and the CLI mask only what passes through them - use them for pasting into a chat, for scanning in CI, or with an agent whose own file and shell tools are turned off.
+
 MCP server that lets a coding agent read your code **masked**: a file read through it reaches the agent with its identifiers as placeholders. What masking does and does not hide: [the engine's README](../engine/README.md#what-it-hides-and-what-it-does-not).
 
 **What it does not do:** it masks what the agent reads *through it*. It does not stop the agent reading files or command output with its own tools, and those reach the model as written - in the spec 067 benchmark, project names reached the model in 93-96 of 96 MCP and CLI sessions, as often as with no Veilio at all. In Claude Code, [veilio-guard](../../plugins/veilio-guard/README.md) enforces masking for everything the model sees. In another agent, turn off its own file and shell tools so this server is the only way to your code.

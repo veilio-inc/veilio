@@ -8,6 +8,8 @@
 
 Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back ([what it hides, and what it does not](packages/engine/README.md#what-it-hides-and-what-it-does-not)). Source code never leaves your machine: the web app runs the engine in your browser, and the terminal and agent surfaces run it in your own process.
 
+> **With a coding agent, use the guard.** Inside an agent, only veilio-guard keeps your names from the model: it masks everything the agent reads. Today that means Claude Code; other agents are in progress. The MCP server and the CLI mask only what passes through them - use them for pasting into a chat, for scanning in CI, or with an agent whose own file and shell tools are turned off.
+
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
 ## New: Veilio guard for Claude Code
