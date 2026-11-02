@@ -53,7 +53,7 @@ masked, and a value whose key contains a credential word (`password: sunshine`,
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `anonymize_file`     | Read a file and return only its masked form. **Preferred.**                                                                                                                                                                                                                                    |
 | `anonymize_text`     | Mask text the agent already holds (a user paste). Not for file contents.                                                                                                                                                                                                                       |
-| `restore_text`       | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). With `strict: true`, it returns an error naming them instead of the text. |
+| `restore_text`       | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). A value redacted one-way is named too: it cannot be restored. With `strict: true`, it returns an error naming them instead of the text. |
 | `scan_secrets`       | Detect credentials without modifying anything, and without putting the values in context.                                                                                                                                                                                                      |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names.                                                                                                                                                                                                                               |
 
@@ -267,8 +267,9 @@ tools/call restore_text { "text": "new __CLS__1().__fn__1()", "strict": true }
 ```
 
 `strict` must be `true` or `false`; anything else (`"true"`) is an error, never
-"not strict". A credential redacted on purpose is not a placeholder and never
-fails it. Without `strict`, the text comes back with the warnings, as before.
+"not strict". A value redacted one-way (`__REDACTED_CREDENTIAL_1__`) cannot be
+restored, so the text is not the original file: it is always named, and `strict`
+refuses it. Without `strict`, the text comes back with the warnings, as before.
 
 ### After a lapse
 

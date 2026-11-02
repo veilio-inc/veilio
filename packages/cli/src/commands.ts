@@ -43,6 +43,8 @@ import {
   ignoredKeysNote,
   reservationRefusedSentence,
   localNumbering,
+  redactedNote,
+  redactionsIn,
 } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -464,7 +466,7 @@ export async function runRestore(
 
   // --strict: a restore that leaves any placeholder in the text writes nothing,
   // so `... | veilio restore --strict > file` cannot produce a file that still
-  // holds one. A credential redacted on purpose is not a placeholder. The
+  // holds one, nor a redaction (below). The
   // team's maps failing needs no case of its own: a placeholder they were needed
   // for is unresolved.
   const left = [
@@ -477,7 +479,10 @@ export async function runRestore(
     ...otherLocal,
     ...altered,
   ]
-  const refused = args.strict && left.length > 0
+  // Spec 067: a redaction cannot be restored, so text holding one is not the
+  // file - written over it, the file loses those values for good.
+  const redacted = redactionsIn(result.restored)
+  const refused = args.strict && (left.length > 0 || redacted.length > 0)
   if (!refused) io.stdout(result.restored)
 
   // Findings, never under --quiet: the output still holds these placeholders.
@@ -503,10 +508,11 @@ export async function runRestore(
     )
   }
   if (altered.length > 0) io.stderr(`${BIN_NAME}: ${alteredNote(altered)}\n`)
+  if (redacted.length > 0 && !refused) io.stderr(`${BIN_NAME}: ${redactedNote(redacted)}\n`)
 
   if (refused) {
     io.stderr(
-      `${BIN_NAME}: --strict: nothing written - ${left.join(', ')} would have been left in the text.\n`
+      `${BIN_NAME}: --strict: nothing written - ${[...left, ...redacted].join(', ')} would have been left in the text.\n`
     )
     return EXIT_FINDINGS
   }

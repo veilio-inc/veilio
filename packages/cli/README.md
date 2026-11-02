@@ -30,7 +30,7 @@ signed-in `scrub` offline, `veilio logout` first.
 | Command              | Purpose                                                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scrub [files...]`   | Mask identifiers, redact credentials. Reads stdin when given no file.                                                                                                                                   |
-| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore; `--strict` writes nothing if a placeholder would be left. |
+| `restore [files...]` | Swap placeholders back, strip AI-generated noise. Signed in, also a teammate's placeholders — see below. Names anything it could not restore, a redacted value included; `--strict` writes nothing if a placeholder or a redaction would be left. |
 | `scan [files...]`    | Detect credentials only. Never rewrites. Exits 1 on a credential; with `--strict`, on any finding.                                                                                                      |
 | `map`                | Show the symbol map (`--clear` to wipe it).                                                                                                                                                             |
 
@@ -306,7 +306,8 @@ a plan feature the web app couldn't.
     --json              Machine-readable output
                         For: scan, map
     --strict            scan: also fail on advisory findings. restore: write
-                        nothing and exit 1 if a placeholder would be left
+                        nothing and exit 1 if a placeholder or a redaction
+                        would be left
                         For: scan, restore
     --keep-docs         Keep JSDoc blocks the model wrote
                         For: restore
@@ -348,8 +349,9 @@ command.
 placeholder would be left in it — one the AI invented, one whose shape it changed
 (`__fn__1`), one the team's maps disagree on, or one the team's maps could not be
 read for — nothing goes to stdout and it exits 1. Without it, restore writes the
-text, placeholders and all, names each one on stderr and exits 0. A credential
-redacted on purpose is not a placeholder and never fails it.
+text, placeholders and all, names each one on stderr and exits 0. A value
+redacted one-way (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so the text is
+not the original file: restore names it every time, and `--strict` refuses it.
 
 `--keep-docs` is worth knowing about: the default strip removes JSDoc along with
 the narration and TODOs, which is wrong when the model was _asked_ to document
@@ -385,7 +387,7 @@ so write files from PowerShell 7 (`pwsh`).
 | Code | Meaning                                                                                                            |
 | ---- | ------------------------------------------------------------------------------------------------------------------ |
 | 0    | Clean                                                                                                              |
-| 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder `restore --strict` would have left |
+| 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder or redaction `restore --strict` would have left |
 | 2    | Usage or IO error                                                                                                  |
 
 As a pre-commit hook:
