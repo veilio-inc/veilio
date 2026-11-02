@@ -1,5 +1,11 @@
 # @veilio-inc/cli
 
+## 0.9.0
+
+### Minor Changes
+
+- [#189](https://github.com/veilio-inc/veilio/pull/189) [`e9dec9a`](https://github.com/veilio-inc/veilio/commit/e9dec9a491edc605f01534fa7f191b6d85e91246) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `restore` and `restore_text` now name every redaction left in the text (`__REDACTED_CREDENTIAL_1__`): a redacted value is gone for good, so the restored text is not the original file and must not be written over it. `--strict` (and `strict` in `restore_text`) now withholds such text.
+
 ## 0.8.0
 
 ### Minor Changes
