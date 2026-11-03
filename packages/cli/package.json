@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run typecheck && npm run build && npm run test",
+    "prepublishOnly": "npm run clean && npm run build && npm run typecheck && npm run test",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
