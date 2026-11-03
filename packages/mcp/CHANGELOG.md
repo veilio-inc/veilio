@@ -1,5 +1,11 @@
 # @veilio-inc/mcp
 
+## 0.8.1
+
+### Patch Changes
+
+- [#192](https://github.com/veilio-inc/veilio/pull/192) [`0cc838f`](https://github.com/veilio-inc/veilio/commit/0cc838f9b1b0834e50054b7be7fad2f1299524f8) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The server's instructions to the agent no longer say real identifiers never enter its context. They say MCP does not stop the agent reading files with its own tools, and that with a coding agent the guard is what keeps the names from the model. The package description says the same.
+
 ## 0.8.0
 
 ### Minor Changes
