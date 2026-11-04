@@ -1490,6 +1490,133 @@ function resolveStripSet(option) {
     return new Set(option);
 }
 /**
+ * Remove the wanted noise from `text`, leaving everything else as written
+ * (e44). Items are found in the original text, so line numbers are the AI
+ * response's own. Each later pattern sees the earlier items blanked to spaces,
+ * so a `// TODO` after a removed JSDoc still starts its line. Then, line by
+ * line:
+ * - a line that held only stripped items goes, newline and all;
+ * - an item at the start of a line takes the spaces after it, and one at the
+ *   end takes the spaces before it, so no stray whitespace is left;
+ * - an item inside a line leaves the spacing around it.
+ * Where removed lines sat between blank lines, the gap becomes the larger of
+ * the two sides, not their sum. Nothing else is touched: the writer's own
+ * blank lines - Python's two between top-level definitions (PEP 8) included -
+ * and whitespace stay as they were. The old version collapsed every pair of
+ * blank lines file-wide to hide the gaps its stripping left.
+ */
+function stripNoise(text, wanted) {
+    if (wanted.size === 0)
+        return { text, items: [] };
+    // Where each line starts, for line numbers and the line pass.
+    const lineStarts = [0];
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1))
+        lineStarts.push(i + 1);
+    const lineOf = (offset) => {
+        let lo = 0;
+        let hi = lineStarts.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (lineStarts[mid] <= offset)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return lo;
+    };
+    // A plain array, not a Uint8Array: the typed array made the README type
+    // check take minutes under its compiler settings (3 s with this).
+    const gone = new Array(text.length).fill(0);
+    const items = [];
+    let view = text;
+    for (const [type, pattern] of STRIP_PATTERNS) {
+        if (!wanted.has(type))
+            continue;
+        const found = [];
+        for (const m of view.matchAll(pattern)) {
+            if (m[0].length === 0)
+                continue;
+            const start = m.index;
+            found.push([start, start + m[0].length]);
+            items.push({ type, content: m[0].trim(), lineNumber: lineOf(start) + 1 });
+        }
+        if (found.length === 0)
+            continue;
+        const parts = [];
+        let at = 0;
+        for (const [start, end] of found) {
+            gone.fill(1, start, end);
+            parts.push(view.slice(at, start), view.slice(start, end).replace(/[^\n]/g, ' '));
+            at = end;
+        }
+        parts.push(view.slice(at));
+        view = parts.join('');
+    }
+    if (items.length === 0)
+        return { text, items };
+    const lines = lineStarts.map((start, i) => {
+        const next = i + 1 < lineStarts.length ? lineStarts[i + 1] - 1 : text.length;
+        const cr = next > start && text[next - 1] === '\r' ? 1 : 0;
+        const end = next - cr;
+        const eol = text.slice(end, i + 1 < lineStarts.length ? next + 1 : next);
+        let touched = false;
+        for (let k = start; k < end && !touched; k++)
+            touched = gone[k] === 1;
+        const original = text.slice(start, end);
+        if (!touched)
+            return { body: original, eol, touched, dropped: false, blank: /^[ \t]*$/.test(original) };
+        let kept = '';
+        let firstGone = -1;
+        let lastGone = -1;
+        for (let k = start; k < end; k++) {
+            if (gone[k] === 1) {
+                if (firstGone === -1)
+                    firstGone = k;
+                lastGone = k;
+            }
+            else
+                kept += text[k];
+        }
+        if (/^[ \t]*$/.test(kept))
+            return { body: '', eol, touched, dropped: true, blank: false };
+        let body = kept;
+        if (/^[ \t]*$/.test(text.slice(start, firstGone))) {
+            const indent = text.slice(start, firstGone);
+            body = indent + body.slice(indent.length).replace(/^[ \t]+/, '');
+        }
+        if (/^[ \t]*$/.test(text.slice(lastGone + 1, end)))
+            body = body.replace(/[ \t]+$/, '');
+        return { body, eol, touched, dropped: false, blank: false };
+    });
+    // Removed lines between blank lines: keep the larger gap, not both.
+    for (let i = 0; i < lines.length;) {
+        if (!lines[i].dropped) {
+            i++;
+            continue;
+        }
+        let j = i;
+        while (j < lines.length && lines[j].dropped)
+            j++;
+        let before = 0;
+        for (let k = i - 1; k >= 0 && lines[k].blank; k--)
+            before++;
+        let after = 0;
+        for (let k = j; k < lines.length && lines[k].blank; k++)
+            after++;
+        const drop = i === 0 ? after : Math.min(before, after);
+        for (let k = j; k < j + drop; k++)
+            lines[k].dropped = true;
+        i = j + drop;
+    }
+    return {
+        text: lines
+            .filter((l) => !l.dropped)
+            .map((l) => l.body + l.eol)
+            .join(''),
+        items,
+    };
+}
+/**
  * Restore an AI response: strip AI-generated noise, then swap placeholders back.
  *
  * `options.strip` selects what counts as noise. It matters most for `'jsdoc'`:
@@ -1500,56 +1627,9 @@ export function restore(aiResponse, map, options = {}) {
     assertKnownOptions('restore', options, RESTORE_OPTIONS);
     const strippedItems = [];
     const wanted = resolveStripSet(options.strip);
-    let result = aiResponse;
-    // Each item is removed where it sits (e44), so the writer's own blank lines
-    // are never touched and nothing needs collapsing after:
-    // - an item that is the whole line takes the line with it; between two blank
-    //   lines it takes one of them too, so they become one, as before;
-    // - an item at the end of a line takes the spaces before it;
-    // - an item inside a line leaves the spacing it had.
-    // The match carries the spaces before it and up to two line ends after it.
-    // The old clean-up instead collapsed every pair of blank lines to one, which
-    // rewrote Python's two blank lines between top-level definitions (PEP 8).
-    function strip(pattern, type) {
-        if (!wanted.has(type))
-            return;
-        const around = new RegExp(`(?<lead>[ \\t]*)(?:${pattern.source})(?<eol>\\r?\\n)?(?<blank>\\r?\\n)?`, pattern.flags);
-        result = result.replace(around, (match, ...args) => {
-            const groups = args[args.length - 1];
-            const text = args[args.length - 2];
-            const offset = args[args.length - 3];
-            const { lead = '', eol = '', blank = '' } = groups;
-            strippedItems.push({
-                type,
-                content: match.trim(),
-                lineNumber: text.slice(0, offset).split('\n').length,
-            });
-            const lineStart = offset === 0 || text[offset - 1] === '\n';
-            const lineEnd = eol !== '' || offset + match.length === text.length;
-            if (lineStart && lineEnd) {
-                const blankBefore = offset === 0 || /\n\r?\n$/.test(text.slice(0, offset));
-                return blank && blankBefore ? '' : blank;
-            }
-            return lineEnd ? eol + blank : lead;
-        });
-    }
-    for (const [type, pattern] of STRIP_PATTERNS)
-        strip(pattern, type);
-    // Tidy up after stripping. Gated on whether stripping is enabled at all, not
-    // on whether anything matched: `strip: 'none'` means "restore placeholders and
-    // change nothing else", so it must not reformat.
-    if (wanted.size > 0) {
-        // Removing a comment leaves its indentation behind, so a stripped block
-        // becomes a line of spaces rather than a blank line — invisible in the UI,
-        // trailing whitespace in the editor it gets pasted into, and a lint error in
-        // any project with no-trailing-spaces. Blanked before the run collapse below
-        // so those lines can actually be collapsed.
-        result = result.replace(/^[ \t]+$/gm, '');
-        // Collapse 3+ consecutive blank lines to 2. Two blank lines are three
-        // newlines and stay: that is Python's layout between top-level definitions
-        // (PEP 8), which `\n{3,}` used to squash to one (e44).
-        result = result.replace(/\n{4,}/g, '\n\n\n');
-    }
+    const stripped = stripNoise(aiResponse, wanted);
+    strippedItems.push(...stripped.items);
+    let result = stripped.text;
     // Restore placeholders in one pass, longest-first.
     //
     // Same reasoning as the substitution in anonymize: a replace per placeholder
