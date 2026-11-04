@@ -6,6 +6,7 @@
 // go to stderr, which MCP clients surface as server logs.
 
 import { realpathSync } from 'node:fs'
+import { guardHint } from '@veilio-inc/cli/guard-hint'
 import { pathToFileURL } from 'node:url'
 import { FrameReader, type JsonRpcResponse } from './server.js'
 import type { ToolContext } from './tools.js'
@@ -46,6 +47,8 @@ function parseCliContext(argv: readonly string[]): ToolContext {
 
 async function start(): Promise<void> {
   const ctx = contextFromArgv(process.argv.slice(2))
+  ctx.guardHint = guardHint('mcp', process.env)
+  if (ctx.guardHint) process.stderr.write(`${ctx.guardHint}\n`)
   const send = (response: JsonRpcResponse): void => {
     process.stdout.write(`${JSON.stringify(response)}\n`)
   }

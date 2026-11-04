@@ -107,6 +107,8 @@ export interface ToolContext {
    * every tool call. Undefined: this process's environment.
    */
   env?: Readonly<Record<string, string | undefined>>
+  /** Spec 070: the guard-missing line, worked out once when the server starts. */
+  guardHint?: string | null
 }
 
 export interface ToolResult {

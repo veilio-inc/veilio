@@ -2,6 +2,14 @@
 
 Anonymize code before it reaches an LLM, restore it after — from a terminal, a pipe, or a pre-commit hook.
 
+> **Veilio is a set: install the guard, the CLI and the MCP server together.** Each does one job, and all three share one map (`.veilio/map.json`).
+>
+> - **[veilio-guard](../../plugins/veilio-guard/README.md)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
+> - **The CLI (this package)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
+> - **[The MCP server](../mcp/README.md) (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+>
+> **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
+
 ```bash
 veilio scrub src/billing.ts | pbcopy     # mask, then paste anywhere
 pbpaste | veilio restore                 # bring the answer back
@@ -381,6 +389,16 @@ Veilio is read with the console's code page, which may not be UTF-8. Passing
 files as arguments (`veilio scrub file`, `veilio restore answer.txt`) avoids
 the first problem; the line above avoids both. In 5.1, `>` also writes UTF-16,
 so write files from PowerShell 7 (`pwsh`).
+
+## When Veilio says the guard is missing
+
+Run inside Claude Code (Claude Code sets `CLAUDECODE` for the commands it runs) on a machine where veilio-guard is not installed, every command prints one line to stderr:
+
+```text
+veilio: veilio-guard is not installed. In Claude Code the CLI and MCP mask only what passes through them; the agent's own reads reach the model as written. Install it: /plugin install veilio-guard@veilio
+```
+
+Standard output and the exit code are never changed, so pipes keep working. The line goes away once the guard is installed (the CLI reads Claude Code's plugin list, `~/.claude/plugins/installed_plugins.json`, and nothing else), and never shows under `--quiet`, with `CI` set, or outside Claude Code. A guard enforced only through your organisation's managed settings may not appear in that list; use `--quiet` there.
 
 ## Exit codes
 

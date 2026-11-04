@@ -8,7 +8,13 @@
 
 Two-way code anonymizer for AI. Strip real identifiers (`UserAuthService.validateSessionToken`) before you paste code into an LLM, then restore them on the way back ([what it hides, and what it does not](packages/engine/README.md#what-it-hides-and-what-it-does-not)). Source code never leaves your machine: the web app runs the engine in your browser, and the terminal and agent surfaces run it in your own process.
 
-> **With a coding agent, use the guard.** Inside an agent, only veilio-guard keeps your names from the model: it masks everything the agent reads. Today that means Claude Code; other agents are in progress. The MCP server and the CLI mask only what passes through them - use them for pasting into a chat, for scanning in CI, or with an agent whose own file and shell tools are turned off.
+> **Veilio is a set: install the guard, the CLI and the MCP server together.** Each does one job, and all three share one map (`.veilio/map.json`).
+>
+> - **[veilio-guard](plugins/veilio-guard/README.md)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
+> - **[The CLI](packages/cli/README.md) (`@veilio-inc/cli`)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
+> - **[The MCP server](packages/mcp/README.md) (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+>
+> **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
 
 **This is the self-hostable Community Edition.** For the hosted Cloud edition with accounts, cross-device sync, and team features, see [veilio.dev](https://veilio.dev).
 
@@ -33,7 +39,7 @@ It needs Claude Code 2.1.287 or later, uses the same map as the CLI, and makes n
 
 - Two-way anonymize / restore in-browser via `@veilio-inc/engine`
 - Restore names every placeholder it could not put back — invented by the AI, re-cased (`__fn__1`), or disputed between maps — never guesses; `veilio restore --strict` and the MCP's `strict` refuse instead
-- The same engine in a terminal (`@veilio-inc/cli`) and in coding agents (`@veilio-inc/mcp`)
+- One set: the guard for Claude Code, the CLI (`@veilio-inc/cli`) for the map, your team and CI, the MCP server (`@veilio-inc/mcp`) for agents the guard does not cover yet
 - A Claude Code plugin (`veilio-guard`) that masks everything Claude Code reads and restores what it writes
 - Bank account (IBAN), payment card and PESEL numbers found by checksum and masked reversibly, so the round trip returns them; a live credential is destroyed instead and never enters the map
 - Maps saved to browser localStorage for convenience

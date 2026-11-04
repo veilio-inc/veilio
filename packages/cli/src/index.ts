@@ -23,6 +23,7 @@ import {
   teamNamespaceForScrub,
 } from './cloud-commands.js'
 import { resolveMapPath } from './store.js'
+import { guardHint } from './guard-hint.js'
 import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
@@ -46,6 +47,11 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       return EXIT_ERROR
     }
     throw err
+  }
+  // Spec 070: only with a real environment - an Io without one (a test, an embedder) gets no hint.
+  if (io.env && !args.quiet) {
+    const hint = guardHint('cli', io.env, io.home)
+    if (hint) io.stderr(`${hint}\n`)
   }
   return run(args, io)
 }
@@ -293,6 +299,7 @@ if (invokedAsProgram()) {
     stderr: (text) => process.stderr.write(text),
     prompt: readLine,
     password: readSecret,
+    env: process.env,
   }
   main(process.argv.slice(2), io).then(
     (code) => {
