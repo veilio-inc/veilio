@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.8.2
+
+### Patch Changes
+
+- [#196](https://github.com/veilio-inc/veilio/pull/196) [`eba612c`](https://github.com/veilio-inc/veilio/commit/eba612c72ed438fd92de8325d30a0e5901772a17) Thanks [@DlgSHi](https://github.com/DlgSHi)! - At startup, without veilio-guard, the server prints one line to stderr and tells the agent the same in its instructions: in Claude Code, to install the guard; in other agents, to turn off the agent's own file and shell tools. `CI` silences it.
+- Updated dependencies [[`eba612c`](https://github.com/veilio-inc/veilio/commit/eba612c72ed438fd92de8325d30a0e5901772a17)]:
+  - @veilio-inc/cli@0.9.1
+
 ## 0.8.1
 
 ### Patch Changes
