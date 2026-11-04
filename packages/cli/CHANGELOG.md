@@ -1,5 +1,11 @@
 # @veilio-inc/cli
 
+## 0.9.1
+
+### Patch Changes
+
+- [#196](https://github.com/veilio-inc/veilio/pull/196) [`eba612c`](https://github.com/veilio-inc/veilio/commit/eba612c72ed438fd92de8325d30a0e5901772a17) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Inside Claude Code without veilio-guard, every command prints one line to stderr saying that the CLI masks only what passes through it and how to install the guard. Standard output and exit codes are unchanged; `--quiet` and `CI` silence it.
+
 ## 0.9.0
 
 ### Minor Changes
