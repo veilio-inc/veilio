@@ -55,7 +55,8 @@
     "./team-anonymize": "./dist/team-anonymize.js",
     "./third-party": "./dist/third-party.js",
     "./client": "./dist/client/index.js",
-    "./reservations": "./dist/reservations.js"
+    "./reservations": "./dist/reservations.js",
+    "./guard-hint": "./dist/guard-hint.js"
   },
   "repository": {
     "type": "git",

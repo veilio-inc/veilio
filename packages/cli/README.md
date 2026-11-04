@@ -390,6 +390,16 @@ files as arguments (`veilio scrub file`, `veilio restore answer.txt`) avoids
 the first problem; the line above avoids both. In 5.1, `>` also writes UTF-16,
 so write files from PowerShell 7 (`pwsh`).
 
+## When Veilio says the guard is missing
+
+Run inside Claude Code (Claude Code sets `CLAUDECODE` for the commands it runs) on a machine where veilio-guard is not installed, every command prints one line to stderr:
+
+```text
+veilio: veilio-guard is not installed. In Claude Code the CLI and MCP mask only what passes through them; the agent's own reads reach the model as written. Install it: /plugin install veilio-guard@veilio
+```
+
+Standard output and the exit code are never changed, so pipes keep working. The line goes away once the guard is installed (the CLI reads Claude Code's plugin list, `~/.claude/plugins/installed_plugins.json`, and nothing else), and never shows under `--quiet`, with `CI` set, or outside Claude Code. A guard enforced only through your organisation's managed settings may not appear in that list; use `--quiet` there.
+
 ## Exit codes
 
 | Code | Meaning                                                                                                            |

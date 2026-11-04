@@ -147,6 +147,15 @@ project with `env`. Use a name or an id; an empty value counts as unset:
 
 **`--root` guards the files, not the conversation.** Everything the agent has read stays in its session. If you work on several clients' repos, a session that read client A's code still holds it when you switch to client B, and the model can repeat a name from it without reading a file. Without a team namespace, placeholders are also numbered per project: `__CLS__1` in A's repo and `__CLS__1` in B's are different classes, so an answer about A restored through B's server comes back with B's names in it. Open a fresh session per client, from that repo's root, so each session has one root, one map and one client's code.
 
+## When Veilio says the guard is missing
+
+At startup the server checks whether veilio-guard is installed (Claude Code's plugin list, `~/.claude/plugins/installed_plugins.json`; nothing else is read, nothing is sent). If it is not, the server prints one line to stderr and adds the same sentence to the instructions it gives the agent:
+
+- **In Claude Code** (`CLAUDECODE` is set): `veilio: veilio-guard is not installed. In Claude Code the CLI and MCP mask only what passes through them; the agent's own reads reach the model as written. Install it: /plugin install veilio-guard@veilio`
+- **In any other agent**, where the guard does not exist yet: `veilio: this agent has no Veilio guard yet. Turn off its own file and shell tools so this server is the only way to your code; otherwise its reads reach the model as written.`
+
+Nothing is added once the guard is installed, or with `CI` set. Tool results are never changed.
+
 ## Team namespace (Team plan and above)
 
 Sign in once with the `veilio` CLI — `veilio login` — and every anonymize
