@@ -8,17 +8,13 @@ Veilio ships two command-line packages:
   coding assistant (Claude Code, Claude Desktop, Xcode, Cursor, VS Code) can
   read files masked through it and restore its own answers.
 
-> **With a coding agent, use the guard.** Inside an agent, only [veilio-guard](../plugins/veilio-guard/README.md) keeps your names from the model: it masks everything the agent reads. Today that means Claude Code; other agents are in progress. The MCP server and the CLI mask only what passes through them - use them for pasting into a chat, for scanning in CI, or with an agent whose own file and shell tools are turned off.
-
-> **What MCP and the CLI do not do inside an agent.** They mask what passes
-> through them. An agent that also has its own file, search and shell tools reads
-> files and test output with those, and that reaches the model as written: in the
-> spec 067 benchmark, project names reached the model in 93-96 of 96 MCP and CLI
-> sessions, as often as with no Veilio at all. In Claude Code, install
-> [veilio-guard](../plugins/veilio-guard/README.md), which masks everything the
-> model sees. In another agent, turn off its own file and shell tools so Veilio is
-> the only way to your code. Pasting into a chat with `veilio scrub | pbcopy`, and
-> `veilio scan` in a hook or CI, need neither.
+> **Veilio is a set: install the guard, the CLI and the MCP server together.** Each does one job, and all three share one map (`.veilio/map.json`).
+>
+> - **[veilio-guard](../plugins/veilio-guard/README.md)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
+> - **The CLI (`@veilio-inc/cli`)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
+> - **The MCP server (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+>
+> **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
 
 Both work **offline and without an account**. A Veilio Cloud subscription adds
 your saved maps, your team's shared placeholders and your custom rules.
