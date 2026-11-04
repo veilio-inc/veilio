@@ -208,10 +208,51 @@ describe('restore', () => {
     expect(restore(ts, {}).restored).toBe("import x from 'x'\n\nexport class A {}\n")
   })
 
-  it('an inline stripped item leaves the rest of its line', () => {
+  it('an item at the end of a line takes the spaces before it (no trailing space)', () => {
     expect(restore('const a = 1 /** doc */\nconst b = 2\n', {}).restored).toBe(
-      'const a = 1 \nconst b = 2\n'
+      'const a = 1\nconst b = 2\n'
     )
+  })
+
+  it('an item inside a line leaves the spacing it had', () => {
+    expect(restore('f(/** a */ x)\n', {}).restored).toBe('f( x)\n')
+    // As on main: the spaces before it stay, only the item goes.
+    expect(restore('f(a, /** b */ c)\n', {}).restored).toBe('f(a,  c)\n')
+  })
+
+  it('a JSDoc and a // comment on one line are both stripped, and the line goes', () => {
+    const { restored, strippedItems } = restore(
+      '/** @deprecated */ // TODO remove\nconst a = 1\n',
+      {}
+    )
+    expect(restored).toBe('const a = 1\n')
+    expect(strippedItems.map((i) => i.type).sort()).toEqual(['jsdoc', 'todo'])
+  })
+
+  it('a separator between single blank lines leaves one blank line, as before', () => {
+    expect(restore('const a = 1\n\n// ----------\n\nconst b = 2\n', {}).restored).toBe(
+      'const a = 1\n\nconst b = 2\n'
+    )
+  })
+
+  it('CRLF text is handled the same way', () => {
+    expect(restore('const a = 1\r\n\r\n// TODO x\r\nconst b = 2\r\n', {}).restored).toBe(
+      'const a = 1\r\n\r\nconst b = 2\r\n'
+    )
+    expect(restore('def a():\r\n    pass\r\n\r\n\r\ndef b():\r\n', {}).restored).toBe(
+      'def a():\r\n    pass\r\n\r\n\r\ndef b():\r\n'
+    )
+  })
+
+  it('a private-use character in the text changes nothing (icon fonts use U+E000)', () => {
+    const plain = restore("const i = 'x'\n\n// TODO x\nconst b = 2\n", {}).restored
+    const icon = restore("const i = '\uE000'\n\n// TODO x\nconst b = 2\n", {}).restored
+    expect(icon).toBe(plain.replace("'x'", "'\uE000'"))
+  })
+
+  it('repeated identical comments report their own line numbers', () => {
+    const { strippedItems } = restore('// TODO a\nx\n// TODO a\ny\n', {})
+    expect(strippedItems.map((i) => i.lineNumber)).toEqual([1, 3])
   })
 
   it('a stripped comment between two blocks leaves at most two blank lines', () => {

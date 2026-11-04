@@ -1501,32 +1501,40 @@ export function restore(aiResponse, map, options = {}) {
     const strippedItems = [];
     const wanted = resolveStripSet(options.strip);
     let result = aiResponse;
-    // A stripped item is first replaced by a marker, so a line it emptied can be
-    // told apart from a blank line the writer put there (e44): the first goes,
-    // the second stays. Without the marker, the clean-up below had to collapse
-    // every pair of blank lines to one, and that rewrote Python's two blank
-    // lines between top-level definitions (PEP 8).
-    const GONE = '\uE000';
-    const marked = !aiResponse.includes(GONE);
+    // Each item is removed where it sits (e44), so the writer's own blank lines
+    // are never touched and nothing needs collapsing after:
+    // - an item that is the whole line takes the line with it; between two blank
+    //   lines it takes one of them too, so they become one, as before;
+    // - an item at the end of a line takes the spaces before it;
+    // - an item inside a line leaves the spacing it had.
+    // The match carries the spaces before it and up to two line ends after it.
+    // The old clean-up instead collapsed every pair of blank lines to one, which
+    // rewrote Python's two blank lines between top-level definitions (PEP 8).
     function strip(pattern, type) {
         if (!wanted.has(type))
             return;
-        result = result.replace(pattern, (match) => {
-            const before = result.slice(0, result.indexOf(match));
-            const lineNumber = before.split('\n').length;
-            strippedItems.push({ type, content: match.trim(), lineNumber });
-            return marked ? GONE : '';
+        const around = new RegExp(`(?<lead>[ \\t]*)(?:${pattern.source})(?<eol>\\r?\\n)?(?<blank>\\r?\\n)?`, pattern.flags);
+        result = result.replace(around, (match, ...args) => {
+            const groups = args[args.length - 1];
+            const text = args[args.length - 2];
+            const offset = args[args.length - 3];
+            const { lead = '', eol = '', blank = '' } = groups;
+            strippedItems.push({
+                type,
+                content: match.trim(),
+                lineNumber: text.slice(0, offset).split('\n').length,
+            });
+            const lineStart = offset === 0 || text[offset - 1] === '\n';
+            const lineEnd = eol !== '' || offset + match.length === text.length;
+            if (lineStart && lineEnd) {
+                const blankBefore = offset === 0 || /\n\r?\n$/.test(text.slice(0, offset));
+                return blank && blankBefore ? '' : blank;
+            }
+            return lineEnd ? eol + blank : lead;
         });
     }
     for (const [type, pattern] of STRIP_PATTERNS)
         strip(pattern, type);
-    if (marked) {
-        // A line holding nothing but stripped items goes whole, newline included.
-        result = result
-            .replace(/^[ \t]*(?:\uE000[ \t]*)+(?:\r?\n|$)/gm, '')
-            .split(GONE)
-            .join('');
-    }
     // Tidy up after stripping. Gated on whether stripping is enabled at all, not
     // on whether anything matched: `strip: 'none'` means "restore placeholders and
     // change nothing else", so it must not reformat.
