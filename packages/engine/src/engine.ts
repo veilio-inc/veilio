@@ -1777,17 +1777,31 @@ export function restore(
   const wanted = resolveStripSet(options.strip)
   let result = aiResponse
 
+  // A stripped item is first replaced by a marker, so a line it emptied can be
+  // told apart from a blank line the writer put there (e44): the first goes,
+  // the second stays. Without the marker, the clean-up below had to collapse
+  // every pair of blank lines to one, and that rewrote Python's two blank
+  // lines between top-level definitions (PEP 8).
+  const GONE = '\uE000'
+  const marked = !aiResponse.includes(GONE)
   function strip(pattern: RegExp, type: StrippedItemType): void {
     if (!wanted.has(type)) return
     result = result.replace(pattern, (match) => {
       const before = result.slice(0, result.indexOf(match))
       const lineNumber = before.split('\n').length
       strippedItems.push({ type, content: match.trim(), lineNumber })
-      return ''
+      return marked ? GONE : ''
     })
   }
 
   for (const [type, pattern] of STRIP_PATTERNS) strip(pattern, type)
+  if (marked) {
+    // A line holding nothing but stripped items goes whole, newline included.
+    result = result
+      .replace(/^[ \t]*(?:\uE000[ \t]*)+(?:\r?\n|$)/gm, '')
+      .split(GONE)
+      .join('')
+  }
 
   // Tidy up after stripping. Gated on whether stripping is enabled at all, not
   // on whether anything matched: `strip: 'none'` means "restore placeholders and
@@ -1799,8 +1813,10 @@ export function restore(
     // any project with no-trailing-spaces. Blanked before the run collapse below
     // so those lines can actually be collapsed.
     result = result.replace(/^[ \t]+$/gm, '')
-    // Collapse 3+ consecutive blank lines to 2.
-    result = result.replace(/\n{3,}/g, '\n\n')
+    // Collapse 3+ consecutive blank lines to 2. Two blank lines are three
+    // newlines and stay: that is Python's layout between top-level definitions
+    // (PEP 8), which `\n{3,}` used to squash to one (e44).
+    result = result.replace(/\n{4,}/g, '\n\n\n')
   }
 
   // Restore placeholders in one pass, longest-first.

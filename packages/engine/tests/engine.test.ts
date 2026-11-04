@@ -187,7 +187,37 @@ describe('restore', () => {
   it('collapses multiple blank lines to maximum 2', () => {
     const input = 'line1\n\n\n\n\nline2'
     const { restored } = restore(input, {})
-    expect(restored).not.toMatch(/\n{3,}/)
+    // Two blank lines are three newlines; never more.
+    expect(restored).toBe('line1\n\n\nline2')
+  })
+
+  // e44: two blank lines between top-level definitions are Python's layout
+  // (PEP 8 E302/E305). Collapsing them to one rewrote every Python file passed
+  // back through restore, and grew its diff.
+  it("keeps Python's two blank lines between top-level definitions", () => {
+    const py = 'import os\n\n\ndef a():\n    return 1\n\n\nclass B:\n    pass\n'
+    expect(restore(py, {}).restored).toBe(py)
+  })
+
+  it('keeps one blank line as it is', () => {
+    expect(restore('a\n\nb', {}).restored).toBe('a\n\nb')
+  })
+
+  it('a stripped comment line goes whole: the blank line before it is kept as one', () => {
+    const ts = "import x from 'x'\n\n// Step 1: settle\nexport class A {}\n"
+    expect(restore(ts, {}).restored).toBe("import x from 'x'\n\nexport class A {}\n")
+  })
+
+  it('an inline stripped item leaves the rest of its line', () => {
+    expect(restore('const a = 1 /** doc */\nconst b = 2\n', {}).restored).toBe(
+      'const a = 1 \nconst b = 2\n'
+    )
+  })
+
+  it('a stripped comment between two blocks leaves at most two blank lines', () => {
+    // Restore strips // comments; the gap they leave is collapsed, not kept whole.
+    const ts = 'const a = 1\n\n\n// TODO: remove\n\n\nconst b = 2\n'
+    expect(restore(ts, {}).restored).toBe('const a = 1\n\n\nconst b = 2\n')
   })
 
   it('strippedCount matches strippedItems length', () => {
