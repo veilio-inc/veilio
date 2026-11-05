@@ -170,8 +170,9 @@ export async function runScrub(
   // So the person who is about to publish says so, and `maps push --team`
   // refuses a map that conflicts anyway - naming this flag as the remedy.
   //
-  // One reservation for the whole call, every file together (e40: one per file
-  // met Cloud's rate limit on a 164-file project).
+  // One reservation for the whole call, every file together - more only past
+  // what one request may ask (e40: one per file met Cloud's rate limit on a
+  // 164-file project).
   const reserveTeam = args.team && found.team && found.reserve ? found.reserve : null
 
   // Each file in its own language: the flag's, else its extension's, else a
@@ -206,12 +207,10 @@ export async function runScrub(
   const record = (
     input: (typeof inputs)[number],
     result: ReturnType<typeof anonymizeOverTeam>['result'],
-    persist: Record<string, string>
+    newEntries: number
   ): void => {
-    const before = Object.keys(toPersist).length
-    toPersist = persist
     const label = LANGUAGE_LABELS[result.language]
-    added.set(label, (added.get(label) ?? 0) + Object.keys(toPersist).length - before)
+    added.set(label, (added.get(label) ?? 0) + newEntries)
     outputs.push(result.anonymized)
     results.push({ name: input.name, result })
   }
@@ -238,7 +237,8 @@ export async function runScrub(
       )
       return EXIT_ERROR
     }
-    inputs.forEach((input, i) => record(input, batch.results[i]!, batch.persists[i]!))
+    inputs.forEach((input, i) => record(input, batch.results[i]!, batch.added[i]!))
+    toPersist = batch.toPersist
   } else {
     for (const input of inputs) {
       const masked = anonymizeOverTeam(
@@ -248,7 +248,9 @@ export async function runScrub(
         optionsFor(input),
         numbering
       )
-      record(input, masked.result, masked.toPersist)
+      const before = Object.keys(toPersist).length
+      toPersist = masked.toPersist
+      record(input, masked.result, Object.keys(toPersist).length - before)
     }
   }
 

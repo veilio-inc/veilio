@@ -238,6 +238,10 @@ export class ReservationFailed extends Error {
   }
 }
 
+/** Cloud's reserve route refuses more numbers per base, or more bases, in one request. */
+export const RESERVE_MAX_COUNT = 5000
+export const RESERVE_MAX_BASES = 32
+
 /**
  * `anonymizeOverTeam` for the files of one call, with every NEW number taken
  * from the team's allocation.
@@ -267,10 +271,6 @@ export class ReservationFailed extends Error {
  * inside the reserved runs. A mismatch in any file fails the whole call - no
  * file comes back with numbers nobody reserved.
  */
-/** Cloud's reserve route refuses more numbers per base, or more bases, in one request. */
-export const RESERVE_MAX_COUNT = 5000
-export const RESERVE_MAX_BASES = 32
-
 export async function reservedAnonymizeFilesOverTeam(
   files: ReadonlyArray<{ source: string; options: Omit<AnonymizeOptions, 'existingMap'> }>,
   local: Record<string, string>,
@@ -282,27 +282,23 @@ export async function reservedAnonymizeFilesOverTeam(
   reserve: Reserve
 ): Promise<{
   results: ReturnType<typeof anonymize>[]
-  /** The store after each file: what to keep once that file is masked. */
-  persists: Record<string, string>[]
+  /** How many entries each file added to the store. */
+  added: number[]
   toPersist: Record<string, string>
 }> {
   const settled = Object.fromEntries(
     Object.entries(team.namespace).filter(([p]) => !(p in (team.conflicts ?? {})))
   )
   const existingMap = mergeNamespace(local, settled)
-  type Pass = (
-    source: string,
-    options: AnonymizeOptions & { existingMap: Record<string, string> }
-  ) => ReturnType<typeof anonymize>
 
   // Pass 1: each file over the names the earlier ones minted, so a name several
   // files share is counted once, for the first file that has it. The numbers
-  // this pass chooses are discarded.
+  // this pass chooses are discarded. The engine copies the map it is given.
   const seen = { ...existingMap }
   const firsts: ReturnType<typeof anonymize>[] = []
   const newIn: Map<string, number>[] = []
   for (const { source, options } of files) {
-    const result = anonymize(source, { ...options, existingMap: { ...seen } })
+    const result = anonymize(source, { ...options, existingMap: seen })
     const counts = new Map<string, number>()
     for (const p of Object.keys(result.map)) {
       if (p in seen) continue
@@ -315,67 +311,70 @@ export async function reservedAnonymizeFilesOverTeam(
     newIn.push(counts)
   }
 
-  /** Run `pass` over files [from, to), each over the map so far; the store after each. */
-  const map = { ...existingMap }
-  let toPersist = local
-  const results: ReturnType<typeof anonymize>[] = []
-  const persists: Record<string, string>[] = []
-  const run = (from: number, to: number, pass: Pass): void => {
-    for (let i = from; i < to; i++) {
-      const result = pass(files[i]!.source, { ...files[i]!.options, existingMap: { ...map } })
-      Object.assign(map, result.map)
+  /** The store after each result, and how many entries each added. */
+  const keep = (results: ReturnType<typeof anonymize>[]) => {
+    let toPersist = local
+    const added = results.map((result) => {
+      const before = Object.keys(toPersist).length
       toPersist = persisted(toPersist, result, settled)
-      results.push(result)
-      persists.push(toPersist)
-    }
+      return Object.keys(toPersist).length - before
+    })
+    return { results, added, toPersist }
   }
 
-  if (newIn.every((c) => c.size === 0)) {
-    // Nothing new, so nothing to reserve. Returning the first pass is correct
-    // AND is the only way to avoid a reservation of zero numbers, which the
-    // server would answer with an empty run the verification below rejects.
-    // The first pass is the answer: each file again, as it came out.
-    run(0, files.length, () => firsts[results.length]!)
-    return { results, persists, toPersist }
-  }
+  // Nothing new, so nothing to reserve. Returning the first pass is correct AND
+  // is the only way to avoid a reservation of zero numbers, which the server
+  // would answer with an empty run the verification below rejects.
+  if (newIn.every((c) => c.size === 0)) return keep(firsts)
 
   // Files in groups, each within one request's limits - one group, one
   // reservation, for any project short of thousands of new names per base.
+  // A single file over a limit cannot be split: it fails here, with the reason.
   const groups: Array<{ from: number; to: number; counts: Map<string, number> }> = []
-  for (let i = 0; i < files.length; i++) {
+  newIn.forEach((counts, i) => {
+    const over = [...counts].find(([, n]) => n > RESERVE_MAX_COUNT)
+    if (over || counts.size > RESERVE_MAX_BASES)
+      throw new ReservationFailed(
+        new Error(
+          over
+            ? `one file needs ${over[1]} new ${over[0]} names, more than the ${RESERVE_MAX_COUNT} one reservation may ask - scrub it in parts`
+            : `one file needs new names in ${counts.size} kinds, more than the ${RESERVE_MAX_BASES} one reservation may ask - scrub it in parts`
+        )
+      )
     const last = groups.at(-1)
     const fits =
-      last &&
-      [...newIn[i]!].every(([base, n]) => (last.counts.get(base) ?? 0) + n <= RESERVE_MAX_COUNT) &&
-      new Set([...last.counts.keys(), ...newIn[i]!.keys()]).size <= RESERVE_MAX_BASES
+      last !== undefined &&
+      [...counts].every(([base, n]) => (last.counts.get(base) ?? 0) + n <= RESERVE_MAX_COUNT) &&
+      new Set([...last.counts.keys(), ...counts.keys()]).size <= RESERVE_MAX_BASES
     if (last && fits) {
-      for (const [base, n] of newIn[i]!) last.counts.set(base, (last.counts.get(base) ?? 0) + n)
+      for (const [base, n] of counts) last.counts.set(base, (last.counts.get(base) ?? 0) + n)
       last.to = i + 1
-    } else groups.push({ from: i, to: i + 1, counts: new Map(newIn[i]!) })
-  }
+    } else groups.push({ from: i, to: i + 1, counts: new Map(counts) })
+  })
 
-  // A number already in any file's text is taken: every group's floor is above it.
-  const inText: Record<string, number> = {}
+  // A number already taken - in this project's store (also one the merge with
+  // the team's namespace left out), or in any file's text - is below every floor.
+  const taken = highestPerBase(local)
   for (const { source } of files)
     for (const [base, n] of Object.entries(highestInText(source)))
-      if (n > (inText[base] ?? 0)) inText[base] = n
+      if (n > (taken[base] ?? 0)) taken[base] = n
 
+  const map = { ...existingMap }
+  const results: ReturnType<typeof anonymize>[] = []
   for (const group of groups) {
-    if (group.counts.size === 0) {
-      run(group.from, group.to, anonymize)
-      continue
-    }
     const inMap = highestPerBase(map)
     const requests = [...group.counts].map(([base, count]) => ({
       base,
       count,
-      floor: Math.max(team.highest[base] ?? 0, inMap[base] ?? 0, inText[base] ?? 0),
+      floor: Math.max(team.highest[base] ?? 0, inMap[base] ?? 0, taken[base] ?? 0),
     }))
-    let ranges: { base: string; start: number; end: number }[]
-    try {
-      ranges = await reserve(requests)
-    } catch (err) {
-      throw new ReservationFailed(err)
+    let ranges: { base: string; start: number; end: number }[] = []
+    if (requests.length > 0) {
+      try {
+        ranges = await reserve(requests)
+      } catch (err) {
+        throw new ReservationFailed(err)
+      }
     }
     const byBase = new Map(ranges.map((r) => [r.base, r]))
 
@@ -388,8 +387,17 @@ export async function reservedAnonymizeFilesOverTeam(
       floors[base] = range.start - 1
     }
     const before = new Set(Object.keys(map))
-    run(group.from, group.to, (source, options) => anonymizeAbove(source, options, floors))
+    for (let i = group.from; i < group.to; i++) {
+      const result = anonymizeAbove(
+        files[i]!.source,
+        { ...files[i]!.options, existingMap: map },
+        floors
+      )
+      Object.assign(map, result.map)
+      results.push(result)
+    }
 
+    // Every new placeholder of the group - none expected where nothing was reserved.
     for (const placeholder of Object.keys(map)) {
       if (before.has(placeholder)) continue
       const m = NUMBERED.exec(placeholder)
@@ -399,7 +407,7 @@ export async function reservedAnonymizeFilesOverTeam(
     }
   }
 
-  return { results, persists, toPersist }
+  return keep(results)
 }
 
 /** What the project's store keeps: everything it held, whatever was minted, and
