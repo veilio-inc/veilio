@@ -1736,19 +1736,21 @@ export function anonymize(
 
 /** Strip patterns in application order — larger blocks before line-level ones,
  *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
+// A // item runs to the end of its line: `.*` stops at \n, \r, U+2028 and U+2029,
+// where a // comment ends.
 const STRIP_PATTERNS: ReadonlyArray<readonly [StrippedItemType, RegExp]> = [
   ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
-  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\r\n]*/gm],
-  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\r\n]*/gm],
+  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW).*/gm],
+  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\r\n]*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize).*/gm,
   ],
-  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}[^\r\n]*/gm],
+  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
   [
     'inline-annotation',
-    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\r\n]*/gm,
+    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example).*/gm,
   ],
 ]
 
@@ -1798,6 +1800,7 @@ function stripNoise(
     if (!wanted.has(type)) continue
     const found: Array<[number, number]> = []
     for (const m of view.matchAll(pattern)) {
+      if (m[0].length === 0) continue
       const start = m.index!
       const end = start + m[0].length
       let own = start
@@ -1852,7 +1855,8 @@ function stripNoise(
       }
     const original = text.slice(start, end)
     if (firstGone === -1) {
-      // An empty line inside a multi-line item: its newlines on both sides are the item's.
+      // An empty line inside a multi-line item: its newlines on both sides are the
+      // item's. Holds while the only multi-line item (jsdoc) owns its newlines.
       const inside = start > 0 && gone[start - 1] !== 0 && next < text.length && gone[next] !== 0
       if (inside) return { body: '', eol, dropped: true, blank: false }
       return { body: original, eol, dropped: false, blank: /^[ \t]*$/.test(original) }
@@ -1879,7 +1883,7 @@ function stripNoise(
 
   // A run of blank and removed lines keeps the longest stretch of the writer's
   // blank lines in it, counted once - at the start of the text, only those
-  // before the first removed line; at the end, none.
+  // before the first removed line; at the end, only those after the last.
   for (let i = 0; i < lines.length;) {
     if (!lines[i]!.blank && !lines[i]!.dropped) {
       i++
@@ -1904,7 +1908,9 @@ function stripNoise(
       }
       const keep =
         j === lines.length
-          ? undefined
+          ? stretches.at(-1)?.[1] === j
+            ? stretches.at(-1)
+            : undefined
           : i === 0
             ? stretches[0]?.[0] === 0
               ? stretches[0]

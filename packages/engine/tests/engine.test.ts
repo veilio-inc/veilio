@@ -334,14 +334,23 @@ describe('restore', () => {
   })
 
   it('R7: a // item stops at a lone CR - CR-only text loses no code', () => {
+    // CR-only text is one line to the line pass: the item goes, its CR stays.
     const { restored, strippedItems } = restore('foo\r// TODO x\rbar\r', {})
-    expect(restored).toContain('bar')
+    expect(restored).toBe('foo\r\rbar\r')
     expect(strippedItems[0]?.content).toBe('// TODO x')
   })
 
-  it('R8: removed lines at the end leave no blank line at the end of the file', () => {
+  it('R9: a // item stops at U+2028 and U+2029 - the code after it stays', () => {
+    for (const sep of ['\u2028', '\u2029']) {
+      const { restored, strippedItems } = restore(`// TODO x${sep}code()\n`, {})
+      expect(restored).toContain('code()')
+      expect(strippedItems[0]?.content).toBe('// TODO x')
+    }
+  })
+
+  it('R8: removed lines at the end leave no blank line before them; the end as written stays', () => {
     expect(restore('code\n\n// TODO x\n', {}).restored).toBe('code\n')
-    expect(restore('code\n// TODO x\n\n', {}).restored).toBe('code\n')
+    expect(restore('x\n\n// TODO\n\n\n', {}).restored).toBe('x\n\n\n')
   })
 
   it('repeated identical comments report their own line numbers', () => {
