@@ -174,16 +174,36 @@ describe('each command stays within its request budget', () => {
     expect(r.paths.length, r.paths.join('\n')).toBeLessThanOrEqual(2)
   })
 
-  it('scrub --team: at most 2 reads, plus the one reservation', async () => {
+  // The two namespace reads, then the reservation: its listing and the reserve
+  // itself. A name the engine masks is needed for there to be one at all - an
+  // ordinary word is left readable and nothing is reserved.
+  const RESERVING_SCRUB = [
+    'GET /api/maps',
+    'GET /api/maps/team-envelopes',
+    'GET /api/teams/team-1/placeholders/reservations',
+    'POST /api/teams/team-1/placeholders/reserve',
+  ]
+
+  it('scrub --team: the two reads and one reservation', async () => {
     await teamWorld()
-    writeFileSync(join(cwd, 'a.ts'), 'export class Gamma {}\n')
+    writeFileSync(join(cwd, 'a.ts'), 'export class GammaQuayBook {}\n')
     const r = await measure(['scrub', '--team', 'a.ts'])
     expect(r.code, r.err).toBe(0)
-    expect(
-      r.paths.filter((p) => p.startsWith('GET')).length,
-      r.paths.join('\n')
-    ).toBeLessThanOrEqual(2)
-    expect(r.paths.filter((p) => p.startsWith('POST')).length).toBeLessThanOrEqual(1)
+    expect(r.paths).toEqual(RESERVING_SCRUB)
+  })
+
+  // e40: one reservation per file met Cloud's rate limit on a 164-file project.
+  it('scrub --team of several files: still the two reads and one reservation', async () => {
+    await teamWorld()
+    writeFileSync(join(cwd, 'a.ts'), 'export class GammaQuayBook {}\n')
+    writeFileSync(join(cwd, 'b.ts'), 'export class DeltaRouterHub {}\n')
+    writeFileSync(
+      join(cwd, 'c.ts'),
+      'export function settleEpsilonFees(g: GammaQuayBook) { return g }\n'
+    )
+    const r = await measure(['scrub', '--team', 'a.ts', 'b.ts', 'c.ts'])
+    expect(r.code, r.err).toBe(0)
+    expect(r.paths).toEqual(RESERVING_SCRUB)
   })
 
   it('projects: 1, projects use: 1', async () => {

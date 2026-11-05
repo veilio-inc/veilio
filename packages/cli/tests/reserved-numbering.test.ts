@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
-  reservedAnonymizeOverTeam,
+  reservedAnonymizeFilesOverTeam,
+  RESERVE_MAX_COUNT,
+  RESERVE_MAX_BASES,
   anonymizeOverTeam,
   highestPerBase,
   highestInText,
@@ -31,6 +33,23 @@ const CRED: Credential = {
 } as unknown as Credential
 
 const noTeam = { namespace: {}, highest: {} }
+
+/** One text through the batch function: the single-file case. */
+async function reservedAnonymizeOverTeam(
+  source: string,
+  local: Record<string, string>,
+  team: Parameters<typeof reservedAnonymizeFilesOverTeam>[2],
+  options: typeof OPTS,
+  reserve: Reserve
+) {
+  const { results, toPersist } = await reservedAnonymizeFilesOverTeam(
+    [{ source, options }],
+    local,
+    team,
+    reserve
+  )
+  return { result: results[0]!, toPersist }
+}
 
 /** A reserve that hands out exactly what was asked for, starting above floor. */
 function granting(starts: Record<string, number>): { reserve: Reserve; seen: () => unknown } {
@@ -302,5 +321,172 @@ describe('reservedAnonymizeOverTeam', () => {
     const { result } = anonymizeOverTeam(SRC, {}, { namespace: {}, highest: { __CLS__: 4 } }, OPTS)
 
     expect(result.map.__CLS__5).toBe('PaymentProcessor')
+  })
+})
+
+// e40: a team's first scrub --team of a 164-file project made one reservation
+// per file and met Cloud's rate limit (300 / 15 min per session).
+describe('reservedAnonymizeFilesOverTeam', () => {
+  const FILES = [
+    { source: 'class LedgerQuayBook { settleQuayFees() { return 1 } }', options: OPTS },
+    { source: 'class InvoiceRouterHub { settleQuayFees() { return 2 } }', options: OPTS },
+    { source: 'function auditTrailWriter(entry: LedgerQuayBook) { return entry }', options: OPTS },
+  ]
+
+  it('reserves once for every file, counting a name shared by files once', async () => {
+    const { reserve, seen } = granting({ __CLS__: 10, __FN__: 20 })
+
+    const { results } = await reservedAnonymizeFilesOverTeam(FILES, {}, noTeam, reserve)
+
+    expect(seen()).toHaveLength(1)
+    const requests = (seen() as { base: string; count: number }[][])[0]!
+    // LedgerQuayBook, InvoiceRouterHub; settleQuayFees (in two files), auditTrailWriter.
+    expect(Object.fromEntries(requests.map((r) => [r.base, r.count]))).toEqual({
+      __CLS__: 2,
+      __FN__: 2,
+    })
+    expect(results).toHaveLength(3)
+    // The same name gets the same placeholder in every file, from the reserved run.
+    const ledger = results[0]!.map
+    const placeholderOf = (map: Record<string, string>, name: string) =>
+      Object.keys(map).find((p) => map[p] === name)
+    expect(placeholderOf(ledger, 'LedgerQuayBook')).toBe(
+      placeholderOf(results[2]!.map, 'LedgerQuayBook')
+    )
+    expect(placeholderOf(ledger, 'settleQuayFees')).toBe(
+      placeholderOf(results[1]!.map, 'settleQuayFees')
+    )
+    for (const r of results)
+      for (const p of Object.keys(r.map)) expect(Number(/\d+$/.exec(p)![0])).toBeGreaterThan(10)
+  })
+
+  it("stays inside Cloud's limits: more new names than one request may ask splits into several", async () => {
+    // Cloud refuses a reserve request over RESERVE_MAX_COUNT numbers per base or
+    // RESERVE_MAX_BASES bases; the files are grouped so no request is.
+    const names = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => `class Quay${from + i}Book {}`).join('\n')
+    const half = Math.ceil(RESERVE_MAX_COUNT / 2) + 10
+    // A name in the first file and the last, which land in different groups.
+    const shared = 'class SharedLedgerQuayHub {}'
+    const files = [0, 1, 2].map((k) => ({
+      source: `${k !== 1 ? shared + '\n' : ''}${names(half, k * half)}`,
+      options: OPTS,
+    }))
+    const granted: { base: string; start: number; end: number }[] = []
+    const { reserve: grant, seen } = granting({})
+    const reserve: Reserve = async (requests) => {
+      const ranges = await grant(requests)
+      granted.push(...ranges)
+      return ranges
+    }
+    const { results } = await reservedAnonymizeFilesOverTeam(files, {}, noTeam, reserve)
+    const calls = seen() as { base: string; count: number }[][]
+    expect(calls.length).toBeGreaterThan(1)
+    for (const call of calls) {
+      expect(call.length).toBeLessThanOrEqual(RESERVE_MAX_BASES)
+      for (const r of call) expect(r.count).toBeLessThanOrEqual(RESERVE_MAX_COUNT)
+    }
+    // One name, one placeholder, across groups.
+    const of = (map: Record<string, string>) =>
+      Object.keys(map).find((p) => map[p] === 'SharedLedgerQuayHub')
+    expect(of(results[0]!.map)).toBeDefined()
+    expect(of(results[2]!.map)).toBe(of(results[0]!.map))
+    // Every placeholder is inside a run Cloud granted, and none is given twice.
+    const all = new Map<string, string>()
+    for (const r of results)
+      for (const [p, name] of Object.entries(r.map)) {
+        expect(all.get(p) ?? name).toBe(name)
+        all.set(p, name)
+      }
+    for (const p of all.keys()) {
+      const [, base, n] = /^(__[A-Z]+__)(\d+)$/.exec(p)!
+      expect(
+        granted.some((g) => g.base === base && +n! >= g.start && +n! <= g.end),
+        p
+      ).toBe(true)
+    }
+    expect(all.size).toBe(3 * half + 1)
+  })
+
+  it("one file over a request's limit fails with the reason, before asking Cloud", async () => {
+    const reserve = vi.fn<Reserve>()
+    const big = Array.from(
+      { length: RESERVE_MAX_COUNT + 1 },
+      (_, i) => `class Quay${i}Book {}`
+    ).join('\n')
+    const err = await reservedAnonymizeFilesOverTeam(
+      [{ source: big, options: OPTS }],
+      {},
+      noTeam,
+      reserve
+    ).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ReservationFailed)
+    expect(String((err as Error).message)).toMatch(/5000/)
+    expect(reserve).not.toHaveBeenCalled()
+  })
+
+  it("the floor counts the project's own numbers, also one the team's namespace replaced", async () => {
+    // __CLS__12 -> LedgerQuayBook locally; the team holds it as __CLS__3, so the
+    // merge drops __CLS__12 - but its number is still taken in this store.
+    const { reserve, seen } = granting({})
+    const team = { namespace: { __CLS__3: 'LedgerQuayBook' }, highest: { __CLS__: 9 } }
+    const { toPersist } = await reservedAnonymizeFilesOverTeam(
+      [{ source: 'class InvoiceRouterHub {}', options: OPTS }],
+      { __CLS__12: 'LedgerQuayBook' },
+      team,
+      reserve
+    )
+    const cls = (seen() as { base: string; floor: number }[][])[0]!.find(
+      (r) => r.base === '__CLS__'
+    )!
+    expect(cls.floor).toBe(12)
+    expect(toPersist.__CLS__12).toBe('LedgerQuayBook')
+  })
+
+  it('a high number in a later file raises the floor for every file of the call', async () => {
+    const { reserve, seen } = granting({})
+    const files = [
+      { source: 'class LedgerQuayBook {}', options: OPTS },
+      { source: 'const v = __CLS__90', options: OPTS },
+    ]
+    const { results } = await reservedAnonymizeFilesOverTeam(files, {}, noTeam, reserve)
+    const cls = (seen() as { base: string; floor: number }[][])[0]!.find(
+      (r) => r.base === '__CLS__'
+    )!
+    expect(cls.floor).toBe(90)
+    expect(Object.keys(results[0]!.map)).toContain('__CLS__91')
+  })
+
+  it('returns how many entries each file added to the store, for the per-language counts', async () => {
+    const { reserve } = granting({})
+    const team = { namespace: { __CLS__3: 'InvoiceRouterHub' }, highest: { __CLS__: 3 } }
+    const files = [
+      { source: 'class LedgerQuayBook {}', options: OPTS },
+      { source: 'const r: InvoiceRouterHub = make()', options: OPTS },
+    ]
+    const { added } = await reservedAnonymizeFilesOverTeam(files, {}, team, reserve)
+    // The first file minted one class; the team entry only the second used is the second's.
+    expect(added[0]).toBe(1)
+    expect(added[1]).toBeGreaterThanOrEqual(1)
+  })
+
+  it('a mismatch in any file fails the whole call: nothing comes back', async () => {
+    const reserve: Reserve = async (requests) =>
+      requests.map(({ base }) => ({ base, start: 5, end: 5 })) // one number per base, not enough
+    await expect(reservedAnonymizeFilesOverTeam(FILES, {}, noTeam, reserve)).rejects.toBeInstanceOf(
+      ReservationMismatch
+    )
+  })
+
+  it('no new names in any file: no reservation', async () => {
+    const reserve = vi.fn<Reserve>()
+    const team = { namespace: { __CLS__3: 'LedgerQuayBook' }, highest: { __CLS__: 3 } }
+    await reservedAnonymizeFilesOverTeam(
+      [{ source: 'export type T = LedgerQuayBook', options: OPTS }],
+      {},
+      team,
+      reserve
+    )
+    expect(reserve).not.toHaveBeenCalled()
   })
 })
