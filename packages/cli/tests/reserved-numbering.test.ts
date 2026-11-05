@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   reservedAnonymizeFilesOverTeam,
+  RESERVE_MAX_COUNT,
+  RESERVE_MAX_BASES,
   anonymizeOverTeam,
   highestPerBase,
   highestInText,
@@ -356,6 +358,53 @@ describe('reservedAnonymizeFilesOverTeam', () => {
     )
     for (const r of results)
       for (const p of Object.keys(r.map)) expect(Number(/\d+$/.exec(p)![0])).toBeGreaterThan(10)
+  })
+
+  it("stays inside Cloud's limits: more new names than one request may ask splits into several", async () => {
+    // Cloud refuses a reserve request over RESERVE_MAX_COUNT numbers per base or
+    // RESERVE_MAX_BASES bases; the files are grouped so no request is.
+    const names = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => `class Quay${from + i}Book {}`).join('\n')
+    const half = Math.ceil(RESERVE_MAX_COUNT / 2) + 10
+    const files = [0, 1, 2].map((k) => ({ source: names(half, k * half), options: OPTS }))
+    const { reserve, seen } = granting({})
+    const { results } = await reservedAnonymizeFilesOverTeam(files, {}, noTeam, reserve)
+    const calls = seen() as { base: string; count: number }[][]
+    expect(calls.length).toBeGreaterThan(1)
+    for (const call of calls) {
+      expect(call.length).toBeLessThanOrEqual(RESERVE_MAX_BASES)
+      for (const r of call) expect(r.count).toBeLessThanOrEqual(RESERVE_MAX_COUNT)
+    }
+    // Every class got its own number, none twice.
+    const all = results.flatMap((r) => Object.keys(r.map))
+    expect(new Set(all).size).toBe(3 * half)
+  })
+
+  it('a high number in a later file raises the floor for every file of the call', async () => {
+    const { reserve, seen } = granting({})
+    const files = [
+      { source: 'class LedgerQuayBook {}', options: OPTS },
+      { source: 'const v = __CLS__90', options: OPTS },
+    ]
+    const { results } = await reservedAnonymizeFilesOverTeam(files, {}, noTeam, reserve)
+    const cls = (seen() as { base: string; floor: number }[][])[0]!.find(
+      (r) => r.base === '__CLS__'
+    )!
+    expect(cls.floor).toBe(90)
+    expect(Object.keys(results[0]!.map)).toContain('__CLS__91')
+  })
+
+  it('returns what each file added to the store, for the per-language counts', async () => {
+    const { reserve } = granting({})
+    const team = { namespace: { __CLS__3: 'InvoiceRouterHub' }, highest: { __CLS__: 3 } }
+    const files = [
+      { source: 'class LedgerQuayBook {}', options: OPTS },
+      { source: 'const r: InvoiceRouterHub = make()', options: OPTS },
+    ]
+    const { persists } = await reservedAnonymizeFilesOverTeam(files, {}, team, reserve)
+    // The team entry only the second file used is the second file's.
+    expect('__CLS__3' in persists[0]!).toBe(false)
+    expect('__CLS__3' in persists[1]!).toBe(true)
   })
 
   it('a mismatch in any file fails the whole call: nothing comes back', async () => {

@@ -238,19 +238,7 @@ export async function runScrub(
       )
       return EXIT_ERROR
     }
-    // The per-file counts of new names, as the per-file path reports them.
-    let persist = existingMap
-    inputs.forEach((input, i) => {
-      const result = batch.results[i]!
-      persist = {
-        ...persist,
-        ...Object.fromEntries(
-          Object.entries(batch.toPersist).filter(([p]) => p in result.map && !(p in persist))
-        ),
-      }
-      record(input, result, persist)
-    })
-    toPersist = batch.toPersist
+    inputs.forEach((input, i) => record(input, batch.results[i]!, batch.persists[i]!))
   } else {
     for (const input of inputs) {
       const masked = anonymizeOverTeam(

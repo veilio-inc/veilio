@@ -259,13 +259,18 @@ export class ReservationFailed extends Error {
  * that looks correct, publishes, and collides with a teammate's — the exact
  * failure that is invisible until someone restores the wrong name.
  *
- * Every file of one call goes through each step together, with ONE reservation
- * for all of them (e40: a 164-file project made 164 reservations and met
- * Cloud's rate limit). Pass 1 carries each file's names into the next, so a
- * name several files share is counted once; pass 2 numbers file after file
+ * Every file of one call goes through these steps together, with one
+ * reservation for all of them (e40: a 164-file project made 164 reservations
+ * and met Cloud's rate limit) - or one per group of files when they need more
+ * than one request may ask. Pass 1 carries each file's names into the next, so
+ * a name several files share is counted once; pass 2 numbers file after file
  * inside the reserved runs. A mismatch in any file fails the whole call - no
  * file comes back with numbers nobody reserved.
  */
+/** Cloud's reserve route refuses more numbers per base, or more bases, in one request. */
+export const RESERVE_MAX_COUNT = 5000
+export const RESERVE_MAX_BASES = 32
+
 export async function reservedAnonymizeFilesOverTeam(
   files: ReadonlyArray<{ source: string; options: Omit<AnonymizeOptions, 'existingMap'> }>,
   local: Record<string, string>,
@@ -275,89 +280,126 @@ export async function reservedAnonymizeFilesOverTeam(
     conflicts?: Record<string, number>
   },
   reserve: Reserve
-): Promise<{ results: ReturnType<typeof anonymize>[]; toPersist: Record<string, string> }> {
+): Promise<{
+  results: ReturnType<typeof anonymize>[]
+  /** The store after each file: what to keep once that file is masked. */
+  persists: Record<string, string>[]
+  toPersist: Record<string, string>
+}> {
   const settled = Object.fromEntries(
     Object.entries(team.namespace).filter(([p]) => !(p in (team.conflicts ?? {})))
   )
   const existingMap = mergeNamespace(local, settled)
+  type Pass = (
+    source: string,
+    options: AnonymizeOptions & { existingMap: Record<string, string> }
+  ) => ReturnType<typeof anonymize>
 
-  /** Anonymize file after file, each over the names the earlier ones minted. */
-  const each = (
-    pass: (source: string, options: AnonymizeOptions) => ReturnType<typeof anonymize>
-  ) => {
-    let map = existingMap
-    let toPersist = local
-    const results = files.map(({ source, options }) => {
-      const result = pass(source, { ...options, existingMap: map })
-      map = { ...map, ...result.map }
-      toPersist = persisted(toPersist, result, settled)
-      return result
-    })
-    return { results, map, toPersist }
+  // Pass 1: each file over the names the earlier ones minted, so a name several
+  // files share is counted once, for the first file that has it. The numbers
+  // this pass chooses are discarded.
+  const seen = { ...existingMap }
+  const firsts: ReturnType<typeof anonymize>[] = []
+  const newIn: Map<string, number>[] = []
+  for (const { source, options } of files) {
+    const result = anonymize(source, { ...options, existingMap: { ...seen } })
+    const counts = new Map<string, number>()
+    for (const p of Object.keys(result.map)) {
+      if (p in seen) continue
+      const m = NUMBERED.exec(p)
+      if (!m) throw new ReservationMismatch(p)
+      counts.set(m[1], (counts.get(m[1]) ?? 0) + 1)
+    }
+    Object.assign(seen, result.map)
+    firsts.push(result)
+    newIn.push(counts)
   }
 
-  // Pass 1: count the new names per base, over every file. No floor needed —
-  // the numbers this pass chooses are discarded.
-  const first = each((source, options) => anonymize(source, options))
-  const fresh = Object.keys(first.map).filter((p) => !(p in existingMap))
-  if (fresh.length === 0) {
+  /** Run `pass` over files [from, to), each over the map so far; the store after each. */
+  const map = { ...existingMap }
+  let toPersist = local
+  const results: ReturnType<typeof anonymize>[] = []
+  const persists: Record<string, string>[] = []
+  const run = (from: number, to: number, pass: Pass): void => {
+    for (let i = from; i < to; i++) {
+      const result = pass(files[i]!.source, { ...files[i]!.options, existingMap: { ...map } })
+      Object.assign(map, result.map)
+      toPersist = persisted(toPersist, result, settled)
+      results.push(result)
+      persists.push(toPersist)
+    }
+  }
+
+  if (newIn.every((c) => c.size === 0)) {
     // Nothing new, so nothing to reserve. Returning the first pass is correct
     // AND is the only way to avoid a reservation of zero numbers, which the
     // server would answer with an empty run the verification below rejects.
-    return { results: first.results, toPersist: first.toPersist }
+    // The first pass is the answer: each file again, as it came out.
+    run(0, files.length, () => firsts[results.length]!)
+    return { results, persists, toPersist }
   }
 
-  const counts = new Map<string, number>()
-  for (const p of fresh) {
-    const m = NUMBERED.exec(p)
-    if (!m) throw new ReservationMismatch(p)
-    counts.set(m[1], (counts.get(m[1]) ?? 0) + 1)
+  // Files in groups, each within one request's limits - one group, one
+  // reservation, for any project short of thousands of new names per base.
+  const groups: Array<{ from: number; to: number; counts: Map<string, number> }> = []
+  for (let i = 0; i < files.length; i++) {
+    const last = groups.at(-1)
+    const fits =
+      last &&
+      [...newIn[i]!].every(([base, n]) => (last.counts.get(base) ?? 0) + n <= RESERVE_MAX_COUNT) &&
+      new Set([...last.counts.keys(), ...newIn[i]!.keys()]).size <= RESERVE_MAX_BASES
+    if (last && fits) {
+      for (const [base, n] of newIn[i]!) last.counts.set(base, (last.counts.get(base) ?? 0) + n)
+      last.to = i + 1
+    } else groups.push({ from: i, to: i + 1, counts: new Map(newIn[i]!) })
   }
 
-  const inMap = highestPerBase(existingMap)
+  // A number already in any file's text is taken: every group's floor is above it.
   const inText: Record<string, number> = {}
   for (const { source } of files)
     for (const [base, n] of Object.entries(highestInText(source)))
       if (n > (inText[base] ?? 0)) inText[base] = n
-  const requests = [...counts].map(([base, count]) => ({
-    base,
-    count,
-    floor: Math.max(team.highest[base] ?? 0, inMap[base] ?? 0, inText[base] ?? 0),
-  }))
 
-  let ranges: { base: string; start: number; end: number }[]
-  try {
-    ranges = await reserve(requests)
-  } catch (err) {
-    throw new ReservationFailed(err)
+  for (const group of groups) {
+    if (group.counts.size === 0) {
+      run(group.from, group.to, anonymize)
+      continue
+    }
+    const inMap = highestPerBase(map)
+    const requests = [...group.counts].map(([base, count]) => ({
+      base,
+      count,
+      floor: Math.max(team.highest[base] ?? 0, inMap[base] ?? 0, inText[base] ?? 0),
+    }))
+    let ranges: { base: string; start: number; end: number }[]
+    try {
+      ranges = await reserve(requests)
+    } catch (err) {
+      throw new ReservationFailed(err)
+    }
+    const byBase = new Map(ranges.map((r) => [r.base, r]))
+
+    // Pass 2: `start - 1` as the floor, so the first new number IS `start`;
+    // each later file of the group numbers above the earlier ones, inside the run.
+    const floors: Record<string, number> = {}
+    for (const { base } of requests) {
+      const range = byBase.get(base)
+      if (!range || !isSaneBlock(range)) throw new ReservationMismatch(`${base}*`)
+      floors[base] = range.start - 1
+    }
+    const before = new Set(Object.keys(map))
+    run(group.from, group.to, (source, options) => anonymizeAbove(source, options, floors))
+
+    for (const placeholder of Object.keys(map)) {
+      if (before.has(placeholder)) continue
+      const m = NUMBERED.exec(placeholder)
+      const range = m ? byBase.get(m[1]) : undefined
+      const n = m ? Number(m[2]) : NaN
+      if (!range || n < range.start || n > range.end) throw new ReservationMismatch(placeholder)
+    }
   }
-  const byBase = new Map(ranges.map((r) => [r.base, r]))
 
-  // Pass 2: `start - 1` as the floor, so the first new number IS `start`; each
-  // later file numbers above the earlier files' new names, inside the run.
-  const floors: Record<string, number> = {}
-  for (const { base } of requests) {
-    const range = byBase.get(base)
-    if (!range || !isSaneBlock(range)) throw new ReservationMismatch(`${base}*`)
-    floors[base] = range.start - 1
-  }
-  const second = each((source, options) =>
-    anonymizeAbove(
-      source,
-      options as AnonymizeOptions & { existingMap: Record<string, string> },
-      floors
-    )
-  )
-
-  for (const placeholder of Object.keys(second.map)) {
-    if (placeholder in existingMap) continue
-    const m = NUMBERED.exec(placeholder)
-    const range = m ? byBase.get(m[1]) : undefined
-    const n = m ? Number(m[2]) : NaN
-    if (!range || n < range.start || n > range.end) throw new ReservationMismatch(placeholder)
-  }
-
-  return { results: second.results, toPersist: second.toPersist }
+  return { results, persists, toPersist }
 }
 
 /** What the project's store keeps: everything it held, whatever was minted, and
