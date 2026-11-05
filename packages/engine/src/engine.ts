@@ -1738,17 +1738,17 @@ export function anonymize(
  *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
 const STRIP_PATTERNS: ReadonlyArray<readonly [StrippedItemType, RegExp]> = [
   ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
-  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\n]*/gm],
-  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\n]*/gm],
+  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\r\n]*/gm],
+  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\r\n]*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\n]*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\r\n]*/gm,
   ],
-  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}[^\n]*/gm],
+  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}[^\r\n]*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
   [
     'inline-annotation',
-    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\n]*/gm,
+    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\r\n]*/gm,
   ],
 ]
 
@@ -1786,8 +1786,9 @@ function stripNoise(
   const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t'
 
   // owner[k] is 1 + the index of the item that removes text[k], 0 where kept.
-  // Allocated on the first match only. A plain array, not a Uint8Array: the
-  // typed array made the README type check take minutes under its settings.
+  // Allocated on the first match only. A plain number array: it holds item ids,
+  // which a Uint8Array would wrap past 255 (and typed arrays made the README
+  // type check take minutes under its settings).
   let owner: number[] | null = null
   const items: StrippedItem[] = []
   /** Where each item's own text begins: its first character no earlier item took. */
@@ -1797,7 +1798,6 @@ function stripNoise(
     if (!wanted.has(type)) continue
     const found: Array<[number, number]> = []
     for (const m of view.matchAll(pattern)) {
-      if (m[0].length === 0) continue
       const start = m.index!
       const end = start + m[0].length
       let own = start
@@ -1845,16 +1845,20 @@ function stripNoise(
     const eol = text.slice(end, i + 1 < starts.length ? next + 1 : next)
     let firstGone = -1
     let lastGone = -1
-    let kept = ''
-    for (let k = start; k < end; k++) {
+    for (let k = start; k < end; k++)
       if (gone[k] !== 0) {
         if (firstGone === -1) firstGone = k
         lastGone = k
-      } else kept += text[k]
-    }
+      }
     const original = text.slice(start, end)
-    if (firstGone === -1)
+    if (firstGone === -1) {
+      // An empty line inside a multi-line item: its newlines on both sides are the item's.
+      const inside = start > 0 && gone[start - 1] !== 0 && next < text.length && gone[next] !== 0
+      if (inside) return { body: '', eol, dropped: true, blank: false }
       return { body: original, eol, dropped: false, blank: /^[ \t]*$/.test(original) }
+    }
+    let kept = ''
+    for (let k = start; k < end; k++) if (gone[k] === 0) kept += text[k]
     if (/^[ \t]*$/.test(kept)) return { body: '', eol, dropped: true, blank: false }
     let body = kept
     if (/^[ \t]*$/.test(text.slice(start, firstGone))) {
@@ -1875,7 +1879,7 @@ function stripNoise(
 
   // A run of blank and removed lines keeps the longest stretch of the writer's
   // blank lines in it, counted once - at the start of the text, only those
-  // before the first removed line.
+  // before the first removed line; at the end, none.
   for (let i = 0; i < lines.length;) {
     if (!lines[i]!.blank && !lines[i]!.dropped) {
       i++
@@ -1899,14 +1903,16 @@ function stripNoise(
         stretches.push([from, k])
       }
       const keep =
-        i === 0
-          ? stretches[0]?.[0] === 0
-            ? stretches[0]
-            : undefined
-          : stretches.reduce<[number, number] | undefined>(
-              (best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best),
-              undefined
-            )
+        j === lines.length
+          ? undefined
+          : i === 0
+            ? stretches[0]?.[0] === 0
+              ? stretches[0]
+              : undefined
+            : stretches.reduce<[number, number] | undefined>(
+                (best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best),
+                undefined
+              )
       for (const [from, to] of stretches)
         if (from !== keep?.[0]) for (let k = from; k < to; k++) lines[k]!.dropped = true
     }

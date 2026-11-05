@@ -325,6 +325,25 @@ describe('restore', () => {
     expect(strippedItems.find((i) => i.type === 'todo')?.content).toBe('// TODO fix /** x */ later')
   })
 
+  // e44, fourth review.
+  it('R6: empty lines inside a removed multi-line JSDoc go with it', () => {
+    expect(restore('a\n/**\n\n\n */\nb\n', {}).restored).toBe('a\nb\n')
+    expect(restore('code()\r\n/**\r\n * x\r\n\r\n */\r\nfunction f() {}\r\n', {}).restored).toBe(
+      'code()\r\nfunction f() {}\r\n'
+    )
+  })
+
+  it('R7: a // item stops at a lone CR - CR-only text loses no code', () => {
+    const { restored, strippedItems } = restore('foo\r// TODO x\rbar\r', {})
+    expect(restored).toContain('bar')
+    expect(strippedItems[0]?.content).toBe('// TODO x')
+  })
+
+  it('R8: removed lines at the end leave no blank line at the end of the file', () => {
+    expect(restore('code\n\n// TODO x\n', {}).restored).toBe('code\n')
+    expect(restore('code\n// TODO x\n\n', {}).restored).toBe('code\n')
+  })
+
   it('repeated identical comments report their own line numbers', () => {
     const { strippedItems } = restore('// TODO a\nx\n// TODO a\ny\n', {})
     expect(strippedItems.map((i) => i.lineNumber)).toEqual([1, 3])
