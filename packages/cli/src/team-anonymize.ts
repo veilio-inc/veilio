@@ -239,7 +239,8 @@ export class ReservationFailed extends Error {
 }
 
 /**
- * `anonymizeOverTeam`, with every NEW number taken from the team's allocation.
+ * `anonymizeOverTeam` for the files of one call, with every NEW number taken
+ * from the team's allocation.
  *
  * Two passes, because only this machine can read the identifiers and so only
  * this machine can know how many new names there are — but it may not choose
@@ -257,32 +258,53 @@ export class ReservationFailed extends Error {
  * Step 4 is not belt-and-braces. If it ever fires, the alternative is a map
  * that looks correct, publishes, and collides with a teammate's — the exact
  * failure that is invisible until someone restores the wrong name.
+ *
+ * Every file of one call goes through each step together, with ONE reservation
+ * for all of them (e40: a 164-file project made 164 reservations and met
+ * Cloud's rate limit). Pass 1 carries each file's names into the next, so a
+ * name several files share is counted once; pass 2 numbers file after file
+ * inside the reserved runs. A mismatch in any file fails the whole call - no
+ * file comes back with numbers nobody reserved.
  */
-export async function reservedAnonymizeOverTeam(
-  source: string,
+export async function reservedAnonymizeFilesOverTeam(
+  files: ReadonlyArray<{ source: string; options: Omit<AnonymizeOptions, 'existingMap'> }>,
   local: Record<string, string>,
   team: {
     namespace: Record<string, string>
     highest: Record<string, number>
     conflicts?: Record<string, number>
   },
-  options: Omit<AnonymizeOptions, 'existingMap'>,
   reserve: Reserve
-): Promise<{ result: ReturnType<typeof anonymize>; toPersist: Record<string, string> }> {
+): Promise<{ results: ReturnType<typeof anonymize>[]; toPersist: Record<string, string> }> {
   const settled = Object.fromEntries(
     Object.entries(team.namespace).filter(([p]) => !(p in (team.conflicts ?? {})))
   )
   const existingMap = mergeNamespace(local, settled)
 
-  // Pass 1: count the new names per base. No floor needed — the numbers this
-  // pass chooses are discarded.
-  const first = anonymize(source, { ...options, existingMap })
+  /** Anonymize file after file, each over the names the earlier ones minted. */
+  const each = (
+    pass: (source: string, options: AnonymizeOptions) => ReturnType<typeof anonymize>
+  ) => {
+    let map = existingMap
+    let toPersist = local
+    const results = files.map(({ source, options }) => {
+      const result = pass(source, { ...options, existingMap: map })
+      map = { ...map, ...result.map }
+      toPersist = persisted(toPersist, result, settled)
+      return result
+    })
+    return { results, map, toPersist }
+  }
+
+  // Pass 1: count the new names per base, over every file. No floor needed —
+  // the numbers this pass chooses are discarded.
+  const first = each((source, options) => anonymize(source, options))
   const fresh = Object.keys(first.map).filter((p) => !(p in existingMap))
   if (fresh.length === 0) {
     // Nothing new, so nothing to reserve. Returning the first pass is correct
     // AND is the only way to avoid a reservation of zero numbers, which the
     // server would answer with an empty run the verification below rejects.
-    return { result: first, toPersist: persisted(local, first, settled) }
+    return { results: first.results, toPersist: first.toPersist }
   }
 
   const counts = new Map<string, number>()
@@ -293,7 +315,10 @@ export async function reservedAnonymizeOverTeam(
   }
 
   const inMap = highestPerBase(existingMap)
-  const inText = highestInText(source)
+  const inText: Record<string, number> = {}
+  for (const { source } of files)
+    for (const [base, n] of Object.entries(highestInText(source)))
+      if (n > (inText[base] ?? 0)) inText[base] = n
   const requests = [...counts].map(([base, count]) => ({
     base,
     count,
@@ -308,14 +333,21 @@ export async function reservedAnonymizeOverTeam(
   }
   const byBase = new Map(ranges.map((r) => [r.base, r]))
 
-  // Pass 2: `start - 1` as the floor, so the first new number IS `start`.
+  // Pass 2: `start - 1` as the floor, so the first new number IS `start`; each
+  // later file numbers above the earlier files' new names, inside the run.
   const floors: Record<string, number> = {}
   for (const { base } of requests) {
     const range = byBase.get(base)
     if (!range || !isSaneBlock(range)) throw new ReservationMismatch(`${base}*`)
     floors[base] = range.start - 1
   }
-  const second = anonymizeAbove(source, { ...options, existingMap }, floors)
+  const second = each((source, options) =>
+    anonymizeAbove(
+      source,
+      options as AnonymizeOptions & { existingMap: Record<string, string> },
+      floors
+    )
+  )
 
   for (const placeholder of Object.keys(second.map)) {
     if (placeholder in existingMap) continue
@@ -325,7 +357,7 @@ export async function reservedAnonymizeOverTeam(
     if (!range || n < range.start || n > range.end) throw new ReservationMismatch(placeholder)
   }
 
-  return { result: second, toPersist: persisted(local, second, settled) }
+  return { results: second.results, toPersist: second.toPersist }
 }
 
 /** What the project's store keeps: everything it held, whatever was minted, and

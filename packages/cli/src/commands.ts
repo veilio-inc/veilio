@@ -49,7 +49,11 @@ import {
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
 import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
-import { anonymizeOverTeam, reservedAnonymizeOverTeam, type Reserve } from './team-anonymize.js'
+import {
+  anonymizeOverTeam,
+  reservedAnonymizeFilesOverTeam,
+  type Reserve,
+} from './team-anonymize.js'
 import { thirdPartyNames } from './third-party.js'
 
 export interface Io {
@@ -165,37 +169,10 @@ export async function runScrub(
   //
   // So the person who is about to publish says so, and `maps push --team`
   // refuses a map that conflicts anyway - naming this flag as the remedy.
-  const mask = async (
-    source: string,
-    map: Record<string, string>,
-    options: Parameters<typeof anonymizeOverTeam>[3]
-  ): Promise<ReturnType<typeof anonymizeOverTeam> | null> => {
-    if (args.team && found.team && found.reserve) {
-      try {
-        return await reservedAnonymizeOverTeam(source, map, found.team, options, found.reserve)
-      } catch (err) {
-        // Nothing is written and nothing is printed. Numbering locally instead
-        // would hand back placeholders that look correct and collide — the
-        // failure this path exists to prevent. Retrying without reservation is
-        // deliberately NOT offered.
-        const why = err instanceof Error ? err.message : String(err)
-        io.stderr(
-          `${BIN_NAME}: could not reserve placeholder numbers from the team (${why}), ` +
-            `so nothing was masked and nothing was written. ` +
-            `Numbering locally here would produce placeholders that clash with a ` +
-            `teammate's without either side noticing.\n`
-        )
-        return null
-      }
-    }
-    return anonymizeOverTeam(
-      source,
-      map,
-      found.team ?? { namespace: {}, highest: {} },
-      options,
-      numbering
-    )
-  }
+  //
+  // One reservation for the whole call, every file together (e40: one per file
+  // met Cloud's rate limit on a 164-file project).
+  const reserveTeam = args.team && found.team && found.reserve ? found.reserve : null
 
   // Each file in its own language: the flag's, else its extension's, else a
   // guess from that file alone (spec 050 FR-004).
@@ -204,13 +181,7 @@ export async function runScrub(
   // What the team's maps hold counts as known code too (security review of 8adc729).
   const keep = thirdPartyNames(inputs, [existingMap, found.team?.namespace ?? {}], io.cwd)
 
-  let toPersist: Record<string, string> = existingMap
-  const outputs: string[] = []
-  const added = new Map<string, number>()
-  const results: { name: string | null; result: ReturnType<typeof anonymizeOverTeam>['result'] }[] =
-    []
-  for (const input of inputs) {
-    const language = languageFor(input.name)
+  const optionsFor = (input: (typeof inputs)[number]): Parameters<typeof anonymizeOverTeam>[3] => {
     const own = keep.get(input) ?? new Set<string>()
     const rules = [
       ...(cached?.rules ?? []),
@@ -219,19 +190,78 @@ export async function runScrub(
     // The file's kind, never its path (engine spec 013 R19): the
     // environment-style credential rules apply, the test-file relaxation does not.
     const fileKind = input.name ? fileKindOf(input.name) : undefined
-    const masked = await mask(input.text, toPersist, {
-      language,
+    return {
+      language: languageFor(input.name),
       secrets: args.secrets,
       rules: rules.length ? rules : undefined,
       ...(fileKind ? { fileKind } : {}),
-    })
-    if (!masked) return EXIT_ERROR
+    }
+  }
+
+  let toPersist: Record<string, string> = existingMap
+  const outputs: string[] = []
+  const added = new Map<string, number>()
+  const results: { name: string | null; result: ReturnType<typeof anonymizeOverTeam>['result'] }[] =
+    []
+  const record = (
+    input: (typeof inputs)[number],
+    result: ReturnType<typeof anonymizeOverTeam>['result'],
+    persist: Record<string, string>
+  ): void => {
     const before = Object.keys(toPersist).length
-    toPersist = masked.toPersist
-    const label = LANGUAGE_LABELS[masked.result.language]
+    toPersist = persist
+    const label = LANGUAGE_LABELS[result.language]
     added.set(label, (added.get(label) ?? 0) + Object.keys(toPersist).length - before)
-    outputs.push(masked.result.anonymized)
-    results.push({ name: input.name, result: masked.result })
+    outputs.push(result.anonymized)
+    results.push({ name: input.name, result })
+  }
+  if (reserveTeam && found.team) {
+    let batch: Awaited<ReturnType<typeof reservedAnonymizeFilesOverTeam>>
+    try {
+      batch = await reservedAnonymizeFilesOverTeam(
+        inputs.map((input) => ({ source: input.text, options: optionsFor(input) })),
+        existingMap,
+        found.team,
+        reserveTeam
+      )
+    } catch (err) {
+      // Nothing is written and nothing is printed. Numbering locally instead
+      // would hand back placeholders that look correct and collide — the
+      // failure this path exists to prevent. Retrying without reservation is
+      // deliberately NOT offered.
+      const why = err instanceof Error ? err.message : String(err)
+      io.stderr(
+        `${BIN_NAME}: could not reserve placeholder numbers from the team (${why}), ` +
+          `so nothing was masked and nothing was written. ` +
+          `Numbering locally here would produce placeholders that clash with a ` +
+          `teammate's without either side noticing.\n`
+      )
+      return EXIT_ERROR
+    }
+    // The per-file counts of new names, as the per-file path reports them.
+    let persist = existingMap
+    inputs.forEach((input, i) => {
+      const result = batch.results[i]!
+      persist = {
+        ...persist,
+        ...Object.fromEntries(
+          Object.entries(batch.toPersist).filter(([p]) => p in result.map && !(p in persist))
+        ),
+      }
+      record(input, result, persist)
+    })
+    toPersist = batch.toPersist
+  } else {
+    for (const input of inputs) {
+      const masked = anonymizeOverTeam(
+        input.text,
+        toPersist,
+        found.team ?? { namespace: {}, highest: {} },
+        optionsFor(input),
+        numbering
+      )
+      record(input, masked.result, masked.toPersist)
+    }
   }
 
   saveMap(mapPath, toPersist, { force: args.force })
