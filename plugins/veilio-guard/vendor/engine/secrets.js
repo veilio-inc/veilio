@@ -11,6 +11,7 @@
 // the secret back. A developer who sees __REDACTED_AWS_KEY_1__ in their restored
 // code has been told, unmistakably, that a live key was in the payload.
 import { assertKnownOptions, optionKeys } from './options.js';
+import { lineIndex, positionOf } from './lines.js';
 // ─── Structural validators ───────────────────────────────────────────────────
 //
 // Every one of these is arithmetic over the value itself. Nothing here infers,
@@ -1104,28 +1105,6 @@ export function previewSecret(value) {
     if (clean.length <= 12)
         return `${clean.slice(0, 2)}${'•'.repeat(Math.max(clean.length - 2, 1))}`;
     return `${clean.slice(0, 4)}…${clean.slice(-4)} (${clean.length} chars)`;
-}
-/** Byte offset → 1-based line/column, computed once per scan. */
-function lineIndex(code) {
-    const starts = [0];
-    for (let i = 0; i < code.length; i++) {
-        if (code[i] === '\n')
-            starts.push(i + 1);
-    }
-    return starts;
-}
-function positionOf(starts, offset) {
-    // Binary search for the last line start at or before `offset`.
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (starts[mid] <= offset)
-            lo = mid;
-        else
-            hi = mid - 1;
-    }
-    return { line: lo + 1, column: offset - starts[lo] + 1 };
 }
 function collectMatches(code, scan) {
     const found = [];

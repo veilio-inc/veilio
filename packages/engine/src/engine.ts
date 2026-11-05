@@ -41,6 +41,7 @@ import {
   scanSecrets,
   fileKindOf,
 } from './secrets.js'
+import { lineIndex, positionOf } from './lines.js'
 import type { RegulatedSpan, ScanOptions, SecretFinding, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
@@ -1735,19 +1736,21 @@ export function anonymize(
 
 /** Strip patterns in application order — larger blocks before line-level ones,
  *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
+// A // item runs to the end of its line: `.*` stops at \n, \r, U+2028 and U+2029,
+// where a // comment ends.
 const STRIP_PATTERNS: ReadonlyArray<readonly [StrippedItemType, RegExp]> = [
   ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
-  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW)[^\n]*/gm],
-  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.][^\n]*/gm],
+  ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW).*/gm],
+  ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)[^\n]*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize).*/gm,
   ],
-  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}[^\n]*/gm],
+  ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
   [
     'inline-annotation',
-    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example)[^\n]*/gm,
+    /^[ \t]*\/\/[ \t]*@(param|returns?|type|throws?|deprecated|see|example).*/gm,
   ],
 ]
 
@@ -1758,6 +1761,177 @@ function resolveStripSet(option: RestoreOptions['strip']): ReadonlySet<StrippedI
   if (option === 'none') return new Set()
   if (option === undefined || option === 'all') return new Set(STRIPPABLE_TYPES)
   return new Set(option)
+}
+
+/**
+ * Remove the wanted noise from `text`, leaving everything else as written
+ * (e44). Items are found in the original text, so line numbers are the AI
+ * response's own. Each later pattern sees the earlier items blanked to spaces,
+ * so a `// TODO` after a removed JSDoc still starts its line. Then, line by
+ * line:
+ * - a line that held only stripped items goes, newline and all;
+ * - an item at the start of a line takes the spaces after it, and one at the
+ *   end takes the spaces before it, so no stray whitespace is left;
+ * - an item inside a line leaves the spacing around it.
+ * Where removed lines sat between blank lines, the gap becomes the larger of
+ * the two sides, not their sum. Nothing else is touched: the writer's own
+ * blank lines - Python's two between top-level definitions (PEP 8) included -
+ * and whitespace stay as they were. The old version collapsed every pair of
+ * blank lines file-wide to hide the gaps its stripping left.
+ */
+function stripNoise(
+  text: string,
+  wanted: ReadonlySet<StrippedItemType>
+): { text: string; items: StrippedItem[] } {
+  if (wanted.size === 0) return { text, items: [] }
+  const starts = lineIndex(text)
+  const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t'
+
+  // owner[k] is 1 + the index of the item that removes text[k], 0 where kept.
+  // Allocated on the first match only. A plain number array: it holds item ids,
+  // which a Uint8Array would wrap past 255 (and typed arrays made the README
+  // type check take minutes under its settings).
+  let owner: number[] | null = null
+  const items: StrippedItem[] = []
+  /** Where each item's own text begins: its first character no earlier item took. */
+  const itemStart: number[] = []
+  let view = text
+  for (const [type, pattern] of STRIP_PATTERNS) {
+    if (!wanted.has(type)) continue
+    const found: Array<[number, number]> = []
+    for (const m of view.matchAll(pattern)) {
+      if (m[0].length === 0) continue
+      const start = m.index!
+      const end = start + m[0].length
+      let own = start
+      while (own < end && isSpace(view[own])) own++
+      found.push([start, end])
+      itemStart.push(own)
+      // From the original text: an earlier item inside this one is shown as written.
+      items.push({
+        type,
+        content: text.slice(own, end).trim(),
+        lineNumber: positionOf(starts, own).line,
+      })
+    }
+    if (found.length === 0) continue
+    owner ??= new Array<number>(text.length).fill(0)
+    const parts: string[] = []
+    let at = 0
+    let id = items.length - found.length
+    for (const [start, end] of found) {
+      id++
+      for (let k = start; k < end; k++) if (owner[k] === 0) owner[k] = id
+      parts.push(view.slice(at, start), view.slice(start, end).replace(/[^\n]/g, ' '))
+      at = end
+    }
+    parts.push(view.slice(at))
+    view = parts.join('')
+  }
+  if (owner === null) return { text, items }
+  const gone = owner
+
+  /** The leading spaces and tabs of the line holding `offset`. */
+  const indentAt = (offset: number): string => {
+    const from = starts[positionOf(starts, offset).line - 1]!
+    let to = from
+    while (to < text.length && isSpace(text[to])) to++
+    return text.slice(from, to)
+  }
+
+  // The line pass. A line's '\r' is kept with its newline, never stripped.
+  type Line = { body: string; eol: string; dropped: boolean; blank: boolean }
+  const lines: Line[] = starts.map((start, i) => {
+    const next = i + 1 < starts.length ? starts[i + 1]! - 1 : text.length
+    const cr = next > start && text[next - 1] === '\r' ? 1 : 0
+    const end = next - cr
+    const eol = text.slice(end, i + 1 < starts.length ? next + 1 : next)
+    let firstGone = -1
+    let lastGone = -1
+    for (let k = start; k < end; k++)
+      if (gone[k] !== 0) {
+        if (firstGone === -1) firstGone = k
+        lastGone = k
+      }
+    const original = text.slice(start, end)
+    if (firstGone === -1) {
+      // An empty line inside a multi-line item: its newlines on both sides are the
+      // item's. Holds while the only multi-line item (jsdoc) owns its newlines.
+      const inside = start > 0 && gone[start - 1] !== 0 && next < text.length && gone[next] !== 0
+      if (inside) return { body: '', eol, dropped: true, blank: false }
+      return { body: original, eol, dropped: false, blank: /^[ \t]*$/.test(original) }
+    }
+    let kept = ''
+    for (let k = start; k < end; k++) if (gone[k] === 0) kept += text[k]
+    if (/^[ \t]*$/.test(kept)) return { body: '', eol, dropped: true, blank: false }
+    let body = kept
+    if (/^[ \t]*$/.test(text.slice(start, firstGone))) {
+      // An item at the start takes the space after it and keeps the indent - the
+      // indent of the line it began on, when it began on an earlier one.
+      const began = itemStart[gone[firstGone]! - 1]!
+      const indent = began < start ? indentAt(began) : text.slice(start, firstGone)
+      body = indent + kept.replace(/^[ \t]+/, '')
+    }
+    if (/^[ \t]*$/.test(text.slice(lastGone + 1, end))) {
+      // A loop, not /[ \t]+$/: that regex is quadratic on a long run of spaces.
+      let to = body.length
+      while (to > 0 && isSpace(body[to - 1])) to--
+      body = body.slice(0, to)
+    }
+    return { body, eol, dropped: false, blank: false }
+  })
+
+  // A run of blank and removed lines keeps the longest stretch of the writer's
+  // blank lines in it, counted once - at the start of the text, only those
+  // before the first removed line; at the end, only those after the last.
+  for (let i = 0; i < lines.length;) {
+    if (!lines[i]!.blank && !lines[i]!.dropped) {
+      i++
+      continue
+    }
+    let j = i
+    let removed = false
+    while (j < lines.length && (lines[j]!.blank || lines[j]!.dropped)) {
+      if (lines[j]!.dropped) removed = true
+      j++
+    }
+    if (removed) {
+      const stretches: Array<[number, number]> = []
+      for (let k = i; k < j;) {
+        if (lines[k]!.dropped) {
+          k++
+          continue
+        }
+        const from = k
+        while (k < j && lines[k]!.blank) k++
+        stretches.push([from, k])
+      }
+      const keep =
+        j === lines.length
+          ? stretches.at(-1)?.[1] === j
+            ? stretches.at(-1)
+            : undefined
+          : i === 0
+            ? stretches[0]?.[0] === 0
+              ? stretches[0]
+              : undefined
+            : stretches.reduce<[number, number] | undefined>(
+                (best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best),
+                undefined
+              )
+      for (const [from, to] of stretches)
+        if (from !== keep?.[0]) for (let k = from; k < to; k++) lines[k]!.dropped = true
+    }
+    i = j
+  }
+
+  return {
+    text: lines
+      .filter((l) => !l.dropped)
+      .map((l) => l.body + l.eol)
+      .join(''),
+    items,
+  }
 }
 
 /**
@@ -1775,33 +1949,9 @@ export function restore(
   assertKnownOptions('restore', options, RESTORE_OPTIONS)
   const strippedItems: StrippedItem[] = []
   const wanted = resolveStripSet(options.strip)
-  let result = aiResponse
-
-  function strip(pattern: RegExp, type: StrippedItemType): void {
-    if (!wanted.has(type)) return
-    result = result.replace(pattern, (match) => {
-      const before = result.slice(0, result.indexOf(match))
-      const lineNumber = before.split('\n').length
-      strippedItems.push({ type, content: match.trim(), lineNumber })
-      return ''
-    })
-  }
-
-  for (const [type, pattern] of STRIP_PATTERNS) strip(pattern, type)
-
-  // Tidy up after stripping. Gated on whether stripping is enabled at all, not
-  // on whether anything matched: `strip: 'none'` means "restore placeholders and
-  // change nothing else", so it must not reformat.
-  if (wanted.size > 0) {
-    // Removing a comment leaves its indentation behind, so a stripped block
-    // becomes a line of spaces rather than a blank line — invisible in the UI,
-    // trailing whitespace in the editor it gets pasted into, and a lint error in
-    // any project with no-trailing-spaces. Blanked before the run collapse below
-    // so those lines can actually be collapsed.
-    result = result.replace(/^[ \t]+$/gm, '')
-    // Collapse 3+ consecutive blank lines to 2.
-    result = result.replace(/\n{3,}/g, '\n\n')
-  }
+  const stripped = stripNoise(aiResponse, wanted)
+  strippedItems.push(...stripped.items)
+  let result = stripped.text
 
   // Restore placeholders in one pass, longest-first.
   //

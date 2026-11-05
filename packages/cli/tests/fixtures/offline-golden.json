@@ -92,7 +92,7 @@
     },
     {
       "code": 0,
-      "out": "/** Docs. */\nclass LedgerService {}\n\n",
+      "out": "/** Docs. */\nclass LedgerService {}\n",
       "err": "veilio: restored 1 of 8 placeholders, stripped 1 AI artifact\nveilio: 7 placeholders did not appear in the input; if the AI covered the whole file, it renamed them and those names are not recoverable from this text.\n"
     }
   ],

@@ -184,10 +184,184 @@ describe('restore', () => {
     expect(strippedItems.some((i) => i.type === 'inline-annotation')).toBe(true)
   })
 
-  it('collapses multiple blank lines to maximum 2', () => {
-    const input = 'line1\n\n\n\n\nline2'
-    const { restored } = restore(input, {})
-    expect(restored).not.toMatch(/\n{3,}/)
+  it("leaves the writer's own blank lines and whitespace as written when nothing is stripped", () => {
+    for (const text of ['line1\n\n\n\n\nline2', 'def a():\n    x = 1\n    \n    return x\n'])
+      expect(restore(text, {}).restored).toBe(text)
+  })
+
+  it('a stripped line at the very start takes the blank lines after it', () => {
+    expect(restore('// TODO x\n\nconst a = 1\n', {}).restored).toBe('const a = 1\n')
+  })
+
+  it('a run of stripped lines between single blank lines leaves one blank line', () => {
+    expect(restore('a\n\n// TODO 1\n// TODO 2\n\nb\n', {}).restored).toBe('a\n\nb\n')
+    expect(restore('a\n\n// -----\n// -----\n\nb\n', {}).restored).toBe('a\n\nb\n')
+  })
+
+  it('a whitespace-only line next to a stripped one counts as blank', () => {
+    expect(restore('a\n   \n// TODO\n\nb\n', {}).restored).toBe('a\n   \nb\n')
+    expect(restore('class A {\n  x = 1\n  \n  // TODO y\n  \n  z = 2\n}\n', {}).restored).toBe(
+      'class A {\n  x = 1\n  \n  z = 2\n}\n'
+    )
+  })
+
+  it("line numbers are the AI response's own, after a multi-line JSDoc too", () => {
+    const { strippedItems } = restore('/**\n * doc\n */\nx\n// TODO here\n', {})
+    expect(strippedItems.find((i) => i.type === 'todo')?.lineNumber).toBe(5)
+  })
+
+  it('trailing spaces after an item at the end of a line go too', () => {
+    expect(restore('const a = 1 /** doc */  \nb\n', {}).restored).toBe('const a = 1\nb\n')
+  })
+
+  it('an item at the start of a line takes the space after it, and keeps the indent', () => {
+    expect(restore('/** @internal */ export const x = 1\n', {}).restored).toBe(
+      'export const x = 1\n'
+    )
+    expect(restore('  /** a */ y()\n', {}).restored).toBe('  y()\n')
+  })
+
+  it('CRLF: a stripped line between two blank lines on each side leaves two', () => {
+    expect(restore('a\r\n\r\n\r\n// TODO\r\n\r\n\r\nb\r\n', {}).restored).toBe('a\r\n\r\n\r\nb\r\n')
+  })
+
+  it('many stripped lines are linear (20 000 TODOs)', () => {
+    const text = Array.from({ length: 20_000 }, (_, i) => `// TODO ${i}\nx${i}`).join('\n')
+    const t0 = Date.now()
+    const { restored, strippedCount } = restore(text, {})
+    expect(Date.now() - t0).toBeLessThan(2_000)
+    expect(strippedCount).toBe(20_000)
+    expect(restored.startsWith('x0\nx1\n')).toBe(true)
+  })
+
+  // e44: two blank lines between top-level definitions are Python's layout
+  // (PEP 8 E302/E305). Collapsing them to one rewrote every Python file passed
+  // back through restore, and grew its diff.
+  it("keeps Python's two blank lines between top-level definitions", () => {
+    const py = 'import os\n\n\ndef a():\n    return 1\n\n\nclass B:\n    pass\n'
+    expect(restore(py, {}).restored).toBe(py)
+  })
+
+  it('keeps one blank line as it is', () => {
+    expect(restore('a\n\nb', {}).restored).toBe('a\n\nb')
+  })
+
+  it('a stripped comment line goes whole: the blank line before it is kept as one', () => {
+    const ts = "import x from 'x'\n\n// Step 1: settle\nexport class A {}\n"
+    expect(restore(ts, {}).restored).toBe("import x from 'x'\n\nexport class A {}\n")
+  })
+
+  it('an item at the end of a line takes the spaces before it (no trailing space)', () => {
+    expect(restore('const a = 1 /** doc */\nconst b = 2\n', {}).restored).toBe(
+      'const a = 1\nconst b = 2\n'
+    )
+  })
+
+  it('an item inside a line leaves the spacing it had', () => {
+    expect(restore('f(/** a */ x)\n', {}).restored).toBe('f( x)\n')
+    // As on main: the spaces before it stay, only the item goes.
+    expect(restore('f(a, /** b */ c)\n', {}).restored).toBe('f(a,  c)\n')
+  })
+
+  it('a JSDoc and a // comment on one line are both stripped, and the line goes', () => {
+    const { restored, strippedItems } = restore(
+      '/** @deprecated */ // TODO remove\nconst a = 1\n',
+      {}
+    )
+    expect(restored).toBe('const a = 1\n')
+    expect(strippedItems.map((i) => i.type).sort()).toEqual(['jsdoc', 'todo'])
+  })
+
+  it('a separator between single blank lines leaves one blank line, as before', () => {
+    expect(restore('const a = 1\n\n// ----------\n\nconst b = 2\n', {}).restored).toBe(
+      'const a = 1\n\nconst b = 2\n'
+    )
+  })
+
+  it('CRLF text is handled the same way', () => {
+    expect(restore('const a = 1\r\n\r\n// TODO x\r\nconst b = 2\r\n', {}).restored).toBe(
+      'const a = 1\r\n\r\nconst b = 2\r\n'
+    )
+    expect(restore('def a():\r\n    pass\r\n\r\n\r\ndef b():\r\n', {}).restored).toBe(
+      'def a():\r\n    pass\r\n\r\n\r\ndef b():\r\n'
+    )
+  })
+
+  it('a private-use character in the text changes nothing (icon fonts use U+E000)', () => {
+    const plain = restore("const i = 'x'\n\n// TODO x\nconst b = 2\n", {}).restored
+    const icon = restore("const i = '\uE000'\n\n// TODO x\nconst b = 2\n", {}).restored
+    expect(icon).toBe(plain.replace("'x'", "'\uE000'"))
+  })
+
+  it('a long run of spaces is linear, not quadratic (ReDoS)', () => {
+    const text = `x${' '.repeat(200_000)}y\n\t${'\t'.repeat(200_000)}// TODO z\n`
+    const t0 = Date.now()
+    const { restored } = restore(text, {})
+    expect(Date.now() - t0).toBeLessThan(2_000)
+    expect(restored.startsWith('x')).toBe(true)
+    expect(restored).not.toContain('TODO')
+  })
+
+  // e44, third review.
+  it('R1: a long run of spaces before an item at the end of a line is linear', () => {
+    const text = `x${' '.repeat(100_000)}y /** d */\n`
+    const t0 = Date.now()
+    const { restored } = restore(text, {})
+    expect(Date.now() - t0).toBeLessThan(2_000)
+    expect(restored).toBe(`x${' '.repeat(100_000)}y\n`)
+  })
+
+  it('R3: stripped lines among blank lines leave the largest run of them, counted once', () => {
+    expect(restore('A\n\n\n// TODO 1\n\n// TODO 2\n\n\nB', {}).restored).toBe('A\n\n\nB')
+    expect(restore('A\n\n// TODO 1\n\n\n// TODO 2\n\nB', {}).restored).toBe('A\n\n\nB')
+  })
+
+  it('R4: code after the closing line of a multi-line JSDoc keeps the JSDoc line indent', () => {
+    expect(restore('  /**\n   * doc\n   */ foo()\n', {}).restored).toBe('  foo()\n')
+  })
+
+  it('R5: an item reports its own text, not the blanks of another item inside it', () => {
+    const { strippedItems } = restore('// TODO fix /** x */ later\nb\n', {})
+    expect(strippedItems.find((i) => i.type === 'todo')?.content).toBe('// TODO fix /** x */ later')
+  })
+
+  // e44, fourth review.
+  it('R6: empty lines inside a removed multi-line JSDoc go with it', () => {
+    expect(restore('a\n/**\n\n\n */\nb\n', {}).restored).toBe('a\nb\n')
+    expect(restore('code()\r\n/**\r\n * x\r\n\r\n */\r\nfunction f() {}\r\n', {}).restored).toBe(
+      'code()\r\nfunction f() {}\r\n'
+    )
+  })
+
+  it('R7: a // item stops at a lone CR - CR-only text loses no code', () => {
+    // CR-only text is one line to the line pass: the item goes, its CR stays.
+    const { restored, strippedItems } = restore('foo\r// TODO x\rbar\r', {})
+    expect(restored).toBe('foo\r\rbar\r')
+    expect(strippedItems[0]?.content).toBe('// TODO x')
+  })
+
+  it('R9: a // item stops at U+2028 and U+2029 - the code after it stays', () => {
+    for (const sep of ['\u2028', '\u2029']) {
+      const { restored, strippedItems } = restore(`// TODO x${sep}code()\n`, {})
+      expect(restored).toContain('code()')
+      expect(strippedItems[0]?.content).toBe('// TODO x')
+    }
+  })
+
+  it('R8: removed lines at the end leave no blank line before them; the end as written stays', () => {
+    expect(restore('code\n\n// TODO x\n', {}).restored).toBe('code\n')
+    expect(restore('x\n\n// TODO\n\n\n', {}).restored).toBe('x\n\n\n')
+  })
+
+  it('repeated identical comments report their own line numbers', () => {
+    const { strippedItems } = restore('// TODO a\nx\n// TODO a\ny\n', {})
+    expect(strippedItems.map((i) => i.lineNumber)).toEqual([1, 3])
+  })
+
+  it('a stripped comment between two blocks leaves at most two blank lines', () => {
+    // Restore strips // comments; the gap they leave is collapsed, not kept whole.
+    const ts = 'const a = 1\n\n\n// TODO: remove\n\n\nconst b = 2\n'
+    expect(restore(ts, {}).restored).toBe('const a = 1\n\n\nconst b = 2\n')
   })
 
   it('strippedCount matches strippedItems length', () => {
