@@ -12,6 +12,7 @@
 // code has been told, unmistakably, that a live key was in the payload.
 
 import { assertKnownOptions, optionKeys } from './options.js'
+import { lineIndex, positionOf } from './lines.js'
 
 export type SecretSeverity = 'critical' | 'high' | 'medium' | 'low'
 
@@ -1388,27 +1389,6 @@ interface RawMatch {
    *  verdict for the same span. The value is destroyed instead of masked: see
    *  the comment there. */
   forceDestroy?: boolean
-}
-
-/** Byte offset → 1-based line/column, computed once per scan. */
-function lineIndex(code: string): number[] {
-  const starts = [0]
-  for (let i = 0; i < code.length; i++) {
-    if (code[i] === '\n') starts.push(i + 1)
-  }
-  return starts
-}
-
-function positionOf(starts: number[], offset: number): { line: number; column: number } {
-  // Binary search for the last line start at or before `offset`.
-  let lo = 0
-  let hi = starts.length - 1
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2)
-    if (starts[mid] <= offset) lo = mid
-    else hi = mid - 1
-  }
-  return { line: lo + 1, column: offset - starts[lo] + 1 }
 }
 
 function collectMatches(code: string, scan: ScanContext): RawMatch[] {

@@ -302,6 +302,29 @@ describe('restore', () => {
     expect(restored).not.toContain('TODO')
   })
 
+  // e44, third review.
+  it('R1: a long run of spaces before an item at the end of a line is linear', () => {
+    const text = `x${' '.repeat(100_000)}y /** d */\n`
+    const t0 = Date.now()
+    const { restored } = restore(text, {})
+    expect(Date.now() - t0).toBeLessThan(2_000)
+    expect(restored).toBe(`x${' '.repeat(100_000)}y\n`)
+  })
+
+  it('R3: stripped lines among blank lines leave the largest run of them, counted once', () => {
+    expect(restore('A\n\n\n// TODO 1\n\n// TODO 2\n\n\nB', {}).restored).toBe('A\n\n\nB')
+    expect(restore('A\n\n// TODO 1\n\n\n// TODO 2\n\nB', {}).restored).toBe('A\n\n\nB')
+  })
+
+  it('R4: code after the closing line of a multi-line JSDoc keeps the JSDoc line indent', () => {
+    expect(restore('  /**\n   * doc\n   */ foo()\n', {}).restored).toBe('  foo()\n')
+  })
+
+  it('R5: an item reports its own text, not the blanks of another item inside it', () => {
+    const { strippedItems } = restore('// TODO fix /** x */ later\nb\n', {})
+    expect(strippedItems.find((i) => i.type === 'todo')?.content).toBe('// TODO fix /** x */ later')
+  })
+
   it('repeated identical comments report their own line numbers', () => {
     const { strippedItems } = restore('// TODO a\nx\n// TODO a\ny\n', {})
     expect(strippedItems.map((i) => i.lineNumber)).toEqual([1, 3])

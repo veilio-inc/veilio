@@ -41,6 +41,7 @@ import {
   scanSecrets,
   fileKindOf,
 } from './secrets.js'
+import { lineIndex, positionOf } from './lines.js'
 import type { RegulatedSpan, ScanOptions, SecretFinding, SecretType } from './secrets.js'
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js'
 import { blankSpans, inSpan, traceSpans } from './traces.js'
@@ -1781,25 +1782,16 @@ function stripNoise(
   wanted: ReadonlySet<StrippedItemType>
 ): { text: string; items: StrippedItem[] } {
   if (wanted.size === 0) return { text, items: [] }
+  const starts = lineIndex(text)
+  const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t'
 
-  // Where each line starts, for line numbers and the line pass.
-  const lineStarts = [0]
-  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) lineStarts.push(i + 1)
-  const lineOf = (offset: number): number => {
-    let lo = 0
-    let hi = lineStarts.length - 1
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1
-      if (lineStarts[mid]! <= offset) lo = mid
-      else hi = mid - 1
-    }
-    return lo
-  }
-
-  // A plain array, not a Uint8Array: the typed array made the README type
-  // check take minutes under its compiler settings (3 s with this).
-  const gone: number[] = new Array<number>(text.length).fill(0)
+  // owner[k] is 1 + the index of the item that removes text[k], 0 where kept.
+  // Allocated on the first match only. A plain array, not a Uint8Array: the
+  // typed array made the README type check take minutes under its settings.
+  let owner: number[] | null = null
   const items: StrippedItem[] = []
+  /** Where each item's own text begins: its first character no earlier item took. */
+  const itemStart: number[] = []
   let view = text
   for (const [type, pattern] of STRIP_PATTERNS) {
     if (!wanted.has(type)) continue
@@ -1807,68 +1799,118 @@ function stripNoise(
     for (const m of view.matchAll(pattern)) {
       if (m[0].length === 0) continue
       const start = m.index!
-      found.push([start, start + m[0].length])
-      items.push({ type, content: m[0].trim(), lineNumber: lineOf(start) + 1 })
+      const end = start + m[0].length
+      let own = start
+      while (own < end && isSpace(view[own])) own++
+      found.push([start, end])
+      itemStart.push(own)
+      // From the original text: an earlier item inside this one is shown as written.
+      items.push({
+        type,
+        content: text.slice(own, end).trim(),
+        lineNumber: positionOf(starts, own).line,
+      })
     }
     if (found.length === 0) continue
+    owner ??= new Array<number>(text.length).fill(0)
     const parts: string[] = []
     let at = 0
+    let id = items.length - found.length
     for (const [start, end] of found) {
-      gone.fill(1, start, end)
+      id++
+      for (let k = start; k < end; k++) if (owner[k] === 0) owner[k] = id
       parts.push(view.slice(at, start), view.slice(start, end).replace(/[^\n]/g, ' '))
       at = end
     }
     parts.push(view.slice(at))
     view = parts.join('')
   }
-  if (items.length === 0) return { text, items }
+  if (owner === null) return { text, items }
+  const gone = owner
+
+  /** The leading spaces and tabs of the line holding `offset`. */
+  const indentAt = (offset: number): string => {
+    const from = starts[positionOf(starts, offset).line - 1]!
+    let to = from
+    while (to < text.length && isSpace(text[to])) to++
+    return text.slice(from, to)
+  }
 
   // The line pass. A line's '\r' is kept with its newline, never stripped.
-  type Line = { body: string; eol: string; touched: boolean; dropped: boolean; blank: boolean }
-  const lines: Line[] = lineStarts.map((start, i) => {
-    const next = i + 1 < lineStarts.length ? lineStarts[i + 1]! - 1 : text.length
+  type Line = { body: string; eol: string; dropped: boolean; blank: boolean }
+  const lines: Line[] = starts.map((start, i) => {
+    const next = i + 1 < starts.length ? starts[i + 1]! - 1 : text.length
     const cr = next > start && text[next - 1] === '\r' ? 1 : 0
     const end = next - cr
-    const eol = text.slice(end, i + 1 < lineStarts.length ? next + 1 : next)
-    let touched = false
-    for (let k = start; k < end && !touched; k++) touched = gone[k] === 1
-    const original = text.slice(start, end)
-    if (!touched)
-      return { body: original, eol, touched, dropped: false, blank: /^[ \t]*$/.test(original) }
-    let kept = ''
+    const eol = text.slice(end, i + 1 < starts.length ? next + 1 : next)
     let firstGone = -1
     let lastGone = -1
+    let kept = ''
     for (let k = start; k < end; k++) {
-      if (gone[k] === 1) {
+      if (gone[k] !== 0) {
         if (firstGone === -1) firstGone = k
         lastGone = k
       } else kept += text[k]
     }
-    if (/^[ \t]*$/.test(kept)) return { body: '', eol, touched, dropped: true, blank: false }
+    const original = text.slice(start, end)
+    if (firstGone === -1)
+      return { body: original, eol, dropped: false, blank: /^[ \t]*$/.test(original) }
+    if (/^[ \t]*$/.test(kept)) return { body: '', eol, dropped: true, blank: false }
     let body = kept
     if (/^[ \t]*$/.test(text.slice(start, firstGone))) {
-      const indent = text.slice(start, firstGone)
-      body = indent + body.slice(indent.length).replace(/^[ \t]+/, '')
+      // An item at the start takes the space after it and keeps the indent - the
+      // indent of the line it began on, when it began on an earlier one.
+      const began = itemStart[gone[firstGone]! - 1]!
+      const indent = began < start ? indentAt(began) : text.slice(start, firstGone)
+      body = indent + kept.replace(/^[ \t]+/, '')
     }
-    if (/^[ \t]*$/.test(text.slice(lastGone + 1, end))) body = body.replace(/[ \t]+$/, '')
-    return { body, eol, touched, dropped: false, blank: false }
+    if (/^[ \t]*$/.test(text.slice(lastGone + 1, end))) {
+      // A loop, not /[ \t]+$/: that regex is quadratic on a long run of spaces.
+      let to = body.length
+      while (to > 0 && isSpace(body[to - 1])) to--
+      body = body.slice(0, to)
+    }
+    return { body, eol, dropped: false, blank: false }
   })
 
-  // Removed lines between blank lines: keep the larger gap, not both.
+  // A run of blank and removed lines keeps the longest stretch of the writer's
+  // blank lines in it, counted once - at the start of the text, only those
+  // before the first removed line.
   for (let i = 0; i < lines.length;) {
-    if (!lines[i]!.dropped) {
+    if (!lines[i]!.blank && !lines[i]!.dropped) {
       i++
       continue
     }
     let j = i
-    while (j < lines.length && lines[j]!.dropped) j++
-    let before = 0
-    for (let k = i - 1; k >= 0 && lines[k]!.blank; k--) before++
-    let after = 0
-    for (let k = j; k < lines.length && lines[k]!.blank; k++) after++
-    const drop = i === 0 ? after : Math.min(before, after)
-    for (let k = j; k < j + drop; k++) lines[k]!.dropped = true
-    i = j + drop
+    let removed = false
+    while (j < lines.length && (lines[j]!.blank || lines[j]!.dropped)) {
+      if (lines[j]!.dropped) removed = true
+      j++
+    }
+    if (removed) {
+      const stretches: Array<[number, number]> = []
+      for (let k = i; k < j;) {
+        if (lines[k]!.dropped) {
+          k++
+          continue
+        }
+        const from = k
+        while (k < j && lines[k]!.blank) k++
+        stretches.push([from, k])
+      }
+      const keep =
+        i === 0
+          ? stretches[0]?.[0] === 0
+            ? stretches[0]
+            : undefined
+          : stretches.reduce<[number, number] | undefined>(
+              (best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best),
+              undefined
+            )
+      for (const [from, to] of stretches)
+        if (from !== keep?.[0]) for (let k = from; k < to; k++) lines[k]!.dropped = true
+    }
+    i = j
   }
 
   return {
