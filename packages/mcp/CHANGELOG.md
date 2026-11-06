@@ -1,5 +1,30 @@
 # @veilio-inc/mcp
 
+## 0.8.3
+
+### Patch Changes
+
+- [#201](https://github.com/veilio-inc/veilio/pull/201) [`f0086e1`](https://github.com/veilio-inc/veilio/commit/f0086e143e4d6a21ad31cb796bbd4d9947119f2e) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `restore` strips a JSDoc block only where its `/**` opens in code, not inside a string, a template literal, a regex literal or another comment. `"src/**/*.ts"` no longer loses the rest of its line, `"a/**/b"` no longer takes every line up to the next `*/` with it, and a `/** */` inside a `//` comment stays in that comment (inside a `// TODO` it is stripped once, with the TODO). An empty `/**/` is a plain block comment. JSDoc inside a fenced markdown code block is still stripped.
+
+  What counts as code is a lexical reading, not a parse, so a few cases are guesses. Where a guess is wrong, the result is no worse than the old pattern, which stripped from any `/**` to the next `*/`: apart from one shape, `*/**`, where the new reading strips the real JSDoc that follows, it strips nothing the old pattern kept.
+
+  - a `/` is read as a regex literal or a division from the character before it. After `)`, `}` or `<` the guess can be wrong: `if (x) /[/**]/` and `a < /"/.test(s)` read the `/` as a division, so the regex's `/**` or quote counts as code. A misread can hide a JSDoc that should go, or shift where a string or comment starts and strip a `/**` that is not one;
+  - a markdown fence line (three or more backticks or tildes at the start of a line, indented or not) is read as a fence. It ends a backtick left open before it. So a `~~~` line inside a template literal ends that literal for this reading, and that flips which backticks open and close until the next fence line: later code may be read as a template and a later template as code. A JavaScript line starting with `~~~` is read as a fence;
+  - a backtick that never closes is read as prose, but two stray backticks in prose still pair up as a template literal, and a JSDoc between them is kept.
+
+- [#198](https://github.com/veilio-inc/veilio/pull/198) [`3693f2c`](https://github.com/veilio-inc/veilio/commit/3693f2cbffb8c6d5e97a2f6b9d4ed25995f79dae) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `restore` keeps the writer's text as written and removes only the noise it strips. Python's two blank lines between top-level definitions (PEP 8) are no longer squashed to one, and blank lines and whitespace-only lines are no longer rewritten file-wide.
+
+  Each stripped item is removed where it sits:
+
+  - a line that held only stripped items goes, and where removed lines sat among blank lines, the longest stretch of blank lines is kept, counted once;
+  - an item at the start of a line takes the space after it and keeps the line's indent (for code after a multi-line JSDoc, the indent the JSDoc began at), and one at the end takes the spaces before it;
+  - an item inside a line leaves the spacing around it.
+
+  Stripped items report the AI response's own line numbers. A JSDoc and a `//` comment on the same line are both stripped. CRLF text is handled the same way as LF. Restore stays linear on long runs of spaces and on many stripped items.
+
+- Updated dependencies [[`f0086e1`](https://github.com/veilio-inc/veilio/commit/f0086e143e4d6a21ad31cb796bbd4d9947119f2e), [`3693f2c`](https://github.com/veilio-inc/veilio/commit/3693f2cbffb8c6d5e97a2f6b9d4ed25995f79dae), [`65fa5f4`](https://github.com/veilio-inc/veilio/commit/65fa5f41bdd24d9285cf472da4f90a0333359ef9)]:
+  - @veilio-inc/cli@0.9.2
+
 ## 0.8.2
 
 ### Patch Changes
