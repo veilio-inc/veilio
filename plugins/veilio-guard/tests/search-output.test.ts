@@ -178,3 +178,113 @@ test('a file the search names that is not on disk: the result is masked as befor
   // Not resolved, so not paired: exactly the per-line masking of main.
   expect(res(out).content).toBe(content)
 })
+
+// US2: what a search shows under a key that names a secret is remembered by
+// CE #204's rules, so a later bare copy is masked - as after a Read.
+/** A Grep result, then a Bash result printing `later`: both outcomes. */
+async function searchThen(
+  $: Parameters<Body>[0],
+  on: Parameters<Body>[1],
+  content: string,
+  files: string[],
+  later: string,
+  args: Record<string, unknown> = {}
+) {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    ...Object.fromEntries(files.map((f) => [`${ROOT}/${f}`, 'x\n'])),
+  })
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { ...grep.r, result: { ...grep.r.result, content, numLines: content.split('\n').length } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: later } }
+  )
+  const one = await $.tool.call({ ...eventOf(grep), ...args })
+  const two = await $.tool.call(eventOf(bash))
+  return { one: res(one).content as string, two: res(two).stdout as string }
+}
+
+test('a strong credential on a config search line is remembered for a later bare copy', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'config/app.yaml:12:password: xk9mq2vl7zpqwr',
+    ['config/app.yaml'],
+    'connecting with xk9mq2vl7zpqwr\n'
+  )
+  expect(r.one).toMatch(/^config\/app\.yaml:12:password: __REDACTED_CREDENTIAL_\d+__$/)
+  expect(r.two).toMatch(/^connecting with __REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a split k8s credential in a search is remembered too', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'deploy/k8s.yaml:2:  - name: DB_PASSWORD\ndeploy/k8s.yaml-3-    value: qx7mkplzrvnwtyb',
+    ['deploy/k8s.yaml'],
+    'psql with qx7mkplzrvnwtyb\n',
+    { '-A': 1 }
+  )
+  expect(r.two).toMatch(/^psql with __REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test("a code file's unquoted value is masked in the search and not remembered; a quoted one is", async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'src/app.py:4:    self.secret_key = rotatekeyv2xq9\nsrc/app.py:5:    session_token = "xk9mq2vl7zpqwr"',
+    ['src/app.py'],
+    'rotatekeyv2xq9 xk9mq2vl7zpqwr\n'
+  )
+  expect(r.one).not.toContain('rotatekeyv2xq9')
+  expect(r.one).not.toContain('xk9mq2vl7zpqwr')
+  expect(r.two).toMatch(/^rotatekeyv2xq9 __REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a weak value in a search is masked where it stands and not carried forward (decision #5)', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'config/app.yaml:3:password: sunshine2026',
+    ['config/app.yaml'],
+    'the sunshine2026 campaign\n'
+  )
+  expect(r.one).not.toContain('sunshine2026')
+  expect(r.two).toBe('the sunshine2026 campaign\n')
+})
+
+test('a weak value is not swept from the rest of the search result', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'config/app.yaml:3:password: admin\nREADME.md:9:log in as admin',
+    ['config/app.yaml', 'README.md'],
+    'admin\n'
+  )
+  expect(r.one.split('\n')[0]).not.toContain('admin')
+  expect(r.one.split('\n')[1]).toBe('README.md:9:log in as admin')
+})
+
+test('references, encrypted values and resource names in a search teach nothing', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    [
+      'config/app.yaml:1:password: ${DB_PASSWORD}',
+      'config/app.yaml:2:api_token: ENC(xq9mk2plzrvnw7ab)',
+      'config/app.yaml:3:secret_key: arn:aws:kms:us-east-1:123456789012:key/abcd',
+      'config/app.yaml:4:db_password: PROD_DB_PASSWORD_V2',
+      'config/app.yaml:5:passwordSecret: argocd-repo-creds-x7k',
+      'config/app.yaml:6:api_key: xk9mq2vl7zpqwr',
+    ].join('\n'),
+    ['config/app.yaml'],
+    // Each on a line of its own: `NAME value` would be a key and its value.
+    'see ENC(xq9mk2plzrvnw7ab)\nunset PROD_DB_PASSWORD_V2\nargocd-repo-creds-x7k ok\nxk9mq2vl7zpqwr ok\n'
+  )
+  expect(r.two).toMatch(
+    /^see ENC\(xq9mk2plzrvnw7ab\)\nunset PROD_DB_PASSWORD_V2\nargocd-repo-creds-x7k ok\n__REDACTED_CREDENTIAL_\d+__ ok\n$/
+  )
+})

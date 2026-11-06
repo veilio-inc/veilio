@@ -19,6 +19,7 @@ import {
   restoreArgs,
   scrubSource,
   survivingSecrets,
+  keyedRun,
 } from '../../plugins/veilio-guard/lib/scrub.ts'
 
 const SRC = `export class QuasarLedgerReconciler {
@@ -1228,5 +1229,66 @@ describe('the path rule fails closed (commit security review of 92c4ca2)', () =>
       '/run/secrets/Client2',
     ])
       expect(highSignal(v)).toBe(false)
+  })
+})
+
+// Spec 074 pass 2: one file's run of search lines, read as that file's text.
+describe('keyedRun', () => {
+  it('a k8s value on the line after its key is replaced where it stands, and learned', () => {
+    const known = new Destroyed()
+    const r = keyedRun(
+      '  - name: DB_PASSWORD\n    value: qx7mkplzrvnwtyb',
+      {},
+      known,
+      false,
+      'yaml'
+    )
+    expect(r.text).toBe('  - name: DB_PASSWORD\n    value: __REDACTED_CREDENTIAL_1001__')
+    expect(r.learned).toEqual(['qx7mkplzrvnwtyb'])
+  })
+  it('in a code file an unquoted value is replaced, never learned; a quoted one is learned', () => {
+    const r = keyedRun(
+      '    self.secret_key = rotatekeyv2xq9\n    session_token = "xk9mq2vl7zpqwr"',
+      {},
+      new Destroyed(),
+      true
+    )
+    expect(r.text).not.toContain('rotatekeyv2xq9')
+    expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
+  })
+  it('a weak value is replaced where it stands and not learned (decision #5)', () => {
+    const r = keyedRun('password: sunshine2026', {}, new Destroyed(), false)
+    expect(r.text).toBe('password: __REDACTED_CREDENTIAL_1001__')
+    expect(r.learned).toEqual([])
+  })
+  it("references, encrypted values, ARNs, variables' names and kebab names are not learned", () => {
+    const text = [
+      'password: ${DB_PASSWORD}',
+      'api_token: ENC(Xq9mK2pLzRvNw7Ab)',
+      'secret_key: arn:aws:kms:us-east-1:123456789012:key/abcd',
+      'db_password: PROD_DB_PASSWORD_V2',
+      'passwordSecret: argocd-repo-creds-x7k',
+    ].join('\n')
+    expect(keyedRun(text, {}, new Destroyed(), false).learned).toEqual([])
+  })
+  it("only the key rule's values are replaced: a scanner finding outside one is left to the line masking", () => {
+    const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
+    const r = keyedRun(`note: ${gh}\npassword: qx7mkplzrvnwtyb`, {}, new Destroyed(), false)
+    expect(r.text.split('\n')[0]).toBe(`note: ${gh}`)
+    expect(r.text.split('\n')[1]).toMatch(/^password: __REDACTED_CREDENTIAL_\d+__$/)
+  })
+  it('a value holding a finding is replaced whole, from where the finding stood', () => {
+    const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
+    const r = keyedRun(`x: 1\nGITHUB_TOKEN=${gh}&x=1\ny: 2`, {}, new Destroyed(), false)
+    expect(r.text).toMatch(/^x: 1\nGITHUB_TOKEN=__REDACTED_CREDENTIAL_\d+__\ny: 2$/)
+  })
+  it('a name the map holds is not a credential to remove', () => {
+    const r = keyedRun(
+      'password: settledTotal',
+      { __VAR__1: 'settledTotal' },
+      new Destroyed(),
+      false
+    )
+    expect(r.text).toBe('password: settledTotal')
   })
 })
