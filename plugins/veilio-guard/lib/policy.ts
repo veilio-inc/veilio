@@ -142,43 +142,6 @@ export function languageOfGrepLine(line: string): Language | 'unknown' {
   return language === 'auto' ? 'unknown' : language
 }
 
-/** Each line of a Grep result: its `path:N:` (a match) or `path-N-` (a
- *  context line) prefix, its text, and its file; `unplaced`, a context line
- *  it could not split. Where a context line's path
- *  ends cannot be told from the line (a dated directory has `-31-` in it), so
- *  it is one a match line of the same result names. A line it cannot place
- *  keeps its whole text and no file. */
-export function grepLines(
-  content: string
-): { prefix: string; body: string; path: string; unplaced: boolean }[] {
-  const lines = content.split('\n')
-  const match = lines.map((line) => /^(.+?):\d+:/.exec(line))
-  const paths = new Set(match.flatMap((m) => (m ? [m[1]!] : [])))
-  // Context lines only stand around match lines: a result with none (one
-  // file, or no -n) has no context line to leave unplaced.
-  const hasMatches = paths.size > 0
-  return lines.map((line, i) => {
-    const m = match[i]
-    if (m) return { prefix: m[0], body: line.slice(m[0].length), path: m[1]!, unplaced: false }
-    for (const c of line.matchAll(/-\d+-/g))
-      if (paths.has(line.slice(0, c.index))) {
-        const end = c.index + c[0].length
-        const path = line.slice(0, c.index)
-        return { prefix: line.slice(0, end), body: line.slice(end), path, unplaced: false }
-      }
-    // A context line whose path no match line names cannot be split: it is
-    // masked whole, as before, and the guard learns nothing from it.
-    // Unplaced when what stands before `-N-` is shaped like a path (a drive
-    // letter allowed, then no `=` or `:` - a date in a match line printed
-    // without `-n` is not), and either the result has match lines or the
-    // prefix names a file (a `/`, `\\` or an extension: a Grep cut short can
-    // leave only context lines). `db-1-password: …` from one file is text.
-    const shaped = /^((?:[A-Za-z]:[\\/])?[^=:]+?)-\d+-/.exec(line)
-    const file = shaped !== null && /[\\/]|\.[A-Za-z0-9]+$/.test(shaped[1]!)
-    return { prefix: '', body: line, path: '', unplaced: shaped !== null && (hasMatches || file) }
-  })
-}
-
 /** Whether a result shows a file of a known language: its path's, or for a
  *  command the one source file it prints (`cat src/a.py`). */
 export function isCode(path: string, args?: Record<string, unknown>): boolean {

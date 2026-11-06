@@ -867,19 +867,11 @@ const showing: [string, (r: Fields) => Fields][] = [
     'a git diff',
     (r) => ({ ...r, result: { ...r.result, stdout: lines.map((l) => `+${l}`).join('\n') } }),
   ],
-  [
-    'a Grep without paths',
-    (r) => ({
-      ...r,
-      result: { ...r.result, content: lines.map((l, i) => `${i + 1}:${l}`).join('\n') },
-    }),
-  ],
 ]
 const toolOf = {
   'a Write': 'Write',
   'an Edit': 'Edit',
   'a git diff': 'Bash',
-  'a Grep without paths': 'Grep',
 } as const
 for (const [label, shape] of showing)
   test(`${label} of code: a quoted value under a secret key is learned, code is not`, async ($, on) => {
@@ -905,85 +897,42 @@ for (const [label, shape] of showing)
     expect(words.slice(1).join(' ')).not.toContain('__REDACTED_')
   })
 
-// Each line of a search is judged without its `path:N:` or `path-N-` prefix,
-// by its own file's kind: a configuration line is learned, code is not.
-test('a search learns each line by its own file: a config line is learned and swept, code is not', async ($, on) => {
-  const grep = recorded('Grep')
-  const bash = recorded('Bash')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  const content = [
-    `${ROOT}/notes.md:1:rotated Xk9mQ2vL7ZpQwR last week`,
-    `${ROOT}/config/app.yaml:12:password: Xk9mQ2vL7ZpQwR`,
-    `${ROOT}/src/session.ts:3:const password = xQ7zW2vR9tY4pLmN;`,
-    `${ROOT}/src/app.py:4:    self.secret_key = Xq9mK2pLzRvNw7`,
-    `${ROOT}/src/app.py-5-api_token: Xq8nK3pLzRvMw6`,
-  ].join('\n')
-  let call = 0
-  on('tool.call', () =>
-    call++ === 0
-      ? { ...grep.r, result: { ...grep.r.result, content, numLines: 5 } }
-      : {
-          ...bash.r,
-          result: {
-            ...bash.r.result,
-            stdout: 'Xk9mQ2vL7ZpQwR xQ7zW2vR9tY4pLmN; Xq9mK2pLzRvNw7 Xq8nK3pLzRvMw6\n',
-          },
-        }
-  )
-  const one = await $.tool.call(eventOf(grep))
-  expect(res(one).content).not.toContain('Xk9mQ2vL7ZpQwR')
-  const two = await $.tool.call(eventOf(bash))
-  const words = (res(two).stdout as string).trim().split(' ')
-  expect(words[0]).toMatch(/^__REDACTED_CREDENTIAL_\d+__$/)
-  expect(words.slice(1).join(' ')).not.toContain('__REDACTED_')
-})
+// Ship check of e72: a Grep result is masked line by line exactly as before,
+// and the key rule learns nothing from it - its lines' files cannot be told
+// apart safely (a secret file named by its path, a .pgpass line, no -n).
+for (const [label, content] of [
+  ['a config line', `${ROOT}/config/app.yaml:12:password: Xk9mQ2vL7ZpQwR`],
+  [
+    'one Python file without paths',
+    '4:    self.secret_key = Xk9mQ2vL7ZpQwR\n5:    session_token = "Xk9mQ2vL7ZpQwR"',
+  ],
+] as const)
+  test(`a search's key values are masked there and not learned: ${label}`, async ($, on) => {
+    const grep = recorded('Grep')
+    const bash = recorded('Bash')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+    let call = 0
+    on('tool.call', () =>
+      call++ === 0
+        ? { ...grep.r, result: { ...grep.r.result, content, numLines: content.split('\n').length } }
+        : { ...bash.r, result: { ...bash.r.result, stdout: 'Xk9mQ2vL7ZpQwR\n' } }
+    )
+    const one = await $.tool.call(eventOf(grep))
+    expect(res(one).content).not.toContain('Xk9mQ2vL7ZpQwR')
+    const two = await $.tool.call(eventOf(bash))
+    expect(res(two).stdout).not.toContain('__REDACTED_')
+  })
 
-// A context line (`rg -C`) is `path-N-text`: before, its pair had no value
-// span and the password went out as written.
-test("a search's context line is judged without its prefix: its password is removed and learned", async ($, on) => {
+// Byte for byte as before e72: a Grep line's key value goes under its own
+// token, even one holding a finding's token.
+test("a search line's key value is masked exactly as before e72", async ($, on) => {
   const grep = recorded('Grep')
-  const bash = recorded('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  const content = [
-    `${ROOT}/deploy/settings.ini:2:[database]`,
-    `${ROOT}/deploy/settings.ini-3-DB_PASSWORD=Qx7mKpL9zRvNwTyB`,
-    `${ROOT}/deploy/settings.ini-4-smtp_password: Wb4nR8tLq2XzKm`,
-  ].join('\n')
-  let call = 0
-  on('tool.call', () =>
-    call++ === 0
-      ? { ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }
-      : { ...bash.r, result: { ...bash.r.result, stdout: 'Qx7mKpL9zRvNwTyB Wb4nR8tLq2XzKm\n' } }
-  )
-  const one = await $.tool.call(eventOf(grep))
-  expect(res(one).content).not.toMatch(/Qx7mKpL9zRvNwTyB|Wb4nR8tLq2XzKm/)
-  const two = await $.tool.call(eventOf(bash))
-  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ __REDACTED_CREDENTIAL_\d+__\n$/)
-})
-
-// A context line whose path no match line names cannot be split: it is
-// removed as before and teaches the session nothing (e72 closing review).
-test('a context line no match line places is masked, and not learned from', async ($, on) => {
-  const grep = recorded('Grep')
-  const bash = recorded('Bash')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  let call = 0
-  on('tool.call', () =>
-    call++ === 0
-      ? {
-          ...grep.r,
-          result: {
-            ...grep.r.result,
-            content: `${ROOT}/src/app.py-4-self.secret_key=Xq9mK2pLzRvNw7`,
-            numLines: 1,
-          },
-        }
-      : { ...bash.r, result: { ...bash.r.result, stdout: 'Xq9mK2pLzRvNw7\n' } }
-  )
-  const one = await $.tool.call(eventOf(grep))
-  expect(res(one).content).not.toContain('Xq9mK2pLzRvNw7')
-  const two = await $.tool.call(eventOf(bash))
-  expect(res(two).stdout).not.toContain('__REDACTED_')
+  const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const content = `${ROOT}/notes.txt:1:GITHUB_TOKEN=${ghp}&x=1`
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 1 } }))
+  const out = await $.tool.call(eventOf(grep))
+  expect(res(out).content).toMatch(/:1:GITHUB_TOKEN=__REDACTED_CREDENTIAL_1002__$/)
 })
 
 // Code review of acea47b: an assignment without a `;` reads as a

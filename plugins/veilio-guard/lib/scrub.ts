@@ -914,6 +914,18 @@ const NOT_A_SECRET_TOKEN = new Set([
   'cancellation',
   'csrf',
   'xsrf',
+  'skip',
+  'delta',
+  'paging',
+  'resumption',
+  'after',
+  'scroll',
+  'lock',
+  'etag',
+  'previous',
+  'prev',
+  'continue',
+  'request',
 ])
 const CONFIG: ReadonlySet<string> = new Set([
   'env',
@@ -944,8 +956,9 @@ function namesSecret(key: string | undefined): boolean {
   const prev = parts[parts.length - 2]
   if (!last || (prev !== undefined && FLAG.has(prev))) return false
   if (last === 'token' && prev !== undefined && NOT_A_SECRET_TOKEN.has(prev)) return false
-  // A bare `token`, `pass` or `pwd` names no secret: `PWD` is the working directory.
-  if (SECRET_WORD.test(last)) return parts.length > 1 || !/^(?:token|pass|pwd)$/.test(last)
+  // A bare `token`, `pass`, `pwd` or `secret` names no secret: `PWD` is the
+  // working directory, a k8s `secret:` names a resource.
+  if (SECRET_WORD.test(last)) return parts.length > 1 || !/^(?:token|pass|pwd|secret)$/.test(last)
   return prev !== undefined && SECRET_PAIR.test(`${prev}_${last}`)
 }
 
@@ -1167,8 +1180,8 @@ export function applyMap(
     code?: boolean
     /** The learning pass's work on this very text and map (destroyedValues). */
     keyed?: Keyed
-    /** false: a key's value is removed, never learned (a search line that
-     *  cannot be placed in its file). */
+    /** false: a key's value is removed under its own token, never learned
+     *  (a Grep line). */
     learn?: boolean
   } = {}
 ): string {
@@ -1207,7 +1220,10 @@ export function applyMap(
     if (options.learn !== false) known.learn(learned)
     // The whole value goes, as before; a slot that is already a finding's
     // token keeps that token, so one secret reads as one token.
-    unvalued += redacted.slice(at, span.start) + slotToken(slot, known)
+    // A text the key rule learns nothing from (a Grep line) is masked as
+    // before e72: the whole value under its own token.
+    const token = options.learn === false ? known.tokenFor(span.value) : slotToken(slot, known)
+    unvalued += redacted.slice(at, span.start) + token
     at = span.end
   }
   redacted = unvalued + redacted.slice(at)

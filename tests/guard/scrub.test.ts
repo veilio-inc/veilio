@@ -564,6 +564,19 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     expect(known.values).toEqual(['Kq9x$QLmZ7vRt4Wp'])
   })
 
+  it('a bare secret key names a resource, not a secret; SECRET_KEY is one', () => {
+    for (const text of ['secret: release-build-2026-x9Qz7', 'SECRET=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+    for (const text of ['SECRET_KEY=Xq9mK2pLzRvNw7', 'APP_SECRET=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, ['Xq9mK2pLzRvNw7']])
+    }
+  })
+
   it('a bare PWD is the working directory, not a password; DB_PWD is one', () => {
     for (const text of ['PWD=/srv/app/releases/20261105T1200Z', 'PWD=Xq9mK2pLzRvNw7']) {
       const known = new Destroyed()
@@ -665,6 +678,18 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'changeToken',
       'cursorToken',
       'StartingToken',
+      'skipToken',
+      'deltaToken',
+      'pagingToken',
+      'resumptionToken',
+      'afterToken',
+      'scrollToken',
+      'lockToken',
+      'etagToken',
+      'previousToken',
+      'prevToken',
+      'continueToken',
+      'requestToken',
     ]) {
       const known = new Destroyed()
       applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
