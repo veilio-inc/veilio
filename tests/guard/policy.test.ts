@@ -177,7 +177,10 @@ describe('grepLines: an unplaced context line', () => {
         grepLines(`other.py:1:x\n${path}-4-self.secret_key = rotateKeyV2Abcdef12`)[1]?.unplaced
       ).toBe(true)
   })
-  it('is never a line of a result with no match lines (one file, or no -n)', () => {
+  it('is a lone line whose prefix names a file (a Grep cut short)', () => {
+    expect(grepLines('src/app.py-4-self.secret_key=Xq9mK2pLzRvNw7')[0]?.unplaced).toBe(true)
+  })
+  it('is not a lone line whose prefix names no file (one file, or no -n)', () => {
     for (const line of ['db-1-password: Kq9xQ2LmZ7vRt4Wp', 'pg-16-DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp'])
       expect([line, grepLines(line)[0]?.unplaced]).toEqual([line, false])
   })
