@@ -205,8 +205,10 @@ export function withAiPreamble(anonymized: string, map?: SymbolMap): string {
 //
 // So we split source into segments, flagging only comment spans. Strings and
 // templates stay in non-comment segments (still maskable). This is a lexical
-// scanner, not a full parser: a `/` always reads as division, so the rare case
-// of a regex literal containing a quote (e.g. `/'/`) is not handled.
+// scanner, not a full parser, with two modes. For masking a `/` always reads as
+// division, so the rare case of a regex literal containing a quote (e.g. `/'/`)
+// is not handled. For restore's JSDoc search (`forRestore`) it also reads regex
+// literals, markdown fence lines and stray backticks - see tokenizeForMasking.
 //
 // Comment syntax is per-language. Assuming `//` everywhere meant Python and
 // Ruby `#` comments were scanned as code and their prose masked into
@@ -251,13 +253,16 @@ const REGEX_AFTER_WORD =
 
 /** `[true, end]` for the regex literal whose `/` is at `at`; `[false, -1]` when
  *  that `/` is a division; `[false, lineEnd]` when no regex closes on the line.
- *  A `/` after a name, a number, a string, `)` or `]` divides; anywhere else it
- *  opens a regex, which ends on the line it began on.
+ *  A `/` after a name, a number, a string, `)`, `]`, a postfix `++`/`--` or a
+ *  `<` (a JSX closing tag, `</div>`) divides; anywhere else it opens a regex,
+ *  which ends on the line it began on.
  *  shortcut: `)` and `}` are guessed (`if (x) /re/` reads as division, a `/`
  *  after an object literal as a regex); a real parser would know. */
 function regexLiteralEnd(code: string, at: number): [boolean, number] {
   let j = at - 1
   while (j >= 0 && /\s/.test(code[j])) j--
+  if (j >= 0 && (code[j] === '<' || (/[+-]/.test(code[j]) && code[j - 1] === code[j])))
+    return [false, -1]
   if (
     j >= 0 &&
     /[\w$)\]'"`]/.test(code[j]) &&
@@ -282,13 +287,22 @@ function regexLiteralEnd(code: string, at: number): [boolean, number] {
   return [false, code.length]
 }
 
-/** `regexLiterals`: read a regex literal as code, so a quote or comment opener
- *  inside it starts nothing. Restore asks for it; masking does not, and keeps
- *  reading every `/` as division. */
+// A markdown fence line: three or more backticks or tildes at a line start.
+const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
+
+/** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
+ *  in a markdown answer. Masking does not ask for it and reads as it always did.
+ *  - A regex literal is code, so a quote or comment opener inside it starts nothing.
+ *  - A fence line in code is code: its backticks open no template literal. One
+ *    inside a string or comment is part of it.
+ *  - A quote that never closes (a stray backtick in prose) opens nothing, and
+ *    neither does any later one of that quote character.
+ *    shortcut: two stray backticks still pair up; only a parser of the prose
+ *    around the code could tell them from a template. */
 function tokenizeForMasking(
   code: string,
   language: Language = DEFAULT_LANGUAGE,
-  regexLiterals = false
+  forRestore = false
 ): Segment[] {
   const syntax: CommentSyntax = commentSyntaxFor(language)
   const segments: Segment[] = []
@@ -305,9 +319,20 @@ function tokenizeForMasking(
 
   let i = 0
   let noRegexBefore = -1
+  const unclosed = new Set<string>()
   const n = code.length
   while (i < n) {
     const c = code[i]
+
+    if (forRestore && (i === 0 || code[i - 1] === '\n')) {
+      FENCE_LINE.lastIndex = i
+      const fence = FENCE_LINE.exec(code)
+      if (fence !== null) {
+        buf += fence[0]
+        i += fence[0].length
+        continue
+      }
+    }
 
     // Triple-quoted prose (Python docstrings) is documentation, not data —
     // treat it as a comment so its sentences survive intact.
@@ -359,7 +384,7 @@ function tokenizeForMasking(
       continue
     }
 
-    if (regexLiterals && c === '/' && i >= noRegexBefore) {
+    if (forRestore && c === '/' && i >= noRegexBefore) {
       const [closed, end] = regexLiteralEnd(code, i)
       if (closed) {
         buf += code.slice(i, end)
@@ -372,12 +397,14 @@ function tokenizeForMasking(
       noRegexBefore = end
     }
 
-    if (syntax.quotes.includes(c)) {
+    if (syntax.quotes.includes(c) && !unclosed.has(c)) {
       // Emit the whole string/template literal as its own tagged segment so
       // role classification can tell string words and module specifiers apart.
       // Still maskable (isComment: false); escape handling unchanged.
       flush(false)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
+      const opened = i
+      let closed = false
       let str = c
       i++
       const bounded = syntax.lineBounded.includes(c)
@@ -392,10 +419,17 @@ function tokenizeForMasking(
           continue
         }
         if (code[i] === c) {
+          closed = true
           i++
           break
         }
         i++
+      }
+      if (forRestore && !closed && !bounded) {
+        unclosed.add(c)
+        buf += c
+        i = opened + 1
+        continue
       }
       segments.push({ text: str, isComment: false, isString: true, isModuleSpecifier })
       continue
@@ -1795,22 +1829,19 @@ export function anonymize(
 /** Where each JSDoc block in `text` is: a closed block comment whose `/**`
  *  opens in code - not in a string, a template or regex literal, or another
  *  comment (e69). `/**` closed at once by `/` is an empty block comment, not
- *  a JSDoc. Each markdown fence line starts a fresh scan: the backticks of a
- *  fence would otherwise open a template literal that hides the fenced code. */
+ *  a JSDoc. What counts as code is a lexical guess (tokenizeForMasking's
+ *  `forRestore` reading), not a parse. */
 function jsdocSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = []
-  let base = 0
-  text.split(/(^[ \t]*(?:`{3,}|~{3,}).*$)/m).forEach((chunk, i) => {
-    let at = base
-    base += chunk.length
-    if (i % 2 === 1) return
-    for (const s of tokenizeForMasking(chunk, 'typescript', true)) {
-      const t = s.text
-      if (s.isComment && t.length >= 5 && t.startsWith('/**') && t.endsWith('*/'))
-        spans.push([at, at + t.length])
-      at += t.length
-    }
-  })
+  // Runs on every restore: most text has no `/**` to look for.
+  if (!text.includes('/**')) return spans
+  let at = 0
+  for (const s of tokenizeForMasking(text, 'typescript', true)) {
+    const t = s.text
+    if (s.isComment && t.length >= 5 && t.startsWith('/**') && t.endsWith('*/'))
+      spans.push([at, at + t.length])
+    at += t.length
+  }
   return spans
 }
 

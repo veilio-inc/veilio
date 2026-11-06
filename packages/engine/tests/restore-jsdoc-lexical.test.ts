@@ -63,6 +63,29 @@ describe('restore: /** that is not a JSDoc start is left alone (e69)', () => {
     }
   })
 
+  it('a / inside a regex character class does not close it', () => {
+    unchanged('re = /[//**]/\ny = 2\n/* x */\n')
+    expect(restore('re = /[//**]/\ny = 2\n/** d */\nf()\n', {}, JSDOC).restored).toBe(
+      're = /[//**]/\ny = 2\nf()\n'
+    )
+  })
+
+  it('a / after ), ], a string, or a postfix ++ or -- divides', () => {
+    for (const before of ['(a)', 'b[0]', '"s"', "'s'", 'i++', 'i--']) {
+      expect(restore(`x = ${before} / 2 /** d */ / 3\n`, {}, JSDOC).restored).toBe(
+        `x = ${before} / 2  / 3\n`
+      )
+    }
+  })
+
+  it('a JSX closing tag is not a regex', () => {
+    expect(restore('return <div>{x}</div>{/** note */}\n', {}, JSDOC).restored).toBe(
+      'return <div>{x}</div>{}\n'
+    )
+    const text = 'const a = <p>x</p> // the ` key\nconst b = 1\n/** doc */\nf()\n'
+    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** doc */\n', ''))
+  })
+
   it('a division is not read as a regex: the JSDoc between two divisions goes', () => {
     expect(restore('x = a / b; /** doc */ y = c / d\n', {}, JSDOC).restored).toBe(
       'x = a / b;  y = c / d\n'
@@ -146,16 +169,35 @@ describe('restore: a JSDoc inside a markdown answer is still stripped', () => {
     ])
   })
 
-  it('a second fence starts clean even when the first one left a quote open', () => {
-    const text = '```\nconst s = `unclosed\n```\n\n```ts\n/** doc */\nf()\n```\n'
-    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** doc */\n', ''))
+  it('each fence is read on its own, even when the first leaves a backtick open', () => {
+    const text = '```ts\n/** a */\nconst s = `open\n```\n\n```ts\n/** b */\nf()\n```\n'
+    const r = restore(text, {}, JSDOC)
+    expect(r.restored).toBe(text.replace('/** a */\n', '').replace('/** b */\n', ''))
+    expect(r.strippedItems.map((i) => i.content)).toEqual(['/** a */', '/** b */'])
+  })
+
+  it('a fence line inside a JSDoc does not split it: the whole block goes', () => {
+    const text = '/**\n * Use it:\n```ts\nadd(1, 2)\n```\n */\nexport function add() {}\n'
+    const r = restore(text, {}, JSDOC)
+    expect(r.restored).toBe('export function add() {}\n')
+    expect(r.strippedItems).toHaveLength(1)
+  })
+
+  it('a fence inside a template literal (escaped, as JS needs it) stays in it', () => {
+    unchanged('const md = `\n\\`\\`\\`\n/** not a doc */\n\\`\\`\\`\n`\nconst y = 2\n')
+    unchanged('const md = `\n  ~~~\n/** not a doc */\n  ~~~\n`\nconst y = 2\n')
+  })
+
+  it('one stray backtick in prose does not hide the JSDoc after it', () => {
+    const text = 'Use the ` char.\n\n/** doc */\nfunction f() {}\n'
+    expect(restore(text, {}, JSDOC).restored).toBe('Use the ` char.\n\nfunction f() {}\n')
   })
 })
 
 // The repo's own sources, tests included: the tests hold many strings with
-// `/**` in them. Every line that is not part of a stripped JSDoc and holds no
-// `/**` or `*/` must come back unchanged and in order, and every stripped item
-// must look like a JSDoc block - not like code a runaway match swallowed.
+// `/**` in them. Every line no stripped JSDoc touched must come back unchanged
+// and in order - `/**` in it or not - and every stripped item must look like a
+// JSDoc block, not like code a runaway match swallowed.
 describe('restore: the repo corpus loses no code to JSDoc stripping', () => {
   const root = join(import.meta.dirname, '..', '..', '..')
   const dirs = [
@@ -188,20 +230,39 @@ describe('restore: the repo corpus loses no code to JSDoc stripping', () => {
     const text = readFileSync(path, 'utf8')
     const { restored, strippedItems } = restore(text, {}, JSDOC)
 
+    // Lines an item began, ran through or ended on; and, per line, the
+    // one-line items on it.
     const inJsdoc = new Set<number>()
+    const oneLine = new Map<number, string[]>()
     for (const item of strippedItems as StrippedItem[]) {
       expect(item.content.startsWith('/**') && item.content.endsWith('*/')).toBe(true)
       const lines = item.content.split('\n')
       for (const inner of lines.slice(1, -1)) expect(inner).toMatch(/^\s*(\*|$)/)
       for (let k = 0; k < lines.length; k++) inJsdoc.add(item.lineNumber + k)
+      if (lines.length === 1)
+        oneLine.set(item.lineNumber, [...(oneLine.get(item.lineNumber) ?? []), item.content])
     }
 
-    const kept = text
-      .split('\n')
-      .filter((l, i) => !inJsdoc.has(i + 1) && l.trim() !== '' && !/\/\*\*|\*\//.test(l))
+    // Every line no item touched comes back exactly; a line that held one-line
+    // items keeps the rest of its code (spacing aside). Multi-line items' own
+    // first and last lines are the only ones not checked.
+    const norm = (l: string) => l.replace(/\s+/g, ' ').trim()
+    const kept: Array<{ line: string; loose: boolean }> = []
+    text.split('\n').forEach((line, i) => {
+      if (!inJsdoc.has(i + 1)) {
+        if (line.trim() !== '') kept.push({ line, loose: false })
+        return
+      }
+      const items = oneLine.get(i + 1)
+      if (!items || items.length === 0) return
+      let rest = line
+      for (const c of items) rest = rest.replace(c, ' ')
+      if (norm(rest) !== '') kept.push({ line: norm(rest), loose: true })
+    })
     const out = restored.split('\n').filter((l) => l.trim() !== '')
     let at = 0
-    for (const line of out) if (at < kept.length && line === kept[at]) at++
+    for (const line of out)
+      if (at < kept.length && (kept[at]!.loose ? norm(line) : line) === kept[at]!.line) at++
     expect(kept.slice(at, at + 1)).toEqual([])
   })
 })
