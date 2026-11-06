@@ -435,12 +435,19 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       ['SMTP_PASS=qzkvwpxmrtbn8274', 'qzkvwpxmrtbn8274'],
       ["privateKey: 'Hn4xQ8zLw2Vt'", 'Hn4xQ8zLw2Vt'],
       ['Server=db Password=Rv5kW9qLz3Xm', 'Rv5kW9qLz3Xm'],
+      ['DB_PASSWORD_2=Fz6nB1qWx8Lk', 'Fz6nB1qWx8Lk'],
+      ['API_TOKEN_V2="Gk3tP9sVz5Qm"', 'Gk3tP9sVz5Qm'],
+      ['password2: Jd8rM4xNq2Wz', 'Jd8rM4xNq2Wz'],
+      ['env:\n  - name: DB_PASSWORD\n    value: Hn4xQ8zLw2Vk', 'Hn4xQ8zLw2Vk'],
+      ['db_password:\n  Rv5kW9qLz3Xp\n', 'Rv5kW9qLz3Xp'],
+      ['<password>Wm3pX7rQk2Zt</password>', 'Wm3pX7rQk2Zt'],
+      ['<add key="DbPassword">Wm3pX7rQk2Zq</add>', 'Wm3pX7rQk2Zq'],
     ]) {
       const known = new Destroyed()
       expect(applyMap(first!, {}, undefined, { known })).not.toContain(value)
-      expect(known.values).toEqual([value])
+      expect(known.values).toContain(value)
       const later = applyMap(`echo ${value}`, {}, undefined, { known })
-      expect(later).toBe('echo __REDACTED_CREDENTIAL_1001__')
+      expect(later).toMatch(/^echo __REDACTED_CREDENTIAL_\d+__$/)
       // Inside a longer line and a longer word too; the match is exact-case.
       expect(
         applyMap(`url=https://h/?k=${value}&x=1 and x${value}y`, {}, undefined, { known })
@@ -496,6 +503,17 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'primaryKey: Xk9mQ2vL7Zp',
       'keyboard_layout=Xk9mQ2vL7Zp',
       'author: Xk9mQ2vL7Zp',
+      // A cursor or a flag, not a secret (security review of 0228a04).
+      '{"NextToken": "Xk9mQ2vL7ZpQw"}',
+      'nextPageToken: Xk9mQ2vL7ZpQw',
+      'page_token=Xk9mQ2vL7ZpQw',
+      'continuationToken: Xk9mQ2vL7ZpQw',
+      'csrf_token=Xk9mQ2vL7ZpQw',
+      'XSRF-TOKEN=Xk9mQ2vL7ZpQw',
+      'is_secret: Xk9mQ2vL7ZpQw',
+      'has_password: Xk9mQ2vL7ZpQw',
+      // A bare key or token names no secret.
+      '{"token": "Xk9mQ2vL7ZpQw"}',
     ]) {
       const known = new Destroyed()
       applyMap(text, {}, undefined, { known })
@@ -526,18 +544,50 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     expect(destroyedValues([`DB_PASSWORD=${value}`])).toEqual([])
   })
 
-  it('in source code the key rule learns nothing: the scanner judges code', () => {
+  it('in code, a quoted value under a secret key is learned; an unquoted one never is', () => {
     const ts = { ...NO_CONTEXT, language: 'typescript' as const }
-    for (const text of [
-      'const sessionToken = "Xk9mQ2vL7ZpQw"',
-      'const token = `user-${id}-v2x9Qz7`',
-      'if (authMode === "oauth2-pkce-v2") {}',
+    for (const ctx of [undefined, ts]) {
+      const known = new Destroyed()
+      applyMap('const sessionToken = "Xk9mQ2vL7ZpQw"', {}, ctx, { known })
+      expect(known.values).toEqual(['Xk9mQ2vL7ZpQw'])
+      for (const text of [
+        // An unquoted value of a code assignment is code (`rotateKeyV2`).
+        'const password = xQ7zW2vR9tY4pLmN;',
+        'const passKey = rotateKeyV2Xq9;',
+        'const token = `user-${id}-v2x9Qz7`',
+        'if (authMode === "oauth2-pkce-v2Xq9") {}',
+      ]) {
+        const none = new Destroyed()
+        applyMap(text, {}, ctx, { known: none })
+        expect([text, none.values]).toEqual([text, []])
+        expect([text, destroyedValues([text])]).toEqual([text, []])
+      }
+    }
+  })
+
+  it('an unquoted pair is learned without what follows it in a URL or a connection string', () => {
+    for (const [text, core] of [
+      ['GET /cb?access_token=Pq7rT2wZx9Lm&state=1', 'Pq7rT2wZx9Lm'],
+      ['Server=db;Password=Rv5kW9qLz3Xn;Database=app', 'Rv5kW9qLz3Xn'],
+      ['opts api_key=Hb2nV6xKq8Zr,retry=3', 'Hb2nV6xKq8Zr'],
     ]) {
       const known = new Destroyed()
-      applyMap(text, {}, ts, { known })
-      expect([text, known.values]).toEqual([text, []])
-      expect(destroyedValues([text], {}, undefined, undefined, 'typescript')).toEqual([])
+      const out = applyMap(text!, {}, undefined, { known })
+      expect(out).not.toContain(core)
+      expect(known.values).toContain(core)
+      expect(applyMap(`token ${core} again`, {}, undefined, { known })).not.toContain(core)
+      expect(destroyedValues([text!])).toContain(core)
     }
+  })
+
+  it('a value under a secret key that holds a redaction token is never learned', () => {
+    // The provider key inside it is learned by its own rule; what is left
+    // around its token fails the scanner's bar, so no check of its own.
+    const text = `DB_PASSWORD="xQ7zW2vR9t${STRIPE}"`
+    const known = new Destroyed()
+    expect(applyMap(text, {}, undefined, { known })).not.toContain('xQ7zW2vR9t')
+    expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(destroyedValues([text]).some((v) => v.includes('__REDACTED_'))).toBe(false)
   })
 
   it('a value under a credential-named key that the map holds as a name is never learned', () => {

@@ -34,7 +34,6 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
-  keyedValues,
   restoreAdds,
   grow,
   ownedMap,
@@ -1122,21 +1121,11 @@ export class Guard {
       sent.push(s)
       return s
     })
-    // The key rule's values are learned in the language each string is masked
-    // in, as applyMap below learns them: a Grep result line by line.
-    const language = this.resultLanguage(tool, args, filePath)
-    const learned = destroyedValues(
-      sent,
-      this.map,
-      undefined,
-      fileKind,
-      tool === 'Grep' ? null : language
-    )
-    if (tool === 'Grep')
-      for (const s of sent)
-        for (const line of s.split('\n'))
-          learned.push(...keyedValues(line, this.map, languageOfGrepLine(line)))
-    this.destroyed.learn(learned)
+    // One scan per string, for learning here and for masking below while the
+    // string is as scanned (a Grep result is masked line by line, and scanned
+    // whole here, so a finding over several lines is learned).
+    const scans = new Map<string, ScanResult>()
+    this.destroyed.learn(destroyedValues(sent, this.map, undefined, fileKind, scans))
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -1154,7 +1143,7 @@ export class Guard {
       const working: SymbolMap = ownedMap(this.map)
       const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
-      const ctx = this.context(language, 'result', budget)
+      const ctx = this.context(this.resultLanguage(tool, args, filePath), 'result', budget)
       // A Grep result mixes files: each line is masked in its own file's language.
       const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
         tool === 'Grep'
@@ -1166,7 +1155,12 @@ export class Guard {
       // Swept already, above: each string is scanned once here.
       const apply = (s: string) =>
         perLine(s, (t, c) =>
-          applyMap(t, working, c, { known: this.destroyed, swept: true, fileKind })
+          applyMap(t, working, c, {
+            known: this.destroyed,
+            swept: true,
+            fileKind,
+            scan: scans.get(t),
+          })
         )
       // A listed field, already scanned for credentials as written, only has
       // the names the map has learned since replaced in the pass over every

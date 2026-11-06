@@ -843,47 +843,99 @@ test('a value under a credential-named key first seen in a config Read is never 
   expect(p.files[`${ROOT}/.veilio/map.json`]).not.toContain('Tq7wLz2Rk9Vx')
 })
 
-test("a source file's code is not learned by the key rule: later results keep it", async ($, on) => {
-  const read = recorded('Read')
-  const bash = recorded('Bash')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  const content =
-    'const sessionToken = "Xk9mQ2vL7ZpQw"\nconst passKey = rotateKeyV2Xq9\nif (authMode === "oauth2-pkce-v2Xq9") {}\n'
-  let call = 0
-  on('tool.call', () =>
-    call++ === 0
-      ? { ...read.r, result: { ...read.r.result, file: { ...read.r.result.file, content } } }
-      : {
-          ...bash.r,
-          result: { ...bash.r.result, stdout: 'Xk9mQ2vL7ZpQw rotateKeyV2Xq9\n' },
-        }
-  )
-  await $.tool.call(eventOf(read))
-  const two = await $.tool.call(eventOf(bash))
-  expect(res(two).stdout).not.toContain('__REDACTED_')
-})
+// Security review of 0228a04: whether a key's value is learned turns on the
+// value (quoted, or a configuration line's), never on which tool showed it.
+const CODE =
+  'const apiToken = "Xk9mQ2vL7ZpQw"\nconst password = xQ7zW2vR9tY4pLmN;\nconst passKey = rotateKeyV2Xq9;\n'
+const lines = CODE.trimEnd().split('\n')
+const showing: [string, (r: Fields) => Fields][] = [
+  ['a Write', (r) => ({ ...r, result: { ...r.result, content: CODE } })],
+  [
+    'an Edit',
+    (r) => ({
+      ...r,
+      result: {
+        ...r.result,
+        newString: CODE,
+        structuredPatch: [
+          { oldStart: 1, oldLines: 0, newStart: 1, newLines: 3, lines: lines.map((l) => `+${l}`) },
+        ],
+      },
+    }),
+  ],
+  [
+    'a git diff',
+    (r) => ({ ...r, result: { ...r.result, stdout: lines.map((l) => `+${l}`).join('\n') } }),
+  ],
+  [
+    'a Grep without paths',
+    (r) => ({
+      ...r,
+      result: { ...r.result, content: lines.map((l, i) => `${i + 1}:${l}`).join('\n') },
+    }),
+  ],
+]
+const toolOf = {
+  'a Write': 'Write',
+  'an Edit': 'Edit',
+  'a git diff': 'Bash',
+  'a Grep without paths': 'Grep',
+} as const
+for (const [label, shape] of showing)
+  test(`${label} of code: a quoted value under a secret key is learned, code is not`, async ($, on) => {
+    const first = recorded(toolOf[label as keyof typeof toolOf])
+    const bash = recorded('Bash')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+    let call = 0
+    on('tool.call', () =>
+      call++ === 0
+        ? (shape(first.r as unknown as Fields) as unknown as typeof first.r)
+        : {
+            ...bash.r,
+            result: {
+              ...bash.r.result,
+              stdout: 'Xk9mQ2vL7ZpQw xQ7zW2vR9tY4pLmN; rotateKeyV2Xq9;\n',
+            },
+          }
+    )
+    await $.tool.call(eventOf(first))
+    const two = await $.tool.call(eventOf(bash))
+    const words = (res(two).stdout as string).trim().split(' ')
+    expect(words[0]).toMatch(/^__REDACTED_CREDENTIAL_\d+__$/)
+    expect(words.slice(1).join(' ')).not.toContain('__REDACTED_')
+  })
 
-test('a search learns the key rule line by line: a config line is learned, a source line is not', async ($, on) => {
+test('a search learns a quoted value under a secret key, and sweeps the lines before it', async ($, on) => {
   const grep = recorded('Grep')
   const bash = recorded('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
   const content = [
     `${ROOT}/notes.md:1:rotated Tq7wLz2Rk9Vx last week`,
-    `${ROOT}/config/app.yaml:2:password: Tq7wLz2Rk9Vx`,
-    `${ROOT}/src/session.ts:3:const sessionToken = "Xk9mQ2vL7ZpQw"`,
+    `${ROOT}/config/app.yaml:2:password: "Tq7wLz2Rk9Vx"`,
+    `${ROOT}/src/session.ts:3:const password = xQ7zW2vR9tY4pLmN;`,
   ].join('\n')
   let call = 0
   on('tool.call', () =>
     call++ === 0
       ? { ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }
-      : { ...bash.r, result: { ...bash.r.result, stdout: 'Tq7wLz2Rk9Vx Xk9mQ2vL7ZpQw\n' } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Tq7wLz2Rk9Vx xQ7zW2vR9tY4pLmN;\n' } }
   )
   const one = await $.tool.call(eventOf(grep))
-  // The line before the one that reveals it is swept too.
   expect(res(one).content).not.toContain('Tq7wLz2Rk9Vx')
   const two = await $.tool.call(eventOf(bash))
-  // The source line's value is no learned credential: masked as a name at most.
   expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ (?!__REDACTED_)\S+\n$/)
+})
+
+test('a token in a URL is learned without the query after it', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  let stdout = 'Location: https://app.example/cb?access_token=Pq7rT2wZx9Lm&state=1\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const one = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(one)).not.toContain('Pq7rT2wZx9Lm')
+  stdout = 'token Pq7rT2wZx9Lm\n'
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toMatch(/^token __REDACTED_CREDENTIAL_\d+__\n$/)
 })
 
 test('a weak value redacted after its credential-named key is not swept from later results', async ($, on) => {
