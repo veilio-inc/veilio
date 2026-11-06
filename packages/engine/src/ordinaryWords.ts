@@ -247,7 +247,18 @@ export interface ValueSpan {
 }
 
 export type ValueSpanGrammar =
-  'string' | 'env' | 'ini' | 'shell' | 'yaml' | 'k8s' | 'xml' | 'pgpass' | 'inner' | 'bare' | 'net'
+  | 'string'
+  | 'env'
+  | 'ini'
+  | 'shell'
+  | 'yaml'
+  | 'k8s'
+  | 'xml'
+  | 'pgpass'
+  | 'inner'
+  | 'pair'
+  | 'bare'
+  | 'net'
 
 export interface ValueScan {
   /** String literals, as the tokenizer found them: contents only. Absent:

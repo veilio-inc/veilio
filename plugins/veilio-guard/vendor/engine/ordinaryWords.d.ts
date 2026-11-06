@@ -25,7 +25,7 @@ export interface ValueSpan {
      *  connection string `pair`), or a guess at code or prose (`bare`, `net`). */
     grammar?: ValueSpanGrammar;
 }
-export type ValueSpanGrammar = 'string' | 'env' | 'ini' | 'shell' | 'yaml' | 'k8s' | 'xml' | 'pgpass' | 'inner' | 'bare' | 'net';
+export type ValueSpanGrammar = 'string' | 'env' | 'ini' | 'shell' | 'yaml' | 'k8s' | 'xml' | 'pgpass' | 'inner' | 'pair' | 'bare' | 'net';
 export interface ValueScan {
     /** String literals, as the tokenizer found them: contents only. Absent:
      *  quoted runs on one line are taken as strings. */
