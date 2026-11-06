@@ -949,12 +949,6 @@ function namesSecret(key: string | undefined): boolean {
   return prev !== undefined && SECRET_PAIR.test(`${prev}_${last}`)
 }
 
-/** What a key-rule span is learned as, and the one token its slot takes: its
- *  value, and for an unquoted one also the part before a `&`, `,` or `;` (a
- *  URL's query, a connection string's next pair), as the scanner's findings
- *  are learned with and without what runs on. The slot takes the shorter
- *  part's token when that is learned, else the whole value's. `code`: the
- *  text is a file of a known language. */
 // Only a token redactFindings wrote, not any value shaped like a placeholder.
 const REDACTION_ONLY = /^(?:__REDACTED_[A-Z0-9_]+__)+$/
 
@@ -965,6 +959,12 @@ function slotToken(slot: string, known: Destroyed): string {
   return REDACTION_ONLY.test(slot) ? slot : known.tokenFor(slot)
 }
 
+/** What a key-rule span is learned as, and the slot its token stands in: its
+ *  value, and for an unquoted one also its `&`, `,` or `;` parts that have no
+ *  key of their own or a key that names a secret (`Host=`, `commit=` and the
+ *  like are not credentials). A part holding a finding's token is never
+ *  learned. The slot is the first part when learned, else the first learned
+ *  value. `code`: the text is a file of a known language. */
 function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: string[] } {
   const v = span.value
   const cut = span.quoted ? -1 : v.search(/[&,;]/)
@@ -976,10 +976,14 @@ function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: st
     REFERENCE.test(v.trim())
   )
     return { slot: core, learned: [] }
-  // A part holding a finding's token is never learned (the token is not the
-  // secret); a clean part beside it still is - each `&`, `,` or `;` part,
-  // without its own `key=`.
-  const parts = cut > 0 ? v.split(/[&,;]/).map((x) => x.replace(/^[A-Za-z_][\w.-]*=/, '')) : []
+  const parts =
+    cut > 0
+      ? v.split(/[&,;]/).flatMap((x) => {
+          const pair = /^([A-Za-z_][\w.-]*)=(.*)$/s.exec(x)
+          // A part with a key of its own is learned only when that key names a secret.
+          return pair ? (namesSecret(pair[1]) ? [pair[2]!] : []) : [x]
+        })
+      : []
   const learned = [...new Set([core, v, ...parts])].filter(
     (x) => !x.includes('__REDACTED_') && carriedForward('password-assignment', x)
   )

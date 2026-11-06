@@ -621,6 +621,27 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     }
   })
 
+  // Review of 0742bd9: a part under its own key that names no secret is no
+  // credential - the hostname, the build, the commit beside a password.
+  it("a value's parts under keys that name no secret are not learned", () => {
+    for (const [text, companion] of [
+      [
+        'DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp;Host=pg-main-02.eu-west-1.rds;Port=5432',
+        'pg-main-02.eu-west-1.rds',
+      ],
+      [
+        'password=Kq9xQ2LmZ7vRt4Wp&build=Build2024x9Q&commit=a1b2c3d4e5f6a7b8c9d0',
+        'a1b2c3d4e5f6a7b8c9d0',
+      ],
+      ['api_key=Kq9xQ2LmZ7vRt4Wp&sessionId=Usr_7Kx92Lm4', 'Usr_7Kx92Lm4'],
+    ] as const) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes(companion)]).toEqual([text, false])
+      expect(applyMap(`later ${companion}`, {}, undefined, { known })).toBe(`later ${companion}`)
+    }
+  })
+
   it('a clean literal beside a token in the same value is learned', () => {
     const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     for (const text of [
