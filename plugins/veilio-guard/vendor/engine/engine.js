@@ -163,7 +163,45 @@ function isModuleSpecifierContext(code, quotePos) {
 // `default:// note`, a label or an object key followed by a comment must stay
 // a comment. The scheme must not be the tail of a longer word.
 const URL_SCHEME_BEFORE = /(?<![A-Za-z0-9_$])(?:file|https?|wss?|s?ftps?|ssh|git|svn):$/;
-function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
+// After one of these words a `/` opens a regex literal, not a division.
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+/** The end of the regex literal whose `/` is at `at`, or -1 when that `/` is a
+ *  division. A `/` after a name, a number, a string, `)` or `]` divides;
+ *  anywhere else it opens a regex, which ends on the line it began on.
+ *  shortcut: `)` and `}` are guessed (`if (x) /re/` reads as division, a `/`
+ *  after an object literal as a regex); a real parser would know. */
+function regexLiteralEnd(code, at) {
+    let j = at - 1;
+    while (j >= 0 && /\s/.test(code[j]))
+        j--;
+    if (j >= 0 &&
+        /[\w$)\]'"`]/.test(code[j]) &&
+        !REGEX_AFTER_WORD.test(code.slice(Math.max(0, j - 10), j + 1)))
+        return -1;
+    let inClass = false;
+    for (let k = at + 1; k < code.length; k++) {
+        const ch = code[k];
+        if (ch === '\n' || ch === '\r')
+            return -1;
+        if (ch === '\\')
+            k++;
+        else if (ch === '[')
+            inClass = true;
+        else if (ch === ']')
+            inClass = false;
+        else if (ch === '/' && !inClass) {
+            k++;
+            while (k < code.length && /[a-z]/i.test(code[k]))
+                k++;
+            return k;
+        }
+    }
+    return -1;
+}
+/** `regexLiterals`: read a regex literal as code, so a quote or comment opener
+ *  inside it starts nothing. Restore asks for it; masking does not, and keeps
+ *  reading every `/` as division. */
+function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, regexLiterals = false) {
     const syntax = commentSyntaxFor(language);
     const segments = [];
     let buf = '';
@@ -226,6 +264,14 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
             }
             flush(false);
             continue;
+        }
+        if (regexLiterals && c === '/') {
+            const end = regexLiteralEnd(code, i);
+            if (end !== -1) {
+                buf += code.slice(i, end);
+                i = end;
+                continue;
+            }
         }
         if (syntax.quotes.includes(c)) {
             // Emit the whole string/template literal as its own tagged segment so
@@ -1464,12 +1510,34 @@ export function anonymize(code, options = {}) {
         ...(budget.spent ? { rulesStopped: true } : {}),
     };
 }
+/** Where each JSDoc block in `text` is: a closed block comment whose `/**`
+ *  opens in code - not in a string, a template or regex literal, or another
+ *  comment (e69). `/**` closed at once by `/` is an empty block comment, not
+ *  a JSDoc. Each markdown fence line starts a fresh scan: the backticks of a
+ *  fence would otherwise open a template literal that hides the fenced code. */
+function jsdocSpans(text) {
+    const spans = [];
+    let base = 0;
+    text.split(/(^[ \t]*(?:`{3,}|~{3,}).*$)/m).forEach((chunk, i) => {
+        let at = base;
+        base += chunk.length;
+        if (i % 2 === 1)
+            return;
+        for (const s of tokenizeForMasking(chunk, 'typescript', true)) {
+            const t = s.text;
+            if (s.isComment && t.length >= 5 && t.startsWith('/**') && t.endsWith('*/'))
+                spans.push([at, at + t.length]);
+            at += t.length;
+        }
+    });
+    return spans;
+}
 /** Strip patterns in application order — larger blocks before line-level ones,
  *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
 // A // item runs to the end of its line: `.*` stops at \n, \r, U+2028 and U+2029,
 // where a // comment ends.
 const STRIP_PATTERNS = [
-    ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
+    ['jsdoc', jsdocSpans],
     ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW).*/gm],
     ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
     [
@@ -1526,11 +1594,15 @@ function stripNoise(text, wanted) {
         if (!wanted.has(type))
             continue;
         const found = [];
-        for (const m of view.matchAll(pattern)) {
-            if (m[0].length === 0)
+        const spans = typeof pattern === 'function'
+            ? pattern(view)
+            : Array.from(view.matchAll(pattern), (m) => [
+                m.index,
+                m.index + m[0].length,
+            ]);
+        for (const [start, end] of spans) {
+            if (start === end)
                 continue;
-            const start = m.index;
-            const end = start + m[0].length;
             let own = start;
             while (own < end && isSpace(view[own]))
                 own++;
