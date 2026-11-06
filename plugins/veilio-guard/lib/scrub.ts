@@ -955,6 +955,16 @@ function namesSecret(key: string | undefined): boolean {
  *  are learned with and without what runs on. The slot takes the shorter
  *  part's token when that is learned, else the whole value's. `code`: the
  *  text is a file of a known language. */
+// Only a token redactFindings wrote, not any value shaped like a placeholder.
+const REDACTION_ONLY = /^(?:__REDACTED_[A-Z0-9_]+__)+$/
+
+/** What stands in a key's value: a slot that is a finding's token keeps it,
+ *  so one secret reads as one token. (When a credential is learned beside the
+ *  token, it is the slot, and the whole takes its own token.) */
+function slotToken(slot: string, known: Destroyed): string {
+  return REDACTION_ONLY.test(slot) ? slot : known.tokenFor(slot)
+}
+
 function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: string[] } {
   const v = span.value
   const cut = span.quoted ? -1 : v.search(/[&,;]/)
@@ -967,8 +977,10 @@ function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: st
   )
     return { slot: core, learned: [] }
   // A part holding a finding's token is never learned (the token is not the
-  // secret); a clean part beside it still is.
-  const learned = [...new Set([core, v])].filter(
+  // secret); a clean part beside it still is - each `&`, `,` or `;` part,
+  // without its own `key=`.
+  const parts = cut > 0 ? v.split(/[&,;]/).map((x) => x.replace(/^[A-Za-z_][\w.-]*=/, '')) : []
+  const learned = [...new Set([core, v, ...parts])].filter(
     (x) => !x.includes('__REDACTED_') && carriedForward('password-assignment', x)
   )
   return { slot: learned.includes(core) ? core : (learned[0] ?? core), learned }
@@ -1191,8 +1203,7 @@ export function applyMap(
     if (options.learn !== false) known.learn(learned)
     // The whole value goes, as before; a slot that is already a finding's
     // token keeps that token, so one secret reads as one token.
-    unvalued +=
-      redacted.slice(at, span.start) + (OWN_GRAMMAR.test(slot) ? slot : known.tokenFor(slot))
+    unvalued += redacted.slice(at, span.start) + slotToken(slot, known)
     at = span.end
   }
   redacted = unvalued + redacted.slice(at)

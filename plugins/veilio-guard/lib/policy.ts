@@ -154,6 +154,9 @@ export function grepLines(
   const lines = content.split('\n')
   const match = lines.map((line) => /^(.+?):\d+:/.exec(line))
   const paths = new Set(match.flatMap((m) => (m ? [m[1]!] : [])))
+  // Context lines only stand around match lines: a result with none (one
+  // file, or no -n) has no context line to leave unplaced.
+  const hasMatches = paths.size > 0
   return lines.map((line, i) => {
     const m = match[i]
     if (m) return { prefix: m[0], body: line.slice(m[0].length), path: m[1]!, unplaced: false }
@@ -165,9 +168,15 @@ export function grepLines(
       }
     // A context line whose path no match line names cannot be split: it is
     // masked whole, as before, and the guard learns nothing from it.
-    // Unplaced only when what stands before `-N-` is shaped like a path (no
-    // space, `=` or `:`): a date in a match line printed without `-n` is not.
-    return { prefix: '', body: line, path: '', unplaced: /^[^\s=:]+?-\d+-/.test(line) }
+    // Unplaced only when what stands before `-N-` is shaped like a path - a
+    // drive letter allowed, then no `=` or `:` (a date in a match line printed
+    // without `-n` is not).
+    return {
+      prefix: '',
+      body: line,
+      path: '',
+      unplaced: hasMatches && /^(?:[A-Za-z]:[\\/])?[^=:]+?-\d+-/.test(line),
+    }
   })
 }
 

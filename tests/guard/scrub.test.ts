@@ -605,6 +605,22 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     }
   })
 
+  it('a clean credential after a token in the same value is learned, and its slot is a fresh token', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `API_TOKEN=${ghp},Kq9xQ2LmZ7vRt4Wp`,
+      `https://h/cb?access_token=${ghp}&client_secret=Kq9xQ2LmZ7vRt4Wp`,
+    ]) {
+      const known = new Destroyed()
+      const out = applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, true])
+      // Two secrets went: the slot does not read as the ghp key alone.
+      const ghpToken = applyMap(`echo ${ghp}`, {}, undefined, { known }).slice('echo '.length)
+      expect([text, out.endsWith(`=${ghpToken}`)]).toEqual([text, false])
+      expect(applyMap('later: Kq9xQ2LmZ7vRt4Wp', {}, undefined, { known })).not.toContain('Kq9x')
+    }
+  })
+
   it('a clean literal beside a token in the same value is learned', () => {
     const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     for (const text of [
@@ -655,7 +671,8 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     const out = applyMap('api_key=ab,Xq9mK2pLzRvNw7 and ab,Xq9mK2pLzRvNw7', {}, undefined, {
       known,
     })
-    expect(known.values).toEqual(['ab,Xq9mK2pLzRvNw7'])
+    // The strong part is learned on its own too, so it is swept wherever it stands.
+    expect(known.values).toEqual(['ab,Xq9mK2pLzRvNw7', 'Xq9mK2pLzRvNw7'])
     expect(out).toBe('api_key=__REDACTED_CREDENTIAL_1001__ and __REDACTED_CREDENTIAL_1001__')
   })
 

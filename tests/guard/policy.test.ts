@@ -167,7 +167,19 @@ describe('languageOf: the language a source Read is scrubbed as', () => {
 // path is an unplaced context line; a date in a match line is not.
 describe('grepLines: an unplaced context line', () => {
   it('is a path-shaped `-N-` prefix no match line names', () => {
-    expect(grepLines('src/app.py-4-self.secret_key=Xq9mK2pLzRvNw7')[0]?.unplaced).toBe(true)
+    expect(
+      grepLines('src/x.py:1:y\nsrc/app.py-4-self.secret_key=Xq9mK2pLzRvNw7')[1]?.unplaced
+    ).toBe(true)
+  })
+  it('is a Windows path or one with spaces, when the result has match lines', () => {
+    for (const path of ['C:\\proj\\src\\app.py', 'My App/src/app.py'])
+      expect(
+        grepLines(`other.py:1:x\n${path}-4-self.secret_key = rotateKeyV2Abcdef12`)[1]?.unplaced
+      ).toBe(true)
+  })
+  it('is never a line of a result with no match lines (one file, or no -n)', () => {
+    for (const line of ['db-1-password: Kq9xQ2LmZ7vRt4Wp', 'pg-16-DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp'])
+      expect([line, grepLines(line)[0]?.unplaced]).toEqual([line, false])
   })
   it('is not a match line with a date in it', () => {
     for (const line of [
