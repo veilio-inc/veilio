@@ -564,6 +564,70 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     expect(known.values).toEqual(['Kq9x$QLmZ7vRt4Wp'])
   })
 
+  // Ship check 2 of e72: ordinary text the key rule removes in place, which
+  // must not be swept from the rest of the session.
+  const notLearned = (texts: readonly string[], ctx?: Parameters<typeof applyMap>[2]) => {
+    for (const text of texts) {
+      const known = new Destroyed()
+      const out = applyMap(text, {}, ctx, { known })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text])]).toEqual([text, []])
+      void out
+    }
+  }
+
+  it("an environment variable's name as a key's value is not learned (founder decision 2)", () => {
+    notLearned([
+      'password: GITHUB_TOKEN_CI2',
+      'password: SECRET_KEY_V2',
+      'API_TOKEN=PROD_DB_PASSWORD_V2',
+    ])
+    // A value that is no variable's name still is.
+    const known = new Destroyed()
+    applyMap('password: X7K9A2_Q2LE4M8P', {}, undefined, { known })
+    expect(known.values).toEqual(['X7K9A2_Q2LE4M8P'])
+  })
+
+  it('a checksum, hash or digest key names no secret', () => {
+    notLearned([
+      'checksum/secret: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f5d8c2a4b6e9f1d3c5a7b8e0f',
+      'secret_hash: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f',
+      'tokenDigest: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f',
+    ])
+  })
+
+  it("a lookup call's argument is a name, not a secret", () => {
+    notLearned([
+      "const s = await client.getSecret('stripe-key-v2Xq9Z')",
+      'secret = client.get_secret("db-pw-v2Xq9Zk7")',
+      'pw = keyring.get_password("my-service-v2Xq9", "bob")',
+      "fetchToken('svc-tok-v2Xq9Zk7')",
+      "loadApiKey('svc-key-v2Xq9Zk7')",
+    ])
+    // A call that sets one is given the secret.
+    const known = new Destroyed()
+    applyMap("setPassword('Xq9mK2pLzRvNw7')", {}, undefined, { known })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+  })
+
+  it('a lowercase kebab-case value reads as a resource name: removed in place, not learned', () => {
+    notLearned([
+      'password: db-password-v2',
+      'API_TOKEN=postgresql-password-2',
+      'password: x7k2q9-m4b8z1-r5v3n6',
+    ])
+  })
+
+  it('an encrypted-property wrapper is never learned', () => {
+    notLearned([
+      'db.password=ENC(Xq9mK2pLzRvNw7Ab)',
+      'password: ENC[AES256_GCM,data:Wb4nR8tLq2XzKm==,iv:Qx7mKpL9zRvNwTyB4hJ2aa==,type:str]',
+      'DB_PASS: "ENC[Wb4nR8tLq2XzKmQx7mKp]"',
+      // The scanner reads `password: '...'` by its own rule; DB_PASS only the key rule.
+      "DB_PASS: '{cipher}AQBx7mKpL9zRvNwTyB4hJ2'",
+    ])
+  })
+
   it('a bare secret key names a resource, not a secret; SECRET_KEY is one', () => {
     for (const text of ['secret: release-build-2026-x9Qz7', 'SECRET=Xq9mK2pLzRvNw7']) {
       const known = new Destroyed()

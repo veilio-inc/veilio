@@ -888,13 +888,19 @@ function keyedSpans(redacted: string, held: ReadonlySet<string>): ValueSpan[] {
 //   SECRET_WORD, or two parts make a SECRET_PAIR (`secretKey`), after a
 //   trailing number or version (`DB_PASSWORD_2`, `API_TOKEN_V2`); not a flag
 //   (`is_secret`, `has_password`), not a token that is a cursor or a request
-//   id (`NextToken`, `PaginationToken`, `ClientToken`, `csrf_token`), and not
-//   a bare `token` or `pass`;
+//   id (`NextToken`, `PaginationToken`, `csrf_token`), not a checksum, hash
+//   or digest of one (`checksum/secret`), not a lookup call whose argument
+//   is a name (`getSecret('stripe-key')`), and not a bare `token`, `pass`,
+//   `pwd` or `secret`. A client token is a credential (Vault's
+//   `client_token`); an AWS `ClientToken` idempotency key is learned too, a
+//   recorded limit;
 // - the value is a literal: quoted, or found by a configuration grammar in
 //   text that is not code. In a file of a known language a configuration
 //   line is an assignment (`self.secret_key = rotateKeyV2`);
-// - not a reference, the whole value (`$TOKEN`, `${DB_PASSWORD}`,
-//   `%(password)s`, `%PASSWORD%`, `#{password}`, `{{ password }}`);
+// - not a reference (`$TOKEN`, `${DB_PASSWORD}`, `%(password)s`, `%PASSWORD%`,
+//   `#{password}`, `{{ password }}`), an encrypted property (`ENC(...)`,
+//   `ENC[...]`, `{cipher}...`), an environment variable's name (founder
+//   decision 2), or a lowercase kebab-case name (`db-password-v2`);
 // - 16 KB at most: a longer one is removed where it stands, never thrown on;
 // - the scanner's own bar (carriedForward, founder decision #5).
 const SECRET_WORD = /^(?:password|passwd|pwd|pass|passphrase|secret|token|apikey)$/
@@ -942,7 +948,15 @@ const CONFIG: ReadonlySet<string> = new Set([
 // holds `${` or `$(` anywhere (`${DB_PASSWORD:-}`, `$(vault read ...)`), or
 // is wholly a template's placeholder. Conservative: a literal password that
 // starts with `$` is removed where it stands and not carried forward.
-const REFERENCE = /^\$|\$[{(]|^(?:%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\})$/
+const REFERENCE =
+  /^\$|\$[{(]|^(?:%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\})$|^ENC\(.*\)$|^ENC\[.*\]$|^\{cipher\}/
+// A resource's name (`db-password-v2`, `postgresql-password-2`): like
+// decision #5's weak values, removed where it stands, never carried forward.
+const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)+$/
+// A key with one of these parts is about a secret, not one (`checksum/secret`).
+const ABOUT_A_SECRET = new Set(['checksum', 'hash', 'digest'])
+// A call that looks a secret up by name: its argument is the name.
+const LOOKUP = new Set(['get', 'fetch', 'read', 'load', 'lookup', 'find'])
 
 function namesSecret(key: string | undefined): boolean {
   if (!key) return false
@@ -951,6 +965,7 @@ function namesSecret(key: string | undefined): boolean {
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean)
+  if (parts.some((p) => ABOUT_A_SECRET.has(p)) || LOOKUP.has(parts[0] ?? '')) return false
   if (parts.length > 1 && /^v?\d+$/.test(parts[parts.length - 1]!)) parts.pop()
   const last = parts[parts.length - 1]?.replace(/(?<=[a-z])v?\d+$/, '')
   const prev = parts[parts.length - 2]
@@ -986,7 +1001,10 @@ function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: st
     !namesSecret(span.key) ||
     !(span.quoted || (!code && CONFIG.has(span.grammar ?? ''))) ||
     v.length > MAX_VALUE ||
-    REFERENCE.test(v.trim())
+    REFERENCE.test(v.trim()) ||
+    KEBAB.test(v) ||
+    referenceName(v, 'password-assignment') ||
+    referenceName(v.replace(/_V(\d+)$/, '_$1'), 'password-assignment')
   )
     return { slot: core, learned: [] }
   const parts =
