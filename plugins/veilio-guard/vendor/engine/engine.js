@@ -211,11 +211,13 @@ const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
  *  in a markdown answer. Masking does not ask for it and reads as it always did.
  *  - A regex literal is code, so a quote or comment opener inside it starts nothing.
  *  - A fence line in code is code: its backticks open no template literal. One
- *    inside a string or comment is part of it.
- *  - A quote that never closes (a stray backtick in prose) opens nothing, and
- *    neither does any later one of that quote character.
- *    shortcut: two stray backticks still pair up; only a parser of the prose
- *    around the code could tell them from a template. */
+ *    inside a comment is part of it.
+ *  - A quote that never closes (a stray backtick in prose), or that reaches a
+ *    fence line first, opens nothing; neither does a later one of that quote
+ *    character before the end, or before that fence line.
+ *    shortcut: two stray backticks still pair up, and a `~~~` line inside a
+ *    template literal ends it; only a parser of the prose around the code
+ *    could tell them apart. */
 function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = false) {
     const syntax = commentSyntaxFor(language);
     const segments = [];
@@ -230,18 +232,19 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
     const startsWithAt = (token, at) => code.startsWith(token, at);
     let i = 0;
     let noRegexBefore = -1;
-    const unclosed = new Set();
+    // A quote character opens nothing before this offset (see `forRestore`).
+    const proseBefore = new Map();
+    const atFence = (at) => {
+        FENCE_LINE.lastIndex = at;
+        return FENCE_LINE.test(code);
+    };
     const n = code.length;
     while (i < n) {
         const c = code[i];
-        if (forRestore && (i === 0 || code[i - 1] === '\n')) {
-            FENCE_LINE.lastIndex = i;
-            const fence = FENCE_LINE.exec(code);
-            if (fence !== null) {
-                buf += fence[0];
-                i += fence[0].length;
-                continue;
-            }
+        if (forRestore && (i === 0 || code[i - 1] === '\n') && atFence(i)) {
+            buf += code.slice(i, FENCE_LINE.lastIndex);
+            i = FENCE_LINE.lastIndex;
+            continue;
         }
         // Triple-quoted prose (Python docstrings) is documentation, not data —
         // treat it as a comment so its sentences survive intact.
@@ -303,7 +306,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             // failed scan can hide a later regex's close; a lexer with state fixes it.
             noRegexBefore = end;
         }
-        if (syntax.quotes.includes(c) && !unclosed.has(c)) {
+        if (syntax.quotes.includes(c) && i >= (proseBefore.get(c) ?? 0)) {
             // Emit the whole string/template literal as its own tagged segment so
             // role classification can tell string words and module specifiers apart.
             // Still maskable (isComment: false); escape handling unchanged.
@@ -318,6 +321,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
                 // An unterminated '…' in a language where it cannot span lines ends at
                 // the line break, which stays outside the string.
                 if (bounded && code[i] === '\n')
+                    break;
+                if (forRestore && !bounded && code[i - 1] === '\n' && atFence(i))
                     break;
                 str += code[i];
                 if (code[i] === '\\') {
@@ -334,7 +339,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
                 i++;
             }
             if (forRestore && !closed && !bounded) {
-                unclosed.add(c);
+                proseBefore.set(c, i);
                 buf += c;
                 i = opened + 1;
                 continue;

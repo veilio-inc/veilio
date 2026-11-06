@@ -55,6 +55,17 @@ describe('restore: /** that is not a JSDoc start is left alone (e69)', () => {
     expect(r.restored).toBe('re = /a\\\nb  c/\n')
   })
 
+  it('many backticks after one that never closes are linear, not quadratic', () => {
+    for (const text of [
+      '/** d */ `' + '\\`'.repeat(50_000),
+      '/** d */ `' + '\\`'.repeat(50_000) + '\n~~~\n',
+    ]) {
+      const t0 = Date.now()
+      expect(restore(text, {}, JSDOC).strippedCount).toBe(1)
+      expect(Date.now() - t0).toBeLessThan(2_000)
+    }
+  })
+
   it('a line of slashes that never close a regex is linear, not quadratic', () => {
     for (const line of ['x = ' + '\\/'.repeat(100_000), 'x = ' + '/['.repeat(100_000)]) {
       const t0 = Date.now()
@@ -82,8 +93,10 @@ describe('restore: /** that is not a JSDoc start is left alone (e69)', () => {
     expect(restore('return <div>{x}</div>{/** note */}\n', {}, JSDOC).restored).toBe(
       'return <div>{x}</div>{}\n'
     )
-    const text = 'const a = <p>x</p> // the ` key\nconst b = 1\n/** doc */\nf()\n'
-    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** doc */\n', ''))
+    // Read as a regex, `</p>; … {/` would end at the / that opens the JSDoc.
+    expect(
+      restore('const a = <p>{x}</p>; const b = <i>{/** note */}</i>\n', {}, JSDOC).restored
+    ).toBe('const a = <p>{x}</p>; const b = <i>{}</i>\n')
   })
 
   it('a division is not read as a regex: the JSDoc between two divisions goes', () => {
@@ -169,11 +182,23 @@ describe('restore: a JSDoc inside a markdown answer is still stripped', () => {
     ])
   })
 
-  it('each fence is read on its own, even when the first leaves a backtick open', () => {
-    const text = '```ts\n/** a */\nconst s = `open\n```\n\n```ts\n/** b */\nf()\n```\n'
-    const r = restore(text, {}, JSDOC)
-    expect(r.restored).toBe(text.replace('/** a */\n', '').replace('/** b */\n', ''))
-    expect(r.strippedItems.map((i) => i.content)).toEqual(['/** a */', '/** b */'])
+  it('a fence line ends a backtick left open before it (``` and ```` fences)', () => {
+    for (const f of ['```', '````']) {
+      const text = `${f}ts\n/** a */\nconst s = \`open\n${f}\n\n${f}ts\n/** b */\nf()\n${f}\n`
+      const r = restore(text, {}, JSDOC)
+      expect(r.restored).toBe(text.replace('/** a */\n', '').replace('/** b */\n', ''))
+      expect(r.strippedItems.map((i) => i.content)).toEqual(['/** a */', '/** b */'])
+    }
+  })
+
+  it('a ~~~ fence ends a stray backtick in the prose before it', () => {
+    const text = 'Use the ` key.\n~~~ts\n/** e */\nf()\n~~~\nRun `x`.\n'
+    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** e */\n', ''))
+  })
+
+  it('an indented fence in a list item is a fence', () => {
+    const text = '1. Add it:\n\n   ```ts\n   /** doc */\n   f()\n   ```\n'
+    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('   /** doc */\n', ''))
   })
 
   it('a fence line inside a JSDoc does not split it: the whole block goes', () => {
@@ -183,9 +208,15 @@ describe('restore: a JSDoc inside a markdown answer is still stripped', () => {
     expect(r.strippedItems).toHaveLength(1)
   })
 
-  it('a fence inside a template literal (escaped, as JS needs it) stays in it', () => {
+  it('a ``` fence inside a template literal (escaped, as JS needs it) stays in it', () => {
     unchanged('const md = `\n\\`\\`\\`\n/** not a doc */\n\\`\\`\\`\n`\nconst y = 2\n')
-    unchanged('const md = `\n  ~~~\n/** not a doc */\n  ~~~\n`\nconst y = 2\n')
+  })
+
+  it('known limit: a ~~~ line inside a template literal ends it for the JSDoc search', () => {
+    // A ~~~ fence in a template cannot be told from one after a stray backtick
+    // in prose; the markdown reading wins. As before e69, the look-alike goes.
+    const text = 'const md = `\n~~~\n/** look-alike */\n~~~\n`\nconst y = 2\n'
+    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** look-alike */\n', ''))
   })
 
   it('one stray backtick in prose does not hide the JSDoc after it', () => {
