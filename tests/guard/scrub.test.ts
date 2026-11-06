@@ -11,6 +11,7 @@ import {
   restoresNeverRestored,
   grow,
   Destroyed,
+  destroyedValues,
   dropResidue,
   redactKnown,
   applyMap,
@@ -392,6 +393,7 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'app_pass',
       'my-secret-pass',
       'Welcome2024',
+      'sunshine2026',
     ])
       expect(learnedFrom(`password = "${plain}"`).values).toEqual([])
     for (const strong of ['S3cretpw!', 'Xk9mQ2vL7Zp'])
@@ -419,6 +421,68 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     expect(learnedFrom('client_secret = "xQ7zW2vR9t__VAR__1"').values).toContain(
       'xQ7zW2vR9t__VAR__1'
     )
+  })
+
+  // Work queue e72: the value of a credential-named key the scanner does not
+  // flag was redacted in place but never learned, so a bare copy later leaked.
+  it('a strong value under a credential-named key is learned and swept later', () => {
+    for (const [first, value] of [
+      ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'xQ7zW2vR9tY4pLmN'],
+      ['export API_TOKEN="x9Kq2LmZ7vRt4Wp"', 'x9Kq2LmZ7vRt4Wp'],
+      ['{"secretKey": "Zq8vB3nM1kL0pW9x"}', 'Zq8vB3nM1kL0pW9x'],
+      ['password: Tq7wLz2Rk9Vx', 'Tq7wLz2Rk9Vx'],
+    ]) {
+      const known = new Destroyed()
+      expect(applyMap(first!, {}, undefined, { known })).not.toContain(value)
+      expect(known.values).toContain(value)
+      const later = applyMap(`echo ${value}`, {}, undefined, { known })
+      expect(later).toBe('echo __REDACTED_CREDENTIAL_1001__')
+      // Inside a longer line and a longer word too; the match is exact-case.
+      expect(
+        applyMap(`url=https://h/?k=${value}&x=1 and x${value}y`, {}, undefined, { known })
+      ).not.toContain(value)
+      expect(applyMap(`echo ${value.toLowerCase()}`, {}, undefined, { known })).toBe(
+        `echo ${value.toLowerCase()}`
+      )
+    }
+  })
+
+  it('a value under a credential-named key is learned only when the scan would learn it', () => {
+    // Weak, ordinary, short or path-shaped: at most redacted where it stands,
+    // never swept elsewhere (founder decision #5, as `password = "..."` above).
+    for (const plain of [
+      'sunshine2026',
+      'Welcome2024',
+      'changeme',
+      'true',
+      '1',
+      'postgres',
+      'my-secret-pass',
+      'root1234',
+      '/run/secrets/db',
+      'Xk9mQ',
+    ]) {
+      const known = new Destroyed()
+      applyMap(`DB_PASSWORD=${plain}`, {}, undefined, { known })
+      expect(known.values).toEqual([])
+      expect(applyMap(`echo ${plain}`, {}, undefined, { known })).toBe(`echo ${plain}`)
+    }
+  })
+
+  it('a value under a credential-named key that the map holds as a name is never learned', () => {
+    const known = new Destroyed()
+    const map = { __VAR__1: 'xQ7zW2vR9tY4pLmN' }
+    expect(applyMap('DB_PASSWORD=xQ7zW2vR9tY4pLmN', map, undefined, { known })).toBe(
+      'DB_PASSWORD=__VAR__1'
+    )
+    expect(known.values).toEqual([])
+  })
+
+  it('a value under a credential-named key in one string of a result is learned for all of them', () => {
+    expect(destroyedValues(['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'unrelated'])).toEqual([
+      'xQ7zW2vR9tY4pLmN',
+    ])
+    expect(destroyedValues(['DB_PASSWORD=sunshine2026'])).toEqual([])
   })
 })
 

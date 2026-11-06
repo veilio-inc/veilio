@@ -850,6 +850,11 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
       if (carriedForward(type, v)) out.push(v)
   }
+  // The value of a credential-named key the scanner does not flag, which
+  // applyMap removes one-way, is learned by the same bar as the scanner's
+  // (work queue e72: a bare copy in a later result was sent as written).
+  for (const { value } of credentialsAmong(valueSpans(text)))
+    if (!names.has(value) && carriedForward('password-assignment', value)) out.push(value)
   return out
 }
 
@@ -1030,8 +1035,8 @@ export function applyMap(
   // an empty map nothing was written over `DB_PASSWORD=sunshine`). A map name
   // keeps its placeholder (withCredentialWords); any other value is removed
   // one-way. Only `$NAME` and `${NAME}` are references: `DB_PASSWORD=
-  // ADMIN_PASSWORD` is a value (round 3). Not learned: the same word
-  // elsewhere is an ordinary word.
+  // ADMIN_PASSWORD` is a value (round 3). learnable() has learned the ones
+  // with structural signal; a weak one elsewhere is an ordinary word.
   const held = namesOf(map)
   let unvalued = ''
   at = 0

@@ -788,3 +788,62 @@ test('a very long line of separators is filtered in bounded time', async ($, on)
   await $.tool.call(eventOf(grep))
   expect(Date.now() - started).toBeLessThan(5000)
 })
+
+// Work queue e72: a value the credential-named-key rule redacted was not
+// learned, so a later result that printed it on its own sent it as written.
+for (const [first, value] of [
+  ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'xQ7zW2vR9tY4pLmN'],
+  ['export API_TOKEN="x9Kq2LmZ7vRt4Wp"', 'x9Kq2LmZ7vRt4Wp'],
+  ['{"secretKey": "Zq8vB3nM1kL0pW9x"}', 'Zq8vB3nM1kL0pW9x'],
+  ['password: Tq7wLz2Rk9Vx', 'Tq7wLz2Rk9Vx'],
+  ['SMTP_PASS=qzkvwpxmrtbn8274', 'qzkvwpxmrtbn8274'],
+])
+  test(`a value redacted after its credential-named key stays redacted in a later result: ${first}`, async ($, on) => {
+    const bash = recorded('Bash')
+    const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+    let stdout = `${first}\n`
+    on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+    const one = await $.tool.call(eventOf(bash))
+    expect(JSON.stringify(one)).not.toContain(value)
+    stdout = `${value}\nconnecting with ${value} as admin\n`
+    const two = await $.tool.call(eventOf(bash))
+    expect(two.deny).toBeUndefined()
+    expect(JSON.stringify(two)).not.toContain(value)
+    // Destroyed, not taken for a project name: no placeholder, nothing saved
+    // that a restore could write back.
+    expect(res(two).stdout).toBe(
+      '__REDACTED_CREDENTIAL_1001__\nconnecting with __REDACTED_CREDENTIAL_1001__ as admin\n'
+    )
+    expect(p.files[`${ROOT}/.veilio/map.json`]).not.toContain(value)
+  })
+
+test('a value under a credential-named key first seen in a Read stays redacted in a later result', async ($, on) => {
+  const read = recorded('Read')
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = '{"secretKey": "Zq8vB3nM1kL0pW9x"}\n'
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { ...read.r, result: { ...read.r.result, file: { ...read.r.result.file, content } } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Zq8vB3nM1kL0pW9x\n' } }
+  )
+  const one = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(one)).not.toContain('Zq8vB3nM1kL0pW9x')
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toBe('__REDACTED_CREDENTIAL_1001__\n')
+})
+
+test('a weak value redacted after its credential-named key is not swept from later results', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  let stdout = 'DB_PASSWORD=sunshine2026\n'
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout } }))
+  const one = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(one)).not.toContain('sunshine2026')
+  // Founder decision #5: a word and a year is not carried forward, as after
+  // `password = "..."`; COVERAGE.md, A weak password away from its assignment.
+  stdout = 'the sunshine2026 campaign\n'
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toContain('sunshine2026')
+})
