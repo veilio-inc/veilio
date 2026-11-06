@@ -557,7 +557,6 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'resumeToken',
       'idempotencyToken',
       'cancellationToken',
-      'ClientToken',
       'changeToken',
       'cursorToken',
       'StartingToken',
@@ -568,7 +567,15 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     }
     // A secret the scanner does not read by its key either: only a token
     // after these words is refused.
-    for (const key of ['client_secret', 'client_pass', 'changePass', 'syncPassphrase']) {
+    // A client token is a credential (HashiCorp Vault's client_token).
+    for (const key of [
+      'client_secret',
+      'client_pass',
+      'changePass',
+      'syncPassphrase',
+      'client_token',
+      'ClientToken',
+    ]) {
       const known = new Destroyed()
       applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
       expect([key, known.values]).toEqual([key, ['Xk9mQ2vL7ZpQw']])

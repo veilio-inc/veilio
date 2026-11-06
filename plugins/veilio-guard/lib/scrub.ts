@@ -912,7 +912,6 @@ const NOT_A_SECRET_TOKEN = new Set([
   'change',
   'idempotency',
   'cancellation',
-  'client',
   'csrf',
   'xsrf',
 ])
