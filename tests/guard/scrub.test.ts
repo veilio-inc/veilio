@@ -527,11 +527,83 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       "API_TOKEN='${CI_JOB_TOKEN_X9}'",
       'DB_PASSWORD=${DB_PASSWORD_V2}',
       'password: "${{ secrets.DB_PASSWORD_V2 }}"',
+      'DB_PASSWORD="$DB_PASSWORD_V2"',
+      "DB_PASS = '%(db_pass_v2)s'",
+      'DB_PASSWORD=%DB_PASSWORD_V2%',
+      'DB_PASS: "#{dbPassV2}"',
+      'password: "{{ db_password_v2 }}"',
     ]) {
       const known = new Destroyed()
       applyMap(text, {}, undefined, { known })
       expect([text, known.values]).toEqual([text, []])
     }
+  })
+
+  it('a literal with a dollar sign in it is learned: only a whole reference is not', () => {
+    for (const [text, value] of [
+      ['DB_PASSWORD="$Kq9xQ2LmZ7vRt4Wp"', '$Kq9xQ2LmZ7vRt4Wp'],
+      ['DB_PASSWORD="Kq9x${QLmZ7vRt4Wp"', 'Kq9x${QLmZ7vRt4Wp'],
+    ]) {
+      const known = new Destroyed()
+      applyMap(text!, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, [value]])
+    }
+  })
+
+  it('a cursor, a sync or an idempotency token is no secret; a client secret is', () => {
+    for (const key of [
+      'PaginationToken',
+      'syncToken',
+      'resumeToken',
+      'idempotencyToken',
+      'cancellationToken',
+      'ClientToken',
+      'changeToken',
+      'cursorToken',
+      'StartingToken',
+    ]) {
+      const known = new Destroyed()
+      applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
+      expect([key, known.values]).toEqual([key, []])
+    }
+    // A secret the scanner does not read by its key either: only a token
+    // after these words is refused.
+    for (const key of ['client_secret', 'client_pass', 'changePass', 'syncPassphrase']) {
+      const known = new Destroyed()
+      applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
+      expect([key, known.values]).toEqual([key, ['Xk9mQ2vL7ZpQw']])
+    }
+  })
+
+  it("a slot whose short part is too weak to learn takes the whole value's token", () => {
+    const known = new Destroyed()
+    const out = applyMap('api_key=ab,Xq9mK2pLzRvNw7 and ab,Xq9mK2pLzRvNw7', {}, undefined, {
+      known,
+    })
+    expect(known.values).toEqual(['ab,Xq9mK2pLzRvNw7'])
+    expect(out).toBe('api_key=__REDACTED_CREDENTIAL_1001__ and __REDACTED_CREDENTIAL_1001__')
+  })
+
+  it('in a code file only a quoted value is learned: a configuration line there is code', () => {
+    for (const text of [
+      '    self.secret_key = Xq9mK2pLzRvNw7',
+      '    access_token = response_json_v2Xq9',
+      'this.apiKey = Xq9mK2pLzRvNw7',
+      'DB_PASSWORD=Xq9mK2pLzRvNw7',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known, code: true })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text], {}, undefined, undefined, { code: true })]).toEqual([
+        text,
+        [],
+      ])
+    }
+    const known = new Destroyed()
+    applyMap('    api_key = "Xq9mK2pLzRvNw7"', {}, undefined, { known, code: true })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+    // The same line outside code is a configuration line.
+    expect(destroyedValues(['    self.secret_key = Xq9mK2pLzRvNw7'])).toEqual(['Xq9mK2pLzRvNw7'])
   })
 
   it('a value under a credential-named key too long to sweep is redacted in place, never thrown on', () => {

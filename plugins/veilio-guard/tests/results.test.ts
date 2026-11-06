@@ -739,7 +739,7 @@ test('context and match lines of a raw-only file are dropped whatever its direct
     `${ROOT}/backups/2026-10-31/.env-3-DB_PASSWORD=hunter2hunter2`,
     `${ROOT}/src/app-v2-1-3/a.ts:4:const ok = 1`,
   ].join('\n')
-  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 4 } }))
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 5 } }))
   const out = JSON.stringify(await $.tool.call(eventOf(grep)))
   expect(out).not.toContain('hunter2hunter2')
   expect(out).not.toContain('hello world')
@@ -905,26 +905,89 @@ for (const [label, shape] of showing)
     expect(words.slice(1).join(' ')).not.toContain('__REDACTED_')
   })
 
-test('a search learns a quoted value under a secret key, and sweeps the lines before it', async ($, on) => {
+// Each line of a search is judged without its `path:N:` or `path-N-` prefix,
+// by its own file's kind: a configuration line is learned, code is not.
+test('a search learns each line by its own file: a config line is learned and swept, code is not', async ($, on) => {
   const grep = recorded('Grep')
   const bash = recorded('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
   const content = [
-    `${ROOT}/notes.md:1:rotated Tq7wLz2Rk9Vx last week`,
-    `${ROOT}/config/app.yaml:2:password: "Tq7wLz2Rk9Vx"`,
+    `${ROOT}/notes.md:1:rotated Xk9mQ2vL7ZpQwR last week`,
+    `${ROOT}/config/app.yaml:12:password: Xk9mQ2vL7ZpQwR`,
     `${ROOT}/src/session.ts:3:const password = xQ7zW2vR9tY4pLmN;`,
+    `${ROOT}/src/app.py:4:    self.secret_key = Xq9mK2pLzRvNw7`,
+    `${ROOT}/src/app.py-5-api_token: Xq8nK3pLzRvMw6`,
+  ].join('\n')
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { ...grep.r, result: { ...grep.r.result, content, numLines: 5 } }
+      : {
+          ...bash.r,
+          result: {
+            ...bash.r.result,
+            stdout: 'Xk9mQ2vL7ZpQwR xQ7zW2vR9tY4pLmN; Xq9mK2pLzRvNw7 Xq8nK3pLzRvMw6\n',
+          },
+        }
+  )
+  const one = await $.tool.call(eventOf(grep))
+  expect(res(one).content).not.toContain('Xk9mQ2vL7ZpQwR')
+  const two = await $.tool.call(eventOf(bash))
+  const words = (res(two).stdout as string).trim().split(' ')
+  expect(words[0]).toMatch(/^__REDACTED_CREDENTIAL_\d+__$/)
+  expect(words.slice(1).join(' ')).not.toContain('__REDACTED_')
+})
+
+// A context line (`rg -C`) is `path-N-text`: before, its pair had no value
+// span and the password went out as written.
+test("a search's context line is judged without its prefix: its password is removed and learned", async ($, on) => {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/deploy/settings.ini:2:[database]`,
+    `${ROOT}/deploy/settings.ini-3-DB_PASSWORD=Qx7mKpL9zRvNwTyB`,
+    `${ROOT}/deploy/settings.ini-4-smtp_password: Wb4nR8tLq2XzKm`,
   ].join('\n')
   let call = 0
   on('tool.call', () =>
     call++ === 0
       ? { ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }
-      : { ...bash.r, result: { ...bash.r.result, stdout: 'Tq7wLz2Rk9Vx xQ7zW2vR9tY4pLmN;\n' } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Qx7mKpL9zRvNwTyB Wb4nR8tLq2XzKm\n' } }
   )
   const one = await $.tool.call(eventOf(grep))
-  expect(res(one).content).not.toContain('Tq7wLz2Rk9Vx')
+  expect(res(one).content).not.toMatch(/Qx7mKpL9zRvNwTyB|Wb4nR8tLq2XzKm/)
   const two = await $.tool.call(eventOf(bash))
-  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ (?!__REDACTED_)\S+\n$/)
+  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ __REDACTED_CREDENTIAL_\d+__\n$/)
 })
+
+// Code review of acea47b: an assignment without a `;` reads as a
+// configuration line; in a file of a known language it is code.
+const PY = '    self.secret_key = Xq9mK2pLzRvNw7\n'
+const JS = 'this.apiKey = Xq9mK2pLzRvNw7\n'
+for (const [name, path, content] of [
+  ['Python', `${ROOT}/src/app.py`, PY],
+  ['JavaScript', `${ROOT}/src/app.js`, JS],
+] as const)
+  for (const via of ['Read', 'Edit'] as const)
+    test(`${name} code shown by ${via} is not learned by the key rule`, async ($, on) => {
+      const first = recorded(via)
+      const bash = recorded('Bash')
+      project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+      const result =
+        via === 'Read'
+          ? { ...first.r.result, file: { ...first.r.result.file, filePath: path, content } }
+          : { ...first.r.result, filePath: path, newString: content, originalFile: content }
+      let call = 0
+      on('tool.call', () =>
+        call++ === 0
+          ? { ...first.r, result }
+          : { ...bash.r, result: { ...bash.r.result, stdout: 'Xq9mK2pLzRvNw7\n' } }
+      )
+      await $.tool.call({ ...eventOf(first), file_path: path })
+      const two = await $.tool.call(eventOf(bash))
+      expect(res(two).stdout).not.toContain('__REDACTED_')
+    })
 
 test('a token in a URL is learned without the query after it', async ($, on) => {
   const bash = recorded('Bash')

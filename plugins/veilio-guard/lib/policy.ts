@@ -142,6 +142,34 @@ export function languageOfGrepLine(line: string): Language | 'unknown' {
   return language === 'auto' ? 'unknown' : language
 }
 
+/** Each line of a Grep result: its `path:N:` (a match) or `path-N-` (a
+ *  context line) prefix, its text, and its file. Where a context line's path
+ *  ends cannot be told from the line (a dated directory has `-31-` in it), so
+ *  it is one a match line of the same result names. A line it cannot place
+ *  keeps its whole text and no file. */
+export function grepLines(content: string): { prefix: string; body: string; path: string }[] {
+  const lines = content.split('\n')
+  const match = lines.map((line) => /^(.+?):\d+:/.exec(line))
+  const paths = new Set(match.flatMap((m) => (m ? [m[1]!] : [])))
+  return lines.map((line, i) => {
+    const m = match[i]
+    if (m) return { prefix: m[0], body: line.slice(m[0].length), path: m[1]! }
+    for (const c of line.matchAll(/-\d+-/g))
+      if (paths.has(line.slice(0, c.index))) {
+        const end = c.index + c[0].length
+        return { prefix: line.slice(0, end), body: line.slice(end), path: line.slice(0, c.index) }
+      }
+    return { prefix: '', body: line, path: '' }
+  })
+}
+
+/** Whether a result shows a file of a known language: its path's, or for a
+ *  command the one source file it prints (`cat src/a.py`). */
+export function isCode(path: string, args?: Record<string, unknown>): boolean {
+  if (path) return languageOf(path) !== 'auto'
+  return typeof args?.command === 'string' && languageOfCommand(args.command) !== 'unknown'
+}
+
 // Commands whose output is the text of the one file they are given, and the
 // filters that may follow them in a pipeline without changing what it is.
 const READERS = new Set([
