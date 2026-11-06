@@ -955,27 +955,23 @@ function namesSecret(key: string | undefined): boolean {
  *  are learned with and without what runs on. The slot takes the shorter
  *  part's token when that is learned, else the whole value's. `code`: the
  *  text is a file of a known language. */
-function keyedParts(
-  span: ValueSpan,
-  code: boolean
-): { slot: string; learned: string[]; end: number } {
+function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: string[] } {
   const v = span.value
   const cut = span.quoted ? -1 : v.search(/[&,;]/)
   const core = cut > 0 ? v.slice(0, cut) : v
-  // A value a finding's token stands in keeps what follows the token's part
-  // (`ghp_…&x=1`): the token is the secret, the rest the query.
-  const end = cut > 0 && v.includes('__REDACTED_') ? span.start + cut : span.end
   if (
     !namesSecret(span.key) ||
     !(span.quoted || (!code && CONFIG.has(span.grammar ?? ''))) ||
     v.length > MAX_VALUE ||
-    REFERENCE.test(v.trim()) ||
-    v.includes('__REDACTED_')
+    REFERENCE.test(v.trim())
   )
-    return { slot: core, learned: [], end }
-
-  const learned = [...new Set([core, v])].filter((x) => carriedForward('password-assignment', x))
-  return { slot: learned.includes(core) ? core : (learned[0] ?? core), learned, end }
+    return { slot: core, learned: [] }
+  // A part holding a finding's token is never learned (the token is not the
+  // secret); a clean part beside it still is.
+  const learned = [...new Set([core, v])].filter(
+    (x) => !x.includes('__REDACTED_') && carriedForward('password-assignment', x)
+  )
+  return { slot: learned.includes(core) ? core : (learned[0] ?? core), learned }
 }
 
 /** A text's key-rule removal, worked out once: the text with its findings
@@ -1191,12 +1187,13 @@ export function applyMap(
   let unvalued = ''
   let at = 0
   for (const span of keyed.spans) {
-    const { slot, learned, end } = keyedParts(span, options.code ?? false)
+    const { slot, learned } = keyedParts(span, options.code ?? false)
     if (options.learn !== false) known.learn(learned)
-    // Only tokens left in the slot: nothing more to remove.
-    if (OWN_GRAMMAR.test(redacted.slice(span.start, end))) continue
-    unvalued += redacted.slice(at, span.start) + known.tokenFor(slot)
-    at = end
+    // The whole value goes, as before; a slot that is already a finding's
+    // token keeps that token, so one secret reads as one token.
+    unvalued +=
+      redacted.slice(at, span.start) + (OWN_GRAMMAR.test(slot) ? slot : known.tokenFor(slot))
+    at = span.end
   }
   redacted = unvalued + redacted.slice(at)
   // Every credential the session has destroyed, wherever it stands as a word.

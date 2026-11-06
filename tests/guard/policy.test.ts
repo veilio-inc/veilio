@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { RECORDED } from '../../plugins/veilio-guard/tests/fixtures/recorded.ts'
-import { argumentPolicy, languageOf, resultPolicy } from '../../plugins/veilio-guard/lib/policy.ts'
+import {
+  argumentPolicy,
+  grepLines,
+  languageOf,
+  resultPolicy,
+} from '../../plugins/veilio-guard/lib/policy.ts'
 
 // Spec 033 data-model tables A and B, as data. What a tool's arguments get
 // before it runs, and which fields of its result the model reads.
@@ -155,5 +160,20 @@ describe('languageOf: the language a source Read is scrubbed as', () => {
   it('detects from the content when the extension names no language the engine has', () => {
     expect(languageOf('/p/x.lua')).toBe('auto')
     expect(languageOf('/p/Makefile')).toBe('auto')
+  })
+})
+
+// Review of fe21d7e: only a line whose text before `-N-` is shaped like a
+// path is an unplaced context line; a date in a match line is not.
+describe('grepLines: an unplaced context line', () => {
+  it('is a path-shaped `-N-` prefix no match line names', () => {
+    expect(grepLines('src/app.py-4-self.secret_key=Xq9mK2pLzRvNw7')[0]?.unplaced).toBe(true)
+  })
+  it('is not a match line with a date in it', () => {
+    for (const line of [
+      'config/.env:DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp # rotated 2026-11-05',
+      'DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp # 2026-11-05',
+    ])
+      expect([line, grepLines(line)[0]?.unplaced]).toEqual([line, false])
   })
 })

@@ -165,7 +165,9 @@ export function grepLines(
       }
     // A context line whose path no match line names cannot be split: it is
     // masked whole, as before, and the guard learns nothing from it.
-    return { prefix: '', body: line, path: '', unplaced: /^.+?-\d+-/.test(line) }
+    // Unplaced only when what stands before `-N-` is shaped like a path (no
+    // space, `=` or `:`): a date in a match line printed without `-n` is not.
+    return { prefix: '', body: line, path: '', unplaced: /^[^\s=:]+?-\d+-/.test(line) }
   })
 }
 

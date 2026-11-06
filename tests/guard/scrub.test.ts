@@ -579,14 +579,43 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     const text = `GITHUB_TOKEN=${ghp}&x=1`
     const known = new Destroyed()
+    // The whole value goes (what follows can be another credential); the
+    // slot keeps the finding's own token.
     expect(applyMap(text, {}, undefined, { known })).toBe(
-      'GITHUB_TOKEN=__REDACTED_CREDENTIAL_1001__&x=1'
+      'GITHUB_TOKEN=__REDACTED_CREDENTIAL_1001__'
     )
     expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
     expect(destroyedValues([text]).some((v) => v.includes('__REDACTED_'))).toBe(false)
     expect(applyMap(`echo ${ghp}`, {}, undefined, { known })).toBe(
       'echo __REDACTED_CREDENTIAL_1001__'
     )
+  })
+
+  // Review of fe21d7e: what follows a token in the same value is removed with
+  // it, and a clean literal beside a token is still learned.
+  it('a credential after a token in the same value is never sent as written', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `https://h/cb?access_token=${ghp}&client_secret=Kq9xQ2LmZ7vRt4Wp`,
+      `SECRET_TOKENS=${ghp},Kq9xQ2LmZ7vRt4Wp`,
+      `TOKEN_LIST=${ghp};Kq9xQ2LmZ7vRt4Wp`,
+    ]) {
+      const out = applyMap(text, {}, undefined, { known: new Destroyed() })
+      expect([text, out.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, false])
+    }
+  })
+
+  it('a clean literal beside a token in the same value is learned', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp,${ghp}`,
+      `access_token=Kq9xQ2LmZ7vRt4Wp&next=${ghp}`,
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, true])
+      expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    }
   })
 
   it('a cursor, a sync or an idempotency token is no secret; a client secret is', () => {
