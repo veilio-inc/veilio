@@ -15,6 +15,7 @@ import {
   dropResidue,
   redactKnown,
   applyMap,
+  NO_CONTEXT,
   restoreArgs,
   scrubSource,
   survivingSecrets,
@@ -425,26 +426,37 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
 
   // Work queue e72: the value of a credential-named key the scanner does not
   // flag was redacted in place but never learned, so a bare copy later leaked.
-  it('a strong value under a credential-named key is learned and swept later', () => {
+  it('a strong value under a key that names a secret is learned and swept later', () => {
     for (const [first, value] of [
       ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'xQ7zW2vR9tY4pLmN'],
       ['export API_TOKEN="x9Kq2LmZ7vRt4Wp"', 'x9Kq2LmZ7vRt4Wp'],
       ['{"secretKey": "Zq8vB3nM1kL0pW9x"}', 'Zq8vB3nM1kL0pW9x'],
       ['password: Tq7wLz2Rk9Vx', 'Tq7wLz2Rk9Vx'],
+      ['SMTP_PASS=qzkvwpxmrtbn8274', 'qzkvwpxmrtbn8274'],
+      ["privateKey: 'Hn4xQ8zLw2Vt'", 'Hn4xQ8zLw2Vt'],
+      ['Server=db Password=Rv5kW9qLz3Xm', 'Rv5kW9qLz3Xm'],
     ]) {
       const known = new Destroyed()
       expect(applyMap(first!, {}, undefined, { known })).not.toContain(value)
-      expect(known.values).toContain(value)
+      expect(known.values).toEqual([value])
       const later = applyMap(`echo ${value}`, {}, undefined, { known })
       expect(later).toBe('echo __REDACTED_CREDENTIAL_1001__')
       // Inside a longer line and a longer word too; the match is exact-case.
       expect(
         applyMap(`url=https://h/?k=${value}&x=1 and x${value}y`, {}, undefined, { known })
       ).not.toContain(value)
-      expect(applyMap(`echo ${value.toLowerCase()}`, {}, undefined, { known })).toBe(
-        `echo ${value.toLowerCase()}`
-      )
+      if (value !== value.toLowerCase())
+        expect(applyMap(`echo ${value.toLowerCase()}`, {}, undefined, { known })).toBe(
+          `echo ${value.toLowerCase()}`
+        )
     }
+  })
+
+  it('one secret under a credential-named key reads as one token, in its slot and elsewhere', () => {
+    const known = new Destroyed()
+    expect(
+      applyMap('DB_PASSWORD=xQ7zW2vR9tY4pLmN\nlogin xQ7zW2vR9tY4pLmN', {}, undefined, { known })
+    ).toBe('DB_PASSWORD=__REDACTED_CREDENTIAL_1001__\nlogin __REDACTED_CREDENTIAL_1001__')
   })
 
   it('a value under a credential-named key is learned only when the scan would learn it', () => {
@@ -469,6 +481,65 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     }
   })
 
+  it('a strong value under a key that only contains a credential word is not learned', () => {
+    // The key rule removes these where they stand; only a key that names a
+    // secret carries its value through the session (code review of e72).
+    for (const text of [
+      'AUTH_PROVIDER=okta-prod-eu1x7Q',
+      'auth_method: oauth2-pkce-v2Xq9',
+      '{"tokenizer": "cl100k_baseXq9Z"}',
+      '{"apiKeyName": "ci-runner-eu-west-1Xq9"}',
+      'pass_through_tag=Xk9mQ2vL7Zp',
+      '{"key": "a1b2c3d4e5f6Xq9Z"}',
+      'Cache restored from key: node-cache-Linux-x64-9f8e7d6c5bXq',
+      '{"sortKey": "Xk9mQ2vL7Zp"}',
+      'primaryKey: Xk9mQ2vL7Zp',
+      'keyboard_layout=Xk9mQ2vL7Zp',
+      'author: Xk9mQ2vL7Zp',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+  })
+
+  it('a reference under a credential-named key is not learned, quoted or not', () => {
+    for (const text of [
+      'DB_PASSWORD="${DB_PASSWORD_V2}"',
+      "API_TOKEN='${CI_JOB_TOKEN_X9}'",
+      'DB_PASSWORD=${DB_PASSWORD_V2}',
+      'password: "${{ secrets.DB_PASSWORD_V2 }}"',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+  })
+
+  it('a value under a credential-named key too long to sweep is redacted in place, never thrown on', () => {
+    const value = 'Xk9mQ2vL7Zp'.repeat(1_600)
+    expect(value.length).toBeGreaterThan(16_384)
+    const known = new Destroyed()
+    const out = applyMap(`DB_PASSWORD=${value}\n`, {}, undefined, { known })
+    expect(out).toBe('DB_PASSWORD=__REDACTED_CREDENTIAL_1001__\n')
+    expect(known.values).toEqual([])
+    expect(destroyedValues([`DB_PASSWORD=${value}`])).toEqual([])
+  })
+
+  it('in source code the key rule learns nothing: the scanner judges code', () => {
+    const ts = { ...NO_CONTEXT, language: 'typescript' as const }
+    for (const text of [
+      'const sessionToken = "Xk9mQ2vL7ZpQw"',
+      'const token = `user-${id}-v2x9Qz7`',
+      'if (authMode === "oauth2-pkce-v2") {}',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, ts, { known })
+      expect([text, known.values]).toEqual([text, []])
+      expect(destroyedValues([text], {}, undefined, undefined, 'typescript')).toEqual([])
+    }
+  })
+
   it('a value under a credential-named key that the map holds as a name is never learned', () => {
     const known = new Destroyed()
     const map = { __VAR__1: 'xQ7zW2vR9tY4pLmN' }
@@ -476,12 +547,18 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'DB_PASSWORD=__VAR__1'
     )
     expect(known.values).toEqual([])
+    expect(destroyedValues(['DB_PASSWORD=xQ7zW2vR9tY4pLmN'], map)).toEqual([])
   })
 
-  it('a value under a credential-named key in one string of a result is learned for all of them', () => {
-    expect(destroyedValues(['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'unrelated'])).toEqual([
-      'xQ7zW2vR9tY4pLmN',
-    ])
+  it('a value under a credential-named key in one string of a result is swept from the others', () => {
+    const texts = ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'rotated xQ7zW2vR9tY4pLmN today']
+    const known = new Destroyed()
+    known.learn(destroyedValues(texts))
+    expect(redactKnown(texts[1]!, known)).toBe('rotated __REDACTED_CREDENTIAL_1001__ today')
+    // The token the pass over the first string gives it is the same one.
+    expect(applyMap(texts[0]!, {}, undefined, { known, swept: true })).toBe(
+      'DB_PASSWORD=__REDACTED_CREDENTIAL_1001__'
+    )
     expect(destroyedValues(['DB_PASSWORD=sunshine2026'])).toEqual([])
   })
 })

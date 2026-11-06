@@ -34,6 +34,7 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  keyedValues,
   restoreAdds,
   grow,
   ownedMap,
@@ -1121,7 +1122,21 @@ export class Guard {
       sent.push(s)
       return s
     })
-    this.destroyed.learn(destroyedValues(sent, this.map, undefined, fileKind))
+    // The key rule's values are learned in the language each string is masked
+    // in, as applyMap below learns them: a Grep result line by line.
+    const language = this.resultLanguage(tool, args, filePath)
+    const learned = destroyedValues(
+      sent,
+      this.map,
+      undefined,
+      fileKind,
+      tool === 'Grep' ? null : language
+    )
+    if (tool === 'Grep')
+      for (const s of sent)
+        for (const line of s.split('\n'))
+          learned.push(...keyedValues(line, this.map, languageOfGrepLine(line)))
+    this.destroyed.learn(learned)
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -1139,7 +1154,7 @@ export class Guard {
       const working: SymbolMap = ownedMap(this.map)
       const additions: SymbolMap = ownedMap()
       let value: unknown = outcome.result
-      const ctx = this.context(this.resultLanguage(tool, args, filePath), 'result', budget)
+      const ctx = this.context(language, 'result', budget)
       // A Grep result mixes files: each line is masked in its own file's language.
       const perLine = (s: string, fn: (line: string, c: MaskContext) => string) =>
         tool === 'Grep'

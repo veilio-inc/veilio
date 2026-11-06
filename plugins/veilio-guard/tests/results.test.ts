@@ -817,21 +817,73 @@ for (const [first, value] of [
     expect(p.files[`${ROOT}/.veilio/map.json`]).not.toContain(value)
   })
 
-test('a value under a credential-named key first seen in a Read stays redacted in a later result', async ($, on) => {
+test('a value under a credential-named key first seen in a config Read is never saved as a name', async ($, on) => {
+  const read = recorded('Read')
+  const bash = recorded('Bash')
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const path = `${ROOT}/config/app.yaml`
+  // The second line is a value under a key that names no secret: before e72
+  // it was taken for a project name and written to the map.
+  const content = 'password: Tq7wLz2Rk9Vx\nbackup_of: Tq7wLz2Rk9Vx\n'
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? {
+          ...read.r,
+          result: { ...read.r.result, file: { ...read.r.result.file, filePath: path, content } },
+        }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Tq7wLz2Rk9Vx\n' } }
+  )
+  const one = await $.tool.call({ ...eventOf(read), file_path: path })
+  expect(res(one).file.content).toContain('password: __REDACTED_CREDENTIAL_1001__\n')
+  expect(res(one).file.content.split('__REDACTED_CREDENTIAL_1001__').length).toBe(3)
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toBe('__REDACTED_CREDENTIAL_1001__\n')
+  expect(p.writes.filter((w) => w.path.endsWith('map.json')).length).toBeGreaterThan(0)
+  expect(p.files[`${ROOT}/.veilio/map.json`]).not.toContain('Tq7wLz2Rk9Vx')
+})
+
+test("a source file's code is not learned by the key rule: later results keep it", async ($, on) => {
   const read = recorded('Read')
   const bash = recorded('Bash')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  const content = '{"secretKey": "Zq8vB3nM1kL0pW9x"}\n'
+  const content =
+    'const sessionToken = "Xk9mQ2vL7ZpQw"\nconst passKey = rotateKeyV2Xq9\nif (authMode === "oauth2-pkce-v2Xq9") {}\n'
   let call = 0
   on('tool.call', () =>
     call++ === 0
       ? { ...read.r, result: { ...read.r.result, file: { ...read.r.result.file, content } } }
-      : { ...bash.r, result: { ...bash.r.result, stdout: 'Zq8vB3nM1kL0pW9x\n' } }
+      : {
+          ...bash.r,
+          result: { ...bash.r.result, stdout: 'Xk9mQ2vL7ZpQw rotateKeyV2Xq9\n' },
+        }
   )
-  const one = await $.tool.call(eventOf(read))
-  expect(JSON.stringify(one)).not.toContain('Zq8vB3nM1kL0pW9x')
+  await $.tool.call(eventOf(read))
   const two = await $.tool.call(eventOf(bash))
-  expect(res(two).stdout).toBe('__REDACTED_CREDENTIAL_1001__\n')
+  expect(res(two).stdout).not.toContain('__REDACTED_')
+})
+
+test('a search learns the key rule line by line: a config line is learned, a source line is not', async ($, on) => {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  const content = [
+    `${ROOT}/notes.md:1:rotated Tq7wLz2Rk9Vx last week`,
+    `${ROOT}/config/app.yaml:2:password: Tq7wLz2Rk9Vx`,
+    `${ROOT}/src/session.ts:3:const sessionToken = "Xk9mQ2vL7ZpQw"`,
+  ].join('\n')
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { ...grep.r, result: { ...grep.r.result, content, numLines: 3 } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Tq7wLz2Rk9Vx Xk9mQ2vL7ZpQw\n' } }
+  )
+  const one = await $.tool.call(eventOf(grep))
+  // The line before the one that reveals it is swept too.
+  expect(res(one).content).not.toContain('Tq7wLz2Rk9Vx')
+  const two = await $.tool.call(eventOf(bash))
+  // The source line's value is no learned credential: masked as a name at most.
+  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ (?!__REDACTED_)\S+\n$/)
 })
 
 test('a weak value redacted after its credential-named key is not swept from later results', async ($, on) => {

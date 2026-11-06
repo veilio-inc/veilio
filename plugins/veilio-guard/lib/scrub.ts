@@ -850,12 +850,96 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
     for (const v of end > matched ? [core, text.slice(start, end)] : [core])
       if (carriedForward(type, v)) out.push(v)
   }
-  // The value of a credential-named key the scanner does not flag, which
-  // applyMap removes one-way, is learned by the same bar as the scanner's
-  // (work queue e72: a bare copy in a later result was sent as written).
-  for (const { value } of credentialsAmong(valueSpans(text)))
-    if (!names.has(value) && carriedForward('password-assignment', value)) out.push(value)
   return out
+}
+
+/** `text` with each finding of `scan` removed as applyMap removes it: a
+ *  heuristic finding that is a name `names` holds, or a variable's name, is
+ *  left as written. */
+function redactFindings(
+  text: string,
+  scan: ScanResult,
+  names: ReadonlySet<string>,
+  token: (core: string) => string
+): string {
+  let redacted = ''
+  let at = 0
+  for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
+    if (start < at) continue
+    const core = text.slice(start, matched)
+    if (HEURISTIC.has(type) && (names.has(core) || referenceName(core, type))) continue
+    redacted += text.slice(at, start) + token(core)
+    at = end
+  }
+  return redacted + text.slice(at)
+}
+
+type ValueSpan = ReturnType<typeof valueSpans>[number]
+
+/** The values of credential-named keys in `redacted` (its findings already
+ *  tokens) that applyMap removes one-way: not a name `held` holds. */
+function keyedSpans(redacted: string, held: ReadonlySet<string>): ValueSpan[] {
+  return credentialsAmong(valueSpans(redacted)).filter((s) => !held.has(s.value))
+}
+
+// A key whose last part names a secret (`DB_PASSWORD`, `API_TOKEN`,
+// `secretKey`, `SMTP_PASS`, `privateKey`), split at camel humps, `_`, `-`
+// and `.`. Not one that only contains a credential word (`AUTH_PROVIDER`,
+// `tokenizer`, `apiKeyName`, `sortKey`, `pass_through_tag`): the key rule
+// still removes those where they stand (code review of e72).
+const SECRET_KEY =
+  /(?:^|_)(?:password|passwd|pwd|pass|passphrase|secret|token|apikey|(?:api|private|access|secret|encryption|signing)_key)$/
+// The key a value stands after on its line: `KEY=`, `KEY: `, `"KEY": "`,
+// `KEY => '`, `KEY := `. Anything else (a flag, an XML element) names none.
+const KEY_BEFORE = /([A-Za-z_][\w.-]{0,100})["'`]?\]?[ \t]*(?:=>|:=|=|:)[ \t]*["'`]?$/
+
+function namesSecret(text: string, start: number): boolean {
+  const line = text.slice(Math.max(text.lastIndexOf('\n', start - 1) + 1, start - 200), start)
+  const key = KEY_BEFORE.exec(line)?.[1]
+  if (!key) return false
+  const parts = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+  return SECRET_KEY.test(parts.replace(/[^a-z0-9]+/g, '_'))
+}
+
+/** Whether a value the key rule removes is learned for the session (work
+ *  queue e72): under a key that names a secret, by the scanner's own bar,
+ *  short enough to sweep, never a reference (`"${DB_PASSWORD}"`) or a token. */
+function learnsKeyed(redacted: string, span: ValueSpan): boolean {
+  const v = span.value
+  return (
+    v.length <= MAX_VALUE &&
+    !v.includes('${') &&
+    !v.includes('__REDACTED_') &&
+    carriedForward('password-assignment', v) &&
+    namesSecret(redacted, span.start)
+  )
+}
+
+/** The key rule learns only from text of no code language: in code the
+ *  scanner judges credentials, and a key's value is code (`passKey =
+ *  rotateKeyV2`). */
+const keyedLearning = (language: MaskContext['language']) => language === 'unknown'
+
+/** The values applyMap would learn from the key rule in `text` masked as
+ *  `language`: the same spans and the same names as its removal, so one
+ *  secret has one token. */
+export function keyedValues(
+  text: string,
+  map: SymbolMap = {},
+  language: MaskContext['language'] = 'unknown',
+  scan?: ScanResult,
+  fileKind?: FileKind
+): string[] {
+  if (!keyedLearning(language)) return []
+  const redacted = redactFindings(
+    text,
+    scan ?? scanSecrets(text, 'redact', fileKind ? { fileKind } : {}),
+    namesOf(readableView(map)),
+    () => '__REDACTED_CREDENTIAL__'
+  )
+  return keyedSpans(redacted, namesOf(map))
+    .filter((s) => learnsKeyed(redacted, s))
+    .map((s) => s.value)
 }
 
 /** Every value the scans of a whole result destroy, so that a secret found in
@@ -865,13 +949,19 @@ export function destroyedValues(
   texts: readonly string[],
   map: SymbolMap = {},
   scan?: ScanResult,
-  fileKind?: FileKind
+  fileKind?: FileKind,
+  /** The language each text is masked in; `null` leaves the key rule's
+   *  values to the caller (a Grep result, judged line by line). */
+  language: MaskContext['language'] | null = 'unknown'
 ): string[] {
   const values = new Set<string>()
   const options = fileKind ? { fileKind } : {}
-  for (const text of texts)
-    for (const value of learnable(text, scan ?? scanSecrets(text, 'redact', options), map))
-      values.add(value)
+  for (const text of texts) {
+    const found = scan ?? scanSecrets(text, 'redact', options)
+    for (const value of learnable(text, found, map)) values.add(value)
+    if (language !== null)
+      for (const value of keyedValues(text, map, language, found)) values.add(value)
+  }
   return [...values]
 }
 
@@ -1019,31 +1109,22 @@ export function applyMap(
   // left as written now, so a credential that is one is redacted (code review).
   const shown = readableView(map)
   known.learn(learnable(text, scan, shown))
-  const names = namesOf(shown)
-  let redacted = ''
-  let at = 0
-  for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
-    if (start < at) continue
-    const core = text.slice(start, matched)
-    if (HEURISTIC.has(type) && (names.has(core) || referenceName(core, type))) continue
-    redacted += text.slice(at, start) + known.tokenFor(core)
-    at = end
-  }
-  redacted += text.slice(at)
+  let redacted = redactFindings(text, scan, namesOf(shown), (core) => known.tokenFor(core))
   // The value of a credential-named key - one CONTAINS a credential word -
   // whole, up to its delimiter, whatever the map holds (security review: with
   // an empty map nothing was written over `DB_PASSWORD=sunshine`). A map name
   // keeps its placeholder (withCredentialWords); any other value is removed
   // one-way. Only `$NAME` and `${NAME}` are references: `DB_PASSWORD=
-  // ADMIN_PASSWORD` is a value (round 3). learnable() has learned the ones
-  // with structural signal; a weak one elsewhere is an ordinary word.
-  const held = namesOf(map)
+  // ADMIN_PASSWORD` is a value (round 3). A strong one under a key that
+  // names a secret is learned for the session (learnsKeyed); a weak one
+  // elsewhere is an ordinary word.
+  const learn = keyedLearning(ctx.language)
   let unvalued = ''
-  at = 0
-  for (const { start, end, value } of credentialsAmong(valueSpans(redacted))) {
-    if (held.has(value)) continue
-    unvalued += redacted.slice(at, start) + known.tokenFor(value)
-    at = end
+  let at = 0
+  for (const span of keyedSpans(redacted, namesOf(map))) {
+    if (learn && learnsKeyed(redacted, span)) known.learn([span.value])
+    unvalued += redacted.slice(at, span.start) + known.tokenFor(span.value)
+    at = span.end
   }
   redacted = unvalued + redacted.slice(at)
   // Every credential the session has destroyed, wherever it stands as a word.
