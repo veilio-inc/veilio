@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.16.1](https://github.com/veilio-inc/veilio/compare/engine-v1.16.0...engine-v1.16.1) (2026-11-06)
+
+### Fixes
+
+* **engine:** // items end at U+2028/U+2029 too; the writer's blank lines after a removed last line stay ([4084387](https://github.com/veilio-inc/veilio/commit/4084387bec33c6b416df13f7b612f82ef3a08ece))
+* **engine:** a fence line ends a backtick left open before it in restore's JSDoc search ([0e33726](https://github.com/veilio-inc/veilio/commit/0e3372666d4913e9299602f923fdce10dbb35153))
+* **engine:** restore drops a JSDoc's empty lines, stops // items at any line ending, and leaves no blank line at the end ([9015023](https://github.com/veilio-inc/veilio/commit/90150231a7adefc7efb373677a12980c6a07a9d5))
+* **engine:** restore keeps the writer's blank lines ([3693f2c](https://github.com/veilio-inc/veilio/commit/3693f2cbffb8c6d5e97a2f6b9d4ed25995f79dae))
+* **engine:** restore strips a JSDoc only where its /** opens in code ([d907e7f](https://github.com/veilio-inc/veilio/commit/d907e7f2001dcb712258c6909b41c303741ff6d3)), closes [#198](https://github.com/veilio-inc/veilio/issues/198)
+* **engine:** restore's gap merge counts each blank line once, and keeps a JSDoc's indent ([7909592](https://github.com/veilio-inc/veilio/commit/79095925e817709fd40c35b5175e1aa6b16b2786))
+* **engine:** restore's JSDoc search reads JSX closing tags, postfix ++/--, fences and stray backticks ([abd51e7](https://github.com/veilio-inc/veilio/commit/abd51e74ce487e5c91f527dfa85e6e5e59425d28))
+* **engine:** restore's regex-literal scan is linear and stops at every line break ([d8c9b31](https://github.com/veilio-inc/veilio/commit/d8c9b31925577a6fb5681e33f233769453497772))
+* **engine:** strip items where they sit - no marker, no collapse to hide gaps ([2d4c46b](https://github.com/veilio-inc/veilio/commit/2d4c46bde6691f4757bd8d4c964a255a4b05a516))
+* **engine:** strip noise in one pass over the original text ([6b45822](https://github.com/veilio-inc/veilio/commit/6b45822ad1bb49880d28456e240398a8790aec86))
+
 ## [1.16.0](https://github.com/veilio-inc/veilio/compare/engine-v1.15.0...engine-v1.16.0) (2026-11-01)
 
 ### Features
