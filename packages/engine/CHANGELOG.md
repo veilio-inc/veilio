@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/veilio-inc/veilio/compare/engine-v1.16.1...engine-v1.16.2) (2026-11-06)
+
+### Fixes
+
+* **engine:** a credential value span names the key and the grammar that found it ([81aa8b1](https://github.com/veilio-inc/veilio/commit/81aa8b136b2e7c8e62d12df3f076fa6c716394b4))
+* **engine:** ValueSpanGrammar names the pair grammar valueSpans reports ([8362487](https://github.com/veilio-inc/veilio/commit/8362487bcd1479e7dfab655872ac42c792299c83))
+
 ## [1.16.1](https://github.com/veilio-inc/veilio/compare/engine-v1.16.0...engine-v1.16.1) (2026-11-06)
 
 ### Fixes
