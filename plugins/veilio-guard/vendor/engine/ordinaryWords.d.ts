@@ -14,7 +14,18 @@ export interface ValueSpan {
     /** A bare name after a credential key in code (`password = sunshine`):
      *  perhaps a variable, so masked reversibly, never removed. */
     bare?: boolean;
+    /** The key that makes it a credential's value, as written: for a k8s env
+     *  entry's `value:`, the `name:` it belongs to. */
+    key?: string;
+    /** Written in quotes. */
+    quoted?: boolean;
+    /** The grammar that found it: a quoted string, a configuration line
+     *  (`env`, `ini`, `shell`, `yaml`, `k8s`, `xml`, `pgpass`, a pair `inner`
+     *  to another value, a `KEY=value` written tight in prose, a URL or a
+     *  connection string `pair`), or a guess at code or prose (`bare`, `net`). */
+    grammar?: ValueSpanGrammar;
 }
+export type ValueSpanGrammar = 'string' | 'env' | 'ini' | 'shell' | 'yaml' | 'k8s' | 'xml' | 'pgpass' | 'inner' | 'pair' | 'bare' | 'net';
 export interface ValueScan {
     /** String literals, as the tokenizer found them: contents only. Absent:
      *  quoted runs on one line are taken as strings. */

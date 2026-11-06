@@ -27,6 +27,7 @@ import {
   isSourcePath,
   languageOf,
   languageOfCommand,
+  isCode,
   languageOfGrepLine,
   resultPolicy,
 } from './policy.ts'
@@ -47,7 +48,7 @@ import {
   survivingSecrets,
   versionOf,
 } from './scrub.ts'
-import type { MaskContext, Numbering, ScanResult } from './scrub.ts'
+import type { MaskContext, Numbering, Prepared, ScanResult } from './scrub.ts'
 import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
 import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
@@ -1121,7 +1122,21 @@ export class Guard {
       sent.push(s)
       return s
     })
-    this.destroyed.learn(destroyedValues(sent, this.map, undefined, fileKind))
+    // One scan per string, for learning here and for masking below while the
+    // string is as scanned. A Grep result mixes files the guard cannot tell
+    // apart safely (a secret file named by its path, a .pgpass line, a search
+    // without -n): the key rule learns nothing from it (e72 ship check).
+    const prepared: Prepared = new Map()
+    const code = isCode(filePath, args)
+    this.destroyed.learn(
+      tool === 'Grep'
+        ? destroyedValues(sent, this.map, undefined, fileKind, { keyed: false })
+        : destroyedValues(sent, this.map, undefined, fileKind, {
+            code,
+            known: this.destroyed,
+            prepared,
+          })
+    )
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -1148,11 +1163,28 @@ export class Guard {
               .map((line) => fn(line, this.context(languageOfGrepLine(line), 'result', budget)))
               .join('\n')
           : fn(s, ctx)
-      // Swept already, above: each string is scanned once here.
+      // Swept already, above: each string is scanned once here, with the
+      // learning pass's work while it is the text and the map that pass saw.
       const apply = (s: string) =>
-        perLine(s, (t, c) =>
-          applyMap(t, working, c, { known: this.destroyed, swept: true, fileKind })
-        )
+        perLine(s, (t, c) => {
+          if (tool === 'Grep')
+            return applyMap(t, working, c, {
+              known: this.destroyed,
+              swept: true,
+              fileKind,
+              learn: false,
+            })
+          const ready = attempt === 0 ? prepared.get(t) : undefined
+          const same = ready && ready.code === code && ready.fileKind === fileKind
+          return applyMap(t, working, c, {
+            known: this.destroyed,
+            swept: true,
+            fileKind,
+            code,
+            scan: same ? ready.scan : undefined,
+            keyed: same ? ready.keyed : undefined,
+          })
+        })
       // A listed field, already scanned for credentials as written, only has
       // the names the map has learned since replaced in the pass over every
       // string; every other field is masked in full. Told apart by where the

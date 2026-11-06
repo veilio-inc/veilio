@@ -142,6 +142,13 @@ export function languageOfGrepLine(line: string): Language | 'unknown' {
   return language === 'auto' ? 'unknown' : language
 }
 
+/** Whether a result shows a file of a known language: its path's, or for a
+ *  command the one source file it prints (`cat src/a.py`). */
+export function isCode(path: string, args?: Record<string, unknown>): boolean {
+  if (path) return languageOf(path) !== 'auto'
+  return typeof args?.command === 'string' && languageOfCommand(args.command) !== 'unknown'
+}
+
 // Commands whose output is the text of the one file they are given, and the
 // filters that may follow them in a pipeline without changing what it is.
 const READERS = new Set([

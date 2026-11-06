@@ -11,9 +11,11 @@ import {
   restoresNeverRestored,
   grow,
   Destroyed,
+  destroyedValues,
   dropResidue,
   redactKnown,
   applyMap,
+  NO_CONTEXT,
   restoreArgs,
   scrubSource,
   survivingSecrets,
@@ -392,6 +394,7 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
       'app_pass',
       'my-secret-pass',
       'Welcome2024',
+      'sunshine2026',
     ])
       expect(learnedFrom(`password = "${plain}"`).values).toEqual([])
     for (const strong of ['S3cretpw!', 'Xk9mQ2vL7Zp'])
@@ -419,6 +422,482 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     expect(learnedFrom('client_secret = "xQ7zW2vR9t__VAR__1"').values).toContain(
       'xQ7zW2vR9t__VAR__1'
     )
+  })
+
+  // Work queue e72: the value of a credential-named key the scanner does not
+  // flag was redacted in place but never learned, so a bare copy later leaked.
+  it('a strong value under a key that names a secret is learned and swept later', () => {
+    for (const [first, value] of [
+      ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'xQ7zW2vR9tY4pLmN'],
+      ['export API_TOKEN="x9Kq2LmZ7vRt4Wp"', 'x9Kq2LmZ7vRt4Wp'],
+      ['{"secretKey": "Zq8vB3nM1kL0pW9x"}', 'Zq8vB3nM1kL0pW9x'],
+      ['password: Tq7wLz2Rk9Vx', 'Tq7wLz2Rk9Vx'],
+      ['SMTP_PASS=qzkvwpxmrtbn8274', 'qzkvwpxmrtbn8274'],
+      ["privateKey: 'Hn4xQ8zLw2Vt'", 'Hn4xQ8zLw2Vt'],
+      ['Server=db Password=Rv5kW9qLz3Xm', 'Rv5kW9qLz3Xm'],
+      ['DB_PASSWORD_2=Fz6nB1qWx8Lk', 'Fz6nB1qWx8Lk'],
+      ['API_TOKEN_V2="Gk3tP9sVz5Qm"', 'Gk3tP9sVz5Qm'],
+      ['password2: Jd8rM4xNq2Wz', 'Jd8rM4xNq2Wz'],
+      ['env:\n  - name: DB_PASSWORD\n    value: Hn4xQ8zLw2Vk', 'Hn4xQ8zLw2Vk'],
+      ['db_password:\n  Rv5kW9qLz3Xp\n', 'Rv5kW9qLz3Xp'],
+      ['<password>Wm3pX7rQk2Zt</password>', 'Wm3pX7rQk2Zt'],
+      ['<add key="DbPassword">Wm3pX7rQk2Zq</add>', 'Wm3pX7rQk2Zq'],
+    ]) {
+      const known = new Destroyed()
+      expect(applyMap(first!, {}, undefined, { known })).not.toContain(value)
+      expect(known.values).toContain(value)
+      const later = applyMap(`echo ${value}`, {}, undefined, { known })
+      expect(later).toMatch(/^echo __REDACTED_CREDENTIAL_\d+__$/)
+      // Inside a longer line and a longer word too; the match is exact-case.
+      expect(
+        applyMap(`url=https://h/?k=${value}&x=1 and x${value}y`, {}, undefined, { known })
+      ).not.toContain(value)
+      if (value !== value.toLowerCase())
+        expect(applyMap(`echo ${value.toLowerCase()}`, {}, undefined, { known })).toBe(
+          `echo ${value.toLowerCase()}`
+        )
+    }
+  })
+
+  it('one secret under a credential-named key reads as one token, in its slot and elsewhere', () => {
+    const known = new Destroyed()
+    expect(
+      applyMap('DB_PASSWORD=xQ7zW2vR9tY4pLmN\nlogin xQ7zW2vR9tY4pLmN', {}, undefined, { known })
+    ).toBe('DB_PASSWORD=__REDACTED_CREDENTIAL_1001__\nlogin __REDACTED_CREDENTIAL_1001__')
+  })
+
+  it('a value under a credential-named key is learned only when the scan would learn it', () => {
+    // Weak, ordinary, short or path-shaped: at most redacted where it stands,
+    // never swept elsewhere (founder decision #5, as `password = "..."` above).
+    for (const plain of [
+      'sunshine2026',
+      'Welcome2024',
+      'changeme',
+      'true',
+      '1',
+      'postgres',
+      'my-secret-pass',
+      'root1234',
+      '/run/secrets/db',
+      'Xk9mQ',
+    ]) {
+      const known = new Destroyed()
+      applyMap(`DB_PASSWORD=${plain}`, {}, undefined, { known })
+      expect(known.values).toEqual([])
+      expect(applyMap(`echo ${plain}`, {}, undefined, { known })).toBe(`echo ${plain}`)
+    }
+  })
+
+  it('a strong value under a key that only contains a credential word is not learned', () => {
+    // The key rule removes these where they stand; only a key that names a
+    // secret carries its value through the session (code review of e72).
+    for (const text of [
+      'AUTH_PROVIDER=okta-prod-eu1x7Q',
+      'auth_method: oauth2-pkce-v2Xq9',
+      '{"tokenizer": "cl100k_baseXq9Z"}',
+      '{"apiKeyName": "ci-runner-eu-west-1Xq9"}',
+      'pass_through_tag=Xk9mQ2vL7Zp',
+      '{"key": "a1b2c3d4e5f6Xq9Z"}',
+      'Cache restored from key: node-cache-Linux-x64-9f8e7d6c5bXq',
+      '{"sortKey": "Xk9mQ2vL7Zp"}',
+      'primaryKey: Xk9mQ2vL7Zp',
+      'keyboard_layout=Xk9mQ2vL7Zp',
+      'author: Xk9mQ2vL7Zp',
+      // A cursor or a flag, not a secret (security review of 0228a04).
+      '{"NextToken": "Xk9mQ2vL7ZpQw"}',
+      'nextPageToken: Xk9mQ2vL7ZpQw',
+      'page_token=Xk9mQ2vL7ZpQw',
+      'continuationToken: Xk9mQ2vL7ZpQw',
+      'csrf_token=Xk9mQ2vL7ZpQw',
+      'XSRF-TOKEN=Xk9mQ2vL7ZpQw',
+      'is_secret: Xk9mQ2vL7ZpQw',
+      'has_password: Xk9mQ2vL7ZpQw',
+      // A bare key or token names no secret.
+      '{"token": "Xk9mQ2vL7ZpQw"}',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+  })
+
+  it('a reference under a credential-named key is not learned, quoted or not', () => {
+    for (const text of [
+      'DB_PASSWORD="${DB_PASSWORD_V2}"',
+      "API_TOKEN='${CI_JOB_TOKEN_X9}'",
+      'DB_PASSWORD=${DB_PASSWORD_V2}',
+      'password: "${{ secrets.DB_PASSWORD_V2 }}"',
+      'DB_PASSWORD="$DB_PASSWORD_V2"',
+      "DB_PASS = '%(db_pass_v2)s'",
+      'DB_PASSWORD=%DB_PASSWORD_V2%',
+      'DB_PASS: "#{dbPassV2}"',
+      'password: "{{ db_password_v2 }}"',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+  })
+
+  it('a value that starts with $ or holds ${ or $( is a reference: removed in place, never learned', () => {
+    // Conservative, the documented limit: a literal password that starts with
+    // `$` is not carried forward (e72 closing review).
+    for (const text of [
+      'DB_PASS="$Kq9xQ2LmZ7vRt4Wp"',
+      'DB_PASS="Kq9x${QLmZ7vRt4Wp"',
+      'DB_PASS="${DB_PASSWORD_V2:-}"',
+      'DB_PASS="${env:DB_PASSWORD_V2}"',
+      'DB_PASS="$(vault read -field=pw db)"',
+      'DB_PASS="Kq9x$(QLmZ7)vRt4Wp"',
+      'API_TOKEN="$secretKeyFromVault2X"',
+    ]) {
+      const known = new Destroyed()
+      const out = applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text])]).toEqual([text, []])
+      expect(out).toMatch(/^\w+="__REDACTED_CREDENTIAL_\d+__"$/)
+    }
+    // The scanner reads `password = "..."` by its own rule; these keys only
+    // the key rule reads. A `$` inside a literal, not starting a reference, is a character.
+    const known = new Destroyed()
+    applyMap('DB_PASS="Kq9x$QLmZ7vRt4Wp"', {}, undefined, { known })
+    expect(known.values).toEqual(['Kq9x$QLmZ7vRt4Wp'])
+  })
+
+  // Ship check 2 of e72: ordinary text the key rule removes in place, which
+  // must not be swept from the rest of the session.
+  const notLearned = (texts: readonly string[], ctx?: Parameters<typeof applyMap>[2]) => {
+    for (const text of texts) {
+      const known = new Destroyed()
+      const out = applyMap(text, {}, ctx, { known })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text])]).toEqual([text, []])
+      void out
+    }
+  }
+
+  it("an environment variable's name as a key's value is not learned (founder decision 2)", () => {
+    notLearned([
+      'password: GITHUB_TOKEN_CI2',
+      'password: SECRET_KEY_V2',
+      'API_TOKEN=PROD_DB_PASSWORD_V2',
+    ])
+    // A value that is no variable's name still is.
+    const known = new Destroyed()
+    applyMap('password: X7K9A2_Q2LE4M8P', {}, undefined, { known })
+    expect(known.values).toEqual(['X7K9A2_Q2LE4M8P'])
+  })
+
+  it('a checksum, hash or digest key names no secret', () => {
+    notLearned([
+      'checksum/secret: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f5d8c2a4b6e9f1d3c5a7b8e0f',
+      'secret_hash: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f',
+      'tokenDigest: 8f3d2a9c41b7e6f05d1c3a8b9e2f4d6c7a1b0e3f',
+    ])
+  })
+
+  it("a lookup call's argument is a name, not a secret", () => {
+    notLearned([
+      "const s = await client.getSecret('stripe-key-v2Xq9Z')",
+      'secret = client.get_secret("db-pw-v2Xq9Zk7")',
+      'pw = keyring.get_password("my-service-v2Xq9", "bob")',
+      "fetchToken('svc-tok-v2Xq9Zk7')",
+      "loadApiKey('svc-key-v2Xq9Zk7')",
+    ])
+    // A call that sets one is given the secret.
+    const known = new Destroyed()
+    applyMap("setPassword('Xq9mK2pLzRvNw7')", {}, undefined, { known })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+  })
+
+  it('a lowercase kebab-case value reads as a resource name: removed in place, not learned', () => {
+    notLearned([
+      'password: db-password-v2',
+      'API_TOKEN=postgresql-password-2',
+      'password: x7k2q9-m4b8z1-r5v3n6',
+    ])
+  })
+
+  it('an encrypted-property wrapper is never learned', () => {
+    notLearned([
+      'db.password=ENC(Xq9mK2pLzRvNw7Ab)',
+      'password: ENC[AES256_GCM,data:Wb4nR8tLq2XzKm==,iv:Qx7mKpL9zRvNwTyB4hJ2aa==,type:str]',
+      'DB_PASS: "ENC[Wb4nR8tLq2XzKmQx7mKp]"',
+      // The scanner reads `password: '...'` by its own rule; DB_PASS only the key rule.
+      "DB_PASS: '{cipher}AQBx7mKpL9zRvNwTyB4hJ2'",
+    ])
+  })
+
+  it('an AWS resource name, KMS ciphertext or a Sealed Secret is never learned', () => {
+    notLearned([
+      'EncryptionKey: arn:aws:kms:eu-west-1:123456789012:key/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d',
+      'signingKey: "arn:aws:kms:us-east-1:123456789012:alias/Xq9mK2pLzRvNw7"',
+      'DB_PASS: AQICAHhXq9mK2pLzRvNw7Ab3cD5fG6hJ0kQ8nB3x7Kq9LmZ2vRt4WpQ8nB3==',
+      'DB_PASS: AQICAHjWb4nR8tLq2XzKmQx7mKpL9zRvNwTyB4hJ2aaPz6vT1yHq8LmNc',
+      'encryptedData:\n  DB_PASS: AgBx7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3',
+    ])
+  })
+
+  it('Mule secure properties and a lowercase enc(...) are encrypted values, never learned', () => {
+    notLearned(['DB_PASS: "![Xq9mK2pLzRvNw7AbQx7mKpL9z]"', 'DB_PASS=enc(Xq9mK2pLzRvNw7AbQx7mKp)'])
+  })
+
+  it('a bare secret key names a resource, not a secret; SECRET_KEY is one', () => {
+    for (const text of ['secret: release-build-2026-x9Qz7', 'SECRET=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+    for (const text of ['SECRET_KEY=Xq9mK2pLzRvNw7', 'APP_SECRET=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, ['Xq9mK2pLzRvNw7']])
+    }
+  })
+
+  it('a bare PWD is the working directory, not a password; DB_PWD is one', () => {
+    for (const text of ['PWD=/srv/app/releases/20261105T1200Z', 'PWD=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+    const known = new Destroyed()
+    applyMap('DB_PWD=Xq9mK2pLzRvNw7', {}, undefined, { known })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+  })
+
+  it('a value holding a redaction token is never learned: the key inside it keeps one token', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const text = `GITHUB_TOKEN=${ghp}&x=1`
+    const known = new Destroyed()
+    // The whole value goes (what follows can be another credential); the
+    // slot keeps the finding's own token.
+    expect(applyMap(text, {}, undefined, { known })).toBe(
+      'GITHUB_TOKEN=__REDACTED_CREDENTIAL_1001__'
+    )
+    expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(destroyedValues([text]).some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(applyMap(`echo ${ghp}`, {}, undefined, { known })).toBe(
+      'echo __REDACTED_CREDENTIAL_1001__'
+    )
+  })
+
+  // Review of fe21d7e: what follows a token in the same value is removed with
+  // it, and a clean literal beside a token is still learned.
+  it('a credential after a token in the same value is never sent as written', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `https://h/cb?access_token=${ghp}&client_secret=Kq9xQ2LmZ7vRt4Wp`,
+      `SECRET_TOKENS=${ghp},Kq9xQ2LmZ7vRt4Wp`,
+      `TOKEN_LIST=${ghp};Kq9xQ2LmZ7vRt4Wp`,
+    ]) {
+      const out = applyMap(text, {}, undefined, { known: new Destroyed() })
+      expect([text, out.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, false])
+    }
+  })
+
+  it('a clean credential after a token in the same value is learned, and its slot is a fresh token', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `API_TOKEN=${ghp},Kq9xQ2LmZ7vRt4Wp`,
+      `https://h/cb?access_token=${ghp}&client_secret=Kq9xQ2LmZ7vRt4Wp`,
+    ]) {
+      const known = new Destroyed()
+      const out = applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, true])
+      // Two secrets went: the slot does not read as the ghp key alone.
+      const ghpToken = applyMap(`echo ${ghp}`, {}, undefined, { known }).slice('echo '.length)
+      expect([text, out.endsWith(`=${ghpToken}`)]).toEqual([text, false])
+      expect(applyMap('later: Kq9xQ2LmZ7vRt4Wp', {}, undefined, { known })).not.toContain('Kq9x')
+    }
+  })
+
+  // Review of 0742bd9: a part under its own key that names no secret is no
+  // credential - the hostname, the build, the commit beside a password.
+  it("a value's parts under keys that name no secret are not learned", () => {
+    for (const [text, companion] of [
+      [
+        'DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp;Host=pg-main-02.eu-west-1.rds;Port=5432',
+        'pg-main-02.eu-west-1.rds',
+      ],
+      [
+        'password=Kq9xQ2LmZ7vRt4Wp&build=Build2024x9Q&commit=a1b2c3d4e5f6a7b8c9d0',
+        'a1b2c3d4e5f6a7b8c9d0',
+      ],
+      ['api_key=Kq9xQ2LmZ7vRt4Wp&sessionId=Usr_7Kx92Lm4', 'Usr_7Kx92Lm4'],
+    ] as const) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes(companion)]).toEqual([text, false])
+      expect(applyMap(`later ${companion}`, {}, undefined, { known })).toBe(`later ${companion}`)
+    }
+  })
+
+  it('a clean literal beside a token in the same value is learned', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    for (const text of [
+      `DB_PASSWORD=Kq9xQ2LmZ7vRt4Wp,${ghp}`,
+      `access_token=Kq9xQ2LmZ7vRt4Wp&next=${ghp}`,
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values.includes('Kq9xQ2LmZ7vRt4Wp')]).toEqual([text, true])
+      expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    }
+  })
+
+  it('a cursor, a sync or an idempotency token is no secret; a client secret is', () => {
+    for (const key of [
+      'PaginationToken',
+      'syncToken',
+      'resumeToken',
+      'idempotencyToken',
+      'cancellationToken',
+      'changeToken',
+      'cursorToken',
+      'StartingToken',
+      'skipToken',
+      'deltaToken',
+      'pagingToken',
+      'resumptionToken',
+      'afterToken',
+      'scrollToken',
+      'lockToken',
+      'etagToken',
+      'previousToken',
+      'prevToken',
+      'continueToken',
+      'requestToken',
+    ]) {
+      const known = new Destroyed()
+      applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
+      expect([key, known.values]).toEqual([key, []])
+    }
+    // A secret the scanner does not read by its key either: only a token
+    // after these words is refused.
+    // A client token is a credential (HashiCorp Vault's client_token).
+    for (const key of [
+      'client_secret',
+      'client_pass',
+      'changePass',
+      'syncPassphrase',
+      'client_token',
+      'ClientToken',
+    ]) {
+      const known = new Destroyed()
+      applyMap(`{"${key}": "Xk9mQ2vL7ZpQw"}`, {}, undefined, { known })
+      expect([key, known.values]).toEqual([key, ['Xk9mQ2vL7ZpQw']])
+    }
+  })
+
+  it("a slot whose short part is too weak to learn takes the whole value's token", () => {
+    const known = new Destroyed()
+    const out = applyMap('api_key=ab,Xq9mK2pLzRvNw7 and ab,Xq9mK2pLzRvNw7', {}, undefined, {
+      known,
+    })
+    // The strong part is learned on its own too, so it is swept wherever it stands.
+    expect(known.values).toEqual(['ab,Xq9mK2pLzRvNw7', 'Xq9mK2pLzRvNw7'])
+    expect(out).toBe('api_key=__REDACTED_CREDENTIAL_1001__ and __REDACTED_CREDENTIAL_1001__')
+  })
+
+  it('in a code file only a quoted value is learned: a configuration line there is code', () => {
+    for (const text of [
+      '    self.secret_key = Xq9mK2pLzRvNw7',
+      '    access_token = response_json_v2Xq9',
+      'this.apiKey = Xq9mK2pLzRvNw7',
+      'DB_PASSWORD=Xq9mK2pLzRvNw7',
+    ]) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known, code: true })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text], {}, undefined, undefined, { code: true })]).toEqual([
+        text,
+        [],
+      ])
+    }
+    const known = new Destroyed()
+    applyMap('    api_key = "Xq9mK2pLzRvNw7"', {}, undefined, { known, code: true })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+    // The same line outside code is a configuration line.
+    expect(destroyedValues(['    self.secret_key = Xq9mK2pLzRvNw7'])).toEqual(['Xq9mK2pLzRvNw7'])
+  })
+
+  it('a value under a credential-named key too long to sweep is redacted in place, never thrown on', () => {
+    const value = 'Xk9mQ2vL7Zp'.repeat(1_600)
+    expect(value.length).toBeGreaterThan(16_384)
+    const known = new Destroyed()
+    const out = applyMap(`DB_PASSWORD=${value}\n`, {}, undefined, { known })
+    expect(out).toBe('DB_PASSWORD=__REDACTED_CREDENTIAL_1001__\n')
+    expect(known.values).toEqual([])
+    expect(destroyedValues([`DB_PASSWORD=${value}`])).toEqual([])
+  })
+
+  it('in code, a quoted value under a secret key is learned; an unquoted one never is', () => {
+    const ts = { ...NO_CONTEXT, language: 'typescript' as const }
+    for (const ctx of [undefined, ts]) {
+      const known = new Destroyed()
+      applyMap('const sessionToken = "Xk9mQ2vL7ZpQw"', {}, ctx, { known })
+      expect(known.values).toEqual(['Xk9mQ2vL7ZpQw'])
+      for (const text of [
+        // An unquoted value of a code assignment is code (`rotateKeyV2`).
+        'const password = xQ7zW2vR9tY4pLmN;',
+        'const passKey = rotateKeyV2Xq9;',
+        'const token = `user-${id}-v2x9Qz7`',
+        'if (authMode === "oauth2-pkce-v2Xq9") {}',
+      ]) {
+        const none = new Destroyed()
+        applyMap(text, {}, ctx, { known: none })
+        expect([text, none.values]).toEqual([text, []])
+        expect([text, destroyedValues([text])]).toEqual([text, []])
+      }
+    }
+  })
+
+  it('an unquoted pair is learned without what follows it in a URL or a connection string', () => {
+    for (const [text, core] of [
+      ['GET /cb?access_token=Pq7rT2wZx9Lm&state=1', 'Pq7rT2wZx9Lm'],
+      ['Server=db;Password=Rv5kW9qLz3Xn;Database=app', 'Rv5kW9qLz3Xn'],
+      ['opts api_key=Hb2nV6xKq8Zr,retry=3', 'Hb2nV6xKq8Zr'],
+    ]) {
+      const known = new Destroyed()
+      const out = applyMap(text!, {}, undefined, { known })
+      expect(out).not.toContain(core)
+      expect(known.values).toContain(core)
+      expect(applyMap(`token ${core} again`, {}, undefined, { known })).not.toContain(core)
+      expect(destroyedValues([text!])).toContain(core)
+    }
+  })
+
+  it('a value under a secret key that holds a redaction token is never learned', () => {
+    // The provider key inside it is learned by its own rule; what is left
+    // around its token fails the scanner's bar, so no check of its own.
+    const text = `DB_PASSWORD="xQ7zW2vR9t${STRIPE}"`
+    const known = new Destroyed()
+    expect(applyMap(text, {}, undefined, { known })).not.toContain('xQ7zW2vR9t')
+    expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(destroyedValues([text]).some((v) => v.includes('__REDACTED_'))).toBe(false)
+  })
+
+  it('a value under a credential-named key that the map holds as a name is never learned', () => {
+    const known = new Destroyed()
+    const map = { __VAR__1: 'xQ7zW2vR9tY4pLmN' }
+    expect(applyMap('DB_PASSWORD=xQ7zW2vR9tY4pLmN', map, undefined, { known })).toBe(
+      'DB_PASSWORD=__VAR__1'
+    )
+    expect(known.values).toEqual([])
+    expect(destroyedValues(['DB_PASSWORD=xQ7zW2vR9tY4pLmN'], map)).toEqual([])
+  })
+
+  it('a value under a credential-named key in one string of a result is swept from the others', () => {
+    const texts = ['DB_PASSWORD=xQ7zW2vR9tY4pLmN', 'rotated xQ7zW2vR9tY4pLmN today']
+    const known = new Destroyed()
+    known.learn(destroyedValues(texts))
+    expect(redactKnown(texts[1]!, known)).toBe('rotated __REDACTED_CREDENTIAL_1001__ today')
+    // The token the pass over the first string gives it is the same one.
+    expect(applyMap(texts[0]!, {}, undefined, { known, swept: true })).toBe(
+      'DB_PASSWORD=__REDACTED_CREDENTIAL_1001__'
+    )
+    expect(destroyedValues(['DB_PASSWORD=sunshine2026'])).toEqual([])
   })
 })
 
