@@ -249,3 +249,38 @@ describe('a credential value is a secret under redact (security review)', () => 
     expect(restore(r.anonymized, r.map).restored).toBe(code)
   })
 })
+
+// Guard work queue e72: the guard learns a value for the session only from
+// the key the engine matched and the grammar that found it.
+describe('a credential value says which key and which grammar found it', () => {
+  const first = (text: string, scan = {}) => {
+    const [span] = credentialsAmong(valueSpans(text, scan))
+    return span && { value: span.value, key: span.key, quoted: span.quoted, grammar: span.grammar }
+  }
+  it.each([
+    ['DB_PASSWORD=xQ7zW2vR9t', 'xQ7zW2vR9t', 'DB_PASSWORD', false, 'env'],
+    ['export API_TOKEN="x9Kq2LmZ7v"', 'x9Kq2LmZ7v', 'API_TOKEN', true, 'string'],
+    ['{"secretKey": "Zq8vB3nM1k"}', 'Zq8vB3nM1k', 'secretKey', true, 'string'],
+    ['password: Tq7wLz2Rk9', 'Tq7wLz2Rk9', 'password', false, 'ini'],
+    ['- name: DB_PASSWORD\n  value: Hn4xQ8zLw2', 'Hn4xQ8zLw2', 'DB_PASSWORD', false, 'k8s'],
+    ['db_password:\n  Rv5kW9qLz3\n', 'Rv5kW9qLz3', 'db_password', false, 'yaml'],
+    ['<password>Wm3pX7rQk2</password>', 'Wm3pX7rQk2', 'password', false, 'xml'],
+    ['const password = rotateKeyV2;', 'rotateKeyV2;', 'password', false, 'net'],
+    [
+      'curl https://h/cb?access_token=Pq7rT2wZx9&state=1',
+      'Pq7rT2wZx9&state=1',
+      'access_token',
+      false,
+      'pair',
+    ],
+    ['Server=db;Password=Rv5kW9qLz3;', 'Rv5kW9qLz3;', 'Password', false, 'pair'],
+    ['DB_PASSWORD="${DB_PASSWORD_V2}"', '${DB_PASSWORD_V2}', 'DB_PASSWORD', true, 'string'],
+    ['host:5432:db:app:Wm3pX7rQk2Zt', 'Wm3pX7rQk2Zt', 'password', false, 'pgpass'],
+  ])('%s', (text, value, key, quoted, grammar) => {
+    expect(first(text)).toEqual({ value, key, quoted, grammar })
+  })
+  it('a value no credential key names carries no key', () => {
+    const [span] = valueSpans('color = "blue"')
+    expect(span).toEqual({ start: 9, end: 13, value: 'blue', credential: false, path: false })
+  })
+})

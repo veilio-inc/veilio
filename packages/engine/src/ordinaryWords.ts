@@ -234,7 +234,20 @@ export interface ValueSpan {
   /** A bare name after a credential key in code (`password = sunshine`):
    *  perhaps a variable, so masked reversibly, never removed. */
   bare?: boolean
+  /** The key that makes it a credential's value, as written: for a k8s env
+   *  entry's `value:`, the `name:` it belongs to. */
+  key?: string
+  /** Written in quotes. */
+  quoted?: boolean
+  /** The grammar that found it: a quoted string, a configuration line
+   *  (`env`, `ini`, `shell`, `yaml`, `k8s`, `xml`, `pgpass`, a pair `inner`
+   *  to another value, a `KEY=value` written tight in prose, a URL or a
+   *  connection string `pair`), or a guess at code or prose (`bare`, `net`). */
+  grammar?: ValueSpanGrammar
 }
+
+export type ValueSpanGrammar =
+  'string' | 'env' | 'ini' | 'shell' | 'yaml' | 'k8s' | 'xml' | 'pgpass' | 'inner' | 'bare' | 'net'
 
 export interface ValueScan {
   /** String literals, as the tokenizer found them: contents only. Absent:
@@ -266,7 +279,7 @@ function keyword(word: string, language: Language | undefined): boolean {
  *  most 256 characters back on its line (`password: Optional[str] = `,
  *  `define('DB_PASSWORD', `, `secrets = Map.of("k", `). A comma ends the
  *  search only where a new pair starts after it (`"pass": "x", "color": `). */
-function credentialBefore(text: string, at: number, language: Language | undefined): boolean {
+function credentialBefore(text: string, at: number, language: Language | undefined): string | null {
   // A C# property's accessors stand between its name and its value.
   let prefix = lineBefore(text, at).replace(ACCESSORS, ' ')
   const statement = Math.max(
@@ -284,13 +297,13 @@ function credentialBefore(text: string, at: number, language: Language | undefin
   // A call's first argument is keyed by the call: `setPassword("...")` is,
   // `os.getenv("SECRET_KEY")` looks a name up.
   const call = /([A-Za-z_$][\w$]*)[ \t]*\([ \t]*$/.exec(prefix)
-  if (call) return CREDENTIAL.test(call[1]!) && !keyword(call[1]!, language)
+  if (call) return CREDENTIAL.test(call[1]!) && !keyword(call[1]!, language) ? call[1]! : null
   // In a tag, `key="..."` names the entry (`<add key="Theme" value="dark"/>`).
-  if (/<[\w.:-]+(?:\s[^<>]*)?\s(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix)) return false
-  for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return true
+  if (/<[\w.:-]+(?:\s[^<>]*)?\s(?:key|name|id)[ \t]*=[ \t]*$/i.test(prefix)) return null
+  for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return m[1]!
   for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
-    if (CREDENTIAL.test(t) && !keyword(t, language)) return true
-  return false
+    if (CREDENTIAL.test(t) && !keyword(t, language)) return t
+  return null
 }
 const STRING = /(["'`])[^"'`]*\1/g
 const ACCESSORS = /\{\s*(?:get|set|init)\b[^{}]*\}/g
@@ -465,11 +478,29 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
   // In code an unquoted call or member access reads a value; never elsewhere.
   const calls = kind === 'code'
   // Under a credential key a value is never a readable path.
-  const add = (start: number, end: number, keyed: boolean, quoted: boolean, module = false) => {
+  const add = (
+    start: number,
+    end: number,
+    key: string | null,
+    quoted: boolean,
+    grammar: ValueSpanGrammar,
+    module = false
+  ) => {
     const value = text.slice(start, end)
+    const keyed = key !== null
     const credential = keyed && secretShaped(value, quoted, calls)
-    out.push({ start, end, value, credential, path: !keyed && (module || PATH.test(value)) })
+    const span: ValueSpan = {
+      start,
+      end,
+      value,
+      credential,
+      path: !keyed && (module || PATH.test(value)),
+    }
+    if (keyed) Object.assign(span, { key, quoted, grammar })
+    out.push(span)
   }
+  const named = (key: string | undefined) =>
+    key !== undefined && CREDENTIAL.test(key) ? key : null
   const strings: readonly { start: number; end: number; module?: boolean }[] =
     scan.strings ??
     [...text.matchAll(QUOTED)].map((m) => ({
@@ -480,33 +511,39 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     // A module is a path; a shell's backticks run a command.
     const shell = kind === 'shell' || kind === 'dotenv'
     const command = shell && (text[s.start - 1] === '`' || inCommand(text, s.start))
-    const keyed = !s.module && !command && credentialBefore(text, s.start - 1, scan.language)
-    add(s.start, s.end, keyed, true, s.module)
+    const key = s.module || command ? null : credentialBefore(text, s.start - 1, scan.language)
+    add(s.start, s.end, key, true, 'string', s.module)
   }
 
   const any = kind === undefined
   // In text of no known kind a line holds several pairs: `,` and `;` end one.
   const end = any ? /[,;]/ : null
-  const line = (re: RegExp, key: number, value: number, comment: RegExp | null) => {
+  const line = (
+    re: RegExp,
+    key: number,
+    value: number,
+    comment: RegExp | null,
+    grammar: ValueSpanGrammar
+  ) => {
     for (const m of text.matchAll(re)) {
       const raw = m[value]
       if (raw === undefined) continue
       const at = m.indices![value]![0]
       const v = trimmed(raw, at, comment, false, end)
-      if (v) add(v.start, v.end, key > 0 && CREDENTIAL.test(m[key]!), v.quoted)
+      if (v) add(v.start, v.end, key > 0 ? named(m[key]) : null, v.quoted, grammar)
     }
   }
   // A config file written in its neighbour's syntax keeps its values too: a
   // `key: value` in a dotenv file, a `KEY=value` in YAML.
-  if (any || kind === 'dotenv' || kind === 'yaml') line(ENV_LINE, 1, 2, HASH)
-  if (any || kind === 'ini' || kind === 'dotenv') line(INI_LINE, 1, 2, HASH_OR_SEMICOLON)
+  if (any || kind === 'dotenv' || kind === 'yaml') line(ENV_LINE, 1, 2, HASH, 'env')
+  if (any || kind === 'ini' || kind === 'dotenv') line(INI_LINE, 1, 2, HASH_OR_SEMICOLON, 'ini')
   if (any || kind === 'shell') {
-    line(SHELL_PAIR, 1, 2, null)
-    line(DOCKER_ENV, 1, 2, HASH)
+    line(SHELL_PAIR, 1, 2, null, 'shell')
+    line(DOCKER_ENV, 1, 2, HASH, 'shell')
   }
   if (any || kind === 'yaml') {
     // A list item is a value; a `KEY=value` in it is found as a pair inside.
-    line(YAML_ITEM, 0, 1, HASH)
+    line(YAML_ITEM, 0, 1, HASH, 'yaml')
     // A key with nothing after it may have its value on the line below; a
     // k8s env entry's `value:` belongs to the `name:` above it.
     let previous: { indent: number; key: string; value: string } | null = null
@@ -515,12 +552,13 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       keys.add(m.index!)
       const indent = m[1]!.length
       const key = m[2]!
-      const named = previous && /^value$/i.test(key) && /^name$/i.test(previous.key)
-      const credential =
-        CREDENTIAL.test(key) || (named === true && CREDENTIAL.test(previous!.value))
+      const entry = previous && /^value$/i.test(key) && /^name$/i.test(previous.key)
+      const k8s = !CREDENTIAL.test(key) && entry === true ? named(previous!.value) : null
+      const credential = k8s ?? named(key)
+      const grammar = k8s === null ? 'yaml' : 'k8s'
       const raw = m[3] ?? ''
       const v = trimmed(raw, m.indices![3]?.[0] ?? m.index! + m[0].length, HASH, true, end)
-      if (v) add(v.start, v.end, credential, v.quoted)
+      if (v) add(v.start, v.end, credential, v.quoted, grammar)
       else {
         const next = m.index! + m[0].length + 1
         const nl = text.indexOf('\n', next)
@@ -528,7 +566,7 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
         const lead = below.length - below.trimStart().length
         if (lead > indent && !/^[ \t]*(?:-|#|[^\s:]+:(?:\s|$))/.test(below)) {
           const w = trimmed(below, next, HASH, true)
-          if (w) add(w.start, w.end, credential, w.quoted)
+          if (w) add(w.start, w.end, credential, w.quoted, grammar)
         }
       }
       previous = { indent, key, value: v ? text.slice(v.start, v.end) : '' }
@@ -539,7 +577,7 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       for (const m of text.matchAll(YAML_SCALAR)) {
         if (keys.has(m.index!)) continue
         const v = trimmed(m[1]!, m.indices![1]![0], HASH, true)
-        if (v) add(v.start, v.end, false, v.quoted)
+        if (v) add(v.start, v.end, null, v.quoted, 'yaml')
       }
   }
   // Element text, in every kind: XML embedded in code, JSX.
@@ -548,9 +586,9 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       const [s] = m.indices![3]!
       const v = trimmed(m[3]!, s, null)
       if (!v) continue
-      let credential = CREDENTIAL.test(m[1]!)
-      for (const a of m[2]!.matchAll(XML_KEY_ATTR)) credential ||= CREDENTIAL.test(a[1]!)
-      add(v.start, v.end, credential, false)
+      let credential = named(m[1])
+      for (const a of m[2]!.matchAll(XML_KEY_ATTR)) credential ??= named(a[1])
+      add(v.start, v.end, credential, false, 'xml')
     }
   }
   // A bare name after a credential key, in text of no known kind.
@@ -560,7 +598,8 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       const value = m[2]!
       if (!CREDENTIAL.test(m[1]!) || !secretShaped(value, false) || keyword(value, scan.language))
         continue
-      out.push({ start: s, end: e, value, credential: true, path: false, bare: true })
+      const span: ValueSpan = { start: s, end: e, value, credential: true, path: false, bare: true }
+      out.push(Object.assign(span, { key: m[1]!, quoted: false, grammar: 'bare' as const }))
     }
   }
   if (kind !== 'code' || scan.net) {
@@ -586,21 +625,24 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       const value = text.slice(s, e)
       covered = e
       if (netExempt(value, calls, scan.language)) continue
-      out.push({ start: s, end: e, value, credential: true, path: false })
+      const quoted = /["'`]$/.test(sep)
+      const span: ValueSpan = { start: s, end: e, value, credential: true, path: false }
+      // `KEY=value` written tight is a pair (a URL's query, a connection
+      // string); with spaces around it, perhaps an assignment in code.
+      const grammar = /^[=:]$/.test(sep) ? ('pair' as const) : ('net' as const)
+      out.push(Object.assign(span, { key: k[1]!, quoted, grammar }))
     }
   }
   // `host:port:db:user:password` in text of no kind: a .pgpass line.
   if (kind === undefined || scan.net)
     for (const m of text.matchAll(PGPASS_SHAPE)) {
       const [s, e] = m.indices![1]!
-      if (secretShaped(m[1]!, false))
-        out.push({ start: s, end: e, value: m[1]!, credential: true, path: false })
+      if (secretShaped(m[1]!, false)) out.push(pgpass(s, e, m[1]!))
     }
   if (kind === 'pgpass')
     for (const m of text.matchAll(PGPASS_LINE)) {
       const [s, e] = m.indices![1]!
-      if (!netExempt(m[1]!, false, scan.language))
-        out.push({ start: s, end: e, value: m[1]!, credential: true, path: false })
+      if (!netExempt(m[1]!, false, scan.language)) out.push(pgpass(s, e, m[1]!))
     }
   // Pairs inside every value found so far.
   for (const span of out.slice()) {
@@ -608,7 +650,7 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     for (const m of span.value.matchAll(INNER)) {
       if (!CREDENTIAL.test(m[1]!)) continue
       const [s, e] = m.indices![2]!
-      add(span.start + s, span.start + e, true, false)
+      add(span.start + s, span.start + e, m[1]!, false, 'inner')
     }
   }
   // A value written as one wins over the same text read as a bare name.
@@ -616,6 +658,18 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     (a, b) => a.start - b.start || b.end - a.end || Number(!!a.bare) - Number(!!b.bare)
   )
 }
+
+// A .pgpass line's last field is its password.
+const pgpass = (start: number, end: number, value: string): ValueSpan => ({
+  start,
+  end,
+  value,
+  credential: true,
+  path: false,
+  key: 'password',
+  quoted: false,
+  grammar: 'pgpass',
+})
 
 const BARE =
   /(?<![\w$.-])["'`]?([A-Za-z_$][\w$.-]{0,100})["'`]?\]?[ \t]*(?:=>|:=|=(?![=~>])|:(?!:))[ \t]*([A-Za-z_$][\w$]{0,255})(?=[ \t]*(?:[,;})\]#<]|\/\/|\r?$))/dgm
