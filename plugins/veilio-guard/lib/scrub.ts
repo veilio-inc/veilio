@@ -1046,16 +1046,21 @@ function keyedOf(text: string, scan: ScanResult, map: SymbolMap, known: Destroye
 
 /** Spec 074 pass 2: the key rule over one file's run of search lines, read
  *  as that file's own text (`code`: a file of a known language), so a key on
- *  one line and its value on the next are one span. Only each key-rule value
- *  is replaced, where it stands, under its own token as a search line's is;
- *  the scanner's findings are left to the per-line masking that follows.
- *  `learned`: the values CE #204's rules carry forward (keyedParts). */
+ *  one line and its value on the next are one span. A key-rule value whose
+ *  key is not on its line is replaced where it stands, under its own token as
+ *  a search line's is; one whose key is on its line is left to the per-line
+ *  masking, which reads that line as main does (replaced here, the line would
+ *  be read again differently), unless `everywhere` (the key is the file's
+ *  name). The scanner's findings are left to the per-line masking too.
+ *  `learned`: the values CE #204's rules carry forward (keyedParts), from
+ *  every span. */
 export function keyedRun(
   text: string,
   map: SymbolMap,
   known: Destroyed,
   code: boolean,
-  fileKind?: FileKind
+  fileKind?: FileKind,
+  everywhere = false
 ): { text: string; learned: string[] } {
   const scan = scanSecrets(text, 'redact', fileKind ? { fileKind } : {})
   const cuts: Cut[] = []
@@ -1084,6 +1089,8 @@ export function keyedRun(
     const from = original(span.start, false)
     if (from < at) continue
     learned.push(...keyedParts(span, code).learned)
+    const line = text.slice(text.lastIndexOf('\n', from - 1) + 1, from)
+    if (!everywhere && span.key !== undefined && line.includes(span.key)) continue
     out += text.slice(at, from) + known.tokenFor(span.value)
     at = original(span.end, true)
   }

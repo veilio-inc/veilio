@@ -1246,19 +1246,29 @@ describe('keyedRun', () => {
     expect(r.text).toBe('  - name: DB_PASSWORD\n    value: __REDACTED_CREDENTIAL_1001__')
     expect(r.learned).toEqual(['qx7mkplzrvnwtyb'])
   })
-  it('in a code file an unquoted value is replaced, never learned; a quoted one is learned', () => {
+  // The value of a key on its own line is the per-line masking's, as on main:
+  // replaced here it would be read again, differently (half a template).
+  it('a value whose key is on its own line is left in place, and still learned', () => {
+    const r = keyedRun('db:\n  password: xk9mq2vl7zpqwr', {}, new Destroyed(), false)
+    expect(r.text).toBe('db:\n  password: xk9mq2vl7zpqwr')
+    expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
+  })
+  it("everywhere: a value is replaced on its key's line too (a file named for its key)", () => {
+    const r = keyedRun('db_password: hunter2hunter2', {}, new Destroyed(), false, undefined, true)
+    expect(r.text).toBe('db_password: __REDACTED_CREDENTIAL_1001__')
+  })
+  it('in a code file an unquoted value is never learned; a quoted one is', () => {
     const r = keyedRun(
       '    self.secret_key = rotatekeyv2xq9\n    session_token = "xk9mq2vl7zpqwr"',
       {},
       new Destroyed(),
       true
     )
-    expect(r.text).not.toContain('rotatekeyv2xq9')
     expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
   })
-  it('a weak value is replaced where it stands and not learned (decision #5)', () => {
-    const r = keyedRun('password: sunshine2026', {}, new Destroyed(), false)
-    expect(r.text).toBe('password: __REDACTED_CREDENTIAL_1001__')
+  it('a weak value is replaced and not learned (decision #5)', () => {
+    const r = keyedRun('x: 1\npassword:\n  sunshine2026', {}, new Destroyed(), false)
+    expect(r.text).toBe('x: 1\npassword:\n  __REDACTED_CREDENTIAL_1001__')
     expect(r.learned).toEqual([])
   })
   it("references, encrypted values, ARNs, variables' names and kebab names are not learned", () => {
@@ -1273,22 +1283,29 @@ describe('keyedRun', () => {
   })
   it("only the key rule's values are replaced: a scanner finding outside one is left to the line masking", () => {
     const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
-    const r = keyedRun(`note: ${gh}\npassword: qx7mkplzrvnwtyb`, {}, new Destroyed(), false)
+    const r = keyedRun(`note: ${gh}\npassword:\n  qx7mkplzrvnwtyb`, {}, new Destroyed(), false)
     expect(r.text.split('\n')[0]).toBe(`note: ${gh}`)
-    expect(r.text.split('\n')[1]).toMatch(/^password: __REDACTED_CREDENTIAL_\d+__$/)
+    expect(r.text.split('\n')[2]).toMatch(/^ {2}__REDACTED_CREDENTIAL_\d+__$/)
   })
   it('a value holding a finding is replaced whole, from where the finding stood', () => {
     const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
-    const r = keyedRun(`x: 1\nGITHUB_TOKEN=${gh}&x=1\ny: 2`, {}, new Destroyed(), false)
+    const r = keyedRun(
+      `x: 1\nGITHUB_TOKEN=${gh}&x=1\ny: 2`,
+      {},
+      new Destroyed(),
+      false,
+      undefined,
+      true
+    )
     expect(r.text).toMatch(/^x: 1\nGITHUB_TOKEN=__REDACTED_CREDENTIAL_\d+__\ny: 2$/)
   })
   it('a name the map holds is not a credential to remove', () => {
     const r = keyedRun(
-      'password: settledTotal',
+      'password:\n  settledTotal',
       { __VAR__1: 'settledTotal' },
       new Destroyed(),
       false
     )
-    expect(r.text).toBe('password: settledTotal')
+    expect(r.text).toBe('password:\n  settledTotal')
   })
 })

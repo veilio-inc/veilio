@@ -1329,7 +1329,8 @@ export class Guard {
           this.map,
           this.destroyed,
           isCode(run.path),
-          fileKindOf(run.path)
+          fileKindOf(run.path),
+          bare
         )
         learned.push(...r.learned)
         const back = r.text.split('\n')
