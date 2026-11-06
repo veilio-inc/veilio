@@ -1046,12 +1046,16 @@ function keyedOf(text: string, scan: ScanResult, map: SymbolMap, known: Destroye
 
 /** Spec 074 pass 2: the key rule over one file's run of search lines, read
  *  as that file's own text (`code`: a file of a known language), so a key on
- *  one line and its value on the next are one span. A key-rule value whose
- *  key is not on its line is replaced where it stands, under its own token as
- *  a search line's is; one whose key is on its line is left to the per-line
- *  masking, which reads that line as main does (replaced here, the line would
- *  be read again differently), unless `everywhere` (the key is the file's
- *  name). The scanner's findings are left to the per-line masking too.
+ *  one line and its value on the next are one span. Each key-rule value is
+ *  replaced where it stands, under its own token as a search line's is,
+ *  except one the per-line masking reads itself: on one line, and found by
+ *  the key rule on that line as printed (`prefixes`: each line's search
+ *  prefix) at the same place with the same value - replaced here, the line
+ *  would be read again differently. Where the line as printed reads an
+ *  overlapping value another way, the two together are replaced, so neither
+ *  reading shows a part the other hides. `everywhere` (the key is the
+ *  file's name) replaces every value. The scanner's findings are left to the
+ *  per-line masking.
  *  `learned`: the values CE #204's rules carry forward (keyedParts), from
  *  every span. */
 export function keyedRun(
@@ -1060,7 +1064,8 @@ export function keyedRun(
   known: Destroyed,
   code: boolean,
   fileKind?: FileKind,
-  everywhere = false
+  everywhere = false,
+  prefixes: readonly string[] = []
 ): { text: string; learned: string[] } {
   const scan = scanSecrets(text, 'redact', fileKind ? { fileKind } : {})
   const cuts: Cut[] = []
@@ -1082,6 +1087,28 @@ export function keyedRun(
     }
     return pos + delta
   }
+  const starts = lineStarts(text)
+  /** What to replace for [from, to): null when the per-line masking finds
+   *  that very span itself (security review of bafafe8: by place and value,
+   *  never by the key's text on the line); else it, widened over every span
+   *  the line as printed reads overlapping it. */
+  const extent = (from: number, to: number): [number, number] | null => {
+    const value = text.slice(from, to)
+    if (value.includes('\n')) return [from, to]
+    let n = starts.length - 1
+    while (starts[n]! > from) n--
+    const start = starts[n]!
+    const end = text.indexOf('\n', start)
+    const prefix = prefixes[n] ?? ''
+    const body = text.slice(start, end === -1 ? undefined : end)
+    let [a, b] = [from, to]
+    for (const s of credentialsAmong(valueSpans(prefix + body))) {
+      const [sa, sb] = [start + Math.max(0, s.start - prefix.length), start + s.end - prefix.length]
+      if (sa === from && s.value === value) return null
+      if (sa < to && sb > from) [a, b] = [Math.min(a, sa), Math.max(b, sb)]
+    }
+    return [a, b]
+  }
   const learned: string[] = []
   let out = ''
   let at = 0
@@ -1089,10 +1116,11 @@ export function keyedRun(
     const from = original(span.start, false)
     if (from < at) continue
     learned.push(...keyedParts(span, code).learned)
-    const line = text.slice(text.lastIndexOf('\n', from - 1) + 1, from)
-    if (!everywhere && span.key !== undefined && line.includes(span.key)) continue
-    out += text.slice(at, from) + known.tokenFor(span.value)
-    at = original(span.end, true)
+    const to = original(span.end, true)
+    const cut: [number, number] | null = everywhere ? [from, to] : extent(from, to)
+    if (!cut) continue
+    out += text.slice(at, Math.max(at, cut[0])) + known.tokenFor(span.value)
+    at = Math.max(at, cut[1])
   }
   return { text: out + text.slice(at), learned }
 }

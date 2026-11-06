@@ -1253,6 +1253,67 @@ describe('keyedRun', () => {
     expect(r.text).toBe('db:\n  password: xk9mq2vl7zpqwr')
     expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
   })
+  // Security review of bafafe8: left only where the per-line masking reads
+  // the same span - same place, same value - never because the key's text
+  // happens to be on the line.
+  it('a value that runs onto the next line is replaced, its key on the first line', () => {
+    const r = keyedRun(
+      '<password>xk9mq2vl7zpqwr\nwb4nr8tlq2xzkm</password>',
+      {},
+      new Destroyed(),
+      false
+    )
+    expect(r.text).toBe('<password>__REDACTED_CREDENTIAL_1001__</password>')
+  })
+  it("a line holding the key's text in a comment, its real key a line above: replaced", () => {
+    const r = keyedRun(
+      '  - name: DB_PASSWORD\n    value: qx7mkplzrvnwtyb # DB_PASSWORD',
+      {},
+      new Destroyed(),
+      false,
+      'yaml'
+    )
+    expect(r.text).toBe(
+      '  - name: DB_PASSWORD\n    value: __REDACTED_CREDENTIAL_1001__ # DB_PASSWORD'
+    )
+  })
+  it("the key's text in a comment before the value, its real key a line above: never shown", () => {
+    // Here the line read alone gives the same value, so it is the per-line
+    // masking's; together they hide it.
+    const r = keyedRun(
+      '<password>\n<!-- password -->xk9mq2vl7zpqwr</password>',
+      {},
+      new Destroyed(),
+      false
+    )
+    for (const line of r.text.split('\n'))
+      expect(applyMap(line, {})).not.toContain('xk9mq2vl7zpqwr')
+  })
+  it('the line is judged as printed: read another way there, both readings are replaced', () => {
+    const body = "db:\n  password: \"{{ lookup('env', 'DB_PASS') }}\""
+    // Unprefixed, the line reads the run's own value: left to it.
+    expect(keyedRun(body, {}, new Destroyed(), false).text).toBe(body)
+    // Behind its search prefix the line reads `{{ … }}` inside the quotes: the
+    // run's `"{{ lookup('env'` and that together go.
+    const r = keyedRun(body, {}, new Destroyed(), false, undefined, false, [
+      'app.yaml:1:',
+      'app.yaml:2:',
+    ])
+    expect(r.text).toMatch(/^db:\n {2}password: __REDACTED_CREDENTIAL_\d+__"$/)
+  })
+  it('the same place but a shorter value as printed: the whole value is replaced', () => {
+    // Behind its prefix the line reads only `xk9` here; the run reads all three words.
+    const r = keyedRun(
+      'x: 1\npassword: xk9 mq2 vl7',
+      {},
+      new Destroyed(),
+      false,
+      undefined,
+      false,
+      ['a.yaml:1:', 'a.yaml:2:']
+    )
+    expect(r.text).toMatch(/^x: 1\npassword: __REDACTED_CREDENTIAL_\d+__$/)
+  })
   it("everywhere: a value is replaced on its key's line too (a file named for its key)", () => {
     const r = keyedRun('db_password: hunter2hunter2', {}, new Destroyed(), false, undefined, true)
     expect(r.text).toBe('db_password: __REDACTED_CREDENTIAL_1001__')
