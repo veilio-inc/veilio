@@ -165,9 +165,10 @@ function isModuleSpecifierContext(code, quotePos) {
 const URL_SCHEME_BEFORE = /(?<![A-Za-z0-9_$])(?:file|https?|wss?|s?ftps?|ssh|git|svn):$/;
 // After one of these words a `/` opens a regex literal, not a division.
 const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
-/** The end of the regex literal whose `/` is at `at`, or -1 when that `/` is a
- *  division. A `/` after a name, a number, a string, `)` or `]` divides;
- *  anywhere else it opens a regex, which ends on the line it began on.
+/** `[true, end]` for the regex literal whose `/` is at `at`; `[false, -1]` when
+ *  that `/` is a division; `[false, lineEnd]` when no regex closes on the line.
+ *  A `/` after a name, a number, a string, `)` or `]` divides; anywhere else it
+ *  opens a regex, which ends on the line it began on.
  *  shortcut: `)` and `}` are guessed (`if (x) /re/` reads as division, a `/`
  *  after an object literal as a regex); a real parser would know. */
 function regexLiteralEnd(code, at) {
@@ -177,14 +178,17 @@ function regexLiteralEnd(code, at) {
     if (j >= 0 &&
         /[\w$)\]'"`]/.test(code[j]) &&
         !REGEX_AFTER_WORD.test(code.slice(Math.max(0, j - 10), j + 1)))
-        return -1;
+        return [false, -1];
     let inClass = false;
     for (let k = at + 1; k < code.length; k++) {
         const ch = code[k];
         if (ch === '\n' || ch === '\r')
-            return -1;
-        if (ch === '\\')
-            k++;
+            return [false, k];
+        if (ch === '\\') {
+            // Not past a line break: a regex literal never spans lines, escaped or not.
+            if (code[k + 1] !== '\n' && code[k + 1] !== '\r')
+                k++;
+        }
         else if (ch === '[')
             inClass = true;
         else if (ch === ']')
@@ -193,10 +197,10 @@ function regexLiteralEnd(code, at) {
             k++;
             while (k < code.length && /[a-z]/i.test(code[k]))
                 k++;
-            return k;
+            return [true, k];
         }
     }
-    return -1;
+    return [false, code.length];
 }
 /** `regexLiterals`: read a regex literal as code, so a quote or comment opener
  *  inside it starts nothing. Restore asks for it; masking does not, and keeps
@@ -214,6 +218,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, regexLiterals = f
     };
     const startsWithAt = (token, at) => code.startsWith(token, at);
     let i = 0;
+    let noRegexBefore = -1;
     const n = code.length;
     while (i < n) {
         const c = code[i];
@@ -265,13 +270,17 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, regexLiterals = f
             flush(false);
             continue;
         }
-        if (regexLiterals && c === '/') {
-            const end = regexLiteralEnd(code, i);
-            if (end !== -1) {
+        if (regexLiterals && c === '/' && i >= noRegexBefore) {
+            const [closed, end] = regexLiteralEnd(code, i);
+            if (closed) {
                 buf += code.slice(i, end);
                 i = end;
                 continue;
             }
+            // No regex closed before the line end: the rest of the line's `/`s read
+            // as divisions, or a line of them is quadratic. shortcut: a `[` in the
+            // failed scan can hide a later regex's close; a lexer with state fixes it.
+            noRegexBefore = end;
         }
         if (syntax.quotes.includes(c)) {
             // Emit the whole string/template literal as its own tagged segment so

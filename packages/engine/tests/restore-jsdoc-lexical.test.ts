@@ -50,6 +50,19 @@ describe('restore: /** that is not a JSDoc start is left alone (e69)', () => {
     unchanged('if (ok) return /[/**]/.test(s)\nconst y = 2 // */\n')
   })
 
+  it('a regex literal ends at its line even after a backslash', () => {
+    const r = restore('re = /a\\\nb /** doc */ c/\n', {}, JSDOC)
+    expect(r.restored).toBe('re = /a\\\nb  c/\n')
+  })
+
+  it('a line of slashes that never close a regex is linear, not quadratic', () => {
+    for (const line of ['x = ' + '\\/'.repeat(100_000), 'x = ' + '/['.repeat(100_000)]) {
+      const t0 = Date.now()
+      restore(`${line}\n/** doc */\nf()\n`, {}, JSDOC)
+      expect(Date.now() - t0).toBeLessThan(2_000)
+    }
+  })
+
   it('a division is not read as a regex: the JSDoc between two divisions goes', () => {
     expect(restore('x = a / b; /** doc */ y = c / d\n', {}, JSDOC).restored).toBe(
       'x = a / b;  y = c / d\n'
