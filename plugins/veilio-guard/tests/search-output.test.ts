@@ -288,3 +288,111 @@ test('references, encrypted values and resource names in a search teach nothing'
     /^see ENC\(xq9mk2plzrvnw7ab\)\nunset PROD_DB_PASSWORD_V2\nargocd-repo-creds-x7k ok\n__REDACTED_CREDENTIAL_\d+__ ok\n$/
   )
 })
+
+// US3: a secret mounted as a file holds only its value; the file's name is
+// the key (`/run/secrets/db_password`). Main masks such a line by its path;
+// pass 2 reads it as `<name>: <value>`, so a one-file search is masked too
+// and a strong value is remembered.
+test('a secret file named for its key, in a search of many files: masked and remembered', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'secrets/db_password:1:xq9mk2plzrvnw7\nsrc/a.ts:1:x',
+    ['secrets/db_password', 'src/a.ts'],
+    'xq9mk2plzrvnw7\n'
+  )
+  expect(r.one).not.toContain('xq9mk2plzrvnw7')
+  // Main's per-line masking reads `db_password` as the key here, as before.
+  expect(r.one).toMatch(/^secrets\/__VAR__\d+:__REDACTED_CREDENTIAL_\d+__\nsrc\/a\.ts:1:x$/)
+  expect(r.two).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a secret file named for its key, without line numbers', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'secrets/api_token.txt:xq9mk2plzrvnw7\nsrc/a.ts:x',
+    ['secrets/api_token.txt', 'src/a.ts'],
+    'xq9mk2plzrvnw7\n',
+    { '-n': false }
+  )
+  expect(r.one).not.toContain('xq9mk2plzrvnw7')
+  expect(r.two).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a secret file named for its key, searched alone: no path on the line, still masked', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:xq9mk2plzrvnw7',
+    ['secrets/db_password'],
+    'xq9mk2plzrvnw7\n',
+    { path: 'secrets/db_password' }
+  )
+  expect(r.one).toMatch(/^1:__REDACTED_CREDENTIAL_\d+__$/)
+  expect(r.two).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a mounted secret under an absolute path is read the same way', async ($, on) => {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    '/run/secrets/api_token': 'xq9mk2plzrvnw7\n',
+  })
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? {
+          ...grep.r,
+          result: {
+            ...grep.r.result,
+            content: '/run/secrets/api_token:1:xq9mk2plzrvnw7',
+            numLines: 1,
+          },
+        }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'xq9mk2plzrvnw7\n' } }
+  )
+  const one = await $.tool.call(eventOf(grep))
+  expect(JSON.stringify(one)).not.toContain('xq9mk2plzrvnw7')
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('a weak value in a file named for its key is masked and not remembered', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:sunshine2026',
+    ['secrets/db_password'],
+    'the sunshine2026 campaign\n',
+    { path: 'secrets/db_password' }
+  )
+  expect(r.one).toMatch(/^1:__REDACTED_CREDENTIAL_\d+__$/)
+  expect(r.two).toBe('the sunshine2026 campaign\n')
+})
+
+test("a configuration file under secrets/ keeps its own grammar, not its name's", async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:host: db.internal.example\n2:password: xq9mk2plzrvnw7',
+    ['secrets/db.yaml'],
+    'xq9mk2plzrvnw7 db.internal.example\n',
+    { path: 'secrets/db.yaml' }
+  )
+  expect(r.one).toMatch(/^1:host: db\.internal\.example\n2:password: __REDACTED_CREDENTIAL_\d+__$/)
+  expect(r.two).toMatch(/^__REDACTED_CREDENTIAL_\d+__ db\.internal\.example\n$/)
+})
+
+test('a file whose name names no secret is not read as a key', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:Use twelve characters or more',
+    ['docs/password_policy.txt'],
+    'x\n',
+    { path: 'docs/password_policy.txt' }
+  )
+  expect(r.one).toBe('1:Use twelve characters or more')
+})
