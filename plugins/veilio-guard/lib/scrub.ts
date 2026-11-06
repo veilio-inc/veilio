@@ -860,7 +860,8 @@ function redactFindings(
   text: string,
   scan: ScanResult,
   names: ReadonlySet<string>,
-  token: (core: string) => string
+  token: (core: string) => string,
+  cuts?: Cut[]
 ): string {
   let redacted = ''
   let at = 0
@@ -868,11 +869,18 @@ function redactFindings(
     if (start < at) continue
     const core = text.slice(start, matched)
     if (HEURISTIC.has(type) && (names.has(core) || referenceName(core, type))) continue
-    redacted += text.slice(at, start) + token(core)
+    redacted += text.slice(at, start)
+    const t = token(core)
+    cuts?.push([redacted.length, redacted.length + t.length, start, end])
+    redacted += t
     at = end
   }
   return redacted + text.slice(at)
 }
+
+/** Where redactFindings put a token: its start and end in the redacted
+ *  text, and the start and end of what it replaced in the text. */
+type Cut = [number, number, number, number]
 
 type ValueSpan = ReturnType<typeof valueSpans>[number]
 
@@ -960,7 +968,7 @@ const ABOUT_A_SECRET = new Set(['checksum', 'hash', 'digest'])
 // A call that looks a secret up by name: its argument is the name.
 const LOOKUP = new Set(['get', 'fetch', 'read', 'load', 'lookup', 'find'])
 
-function namesSecret(key: string | undefined): boolean {
+export function namesSecret(key: string | undefined): boolean {
   if (!key) return false
   const parts = key
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -1034,6 +1042,52 @@ function keyedOf(text: string, scan: ScanResult, map: SymbolMap, known: Destroye
     known.tokenFor(core)
   )
   return { redacted, spans: keyedSpans(redacted, namesOf(map)) }
+}
+
+/** Spec 074 pass 2: the key rule over one file's run of search lines, read
+ *  as that file's own text (`code`: a file of a known language), so a key on
+ *  one line and its value on the next are one span. Only each key-rule value
+ *  is replaced, where it stands, under its own token as a search line's is;
+ *  the scanner's findings are left to the per-line masking that follows.
+ *  `learned`: the values CE #204's rules carry forward (keyedParts). */
+export function keyedRun(
+  text: string,
+  map: SymbolMap,
+  known: Destroyed,
+  code: boolean,
+  fileKind?: FileKind
+): { text: string; learned: string[] } {
+  const scan = scanSecrets(text, 'redact', fileKind ? { fileKind } : {})
+  const cuts: Cut[] = []
+  const redacted = redactFindings(
+    text,
+    scan,
+    namesOf(readableView(map)),
+    (core) => known.tokenFor(core),
+    cuts
+  )
+  // A position in the redacted text, in the text: one inside a token is the
+  // start (or the end) of what the token replaced.
+  const original = (pos: number, end: boolean) => {
+    let delta = 0
+    for (const [rs, re, os, oe] of cuts) {
+      if (end ? pos <= rs : pos < rs) break
+      if (end ? pos <= re : pos < re) return end ? oe : os
+      delta = oe - re
+    }
+    return pos + delta
+  }
+  const learned: string[] = []
+  let out = ''
+  let at = 0
+  for (const span of keyedSpans(redacted, namesOf(map))) {
+    const from = original(span.start, false)
+    if (from < at) continue
+    learned.push(...keyedParts(span, code).learned)
+    out += text.slice(at, from) + known.tokenFor(span.value)
+    at = original(span.end, true)
+  }
+  return { text: out + text.slice(at), learned }
 }
 
 /** Each text's scan and key-rule removal, from the pass that learns from it,

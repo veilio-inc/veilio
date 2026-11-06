@@ -42,6 +42,8 @@ import {
   redactKnown,
   restoresNeverRestored,
   maskShaped,
+  keyedRun,
+  namesSecret,
   NO_CONTEXT,
   restoreArgs,
   scrubSource,
@@ -49,11 +51,12 @@ import {
   versionOf,
 } from './scrub.ts'
 import type { MaskContext, Numbering, Prepared, ScanResult } from './scrub.ts'
-import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
+import { fileKindOf, restore, ruleBudget, scanSecrets, valueSpans } from '../vendor/engine/index.js'
 import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
+import { parseSearchOutput, type SearchFormat } from './search.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -61,6 +64,9 @@ export interface GuardIO {
   exists(path: string): Promise<boolean>
   /** Where a path really leads (symbolic links followed), or undefined. */
   realPath(path: string): Promise<string | undefined>
+  /** Whether a path is a regular file (links followed). Absent: search
+   *  output is masked line by line only (spec 074). */
+  isFile?(path: string): Promise<boolean>
   /** The project's tracked files, relative to `root` (`git ls-files`), or null
    *  when it cannot be listed. Absent: the project is never listed, and only
    *  the files a result names are indexed. */
@@ -152,6 +158,11 @@ export class Guard {
   /** guard.json is the repository's, or cannot be shown to be this checkout's. */
   private settingsFromRepository = false
   root = ''
+  /** The session's working directory: what a search's paths are read from. */
+  cwd = ''
+  /** Spec 074 pass 2 over search output; off, a search is masked exactly as
+   *  before (the differential test's baseline). */
+  searchPass2 = true
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
@@ -278,6 +289,7 @@ export class Guard {
   async load(cwd: string, home?: string): Promise<void> {
     let dir: string | null = cwd
     this.root = cwd
+    this.cwd = cwd
     while (dir) {
       if (
         (await this.io.exists(join(dir, '.veilio'))) ||
@@ -1137,6 +1149,20 @@ export class Guard {
             prepared,
           })
     )
+    // Spec 074 pass 2: a search's lines read as their files' text, after the
+    // learning above (on the result as sent) and before the sweep below, so
+    // what it learns is removed from the whole result.
+    if (tool === 'Grep' && policy.kind === 'fields') {
+      const record = outcome.result as Record<string, unknown>
+      if (record.mode === 'content' && typeof record.content === 'string')
+        outcome = {
+          ...outcome,
+          result: {
+            ...record,
+            content: await this.searchPass(record.content, grepFormat(args), deadline),
+          },
+        }
+    }
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -1262,6 +1288,65 @@ export class Guard {
     )
   }
 
+  /** Spec 074 pass 2 (research R4): each file's run of search lines read as
+   *  that file's text - a key on one line and its value on the next are one
+   *  value - with each key-rule value replaced where it stands, and the
+   *  values CE #204's rules carry forward learned. A run whose line count
+   *  would change is left as it is; a line whose file the disk cannot name is
+   *  left to the per-line masking, as is everything when pass 2 cannot finish
+   *  in time or fails. `oneFile`: the path argument, used when it is a file. */
+  private async searchPass(
+    text: string,
+    format: Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string },
+    deadline: number
+  ): Promise<string> {
+    const isFile = this.io.isFile
+    if (!this.searchPass2 || !isFile || !this.cwd) return text
+    try {
+      const full = (p: string) => (p.startsWith('/') ? p : join(this.cwd, p))
+      const oneFile =
+        format.oneFile !== undefined && (await isFile(full(format.oneFile)))
+          ? format.oneFile
+          : undefined
+      const parsed = await bounded(
+        parseSearchOutput(text, { ...format, oneFile, base: this.cwd, fileExists: isFile }),
+        deadline,
+        this.clock
+      )
+      if (parsed === LATE) return text
+      const { lines, runs } = parsed
+      const out = lines.map((l) => l.text)
+      const learned: string[] = []
+      for (const run of runs) {
+        const shown = run.lines.map((i) => lines[i]!)
+        // A file named for its key (`secrets/db_password`) that holds only a
+        // value is read as that key's value (FR-004).
+        const name = (run.path.split(/[\\/]/).pop() ?? '').replace(/(?<=.)\.[^.]*$/, '')
+        const bare = namesSecret(name) && shown.every((l) => valueSpans(l.body!).length === 0)
+        const prefix = bare ? `${name}: ` : ''
+        const r = keyedRun(
+          shown.map((l) => prefix + l.body).join('\n'),
+          this.map,
+          this.destroyed,
+          isCode(run.path),
+          fileKindOf(run.path)
+        )
+        learned.push(...r.learned)
+        const back = r.text.split('\n')
+        if (back.length !== shown.length || back.some((b) => !b.startsWith(prefix))) continue
+        run.lines.forEach((i, j) => {
+          const l = lines[i]!
+          out[i] = l.text.slice(0, l.text.length - l.body!.length) + back[j]!.slice(prefix.length)
+        })
+      }
+      this.destroyed.learn(learned)
+      return out.join('\n')
+    } catch {
+      // Pass 2 only ever adds: without it the result is masked as before.
+      return text
+    }
+  }
+
   /** A search over a directory or a glob can reach raw-only files the call
    *  never named: their lines and names are dropped from the result. */
   private dropRawOnly(tool: string, result: unknown): unknown {
@@ -1349,5 +1434,18 @@ export class Guard {
     // A failed write must not wedge every later one.
     this.writes = run.catch(() => undefined)
     return run
+  }
+}
+
+/** How the Grep tool printed its content (research R1, T001): line numbers
+ *  unless `-n` is false, context lines when asked for, no path when `path`
+ *  is one file. */
+function grepFormat(
+  args: ToolEvent
+): Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string } {
+  return {
+    numbered: args['-n'] !== false,
+    context: ['-A', '-B', '-C', 'context'].some((k) => Number(args[k]) > 0),
+    ...(typeof args.path === 'string' ? { oneFile: args.path } : {}),
   }
 }
