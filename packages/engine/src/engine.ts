@@ -299,7 +299,8 @@ const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
  *    fence line first, opens nothing; neither does a later one of that quote
  *    character before the end, or before that fence line.
  *    shortcut: two stray backticks still pair up, and a `~~~` line inside a
- *    template literal ends it; only a parser of the prose around the code
+ *    template literal ends it, which flips which backticks open and close
+ *    until the next fence line; only a parser of the prose around the code
  *    could tell them apart. */
 function tokenizeForMasking(
   code: string,
@@ -323,17 +324,19 @@ function tokenizeForMasking(
   let noRegexBefore = -1
   // A quote character opens nothing before this offset (see `forRestore`).
   const proseBefore = new Map<string, number>()
-  const atFence = (at: number): boolean => {
+  /** The end of the fence line starting at `at`, or -1 when none does. */
+  const fenceEnd = (at: number): number => {
     FENCE_LINE.lastIndex = at
-    return FENCE_LINE.test(code)
+    return FENCE_LINE.test(code) ? FENCE_LINE.lastIndex : -1
   }
   const n = code.length
   while (i < n) {
     const c = code[i]
 
-    if (forRestore && (i === 0 || code[i - 1] === '\n') && atFence(i)) {
-      buf += code.slice(i, FENCE_LINE.lastIndex)
-      i = FENCE_LINE.lastIndex
+    const fence = forRestore && (i === 0 || code[i - 1] === '\n') ? fenceEnd(i) : -1
+    if (fence !== -1) {
+      buf += code.slice(i, fence)
+      i = fence
       continue
     }
 
@@ -415,7 +418,7 @@ function tokenizeForMasking(
         // An unterminated '…' in a language where it cannot span lines ends at
         // the line break, which stays outside the string.
         if (bounded && code[i] === '\n') break
-        if (forRestore && !bounded && code[i - 1] === '\n' && atFence(i)) break
+        if (forRestore && !bounded && code[i - 1] === '\n' && fenceEnd(i) !== -1) break
         str += code[i]
         if (code[i] === '\\') {
           if (i + 1 < n) str += code[++i]

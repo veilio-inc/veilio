@@ -97,6 +97,8 @@ describe('restore: /** that is not a JSDoc start is left alone (e69)', () => {
     expect(
       restore('const a = <p>{x}</p>; const b = <i>{/** note */}</i>\n', {}, JSDOC).restored
     ).toBe('const a = <p>{x}</p>; const b = <i>{}</i>\n')
+    const text = 'const a = <p>x</p> // the ` key\nconst b = 1\n/** doc */\nf()\n'
+    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** doc */\n', ''))
   })
 
   it('a division is not read as a regex: the JSDoc between two divisions goes', () => {
@@ -212,11 +214,18 @@ describe('restore: a JSDoc inside a markdown answer is still stripped', () => {
     unchanged('const md = `\n\\`\\`\\`\n/** not a doc */\n\\`\\`\\`\n`\nconst y = 2\n')
   })
 
-  it('known limit: a ~~~ line inside a template literal ends it for the JSDoc search', () => {
+  it('known limit: a ~~~ line inside a template literal flips the backticks after it', () => {
     // A ~~~ fence in a template cannot be told from one after a stray backtick
-    // in prose; the markdown reading wins. As before e69, the look-alike goes.
-    const text = 'const md = `\n~~~\n/** look-alike */\n~~~\n`\nconst y = 2\n'
-    expect(restore(text, {}, JSDOC).restored).toBe(text.replace('/** look-alike */\n', ''))
+    // in prose; the markdown reading wins. The literal's own closing backtick
+    // then opens one, which closes on the next literal's opening one - so
+    // until the next fence, template reads as code and code as template. Both
+    // look-alikes go, as they did before e69.
+    const text = 'const md = `\n~~~\n/** a */\n~~~\n`\nconst t = `/** b */`\n'
+    expect(restore(text, {}, JSDOC).restored).toBe('const md = `\n~~~\n~~~\n`\nconst t = ``\n')
+  })
+
+  it('a stray backtick a fence ended does not stop real templates after the fence', () => {
+    unchanged('Note `\n\n```ts\nconst s = `x\n/** c */\n`\n```\n')
   })
 
   it('one stray backtick in prose does not hide the JSDoc after it', () => {
