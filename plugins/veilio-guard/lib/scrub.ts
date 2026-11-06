@@ -899,7 +899,9 @@ function keyedSpans(redacted: string, held: ReadonlySet<string>): ValueSpan[] {
 //   line is an assignment (`self.secret_key = rotateKeyV2`);
 // - not a reference (`$TOKEN`, `${DB_PASSWORD}`, `%(password)s`, `%PASSWORD%`,
 //   `#{password}`, `{{ password }}`), an encrypted property (`ENC(...)`,
-//   `ENC[...]`, `{cipher}...`), an environment variable's name (founder
+//   `enc(...)`, `ENC[...]`, `{cipher}...`, Mule's `![...]`), KMS or Sealed
+//   Secrets ciphertext (`AQICAH...`, `AgB...` of 200 characters or more), an
+//   AWS resource name (`arn:...`), an environment variable's name (founder
 //   decision 2), or a lowercase kebab-case name (`db-password-v2`);
 // - 16 KB at most: a longer one is removed where it stands, never thrown on;
 // - the scanner's own bar (carriedForward, founder decision #5).
@@ -949,7 +951,7 @@ const CONFIG: ReadonlySet<string> = new Set([
 // is wholly a template's placeholder. Conservative: a literal password that
 // starts with `$` is removed where it stands and not carried forward.
 const REFERENCE =
-  /^\$|\$[{(]|^(?:%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\})$|^ENC\(.*\)$|^ENC\[.*\]$|^\{cipher\}/
+  /^\$|\$[{(]|^(?:%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\})$|^ENC\(.*\)$|^ENC\[.*\]$|^\{cipher\}|^enc\(.*\)$|^!\[.*\]$|^arn:|^AQICAH|^AgB[A-Za-z0-9+/]{197,}={0,2}$/
 // A resource's name (`db-password-v2`, `postgresql-password-2`): like
 // decision #5's weak values, removed where it stands, never carried forward.
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)+$/

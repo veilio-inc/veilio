@@ -628,6 +628,20 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     ])
   })
 
+  it('an AWS resource name, KMS ciphertext or a Sealed Secret is never learned', () => {
+    notLearned([
+      'EncryptionKey: arn:aws:kms:eu-west-1:123456789012:key/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d',
+      'signingKey: "arn:aws:kms:us-east-1:123456789012:alias/Xq9mK2pLzRvNw7"',
+      'DB_PASS: AQICAHhXq9mK2pLzRvNw7Ab3cD5fG6hJ0kQ8nB3x7Kq9LmZ2vRt4WpQ8nB3==',
+      'DB_PASS: AQICAHjWb4nR8tLq2XzKmQx7mKpL9zRvNwTyB4hJ2aaPz6vT1yHq8LmNc',
+      'encryptedData:\n  DB_PASS: AgBx7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3x7Kq9LmZ2vRt4WpQ8nB3',
+    ])
+  })
+
+  it('Mule secure properties and a lowercase enc(...) are encrypted values, never learned', () => {
+    notLearned(['DB_PASS: "![Xq9mK2pLzRvNw7AbQx7mKpL9z]"', 'DB_PASS=enc(Xq9mK2pLzRvNw7AbQx7mKp)'])
+  })
+
   it('a bare secret key names a resource, not a secret; SECRET_KEY is one', () => {
     for (const text of ['secret: release-build-2026-x9Qz7', 'SECRET=Xq9mK2pLzRvNw7']) {
       const known = new Destroyed()
