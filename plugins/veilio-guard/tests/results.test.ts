@@ -961,6 +961,31 @@ test("a search's context line is judged without its prefix: its password is remo
   expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__ __REDACTED_CREDENTIAL_\d+__\n$/)
 })
 
+// A context line whose path no match line names cannot be split: it is
+// removed as before and teaches the session nothing (e72 closing review).
+test('a context line no match line places is masked, and not learned from', async ($, on) => {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? {
+          ...grep.r,
+          result: {
+            ...grep.r.result,
+            content: `${ROOT}/src/app.py-4-self.secret_key=Xq9mK2pLzRvNw7`,
+            numLines: 1,
+          },
+        }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'Xq9mK2pLzRvNw7\n' } }
+  )
+  const one = await $.tool.call(eventOf(grep))
+  expect(res(one).content).not.toContain('Xq9mK2pLzRvNw7')
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).not.toContain('__REDACTED_')
+})
+
 // Code review of acea47b: an assignment without a `;` reads as a
 // configuration line; in a file of a known language it is code.
 const PY = '    self.secret_key = Xq9mK2pLzRvNw7\n'

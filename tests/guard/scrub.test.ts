@@ -539,15 +539,54 @@ describe('the learn bar, by example (reviews of da4ff84 and 7b930ad)', () => {
     }
   })
 
-  it('a literal with a dollar sign in it is learned: only a whole reference is not', () => {
-    for (const [text, value] of [
-      ['DB_PASSWORD="$Kq9xQ2LmZ7vRt4Wp"', '$Kq9xQ2LmZ7vRt4Wp'],
-      ['DB_PASSWORD="Kq9x${QLmZ7vRt4Wp"', 'Kq9x${QLmZ7vRt4Wp'],
+  it('a value that starts with $ or holds ${ or $( is a reference: removed in place, never learned', () => {
+    // Conservative, the documented limit: a literal password that starts with
+    // `$` is not carried forward (e72 closing review).
+    for (const text of [
+      'DB_PASS="$Kq9xQ2LmZ7vRt4Wp"',
+      'DB_PASS="Kq9x${QLmZ7vRt4Wp"',
+      'DB_PASS="${DB_PASSWORD_V2:-}"',
+      'DB_PASS="${env:DB_PASSWORD_V2}"',
+      'DB_PASS="$(vault read -field=pw db)"',
+      'DB_PASS="Kq9x$(QLmZ7)vRt4Wp"',
+      'API_TOKEN="$secretKeyFromVault2X"',
     ]) {
       const known = new Destroyed()
-      applyMap(text!, {}, undefined, { known })
-      expect([text, known.values]).toEqual([text, [value]])
+      const out = applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+      expect([text, destroyedValues([text])]).toEqual([text, []])
+      expect(out).toMatch(/^\w+="__REDACTED_CREDENTIAL_\d+__"$/)
     }
+    // The scanner reads `password = "..."` by its own rule; these keys only
+    // the key rule reads. A `$` inside a literal, not starting a reference, is a character.
+    const known = new Destroyed()
+    applyMap('DB_PASS="Kq9x$QLmZ7vRt4Wp"', {}, undefined, { known })
+    expect(known.values).toEqual(['Kq9x$QLmZ7vRt4Wp'])
+  })
+
+  it('a bare PWD is the working directory, not a password; DB_PWD is one', () => {
+    for (const text of ['PWD=/srv/app/releases/20261105T1200Z', 'PWD=Xq9mK2pLzRvNw7']) {
+      const known = new Destroyed()
+      applyMap(text, {}, undefined, { known })
+      expect([text, known.values]).toEqual([text, []])
+    }
+    const known = new Destroyed()
+    applyMap('DB_PWD=Xq9mK2pLzRvNw7', {}, undefined, { known })
+    expect(known.values).toEqual(['Xq9mK2pLzRvNw7'])
+  })
+
+  it('a value holding a redaction token is never learned: the key inside it keeps one token', () => {
+    const ghp = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const text = `GITHUB_TOKEN=${ghp}&x=1`
+    const known = new Destroyed()
+    expect(applyMap(text, {}, undefined, { known })).toBe(
+      'GITHUB_TOKEN=__REDACTED_CREDENTIAL_1001__&x=1'
+    )
+    expect(known.values.some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(destroyedValues([text]).some((v) => v.includes('__REDACTED_'))).toBe(false)
+    expect(applyMap(`echo ${ghp}`, {}, undefined, { known })).toBe(
+      'echo __REDACTED_CREDENTIAL_1001__'
+    )
   })
 
   it('a cursor, a sync or an idempotency token is no secret; a client secret is', () => {

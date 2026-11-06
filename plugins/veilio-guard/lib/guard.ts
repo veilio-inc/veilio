@@ -1141,13 +1141,14 @@ export class Guard {
     if (tool === 'Grep')
       for (const s of sent)
         for (const line of grepLines(s))
-          learned.push(
-            ...destroyedValues([line.body], this.map, undefined, fileKindOf(line.path), {
-              code: isCode(line.path),
-              known,
-              prepared,
-            })
-          )
+          if (!line.unplaced)
+            learned.push(
+              ...destroyedValues([line.body], this.map, undefined, fileKindOf(line.path), {
+                code: isCode(line.path),
+                known,
+                prepared,
+              })
+            )
     this.destroyed.learn(learned)
     if (this.destroyed.values.length > 0)
       outcome = {
@@ -1171,7 +1172,7 @@ export class Guard {
       // language, its prefix apart from its text, which is read as its file.
       const perLine = (
         s: string,
-        fn: (line: string, c: MaskContext, file?: { path: string }) => string
+        fn: (line: string, c: MaskContext, file?: { path: string; unplaced?: boolean }) => string
       ) =>
         tool === 'Grep'
           ? grepLines(s)
@@ -1198,6 +1199,7 @@ export class Guard {
             swept: true,
             fileKind: kind,
             code,
+            learn: !file?.unplaced,
             scan: same ? ready.scan : undefined,
             keyed: same ? ready.keyed : undefined,
           })

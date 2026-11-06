@@ -926,12 +926,11 @@ const CONFIG: ReadonlySet<string> = new Set([
   'inner',
   'pair',
 ])
-// A whole value that names another: `${NAME}`, a template's placeholder, an
-// environment variable's `$NAME`. Unquoted, any `$name` is one (the engine's
-// REFERENCE); a quoted `$Kq9xQ2...` is a literal.
-const REFERENCE =
-  /^(?:\$\{[A-Za-z_]\w*\}|\$\{\{[^{}]*\}\}|%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\}|\$[A-Z_][A-Z0-9_]*)$/
-const UNQUOTED_REFERENCE = /^\$[A-Za-z_]\w*$/
+// A value that names another, never learned: one that starts with `$` or
+// holds `${` or `$(` anywhere (`${DB_PASSWORD:-}`, `$(vault read ...)`), or
+// is wholly a template's placeholder. Conservative: a literal password that
+// starts with `$` is removed where it stands and not carried forward.
+const REFERENCE = /^\$|\$[{(]|^(?:%\([A-Za-z_]\w*\)s|%[A-Za-z_]\w*%|#\{[^{}]*\}|\{\{[^{}]*\}\})$/
 
 function namesSecret(key: string | undefined): boolean {
   if (!key) return false
@@ -945,7 +944,8 @@ function namesSecret(key: string | undefined): boolean {
   const prev = parts[parts.length - 2]
   if (!last || (prev !== undefined && FLAG.has(prev))) return false
   if (last === 'token' && prev !== undefined && NOT_A_SECRET_TOKEN.has(prev)) return false
-  if (SECRET_WORD.test(last)) return parts.length > 1 || (last !== 'token' && last !== 'pass')
+  // A bare `token`, `pass` or `pwd` names no secret: `PWD` is the working directory.
+  if (SECRET_WORD.test(last)) return parts.length > 1 || !/^(?:token|pass|pwd)$/.test(last)
   return prev !== undefined && SECRET_PAIR.test(`${prev}_${last}`)
 }
 
@@ -955,20 +955,27 @@ function namesSecret(key: string | undefined): boolean {
  *  are learned with and without what runs on. The slot takes the shorter
  *  part's token when that is learned, else the whole value's. `code`: the
  *  text is a file of a known language. */
-function keyedParts(span: ValueSpan, code: boolean): { slot: string; learned: string[] } {
+function keyedParts(
+  span: ValueSpan,
+  code: boolean
+): { slot: string; learned: string[]; end: number } {
   const v = span.value
   const cut = span.quoted ? -1 : v.search(/[&,;]/)
   const core = cut > 0 ? v.slice(0, cut) : v
+  // A value a finding's token stands in keeps what follows the token's part
+  // (`ghp_…&x=1`): the token is the secret, the rest the query.
+  const end = cut > 0 && v.includes('__REDACTED_') ? span.start + cut : span.end
   if (
     !namesSecret(span.key) ||
     !(span.quoted || (!code && CONFIG.has(span.grammar ?? ''))) ||
     v.length > MAX_VALUE ||
     REFERENCE.test(v.trim()) ||
-    (!span.quoted && UNQUOTED_REFERENCE.test(v.trim()))
+    v.includes('__REDACTED_')
   )
-    return { slot: core, learned: [] }
+    return { slot: core, learned: [], end }
+
   const learned = [...new Set([core, v])].filter((x) => carriedForward('password-assignment', x))
-  return { slot: learned.includes(core) ? core : (learned[0] ?? core), learned }
+  return { slot: learned.includes(core) ? core : (learned[0] ?? core), learned, end }
 }
 
 /** A text's key-rule removal, worked out once: the text with its findings
@@ -1148,6 +1155,9 @@ export function applyMap(
     code?: boolean
     /** The learning pass's work on this very text and map (destroyedValues). */
     keyed?: Keyed
+    /** false: a key's value is removed, never learned (a search line that
+     *  cannot be placed in its file). */
+    learn?: boolean
   } = {}
 ): string {
   // Already scanned for credentials as written (a field the guard masked
@@ -1181,10 +1191,12 @@ export function applyMap(
   let unvalued = ''
   let at = 0
   for (const span of keyed.spans) {
-    const { slot, learned } = keyedParts(span, options.code ?? false)
-    known.learn(learned)
+    const { slot, learned, end } = keyedParts(span, options.code ?? false)
+    if (options.learn !== false) known.learn(learned)
+    // Only tokens left in the slot: nothing more to remove.
+    if (OWN_GRAMMAR.test(redacted.slice(span.start, end))) continue
     unvalued += redacted.slice(at, span.start) + known.tokenFor(slot)
-    at = span.end
+    at = end
   }
   redacted = unvalued + redacted.slice(at)
   // Every credential the session has destroyed, wherever it stands as a word.

@@ -143,23 +143,29 @@ export function languageOfGrepLine(line: string): Language | 'unknown' {
 }
 
 /** Each line of a Grep result: its `path:N:` (a match) or `path-N-` (a
- *  context line) prefix, its text, and its file. Where a context line's path
+ *  context line) prefix, its text, and its file; `unplaced`, a context line
+ *  it could not split. Where a context line's path
  *  ends cannot be told from the line (a dated directory has `-31-` in it), so
  *  it is one a match line of the same result names. A line it cannot place
  *  keeps its whole text and no file. */
-export function grepLines(content: string): { prefix: string; body: string; path: string }[] {
+export function grepLines(
+  content: string
+): { prefix: string; body: string; path: string; unplaced: boolean }[] {
   const lines = content.split('\n')
   const match = lines.map((line) => /^(.+?):\d+:/.exec(line))
   const paths = new Set(match.flatMap((m) => (m ? [m[1]!] : [])))
   return lines.map((line, i) => {
     const m = match[i]
-    if (m) return { prefix: m[0], body: line.slice(m[0].length), path: m[1]! }
+    if (m) return { prefix: m[0], body: line.slice(m[0].length), path: m[1]!, unplaced: false }
     for (const c of line.matchAll(/-\d+-/g))
       if (paths.has(line.slice(0, c.index))) {
         const end = c.index + c[0].length
-        return { prefix: line.slice(0, end), body: line.slice(end), path: line.slice(0, c.index) }
+        const path = line.slice(0, c.index)
+        return { prefix: line.slice(0, end), body: line.slice(end), path, unplaced: false }
       }
-    return { prefix: '', body: line, path: '' }
+    // A context line whose path no match line names cannot be split: it is
+    // masked whole, as before, and the guard learns nothing from it.
+    return { prefix: '', body: line, path: '', unplaced: /^.+?-\d+-/.test(line) }
   })
 }
 
