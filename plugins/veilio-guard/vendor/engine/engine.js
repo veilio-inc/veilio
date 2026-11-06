@@ -163,7 +163,63 @@ function isModuleSpecifierContext(code, quotePos) {
 // `default:// note`, a label or an object key followed by a comment must stay
 // a comment. The scheme must not be the tail of a longer word.
 const URL_SCHEME_BEFORE = /(?<![A-Za-z0-9_$])(?:file|https?|wss?|s?ftps?|ssh|git|svn):$/;
-function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
+// After one of these words a `/` opens a regex literal, not a division.
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+/** `[true, end]` for the regex literal whose `/` is at `at`; `[false, -1]` when
+ *  that `/` is a division; `[false, lineEnd]` when no regex closes on the line.
+ *  A `/` after a name, a number, a string, `)`, `]`, a postfix `++`/`--` or a
+ *  `<` (a JSX closing tag, `</div>`) divides; anywhere else it opens a regex,
+ *  which ends on the line it began on.
+ *  shortcut: `)` and `}` are guessed (`if (x) /re/` reads as division, a `/`
+ *  after an object literal as a regex); a real parser would know. */
+function regexLiteralEnd(code, at) {
+    let j = at - 1;
+    while (j >= 0 && /\s/.test(code[j]))
+        j--;
+    if (j >= 0 && (code[j] === '<' || (/[+-]/.test(code[j]) && code[j - 1] === code[j])))
+        return [false, -1];
+    if (j >= 0 &&
+        /[\w$)\]'"`]/.test(code[j]) &&
+        !REGEX_AFTER_WORD.test(code.slice(Math.max(0, j - 10), j + 1)))
+        return [false, -1];
+    let inClass = false;
+    for (let k = at + 1; k < code.length; k++) {
+        const ch = code[k];
+        if (ch === '\n' || ch === '\r')
+            return [false, k];
+        if (ch === '\\') {
+            // Not past a line break: a regex literal never spans lines, escaped or not.
+            if (code[k + 1] !== '\n' && code[k + 1] !== '\r')
+                k++;
+        }
+        else if (ch === '[')
+            inClass = true;
+        else if (ch === ']')
+            inClass = false;
+        else if (ch === '/' && !inClass) {
+            k++;
+            while (k < code.length && /[a-z]/i.test(code[k]))
+                k++;
+            return [true, k];
+        }
+    }
+    return [false, code.length];
+}
+// A markdown fence line: three or more backticks or tildes at a line start.
+const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
+/** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
+ *  in a markdown answer. Masking does not ask for it and reads as it always did.
+ *  - A regex literal is code, so a quote or comment opener inside it starts nothing.
+ *  - A fence line in code is code: its backticks open no template literal. One
+ *    inside a comment is part of it.
+ *  - A quote that never closes (a stray backtick in prose), or that reaches a
+ *    fence line first, opens nothing; neither does a later one of that quote
+ *    character before the end, or before that fence line.
+ *    shortcut: two stray backticks still pair up, and a `~~~` line inside a
+ *    template literal ends it, which flips which backticks open and close
+ *    until the next fence line; only a parser of the prose around the code
+ *    could tell them apart. */
+function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = false) {
     const syntax = commentSyntaxFor(language);
     const segments = [];
     let buf = '';
@@ -176,9 +232,23 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
     };
     const startsWithAt = (token, at) => code.startsWith(token, at);
     let i = 0;
+    let noRegexBefore = -1;
+    // A quote character opens nothing before this offset (see `forRestore`).
+    const proseBefore = new Map();
+    /** The end of the fence line starting at `at`, or -1 when none does. */
+    const fenceEnd = (at) => {
+        FENCE_LINE.lastIndex = at;
+        return FENCE_LINE.test(code) ? FENCE_LINE.lastIndex : -1;
+    };
     const n = code.length;
     while (i < n) {
         const c = code[i];
+        const fence = forRestore && (i === 0 || code[i - 1] === '\n') ? fenceEnd(i) : -1;
+        if (fence !== -1) {
+            buf += code.slice(i, fence);
+            i = fence;
+            continue;
+        }
         // Triple-quoted prose (Python docstrings) is documentation, not data —
         // treat it as a comment so its sentences survive intact.
         const doc = syntax.docstring.find((d) => startsWithAt(d, i));
@@ -227,12 +297,26 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
             flush(false);
             continue;
         }
-        if (syntax.quotes.includes(c)) {
+        if (forRestore && c === '/' && i >= noRegexBefore) {
+            const [closed, end] = regexLiteralEnd(code, i);
+            if (closed) {
+                buf += code.slice(i, end);
+                i = end;
+                continue;
+            }
+            // No regex closed before the line end: the rest of the line's `/`s read
+            // as divisions, or a line of them is quadratic. shortcut: a `[` in the
+            // failed scan can hide a later regex's close; a lexer with state fixes it.
+            noRegexBefore = end;
+        }
+        if (syntax.quotes.includes(c) && i >= (proseBefore.get(c) ?? 0)) {
             // Emit the whole string/template literal as its own tagged segment so
             // role classification can tell string words and module specifiers apart.
             // Still maskable (isComment: false); escape handling unchanged.
             flush(false);
             const isModuleSpecifier = isModuleSpecifierContext(code, i);
+            const opened = i;
+            let closed = false;
             let str = c;
             i++;
             const bounded = syntax.lineBounded.includes(c);
@@ -240,6 +324,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
                 // An unterminated '…' in a language where it cannot span lines ends at
                 // the line break, which stays outside the string.
                 if (bounded && code[i] === '\n')
+                    break;
+                if (forRestore && !bounded && code[i - 1] === '\n' && fenceEnd(i) !== -1)
                     break;
                 str += code[i];
                 if (code[i] === '\\') {
@@ -249,10 +335,17 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE) {
                     continue;
                 }
                 if (code[i] === c) {
+                    closed = true;
                     i++;
                     break;
                 }
                 i++;
+            }
+            if (forRestore && !closed && !bounded) {
+                proseBefore.set(c, i);
+                buf += c;
+                i = opened + 1;
+                continue;
             }
             segments.push({ text: str, isComment: false, isString: true, isModuleSpecifier });
             continue;
@@ -1464,12 +1557,31 @@ export function anonymize(code, options = {}) {
         ...(budget.spent ? { rulesStopped: true } : {}),
     };
 }
+/** Where each JSDoc block in `text` is: a closed block comment whose `/**`
+ *  opens in code - not in a string, a template or regex literal, or another
+ *  comment (e69). `/**` closed at once by `/` is an empty block comment, not
+ *  a JSDoc. What counts as code is a lexical guess (tokenizeForMasking's
+ *  `forRestore` reading), not a parse. */
+function jsdocSpans(text) {
+    const spans = [];
+    // Runs on every restore: most text has no `/**` to look for.
+    if (!text.includes('/**'))
+        return spans;
+    let at = 0;
+    for (const s of tokenizeForMasking(text, 'typescript', true)) {
+        const t = s.text;
+        if (s.isComment && t.length >= 5 && t.startsWith('/**') && t.endsWith('*/'))
+            spans.push([at, at + t.length]);
+        at += t.length;
+    }
+    return spans;
+}
 /** Strip patterns in application order — larger blocks before line-level ones,
  *  so a JSDoc block isn't half-eaten by an inline-annotation match. */
 // A // item runs to the end of its line: `.*` stops at \n, \r, U+2028 and U+2029,
 // where a // comment ends.
 const STRIP_PATTERNS = [
-    ['jsdoc', /\/\*\*[\s\S]*?\*\//g],
+    ['jsdoc', jsdocSpans],
     ['todo', /^[ \t]*\/\/[ \t]*(TODO|FIXME|HACK|REVIEW).*/gm],
     ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
     [
@@ -1526,11 +1638,15 @@ function stripNoise(text, wanted) {
         if (!wanted.has(type))
             continue;
         const found = [];
-        for (const m of view.matchAll(pattern)) {
-            if (m[0].length === 0)
+        const spans = typeof pattern === 'function'
+            ? pattern(view)
+            : Array.from(view.matchAll(pattern), (m) => [
+                m.index,
+                m.index + m[0].length,
+            ]);
+        for (const [start, end] of spans) {
+            if (start === end)
                 continue;
-            const start = m.index;
-            const end = start + m[0].length;
             let own = start;
             while (own < end && isSpace(view[own]))
                 own++;
