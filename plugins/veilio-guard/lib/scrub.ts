@@ -860,7 +860,8 @@ function redactFindings(
   text: string,
   scan: ScanResult,
   names: ReadonlySet<string>,
-  token: (core: string) => string
+  token: (core: string) => string,
+  cuts?: Cut[]
 ): string {
   let redacted = ''
   let at = 0
@@ -868,11 +869,18 @@ function redactFindings(
     if (start < at) continue
     const core = text.slice(start, matched)
     if (HEURISTIC.has(type) && (names.has(core) || referenceName(core, type))) continue
-    redacted += text.slice(at, start) + token(core)
+    redacted += text.slice(at, start)
+    const t = token(core)
+    cuts?.push([redacted.length, redacted.length + t.length, start, end])
+    redacted += t
     at = end
   }
   return redacted + text.slice(at)
 }
+
+/** Where redactFindings put a token: its start and end in the redacted
+ *  text, and the start and end of what it replaced in the text. */
+type Cut = [number, number, number, number]
 
 type ValueSpan = ReturnType<typeof valueSpans>[number]
 
@@ -960,7 +968,7 @@ const ABOUT_A_SECRET = new Set(['checksum', 'hash', 'digest'])
 // A call that looks a secret up by name: its argument is the name.
 const LOOKUP = new Set(['get', 'fetch', 'read', 'load', 'lookup', 'find'])
 
-function namesSecret(key: string | undefined): boolean {
+export function namesSecret(key: string | undefined): boolean {
   if (!key) return false
   const parts = key
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -1034,6 +1042,110 @@ function keyedOf(text: string, scan: ScanResult, map: SymbolMap, known: Destroye
     known.tokenFor(core)
   )
   return { redacted, spans: keyedSpans(redacted, namesOf(map)) }
+}
+
+/** `text` with each cut [from, to) replaced by its token (security review
+ *  of 72e1e4c): cuts that overlap are merged under the first one's token,
+ *  and a cut over line breaks is replaced on each of its lines, the breaks
+ *  and each line's indentation kept, so the text keeps its line count. */
+export function replaceCuts(text: string, cuts: [number, number, string][]): string {
+  const merged: [number, number, string][] = []
+  for (const c of [...cuts].sort((x, y) => x[0] - y[0] || y[1] - x[1])) {
+    const last = merged[merged.length - 1]
+    if (last && c[0] < last[1]) last[1] = Math.max(last[1], c[1])
+    else merged.push([...c])
+  }
+  let out = ''
+  let at = 0
+  for (const [from, to, token] of merged) {
+    const piece = text
+      .slice(from, to)
+      .split('\n')
+      .map((p, i) => (i > 0 ? p.replace(/^(\s*)\S[\s\S]*$/, `$1${token}`) : p === '' ? p : token))
+      .join('\n')
+    out += text.slice(at, from) + piece
+    at = to
+  }
+  return out + text.slice(at)
+}
+
+/** Spec 074 pass 2: the key rule over one file's run of search lines, read
+ *  as that file's own text (`code`: a file of a known language), so a key on
+ *  one line and its value on the next are one span. Each key-rule value is
+ *  replaced where it stands, under its own token as a search line's is,
+ *  except one the per-line masking reads itself: on one line, and found by
+ *  the key rule on that line as printed (`prefixes`: each line's search
+ *  prefix) at the same place with the same value - replaced here, the line
+ *  would be read again differently. Where the line as printed reads an
+ *  overlapping value another way, the two together are replaced, so neither
+ *  reading shows a part the other hides. `everywhere` (the key is the
+ *  file's name) replaces every value. The scanner's findings are left to the
+ *  per-line masking.
+ *  `learned`: the values CE #204's rules carry forward (keyedParts), from
+ *  every span. */
+export function keyedRun(
+  text: string,
+  map: SymbolMap,
+  known: Destroyed,
+  code: boolean,
+  fileKind?: FileKind,
+  everywhere = false,
+  prefixes: readonly string[] = []
+): { text: string; learned: string[] } {
+  const scan = scanSecrets(text, 'redact', fileKind ? { fileKind } : {})
+  const cuts: Cut[] = []
+  const redacted = redactFindings(
+    text,
+    scan,
+    namesOf(readableView(map)),
+    (core) => known.tokenFor(core),
+    cuts
+  )
+  // A position in the redacted text, in the text: one inside a token is the
+  // start (or the end) of what the token replaced.
+  const original = (pos: number, end: boolean) => {
+    let delta = 0
+    for (const [rs, re, os, oe] of cuts) {
+      if (end ? pos <= rs : pos < rs) break
+      if (end ? pos <= re : pos < re) return end ? oe : os
+      delta = oe - re
+    }
+    return pos + delta
+  }
+  const starts = lineStarts(text)
+  /** What to replace for [from, to): null when the per-line masking finds
+   *  that very span itself (security review of bafafe8: by place and value,
+   *  never by the key's text on the line); else it, widened over every span
+   *  the line as printed reads overlapping it. */
+  const extent = (from: number, to: number): [number, number] | null => {
+    const value = text.slice(from, to)
+    if (value.includes('\n')) return [from, to] // replaced on each line (replaceCuts)
+    let n = starts.length - 1
+    while (starts[n]! > from) n--
+    const start = starts[n]!
+    const end = text.indexOf('\n', start)
+    const prefix = prefixes[n] ?? ''
+    const body = text.slice(start, end === -1 ? undefined : end)
+    let [a, b] = [from, to]
+    for (const s of credentialsAmong(valueSpans(prefix + body))) {
+      const [sa, sb] = [start + Math.max(0, s.start - prefix.length), start + s.end - prefix.length]
+      if (sa === from && s.value === value) return null
+      if (sa < to && sb > from) [a, b] = [Math.min(a, sa), Math.max(b, sb)]
+    }
+    return [a, b]
+  }
+  const learned: string[] = []
+  // Every cut first, then merged (security review of 72e1e4c: one that only
+  // partly overlaps the cut before it was dropped).
+  const replace: [number, number, string][] = []
+  for (const span of keyedSpans(redacted, namesOf(map))) {
+    learned.push(...keyedParts(span, code).learned)
+    const from = original(span.start, false)
+    const to = original(span.end, true)
+    const cut = everywhere ? ([from, to] as [number, number]) : extent(from, to)
+    if (cut) replace.push([cut[0], cut[1], known.tokenFor(span.value)])
+  }
+  return { text: replaceCuts(text, replace), learned }
 }
 
 /** Each text's scan and key-rule removal, from the pass that learns from it,

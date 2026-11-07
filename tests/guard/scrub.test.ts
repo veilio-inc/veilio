@@ -19,6 +19,8 @@ import {
   restoreArgs,
   scrubSource,
   survivingSecrets,
+  keyedRun,
+  replaceCuts,
 } from '../../plugins/veilio-guard/lib/scrub.ts'
 
 const SRC = `export class QuasarLedgerReconciler {
@@ -1228,5 +1230,179 @@ describe('the path rule fails closed (commit security review of 92c4ca2)', () =>
       '/run/secrets/Client2',
     ])
       expect(highSignal(v)).toBe(false)
+  })
+})
+
+// Spec 074 pass 2: one file's run of search lines, read as that file's text.
+describe('keyedRun', () => {
+  it('a k8s value on the line after its key is replaced where it stands, and learned', () => {
+    const known = new Destroyed()
+    const r = keyedRun(
+      '  - name: DB_PASSWORD\n    value: qx7mkplzrvnwtyb',
+      {},
+      known,
+      false,
+      'yaml'
+    )
+    expect(r.text).toBe('  - name: DB_PASSWORD\n    value: __REDACTED_CREDENTIAL_1001__')
+    expect(r.learned).toEqual(['qx7mkplzrvnwtyb'])
+  })
+  // The value of a key on its own line is the per-line masking's, as on main:
+  // replaced here it would be read again, differently (half a template).
+  it('a value whose key is on its own line is left in place, and still learned', () => {
+    const r = keyedRun('db:\n  password: xk9mq2vl7zpqwr', {}, new Destroyed(), false)
+    expect(r.text).toBe('db:\n  password: xk9mq2vl7zpqwr')
+    expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
+  })
+  // Security review of bafafe8: left only where the per-line masking reads
+  // the same span - same place, same value - never because the key's text
+  // happens to be on the line.
+  // Security review of 72e1e4c: a value over several lines is replaced on
+  // each of its lines, so the run keeps its line count and is always written.
+  it('a value that runs onto the next lines is replaced on every line, lines kept', () => {
+    const r = keyedRun(
+      '<password>xk9mq2vl7zpqwr\n  wb4nr8tlq2xzkm\npz6vt1yhq8lmnc</password>',
+      {},
+      new Destroyed(),
+      false
+    )
+    expect(r.text).toBe(
+      '<password>__REDACTED_CREDENTIAL_1001__\n  __REDACTED_CREDENTIAL_1001__\n__REDACTED_CREDENTIAL_1001__</password>'
+    )
+  })
+  it("a line holding the key's text in a comment, its real key a line above: replaced", () => {
+    const r = keyedRun(
+      '  - name: DB_PASSWORD\n    value: qx7mkplzrvnwtyb # DB_PASSWORD',
+      {},
+      new Destroyed(),
+      false,
+      'yaml'
+    )
+    expect(r.text).toBe(
+      '  - name: DB_PASSWORD\n    value: __REDACTED_CREDENTIAL_1001__ # DB_PASSWORD'
+    )
+  })
+  it("the key's text in a comment before the value, its real key a line above: never shown", () => {
+    // Here the line read alone gives the same value, so it is the per-line
+    // masking's; together they hide it.
+    const r = keyedRun(
+      '<password>\n<!-- password -->xk9mq2vl7zpqwr</password>',
+      {},
+      new Destroyed(),
+      false
+    )
+    for (const line of r.text.split('\n'))
+      expect(applyMap(line, {})).not.toContain('xk9mq2vl7zpqwr')
+  })
+  it('the line is judged as printed: read another way there, both readings are replaced', () => {
+    const body = "db:\n  password: \"{{ lookup('env', 'DB_PASS') }}\""
+    // Unprefixed, the line reads the run's own value: left to it.
+    expect(keyedRun(body, {}, new Destroyed(), false).text).toBe(body)
+    // Behind its search prefix the line reads `{{ … }}` inside the quotes: the
+    // run's `"{{ lookup('env'` and that together go.
+    const r = keyedRun(body, {}, new Destroyed(), false, undefined, false, [
+      'app.yaml:1:',
+      'app.yaml:2:',
+    ])
+    expect(r.text).toMatch(/^db:\n {2}password: __REDACTED_CREDENTIAL_\d+__"$/)
+  })
+  it('the same place but a shorter value as printed: the whole value is replaced', () => {
+    // Behind its prefix the line reads only `xk9` here; the run reads all three words.
+    const r = keyedRun(
+      'x: 1\npassword: xk9 mq2 vl7',
+      {},
+      new Destroyed(),
+      false,
+      undefined,
+      false,
+      ['a.yaml:1:', 'a.yaml:2:']
+    )
+    expect(r.text).toMatch(/^x: 1\npassword: __REDACTED_CREDENTIAL_\d+__$/)
+  })
+  it("everywhere: a value is replaced on its key's line too (a file named for its key)", () => {
+    const r = keyedRun('db_password: hunter2hunter2', {}, new Destroyed(), false, undefined, true)
+    expect(r.text).toBe('db_password: __REDACTED_CREDENTIAL_1001__')
+  })
+  it('in a code file an unquoted value is never learned; a quoted one is', () => {
+    const r = keyedRun(
+      '    self.secret_key = rotatekeyv2xq9\n    session_token = "xk9mq2vl7zpqwr"',
+      {},
+      new Destroyed(),
+      true
+    )
+    expect(r.learned).toEqual(['xk9mq2vl7zpqwr'])
+  })
+  it('a weak value is replaced and not learned (decision #5)', () => {
+    const r = keyedRun('x: 1\npassword:\n  sunshine2026', {}, new Destroyed(), false)
+    expect(r.text).toBe('x: 1\npassword:\n  __REDACTED_CREDENTIAL_1001__')
+    expect(r.learned).toEqual([])
+  })
+  it("references, encrypted values, ARNs, variables' names and kebab names are not learned", () => {
+    const text = [
+      'password: ${DB_PASSWORD}',
+      'api_token: ENC(Xq9mK2pLzRvNw7Ab)',
+      'secret_key: arn:aws:kms:us-east-1:123456789012:key/abcd',
+      'db_password: PROD_DB_PASSWORD_V2',
+      'passwordSecret: argocd-repo-creds-x7k',
+    ].join('\n')
+    expect(keyedRun(text, {}, new Destroyed(), false).learned).toEqual([])
+  })
+  it("only the key rule's values are replaced: a scanner finding outside one is left to the line masking", () => {
+    const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
+    const r = keyedRun(`note: ${gh}\npassword:\n  qx7mkplzrvnwtyb`, {}, new Destroyed(), false)
+    expect(r.text.split('\n')[0]).toBe(`note: ${gh}`)
+    expect(r.text.split('\n')[2]).toMatch(/^ {2}__REDACTED_CREDENTIAL_\d+__$/)
+  })
+  it('a value holding a finding is replaced whole, from where the finding stood', () => {
+    const gh = 'ghp_' + 'Zq8vB3nM1kL0pW9xYc7dE6fG5hJ4kL3mN2pQ'
+    const r = keyedRun(
+      `x: 1\nGITHUB_TOKEN=${gh}&x=1\ny: 2`,
+      {},
+      new Destroyed(),
+      false,
+      undefined,
+      true
+    )
+    expect(r.text).toMatch(/^x: 1\nGITHUB_TOKEN=__REDACTED_CREDENTIAL_\d+__\ny: 2$/)
+  })
+  it('a name the map holds is not a credential to remove', () => {
+    const r = keyedRun(
+      'password:\n  settledTotal',
+      { __VAR__1: 'settledTotal' },
+      new Destroyed(),
+      false
+    )
+    expect(r.text).toBe('password:\n  settledTotal')
+  })
+})
+
+// Security review of 72e1e4c: cuts that overlap are merged, never one dropped.
+describe('replaceCuts', () => {
+  it('a cut that starts inside the one before and runs past it: nothing of either is left', () => {
+    expect(
+      replaceCuts('k: aaaa bbbb cccc', [
+        [3, 12, 'T1'],
+        [8, 17, 'T2'],
+      ])
+    ).toBe('k: T1')
+  })
+  it('cuts given out of order are sorted first', () => {
+    expect(
+      replaceCuts('a=1 b=2', [
+        [6, 7, 'T2'],
+        [2, 3, 'T1'],
+      ])
+    ).toBe('a=T1 b=T2')
+  })
+  it("a cut over a line break replaces each line's piece and keeps the break and indentation", () => {
+    expect(replaceCuts('k: abc\n  def\nx', [[3, 12, 'T']])).toBe('k: T\n  T\nx')
+  })
+  it('a cut that only touches the next is two cuts', () => {
+    expect(
+      replaceCuts('abcdef', [
+        [0, 3, 'T1'],
+        [3, 6, 'T2'],
+      ])
+    ).toBe('T1T2')
   })
 })

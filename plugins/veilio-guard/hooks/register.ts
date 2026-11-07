@@ -105,6 +105,17 @@ async function ready($: Host): Promise<Guard> {
           (s) => s.realPath,
           () => undefined
         ),
+      // Spec 074: a search's line is cut at a path only when it is a file.
+      isFile: (path) =>
+        $.fs.stat(path, { resolve: true }).then(
+          (s) => s.kind === 'file',
+          () => false
+        ),
+      fileSize: (path) =>
+        $.fs.stat(path, { resolve: true }).then(
+          (s) => s.size,
+          () => undefined
+        ),
       // Spec 050: the tracked files, so the index can mask a result by what it
       // contains. Not a git checkout, or git missing: only the files a result
       // names are indexed.

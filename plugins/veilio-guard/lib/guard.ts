@@ -42,6 +42,8 @@ import {
   redactKnown,
   restoresNeverRestored,
   maskShaped,
+  keyedRun,
+  namesSecret,
   NO_CONTEXT,
   restoreArgs,
   scrubSource,
@@ -49,11 +51,12 @@ import {
   versionOf,
 } from './scrub.ts'
 import type { MaskContext, Numbering, Prepared, ScanResult } from './scrub.ts'
-import { fileKindOf, restore, ruleBudget, scanSecrets } from '../vendor/engine/index.js'
+import { fileKindOf, restore, ruleBudget, scanSecrets, valueSpans } from '../vendor/engine/index.js'
 import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
+import { parseSearchOutput, searchCommand, searchPath, type SearchFormat } from './search.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -61,6 +64,12 @@ export interface GuardIO {
   exists(path: string): Promise<boolean>
   /** Where a path really leads (symbolic links followed), or undefined. */
   realPath(path: string): Promise<string | undefined>
+  /** Whether a path is a regular file (links followed). Absent: search
+   *  output is masked line by line only (spec 074). */
+  isFile?(path: string): Promise<boolean>
+  /** A file's size in bytes (links followed), or undefined. Absent: no file
+   *  is read as a mounted secret (spec 074). */
+  fileSize?(path: string): Promise<number | undefined>
   /** The project's tracked files, relative to `root` (`git ls-files`), or null
    *  when it cannot be listed. Absent: the project is never listed, and only
    *  the files a result names are indexed. */
@@ -152,6 +161,21 @@ export class Guard {
   /** guard.json is the repository's, or cannot be shown to be this checkout's. */
   private settingsFromRepository = false
   root = ''
+  /** The session's working directory: what a search's paths are read from. */
+  cwd = ''
+  /** Spec 074 pass 2 over search output; off, a search is masked exactly as
+   *  before (the differential test's baseline). */
+  searchPass2 = true
+  /** Runs pass 2 could not write back line by line and masked whole: never
+   *  expected (replaceCuts keeps the line count); the tests assert 0. */
+  searchUnsplit = 0
+  /** Pass 2 runs that failed and left their result as before: never
+   *  expected; the tests assert 0 (T024 review). */
+  searchFailed = 0
+  /** A shell command this session changed directory: Claude Code's shell
+   *  keeps it, so a shell search's relative paths may be another directory's
+   *  and are read as before from then on (T024 review). */
+  shellMoved = false
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
@@ -278,6 +302,7 @@ export class Guard {
   async load(cwd: string, home?: string): Promise<void> {
     let dir: string | null = cwd
     this.root = cwd
+    this.cwd = cwd
     while (dir) {
       if (
         (await this.io.exists(join(dir, '.veilio'))) ||
@@ -1083,6 +1108,9 @@ export class Guard {
     budget: RuleBudget = ruleBudget()
   ): Promise<ToolOutcome> {
     let outcome = received
+    // First, whatever the outcome: a failed command may have moved the shell.
+    if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
+      this.shellMoved = true
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
@@ -1137,6 +1165,18 @@ export class Guard {
             prepared,
           })
     )
+    // Spec 074 pass 2: a search's lines read as their files' text, after the
+    // learning above (on the result as sent) and before the sweep below, so
+    // what it learns is removed from the whole result.
+    const search = policy.kind === 'fields' ? this.searchOf(tool, args, outcome.result) : null
+    if (search) {
+      const record = outcome.result as Record<string, unknown>
+      const text = record[search.field] as string
+      outcome = {
+        ...outcome,
+        result: { ...record, [search.field]: await this.searchPass(text, search.format, deadline) },
+      }
+    }
     if (this.destroyed.values.length > 0)
       outcome = {
         ...outcome,
@@ -1262,6 +1302,135 @@ export class Guard {
     )
   }
 
+  /** Where a result holds search output, and how it was printed: the Grep
+   *  tool's content, or the stdout of one plain `rg`/`grep` in a shell that
+   *  is where the session started (research R5). */
+  private searchOf(
+    tool: string,
+    args: ToolEvent,
+    result: unknown
+  ): { field: 'content' | 'stdout'; format: ReturnType<typeof grepFormat> } | null {
+    const record = (result ?? {}) as Record<string, unknown>
+    if (tool === 'Grep' && record.mode === 'content' && typeof record.content === 'string')
+      return { field: 'content', format: grepFormat(args) }
+    if (tool !== 'Bash' || this.shellMoved || typeof args.command !== 'string') return null
+    const format = searchCommand(args.command)
+    return format && typeof record.stdout === 'string' ? { field: 'stdout', format } : null
+  }
+
+  /** Spec 074 pass 2 (research R4): each file's run of search lines read as
+   *  that file's text - a key on one line and its value on the next are one
+   *  value - with each key-rule value replaced where it stands, and the
+   *  values CE #204's rules carry forward learned. A run whose line count
+   *  would change is left as it is; a line whose file the disk cannot name is
+   *  left to the per-line masking, as is everything when pass 2 cannot finish
+   *  in time or fails. `oneFile`: the path argument, used when it is a file. */
+  private async searchPass(
+    text: string,
+    format: Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string },
+    deadline: number
+  ): Promise<string> {
+    const isFile = this.io.isFile
+    if (!this.searchPass2 || !isFile || !this.cwd) return text
+    try {
+      const full = (p: string) => searchPath(this.cwd, p)
+      const one = format.oneFile !== undefined ? full(format.oneFile) : null
+      const oneFile = one !== null && (await isFile(one)) ? format.oneFile : undefined
+      // Late, the parse goes on in the background: told to stop asking the disk.
+      const stop = { aborted: false }
+      const parsed = await bounded(
+        parseSearchOutput(text, { ...format, oneFile, base: this.cwd, fileExists: isFile, stop }),
+        deadline,
+        this.clock
+      )
+      if (parsed === LATE) {
+        stop.aborted = true
+        return text
+      }
+      const { lines, runs } = parsed
+      const out = lines.map((l) => l.text)
+      const learned: string[] = []
+      for (const run of runs) {
+        if (this.clock.now() > deadline) return text
+        const shown = run.lines.map((i) => lines[i]!)
+        // A file named for its key (`secrets/db_password`) that holds only a
+        // value is read as that key's value (FR-004).
+        const at = full(run.path)
+        const name = at === null ? null : await this.mountedSecret(at, run.path, shown, deadline)
+        const bare = name !== null
+        const prefix = bare ? `${name}: ` : ''
+        const r = keyedRun(
+          shown.map((l) => prefix + l.body).join('\n'),
+          this.map,
+          this.destroyed,
+          isCode(run.path),
+          fileKindOf(run.path),
+          bare,
+          shown.map((l) => l.prefix!)
+        )
+        learned.push(...r.learned)
+        const back = r.text.split('\n')
+        if (back.length !== shown.length || back.some((b) => !b.startsWith(prefix))) {
+          // Fail closed: each line's text under a token of its own.
+          this.searchUnsplit++
+          for (const i of run.lines) {
+            const l = lines[i]!
+            out[i] = l.prefix! + this.destroyed.tokenFor(l.body!)
+          }
+          continue
+        }
+        run.lines.forEach((i, j) => {
+          const l = lines[i]!
+          out[i] = l.prefix! + back[j]!.slice(prefix.length)
+        })
+      }
+      this.destroyed.learn(learned)
+      return out.join('\n')
+    } catch {
+      // Pass 2 only ever adds: without it the result is masked as before.
+      this.searchFailed++
+      return text
+    }
+  }
+
+  /** The key a mounted secret's file name gives its value (`db_password`), or
+   *  null (T024 review: code and documents named for a secret were read as
+   *  one). Only a file with no extension, `.txt` or `.secret`,
+   *  whose whole text on disk (4 KB at most) is one value with no whitespace
+   *  and no key of its own - the value every line shown is. */
+  private async mountedSecret(
+    full: string,
+    path: string,
+    shown: readonly { body?: string }[],
+    deadline: number
+  ): Promise<string | null> {
+    const base = path.split(/[\\/]/).pop() ?? ''
+    const dot = base.lastIndexOf('.')
+    const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+    const name = dot > 0 ? base.slice(0, dot) : base
+    // Not code either: no language has these extensions.
+    if ((ext && ext !== 'txt' && ext !== 'secret') || !namesSecret(name)) return null
+    // One file's error or a late disk touches its own run only: unconfirmed,
+    // it is masked line by line as on main, by its path (review of a5ca329).
+    let text: string
+    try {
+      const size = await bounded(
+        this.io.fileSize?.(full) ?? Promise.resolve(undefined),
+        deadline,
+        this.clock
+      )
+      if (size === LATE || size === undefined || size > 4096) return null
+      const read = await bounded(this.io.read(full), deadline, this.clock)
+      if (read === LATE) return null
+      text = read
+    } catch {
+      return null
+    }
+    const value = text.replace(/^\uFEFF/, '').replace(/\s+$/, '')
+    if (!value || /\s/.test(value) || valueSpans(value).length > 0) return null
+    return shown.every((l) => l.body!.replace(/\s+$/, '') === value) ? name : null
+  }
+
   /** A search over a directory or a glob can reach raw-only files the call
    *  never named: their lines and names are dropped from the result. */
   private dropRawOnly(tool: string, result: unknown): unknown {
@@ -1349,5 +1518,22 @@ export class Guard {
     // A failed write must not wedge every later one.
     this.writes = run.catch(() => undefined)
     return run
+  }
+}
+
+/** A command that changes the shell's directory: `cd`, `pushd` or `popd`
+ *  at its start or after `&&`, `||`, `;` or `|`. */
+const MOVES = /(?:^|&&|\|\||[;|])\s*(?:cd|pushd|popd)(?:\s|$)/
+
+/** How the Grep tool printed its content (research R1, T001): line numbers
+ *  unless `-n` is false, context lines when asked for, no path when `path`
+ *  is one file. */
+function grepFormat(
+  args: ToolEvent
+): Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string } {
+  return {
+    numbered: args['-n'] !== false,
+    context: ['-A', '-B', '-C', 'context'].some((k) => Number(args[k]) > 0),
+    ...(typeof args.path === 'string' ? { oneFile: args.path } : {}),
   }
 }

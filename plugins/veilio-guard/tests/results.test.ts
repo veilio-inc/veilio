@@ -900,6 +900,8 @@ for (const [label, shape] of showing)
 // Ship check of e72: a Grep result is masked line by line exactly as before,
 // and the key rule learns nothing from it - its lines' files cannot be told
 // apart safely (a secret file named by its path, a .pgpass line, no -n).
+// Spec 074: these files are not on disk, so no line is resolved and pass 2
+// adds nothing; search-output.test.ts has the resolved twins.
 for (const [label, content] of [
   ['a config line', `${ROOT}/config/app.yaml:12:password: Xk9mQ2vL7ZpQwR`],
   [
@@ -924,7 +926,8 @@ for (const [label, content] of [
   })
 
 // Byte for byte as before e72: a Grep line's key value goes under its own
-// token, even one holding a finding's token.
+// token, even one holding a finding's token (notes.txt is not on disk:
+// unresolved, spec 074).
 test("a search line's key value is masked exactly as before e72", async ($, on) => {
   const grep = recorded('Grep')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })

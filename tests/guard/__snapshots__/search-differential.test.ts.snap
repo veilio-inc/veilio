@@ -1,0 +1,548 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2 hides beyond main is the reviewed list 1`] = `
+{
+  "T001 context": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "T001 contextNoNumbers": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "T001 multiline": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "T001 oneFile": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "T001 subdirectory": [
+    "later: Xk9mQ2vL7ZpQwR",
+  ],
+  "a config line remembered": [
+    "later: Xk9mQ2vL7ZpQwR",
+  ],
+  "a dated directory where a shorter prefix is a file too": [
+    "later: Xk9mQ2vL7ZpQwR",
+  ],
+  "a dated directory with dash-digit runs": [
+    "later: Xk9mQ2vL7ZpQwR",
+  ],
+  "a path with a space": [
+    "later: Pz6vT1yHq8LmNc",
+  ],
+  "an absolute path": [
+    "later: Pz6vT1yHq8LmNc",
+  ],
+  "file_c1[1] (Grep -n)": [
+    "later: Qx7mKpL9zRvNwTyB4hJ2",
+  ],
+  "file_c1[1] (Grep, no -n)": [
+    "later: Qx7mKpL9zRvNwTyB4hJ2",
+  ],
+  "file_c1[1] (Grep, one file)": [
+    "later: Qx7mKpL9zRvNwTyB4hJ2",
+  ],
+  "file_d1[15] (Grep -n)": [
+    "later: DbPasswordProd2",
+  ],
+  "file_d1[15] (Grep, no -n)": [
+    "later: DbPasswordProd2",
+  ],
+  "file_d1[15] (Grep, one file)": [
+    "later: DbPasswordProd2",
+  ],
+  "file_d1[15] (grep -rn)": [
+    "later: DbPasswordProd2",
+  ],
+  "file_d1[16] (Grep -n)": [
+    "$ANSIBLE_VAULT;1.1;AES256",
+  ],
+  "file_d1[16] (Grep, no -n)": [
+    "$ANSIBLE_VAULT;1.1;AES256",
+  ],
+  "file_d1[16] (Grep, one file)": [
+    "$ANSIBLE_VAULT;1.1;AES256",
+  ],
+  "file_d1[16] (grep -rn)": [
+    "$ANSIBLE_VAULT;1.1;AES256",
+  ],
+  "file_d3[3] (Grep -n)": [
+    "later: db_password_prod_2026",
+  ],
+  "file_d3[3] (Grep, no -n)": [
+    "later: db_password_prod_2026",
+  ],
+  "file_d3[3] (Grep, one file)": [
+    "later: db_password_prod_2026",
+  ],
+  "file_d3[3] (grep -rn)": [
+    "later: db_password_prod_2026",
+  ],
+  "file_d5[1] (Grep -n)": [
+    "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
+  ],
+  "file_d5[1] (Grep, no -n)": [
+    "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
+  ],
+  "file_d5[1] (Grep, one file)": [
+    "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
+  ],
+  "file_d5[1] (grep -rn)": [
+    "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
+  ],
+  "file_d5[6] (Grep -n)": [
+    "later: DEC(Xq9mK2pLzRvNw7Ab)",
+  ],
+  "file_d5[6] (Grep, no -n)": [
+    "later: DEC(Xq9mK2pLzRvNw7Ab)",
+  ],
+  "file_d5[6] (Grep, one file)": [
+    "later: DEC(Xq9mK2pLzRvNw7Ab)",
+  ],
+  "grep -n on one file": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "named deploy/secrets/postgres_password: -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named deploy/secrets/postgres_password: grep -rn": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named deploy/secrets/postgres_password: no -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named deploy/secrets/postgres_password: one file": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named deploy/secrets/postgres_password: rg": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/api_token.txt: -n": [
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/api_token.txt: grep -rn": [
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/api_token.txt: no -n": [
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/api_token.txt: one file": [
+    "Tr0ub4dor&3xyz",
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/api_token.txt: rg": [
+    "Tr0ub4dor&3xyz",
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/db_password: -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: grep -rn": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: no -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: one file": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: rg": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "pgpass -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "pgpass no -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "pgpass one file": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "rg into head": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "rg piped, no numbers": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "split 0: -n, -A": [
+    "Qx7mKpLzRvNwTy0T",
+    "later: Qx7mKpLzRvNwTy0T",
+  ],
+  "split 0: no -n, -A": [
+    "Qx7mKpLzRvNwTy0T",
+    "later: Qx7mKpLzRvNwTy0T",
+  ],
+  "split 0: one file": [
+    "Qx7mKpLzRvNwTy0T",
+    "later: Qx7mKpLzRvNwTy0T",
+  ],
+  "split 0: rg -n -A2": [
+    "Qx7mKpLzRvNwTy0T",
+    "later: Qx7mKpLzRvNwTy0T",
+  ],
+  "split 10: -n, -A": [
+    "Qx7mKpLzwTyBhJ10T",
+    "later: Qx7mKpLzwTyBhJ10T",
+  ],
+  "split 10: no -n, -A": [
+    "Qx7mKpLzwTyBhJ10T",
+    "later: Qx7mKpLzwTyBhJ10T",
+  ],
+  "split 10: one file": [
+    "Qx7mKpLzwTyBhJ10T",
+    "later: Qx7mKpLzwTyBhJ10T",
+  ],
+  "split 10: rg -n -A2": [
+    "Qx7mKpLzwTyBhJ10T",
+    "later: Qx7mKpLzwTyBhJ10T",
+  ],
+  "split 11: -n, -A": [
+    "Qx7mKpLzTyBhJd11T",
+    "later: Qx7mKpLzTyBhJd11T",
+  ],
+  "split 11: no -n, -A": [
+    "Qx7mKpLzTyBhJd11T",
+    "later: Qx7mKpLzTyBhJd11T",
+  ],
+  "split 11: one file": [
+    "Qx7mKpLzTyBhJd11T",
+    "later: Qx7mKpLzTyBhJd11T",
+  ],
+  "split 11: rg -n -A2": [
+    "later: Qx7mKpLzTyBhJd11T",
+  ],
+  "split 12: -n, -A": [
+    "Qx7mKpLzyBhJdF12T",
+    "later: Qx7mKpLzyBhJdF12T",
+  ],
+  "split 12: no -n, -A": [
+    "Qx7mKpLzyBhJdF12T",
+    "later: Qx7mKpLzyBhJdF12T",
+  ],
+  "split 12: one file": [
+    "Qx7mKpLzyBhJdF12T",
+    "later: Qx7mKpLzyBhJdF12T",
+  ],
+  "split 12: rg -n -A2": [
+    "Qx7mKpLzyBhJdF12T",
+    "later: Qx7mKpLzyBhJdF12T",
+  ],
+  "split 13: -n, -A": [
+    "Qx7mKpLzBhJdFg13T",
+    "later: Qx7mKpLzBhJdFg13T",
+  ],
+  "split 13: no -n, -A": [
+    "Qx7mKpLzBhJdFg13T",
+    "later: Qx7mKpLzBhJdFg13T",
+  ],
+  "split 13: one file": [
+    "Qx7mKpLzBhJdFg13T",
+    "later: Qx7mKpLzBhJdFg13T",
+  ],
+  "split 13: rg -n -A2": [
+    "Qx7mKpLzBhJdFg13T",
+    "later: Qx7mKpLzBhJdFg13T",
+  ],
+  "split 14: -n, -A": [
+    "Qx7mKpLzRvNwTy14T",
+    "later: Qx7mKpLzRvNwTy14T",
+  ],
+  "split 14: no -n, -A": [
+    "Qx7mKpLzRvNwTy14T",
+    "later: Qx7mKpLzRvNwTy14T",
+  ],
+  "split 14: one file": [
+    "Qx7mKpLzRvNwTy14T",
+    "later: Qx7mKpLzRvNwTy14T",
+  ],
+  "split 14: rg -n -A2": [
+    "later: Qx7mKpLzRvNwTy14T",
+  ],
+  "split 15: -n, -A": [
+    "Qx7mKpLzvNwTyB15T",
+    "later: Qx7mKpLzvNwTyB15T",
+  ],
+  "split 15: no -n, -A": [
+    "Qx7mKpLzvNwTyB15T",
+    "later: Qx7mKpLzvNwTyB15T",
+  ],
+  "split 15: one file": [
+    "Qx7mKpLzvNwTyB15T",
+    "later: Qx7mKpLzvNwTyB15T",
+  ],
+  "split 15: rg -n -A2": [
+    "Qx7mKpLzvNwTyB15T",
+    "later: Qx7mKpLzvNwTyB15T",
+  ],
+  "split 16: -n, -A": [
+    "Qx7mKpLzNwTyBh16T",
+    "later: Qx7mKpLzNwTyBh16T",
+  ],
+  "split 16: no -n, -A": [
+    "Qx7mKpLzNwTyBh16T",
+    "later: Qx7mKpLzNwTyBh16T",
+  ],
+  "split 16: one file": [
+    "Qx7mKpLzNwTyBh16T",
+    "later: Qx7mKpLzNwTyBh16T",
+  ],
+  "split 16: rg -n -A2": [
+    "Qx7mKpLzNwTyBh16T",
+    "later: Qx7mKpLzNwTyBh16T",
+  ],
+  "split 17: -n, -A": [
+    "Qx7mKpLzwTyBhJ17T",
+    "later: Qx7mKpLzwTyBhJ17T",
+  ],
+  "split 17: no -n, -A": [
+    "Qx7mKpLzwTyBhJ17T",
+    "later: Qx7mKpLzwTyBhJ17T",
+  ],
+  "split 17: one file": [
+    "Qx7mKpLzwTyBhJ17T",
+    "later: Qx7mKpLzwTyBhJ17T",
+  ],
+  "split 17: rg -n -A2": [
+    "later: Qx7mKpLzwTyBhJ17T",
+  ],
+  "split 1: -n, -A": [
+    "Qx7mKpLzvNwTyB1T",
+    "later: Qx7mKpLzvNwTyB1T",
+  ],
+  "split 1: no -n, -A": [
+    "Qx7mKpLzvNwTyB1T",
+    "later: Qx7mKpLzvNwTyB1T",
+  ],
+  "split 1: one file": [
+    "Qx7mKpLzvNwTyB1T",
+    "later: Qx7mKpLzvNwTyB1T",
+  ],
+  "split 1: rg -n -A2": [
+    "Qx7mKpLzvNwTyB1T",
+    "later: Qx7mKpLzvNwTyB1T",
+  ],
+  "split 2: -n, -A": [
+    "Qx7mKpLzNwTyBh2T",
+    "later: Qx7mKpLzNwTyBh2T",
+  ],
+  "split 2: no -n, -A": [
+    "Qx7mKpLzNwTyBh2T",
+    "later: Qx7mKpLzNwTyBh2T",
+  ],
+  "split 2: one file": [
+    "Qx7mKpLzNwTyBh2T",
+    "later: Qx7mKpLzNwTyBh2T",
+  ],
+  "split 2: rg -n -A2": [
+    "later: Qx7mKpLzNwTyBh2T",
+  ],
+  "split 3: -n, -A": [
+    "Qx7mKpLzwTyBhJ3T",
+    "later: Qx7mKpLzwTyBhJ3T",
+  ],
+  "split 3: no -n, -A": [
+    "Qx7mKpLzwTyBhJ3T",
+    "later: Qx7mKpLzwTyBhJ3T",
+  ],
+  "split 3: one file": [
+    "Qx7mKpLzwTyBhJ3T",
+    "later: Qx7mKpLzwTyBhJ3T",
+  ],
+  "split 3: rg -n -A2": [
+    "Qx7mKpLzwTyBhJ3T",
+    "later: Qx7mKpLzwTyBhJ3T",
+  ],
+  "split 4: -n, -A": [
+    "Qx7mKpLzTyBhJd4T",
+    "later: Qx7mKpLzTyBhJd4T",
+  ],
+  "split 4: no -n, -A": [
+    "Qx7mKpLzTyBhJd4T",
+    "later: Qx7mKpLzTyBhJd4T",
+  ],
+  "split 4: one file": [
+    "Qx7mKpLzTyBhJd4T",
+    "later: Qx7mKpLzTyBhJd4T",
+  ],
+  "split 4: rg -n -A2": [
+    "Qx7mKpLzTyBhJd4T",
+    "later: Qx7mKpLzTyBhJd4T",
+  ],
+  "split 5: -n, -A": [
+    "Qx7mKpLzyBhJdF5T",
+    "later: Qx7mKpLzyBhJdF5T",
+  ],
+  "split 5: no -n, -A": [
+    "Qx7mKpLzyBhJdF5T",
+    "later: Qx7mKpLzyBhJdF5T",
+  ],
+  "split 5: one file": [
+    "Qx7mKpLzyBhJdF5T",
+    "later: Qx7mKpLzyBhJdF5T",
+  ],
+  "split 5: rg -n -A2": [
+    "later: Qx7mKpLzyBhJdF5T",
+  ],
+  "split 6: -n, -A": [
+    "Qx7mKpLzBhJdFg6T",
+    "later: Qx7mKpLzBhJdFg6T",
+  ],
+  "split 6: no -n, -A": [
+    "Qx7mKpLzBhJdFg6T",
+    "later: Qx7mKpLzBhJdFg6T",
+  ],
+  "split 6: one file": [
+    "Qx7mKpLzBhJdFg6T",
+    "later: Qx7mKpLzBhJdFg6T",
+  ],
+  "split 6: rg -n -A2": [
+    "Qx7mKpLzBhJdFg6T",
+    "later: Qx7mKpLzBhJdFg6T",
+  ],
+  "split 7: -n, -A": [
+    "Qx7mKpLzRvNwTy7T",
+    "later: Qx7mKpLzRvNwTy7T",
+  ],
+  "split 7: no -n, -A": [
+    "Qx7mKpLzRvNwTy7T",
+    "later: Qx7mKpLzRvNwTy7T",
+  ],
+  "split 7: one file": [
+    "Qx7mKpLzRvNwTy7T",
+    "later: Qx7mKpLzRvNwTy7T",
+  ],
+  "split 7: rg -n -A2": [
+    "Qx7mKpLzRvNwTy7T",
+    "later: Qx7mKpLzRvNwTy7T",
+  ],
+  "split 8: -n, -A": [
+    "Qx7mKpLzvNwTyB8T",
+    "later: Qx7mKpLzvNwTyB8T",
+  ],
+  "split 8: no -n, -A": [
+    "Qx7mKpLzvNwTyB8T",
+    "later: Qx7mKpLzvNwTyB8T",
+  ],
+  "split 8: one file": [
+    "Qx7mKpLzvNwTyB8T",
+    "later: Qx7mKpLzvNwTyB8T",
+  ],
+  "split 8: rg -n -A2": [
+    "later: Qx7mKpLzvNwTyB8T",
+  ],
+  "split 9: -n, -A": [
+    "Qx7mKpLzNwTyBh9T",
+    "later: Qx7mKpLzNwTyBh9T",
+  ],
+  "split 9: no -n, -A": [
+    "Qx7mKpLzNwTyBh9T",
+    "later: Qx7mKpLzNwTyBh9T",
+  ],
+  "split 9: one file": [
+    "Qx7mKpLzNwTyBh9T",
+    "later: Qx7mKpLzNwTyBh9T",
+  ],
+  "split 9: rg -n -A2": [
+    "Qx7mKpLzNwTyBh9T",
+    "later: Qx7mKpLzNwTyBh9T",
+  ],
+  "text_c1[10] (Grep -n)": [
+    "later: 5f4dcc3b5aa765d61d8327deb882cf99",
+  ],
+  "text_c1[10] (Grep, no -n)": [
+    "later: 5f4dcc3b5aa765d61d8327deb882cf99",
+  ],
+  "text_c1[10] (Grep, one file)": [
+    "later: 5f4dcc3b5aa765d61d8327deb882cf99",
+  ],
+  "text_c1[10] (grep -rn)": [
+    "later: 5f4dcc3b5aa765d61d8327deb882cf99",
+  ],
+  "text_c1[11] (Grep -n)": [
+    "later: sha256:9b74c9897bac770ffc029102a200c5de",
+  ],
+  "text_c1[11] (Grep, no -n)": [
+    "later: sha256:9b74c9897bac770ffc029102a200c5de",
+  ],
+  "text_c1[11] (Grep, one file)": [
+    "later: sha256:9b74c9897bac770ffc029102a200c5de",
+  ],
+  "text_c1[11] (grep -rn)": [
+    "later: sha256:9b74c9897bac770ffc029102a200c5de",
+  ],
+  "text_c1[7] (Grep -n)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "text_c1[7] (Grep, no -n)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "text_c1[7] (Grep, one file)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "text_c2[0] (Grep -n)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_c2[0] (Grep, no -n)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_c2[0] (Grep, one file)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_c2[25] (Grep -n)": [
+    "later: xk2_build_7f9a",
+  ],
+  "text_c2[25] (Grep, no -n)": [
+    "later: xk2_build_7f9a",
+  ],
+  "text_c2[25] (Grep, one file)": [
+    "later: xk2_build_7f9a",
+  ],
+  "text_c2[25] (grep -rn)": [
+    "later: xk2_build_7f9a",
+  ],
+  "text_c4[3] (Grep -n)": [
+    "later: a3f9c2e1b7d4f6a8",
+  ],
+  "text_c4[3] (Grep, no -n)": [
+    "later: a3f9c2e1b7d4f6a8",
+  ],
+  "text_c4[3] (Grep, one file)": [
+    "later: a3f9c2e1b7d4f6a8",
+  ],
+  "text_t2[4] (Grep -n)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_t2[4] (Grep, no -n)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_t2[4] (Grep, one file)": [
+    "later: CfDJ8Mx7Kq2nQ9pLz3RvWt",
+  ],
+  "text_t2[5] (Grep -n)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "text_t2[5] (Grep, no -n)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "text_t2[5] (Grep, one file)": [
+    "later: Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+  ],
+  "the same file in two groups": [
+    "Qx7mKpLzRvNwTyB",
+    "Wb4nR8tLq2XzKm",
+    "later: Qx7mKpLzRvNwTyB",
+    "later: Wb4nR8tLq2XzKm",
+  ],
+}
+`;
