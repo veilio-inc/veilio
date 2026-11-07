@@ -183,6 +183,39 @@ const LONG_VALUED = new Set([
   'regexp',
 ])
 
+const PIPE = '|'
+/** A command's words, unquoted, cut into its pipeline's commands; null for
+ *  anything a shell would expand, redirect, chain or continue (T024 review:
+ *  every quote kind read, never skipped by a pattern). Single quotes hold
+ *  anything; double quotes hold anything but `$`, a backquote and `\`. */
+function shellWords(command: string): string[][] | null {
+  const segments: string[][] = [[]]
+  let word: string | null = null
+  const end = () => {
+    if (word !== null) segments.at(-1)!.push(word)
+    word = null
+  }
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!
+    if (c === ' ' || c === '\t') end()
+    else if (c === "'" || c === '"') {
+      const close = command.indexOf(c, i + 1)
+      if (close === -1) return null
+      const inner = command.slice(i + 1, close)
+      if (c === '"' && /[$`\\]/.test(inner)) return null
+      word = (word ?? '') + inner
+      i = close
+    } else if (c === PIPE) {
+      // `||` leaves an empty command between: refused below.
+      end()
+      segments.push([])
+    } else if (/[;&<>`$\\\n\r(){}#]/.test(c)) return null
+    else word = (word ?? '') + c
+  }
+  end()
+  return segments.some((seg) => seg.length === 0) ? null : segments
+}
+
 /** How a shell command's output is laid out, when the command is one plain
  *  `rg` or `grep` (optionally into `head`/`tail` by lines); null otherwise.
  *  Piped, as the Bash tool's output is, ripgrep prints no line numbers
@@ -191,17 +224,8 @@ const LONG_VALUED = new Set([
 export function searchCommand(
   command: string
 ): (Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string }) | null {
-  // No expansion, redirection, chaining or line continuation: the output is
-  // then not one search's.
-  if (/[;&<>`$\\\n]/.test(command.replace(/'[^']*'/g, "''"))) return null
-  const words: string[] = []
-  for (const m of command.matchAll(/\s*((?:'[^']*'|"[^"]*"|[^\s'"|])+|\|)/g)) words.push(m[1]!)
-  if (words.join('') !== command.replace(/\s+/g, '')) return null // an unclosed quote
-  const segments: string[][] = [[]]
-  for (const w of words) {
-    if (w === '|') segments.push([])
-    else segments.at(-1)!.push(w)
-  }
+  const segments = shellWords(command)
+  if (!segments) return null
   for (const seg of segments.slice(1))
     if (
       !/^(?:head|tail)$/.test(seg[0] ?? '') ||
@@ -212,9 +236,7 @@ export function searchCommand(
         )
     )
       return null
-  const [program, ...args] = (segments[0] ?? []).map((w) =>
-    w.replace(/'([^']*)'|"([^"]*)"/g, '$1$2')
-  )
+  const [program, ...args] = segments[0] ?? []
   if (program !== 'rg' && program !== 'grep') return null
   const flags = FLAGS[program]
   let numbered = false

@@ -309,6 +309,11 @@ describe('searchCommand', () => {
     ['grep -rni password config | tail -5', { numbered: true, context: false }],
     ['grep -r -e password -e token config', { numbered: false, context: false }],
     ['rg -i -g "*.yaml" password', { numbered: false, context: false }],
+    // Quoted, these characters are the pattern's, not the shell's.
+    ['rg -n "a;b" deploy', { numbered: true, context: false }],
+    ["rg -n 'a|b' deploy | head -n 5", { numbered: true, context: false }],
+    ['rg -n "it\'s" deploy', { numbered: true, context: false }],
+    ["rg -n 'cost $5' deploy", { numbered: true, context: false }],
   ])('%s', (command, format) => {
     expect(searchCommand(command)).toMatchObject(format)
   })
@@ -348,6 +353,16 @@ describe('searchCommand', () => {
     'rg -n x | tail -f',
     "rg -n 'x",
     'rg -n x \\\n deploy',
+    // T024 review: a double-quoted word does not hide chaining after it.
+    'rg "it\'s" ; cat notes.txt ; echo "\'"',
+    'rg "x" ; cat notes.txt',
+    'rg "$HOME" deploy',
+    'rg "`id`" deploy',
+    'rg "a\\"b" deploy',
+    'rg x deploy # cat notes',
+    'rg x (deploy)',
+    'rg x deploy || cat notes.txt',
+    'rg "x deploy',
   ])('not search output: %s', (command) => {
     expect(searchCommand(command)).toBeNull()
   })
