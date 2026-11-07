@@ -86,6 +86,11 @@ export interface GuardIO {
   list?(root: string): Promise<string[] | null>
   /** Resolves after `ms` ($.clock.sleep): bounds a read or `git` that hangs. */
   sleep?(ms: number): Promise<void>
+  /** Spec 078 R6: makes a file owner-only (0600). Absent (Windows): files
+   *  are written as the host makes them. */
+  chmod?(path: string): Promise<void>
+  /** A file's permission bits, or undefined when they cannot be read. */
+  mode?(path: string): Promise<number | undefined>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -700,7 +705,26 @@ export class Guard {
   private async ensureIgnored(): Promise<void> {
     // The store holds the real names; it must never be committed.
     const ignore = join(this.root, '.veilio', '.gitignore')
-    if (!(await this.io.exists(ignore))) await this.io.write(ignore, '*\n')
+    if (!(await this.io.exists(ignore))) {
+      await this.createOwnerOnly(ignore, '', false)
+      await this.io.write(ignore, '*\n')
+    }
+  }
+
+  /** Spec 078 R6: a file the guard creates is written with no names in it,
+   *  made 0600, and checked, before its content is written. `names`: a file
+   *  that holds them stops the guard when it cannot be made owner-only. */
+  private async createOwnerOnly(path: string, empty: string, names = true): Promise<void> {
+    await this.io.write(path, empty)
+    if (!this.io.chmod) return
+    await this.io.chmod(path).catch(() => undefined)
+    const mode = this.io.mode ? await this.io.mode(path).catch(() => undefined) : undefined
+    if (names && (mode === undefined || (mode & 0o077) !== 0)) {
+      this.stop(
+        'the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session'
+      )
+      throw new Error(this.stoppedReason)
+    }
   }
 
   // ── text ──────────────────────────────────────────────────────────────────
@@ -1602,6 +1626,8 @@ export class Guard {
         return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
+      if (!existed)
+        await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       await this.io.write(this.mapPath, serialiseMapFile(next))
       if (!existed) await this.ensureIgnored()
       this.stored = next

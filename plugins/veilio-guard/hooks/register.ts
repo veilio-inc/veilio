@@ -109,6 +109,10 @@ async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<strin
 async function ready($: Host): Promise<Guard> {
   if (guard) return guard
   if (!loading) {
+    const windows = $.env.get('OS').then(
+      (os) => os === 'Windows_NT',
+      () => false
+    )
     const io: GuardIO = {
       read: (path) => $.fs.read(path),
       write: (path, text) => $.fs.write(path, text),
@@ -133,6 +137,25 @@ async function ready($: Host): Promise<Guard> {
       // contains. Not a git checkout, or git missing: only the files a result
       // names are indexed.
       sleep: (ms) => $.clock.sleep(ms),
+      // Spec 078 R6: the host's write takes no mode (T020), so a created
+      // file is made owner-only by chmod, and checked with stat (macOS, then
+      // GNU). Windows: neither (ACLs, as the CLI).
+      chmod: async (path) => {
+        if (await windows) return
+        const r = await $.process.run(['chmod', '600', path])
+        if (r.exitCode !== 0) throw new Error(`chmod failed: ${r.stderr ?? ''}`)
+      },
+      mode: async (path) => {
+        if (await windows) return 0o600
+        for (const argv of [
+          ['stat', '-f', '%Lp', path],
+          ['stat', '-c', '%a', path],
+        ]) {
+          const r = await $.process.run(argv).catch(() => null)
+          if (r?.exitCode === 0 && /^[0-7]{3,4}\s*$/.test(r.stdout)) return parseInt(r.stdout, 8)
+        }
+        return undefined
+      },
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
           (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),

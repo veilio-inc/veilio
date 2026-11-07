@@ -23,6 +23,11 @@ export type Project = {
   reads: string[]
   /** What $.fs.stat answers as a file's mtimeMs (0 when not set). */
   mtimes: Record<string, number>
+  /** Each file's permission bits, as `stat` reports them: a new file is
+   *  0644 (umask 022), `chmod 600` makes it 0600 (spec 078 R6). */
+  modes: Record<string, number>
+  /** Writes and chmods, in order: `write <path> <text>` / `chmod <path>`. */
+  ops: string[]
 }
 
 export type Options = {
@@ -46,6 +51,10 @@ export type Options = {
   ownClock?: boolean
   /** Answer $.fs.read for a path only after this resolves: a slow disk. */
   slowRead?: (path: string) => Promise<void> | undefined
+  /** `chmod` runs but leaves the mode as it was (a file system that ignores it). */
+  chmodIgnored?: boolean
+  /** The machine is Windows ($.env OS=Windows_NT): no chmod, no stat. */
+  windows?: boolean
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -63,6 +72,8 @@ export function project(
     timers: [],
     reads: [],
     mtimes: {},
+    modes: {},
+    ops: [],
   }
   const exists = (path: string) => {
     const a = abs(path)
@@ -92,8 +103,10 @@ export function project(
   on('fs.write', (_, e) => {
     const a = abs(e.path)
     if (opts.failWrite?.(a)) return { deny: 'EACCES: read-only file system' }
+    if (!(a in p.files)) p.modes[a] = 0o644
     p.files[a] = e.text
     p.writes.push({ path: a, text: e.text })
+    p.ops.push(`write ${a} ${e.text}`)
     return { value: undefined }
   })
   on('fs.stat', (_, e) => {
@@ -134,7 +147,29 @@ export function project(
   // `git ls-files -z`, as a checkout of these files answers it: every file under
   // the root but git's own and Veilio's.
   on('process.run', (_, e) => {
-    if (opts.noGit || e.argv[0] !== 'git') return { deny: 'spawn git ENOENT' }
+    const ok = (stdout: string) => ({
+      value: {
+        exitCode: 0,
+        stdout,
+        stderr: '',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+      },
+    })
+    // Spec 078 R6: `chmod 600 <path>` and `stat -f %Lp <path>`, as macOS answers.
+    if (e.argv[0] === 'chmod' && !opts.windows) {
+      const a = abs(e.argv[e.argv.length - 1]!)
+      if (!(a in p.files)) return { value: { exitCode: 1, stdout: '', stderr: 'No such file' } }
+      p.ops.push(`chmod ${a}`)
+      if (!opts.chmodIgnored) p.modes[a] = 0o600
+      return ok('')
+    }
+    if (e.argv[0] === 'stat' && !opts.windows) {
+      const a = abs(e.argv[e.argv.length - 1]!)
+      if (!(a in p.files)) return { value: { exitCode: 1, stdout: '', stderr: 'No such file' } }
+      return ok(`${(p.modes[a] ?? 0o644).toString(8)}\n`)
+    }
+    if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }
     const tracked = Object.keys(p.files)
       .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
       .map((f) => f.slice(ROOT.length + 1))
@@ -158,6 +193,7 @@ export function project(
       return { value: undefined }
     })
   }
+  if (opts.windows) on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   const policy = opts.policy ?? {}
   on('settings.read', () => ({ value: policy }))
   return p

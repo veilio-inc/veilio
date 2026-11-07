@@ -208,3 +208,47 @@ test('a search whose file cannot be indexed is withheld, not sent as found', asy
   expect(out.deny).toContain('Veilio withheld this result')
   expect(JSON.stringify(out)).not.toContain('reconcileBatch')
 })
+
+// Spec 078 US6 (A#10, research R6): the host's $.fs.write takes no mode
+// (T020), so a file the guard creates is written with no names in it first,
+// made 0600 with chmod, checked, and only then given its content.
+test('a new map and .gitignore are created without names, made 0600, then written', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, {})
+  on('tool.call', () => read.r)
+  const out = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  const map = `${ROOT}/.veilio/map.json`
+  const ignore = `${ROOT}/.veilio/.gitignore`
+  expect(p.modes[map]).toBe(0o600)
+  expect(p.modes[ignore]).toBe(0o600)
+  const ops = p.ops.filter((o) => o.includes(map))
+  expect(ops[0]).toBe(`write ${map} ${mapFile({})}`)
+  expect(ops[1]).toBe(`chmod ${map}`)
+  expect(ops.slice(2).some((o) => o.includes(CANARY))).toBe(true)
+  // No name is ever written to a file that is not 0600.
+  const ignoreOps = p.ops.filter((o) => o.includes(ignore))
+  expect(ignoreOps.slice(0, 2)).toEqual([`write ${ignore} `, `chmod ${ignore}`])
+})
+
+test('a created map that stays readable by others after chmod stops the guard, and no name is written', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, {}, { chmodIgnored: true })
+  on('tool.call', () => read.r)
+  const out = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(p.writes.some((w) => w.text.includes(CANARY))).toBe(false)
+  const band = await $.command.run({ command: 'veilio', args: '' })
+  expect(band.text).toContain(
+    'Veilio guard stopped: the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session. Every tool call is refused.'
+  )
+})
+
+test('on Windows no chmod is run, and the map is written as before', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, {}, { windows: true })
+  on('tool.call', () => read.r)
+  await $.tool.call(eventOf(read))
+  expect(p.ops.some((o) => o.startsWith('chmod'))).toBe(false)
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+})
