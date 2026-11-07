@@ -583,3 +583,51 @@ test('a file named for a secret whose one word is a key and value is read by its
   )
   expect(r.one).toBe('1:user=admin')
 })
+
+// Security review of a5ca329: a file the guard cannot read affects its own
+// run only; a BOM and trailing whitespace are not part of the value; a file
+// it cannot confirm is masked as main masks it, by its path.
+test('a secret file that cannot be read leaves the rest of the search to pass 2', async ($, on) => {
+  const grep = recorded('Grep')
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+      [`${ROOT}/secrets/db_password`]: 'xq9mk2plzrvnw7\n',
+      [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
+    },
+    { failRead: (p) => p.endsWith('/secrets/db_password') }
+  )
+  const content =
+    'secrets/db_password:1:xq9mk2plzrvnw7\n--\ndeploy/k8s.yaml:2:  - name: DB_PASSWORD\ndeploy/k8s.yaml-3-    value: qx7mkplzrvnwtyb'
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 4 } }))
+  const out = await $.tool.call({ ...eventOf(grep), '-A': 1 })
+  const got = res(out).content as string
+  expect(got).not.toContain('qx7mkplzrvnwtyb')
+  expect(got).not.toContain('xq9mk2plzrvnw7')
+})
+
+test('a secret file with a BOM and trailing blank lines is read as its one value', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:xq9mk2plzrvnw7',
+    { 'secrets/db_password': '﻿xq9mk2plzrvnw7 \n\n' },
+    'xq9mk2plzrvnw7\n',
+    { path: 'secrets/db_password' }
+  )
+  expect(r.one).toMatch(/^1:__REDACTED_CREDENTIAL_\d+__$/)
+})
+
+test('a secret file that is not one value is still masked by its path, as on main', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    'secrets/db_password:1:xq9mk2plzrvnw7',
+    { 'secrets/db_password': 'xq9mk2plzrvnw7\nrotated 2026-11-01\n' },
+    'x\n'
+  )
+  // Main reads `db_password` before the line number as the key. (A value with
+  // spaces it reads only to the first space: COVERAGE.md, Not covered.)
+  expect(r.one).toMatch(/^secrets\/__VAR__\d+:__REDACTED_CREDENTIAL_\d+__$/)
+})

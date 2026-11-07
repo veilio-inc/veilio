@@ -1341,7 +1341,7 @@ export class Guard {
         const shown = run.lines.map((i) => lines[i]!)
         // A file named for its key (`secrets/db_password`) that holds only a
         // value is read as that key's value (FR-004).
-        const name = await this.mountedSecret(full(run.path), run.path, shown)
+        const name = await this.mountedSecret(full(run.path), run.path, shown, deadline)
         const bare = name !== null
         const prefix = bare ? `${name}: ` : ''
         const r = keyedRun(
@@ -1386,7 +1386,8 @@ export class Guard {
   private async mountedSecret(
     full: string,
     path: string,
-    shown: readonly { body?: string }[]
+    shown: readonly { body?: string }[],
+    deadline: number
   ): Promise<string | null> {
     const base = path.split(/[\\/]/).pop() ?? ''
     const dot = base.lastIndexOf('.')
@@ -1394,11 +1395,25 @@ export class Guard {
     const name = dot > 0 ? base.slice(0, dot) : base
     // Not code either: no language has these extensions.
     if ((ext && ext !== 'txt' && ext !== 'secret') || !namesSecret(name)) return null
-    const size = await this.io.fileSize?.(full)
-    if (size === undefined || size > 4096) return null
-    const value = (await this.io.read(full)).replace(/\r?\n$/, '')
+    // One file's error or a late disk touches its own run only: unconfirmed,
+    // it is masked line by line as on main, by its path (review of a5ca329).
+    let text: string
+    try {
+      const size = await bounded(
+        this.io.fileSize?.(full) ?? Promise.resolve(undefined),
+        deadline,
+        this.clock
+      )
+      if (size === LATE || size === undefined || size > 4096) return null
+      const read = await bounded(this.io.read(full), deadline, this.clock)
+      if (read === LATE) return null
+      text = read
+    } catch {
+      return null
+    }
+    const value = text.replace(/^\uFEFF/, '').replace(/\s+$/, '')
     if (!value || /\s/.test(value) || valueSpans(value).length > 0) return null
-    return shown.every((l) => l.body === value) ? name : null
+    return shown.every((l) => l.body!.replace(/\s+$/, '') === value) ? name : null
   }
 
   /** A search over a directory or a glob can reach raw-only files the call
