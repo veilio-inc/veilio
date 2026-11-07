@@ -1577,3 +1577,112 @@ export function restoreArgs(
     resolved: r.report.resolved,
   }
 }
+
+// ── spec 078: encoded copies (research R2 option A, R3) ──────────────────────
+
+/** What a scan of encoded copies reads of one text: its first and last 1 MB
+ *  when it is longer (COVERAGE.md states the gap). */
+export const ENCODED_SCAN_LIMIT = 1 << 20
+
+const BASE64_RUN = /[A-Za-z0-9+/_-]{16,}={0,2}/g
+// Hex digit pairs, optionally spaced or on several lines (xxd -p, od -tx1).
+const HEX_RUN = /[0-9a-fA-F]{2}(?:[ \t\r\n]*[0-9a-fA-F]{2}){7,}/g
+
+/** Decoded bytes as text when most of them are printable, else null. */
+function printable(bytes: string): string | null {
+  if (bytes.length === 0) return null
+  let ok = 0
+  for (let i = 0; i < bytes.length; i++) {
+    const c = bytes.charCodeAt(i)
+    if ((c >= 0x20 && c < 0x7f) || c === 9 || c === 10 || c === 13) ok++
+  }
+  return ok / bytes.length >= 0.9 ? bytes : null
+}
+
+function decodeBase64(run: string): string | null {
+  const plain = run.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
+  if (plain.length % 4 === 1) return null
+  try {
+    return printable(atob(plain + '='.repeat((4 - (plain.length % 4)) % 4)))
+  } catch {
+    return null
+  }
+}
+
+function decodeHex(run: string): string | null {
+  const digits = run.replace(/\s+/g, '')
+  let out = ''
+  for (let i = 0; i + 1 < digits.length; i += 2)
+    out += String.fromCharCode(parseInt(digits.slice(i, i + 2), 16))
+  return printable(out)
+}
+
+/** The forms a text can carry a copy of a name in that masking does not
+ *  read: base64, base64url and hex runs decoded (lines of a wrapped run
+ *  joined first), each line reversed, and a column of 4 or more lines of 1-3
+ *  characters joined. Linear in the text. */
+export function encodedForms(text: string): string[] {
+  const parts =
+    text.length > 2 * ENCODED_SCAN_LIMIT
+      ? [text.slice(0, ENCODED_SCAN_LIMIT), text.slice(-ENCODED_SCAN_LIMIT)]
+      : [text]
+  const out: string[] = []
+  for (const t of parts) {
+    const lines = t.split('\n')
+    // A wrapped base64 run (base64's 76 columns) is one run: whole lines of
+    // base64 characters joined, line by line (a regex across lines
+    // backtracks quadratically on a long run).
+    const joined: string[] = []
+    for (const line of lines) {
+      const l = line.replace(/\r$/, '')
+      const whole = /^[A-Za-z0-9+/_-]+={0,2}$/.test(l)
+      const last = joined.length - 1
+      if (whole && last >= 0 && joined[last]!.length >= 16 && !/=$/.test(joined[last]!))
+        joined[last] += l
+      else joined.push(whole ? l : '')
+    }
+    for (const source of [t, ...joined.filter((j) => j.length > 76)])
+      for (const m of source.matchAll(BASE64_RUN)) {
+        const d = decodeBase64(m[0])
+        if (d !== null) out.push(d)
+      }
+    for (const m of t.matchAll(HEX_RUN)) {
+      const d = decodeHex(m[0])
+      if (d !== null) out.push(d)
+    }
+    out.push(lines.map((l) => [...l].reverse().join('')).join('\n'))
+    let column: string[] = []
+    for (const line of [...lines, '']) {
+      const l = line.replace(/\r$/, '')
+      if (l.length >= 1 && l.length <= 3) column.push(l)
+      else {
+        if (column.length >= 4) out.push(column.join(''))
+        column = []
+      }
+    }
+  }
+  return out
+}
+
+const nameSets = new WeakMap<SymbolMap, ReadonlySet<string>>()
+/** A masked name of 4 or more characters that one of `text`'s encoded forms
+ *  holds, or null. Readable ordinary words (spec 064) are not masked, so
+ *  they are not looked for; no case-folding (FR-018a). */
+export function encodedName(text: string, map: SymbolMap): string | null {
+  const view = readableView(map)
+  let names = nameSets.get(view)
+  if (!names) {
+    names = new Set([...namesOf(view)].filter((n) => n.length >= 4))
+    nameSets.set(view, names)
+  }
+  if (names.size === 0) return null
+  // shortcut: names are matched as whole words of the decoded text, so one
+  // glued to other word characters is missed; upgrade to a substring
+  // automaton if that is shown to matter.
+  for (const form of encodedForms(text))
+    for (const word of form.split(/[^A-Za-z0-9_$.\-/]+/)) {
+      if (names.has(word)) return word
+      for (const piece of word.split(/[.\-/]+/)) if (names.has(piece)) return piece
+    }
+  return null
+}

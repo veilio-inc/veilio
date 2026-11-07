@@ -21,6 +21,8 @@ import {
   survivingSecrets,
   keyedRun,
   replaceCuts,
+  encodedName,
+  ENCODED_SCAN_LIMIT,
 } from '../../plugins/veilio-guard/lib/scrub.ts'
 
 const SRC = `export class QuasarLedgerReconciler {
@@ -1404,5 +1406,26 @@ describe('replaceCuts', () => {
         [3, 6, 'T2'],
       ])
     ).toBe('T1T2')
+  })
+})
+
+// Spec 078 FR-018a: the scan of encoded copies is bounded: a result over
+// 2 MB is read in its first and last 1 MB (COVERAGE.md states the gap).
+describe('encodedName (spec 078)', () => {
+  const map = { __CLS__1: 'PaymentGateway' }
+  const line = `${btoa('class PaymentGateway {}')}\n`
+  const filler = 'x'.repeat(ENCODED_SCAN_LIMIT)
+  it('finds a name encoded at either end of a long result', () => {
+    expect(encodedName(line + filler + filler + filler, map)).toBe('PaymentGateway')
+    expect(encodedName(filler + filler + filler + '\n' + line, map)).toBe('PaymentGateway')
+  })
+  it('does not read the middle of a result over 2 MB', () => {
+    expect(encodedName(filler + '\n' + line + filler + filler, map)).toBeNull()
+  })
+  it('scans 1 MB of ordinary output in linear time (reported, not asserted)', () => {
+    const text = 'commit a1b2c3d4e5f60718 fix: totals in OrderLine\n'.repeat(20_000)
+    const t = performance.now()
+    expect(encodedName(text, map)).toBeNull()
+    console.log(`encodedName on ${text.length} bytes: ${(performance.now() - t).toFixed(1)} ms`)
   })
 })

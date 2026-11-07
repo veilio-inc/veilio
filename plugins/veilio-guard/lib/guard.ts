@@ -36,6 +36,7 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  encodedName,
   restoreAdds,
   grow,
   ownedMap,
@@ -125,6 +126,9 @@ const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
   'Veilio withheld this result: the guard failed while checking it. Nothing from it was sent.'
+/** strings.md #12, as `withheld` completes it. */
+export const ENCODED_NAME =
+  'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
 
@@ -1201,6 +1205,17 @@ export class Guard {
                 new Set(policy.kind === 'fields' ? policy.keep : [])
               ),
       }
+
+    // Spec 078 FR-018a: a shell can print a project name encoded, which
+    // masking does not read; read before masking, which would mint it.
+    if (tool === 'Bash' || tool === 'PowerShell') {
+      let encoded = false
+      deepRewrite(outcome.result, (s) => {
+        encoded ||= encodedName(s, this.map) !== null
+        return s
+      })
+      if (encoded) return this.withhold(ENCODED_NAME)
+    }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const working: SymbolMap = ownedMap(this.map)

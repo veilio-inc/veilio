@@ -991,3 +991,102 @@ test('a weak value redacted after its credential-named key is not swept from lat
   const two = await $.tool.call(eventOf(bash))
   expect(res(two).stdout).toContain('sunshine2026')
 })
+
+// Spec 078 FR-018a (research R2, N2): a shell command can print a source
+// file's names encoded, with no placeholder in the command. Each encoded form
+// is computed here from the plain names, never written out.
+const PAY = 'class PaymentGateway {\n  chargeCard(order: OrderService) {}\n}\n'
+const PAY_MAP = {
+  __CLS__1: 'PaymentGateway',
+  __FN__1: 'chargeCard',
+  __CLS__2: 'OrderService',
+  __CLS__3: 'InvoiceBuilder',
+}
+const ENCODED =
+  'Veilio withheld this result: it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent.'
+// The mod runtime has no Buffer: ASCII text, encoded with the web's btoa.
+const b64 = (s: string) => btoa(s)
+const b64url = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const hex = (s: string) => [...s].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+const wrap = (s: string, n: number) => s.match(new RegExp(`.{1,${n}}`, 'gs'))!.join('\n')
+const reversed = (s: string) =>
+  s
+    .split('\n')
+    .map((l) => [...l].reverse().join(''))
+    .join('\n')
+
+async function shellPrints(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  command: string,
+  stdout: string,
+  map: Record<string, string> = PAY_MAP
+) {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map), [`${ROOT}/src/pay.ts`]: PAY })
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout, stderr: '' } }))
+  return $.tool.call({ ...eventOf(bash), command })
+}
+
+const ENCODED_FORMS: [string, string][] = [
+  ['base64 src/pay.ts', wrap(b64(PAY), 76) + '\n'],
+  ['cat src/pay.ts | fold -w3', wrap(PAY.replace(/\n/g, ''), 3) + '\n'],
+  ['cat src/pay.ts | fold -w1', wrap('PaymentGateway', 1) + '\n'],
+  ['xxd -p src/pay.ts', wrap(hex(PAY), 60) + '\n'],
+  [
+    'od -An -tx1 src/pay.ts',
+    wrap(hex(PAY), 32)
+      .split('\n')
+      .map((l) => ' ' + l.match(/../g)!.join(' '))
+      .join('\n') + '\n',
+  ],
+  ['rev src/pay.ts', reversed(PAY)],
+  [
+    'npx vitest run tests/pay.test.ts',
+    ` ✓ tests/pay.test.ts (1)\nstdout | encoded: ${b64('PaymentGateway')}\n`,
+  ],
+  ['node tests/pay.mjs', `${b64url('chargeCard(order)?')}\n`],
+]
+for (const [command, stdout] of ENCODED_FORMS)
+  test(`a project name printed encoded is withheld: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout)
+    expect(out.deny).toBe(ENCODED)
+  })
+
+// COVERAGE.md, Not covered: Tests the agent writes (re-cased output, strings.md #24).
+test('the documented limit: a re-cased copy of a file still reaches the model (tr A-Z a-z)', async ($, on) => {
+  const out = await shellPrints($, on, 'tr A-Z a-z < src/pay.ts', PAY.toLowerCase())
+  expect(out.deny).toBeUndefined()
+  expect(res(out).stdout).toContain('paymentgateway')
+})
+
+const ORDINARY: [string, string, Record<string, string>?][] = [
+  ['npm ls', 'app@1.0.0 /work/project\n├── payment-gateway@2.1.0\n└── paymentgateway@1.0.0\n'],
+  [
+    'git log --oneline',
+    'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 fix: totals\n0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6 docs\n',
+  ],
+  [
+    'cat tests/fixtures/logo.b64',
+    btoa(String.fromCharCode(...Array.from({ length: 96 }, (_, i) => (i * 37 + 11) % 256))) + '\n',
+  ],
+  // A spec 064 ordinary word is readable as itself: so is its encoding.
+  [
+    'cat tests/fixtures/total.b64',
+    `${b64('the total is 42 today')}\n`,
+    { ...PAY_MAP, __VAR__5: 'total' },
+  ],
+  // Under 4 characters, a name is too short to tell from ordinary text.
+  [
+    'cat tests/fixtures/short.b64',
+    `${b64('Hello Gx and friends')}\n`,
+    { ...PAY_MAP, __CLS__7: 'Gx' },
+  ],
+  // No case-folding for names: the lower-case npm package name is not PaymentGateway.
+  ['npm view paymentgateway --json', `${b64('{"name":"paymentgateway"}')}\n`],
+]
+for (const [command, stdout, map] of ORDINARY)
+  test(`ordinary output is not withheld: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout, map)
+    expect(out.deny).toBeUndefined()
+  })
