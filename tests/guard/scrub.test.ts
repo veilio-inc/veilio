@@ -1443,3 +1443,19 @@ describe('encodedName (spec 078)', () => {
     console.warn(`encodedName on ${capped.length} bytes: ${(performance.now() - u).toFixed(1)} ms`)
   })
 })
+
+// Spec 078 R3: the window scan over a removed credential's forms is linear;
+// its time on 1 MB is reported, not asserted.
+describe('Destroyed.reshaped (spec 078)', () => {
+  const key = 'sk_live_' + '51HbFakeFakeFake0123456789abcdefABCDEF'
+  it('finds a spaced slice and times 1 MB of ordinary output', () => {
+    const d = new Destroyed()
+    d.learn([key])
+    expect(d.reshaped([...key.slice(10, 30)].join(' '))).toBe(true)
+    expect(d.reshaped('fix: totals in OrderLine')).toBe(false)
+    const text = 'commit a1b2c3d4e5f60718 fix: totals in OrderLine\n'.repeat(20_000)
+    const t = performance.now()
+    expect(d.reshaped(text)).toBe(false)
+    console.warn(`reshaped on ${text.length} bytes: ${(performance.now() - t).toFixed(1)} ms`)
+  })
+})

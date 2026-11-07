@@ -160,3 +160,58 @@ test('the masking property holds through read, over random texts', SLOW, propert
 test('the masking property holds through restore, over random texts', SLOW, property('restore'))
 
 test('the masking property holds through listing, over random texts', SLOW, property('listing'))
+
+// Spec 078 R3: random fake keys, removed by a Read, re-emitted through Bash
+// spaced, sliced, reversed, base64 or dash-grouped: no 16 characters of one
+// reach the model in any of those forms.
+test(
+  'removed credentials re-emitted reshaped through Bash never reach the model',
+  SLOW,
+  async ($, on) => {
+    const read = recorded('Read')
+    const bash = recorded('Bash')
+    project(on, {})
+    let seed = 78
+    const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31
+    const alnum = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+    let next: Fields = {}
+    on('tool.call', () => next)
+    const failures: string[] = []
+    for (let k = 0; k < 40; k++) {
+      const body = Array.from({ length: 32 }, () => alnum[Math.floor(rand() * alnum.length)]).join(
+        ''
+      )
+      const key = 'sk_live_' + body
+      next = {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: {
+            ...read.r.result.file,
+            filePath: `${ROOT}/src/k${k}.ts`,
+            content: `const k = '${key}'\n`,
+          },
+        },
+      }
+      await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/k${k}.ts` })
+      const at = Math.floor(rand() * 16)
+      const slice = body.slice(at, at + 16 + Math.floor(rand() * (16 - at)))
+      const forms = [
+        [...key].join(' '),
+        slice,
+        [...key].reverse().join(''),
+        btoa(key),
+        body.match(/.{1,4}/g)!.join('-'),
+      ]
+      const form = forms[k % forms.length]!
+      next = { ...bash.r, result: { ...bash.r.result, stdout: `out: ${form}\n`, stderr: '' } }
+      const out = JSON.stringify(await $.tool.call(eventOf(bash)))
+      const compact = out.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+      const c = body.toLowerCase()
+      for (let i = 0; i + 16 <= c.length; i++)
+        if (compact.includes(c.slice(i, i + 16)) || out.includes(btoa(key).slice(0, 20)))
+          failures.push(`case ${k} (${k % forms.length}): reached the model`)
+    }
+    expect([...new Set(failures)]).toEqual([])
+  }
+)

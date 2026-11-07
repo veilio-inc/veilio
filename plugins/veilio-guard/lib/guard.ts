@@ -134,6 +134,9 @@ const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
   'Veilio withheld this result: the guard failed while checking it. Nothing from it was sent.'
+/** strings.md #11, as `withheld` completes it. */
+export const RESHAPED_CREDENTIAL =
+  'a credential removed earlier in this session came back in another form (spaced, split, sliced or encoded). Nothing from it was sent'
 /** strings.md #12, as `withheld` completes it. */
 export const ENCODED_NAME =
   'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
@@ -264,6 +267,7 @@ export class Guard {
    *  renumbered old placeholders where the map does not give them another
    *  name (a contested one is in neither, as in the CLI). Quarantine never. */
   private get restoreMap(): SymbolMap {
+    this.settle()
     const map = this.stored.map
     const keys = Object.keys(this.aliases)
     if (keys.length === 0) return map
@@ -298,8 +302,32 @@ export class Guard {
   private quarantineNext = 0
   private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
 
+  /** Spec 078 FR-006, at load: a saved entry sharing 12 characters with a
+   *  credential removed this session goes to the quarantine, in memory only,
+   *  so it is never restored. Re-run when the map or that set changes. */
+  private settledFor: { stored: StoredMap; version: number } | null = null
+  private quarantinedNames = new Map<string, string>()
+  private settle(): void {
+    const s = this.settledFor
+    if (s && s.stored === this.stored && s.version === this.destroyed.version) return
+    const map = this.stored.map
+    const out = Object.entries(map).filter(([, name]) => !this.destroyed.sharesWindow(name))
+    if (out.length < Object.keys(map).length) {
+      for (const [, name] of Object.entries(map)) {
+        if (!this.destroyed.sharesWindow(name) || this.quarantinedNames.has(name)) continue
+        const own = `__QUARANTINED__${++this.quarantineNext}`
+        this.quarantinedNames.set(name, own)
+        this.quarantine[own] = name
+        this.destroyed.hold(name, own)
+      }
+      this.stored = { ...this.stored, map: ownedMap(Object.fromEntries(out)) }
+    }
+    this.settledFor = { stored: this.stored, version: this.destroyed.version }
+  }
+
   /** What masking reads: the saved map and this session's quarantine. */
   get map(): SymbolMap {
+    this.settle()
     const size = Object.keys(this.quarantine).length
     if (size === 0) return this.stored.map
     if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size) {
@@ -1175,6 +1203,7 @@ export class Guard {
       // the encoded-name check).
       if (shell && encodedName(raw, this.map) !== null) return this.withhold(ENCODED_NAME)
       this.destroyed.learn(destroyedValues([raw], this.map))
+      if (this.destroyed.reshaped(strip(raw))) return this.withhold(RESHAPED_CREDENTIAL)
       return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
@@ -1228,6 +1257,17 @@ export class Guard {
                 new Set(policy.kind === 'fields' ? policy.keep : [])
               ),
       }
+
+    // Spec 078 FR-005: what the sweep above removed whole may still be here
+    // reformatted, sliced or encoded; read before masking, which would mint
+    // a slice as a name.
+    let reshaped = false
+    deepRewrite(outcome.result, (s) => {
+      // Exact copies left in a kept field are the last scan's (it names them).
+      reshaped ||= this.destroyed.reshaped(strip(s))
+      return s
+    })
+    if (reshaped) return this.withhold(RESHAPED_CREDENTIAL)
 
     // Spec 078 FR-018a: a shell can print a project name encoded, which
     // masking does not read; read before masking, which would mint it.
@@ -1527,12 +1567,14 @@ export class Guard {
     if (learned.length > 0) {
       const kept: SymbolMap = {}
       for (const [placeholder, name] of Object.entries(additions)) {
-        if (learned.some((v) => name.includes(v))) {
+        // Spec 078 FR-006: 12 characters of one is enough (N1).
+        if (learned.some((v) => name.includes(v)) || this.destroyed.sharesWindow(name)) {
           // A namespace of its own, which no saved entry can share (review
           // of 58d3dae). Minted before any text holds the engine's number:
           // only indexing raw files sends a name here.
-          const own = `__QUARANTINED__${++this.quarantineNext}`
+          const own = this.quarantinedNames.get(name) ?? `__QUARANTINED__${++this.quarantineNext}`
           void placeholder
+          this.quarantinedNames.set(name, own)
           this.quarantine[own] = name
           this.destroyed.hold(name, own)
           quarantined++

@@ -4,6 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   CANARY,
+  STRIPE,
   eventOf,
   mapFile,
   project,
@@ -1100,4 +1101,165 @@ test('a failed command whose error text holds a name encoded is withheld', async
   on('tool.call', () => ({ ...failed.r, result: `Error: ${text}`, text, isError: true }))
   const out = await $.tool.call({ ...eventOf(failed), command: 'node tests/pay.mjs' })
   expect(out.deny).toBe(ENCODED)
+})
+
+// Spec 078 US2 (A#2, N1, research R3): a credential removed earlier stays
+// removed when it comes back reformatted, sliced or encoded. The key is the
+// helpers' fake STRIPE value, built by concatenation; every form of it is
+// computed here.
+const RESHAPED =
+  'Veilio withheld this result: a credential removed earlier in this session came back in another form (spaced, split, sliced or encoded). Nothing from it was sent.'
+const KEY_TAIL = STRIPE.slice('sk_live_'.length) // starts with a digit
+const CONFIG = `export const stripeKey = '${STRIPE}'\n`
+
+/** A session that has read src/config.ts (removing the key), then runs `tool`. */
+async function afterKeyRead(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  answer: (e: Record<string, unknown>) => unknown,
+  map: Record<string, string> = PAY_MAP
+) {
+  const read = recorded('Read')
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(map),
+    [`${ROOT}/src/config.ts`]: CONFIG,
+  })
+  let first = true
+  on('tool.call', (_, e) => {
+    if (first) {
+      first = false
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/config.ts`, content: CONFIG },
+        },
+      }
+    }
+    return answer(e)
+  })
+  const shown = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  expect(JSON.stringify(shown)).not.toContain(KEY_TAIL)
+  expect(JSON.stringify(shown)).toContain('__REDACTED_CREDENTIAL_')
+  return p
+}
+
+const bashOut = (stdout: string) => {
+  const bash = recorded('Bash')
+  return { ...bash.r, result: { ...bash.r.result, stdout, stderr: '' } }
+}
+
+const KEY_FORMS: [string, string][] = [
+  ['spaced', [...STRIPE].join(' ')],
+  ['comma', [...STRIPE].join(',')],
+  ['a 22-character slice starting with a digit', KEY_TAIL.slice(0, 22)],
+  ['dash groups of 4', KEY_TAIL.match(/.{1,4}/g)!.join('-')],
+  ['lines of 6', KEY_TAIL.match(/.{1,6}/g)!.join('\n')],
+  ['reversed', [...STRIPE].reverse().join('')],
+  ['base64', btoa(STRIPE)],
+  ['hex', hex(STRIPE)],
+  [
+    'upper-cased and spaced in a test runner',
+    `FAIL expected ${[...STRIPE.toUpperCase()].join(' ')}`,
+  ],
+]
+for (const [form, text] of KEY_FORMS)
+  test(`a removed credential that comes back ${form} through Bash is withheld`, async ($, on) => {
+    await afterKeyRead($, on, () => bashOut(`${text}\n`))
+    const bash = recorded('Bash')
+    const out = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+    expect(out.deny).toBe(RESHAPED)
+  })
+
+test('a slice of a removed credential inside a Grep result is withheld', async ($, on) => {
+  const grep = recorded('Grep')
+  await afterKeyRead($, on, () => ({
+    ...grep.r,
+    result: {
+      ...grep.r.result,
+      content: `src/notes.md:3:see ${KEY_TAIL.slice(2, 24)} here`,
+      numLines: 1,
+    },
+  }))
+  const out = await $.tool.call(eventOf(grep))
+  expect(out.deny).toBe(RESHAPED)
+})
+
+test('a slice of a removed credential inside an MCP text result is withheld', async ($, on) => {
+  const mcp = recordedRaw('mcp__veilio__anonymize_text')
+  await afterKeyRead($, on, () => ({
+    ...mcp.r,
+    result: [{ type: 'text', text: `k=${KEY_TAIL.slice(4, 24)}` }],
+  }))
+  const out = await $.tool.call(eventOf(mcp))
+  expect(out.deny).toBe(RESHAPED)
+})
+
+// N1: a 12-15-character slice is not withheld (under 16), and no name holding
+// it is ever saved: an identifier built on it is masked under a quarantine
+// placeholder instead, so the map a team shares never carries it.
+test('a name holding a short slice of a removed credential is never saved to the map', async ($, on) => {
+  const slice = KEY_TAIL.slice(2, 15) // 13 characters
+  const other = `export function build${slice}Total() {}\n`
+  const read = recorded('Read')
+  const p = await afterKeyRead($, on, () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: { ...read.r.result.file, filePath: `${ROOT}/src/other.ts`, content: other },
+    },
+  }))
+  p.files[`${ROOT}/src/other.ts`] = other
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/other.ts` })
+  expect(JSON.stringify(out)).not.toContain(slice)
+  expect(res(out).file.content).toMatch(/__QUARANTINED__\d+/)
+  const compact = STRIPE.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  for (const name of saved) {
+    const c = name.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+    for (let k = 0; k + 12 <= c.length; k++)
+      expect(`${name}: ${compact.includes(c.slice(k, k + 12))}`).toBe(`${name}: false`)
+  }
+})
+
+test('at load: a map entry sharing 12 characters with a removed credential is never restored', async ($, on) => {
+  const planted = KEY_TAIL.slice(0, 14)
+  const seen: Record<string, unknown>[] = []
+  const edit = recorded('Edit')
+  await afterKeyRead(
+    $,
+    on,
+    (e) => {
+      seen.push(e)
+      return edit.r
+    },
+    { ...PAY_MAP, __VAR__8: planted }
+  )
+  const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'use(__VAR__8)' })
+  expect(out.deny).toContain('Veilio refused this call')
+  expect(seen.length).toBe(0)
+})
+
+test('ordinary output with 16-character git SHAs is not withheld when no SHA was removed', async ($, on) => {
+  await afterKeyRead($, on, () =>
+    bashOut('a1b2c3d4e5f60718 fix: totals\n0f1e2d3c4b5a6978 docs: readme\n')
+  )
+  const bash = recorded('Bash')
+  const out = await $.tool.call({ ...eventOf(bash), command: 'git log --oneline --abbrev=16' })
+  expect(out.deny).toBeUndefined()
+  expect(res(out).stdout).toContain('a1b2c3d4e5f60718')
+})
+
+// COVERAGE.md, Not covered: a credential under 16 characters is matched whole only.
+test('the documented limit: a removed credential under 16 characters comes back spaced', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = 'Location: https://app.example/cb?access_token=Pq7rT2wZx9Lm&state=1\n'
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(one)).not.toContain('Pq7rT2wZx9Lm')
+  stdout = `${[...'Pq7rT2wZx9Lm'].join(' ')}\n`
+  const two = await $.tool.call(eventOf(bash))
+  expect(two.deny).toBeUndefined()
+  expect(res(two).stdout).toContain('P q 7 r')
 })

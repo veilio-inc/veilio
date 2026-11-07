@@ -1200,6 +1200,15 @@ function periodOf(value: string): number {
   return value.length - (border[value.length - 1] ?? 0)
 }
 
+// Spec 078 R3: a removed credential's slices. 16 characters of a value with
+// letters and digits only is high-entropy enough that a chance match in
+// other text is negligible; a name is held to 12.
+const WINDOW = 16
+const NAME_WINDOW = 12
+/** Letters and digits only, lower case: the form two copies of a value share
+ *  whatever separators or case they were printed with. */
+const compact = (text: string) => text.replace(/[^A-Za-z0-9]+/g, '').toLowerCase()
+
 /** The credentials a session has destroyed, held in memory only, each with
  *  one token: the same secret reads as the same token everywhere, two
  *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
@@ -1210,6 +1219,12 @@ export class Destroyed {
   private sweep = new Map<string, number>()
   private list: string[] | null = []
   private next = 1001
+  /** Spec 078 R3: every 16- and 12-character window of each learned value of
+   *  16 or more letters and digits, compacted, forwards and reversed. */
+  private windows16 = new Set<string>()
+  private windows12 = new Set<string>()
+  /** Grows whenever a value with windows is learned. */
+  version = 0
   learn(values: readonly string[]): void {
     // Every value is kept, one too long to search for by its bounded prefix;
     // then a too-long one fails the text that holds it (the caller withholds
@@ -1222,8 +1237,40 @@ export class Destroyed {
       this.tokenFor(v)
       this.sweep.set(v, periodOf(v))
       this.list = null
+      const c = compact(v)
+      if (c.length >= WINDOW) {
+        for (const form of [c, [...c].reverse().join('')]) {
+          for (let i = 0; i + WINDOW <= form.length; i++)
+            this.windows16.add(form.slice(i, i + WINDOW))
+          for (let i = 0; i + NAME_WINDOW <= form.length; i++)
+            this.windows12.add(form.slice(i, i + NAME_WINDOW))
+        }
+        this.version++
+      }
     }
     if (tooLong) throw new Error('a destroyed credential too long to remove safely')
+  }
+  /** Whether `text` holds 16 characters of a learned value in another form:
+   *  separators or case changed, sliced, reversed, or base64/hex encoded
+   *  (spec 078 FR-005). Linear in the text. */
+  reshaped(text: string): boolean {
+    if (this.windows16.size === 0) return false
+    // Compaction joins a column and drops separators; reversed windows are
+    // in the set: only the encoded runs need decoding.
+    for (const form of [text, ...decodedRuns(text)]) {
+      const c = compact(form)
+      for (let i = 0; i + WINDOW <= c.length; i++)
+        if (this.windows16.has(c.slice(i, i + WINDOW))) return true
+    }
+    return false
+  }
+  /** Whether a name shares 12 characters with a learned value (FR-006). */
+  sharesWindow(name: string): boolean {
+    if (this.windows12.size === 0) return false
+    const c = compact(name)
+    for (let i = 0; i + NAME_WINDOW <= c.length; i++)
+      if (this.windows12.has(c.slice(i, i + NAME_WINDOW))) return true
+    return false
   }
   /** A name that holds one of these credentials, with the placeholder it is
    *  masked by this session: replaced whole before the credential inside it is
@@ -1617,10 +1664,26 @@ function decodeHex(run: string): string | null {
  *  joined first), each line reversed, and a column of 4 or more lines of 1-3
  *  characters joined. Linear in the text. */
 export function encodedForms(text: string): string[] {
+  const lines = text.split('\n')
+  const out = decodedRuns(text, lines)
+  out.push(lines.map((l) => [...l].reverse().join('')).join('\n'))
+  let column: string[] = []
+  for (const line of [...lines, '']) {
+    const l = line.replace(/\r$/, '')
+    if (l.length >= 1 && l.length <= 3) column.push(l)
+    else {
+      if (column.length >= 4) out.push(column.join(''))
+      column = []
+    }
+  }
+  return out
+}
+
+/** The base64, base64url and hex runs of a text, decoded. */
+export function decodedRuns(text: string, lines = text.split('\n')): string[] {
   // The whole text, however long: every step below is linear, and a shell's
   // output reaches the guard already capped by Claude Code.
   const out: string[] = []
-  const lines = text.split('\n')
   // A wrapped base64 run (base64's 76 columns) is one run: whole lines of
   // base64 characters joined, line by line (a regex across lines
   // backtracks quadratically on a long run).
@@ -1641,16 +1704,6 @@ export function encodedForms(text: string): string[] {
   for (const m of text.matchAll(HEX_RUN)) {
     const d = decodeHex(m[0])
     if (d !== null) out.push(d)
-  }
-  out.push(lines.map((l) => [...l].reverse().join('')).join('\n'))
-  let column: string[] = []
-  for (const line of [...lines, '']) {
-    const l = line.replace(/\r$/, '')
-    if (l.length >= 1 && l.length <= 3) column.push(l)
-    else {
-      if (column.length >= 4) out.push(column.join(''))
-      column = []
-    }
   }
   return out
 }
