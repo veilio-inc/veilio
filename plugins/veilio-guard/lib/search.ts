@@ -77,6 +77,14 @@ function oneFileLine(text: string, format: SearchFormat & { oneFile: string }): 
   }
 }
 
+/** Where a search's `path` is on disk: absolute as written, else under
+ *  `base` (a leading `./` dropped); null for one that climbs with `..`. The
+ *  one resolver for a line's path and a one-file search's (T024 review). */
+export function searchPath(base: string, path: string): string | null {
+  if (path.split(/[\\/]/).includes('..')) return null
+  return path.startsWith('/') ? path : `${base.replace(/\/+$/, '')}/${path.replace(/^\.\//, '')}`
+}
+
 export async function parseSearchOutput(
   text: string,
   format: SearchFormat & { fileExists: (path: string) => Promise<boolean> }
@@ -88,10 +96,8 @@ export async function parseSearchOutput(
   const names = async (path: string): Promise<boolean | undefined> => {
     if (resolved.has(path)) return true
     // A path that climbs out of the base is never followed.
-    if (path.split(/[\\/]/).includes('..')) return false
-    const full = path.startsWith('/')
-      ? path
-      : `${format.base.replace(/\/+$/, '')}/${path.replace(/^\.\//, '')}`
+    const full = searchPath(format.base, path)
+    if (full === null) return false
     const known = checked.get(full)
     if (known !== undefined) return known
     if (checks >= SEARCH_LIMITS.checks) return undefined

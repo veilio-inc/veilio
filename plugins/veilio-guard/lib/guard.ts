@@ -56,7 +56,7 @@ import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
-import { parseSearchOutput, searchCommand, type SearchFormat } from './search.ts'
+import { parseSearchOutput, searchCommand, searchPath, type SearchFormat } from './search.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -1333,11 +1333,9 @@ export class Guard {
     const isFile = this.io.isFile
     if (!this.searchPass2 || !isFile || !this.cwd) return text
     try {
-      const full = (p: string) => (p.startsWith('/') ? p : join(this.cwd, p))
-      const oneFile =
-        format.oneFile !== undefined && (await isFile(full(format.oneFile)))
-          ? format.oneFile
-          : undefined
+      const full = (p: string) => searchPath(this.cwd, p)
+      const one = format.oneFile !== undefined ? full(format.oneFile) : null
+      const oneFile = one !== null && (await isFile(one)) ? format.oneFile : undefined
       const parsed = await bounded(
         parseSearchOutput(text, { ...format, oneFile, base: this.cwd, fileExists: isFile }),
         deadline,
@@ -1351,7 +1349,8 @@ export class Guard {
         const shown = run.lines.map((i) => lines[i]!)
         // A file named for its key (`secrets/db_password`) that holds only a
         // value is read as that key's value (FR-004).
-        const name = await this.mountedSecret(full(run.path), run.path, shown, deadline)
+        const at = full(run.path)
+        const name = at === null ? null : await this.mountedSecret(at, run.path, shown, deadline)
         const bare = name !== null
         const prefix = bare ? `${name}: ` : ''
         const r = keyedRun(

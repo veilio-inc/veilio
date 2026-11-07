@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { Guard, type GuardIO } from '../../plugins/veilio-guard/lib/guard.ts'
+import {
   parseSearchOutput,
   searchCommand,
+  searchPath,
   SEARCH_LIMITS,
   type SearchFormat,
 } from '../../plugins/veilio-guard/lib/search.ts'
@@ -409,5 +423,67 @@ describe('searchCommand', () => {
     'rg "x deploy',
   ])('not search output: %s', (command) => {
     expect(searchCommand(command)).toBeNull()
+  })
+})
+
+describe('searchPath', () => {
+  it.each([
+    ['a/b.yaml', '/p/a/b.yaml'],
+    ['./a/b.yaml', '/p/a/b.yaml'],
+    ['/run/secrets/x', '/run/secrets/x'],
+    ['../other/x', null],
+    ['a/../../x', null],
+    ['a\\..\\x', null],
+    ['/run/../etc/x', null],
+  ])('%s', (p, full) => {
+    expect(searchPath('/p/', p)).toBe(full)
+  })
+})
+
+// T024 review: the Grep tool's one-file path goes through the same resolver,
+// so a `..` that climbs out of the project is refused there too.
+describe('a one-file search outside the project', () => {
+  it('is masked as before, not read as a mounted secret', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'veilio-074-up-')))
+    try {
+      const root = join(base, 'proj')
+      mkdirSync(join(root, '.git'), { recursive: true })
+      mkdirSync(join(base, 'other/secrets'), { recursive: true })
+      writeFileSync(join(base, 'other/secrets/db_password'), 'xq9mk2plzrvnw7\n')
+      const io: GuardIO = {
+        read: async (p) => readFileSync(p, 'utf8'),
+        write: async (p, t) => {
+          mkdirSync(dirname(p), { recursive: true })
+          writeFileSync(p, t)
+        },
+        exists: async (p) => existsSync(p),
+        realPath: async (p) => p,
+        isFile: async (p) => existsSync(p) && statSync(p).isFile(),
+        fileSize: async (p) => (existsSync(p) ? statSync(p).size : undefined),
+      }
+      const g = new Guard(io, { rawOnly: [], mcpRestore: [] })
+      await g.load(root)
+      const out = (await g.afterTool(
+        'Grep',
+        {
+          tool: 'Grep',
+          pattern: 'x',
+          output_mode: 'content',
+          path: '../other/secrets/db_password',
+        },
+        {
+          result: {
+            mode: 'content',
+            numFiles: 1,
+            filenames: [],
+            content: '1:xq9mk2plzrvnw7',
+            numLines: 1,
+          },
+        }
+      )) as { result: { content: string } }
+      expect(out.result.content).toBe('1:xq9mk2plzrvnw7')
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })
