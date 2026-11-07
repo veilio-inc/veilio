@@ -461,6 +461,13 @@ test('grep -n on one file: no path on the line, still masked', async ($, on) => 
   expect(r.one).toMatch(/^2: {2}- name: DB_PASSWORD\n3- {4}value: __REDACTED_CREDENTIAL_\d+__\n$/)
 })
 
+// Captured on macOS 2026-11-07 (Claude Code's shell grep, ugrep 7.8.4, and
+// BSD grep 2.6.0 print the same): `grep -rn` names even one file.
+test('grep -rn on one file prints its path: masked as the Grep tool', async ($, on) => {
+  const r = await shell($, on, 'grep -rn -A1 DB_PASSWORD deploy/k8s.yaml', PAIR_N)
+  expect(r.one).toMatch(MASKED_PAIR)
+})
+
 test('rg over a secret file named for its key: masked and remembered', async ($, on) => {
   const r = await shell($, on, 'rg x secrets/db_password', 'xq9mk2plzrvnw7\n')
   expect(r.one).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)

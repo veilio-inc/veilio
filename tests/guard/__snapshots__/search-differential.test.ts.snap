@@ -54,6 +54,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
   "file_d1[15] (Grep, one file)": [
     "later: DbPasswordProd2",
   ],
+  "file_d1[15] (grep -rn)": [
+    "later: DbPasswordProd2",
+  ],
   "file_d1[16] (Grep -n)": [
     "$ANSIBLE_VAULT;1.1;AES256",
   ],
@@ -61,6 +64,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "$ANSIBLE_VAULT;1.1;AES256",
   ],
   "file_d1[16] (Grep, one file)": [
+    "$ANSIBLE_VAULT;1.1;AES256",
+  ],
+  "file_d1[16] (grep -rn)": [
     "$ANSIBLE_VAULT;1.1;AES256",
   ],
   "file_d3[3] (Grep -n)": [
@@ -72,6 +78,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
   "file_d3[3] (Grep, one file)": [
     "later: db_password_prod_2026",
   ],
+  "file_d3[3] (grep -rn)": [
+    "later: db_password_prod_2026",
+  ],
   "file_d5[1] (Grep -n)": [
     "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
   ],
@@ -79,6 +88,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
   ],
   "file_d5[1] (Grep, one file)": [
+    "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
+  ],
+  "file_d5[1] (grep -rn)": [
     "later: AgBy3i4OJSWK+PiTySYZZA9rO43cGDEq",
   ],
   "file_d5[6] (Grep -n)": [

@@ -90,6 +90,35 @@ describe('parseSearchOutput: the formats of research R1', () => {
     expect(d.asked).toEqual([])
   })
 
+  // T024 review: `grep -r` on one file prints its path. Captured on macOS
+  // 2026-11-07 from Claude Code's shell grep (ugrep 7.8.4) and /usr/bin/grep
+  // (BSD grep 2.6.0), byte for byte the same.
+  it('one file, the path printed anyway (grep -rn on one file)', async () => {
+    const r = await parse(
+      'deploy/k8s.yaml:2:  - name: DB_PASSWORD\ndeploy/k8s.yaml-3-    value: qx7mkplzrvnwtyb',
+      { oneFile: 'deploy/k8s.yaml', context: true }
+    )
+    expect(r.lines.map((l) => [l.kind, l.lineNumber, l.body])).toEqual([
+      ['match', 2, '  - name: DB_PASSWORD'],
+      ['context', 3, '    value: qx7mkplzrvnwtyb'],
+    ])
+  })
+  it('one file, the path printed, no numbers (grep -r on one file)', async () => {
+    const r = await parse(
+      'deploy/k8s.yaml:  - name: DB_PASSWORD\ndeploy/k8s.yaml-    value: qx7mkplzrvnwtyb',
+      { oneFile: 'deploy/k8s.yaml', context: true, numbered: false }
+    )
+    expect(r.lines.map((l) => l.body)).toEqual([
+      '  - name: DB_PASSWORD',
+      '    value: qx7mkplzrvnwtyb',
+    ])
+  })
+  it('one file: a result where only some lines start with the path keeps them as text', async () => {
+    const r = await parse('a.yaml:1:x\n2:y', { oneFile: 'a.yaml' })
+    expect(r.lines.map((l) => l.body)).toEqual(
+      ['a.yaml:1:x', 'y'].map((b, i) => (i ? b : undefined))
+    )
+  })
   it('one file, numbered: a line without its number is unresolved', async () => {
     const r = await parse('localhost:5432:*:postgres:pw', { oneFile: '.pgpass' })
     expect(r.lines[0]!.kind).toBe('unresolved')

@@ -102,13 +102,22 @@ export async function parseSearchOutput(
   }
 
   const lines: SearchLine[] = []
-  for (const line of text.split('\n')) {
+  const all = text.split('\n')
+  // A one-file search prints no path, or (`grep -r` on one file) the file's
+  // path on every line: then that is cut off first (T024 review).
+  const one = format.oneFile
+  const named =
+    one !== undefined &&
+    all.every((l) => l === '--' || l === '' || l.startsWith(`${one}:`) || l.startsWith(`${one}-`))
+  for (const line of all) {
     if (line === '--') {
       lines.push({ text: line, kind: 'separator' })
       continue
     }
-    if (format.oneFile !== undefined) {
-      lines.push(oneFileLine(line, { ...format, oneFile: format.oneFile }))
+    if (one !== undefined) {
+      const rest = named ? line.slice(one.length + 1) : line
+      const l = oneFileLine(rest, { ...format, oneFile: one })
+      lines.push({ ...l, text: line })
       continue
     }
     // A candidate that is a file this result already placed: the line is
