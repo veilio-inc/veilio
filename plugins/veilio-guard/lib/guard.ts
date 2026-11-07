@@ -1168,33 +1168,14 @@ export class Guard {
     // Spec 074 pass 2: a search's lines read as their files' text, after the
     // learning above (on the result as sent) and before the sweep below, so
     // what it learns is removed from the whole result.
-    if (tool === 'Grep' && policy.kind === 'fields') {
+    const search = policy.kind === 'fields' ? this.searchOf(tool, args, outcome.result) : null
+    if (search) {
       const record = outcome.result as Record<string, unknown>
-      if (record.mode === 'content' && typeof record.content === 'string')
-        outcome = {
-          ...outcome,
-          result: {
-            ...record,
-            content: await this.searchPass(record.content, grepFormat(args), deadline),
-          },
-        }
-    }
-    // The same search run in a shell (research R5): one plain `rg`/`grep`,
-    // while the shell is where the session started.
-    const shellSearch =
-      tool === 'Bash' && typeof args.command === 'string' && !this.shellMoved
-        ? searchCommand(args.command)
-        : null
-    if (shellSearch && policy.kind === 'fields') {
-      const record = outcome.result as Record<string, unknown>
-      if (typeof record.stdout === 'string')
-        outcome = {
-          ...outcome,
-          result: {
-            ...record,
-            stdout: await this.searchPass(record.stdout, shellSearch, deadline),
-          },
-        }
+      const text = record[search.field] as string
+      outcome = {
+        ...outcome,
+        result: { ...record, [search.field]: await this.searchPass(text, search.format, deadline) },
+      }
     }
     if (this.destroyed.values.length > 0)
       outcome = {
@@ -1321,6 +1302,22 @@ export class Guard {
     )
   }
 
+  /** Where a result holds search output, and how it was printed: the Grep
+   *  tool's content, or the stdout of one plain `rg`/`grep` in a shell that
+   *  is where the session started (research R5). */
+  private searchOf(
+    tool: string,
+    args: ToolEvent,
+    result: unknown
+  ): { field: 'content' | 'stdout'; format: ReturnType<typeof grepFormat> } | null {
+    const record = (result ?? {}) as Record<string, unknown>
+    if (tool === 'Grep' && record.mode === 'content' && typeof record.content === 'string')
+      return { field: 'content', format: grepFormat(args) }
+    if (tool !== 'Bash' || this.shellMoved || typeof args.command !== 'string') return null
+    const format = searchCommand(args.command)
+    return format && typeof record.stdout === 'string' ? { field: 'stdout', format } : null
+  }
+
   /** Spec 074 pass 2 (research R4): each file's run of search lines read as
    *  that file's text - a key on one line and its value on the next are one
    *  value - with each key-rule value replaced where it stands, and the
@@ -1369,7 +1366,7 @@ export class Guard {
           isCode(run.path),
           fileKindOf(run.path),
           bare,
-          shown.map((l) => l.text.slice(0, l.text.length - l.body!.length))
+          shown.map((l) => l.prefix!)
         )
         learned.push(...r.learned)
         const back = r.text.split('\n')
@@ -1378,14 +1375,13 @@ export class Guard {
           this.searchUnsplit++
           for (const i of run.lines) {
             const l = lines[i]!
-            out[i] =
-              l.text.slice(0, l.text.length - l.body!.length) + this.destroyed.tokenFor(l.body!)
+            out[i] = l.prefix! + this.destroyed.tokenFor(l.body!)
           }
           continue
         }
         run.lines.forEach((i, j) => {
           const l = lines[i]!
-          out[i] = l.text.slice(0, l.text.length - l.body!.length) + back[j]!.slice(prefix.length)
+          out[i] = l.prefix! + back[j]!.slice(prefix.length)
         })
       }
       this.destroyed.learn(learned)

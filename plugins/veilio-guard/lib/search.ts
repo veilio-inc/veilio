@@ -26,6 +26,8 @@ export type SearchLine = {
   path?: string
   lineNumber?: number
   body?: string
+  /** What the search printed before `body` (a resolved line only). */
+  prefix?: string
 }
 
 /** Consecutive lines of one file, by index into `lines`. */
@@ -64,6 +66,9 @@ function candidates(line: string, format: SearchFormat): Candidate[] | null {
   }
   return out
 }
+
+const withPrefix = (l: SearchLine): SearchLine =>
+  l.body === undefined ? l : { ...l, prefix: l.text.slice(0, l.text.length - l.body.length) }
 
 /** A one-file search's line: `N:text` / `N-text` when numbered, else the text. */
 function oneFileLine(text: string, format: SearchFormat & { oneFile: string }): SearchLine {
@@ -125,7 +130,7 @@ export async function parseSearchOutput(
     if (one !== undefined) {
       const rest = named ? line.slice(one.length + 1) : line
       const l = oneFileLine(rest, { ...format, oneFile: one })
-      lines.push({ ...l, text: line })
+      lines.push(withPrefix({ ...l, text: line }))
       continue
     }
     // A candidate that is a file this result already placed: the line is
@@ -149,7 +154,7 @@ export async function parseSearchOutput(
     }
     if (ok && pick) {
       resolved.add(pick.path)
-      lines.push({ text: line, ...pick })
+      lines.push(withPrefix({ text: line, ...pick }))
     } else lines.push({ text: line, kind: 'unresolved' })
   }
 
