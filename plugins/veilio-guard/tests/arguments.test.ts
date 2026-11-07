@@ -127,8 +127,9 @@ test("Claude Code's own refusal, which quotes the restored command, reaches the 
   on('tool.call', (_, e) => ({
     deny: `Permission to use Bash with command ${e.command} was denied.`,
   }))
-  const out = await $.tool.call({ tool: 'Bash', command: 'rm -rf __CLS__1', description: 'x' })
-  expect(out.deny).toContain('rm -rf __CLS__1')
+  // A read (spec 078 R1: only reads and tests get real names back).
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat __CLS__1', description: 'x' })
+  expect(out.deny).toContain('cat __CLS__1')
   expect(out.deny).not.toContain(CANARY)
 })
 
@@ -224,13 +225,12 @@ test('a shell command with known placeholders and language tokens runs', async (
   const seen = shell(on)
   const out = await $.tool.call({
     tool: 'Bash',
-    command: "sed -i '' 's/__VAR__1/__VAR__3/' src/ledger.ts && grep -rn __DEV__ src",
-    description: 'rename',
+    // A read and a search (spec 078 R1: only reads and tests get real names back).
+    command: 'grep -rn __VAR__1 src/ledger.ts && grep -rn __DEV__ src',
+    description: 'search',
   })
   expect(out.deny).toBeUndefined()
-  expect(seen[0].command).toBe(
-    "sed -i '' 's/settledTotal/closedTotal/' src/ledger.ts && grep -rn __DEV__ src"
-  )
+  expect(seen[0].command).toBe('grep -rn settledTotal src/ledger.ts && grep -rn __DEV__ src')
 })
 
 // Security review of 2af9fca: a placeholder for a provider-format key is

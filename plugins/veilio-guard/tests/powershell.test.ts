@@ -57,15 +57,31 @@ for (const command of [
   })
 }
 
-test('PowerShell: a known placeholder is restored before the command runs', async ($, on) => {
+// Spec 078 R1: PowerShell has no read-or-test list yet, so a known placeholder
+// is never put back into its commands (before, it was restored).
+test('PowerShell: a known placeholder is refused, nothing restored', async ($, on) => {
   const seen = powershell(on)
   const out = await $.tool.call({
     tool: 'PowerShell',
     command: 'Add-Content -Path notes.md -Value "See also __CLS__1"',
     description: 'note',
   })
-  expect(out.deny).toBeUndefined()
-  expect(seen[0].command).toBe(`Add-Content -Path notes.md -Value "See also ${CANARY}"`)
+  expect(seen.length).toBe(0)
+  expect(out.deny).toBe(
+    'Veilio refused this call: PowerShell commands get no real names back yet. Use the Read, Edit, Write or Grep tool.'
+  )
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+})
+
+test('PowerShell: a read gets no real names back either', async ($, on) => {
+  const seen = powershell(on)
+  const out = await $.tool.call({
+    tool: 'PowerShell',
+    command: 'Get-Content src/__CLS__1.ts',
+    description: 'x',
+  })
+  expect(seen.length).toBe(0)
+  expect(out.deny).toContain('PowerShell commands get no real names back yet')
 })
 
 test('PowerShell: a placeholder the map does not have is refused, so no file receives it', async ($, on) => {

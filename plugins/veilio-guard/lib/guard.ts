@@ -21,6 +21,7 @@ import {
   type SymbolMap,
 } from './mapfile.ts'
 import { isRawOnly, pathsInCommand } from './paths.ts'
+import { restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -1050,6 +1051,17 @@ export class Guard {
           '. Read the file again and use the placeholders it shows' +
           viaEdit
       )
+    }
+    // Spec 078 R1 (A#1): a placeholder goes back into a shell command only
+    // when the command reads files or runs tests; anything else could reshape
+    // the real name or send it off the machine.
+    if (policy.command && resolved.size > 0) {
+      const command = e[policy.command]
+      const why = restoreRefusal(
+        typeof command === 'string' ? command : '',
+        e.tool === 'PowerShell' ? 'PowerShell' : 'Bash'
+      )
+      if (why) return this.deny(why)
     }
     return { args }
   }
