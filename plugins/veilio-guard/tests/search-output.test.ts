@@ -231,7 +231,7 @@ test('a split k8s credential in a search is remembered too', async ($, on) => {
   expect(r.two).toMatch(/^psql with __REDACTED_CREDENTIAL_\d+__\n$/)
 })
 
-test("a code file's unquoted value is masked in the search and not remembered; a quoted one is", async ($, on) => {
+test("a code file's unquoted value is masked in the search and not remembered, a quoted one is", async ($, on) => {
   const r = await searchThen(
     $,
     on,
