@@ -1426,6 +1426,6 @@ describe('encodedName (spec 078)', () => {
     const text = 'commit a1b2c3d4e5f60718 fix: totals in OrderLine\n'.repeat(20_000)
     const t = performance.now()
     expect(encodedName(text, map)).toBeNull()
-    console.log(`encodedName on ${text.length} bytes: ${(performance.now() - t).toFixed(1)} ms`)
+    console.warn(`encodedName on ${text.length} bytes: ${(performance.now() - t).toFixed(1)} ms`)
   })
 })
