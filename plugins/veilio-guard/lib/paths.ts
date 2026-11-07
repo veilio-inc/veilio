@@ -130,3 +130,11 @@ export function cdIntoRawOnly(target: string, dirs: readonly string[]): boolean 
   }
   return false
 }
+
+/** Spec 078 FR-012: Claude Code's project and user settings, which can switch
+ *  the guard off (`disableAllHooks`). Matched as a path's tail, as written and
+ *  resolved, ignoring case. */
+export function isWriteProtected(path: string): boolean {
+  const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
+  return /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p)
+}

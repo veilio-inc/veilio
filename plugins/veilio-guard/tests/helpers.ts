@@ -55,6 +55,8 @@ export type Options = {
   chmodIgnored?: boolean
   /** The machine is Windows ($.env OS=Windows_NT): no chmod, no stat. */
   windows?: boolean
+  /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record). */
+  home?: string
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -193,7 +195,11 @@ export function project(
       return { value: undefined }
     })
   }
-  if (opts.windows) on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
+  if (opts.windows || opts.home)
+    on('env.get', (_, e) => ({
+      value:
+        e.name === 'OS' && opts.windows ? 'Windows_NT' : e.name === 'HOME' ? opts.home : undefined,
+    }))
   const policy = opts.policy ?? {}
   on('settings.read', () => ({ value: policy }))
   return p

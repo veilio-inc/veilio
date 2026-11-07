@@ -11,6 +11,7 @@ const guard = (index: unknown) =>
     map: { __FN__1: 'a' },
     counts: { withheld: 0, denied: 0 },
     rules: NO_RULES,
+    mcpRestore: [],
     index,
   }) as unknown as Guard
 

@@ -172,6 +172,7 @@ async function ready($: Host): Promise<Guard> {
       )
     loading = $.session.cwd().then(async (cwd) => {
       await g.load(cwd, await home)
+      for (const text of g.notices.splice(0)) $.ui.log(text)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
       guard = g
@@ -413,10 +414,20 @@ export function register(on: On, options: Options = {}) {
         text: "Veilio guard is set up by your organisation's managed settings, so it can't be switched off here.",
       }
     }
+    let recorded = false
     if (arg === 'off' || arg === 'on') {
-      await g.setEnabled(arg === 'on')
+      recorded = await g.setEnabled(arg === 'on')
+      for (const text of g.notices.splice(0)) $.ui.log(text)
       $.ui.invalidate('ui.render')
     }
-    return { text: statusText(g, managed) }
+    const text = statusText(g, managed)
+    if (arg !== 'off' || !recorded) return { text }
+    // strings.md #17, on the first line of the reply.
+    const [first, ...rest] = text.split('\n')
+    return {
+      text: [`${first} Recorded for this project in ~/.veilio/guard-state.json.`, ...rest].join(
+        '\n'
+      ),
+    }
   })
 }

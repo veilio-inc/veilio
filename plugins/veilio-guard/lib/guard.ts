@@ -25,6 +25,7 @@ import {
   cdTargets,
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  isWriteProtected,
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
@@ -145,6 +146,15 @@ export const RESHAPED_CREDENTIAL =
 /** strings.md #12, as `withheld` completes it. */
 export const ENCODED_NAME =
   'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
+/** strings.md #15 and #16. */
+export const BACK_ON =
+  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off for this project, run /veilio off.'
+export const MCP_IGNORED =
+  "Veilio: mcpRestore in .veilio/guard.json was ignored, because a file in the project can be written by the agent. Set it in the plugin's settings (/config)."
+/** strings.md #9. */
+const SETTINGS_PROTECTED =
+  "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
 
@@ -179,9 +189,13 @@ const withheldText = (w: Withheld) =>
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
-  /** guard.json is the repository's, or cannot be shown to be this checkout's. */
-  private settingsFromRepository = false
   root = ''
+  /** The user's home ($HOME): where the off record is kept (spec 078 FR-010). */
+  home: string | undefined
+  /** Said once a session (register.ts logs them): settings the guard ignored. */
+  notices: string[] = []
+  /** The off record could not be read: the guard stays on, and the band says so. */
+  offRecordUnreadable = false
   /** The session's working directory: what a search's paths are read from. */
   cwd = ''
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
@@ -362,10 +376,9 @@ export class Guard {
     // Security audit 2026-11-01: files under .veilio/ committed to the
     // repository are its author's, not this checkout's.
     const committed = await this.trackedVeilioFiles()
-    // Unknown (no git listing, or a late one): nobody can tell whose
-    // guard.json it is, so it may only tighten (review of a7b6a1b).
-    this.settingsFromRepository = committed === null || committed.includes('.veilio/guard.json')
+    this.home = home
     await this.readSettings()
+    await this.readOffRecord()
     await this.reloadMap()
     // A committed map or aliases file: its values would be restored into
     // commands the model only saw as placeholders.
@@ -567,10 +580,10 @@ export class Guard {
     return null
   }
 
-  /** `fromRepository`: guard.json is committed, so it may only tighten - add
-   *  raw-only paths - never widen what reaches an MCP server or switch the
-   *  guard off (security audit 2026-11-01). */
-  private async readSettings(fromRepository = this.settingsFromRepository): Promise<void> {
+  /** Spec 078 FR-009: guard.json, which the agent's tools can write by some
+   *  route, may only tighten - add raw-only paths - whoever wrote it, tracked
+   *  or not. Its mcpRestore and enabled are ignored, and said once. */
+  private async readSettings(): Promise<void> {
     this.extraRawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
@@ -584,11 +597,48 @@ export class Guard {
     if (Array.isArray(settings.rawOnly)) {
       this.extraRawOnly.push(...settings.rawOnly.filter((p): p is string => typeof p === 'string'))
     }
-    if (fromRepository) return
-    if (Array.isArray(settings.mcpRestore)) {
-      this.mcpRestore.push(...settings.mcpRestore.filter((p): p is string => typeof p === 'string'))
+    if (settings.enabled === false) this.notice(BACK_ON)
+    if (settings.mcpRestore !== undefined) this.notice(MCP_IGNORED)
+  }
+
+  private said = new Set<string>()
+  private notice(text: string): void {
+    if (this.said.has(text)) return
+    this.said.add(text)
+    this.notices.push(text)
+  }
+
+  get offRecordPath(): string | undefined {
+    return this.home ? join(this.home, '.veilio', 'guard-state.json') : undefined
+  }
+
+  /** The project's key in the off record: the root's real path. */
+  private async recordKey(): Promise<string> {
+    return (await this.io.realPath(this.root)) ?? this.root
+  }
+
+  /** The off record, or null when there is none; throws when it cannot be read. */
+  private async offRecord(): Promise<{ version: 1; projects: Record<string, unknown> } | null> {
+    const path = this.offRecordPath
+    if (!path || !(await this.io.exists(path))) return null
+    const parsed: unknown = JSON.parse(await this.io.read(path))
+    const projects = (parsed as { projects?: unknown } | null)?.projects
+    if (!projects || typeof projects !== 'object' || Array.isArray(projects))
+      throw new Error('not an off record')
+    return { version: 1, projects: projects as Record<string, unknown> }
+  }
+
+  /** Spec 078 FR-010: whether /veilio off was run for this project. An
+   *  unreadable record never turns the guard off. */
+  private async readOffRecord(): Promise<void> {
+    this.offRecordUnreadable = false
+    try {
+      const record = await this.offRecord()
+      const entry = record?.projects[await this.recordKey()] as { enabled?: unknown } | undefined
+      if (entry?.enabled === false && this.state === 'on') this.state = 'off'
+    } catch {
+      this.offRecordUnreadable = true
     }
-    if (settings.enabled === false) this.state = 'off'
   }
 
   /** Spec 063: read the member's blocks. Never fatal: without them the guard numbers as it always did. */
@@ -676,30 +726,35 @@ export class Guard {
     this.stoppedReason = reason
   }
 
-  async setEnabled(enabled: boolean): Promise<void> {
-    // Merged into what the file holds, so the project's own lists survive.
-    let settings: Record<string, unknown> = {}
-    if (await this.io.exists(this.settingsPath)) {
+  /** /veilio off|on: recorded in ~/.veilio/guard-state.json (spec 078
+   *  FR-010), never in the project. Says whether it was recorded. */
+  async setEnabled(enabled: boolean): Promise<boolean> {
+    const path = this.offRecordPath
+    let recorded = false
+    if (path) {
+      let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
       try {
-        const parsed: unknown = JSON.parse(await this.io.read(this.settingsPath))
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-          settings = parsed as Record<string, unknown>
+        record = (await this.offRecord()) ?? record
       } catch {
-        // An unreadable file is replaced; readSettings stopped the guard on it.
+        // An unreadable record is replaced: this is the user's own choice.
       }
+      const key = await this.recordKey()
+      const projects = { ...record.projects }
+      if (enabled) delete projects[key]
+      else projects[key] = { enabled: false, changedAt: new Date().toISOString().slice(0, 10) }
+      const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
+      if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
+      await this.io.write(path, text)
+      this.offRecordUnreadable = false
+      recorded = true
     }
-    const changedAt = new Date().toISOString().slice(0, 10)
-    await this.io.write(
-      this.settingsPath,
-      `${JSON.stringify({ ...settings, enabled, changedAt }, null, 2)}\n`
-    )
-    await this.ensureIgnored()
     this.state = enabled ? 'on' : 'off'
     if (enabled) {
       this.stoppedReason = ''
       await this.readSettings()
       await this.reloadMap()
     }
+    return recorded
   }
 
   private async ensureIgnored(): Promise<void> {
@@ -1042,6 +1097,16 @@ export class Guard {
       return this.deny(
         'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
       )
+
+    // Spec 078 FR-012: Claude Code's settings, in every permission mode.
+    if (WRITE_TOOLS.has(e.tool))
+      for (const field of policy.paths)
+        for (const p of [e[field], args[field]])
+          if (typeof p === 'string' && isWriteProtected(p)) return this.deny(SETTINGS_PROTECTED)
+    if (policy.command)
+      for (const c of [e[policy.command], args[policy.command]])
+        if (typeof c === 'string' && pathsInCommand(c).some(isWriteProtected))
+          return this.deny(SETTINGS_PROTECTED)
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {

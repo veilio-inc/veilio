@@ -138,15 +138,20 @@ test('a guard.json committed to the repository cannot switch the guard off', asy
   expect(seen[0]?.command).toBe('grep -rn QuasarLedger src')
 })
 
-test("this checkout's own guard.json still adds MCP servers", async ($, on) => {
-  project(on, {
+// Spec 078 FR-009: the checkout's own (untracked) guard.json no longer adds
+// MCP servers: a file in the project can be written by the agent.
+test("this checkout's own guard.json no longer adds MCP servers, and the band says so", async ($, on) => {
+  const p = project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
     [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['slack'] }),
   })
   const seen: Fields[] = []
   on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
   await $.tool.call({ tool: 'mcp__slack__post_message', channel: 'g', text: 'bug in __CLS__1' })
-  expect(JSON.stringify(seen)).toContain('QuasarLedger')
+  expect(JSON.stringify(seen)).not.toContain('QuasarLedger')
+  expect(
+    p.logs.some((l) => l.startsWith('Veilio: mcpRestore in .veilio/guard.json was ignored'))
+  ).toBe(true)
 })
 
 // Automated review of a7b6a1b: with no git listing (a project unpacked from

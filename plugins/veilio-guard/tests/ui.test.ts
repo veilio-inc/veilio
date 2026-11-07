@@ -22,8 +22,13 @@ function drawn(on: TestOn, seen: Fields[]) {
   })
 }
 
-async function loaded($: TestHost, on: TestOn, files: Record<string, string>) {
-  const p = project(on, files)
+async function loaded(
+  $: TestHost,
+  on: TestOn,
+  files: Record<string, string>,
+  opts: Parameters<typeof project>[2] = {}
+) {
+  const p = project(on, files, opts)
   on('session.start', () => ({ cwd: ROOT }))
   return p
 }
@@ -121,7 +126,14 @@ test('the band says the guard is on, with what it did', async ($, on) => {
 })
 
 test('the band warns while the guard is off', async ($, on) => {
-  await loaded($, on, { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ enabled: false }) })
+  // Spec 078 FR-010: off is recorded under ~/.veilio, not in guard.json.
+  const off = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
+  await loaded(
+    $,
+    on,
+    { '/home/dev/.veilio/guard-state.json': JSON.stringify(off) },
+    { home: '/home/dev' }
+  )
   drawn(on, [])
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   const ui = await $.ui.mount(

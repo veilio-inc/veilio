@@ -104,22 +104,24 @@ test('a web request never gets the real names', async ($, on) => {
   expect(JSON.stringify(seen)).not.toContain(CANARY)
 })
 
-test('an MCP tool gets the real names only for a server the project names', async ($, on) => {
-  project(on, {
-    [`${ROOT}/.veilio/map.json`]: mapFile(MAP),
-    [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ mcpRestore: ['local_db'] }),
-  })
-  const seen: Fields[] = []
-  on('tool.call', (_, e) => {
-    seen.push(e)
-    return { result: [{ type: 'text', text: 'ok' }] }
-  })
-  await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
-  await $.tool.call({ tool: 'mcp__github__create_issue', title: 'bug in __CLS__1' })
-  expect(seen[0].sql).toBe(`select * from ${CANARY}`)
-  expect(seen[0].tool).toBe('mcp__local_db__query')
-  expect(seen[1].title).toBe('bug in __CLS__1')
-})
+// Spec 078 FR-009: the servers are named in the plugin's settings only.
+test(
+  "an MCP tool gets the real names only for a server the plugin's settings name",
+  { options: { mcpRestore: ['local_db'] } },
+  async ($, on) => {
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => {
+      seen.push(e)
+      return { result: [{ type: 'text', text: 'ok' }] }
+    })
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
+    await $.tool.call({ tool: 'mcp__github__create_issue', title: 'bug in __CLS__1' })
+    expect(seen[0].sql).toBe(`select * from ${CANARY}`)
+    expect(seen[0].tool).toBe('mcp__local_db__query')
+    expect(seen[1].title).toBe('bug in __CLS__1')
+  }
+)
 
 test("Claude Code's own refusal, which quotes the restored command, reaches the model masked", async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
