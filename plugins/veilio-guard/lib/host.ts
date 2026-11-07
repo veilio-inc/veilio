@@ -17,7 +17,7 @@ export interface Host {
     stat(
       path: string,
       options?: { resolve?: boolean }
-    ): Promise<{ realPath?: string; mtimeMs?: number; kind?: string }>
+    ): Promise<{ realPath?: string; mtimeMs?: number; kind?: string; size?: number }>
   }
   readonly clock: {
     sleep(ms: number): Promise<void>

@@ -42,6 +42,13 @@ const io: GuardIO = {
       return false
     }
   },
+  fileSize: async (p) => {
+    try {
+      return statSync(p).size
+    } catch {
+      return undefined
+    }
+  },
 }
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'veilio-074-')))

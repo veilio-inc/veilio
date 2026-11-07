@@ -186,7 +186,7 @@ async function searchThen(
   $: Parameters<Body>[0],
   on: Parameters<Body>[1],
   content: string,
-  files: string[],
+  files: string[] | Record<string, string>,
   later: string,
   args: Record<string, unknown> = {}
 ) {
@@ -194,7 +194,12 @@ async function searchThen(
   const bash = recorded('Bash')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
-    ...Object.fromEntries(files.map((f) => [`${ROOT}/${f}`, 'x\n'])),
+    // A list: files holding `x`; a record: each file's own text.
+    ...Object.fromEntries(
+      (Array.isArray(files) ? files.map((f) => [f, 'x\n']) : Object.entries(files)).map(
+        ([f, t]) => [`${ROOT}/${f}`, t]
+      )
+    ),
   })
   let call = 0
   on('tool.call', () =>
@@ -298,7 +303,7 @@ test('a secret file named for its key, in a search of many files: masked and rem
     $,
     on,
     'secrets/db_password:1:xq9mk2plzrvnw7\nsrc/a.ts:1:x',
-    ['secrets/db_password', 'src/a.ts'],
+    { 'secrets/db_password': 'xq9mk2plzrvnw7\n', 'src/a.ts': 'x\n' },
     'xq9mk2plzrvnw7\n'
   )
   expect(r.one).not.toContain('xq9mk2plzrvnw7')
@@ -312,7 +317,7 @@ test('a secret file named for its key, without line numbers', async ($, on) => {
     $,
     on,
     'secrets/api_token.txt:xq9mk2plzrvnw7\nsrc/a.ts:x',
-    ['secrets/api_token.txt', 'src/a.ts'],
+    { 'secrets/api_token.txt': 'xq9mk2plzrvnw7\n', 'src/a.ts': 'x\n' },
     'xq9mk2plzrvnw7\n',
     { '-n': false }
   )
@@ -325,7 +330,7 @@ test('a secret file named for its key, searched alone: no path on the line, stil
     $,
     on,
     '1:xq9mk2plzrvnw7',
-    ['secrets/db_password'],
+    { 'secrets/db_password': 'xq9mk2plzrvnw7\n' },
     'xq9mk2plzrvnw7\n',
     { path: 'secrets/db_password' }
   )
@@ -364,7 +369,7 @@ test('a weak value in a file named for its key is masked and not remembered', as
     $,
     on,
     '1:sunshine2026',
-    ['secrets/db_password'],
+    { 'secrets/db_password': 'sunshine2026\n' },
     'the sunshine2026 campaign\n',
     { path: 'secrets/db_password' }
   )
@@ -417,7 +422,7 @@ async function shell(
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
     [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
-    [`${ROOT}/secrets/db_password`]: 'x\n',
+    [`${ROOT}/secrets/db_password`]: 'xq9mk2plzrvnw7\n',
   })
   let call = 0
   on('tool.call', () => ({
@@ -485,3 +490,96 @@ for (const command of NOT_SEARCH)
     const r = await shell($, on, command, PAIR_N)
     expect(r.one).toBe(PAIR_N)
   })
+
+// T024 review: the file-named key is for a mounted secret only - a file with
+// no extension (or .txt, .secret) that is not code and holds one value, the
+// value the search shows. Code and documents named for a secret are not.
+for (const [path, line] of [
+  ['src/useAuthToken.ts', 'export function useAuthToken() {'],
+  ['src/access_token.ts', '// refresh before it expires'],
+  ['app/secret_key.py', 'import os'],
+  ['docs/password.md', 'Choose a strong passphrase'],
+  ['docs/api_token.txt', 'Ask the platform team for one'],
+] as const)
+  test(`a file named for a secret that is not a mounted value keeps its line: ${path}`, async ($, on) => {
+    const r = await searchThen($, on, `1:${line}`, { [path]: `${line}\nmore text\n` }, 'x\n', {
+      path,
+    })
+    expect(r.one).not.toContain('__REDACTED_')
+  })
+test('a file named for a secret that holds more than its value is not read as a key', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:xq9mk2plzrvnw7',
+    { 'secrets/db_password': 'xq9mk2plzrvnw7\nrotated 2026-11-01\n' },
+    'xq9mk2plzrvnw7\n',
+    { path: 'secrets/db_password' }
+  )
+  expect(r.one).toBe('1:xq9mk2plzrvnw7')
+})
+test('a code file named for a secret keeps its lines in a search', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:export function useAuthToken() {',
+    { 'src/useAuthToken.ts': 'export function useAuthToken() {\n' },
+    'x\n',
+    { path: 'src/useAuthToken.ts' }
+  )
+  expect(r.one).not.toContain('__REDACTED_')
+})
+test('a file named for a secret larger than 4 KB is not read as one value', async ($, on) => {
+  const big = 'xq9mk2plzrvnw7'.repeat(300)
+  const r = await searchThen($, on, `1:${big}`, { 'secrets/db_password': `${big}\n` }, 'x\n', {
+    path: 'secrets/db_password',
+  })
+  expect(r.one).toBe(`1:${big}`)
+})
+// Each rule alone (mutation checks): the extension, whitespace, the file's
+// own text.
+test('a document named for a secret is not read as a key, even holding one word', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:xq9mk2plzrvnw7',
+    { 'docs/password.md': 'xq9mk2plzrvnw7\n' },
+    'x\n',
+    {
+      path: 'docs/password.md',
+    }
+  )
+  expect(r.one).toBe('1:xq9mk2plzrvnw7')
+})
+test('a file named for a secret holding words is not read as one value', async ($, on) => {
+  const r = await searchThen($, on, '1:ask ops', { 'secrets/db_password': 'ask ops\n' }, 'x\n', {
+    path: 'secrets/db_password',
+  })
+  expect(r.one).toBe('1:ask ops')
+})
+test('a file named for a secret is read as one only with the value on disk it shows', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:zz9mk2plzrvnw7',
+    { 'secrets/db_password': 'xq9mk2plzrvnw7\n' },
+    'x\n',
+    {
+      path: 'secrets/db_password',
+    }
+  )
+  expect(r.one).toBe('1:zz9mk2plzrvnw7')
+})
+test('a file named for a secret whose one word is a key and value is read by its own grammar', async ($, on) => {
+  const r = await searchThen(
+    $,
+    on,
+    '1:user=admin',
+    { 'secrets/db_password': 'user=admin\n' },
+    'x\n',
+    {
+      path: 'secrets/db_password',
+    }
+  )
+  expect(r.one).toBe('1:user=admin')
+})

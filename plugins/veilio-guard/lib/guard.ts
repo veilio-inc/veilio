@@ -67,6 +67,9 @@ export interface GuardIO {
   /** Whether a path is a regular file (links followed). Absent: search
    *  output is masked line by line only (spec 074). */
   isFile?(path: string): Promise<boolean>
+  /** A file's size in bytes (links followed), or undefined. Absent: no file
+   *  is read as a mounted secret (spec 074). */
+  fileSize?(path: string): Promise<number | undefined>
   /** The project's tracked files, relative to `root` (`git ls-files`), or null
    *  when it cannot be listed. Absent: the project is never listed, and only
    *  the files a result names are indexed. */
@@ -1338,8 +1341,8 @@ export class Guard {
         const shown = run.lines.map((i) => lines[i]!)
         // A file named for its key (`secrets/db_password`) that holds only a
         // value is read as that key's value (FR-004).
-        const name = (run.path.split(/[\\/]/).pop() ?? '').replace(/(?<=.)\.[^.]*$/, '')
-        const bare = namesSecret(name) && shown.every((l) => valueSpans(l.body!).length === 0)
+        const name = await this.mountedSecret(full(run.path), run.path, shown)
+        const bare = name !== null
         const prefix = bare ? `${name}: ` : ''
         const r = keyedRun(
           shown.map((l) => prefix + l.body).join('\n'),
@@ -1373,6 +1376,29 @@ export class Guard {
       // Pass 2 only ever adds: without it the result is masked as before.
       return text
     }
+  }
+
+  /** The key a mounted secret's file name gives its value (`db_password`), or
+   *  null (T024 review: code and documents named for a secret were read as
+   *  one). Only a file with no extension, `.txt` or `.secret`,
+   *  whose whole text on disk (4 KB at most) is one value with no whitespace
+   *  and no key of its own - the value every line shown is. */
+  private async mountedSecret(
+    full: string,
+    path: string,
+    shown: readonly { body?: string }[]
+  ): Promise<string | null> {
+    const base = path.split(/[\\/]/).pop() ?? ''
+    const dot = base.lastIndexOf('.')
+    const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+    const name = dot > 0 ? base.slice(0, dot) : base
+    // Not code either: no language has these extensions.
+    if ((ext && ext !== 'txt' && ext !== 'secret') || !namesSecret(name)) return null
+    const size = await this.io.fileSize?.(full)
+    if (size === undefined || size > 4096) return null
+    const value = (await this.io.read(full)).replace(/\r?\n$/, '')
+    if (!value || /\s/.test(value) || valueSpans(value).length > 0) return null
+    return shown.every((l) => l.body === value) ? name : null
   }
 
   /** A search over a directory or a glob can reach raw-only files the call

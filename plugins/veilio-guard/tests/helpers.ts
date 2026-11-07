@@ -103,7 +103,13 @@ export function project(
     // A path that only leads to files is a directory, as on disk.
     const kind = a in p.files ? 'file' : 'directory'
     return {
-      value: { kind, size: 1, mtimeMs: p.mtimes[a] ?? 0, isLink: false, realPath: a },
+      value: {
+        kind,
+        size: p.files[a]?.length ?? 0,
+        mtimeMs: p.mtimes[a] ?? 0,
+        isLink: false,
+        realPath: a,
+      },
     }
   })
   on('ui.log', (_, e) => {
