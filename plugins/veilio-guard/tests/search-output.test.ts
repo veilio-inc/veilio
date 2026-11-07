@@ -650,3 +650,67 @@ test('a long search without line numbers still pairs a credential at its end', a
   const out = await $.tool.call({ ...eventOf(grep), '-n': false, '-A': 1 })
   expect(res(out).content).not.toContain('qx7mkplzrvnwtyb')
 })
+
+// T024 review: Claude Code's shell keeps an earlier `cd`, so a shell search's
+// relative paths may be another directory's. Once any command has moved it,
+// shell output is masked as before for the rest of the session.
+test('after a cd in the shell, a shell search is masked as before', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    [`${ROOT}/k8s.yaml`]: 'x\n',
+    [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
+  })
+  const pair = 'k8s.yaml:2:  - name: DB_PASSWORD\nk8s.yaml-3-    value: qx7mkplzrvnwtyb\n'
+  let call = 0
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: call++ === 0 ? '' : pair },
+  }))
+  await $.tool.call({ ...eventOf(bash), command: 'cd deploy' })
+  const out = await $.tool.call({ ...eventOf(bash), command: 'rg -n -A1 DB_PASSWORD .' })
+  expect(res(out).stdout).toBe(pair)
+})
+test('a cd after && moves the shell too', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    [`${ROOT}/k8s.yaml`]: 'x\n',
+  })
+  const pair = 'k8s.yaml:2:  - name: DB_PASSWORD\nk8s.yaml-3-    value: qx7mkplzrvnwtyb\n'
+  let call = 0
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: call++ === 0 ? '' : pair },
+  }))
+  await $.tool.call({ ...eventOf(bash), command: 'npm ci && pushd deploy' })
+  const out = await $.tool.call({ ...eventOf(bash), command: 'rg -n -A1 DB_PASSWORD .' })
+  expect(res(out).stdout).toBe(pair)
+})
+test('a shell that has not moved still reads a search by file', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED), [`${ROOT}/k8s.yaml`]: 'x\n' })
+  const pair = 'k8s.yaml:2:  - name: DB_PASSWORD\nk8s.yaml-3-    value: qx7mkplzrvnwtyb\n'
+  let call = 0
+  on('tool.call', () => ({
+    ...bash.r,
+    result: { ...bash.r.result, stdout: call++ === 0 ? '' : pair },
+  }))
+  await $.tool.call({ ...eventOf(bash), command: 'echo cd is a word here' })
+  const out = await $.tool.call({ ...eventOf(bash), command: 'rg -n -A1 DB_PASSWORD .' })
+  expect(res(out).stdout).not.toContain('qx7mkplzrvnwtyb')
+})
+test('a cd in a command that then fails moves the shell too', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED), [`${ROOT}/k8s.yaml`]: 'x\n' })
+  const pair = 'k8s.yaml:2:  - name: DB_PASSWORD\nk8s.yaml-3-    value: qx7mkplzrvnwtyb\n'
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { result: 'Error: Exit code 1', text: 'Exit code 1', isError: true }
+      : { ...bash.r, result: { ...bash.r.result, stdout: pair } }
+  )
+  await $.tool.call({ ...eventOf(bash), command: 'cd deploy && false' })
+  const out = await $.tool.call({ ...eventOf(bash), command: 'rg -n -A1 DB_PASSWORD .' })
+  expect(res(out).stdout).toBe(pair)
+})

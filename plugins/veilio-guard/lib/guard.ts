@@ -169,6 +169,10 @@ export class Guard {
   /** Runs pass 2 could not write back line by line and masked whole: never
    *  expected (replaceCuts keeps the line count); the tests assert 0. */
   searchUnsplit = 0
+  /** A shell command this session changed directory: Claude Code's shell
+   *  keeps it, so a shell search's relative paths may be another directory's
+   *  and are read as before from then on (T024 review). */
+  shellMoved = false
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
@@ -1101,6 +1105,9 @@ export class Guard {
     budget: RuleBudget = ruleBudget()
   ): Promise<ToolOutcome> {
     let outcome = received
+    // First, whatever the outcome: a failed command may have moved the shell.
+    if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
+      this.shellMoved = true
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
@@ -1169,9 +1176,12 @@ export class Guard {
           },
         }
     }
-    // The same search run in a shell (research R5): one plain `rg`/`grep`.
+    // The same search run in a shell (research R5): one plain `rg`/`grep`,
+    // while the shell is where the session started.
     const shellSearch =
-      tool === 'Bash' && typeof args.command === 'string' ? searchCommand(args.command) : null
+      tool === 'Bash' && typeof args.command === 'string' && !this.shellMoved
+        ? searchCommand(args.command)
+        : null
     if (shellSearch && policy.kind === 'fields') {
       const record = outcome.result as Record<string, unknown>
       if (typeof record.stdout === 'string')
@@ -1505,6 +1515,10 @@ export class Guard {
     return run
   }
 }
+
+/** A command that changes the shell's directory: `cd`, `pushd` or `popd`
+ *  at its start or after `&&`, `||`, `;` or `|`. */
+const MOVES = /(?:^|&&|\|\||[;|])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers
  *  unless `-n` is false, context lines when asked for, no path when `path`
