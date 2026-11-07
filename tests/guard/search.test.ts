@@ -482,6 +482,15 @@ describe('a one-file search outside the project', () => {
         }
       )) as { result: { content: string } }
       expect(out.result.content).toBe('1:xq9mk2plzrvnw7')
+      // Nor is a file there read as one: its pair is not paired.
+      writeFileSync(join(base, 'other/k8s.yaml'), 'x\n')
+      const pair = '2:  - name: DB_PASSWORD\n3-    value: qx7mkplzrvnwtyb'
+      const two = (await g.afterTool(
+        'Grep',
+        { tool: 'Grep', pattern: 'x', output_mode: 'content', path: '../other/k8s.yaml', '-A': 1 },
+        { result: { mode: 'content', numFiles: 1, filenames: [], content: pair, numLines: 2 } }
+      )) as { result: { content: string } }
+      expect(two.result.content).toBe(pair)
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
