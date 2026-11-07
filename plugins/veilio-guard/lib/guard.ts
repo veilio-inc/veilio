@@ -56,7 +56,7 @@ import type { RuleBudget } from '../vendor/engine/index.js'
 import { MODEL_NOTE } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
-import { parseSearchOutput, type SearchFormat } from './search.ts'
+import { parseSearchOutput, searchCommand, type SearchFormat } from './search.ts'
 
 export interface GuardIO {
   read(path: string): Promise<string>
@@ -1163,6 +1163,20 @@ export class Guard {
           result: {
             ...record,
             content: await this.searchPass(record.content, grepFormat(args), deadline),
+          },
+        }
+    }
+    // The same search run in a shell (research R5): one plain `rg`/`grep`.
+    const shellSearch =
+      tool === 'Bash' && typeof args.command === 'string' ? searchCommand(args.command) : null
+    if (shellSearch && policy.kind === 'fields') {
+      const record = outcome.result as Record<string, unknown>
+      if (typeof record.stdout === 'string')
+        outcome = {
+          ...outcome,
+          result: {
+            ...record,
+            stdout: await this.searchPass(record.stdout, shellSearch, deadline),
           },
         }
     }

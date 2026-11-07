@@ -90,7 +90,14 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
   "file_d5[6] (Grep, one file)": [
     "later: DEC(Xq9mK2pLzRvNw7Ab)",
   ],
+  "grep -n on one file": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
   "named deploy/secrets/postgres_password: -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named deploy/secrets/postgres_password: grep -rn": [
     "later: Xq9mK2pLzRvNw7",
   ],
   "named deploy/secrets/postgres_password: no -n": [
@@ -100,7 +107,14 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Xq9mK2pLzRvNw7",
     "later: Xq9mK2pLzRvNw7",
   ],
+  "named deploy/secrets/postgres_password: rg": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
   "named secrets/api_token.txt: -n": [
+    "later: Tr0ub4dor&3xyz",
+  ],
+  "named secrets/api_token.txt: grep -rn": [
     "later: Tr0ub4dor&3xyz",
   ],
   "named secrets/api_token.txt: no -n": [
@@ -110,13 +124,24 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Tr0ub4dor&3xyz",
     "later: Tr0ub4dor&3xyz",
   ],
+  "named secrets/api_token.txt: rg": [
+    "Tr0ub4dor&3xyz",
+    "later: Tr0ub4dor&3xyz",
+  ],
   "named secrets/db_password: -n": [
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: grep -rn": [
     "later: Xq9mK2pLzRvNw7",
   ],
   "named secrets/db_password: no -n": [
     "later: Xq9mK2pLzRvNw7",
   ],
   "named secrets/db_password: one file": [
+    "Xq9mK2pLzRvNw7",
+    "later: Xq9mK2pLzRvNw7",
+  ],
+  "named secrets/db_password: rg": [
     "Xq9mK2pLzRvNw7",
     "later: Xq9mK2pLzRvNw7",
   ],
@@ -130,6 +155,14 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Xq9mK2pLzRvNw7",
     "later: Xq9mK2pLzRvNw7",
   ],
+  "rg into head": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
+  "rg piped, no numbers": [
+    "Qx7mKpLzRvNwTyB",
+    "later: Qx7mKpLzRvNwTyB",
+  ],
   "split 0: -n, -A": [
     "Qx7mKpLzRvNwTy0T",
     "later: Qx7mKpLzRvNwTy0T",
@@ -139,6 +172,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzRvNwTy0T",
   ],
   "split 0: one file": [
+    "Qx7mKpLzRvNwTy0T",
+    "later: Qx7mKpLzRvNwTy0T",
+  ],
+  "split 0: rg -n -A2": [
     "Qx7mKpLzRvNwTy0T",
     "later: Qx7mKpLzRvNwTy0T",
   ],
@@ -154,6 +191,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzwTyBhJ10T",
     "later: Qx7mKpLzwTyBhJ10T",
   ],
+  "split 10: rg -n -A2": [
+    "Qx7mKpLzwTyBhJ10T",
+    "later: Qx7mKpLzwTyBhJ10T",
+  ],
   "split 11: -n, -A": [
     "Qx7mKpLzTyBhJd11T",
     "later: Qx7mKpLzTyBhJd11T",
@@ -166,6 +207,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzTyBhJd11T",
     "later: Qx7mKpLzTyBhJd11T",
   ],
+  "split 11: rg -n -A2": [
+    "later: Qx7mKpLzTyBhJd11T",
+  ],
   "split 12: -n, -A": [
     "Qx7mKpLzyBhJdF12T",
     "later: Qx7mKpLzyBhJdF12T",
@@ -175,6 +219,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzyBhJdF12T",
   ],
   "split 12: one file": [
+    "Qx7mKpLzyBhJdF12T",
+    "later: Qx7mKpLzyBhJdF12T",
+  ],
+  "split 12: rg -n -A2": [
     "Qx7mKpLzyBhJdF12T",
     "later: Qx7mKpLzyBhJdF12T",
   ],
@@ -190,6 +238,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzBhJdFg13T",
     "later: Qx7mKpLzBhJdFg13T",
   ],
+  "split 13: rg -n -A2": [
+    "Qx7mKpLzBhJdFg13T",
+    "later: Qx7mKpLzBhJdFg13T",
+  ],
   "split 14: -n, -A": [
     "Qx7mKpLzRvNwTy14T",
     "later: Qx7mKpLzRvNwTy14T",
@@ -202,6 +254,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzRvNwTy14T",
     "later: Qx7mKpLzRvNwTy14T",
   ],
+  "split 14: rg -n -A2": [
+    "later: Qx7mKpLzRvNwTy14T",
+  ],
   "split 15: -n, -A": [
     "Qx7mKpLzvNwTyB15T",
     "later: Qx7mKpLzvNwTyB15T",
@@ -211,6 +266,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzvNwTyB15T",
   ],
   "split 15: one file": [
+    "Qx7mKpLzvNwTyB15T",
+    "later: Qx7mKpLzvNwTyB15T",
+  ],
+  "split 15: rg -n -A2": [
     "Qx7mKpLzvNwTyB15T",
     "later: Qx7mKpLzvNwTyB15T",
   ],
@@ -226,6 +285,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzNwTyBh16T",
     "later: Qx7mKpLzNwTyBh16T",
   ],
+  "split 16: rg -n -A2": [
+    "Qx7mKpLzNwTyBh16T",
+    "later: Qx7mKpLzNwTyBh16T",
+  ],
   "split 17: -n, -A": [
     "Qx7mKpLzwTyBhJ17T",
     "later: Qx7mKpLzwTyBhJ17T",
@@ -238,6 +301,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzwTyBhJ17T",
     "later: Qx7mKpLzwTyBhJ17T",
   ],
+  "split 17: rg -n -A2": [
+    "later: Qx7mKpLzwTyBhJ17T",
+  ],
   "split 1: -n, -A": [
     "Qx7mKpLzvNwTyB1T",
     "later: Qx7mKpLzvNwTyB1T",
@@ -247,6 +313,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzvNwTyB1T",
   ],
   "split 1: one file": [
+    "Qx7mKpLzvNwTyB1T",
+    "later: Qx7mKpLzvNwTyB1T",
+  ],
+  "split 1: rg -n -A2": [
     "Qx7mKpLzvNwTyB1T",
     "later: Qx7mKpLzvNwTyB1T",
   ],
@@ -262,6 +332,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzNwTyBh2T",
     "later: Qx7mKpLzNwTyBh2T",
   ],
+  "split 2: rg -n -A2": [
+    "later: Qx7mKpLzNwTyBh2T",
+  ],
   "split 3: -n, -A": [
     "Qx7mKpLzwTyBhJ3T",
     "later: Qx7mKpLzwTyBhJ3T",
@@ -271,6 +344,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzwTyBhJ3T",
   ],
   "split 3: one file": [
+    "Qx7mKpLzwTyBhJ3T",
+    "later: Qx7mKpLzwTyBhJ3T",
+  ],
+  "split 3: rg -n -A2": [
     "Qx7mKpLzwTyBhJ3T",
     "later: Qx7mKpLzwTyBhJ3T",
   ],
@@ -286,6 +363,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzTyBhJd4T",
     "later: Qx7mKpLzTyBhJd4T",
   ],
+  "split 4: rg -n -A2": [
+    "Qx7mKpLzTyBhJd4T",
+    "later: Qx7mKpLzTyBhJd4T",
+  ],
   "split 5: -n, -A": [
     "Qx7mKpLzyBhJdF5T",
     "later: Qx7mKpLzyBhJdF5T",
@@ -298,6 +379,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzyBhJdF5T",
     "later: Qx7mKpLzyBhJdF5T",
   ],
+  "split 5: rg -n -A2": [
+    "later: Qx7mKpLzyBhJdF5T",
+  ],
   "split 6: -n, -A": [
     "Qx7mKpLzBhJdFg6T",
     "later: Qx7mKpLzBhJdFg6T",
@@ -307,6 +391,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: Qx7mKpLzBhJdFg6T",
   ],
   "split 6: one file": [
+    "Qx7mKpLzBhJdFg6T",
+    "later: Qx7mKpLzBhJdFg6T",
+  ],
+  "split 6: rg -n -A2": [
     "Qx7mKpLzBhJdFg6T",
     "later: Qx7mKpLzBhJdFg6T",
   ],
@@ -322,6 +410,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzRvNwTy7T",
     "later: Qx7mKpLzRvNwTy7T",
   ],
+  "split 7: rg -n -A2": [
+    "Qx7mKpLzRvNwTy7T",
+    "later: Qx7mKpLzRvNwTy7T",
+  ],
   "split 8: -n, -A": [
     "Qx7mKpLzvNwTyB8T",
     "later: Qx7mKpLzvNwTyB8T",
@@ -332,6 +424,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
   ],
   "split 8: one file": [
     "Qx7mKpLzvNwTyB8T",
+    "later: Qx7mKpLzvNwTyB8T",
+  ],
+  "split 8: rg -n -A2": [
     "later: Qx7mKpLzvNwTyB8T",
   ],
   "split 9: -n, -A": [
@@ -346,6 +441,10 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "Qx7mKpLzNwTyBh9T",
     "later: Qx7mKpLzNwTyBh9T",
   ],
+  "split 9: rg -n -A2": [
+    "Qx7mKpLzNwTyBh9T",
+    "later: Qx7mKpLzNwTyBh9T",
+  ],
   "text_c1[10] (Grep -n)": [
     "later: 5f4dcc3b5aa765d61d8327deb882cf99",
   ],
@@ -355,6 +454,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
   "text_c1[10] (Grep, one file)": [
     "later: 5f4dcc3b5aa765d61d8327deb882cf99",
   ],
+  "text_c1[10] (grep -rn)": [
+    "later: 5f4dcc3b5aa765d61d8327deb882cf99",
+  ],
   "text_c1[11] (Grep -n)": [
     "later: sha256:9b74c9897bac770ffc029102a200c5de",
   ],
@@ -362,6 +464,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: sha256:9b74c9897bac770ffc029102a200c5de",
   ],
   "text_c1[11] (Grep, one file)": [
+    "later: sha256:9b74c9897bac770ffc029102a200c5de",
+  ],
+  "text_c1[11] (grep -rn)": [
     "later: sha256:9b74c9897bac770ffc029102a200c5de",
   ],
   "text_c1[7] (Grep -n)": [
@@ -389,6 +494,9 @@ exports[`search output: pass 2 only adds to main (spec 074 FR-009) > what pass 2
     "later: xk2_build_7f9a",
   ],
   "text_c2[25] (Grep, one file)": [
+    "later: xk2_build_7f9a",
+  ],
+  "text_c2[25] (grep -rn)": [
     "later: xk2_build_7f9a",
   ],
   "text_c4[3] (Grep -n)": [

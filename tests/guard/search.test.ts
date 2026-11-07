@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseSearchOutput,
+  searchCommand,
   SEARCH_LIMITS,
   type SearchFormat,
 } from '../../plugins/veilio-guard/lib/search.ts'
@@ -292,5 +293,62 @@ describe('parseSearchOutput: bounded work (research R6)', () => {
     const half = await time(short(10_000).join('\n'))
     const full = await time(short(40_000).join('\n'))
     expect(full).toBeLessThan(half * 8 + 50)
+  })
+})
+
+// Research R5: a shell command's output is search output only when the
+// command is one plain `rg` or `grep`, optionally into `head`/`tail`.
+describe('searchCommand', () => {
+  it.each([
+    ['rg -n -A1 DB_PASSWORD deploy', { numbered: true, context: true }],
+    ['rg DB_PASSWORD', { numbered: false, context: false }],
+    ["rg -A1 'DB_PASSWORD' deploy", { numbered: false, context: true }],
+    ['rg --line-number --context=2 x src lib', { numbered: true, context: true }],
+    ['rg -n -N x src', { numbered: false, context: false }],
+    ['grep -rn -A 1 DB_PASSWORD deploy | head -n 20', { numbered: true, context: true }],
+    ['grep -rni password config | tail -5', { numbered: true, context: false }],
+    ['grep -r -e password -e token config', { numbered: false, context: false }],
+    ['rg -i -g "*.yaml" password', { numbered: false, context: false }],
+  ])('%s', (command, format) => {
+    expect(searchCommand(command)).toMatchObject(format)
+  })
+  it('one path operand is the one-file candidate; none or several are not', () => {
+    expect(searchCommand('grep -n -A1 DB_PASSWORD deploy/k8s.yaml')?.oneFile).toBe(
+      'deploy/k8s.yaml'
+    )
+    expect(searchCommand('rg x secrets/db_password')?.oneFile).toBe('secrets/db_password')
+    expect(searchCommand('rg -e x secrets/db_password')?.oneFile).toBe('secrets/db_password')
+    expect(searchCommand('rg x')?.oneFile).toBeUndefined()
+    expect(searchCommand('rg x a.yaml b.yaml')?.oneFile).toBeUndefined()
+    // -H prints the path whatever the operands.
+    expect(searchCommand('grep -H -n x a.yaml')?.oneFile).toBeUndefined()
+  })
+  it.each([
+    'rg -n x | sort',
+    'cd deploy && rg -n x .',
+    'rg -n x; echo done',
+    'rg -n x > out.txt',
+    'rg --json x',
+    'rg --heading x',
+    'rg -l x',
+    'rg -c x',
+    'rg --files',
+    'rg -o x',
+    'rg --column x',
+    'rg --vimgrep x',
+    'grep -h x a b',
+    'grep -L x a b',
+    'grep x',
+    'rg -n "$PATTERN" deploy',
+    'rg -n `cat p` deploy',
+    'FOO=1 rg x',
+    'cat a.yaml',
+    'egrep x a',
+    'rg -n x | head -c 100',
+    'rg -n x | tail -f',
+    "rg -n 'x",
+    'rg -n x \\\n deploy',
+  ])('not search output: %s', (command) => {
+    expect(searchCommand(command)).toBeNull()
   })
 })

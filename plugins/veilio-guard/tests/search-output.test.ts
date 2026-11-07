@@ -396,3 +396,92 @@ test('a file whose name names no secret is not read as a key', async ($, on) => 
   )
   expect(r.one).toBe('1:Use twelve characters or more')
 })
+
+// US4: the same search through a shell. A command is read as search output
+// only when it is one plain `rg` or `grep` (optionally into `head`/`tail`);
+// anything else is masked exactly as before, so the same stdout under any
+// other command keeps the split pair as main shows it.
+const PAIR_N =
+  'deploy/k8s.yaml:2:  - name: DB_PASSWORD\ndeploy/k8s.yaml-3-    value: qx7mkplzrvnwtyb\n'
+const PAIR_PLAIN =
+  'deploy/k8s.yaml:  - name: DB_PASSWORD\ndeploy/k8s.yaml-    value: qx7mkplzrvnwtyb\n'
+const PAIR_ONE = '2:  - name: DB_PASSWORD\n3-    value: qx7mkplzrvnwtyb\n'
+
+async function shell(
+  $: Parameters<Body>[0],
+  on: Parameters<Body>[1],
+  command: string,
+  stdout: string
+) {
+  const bash = recorded('Bash')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
+    [`${ROOT}/secrets/db_password`]: 'x\n',
+  })
+  let call = 0
+  on('tool.call', () => ({
+    ...bash.r,
+    result: {
+      ...bash.r.result,
+      stdout: call++ === 0 ? stdout : 'later qx7mkplzrvnwtyb xq9mk2plzrvnw7\n',
+    },
+  }))
+  const one = await $.tool.call({ ...eventOf(bash), command })
+  const two = await $.tool.call(eventOf(bash))
+  return { one: res(one).stdout as string, two: res(two).stdout as string }
+}
+const MASKED_PAIR =
+  /^deploy\/k8s\.yaml:2: {2}- name: DB_PASSWORD\ndeploy\/k8s\.yaml-3- {4}value: __REDACTED_CREDENTIAL_\d+__\n$/
+
+test('rg -n output: a split credential is masked and remembered, as in the Grep tool', async ($, on) => {
+  const r = await shell($, on, 'rg -n -A1 DB_PASSWORD deploy', PAIR_N)
+  expect(r.one).toMatch(MASKED_PAIR)
+  expect(r.two).toMatch(/^later __REDACTED_CREDENTIAL_\d+__ xq9mk2plzrvnw7\n$/)
+})
+
+test('rg piped prints no line numbers: read without them', async ($, on) => {
+  const r = await shell($, on, "rg -A1 'DB_PASSWORD' deploy", PAIR_PLAIN)
+  expect(r.one).not.toContain('qx7mkplzrvnwtyb')
+  expect(r.one).toMatch(/^deploy\/k8s\.yaml: {2}- name: DB_PASSWORD\n/)
+})
+
+test('grep -rn output, into head: masked as the Grep tool', async ($, on) => {
+  const r = await shell($, on, 'grep -rn -A 1 DB_PASSWORD deploy | head -n 20', PAIR_N)
+  expect(r.one).toMatch(MASKED_PAIR)
+})
+
+test('grep -n on one file: no path on the line, still masked', async ($, on) => {
+  const r = await shell($, on, 'grep -n -A1 DB_PASSWORD deploy/k8s.yaml', PAIR_ONE)
+  expect(r.one).toMatch(/^2: {2}- name: DB_PASSWORD\n3- {4}value: __REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+test('rg over a secret file named for its key: masked and remembered', async ($, on) => {
+  const r = await shell($, on, 'rg x secrets/db_password', 'xq9mk2plzrvnw7\n')
+  expect(r.one).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+  expect(r.two).toMatch(/^later qx7mkplzrvnwtyb __REDACTED_CREDENTIAL_\d+__\n$/)
+})
+
+const NOT_SEARCH = [
+  'rg -n -A1 DB_PASSWORD deploy | sort',
+  'cd deploy && rg -n -A1 DB_PASSWORD .',
+  'rg -n -A1 DB_PASSWORD deploy; echo done',
+  'rg --json DB_PASSWORD deploy',
+  'rg --heading -n -A1 DB_PASSWORD deploy',
+  'rg -l DB_PASSWORD',
+  'rg -c DB_PASSWORD',
+  'rg -o -n DB_PASSWORD deploy',
+  'rg -n -A1 "$PATTERN" deploy',
+  'cat deploy/k8s.yaml',
+  'tail -n 2 app.log',
+  'FOO=1 rg -n -A1 DB_PASSWORD deploy',
+]
+test('shell output that is not one plain search is masked exactly as before', async ($, on) => {
+  const r = await shell($, on, 'rg -n -A1 DB_PASSWORD deploy | sort', PAIR_N)
+  expect(r.one).toBe(PAIR_N)
+})
+for (const command of NOT_SEARCH)
+  test(`not one plain search, masked as before: ${command}`, async ($, on) => {
+    const r = await shell($, on, command, PAIR_N)
+    expect(r.one).toBe(PAIR_N)
+  })

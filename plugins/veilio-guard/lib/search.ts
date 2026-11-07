@@ -148,3 +148,130 @@ export async function parseSearchOutput(
   })
   return { lines, runs }
 }
+
+// Research R5: the flags each program may carry for its output to keep the
+// R1 shapes. Anything else (`-l`, `-c`, `-o`, `--json`, `--heading`, `-h`,
+// `--column`, …) and the command is not read as search output. Fail closed:
+// add a flag here only once its output is known.
+const FLAGS = {
+  rg: { plain: 'nNiSswFxvuUPH.L', valued: 'eABCmgt' },
+  grep: { plain: 'rRniswFExvHIPa', valued: 'eABCm' },
+} as const
+const LONG_PLAIN = new Set([
+  'line-number',
+  'no-line-number',
+  'ignore-case',
+  'smart-case',
+  'word-regexp',
+  'fixed-strings',
+  'hidden',
+  'recursive',
+  'with-filename',
+  'no-heading',
+  'multiline',
+])
+const LONG_VALUED = new Set([
+  'context',
+  'after-context',
+  'before-context',
+  'glob',
+  'type',
+  'include',
+  'exclude',
+  'exclude-dir',
+  'max-count',
+  'regexp',
+])
+
+/** How a shell command's output is laid out, when the command is one plain
+ *  `rg` or `grep` (optionally into `head`/`tail` by lines); null otherwise.
+ *  Piped, as the Bash tool's output is, ripgrep prints no line numbers
+ *  unless asked. `oneFile`: the one path operand, which prints no path when
+ *  it is a file (the caller checks). */
+export function searchCommand(
+  command: string
+): (Omit<SearchFormat, 'base' | 'oneFile'> & { oneFile?: string }) | null {
+  // No expansion, redirection, chaining or line continuation: the output is
+  // then not one search's.
+  if (/[;&<>`$\\\n]/.test(command.replace(/'[^']*'/g, "''"))) return null
+  const words: string[] = []
+  for (const m of command.matchAll(/\s*((?:'[^']*'|"[^"]*"|[^\s'"|])+|\|)/g)) words.push(m[1]!)
+  if (words.join('') !== command.replace(/\s+/g, '')) return null // an unclosed quote
+  const segments: string[][] = [[]]
+  for (const w of words) {
+    if (w === '|') segments.push([])
+    else segments.at(-1)!.push(w)
+  }
+  for (const seg of segments.slice(1))
+    if (
+      !/^(?:head|tail)$/.test(seg[0] ?? '') ||
+      !seg
+        .slice(1)
+        .every(
+          (a, k, all) => /^-\d+$|^-n$|^-n\d+$/.test(a) || (/^\d+$/.test(a) && all[k - 1] === '-n')
+        )
+    )
+      return null
+  const [program, ...args] = (segments[0] ?? []).map((w) =>
+    w.replace(/'([^']*)'|"([^"]*)"/g, '$1$2')
+  )
+  if (program !== 'rg' && program !== 'grep') return null
+  const flags = FLAGS[program]
+  let numbered = false
+  let context = false
+  let withFilename = false
+  let recursive = program === 'rg'
+  let pattern = false
+  const operands: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (a === '--') {
+      operands.push(...args.slice(i + 1))
+      break
+    }
+    if (a.startsWith('--')) {
+      const [name, value] = a.slice(2).split(/=(.*)/s)
+      if (LONG_PLAIN.has(name!)) {
+        if (name === 'line-number') numbered = true
+        if (name === 'no-line-number') numbered = false
+        if (name === 'with-filename') withFilename = true
+        if (name === 'recursive') recursive = true
+        continue
+      }
+      if (!LONG_VALUED.has(name!)) return null
+      const v = value ?? args[++i]
+      if (v === undefined) return null
+      if (/context$/.test(name!) && Number(v) > 0) context = true
+      if (name === 'regexp') pattern = true
+      continue
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      for (let k = 1; k < a.length; k++) {
+        const f = a[k]!
+        if ((flags.valued as string).includes(f)) {
+          const v = a.length > k + 1 ? a.slice(k + 1) : args[++i]
+          if (v === undefined) return null
+          if ('ABC'.includes(f) && Number(v) > 0) context = true
+          if (f === 'e') pattern = true
+          break
+        }
+        if (!(flags.plain as string).includes(f)) return null
+        if (f === 'n') numbered = true
+        if (f === 'N') numbered = false
+        if (f === 'H') withFilename = true
+        if (f === 'r' || f === 'R') recursive = true
+      }
+      continue
+    }
+    operands.push(a)
+  }
+  const paths = pattern ? operands : operands.slice(1)
+  if (!pattern && operands.length === 0) return null
+  // grep without -r and no file reads its input: not a file's lines.
+  if (!recursive && paths.length === 0) return null
+  return {
+    numbered,
+    context,
+    ...(paths.length === 1 && !withFilename ? { oneFile: paths[0]! } : {}),
+  }
+}
