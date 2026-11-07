@@ -17,6 +17,8 @@ import {
   sessionEnv,
   veilioFingerprint,
   teamTable,
+  guardStops,
+  hookTimes,
 } from './bench-lib.mjs'
 
 const tasks = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((id) => ({ id }))
@@ -378,4 +380,54 @@ test('the ~/.veilio fingerprint changes when any file in it changes, and is empt
   } finally {
     rmSync(d, { recursive: true, force: true })
   }
+})
+
+// Spec 078: refusals and withholds are explained per session, and the guard's
+// time per tool result is measured.
+test('guardStops pairs each refusal and withhold with the call that met it', () => {
+  const lines = [
+    {
+      message: {
+        content: [
+          { type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'echo __CLS__1 | base64' } },
+        ],
+      },
+    },
+    {
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'a', content: 'Veilio refused this call: no.' },
+        ],
+      },
+    },
+    { message: { content: [{ type: 'tool_use', id: 'b', name: 'Read', input: {} }] } },
+    {
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'b',
+            content: [{ type: 'text', text: 'Veilio withheld this result: x.' }],
+          },
+        ],
+      },
+    },
+    {
+      message: { content: [{ type: 'tool_use', id: 'c', name: 'Bash', input: { command: 'ls' } }] },
+    },
+    { message: { content: [{ type: 'tool_result', tool_use_id: 'c', content: 'a.ts' }] } },
+  ]
+  assert.deepEqual(
+    guardStops(lines).map((s) => [s.kind, s.call]),
+    [
+      ['refused', 'echo __CLS__1 | base64'],
+      ['withheld', 'Read'],
+    ]
+  )
+})
+
+test('hookTimes reads the timing lines: p50, p95, max and count', () => {
+  const text = Array.from({ length: 20 }, (_, i) => `after\t${i + 1}`).join('\n') + '\nnoise\n'
+  assert.deepEqual(hookTimes(text), { n: 20, p50: 10, p95: 19, max: 20 })
+  assert.equal(hookTimes(''), null)
 })

@@ -55,6 +55,19 @@ const offers = new Map<string, AgentOfferInput>()
 let pinned: PublicMarketplace[] = []
 let ignored: string[] = []
 let saidIgnored = false
+// Spec 078 (bench only): when VEILIO_GUARD_TIMING names a file, the guard's
+// time per afterTool call is written there, one `after\t<ms>` line each. Read
+// once; unset, nothing is kept or written.
+let timingFile: Promise<string | undefined> | null = null
+const timings: string[] = []
+async function recordTiming($: Host, ms: number): Promise<void> {
+  timingFile ??= $.env.get('VEILIO_GUARD_TIMING').catch(() => undefined)
+  const file = await timingFile
+  if (!file) return
+  timings.push(`after\t${ms}`)
+  await $.fs.write(file, `${timings.join('\n')}\n`).catch(() => undefined)
+}
+
 // What was read of the plugin cache, by file and mtime, for the session.
 const listingCache = new ListingCache()
 
@@ -230,7 +243,9 @@ export function register(on: On, options: Options = {}) {
       return before
     }
     const outcome = await next(before.args)
+    const startedAt = Date.now()
     const after = await g.afterTool(e.tool, before.args, outcome, deadline(next), budget)
+    await recordTiming($, Date.now() - startedAt)
     if ('deny' in after && after.deny.startsWith('Veilio withheld')) $.ui.log(after.deny)
     $.ui.invalidate('ui.render')
     return after
