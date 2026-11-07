@@ -111,7 +111,16 @@ export async function parseSearchOutput(
       lines.push(oneFileLine(line, { ...format, oneFile: format.oneFile }))
       continue
     }
-    const found = candidates(line, format)
+    // A candidate that is a file this result already placed: the line is
+    // that file's. Its shorter candidates are its own prefixes, all checked
+    // when it was placed; a longer one - new text each line, a new check each
+    // - is not (T024 review: the cap ran out in ~170 unnumbered lines).
+    // shortcut: a file named like a placed one plus `:` or `-` and more is
+    // then read as the placed one; checking a directory's listing once would
+    // close it.
+    const all = candidates(line, format)
+    const placed = all?.find((c) => resolved.has(c.path))
+    const found = placed ? [placed] : all
     let pick: Candidate | null = null
     let ok = found !== null && found.length > 0
     for (const c of found ?? []) {

@@ -631,3 +631,22 @@ test('a secret file that is not one value is still masked by its path, as on mai
   // spaces it reads only to the first space: COVERAGE.md, Not covered.)
   expect(r.one).toMatch(/^secrets\/__VAR__\d+:__REDACTED_CREDENTIAL_\d+__$/)
 })
+
+test('a long search without line numbers still pairs a credential at its end', async ($, on) => {
+  const grep = recorded('Grep')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+    [`${ROOT}/config/app.yaml`]: 'x\n',
+    [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
+  })
+  const config = Array.from({ length: 300 }, (_, i) => `config/app.yaml:  key${i}: v:${i}: w`)
+  const content = [
+    ...config,
+    '--',
+    'deploy/k8s.yaml:  - name: DB_PASSWORD',
+    'deploy/k8s.yaml-    value: qx7mkplzrvnwtyb',
+  ].join('\n')
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 303 } }))
+  const out = await $.tool.call({ ...eventOf(grep), '-n': false, '-A': 1 })
+  expect(res(out).content).not.toContain('qx7mkplzrvnwtyb')
+})

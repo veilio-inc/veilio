@@ -259,6 +259,21 @@ describe('parseSearchOutput: bounded work (research R6)', () => {
     expect(d.asked.length).toBe(SEARCH_LIMITS.checks)
     expect(r.lines.every((l) => l.kind === 'unresolved')).toBe(true)
   })
+  // T024 review: without line numbers every `:` is a candidate; once a file
+  // is resolved, its later lines cost no new checks.
+  it('a long unnumbered search of one file costs a few checks, and resolves to its end', async () => {
+    const d = disk('config/app.yaml', 'deploy/k8s.yaml')
+    const lines = Array.from({ length: 300 }, (_, i) => `config/app.yaml:  key${i}: v:${i}: w`)
+    const r = await parse(
+      [...lines, 'deploy/k8s.yaml:  - name: DB_PASSWORD', 'deploy/k8s.yaml-    value: x'].join(
+        '\n'
+      ),
+      { numbered: false, context: true },
+      d
+    )
+    expect(r.lines.every((l) => l.kind !== 'unresolved')).toBe(true)
+    expect(d.asked.length).toBeLessThan(20)
+  })
   it('each distinct path is checked once, a missing one too (cache)', async () => {
     const d = disk('a.yaml')
     await parse('gone.yaml:1:x\ngone.yaml:2:y\na.yaml:1:z\na.yaml:2:w', {}, d)
