@@ -183,3 +183,100 @@ test('prose that mentions a raw-only file is not a path: a subagent prompt or an
   expect(b.deny).toBeUndefined()
   expect(seen.length).toBe(2)
 })
+
+// Spec 078 US3 (A#4, research R4): `..` is resolved before the raw-only
+// check, and a cd or pushd toward a raw-only directory is refused, so no later
+// command - in the same call or the next - can read it by a short name.
+const CD = (dir: string) =>
+  `Veilio keeps \`${dir}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.`
+const SECRETS = { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }) }
+
+const CD_REFUSED: [string, string][] = [
+  ['cd .kube; cat config', '.kube'],
+  ['cd ~/.aws && cat credentials', '~/.aws'],
+  ['pushd .veilio && cat map.json', '.veilio'],
+  ['cd secrets && cat db.txt', 'secrets'],
+  ["cd .veilio && printf '{}' > guard.json", '.veilio'],
+  ['cd .aws', '.aws'],
+  ['cd ~/.config && cat gcloud/credentials.db', '~/.config'],
+  ['cd .docker', '.docker'],
+  ['pushd .kube', '.kube'],
+  ['cd ./secrets/', './secrets/'],
+  ['cd x && cd ../.veilio', '../.veilio'],
+  ['ls; cd .azure/profiles', '.azure/profiles'],
+  ['ls & cd .aws', '.aws'],
+  ['ls\ncd .aws', '.aws'],
+  ['(cd .aws && ls)', '.aws'],
+  ['cd -P .aws', '.aws'],
+  ['cd /home/dev/.config/gcloud', '/home/dev/.config/gcloud'],
+]
+test('a cd or pushd toward a raw-only directory is refused, wherever it stands in the command', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  for (const [command, dir] of CD_REFUSED) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${JSON.stringify(command)} -> ${out.deny}`).toBe(
+      `${JSON.stringify(command)} -> ${CD(dir)}`
+    )
+  }
+  expect(seen.length).toBe(0)
+})
+
+test('the two-call form: the cd is refused, so the next short name cannot inherit it', async ($, on) => {
+  project(on, {})
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  const first = await $.tool.call({ tool: 'Bash', command: 'cd .aws', description: 'x' })
+  expect(first.deny).toBe(CD('.aws'))
+  expect(seen.length).toBe(0)
+})
+
+for (const command of ['cd packages/cli && npm test', 'cd src', 'cd ..', 'cd ~', 'cd', 'cd -'])
+  test(`an ordinary cd still runs: ${command}`, async ($, on) => {
+    project(on, SECRETS)
+    let ran = false
+    on('tool.call', () => {
+      ran = true
+      return { result: { stdout: '', stderr: '', interrupted: false } }
+    })
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+
+for (const command of [
+  'cat .aws/sso/../credentials',
+  'cat a/../.aws/credentials',
+  'cat ./.kube/./config',
+  'cat src/../.veilio/./map.json',
+])
+  test(`a path with . or .. is checked as resolved too: ${command}`, async ($, on) => {
+    project(on, {})
+    let ran = false
+    on('tool.call', () => {
+      ran = true
+      return { result: { stdout: '', stderr: '', interrupted: false } }
+    })
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('away from the model')
+  })
+
+test('a Read of a path with .. that resolves to a raw-only file is refused', async ($, on) => {
+  project(on, {})
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: 'x' }
+  })
+  const out = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/.aws/sso/../credentials` })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('away from the model')
+})

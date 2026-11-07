@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cdTargets,
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  normalisePath,
   pathsInCommand,
+  rawOnlyDirectories,
 } from '../../plugins/veilio-guard/lib/paths.ts'
 
 // FR-004: files that must never reach the model are refused before the tool
@@ -143,4 +146,42 @@ describe('isRawOnly: case', () => {
       expect(isRawOnly(p, [])).toBe(true)
     }
   )
+})
+
+// Spec 078 R4: `.`/`..` resolved, and the directories a cd may not enter,
+// derived from the patterns (never a hand-kept list).
+describe('normalisePath, rawOnlyDirectories, cdTargets (spec 078)', () => {
+  it.each([
+    ['.aws/sso/../credentials', '.aws/credentials'],
+    ['./.kube/./config', '.kube/config'],
+    ['a/../../.veilio', '../.veilio'],
+    ['/x/../.aws', '/.aws'],
+    ['~/.aws/', '~/.aws'],
+    ['..', '..'],
+    ['.', '.'],
+  ])('normalises %j to %j', (path, want) => {
+    expect(normalisePath(path)).toBe(want)
+  })
+
+  it('derives the directories of the slash patterns, with each leading part', () => {
+    const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, 'secrets/**', 'config/prod/*.yaml'])
+    for (const d of ['.veilio', '.kube', '.aws', '.azure', '.config', '.config/gcloud', '.docker'])
+      expect(dirs).toContain(d)
+    expect(dirs).toContain('secrets')
+    expect(dirs).toContain('config/prod')
+    expect(dirs).toContain('config')
+    expect(dirs).not.toContain('.env')
+  })
+
+  it.each([
+    ['cd .aws', ['.aws']],
+    ['ls && cd a; pushd b', ['a', 'b']],
+    ['cd -P x', ['x']],
+    ['cd', []],
+    ['grep cd src', []],
+    ['ls & cd y', ['y']],
+    ['(cd z)', ['z']],
+  ])('finds the cd targets of %j', (command, want) => {
+    expect(cdTargets(command)).toEqual(want)
+  })
 })

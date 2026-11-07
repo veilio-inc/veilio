@@ -11,6 +11,7 @@
 // The list and its matcher live in the engine (spec 078 FR-016), shared with
 // the MCP server.
 export { DEFAULT_RAW_ONLY, isRawOnly } from '../vendor/engine/index.js'
+import { shellWords, splitChain } from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
  *  whitespace, shell operators, braces and commas, and each piece around `=`
@@ -32,4 +33,100 @@ export function pathsInCommand(command: string): string[] {
     for (const piece of token.split(/[=:]+/)) add(piece)
   }
   return [...words]
+}
+
+// ── spec 078 R4: `..` and cd ──────────────────────────────────────────────
+
+/** A path with `.` dropped and `x/..` collapsed, as the file system would
+ *  read it; a leading `..`, `/` or `~` is kept. */
+export function normalisePath(path: string): string {
+  const p = path.replace(/\\/g, '/')
+  const absolute = p.startsWith('/')
+  const out: string[] = []
+  for (const part of p.split('/')) {
+    if (part === '' || part === '.') continue
+    if (
+      part === '..' &&
+      out.length > 0 &&
+      out[out.length - 1] !== '..' &&
+      out[out.length - 1] !== '~'
+    )
+      out.pop()
+    else if (part === '..' && absolute && out.length === 0) continue
+    else out.push(part)
+  }
+  const joined = out.join('/')
+  return absolute ? `/${joined}` : joined || '.'
+}
+
+/** The directories a cd may not enter: the directory part of every pattern
+ *  with a slash, and each of its leading parts (`.config/gcloud/**` gives
+ *  `.config/gcloud` and `.config`). Derived, so a project's `secrets/**`
+ *  gives `secrets`. */
+export function rawOnlyDirectories(patterns: readonly string[]): string[] {
+  const dirs = new Set<string>()
+  for (const pattern of patterns) {
+    if (!pattern || pattern.startsWith('!') || !pattern.includes('/')) continue
+    // `dir/**` names everything in dir: dir is the directory, not its parent.
+    const dir = pattern
+      .replace(/\\/g, '/')
+      .replace(/\/\*\*$/, '/x')
+      .split('/')
+      .filter((x) => x !== '' && x !== '.' && x !== '**')
+      .slice(0, -1)
+    for (let i = 1; i <= dir.length; i++) dirs.add(dir.slice(0, i).join('/'))
+  }
+  return [...dirs]
+}
+
+/** One directory of a pattern (`*` and `?` as in a glob) against one of a path. */
+function part(pattern: string, name: string): boolean {
+  if (!/[*?]/.test(pattern)) return pattern === name
+  const re = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]')
+  return new RegExp(`^${re}$`).test(name)
+}
+
+const CD_PROGRAMS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl', 'push-location'])
+
+/** The targets of every cd or pushd in a command, wherever it stands: after
+ *  `&&`, `||`, `;`, `|`, a lone `&` or a newline, or inside a subshell. */
+export function cdTargets(command: string): string[] {
+  const targets: string[] = []
+  for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
+    const chain = splitChain(piece)
+    const parts = chain ? chain.map((p) => shellWords(p)) : [piece.split(/\s+/)]
+    for (const raw of parts) {
+      const words = (raw ?? piece.split(/\s+/)).map((w) => w.replace(/^[({]+|[)}]+$/g, ''))
+      let k = 0
+      while (
+        k < words.length &&
+        (words[k] === '' || words[k] === 'builtin' || words[k] === 'command')
+      )
+        k++
+      if (!CD_PROGRAMS.has((words[k] ?? '').toLowerCase())) continue
+      const target = words.slice(k + 1).find((w) => w !== '' && !(w.startsWith('-') && w !== '-'))
+      if (target !== undefined && target !== '-') targets.push(target)
+    }
+  }
+  return targets
+}
+
+/** Whether a cd to `target` would put the shell in or inside one of `dirs`
+ *  (from rawOnlyDirectories, leading parts included), on the normalised path. */
+export function cdIntoRawOnly(target: string, dirs: readonly string[]): boolean {
+  const parts = normalisePath(target)
+    .split('/')
+    .filter((x) => x !== '' && x !== '~' && x !== '.' && x !== '..')
+    .map((x) => x.toLowerCase())
+  for (const dir of dirs) {
+    const d = dir.toLowerCase().split('/')
+    // Equals or inside: the directory appears in the path. A leading part
+    // (`.config` of `.config/gcloud`) is one of `dirs` itself.
+    for (let i = 0; i + d.length <= parts.length; i++)
+      if (d.every((x, j) => part(x, parts[i + j]!))) return true
+  }
+  return false
 }

@@ -20,7 +20,15 @@ import {
   type StoredMap,
   type SymbolMap,
 } from './mapfile.ts'
-import { isRawOnly, pathsInCommand } from './paths.ts'
+import {
+  cdIntoRawOnly,
+  cdTargets,
+  DEFAULT_RAW_ONLY,
+  isRawOnly,
+  normalisePath,
+  pathsInCommand,
+  rawOnlyDirectories,
+} from './paths.ts'
 import { restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
@@ -914,7 +922,9 @@ export class Guard {
   // ── tool calls ────────────────────────────────────────────────────────────
 
   private async rawOnlyHit(path: string): Promise<boolean> {
-    if (isRawOnly(path, this.extraRawOnly)) return true
+    // As written and with `.`/`..` resolved (spec 078 FR-007).
+    if (isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly))
+      return true
     const real = await this.io.realPath(path)
     return real !== undefined && isRawOnly(real, this.extraRawOnly)
   }
@@ -992,8 +1002,17 @@ export class Guard {
       }
     }
     if (policy.command) {
+      const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
         if (typeof c !== 'string') continue
+        // Spec 078 FR-008: a cd there would let a later command read it by a
+        // short name, in this call or the next (the shell keeps its directory).
+        const into = cdTargets(c).find((t) => cdIntoRawOnly(t, dirs))
+        if (into !== undefined)
+          return this.deny(
+            `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+            false
+          )
         for (const word of pathsInCommand(c)) {
           if (await this.rawOnlyHit(word)) {
             return this.deny(
@@ -1553,8 +1572,8 @@ export class Guard {
 }
 
 /** A command that changes the shell's directory: `cd`, `pushd` or `popd`
- *  at its start or after `&&`, `||`, `;` or `|`. */
-const MOVES = /(?:^|&&|\|\||[;|])\s*(?:cd|pushd|popd)(?:\s|$)/
+ *  at its start or after `&&`, `||`, `;`, `|`, a lone `&`, a newline or `(`. */
+const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers
  *  unless `-n` is false, context lines when asked for, no path when `path`
