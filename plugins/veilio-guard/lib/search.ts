@@ -16,6 +16,8 @@ export type SearchFormat = {
   base: string
   /** The one file searched (a file argument): no path is printed. */
   oneFile?: string
+  /** Set by the caller once it no longer waits: no more file checks. */
+  stop?: { aborted: boolean }
 }
 
 export type SearchLine = {
@@ -100,7 +102,7 @@ export async function parseSearchOutput(
     if (full === null) return false
     const known = checked.get(full)
     if (known !== undefined) return known
-    if (checks >= SEARCH_LIMITS.checks) return undefined
+    if (checks >= SEARCH_LIMITS.checks || format.stop?.aborted) return undefined
     checks++
     const is = await format.fileExists(full)
     checked.set(full, is)

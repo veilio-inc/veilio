@@ -496,3 +496,80 @@ describe('a one-file search outside the project', () => {
     }
   })
 })
+
+// T024 review: a pass 2 that fails is counted; one that is late stops
+// reading the disk, and the deadline holds in the loop over runs too.
+describe('pass 2 under failure and time', () => {
+  const pair =
+    'deploy/k8s.yaml:2:  - name: DB_PASSWORD\ndeploy/k8s.yaml-3-    value: qx7mkplzrvnwtyb'
+  async function setUp(io: Partial<GuardIO>) {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'veilio-074-t-')))
+    mkdirSync(join(root, '.git'))
+    mkdirSync(join(root, 'deploy'))
+    writeFileSync(join(root, 'deploy/k8s.yaml'), 'x\n')
+    const full: GuardIO = {
+      read: async (p) => readFileSync(p, 'utf8'),
+      write: async (p, t) => {
+        mkdirSync(dirname(p), { recursive: true })
+        writeFileSync(p, t)
+      },
+      exists: async (p) => existsSync(p),
+      realPath: async (p) => p,
+      isFile: async (p) => existsSync(p) && statSync(p).isFile(),
+      ...io,
+    }
+    const g = new Guard(full, { rawOnly: [], mcpRestore: [] })
+    await g.load(root)
+    return { g, root }
+  }
+  const grep = (g: Guard, deadline?: number) =>
+    g.afterTool(
+      'Grep',
+      { tool: 'Grep', pattern: 'x', output_mode: 'content', '-A': 1 },
+      { result: { mode: 'content', numFiles: 1, filenames: [], content: pair, numLines: 2 } },
+      deadline
+    ) as Promise<{ result: { content: string } }>
+
+  it('a failing file check leaves the result as before, counted', async () => {
+    const { g, root } = await setUp({
+      isFile: async () => {
+        throw new Error('EIO')
+      },
+    })
+    expect((await grep(g)).result.content).toBe(pair)
+    expect(g.searchFailed).toBe(1)
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('past the deadline, the runs are not read: the result is as before', async () => {
+    // No sleep: the parse cannot be cut short, so only the run loop's own
+    // check can see the deadline.
+    const { g, root } = await setUp({})
+    expect((await grep(g, Date.now() - 1)).result.content).toBe(pair)
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('a late parse stops asking the disk', async () => {
+    let asked = 0
+    const many = Array.from({ length: 40 }, (_, i) => `f${i}.yaml:1:x`).join('\n')
+    const { g, root } = await setUp({
+      isFile: async () => {
+        asked++
+        await new Promise((r) => setTimeout(r, 10))
+        return false
+      },
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    })
+    await g.afterTool(
+      'Grep',
+      { tool: 'Grep', pattern: 'x', output_mode: 'content' },
+      { result: { mode: 'content', numFiles: 1, filenames: [], content: many, numLines: 40 } },
+      Date.now() + 35
+    )
+    const then = asked
+    await new Promise((r) => setTimeout(r, 120))
+    expect(asked).toBeLessThan(40)
+    expect(asked - then).toBeLessThanOrEqual(1)
+    rmSync(root, { recursive: true, force: true })
+  })
+})

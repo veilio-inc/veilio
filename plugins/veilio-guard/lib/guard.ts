@@ -169,6 +169,9 @@ export class Guard {
   /** Runs pass 2 could not write back line by line and masked whole: never
    *  expected (replaceCuts keeps the line count); the tests assert 0. */
   searchUnsplit = 0
+  /** Pass 2 runs that failed and left their result as before: never
+   *  expected; the tests assert 0 (T024 review). */
+  searchFailed = 0
   /** A shell command this session changed directory: Claude Code's shell
    *  keeps it, so a shell search's relative paths may be another directory's
    *  and are read as before from then on (T024 review). */
@@ -1336,16 +1339,22 @@ export class Guard {
       const full = (p: string) => searchPath(this.cwd, p)
       const one = format.oneFile !== undefined ? full(format.oneFile) : null
       const oneFile = one !== null && (await isFile(one)) ? format.oneFile : undefined
+      // Late, the parse goes on in the background: told to stop asking the disk.
+      const stop = { aborted: false }
       const parsed = await bounded(
-        parseSearchOutput(text, { ...format, oneFile, base: this.cwd, fileExists: isFile }),
+        parseSearchOutput(text, { ...format, oneFile, base: this.cwd, fileExists: isFile, stop }),
         deadline,
         this.clock
       )
-      if (parsed === LATE) return text
+      if (parsed === LATE) {
+        stop.aborted = true
+        return text
+      }
       const { lines, runs } = parsed
       const out = lines.map((l) => l.text)
       const learned: string[] = []
       for (const run of runs) {
+        if (this.clock.now() > deadline) return text
         const shown = run.lines.map((i) => lines[i]!)
         // A file named for its key (`secrets/db_password`) that holds only a
         // value is read as that key's value (FR-004).
@@ -1383,6 +1392,7 @@ export class Guard {
       return out.join('\n')
     } catch {
       // Pass 2 only ever adds: without it the result is masked as before.
+      this.searchFailed++
       return text
     }
   }
