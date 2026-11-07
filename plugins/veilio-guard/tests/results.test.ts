@@ -1090,3 +1090,14 @@ for (const [command, stdout, map] of ORDINARY)
     const out = await shellPrints($, on, command, stdout, map)
     expect(out.deny).toBeUndefined()
   })
+
+// Security review of the encoded-name check (HIGH): a failed command's error
+// text reaches the model too.
+test('a failed command whose error text holds a name encoded is withheld', async ($, on) => {
+  const failed = recordedRaw('Bash', 1)
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP), [`${ROOT}/src/pay.ts`]: PAY })
+  const text = `Exit code 1\nunexpected token: ${b64('class PaymentGateway {}')}`
+  on('tool.call', () => ({ ...failed.r, result: `Error: ${text}`, text, isError: true }))
+  const out = await $.tool.call({ ...eventOf(failed), command: 'node tests/pay.mjs' })
+  expect(out.deny).toBe(ENCODED)
+})

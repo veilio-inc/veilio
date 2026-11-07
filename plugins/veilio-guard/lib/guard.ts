@@ -1146,11 +1146,15 @@ export class Guard {
     // (review of 99325ba). Enum fields are left for the last scan, which
     // withholds the result.
     const strip = (s: string) => redactKnown(s, this.destroyed)
+    const shell = tool === 'Bash' || tool === 'PowerShell'
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      // A failed command's text reaches the model too (security review of
+      // the encoded-name check).
+      if (shell && encodedName(raw, this.map) !== null) return this.withhold(ENCODED_NAME)
       this.destroyed.learn(destroyedValues([raw], this.map))
       return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
@@ -1208,7 +1212,7 @@ export class Guard {
 
     // Spec 078 FR-018a: a shell can print a project name encoded, which
     // masking does not read; read before masking, which would mint it.
-    if (tool === 'Bash' || tool === 'PowerShell') {
+    if (shell) {
       let encoded = false
       deepRewrite(outcome.result, (s) => {
         encoded ||= encodedName(s, this.map) !== null

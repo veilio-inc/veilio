@@ -22,7 +22,6 @@ import {
   keyedRun,
   replaceCuts,
   encodedName,
-  ENCODED_SCAN_LIMIT,
 } from '../../plugins/veilio-guard/lib/scrub.ts'
 
 const SRC = `export class QuasarLedgerReconciler {
@@ -1409,23 +1408,38 @@ describe('replaceCuts', () => {
   })
 })
 
-// Spec 078 FR-018a: the scan of encoded copies is bounded: a result over
-// 2 MB is read in its first and last 1 MB (COVERAGE.md states the gap).
+// Spec 078 FR-018a: the whole of a result is scanned for encoded copies,
+// however long it is (security review of the encoded-name check: a head and
+// tail bound let the middle through).
 describe('encodedName (spec 078)', () => {
   const map = { __CLS__1: 'PaymentGateway' }
   const line = `${btoa('class PaymentGateway {}')}\n`
-  const filler = 'x'.repeat(ENCODED_SCAN_LIMIT)
+  const filler = 'x'.repeat(1 << 20)
   it('finds a name encoded at either end of a long result', () => {
     expect(encodedName(line + filler + filler + filler, map)).toBe('PaymentGateway')
     expect(encodedName(filler + filler + filler + '\n' + line, map)).toBe('PaymentGateway')
   })
-  it('does not read the middle of a result over 2 MB', () => {
-    expect(encodedName(filler + '\n' + line + filler + filler, map)).toBeNull()
+  it('finds a name encoded in the middle of a result over 2 MB', () => {
+    expect(encodedName(filler + '\n' + line + filler + filler, map)).toBe('PaymentGateway')
+  })
+  it('finds a name encoded among binary bytes', () => {
+    const bytes = (n: number) =>
+      String.fromCharCode(...Array.from({ length: n }, (_, i) => (i * 7) % 32))
+    const run = btoa(bytes(40) + 'PaymentGateway' + bytes(40) + '\u00ff\u00fe')
+    expect(encodedName(`${run}\n`, map)).toBe('PaymentGateway')
+    const hexRun = [...(bytes(30) + 'PaymentGateway' + bytes(30))]
+      .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+      .join('')
+    expect(encodedName(`${hexRun}\n`, map)).toBe('PaymentGateway')
   })
   it('scans 1 MB of ordinary output in linear time (reported, not asserted)', () => {
     const text = 'commit a1b2c3d4e5f60718 fix: totals in OrderLine\n'.repeat(20_000)
     const t = performance.now()
     expect(encodedName(text, map)).toBeNull()
     console.warn(`encodedName on ${text.length} bytes: ${(performance.now() - t).toFixed(1)} ms`)
+    const capped = text.slice(0, 30_000)
+    const u = performance.now()
+    expect(encodedName(capped, map)).toBeNull()
+    console.warn(`encodedName on ${capped.length} bytes: ${(performance.now() - u).toFixed(1)} ms`)
   })
 })
