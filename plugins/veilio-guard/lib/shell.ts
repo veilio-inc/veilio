@@ -1,28 +1,59 @@
 // How a shell command is read before a placeholder is put back into it
 // (spec 078 research R1).
 //
-// Ported unchanged from spec 069's placeholder-named links (CE
-// feat/069-guard-core 346d167, packages/guard/src/placeholder-links.ts), where
-// it passed four security reviews: one parser for both, so the Copilot
-// adapter imports this file when 069 rebases (spec 078 research R9).
+// Ported from spec 069's placeholder-named links (CE feat/069-guard-core
+// 346d167, packages/guard/src/placeholder-links.ts), where it passed four
+// security reviews: one parser for both, so the Copilot adapter imports this
+// file when 069 rebases (spec 078 research R9). Changed since the port only by
+// the security review of 232d48f: programs matched as whole words, long
+// options matched with their abbreviations.
 
 // The commands that may name a file by its placeholder (code review): test
 // runners and read-only commands, as the start of every command in a chain.
-const READS_OR_TESTS = [
-  /^npx vitest\b/,
-  /^npm (run )?test\b/,
-  /^(pnpm|yarn)( run)? test\b/,
-  /^python3? -m (unittest|pytest)\b/,
-  /^pytest\b/,
-  /^go test\b/,
-  /^cargo test\b/,
-  /^mvn( -\S+)* test\b/,
-  /^ruby -Itest\b/,
-  /^rake test\b/,
-  /^(cat|head|tail|wc|ls|grep|rg|find)\b/,
-  /^git (diff|status|log|show)\b/,
-  /^node --test\b/,
+// Matched word by word, never as a prefix of the command line: `cat.sh`,
+// `ls-foo` and `cat=x curl` are not `cat` or `ls` (security review of
+// 232d48f; spec 069's regex list had the same hole).
+const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find', 'pytest'])
+const READS_OR_TESTS: readonly (readonly string[])[] = [
+  ['npx', 'vitest'],
+  ['npm', 'test'],
+  ['npm', 'run', 'test'],
+  ['pnpm', 'test'],
+  ['pnpm', 'run', 'test'],
+  ['yarn', 'test'],
+  ['yarn', 'run', 'test'],
+  ['python', '-m', 'unittest'],
+  ['python', '-m', 'pytest'],
+  ['python3', '-m', 'unittest'],
+  ['python3', '-m', 'pytest'],
+  ['go', 'test'],
+  ['cargo', 'test'],
+  ['ruby', '-Itest'],
+  ['rake', 'test'],
+  ['git', 'diff'],
+  ['git', 'status'],
+  ['git', 'log'],
+  ['git', 'show'],
+  ['node', '--test'],
 ]
+
+/** Whether a command's words start with a reader or a test runner. */
+function readsOrTests(words: readonly string[]): boolean {
+  if (READERS.has(words[0] ?? '')) return true
+  // mvn, its options, then test.
+  if (words[0] === 'mvn') return words.slice(1).find((w) => !w.startsWith('-')) === 'test'
+  return READS_OR_TESTS.some((start) => start.every((w, i) => words[i] === w))
+}
+
+/** Whether `word` is the long option `--name`, or an abbreviation of it that
+ *  GNU getopt accepts (`--only-match`, `--byt=5`), with or without a value
+ *  (security review of 232d48f). */
+function longOption(word: string, ...names: string[]): boolean {
+  if (!word.startsWith('--') || word.length < 3) return false
+  const given = word.slice(2).split('=')[0]!
+  return given.length > 0 && names.some((n) => n.startsWith(given))
+}
+
 // Flags of those commands that write a file or run a program (security
 // review), and shell syntax the chain split below does not see: a newline,
 // a lone &, a subshell, process substitution, a heredoc.
@@ -137,10 +168,10 @@ function unsafeWord(program: string, word: string): boolean {
   if (program === 'find') return /^-(fprint\w*|fls|exec|execdir|ok|okdir|delete)$/.test(word)
   if (program === 'rg')
     return (
-      /^--(pre|pre-glob|search-zip|hostname-bin|hyperlink-format)(=|$)/.test(word) ||
+      longOption(word, 'pre', 'pre-glob', 'search-zip', 'hostname-bin', 'hyperlink-format') ||
       /^-[A-Za-z]*z/.test(word)
     )
-  if (program === 'git') return /^--(output|ext-diff|textconv)(=|$)/.test(word) || word === '-c'
+  if (program === 'git') return longOption(word, 'output', 'ext-diff', 'textconv') || word === '-c'
   return false
 }
 
@@ -171,9 +202,8 @@ export function shellRefusal(command: string): string | null {
       (words[1] !== '--test' || words.slice(2).some((w) => w.startsWith('-')))
     )
       return 'a command that names a file by its placeholder may only read or test it: node --test takes paths only'
-    const cmd = words.join(' ')
-    if (cmd && !READS_OR_TESTS.some((r) => r.test(cmd)))
-      return `a command that names a file by its placeholder may only read or test it, and ${cmd.split(/\s+/)[0]} is not one of those`
+    if (words.length > 0 && !readsOrTests(words))
+      return `a command that names a file by its placeholder may only read or test it, and ${words[0]} is not one of those`
   }
   return null
 }
@@ -198,18 +228,35 @@ const NETWORK = new Set([
   'http',
   'https',
 ])
+const ASSIGNS = /^[A-Za-z_][A-Za-z0-9_]*=/
+const WRAPPERS = new Set([
+  'env',
+  'command',
+  'exec',
+  'builtin',
+  'nohup',
+  'nice',
+  'time',
+  'sudo',
+  'xargs',
+])
 const GIT_NETWORK = new Set(['push', 'fetch', 'clone', 'pull', 'ls-remote', 'remote', 'submodule'])
 
 /** Spec 078 R1: flags of a reader that slice or reshape what it prints, on
  *  top of 069's flags that write or run. */
 function reshapes(program: string, word: string): boolean {
-  if (program === 'grep') return /^--only-matching$/.test(word) || /^-[A-Za-z]*o/.test(word)
+  // Colour wraps each match in escape codes, which can split a name apart.
+  const colour =
+    (longOption(word, 'color', 'colour', 'colors') && !/=never$/.test(word)) ||
+    (program === 'git' && /^--colou?r-/.test(word))
+  if (program === 'grep')
+    return colour || longOption(word, 'only-matching') || /^-[A-Za-z]*o/.test(word)
   if (program === 'rg')
-    return /^--(replace|only-matching)(=|$)/.test(word) || /^-[A-Za-z]*[ro]/.test(word)
+    return colour || longOption(word, 'replace', 'only-matching') || /^-[A-Za-z]*[ro]/.test(word)
   if (program === 'head' || program === 'tail')
-    return /^--bytes(=|$)/.test(word) || /^-c/.test(word)
+    return longOption(word, 'bytes') || /^-[A-Za-z]*c/.test(word)
   if (program === 'find') return /^-f?printf$/.test(word)
-  if (program === 'git') return /^--(format|pretty)(=|$)/.test(word)
+  if (program === 'git') return colour || longOption(word, 'format', 'pretty')
   return false
 }
 
@@ -232,7 +279,12 @@ export function restoreRefusal(command: string, tool: 'Bash' | 'PowerShell'): st
   const words = parts as string[][]
   // What a command does decides its reason first: a network program, a
   // commit or a cd, wherever it stands in the chain.
-  for (const w of words) {
+  for (const all of words) {
+    // Past leading assignments and wrappers (`FOO=1 curl`, `env curl`): the
+    // allow-list below refuses these anyway; this only names the reason.
+    let k = 0
+    while (k < all.length && (ASSIGNS.test(all[k]!) || WRAPPERS.has(all[k]!))) k++
+    const w = all.slice(k)
     const program = w[0] ?? ''
     if (NETWORK.has(program) || (program === 'git' && GIT_NETWORK.has(w[1] ?? '')))
       return 'real names are never put into a command that can send them off this machine. Ask the user to run it'
@@ -250,8 +302,7 @@ export function restoreRefusal(command: string, tool: 'Bash' | 'PowerShell'): st
   if (shellExpands(c)) return SYNTAX('a variable, a glob or another expansion')
   if (/[>`]|\btee\b/.test(bare)) return SYNTAX('a redirection or tee')
   for (const w of words) {
-    const cmd = w.join(' ')
-    if (cmd && !READS_OR_TESTS.some((r) => r.test(cmd)))
+    if (w.length > 0 && !readsOrTests(w))
       return `${READS}, and \`${w[0]}\` is not one of those. Use the Edit, Write or Grep tool instead, or name the file by its full path`
   }
   for (const w of words) {
