@@ -85,7 +85,8 @@ export function project(
     p.reads.push(a)
     await opts.slowRead?.(a)
     if (opts.failRead?.(a)) return { deny: 'EIO: the disk said no' }
-    const text = p.files[a]
+    const to = opts.links?.[a]
+    const text = p.files[to ? abs(to) : a]
     return text !== undefined ? { value: text } : { deny: `ENOENT: ${a}` }
   })
   on('fs.write', (_, e) => {
@@ -98,7 +99,16 @@ export function project(
   on('fs.stat', (_, e) => {
     const a = abs(e.path)
     const link = opts.links?.[a] ?? opts.links?.[e.path]
-    if (link) return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: true, realPath: link } }
+    // A link answers for what it leads to (T024 review: it said `file` for a
+    // folder too); one that leads nowhere is not there.
+    if (link) {
+      const t = abs(link)
+      if (!exists(t)) return { deny: `ENOENT: ${a}` }
+      const kind = t in p.files ? 'file' : 'directory'
+      return {
+        value: { kind, size: p.files[t]?.length ?? 0, mtimeMs: 0, isLink: true, realPath: t },
+      }
+    }
     if (!exists(a)) return { deny: `ENOENT: ${a}` }
     // A path that only leads to files is a directory, as on disk.
     const kind = a in p.files ? 'file' : 'directory'

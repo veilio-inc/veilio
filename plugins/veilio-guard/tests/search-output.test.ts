@@ -721,3 +721,40 @@ test('a cd in a command that then fails moves the shell too', async ($, on) => {
   const out = await $.tool.call({ ...eventOf(bash), command: 'rg -n -A1 DB_PASSWORD .' })
   expect(res(out).stdout).toBe(pair)
 })
+
+// T024 review: links are followed. A k8s secret mount is a link into
+// `..data/`; a link to a folder is no file to read a line by.
+test('a mounted secret behind a symbolic link is read as its key', async ($, on) => {
+  const grep = recorded('Grep')
+  const bash = recorded('Bash')
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
+      [`${ROOT}/run/secrets/..data/db_password`]: 'xq9mk2plzrvnw7\n',
+    },
+    { links: { [`${ROOT}/run/secrets/db_password`]: `${ROOT}/run/secrets/..data/db_password` } }
+  )
+  let call = 0
+  on('tool.call', () =>
+    call++ === 0
+      ? { ...grep.r, result: { ...grep.r.result, content: '1:xq9mk2plzrvnw7', numLines: 1 } }
+      : { ...bash.r, result: { ...bash.r.result, stdout: 'xq9mk2plzrvnw7\n' } }
+  )
+  const one = await $.tool.call({ ...eventOf(grep), path: 'run/secrets/db_password' })
+  expect(res(one).content).toMatch(/^1:__REDACTED_CREDENTIAL_\d+__$/)
+  const two = await $.tool.call(eventOf(bash))
+  expect(res(two).stdout).toMatch(/^__REDACTED_CREDENTIAL_\d+__\n$/)
+})
+test('a symbolic link to a folder is no file: its lines are masked as before', async ($, on) => {
+  const grep = recorded('Grep')
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED), [`${ROOT}/real-conf/a.yaml`]: 'x\n' },
+    { links: { [`${ROOT}/conf`]: `${ROOT}/real-conf` } }
+  )
+  const content = 'conf:2:  - name: DB_PASSWORD\nconf-3-    value: qx7mkplzrvnwtyb'
+  on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 2 } }))
+  const out = await $.tool.call({ ...eventOf(grep), '-A': 1 })
+  expect(res(out).content).toBe(content)
+})
