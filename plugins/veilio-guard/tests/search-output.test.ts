@@ -143,15 +143,14 @@ test("a key on one file's line never pairs with the next file's value", async ($
   expect(res(out).content).toBe(content)
 })
 
-test('a run whose masking would change its line count is left to the per-line masking', async ($, on) => {
+test('a value over two lines of a search is masked on both, and the run beside it too', async ($, on) => {
   const grep = recorded('Grep')
   project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED),
     [`${ROOT}/conf/s.xml`]: 'x\n',
     [`${ROOT}/deploy/k8s.yaml`]: 'x\n',
   })
-  // The engine reads this element's value across the line break; the k8s
-  // pair after it is still masked in its own run.
+  // The engine reads this element's value across the line break.
   const lines = [
     'conf/s.xml:1:<password>xk9mq2vl7zpqwr',
     'conf/s.xml-2-wb4nr8tlq2xzkm</password>',
@@ -164,7 +163,8 @@ test('a run whose masking would change its line count is left to the per-line ma
   const out = await $.tool.call({ ...eventOf(grep), '-A': 1 })
   const got = (res(out).content as string).split('\n')
   expect(got.length).toBe(5)
-  expect(got[1]).toMatch(/^conf\/s\.xml-2-/)
+  expect(got[0]).toMatch(/^conf\/s\.xml:1:<password>__REDACTED_CREDENTIAL_\d+__$/)
+  expect(got[1]).toMatch(/^conf\/s\.xml-2-__REDACTED_CREDENTIAL_\d+__<\/password>$/)
   expect(got[4]).toMatch(/^deploy\/k8s\.yaml-3- {4}value: __REDACTED_CREDENTIAL_\d+__$/)
 })
 

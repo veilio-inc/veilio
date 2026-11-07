@@ -1044,6 +1044,31 @@ function keyedOf(text: string, scan: ScanResult, map: SymbolMap, known: Destroye
   return { redacted, spans: keyedSpans(redacted, namesOf(map)) }
 }
 
+/** `text` with each cut [from, to) replaced by its token (security review
+ *  of 72e1e4c): cuts that overlap are merged under the first one's token,
+ *  and a cut over line breaks is replaced on each of its lines, the breaks
+ *  and each line's indentation kept, so the text keeps its line count. */
+export function replaceCuts(text: string, cuts: [number, number, string][]): string {
+  const merged: [number, number, string][] = []
+  for (const c of [...cuts].sort((x, y) => x[0] - y[0] || y[1] - x[1])) {
+    const last = merged[merged.length - 1]
+    if (last && c[0] < last[1]) last[1] = Math.max(last[1], c[1])
+    else merged.push([...c])
+  }
+  let out = ''
+  let at = 0
+  for (const [from, to, token] of merged) {
+    const piece = text
+      .slice(from, to)
+      .split('\n')
+      .map((p, i) => (i > 0 ? p.replace(/^(\s*)\S[\s\S]*$/, `$1${token}`) : p === '' ? p : token))
+      .join('\n')
+    out += text.slice(at, from) + piece
+    at = to
+  }
+  return out + text.slice(at)
+}
+
 /** Spec 074 pass 2: the key rule over one file's run of search lines, read
  *  as that file's own text (`code`: a file of a known language), so a key on
  *  one line and its value on the next are one span. Each key-rule value is
@@ -1094,7 +1119,7 @@ export function keyedRun(
    *  the line as printed reads overlapping it. */
   const extent = (from: number, to: number): [number, number] | null => {
     const value = text.slice(from, to)
-    if (value.includes('\n')) return [from, to]
+    if (value.includes('\n')) return [from, to] // replaced on each line (replaceCuts)
     let n = starts.length - 1
     while (starts[n]! > from) n--
     const start = starts[n]!
@@ -1110,19 +1135,17 @@ export function keyedRun(
     return [a, b]
   }
   const learned: string[] = []
-  let out = ''
-  let at = 0
+  // Every cut first, then merged (security review of 72e1e4c: one that only
+  // partly overlaps the cut before it was dropped).
+  const replace: [number, number, string][] = []
   for (const span of keyedSpans(redacted, namesOf(map))) {
-    const from = original(span.start, false)
-    if (from < at) continue
     learned.push(...keyedParts(span, code).learned)
+    const from = original(span.start, false)
     const to = original(span.end, true)
-    const cut: [number, number] | null = everywhere ? [from, to] : extent(from, to)
-    if (!cut) continue
-    out += text.slice(at, Math.max(at, cut[0])) + known.tokenFor(span.value)
-    at = Math.max(at, cut[1])
+    const cut = everywhere ? ([from, to] as [number, number]) : extent(from, to)
+    if (cut) replace.push([cut[0], cut[1], known.tokenFor(span.value)])
   }
-  return { text: out + text.slice(at), learned }
+  return { text: replaceCuts(text, replace), learned }
 }
 
 /** Each text's scan and key-rule removal, from the pass that learns from it,

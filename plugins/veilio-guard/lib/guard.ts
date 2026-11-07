@@ -163,6 +163,9 @@ export class Guard {
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
    *  before (the differential test's baseline). */
   searchPass2 = true
+  /** Runs pass 2 could not write back line by line and masked whole: never
+   *  expected (replaceCuts keeps the line count); the tests assert 0. */
+  searchUnsplit = 0
   stored: StoredMap = { version: 1, map: {} }
   extraRawOnly: string[] = []
   mcpRestore: string[] = []
@@ -1335,7 +1338,16 @@ export class Guard {
         )
         learned.push(...r.learned)
         const back = r.text.split('\n')
-        if (back.length !== shown.length || back.some((b) => !b.startsWith(prefix))) continue
+        if (back.length !== shown.length || back.some((b) => !b.startsWith(prefix))) {
+          // Fail closed: each line's text under a token of its own.
+          this.searchUnsplit++
+          for (const i of run.lines) {
+            const l = lines[i]!
+            out[i] =
+              l.text.slice(0, l.text.length - l.body!.length) + this.destroyed.tokenFor(l.body!)
+          }
+          continue
+        }
         run.lines.forEach((i, j) => {
           const l = lines[i]!
           out[i] = l.text.slice(0, l.text.length - l.body!.length) + back[j]!.slice(prefix.length)

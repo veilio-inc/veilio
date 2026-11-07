@@ -92,6 +92,8 @@ async function run(c: CorpusCase, root: string, pass2: boolean): Promise<Seen> {
     result?: { content?: string; stdout?: string }
   }
   const ms = performance.now() - t
+  // The fail-closed path (a run that cannot be written back line by line) never fires.
+  expect(g.searchUnsplit).toBe(0)
   const text = out.result
     ? ((c.tool === 'Grep' ? out.result.content : out.result.stdout) ?? null)
     : null

@@ -20,6 +20,7 @@ import {
   scrubSource,
   survivingSecrets,
   keyedRun,
+  replaceCuts,
 } from '../../plugins/veilio-guard/lib/scrub.ts'
 
 const SRC = `export class QuasarLedgerReconciler {
@@ -1256,14 +1257,18 @@ describe('keyedRun', () => {
   // Security review of bafafe8: left only where the per-line masking reads
   // the same span - same place, same value - never because the key's text
   // happens to be on the line.
-  it('a value that runs onto the next line is replaced, its key on the first line', () => {
+  // Security review of 72e1e4c: a value over several lines is replaced on
+  // each of its lines, so the run keeps its line count and is always written.
+  it('a value that runs onto the next lines is replaced on every line, lines kept', () => {
     const r = keyedRun(
-      '<password>xk9mq2vl7zpqwr\nwb4nr8tlq2xzkm</password>',
+      '<password>xk9mq2vl7zpqwr\n  wb4nr8tlq2xzkm\npz6vt1yhq8lmnc</password>',
       {},
       new Destroyed(),
       false
     )
-    expect(r.text).toBe('<password>__REDACTED_CREDENTIAL_1001__</password>')
+    expect(r.text).toBe(
+      '<password>__REDACTED_CREDENTIAL_1001__\n  __REDACTED_CREDENTIAL_1001__\n__REDACTED_CREDENTIAL_1001__</password>'
+    )
   })
   it("a line holding the key's text in a comment, its real key a line above: replaced", () => {
     const r = keyedRun(
@@ -1368,5 +1373,36 @@ describe('keyedRun', () => {
       false
     )
     expect(r.text).toBe('password:\n  settledTotal')
+  })
+})
+
+// Security review of 72e1e4c: cuts that overlap are merged, never one dropped.
+describe('replaceCuts', () => {
+  it('a cut that starts inside the one before and runs past it: nothing of either is left', () => {
+    expect(
+      replaceCuts('k: aaaa bbbb cccc', [
+        [3, 12, 'T1'],
+        [8, 17, 'T2'],
+      ])
+    ).toBe('k: T1')
+  })
+  it('cuts given out of order are sorted first', () => {
+    expect(
+      replaceCuts('a=1 b=2', [
+        [6, 7, 'T2'],
+        [2, 3, 'T1'],
+      ])
+    ).toBe('a=T1 b=T2')
+  })
+  it("a cut over a line break replaces each line's piece and keeps the break and indentation", () => {
+    expect(replaceCuts('k: abc\n  def\nx', [[3, 12, 'T']])).toBe('k: T\n  T\nx')
+  })
+  it('a cut that only touches the next is two cuts', () => {
+    expect(
+      replaceCuts('abcdef', [
+        [0, 3, 'T1'],
+        [3, 6, 'T2'],
+      ])
+    ).toBe('T1T2')
   })
 })
