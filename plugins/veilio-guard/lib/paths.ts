@@ -8,70 +8,9 @@
 // sandbox: `cat .env` is refused, a script that opens .env is not. The
 // coverage statement says so; strict mode (a later spec) is the answer to it.
 
-export const DEFAULT_RAW_ONLY: readonly string[] = [
-  '.env',
-  '.env.*',
-  '*.pem',
-  '*.key',
-  '*.p12',
-  '*.pfx',
-  'id_rsa*',
-  'id_dsa*',
-  'id_ecdsa*',
-  'id_ed25519*',
-  '.veilio/**',
-  '.npmrc',
-  '.netrc',
-  '.pgpass',
-  // Credential stores and keystores.
-  '.git-credentials',
-  '.htpasswd',
-  '*.jks',
-  '*.keystore',
-  '*.p8',
-  'kubeconfig',
-  '.docker/config.json',
-  // Cloud and cluster credentials, where their tools keep them.
-  '.kube/config',
-  '.kube/**',
-  '.aws/credentials',
-  '.azure/**',
-  '.config/gcloud/**',
-]
-
-// Matched ignoring case: NTFS and APFS, the default file systems on Windows and
-// macOS, open `.ENV` as `.env`. On a case-sensitive one this refuses a little
-// more than it must, which is the side to err on.
-function globToRegExp(glob: string): RegExp {
-  let re = ''
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i)
-    if (c === '*' && glob[i + 1] === '*') {
-      re += '.*'
-      i++
-      if (glob[i + 1] === '/') i++
-    } else if (c === '*') re += '[^/]*'
-    else if (c === '?') re += '[^/]'
-    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-  }
-  return new RegExp(`^${re}$`, 'i')
-}
-
-function matches(path: string, pattern: string): boolean {
-  const re = globToRegExp(pattern)
-  const parts = path.split('/').filter((p) => p !== '' && p !== '.')
-  // A pattern with no slash matches a file name anywhere; one with a slash
-  // matches any tail of the path, so `secrets/**` holds at any depth.
-  if (!pattern.includes('/')) return parts.some((p) => re.test(p))
-  for (let i = 0; i < parts.length; i++) if (re.test(parts.slice(i).join('/'))) return true
-  return false
-}
-
-export function isRawOnly(path: string, extra: readonly string[]): boolean {
-  const normal = path.replace(/\\/g, '/')
-  const patterns = [...DEFAULT_RAW_ONLY, ...extra.filter((p) => p && !p.startsWith('!'))]
-  return patterns.some((p) => matches(normal, p))
-}
+// The list and its matcher live in the engine (spec 078 FR-016), shared with
+// the MCP server.
+export { DEFAULT_RAW_ONLY, isRawOnly } from '../vendor/engine/index.js'
 
 /** The words of a shell command that could name a file: unquoted, split on
  *  whitespace, shell operators, braces and commas, and each piece around `=`
