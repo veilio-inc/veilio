@@ -20,7 +20,7 @@ function shell(on: TestOn) {
 }
 
 const READS =
-  'a shell command gets real names back only when it reads files or runs tests (cat, head, tail, grep, rg, ls, find, wc, git diff/log/show/status, a test runner)'
+  'a shell command gets real names back only when it reads files or runs tests (cat, head, tail, grep, rg, ls, find, wc, a test runner)'
 
 // The seven A#1 probe commands, and the network programs.
 const REFUSED: [string, string][] = [
@@ -92,8 +92,6 @@ const FLAGS: [string, string, string][] = [
   ['head -c 7 src/__CLS__1.ts', 'head', '-c'],
   ['tail -c5 src/__CLS__1.ts', 'tail', '-c5'],
   ['find src -name __CLS__1.ts -printf %f', 'find', '-printf'],
-  ['git log --format=%s -- src/__CLS__1.ts', 'git', '--format=%s'],
-  ['git show --pretty=format:%s src/__CLS__1.ts', 'git', '--pretty=format:%s'],
 ]
 test('a reader given a flag that slices or reshapes its output is refused', async ($, on) => {
   const seen = shell(on)
@@ -131,13 +129,11 @@ const ALLOWED: [string, string][] = [
   ['cat __DIR__1/a.ts | head -50', 'cat ledger/a.ts | head -50'],
   ['grep -rn __CLS__1 src', `grep -rn ${CANARY} src`],
   ['rg __CLS__1', `rg ${CANARY}`],
-  ['git diff __DIR__1', 'git diff ledger'],
   ['npx vitest run tests/__VAR__3.test.ts', 'npx vitest run tests/settleSpec.test.ts'],
   [
     'npx vitest run tests/__VAR__3.test.ts 2>&1 | tail -20',
     'npx vitest run tests/settleSpec.test.ts 2>&1 | tail -20',
   ],
-  ['git log --oneline -- __DIR__1', 'git log --oneline -- ledger'],
 ]
 test('a read or a test runs with the real names', async ($, on) => {
   const seen = shell(on)
@@ -154,21 +150,37 @@ test('a command with no placeholder runs as before', async ($, on) => {
   expect(seen[0]?.command).toBe('echo hi | base64')
 })
 
-// Review round 1 item (b), through the plugin's own host: the repository's
-// configuration is read with git, in the project, on each git command.
-test('a git command gets no real names back while the repository configuration sets a pager', async ($, on) => {
-  const p = project(
-    on,
-    { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) },
-    { gitConfig: 'global\0core.pager\nless\0local\0core.pager\n./x.sh\0' }
-  )
-  let ran = false
-  on('tool.call', () => {
-    ran = true
-    return { result: { stdout: '', stderr: '', interrupted: false } }
+// Security review of the git and MCP changes: reading git's configuration to
+// guard it was a deny-list with holes (global and system scopes, hooks
+// already in .git/hooks, submodule configs, a change between check and run).
+// git is no longer a reader: its output is still masked.
+test('a git command that names a placeholder is refused: git is not a reader', async ($, on) => {
+  const seen = shell(on)
+  for (const command of [
+    'git diff __DIR__1',
+    'git log --oneline -- __DIR__1',
+    'git show HEAD:src/__CLS__1.ts',
+    'git status __DIR__1',
+  ]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toBe(
+      `${command} -> Veilio refused this call: ${READS}, and \`git\` is not one of those. Use the Edit, Write or Grep tool instead, or name the file by its full path.`
+    )
+  }
+  expect(seen.length).toBe(0)
+})
+
+test('git diff with no placeholder runs, and its output is masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return {
+      result: { stdout: `+export class ${CANARY} {}\n`, stderr: '', interrupted: false },
+    }
   })
-  const out = await $.tool.call({ tool: 'Bash', command: 'git diff -- src/__CLS__1.ts' })
-  expect(ran).toBe(false)
-  expect(out.deny).toContain('sets core.pager, which runs a program of its own')
-  expect(p.ops).toContain(`git config --show-scope --includes --list -z in ${ROOT}`)
+  const out = await $.tool.call({ tool: 'Bash', command: 'git diff', description: 'x' })
+  expect(seen[0]?.command).toBe('git diff')
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(JSON.stringify(out)).toContain('__CLS__1')
 })

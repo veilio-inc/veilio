@@ -225,20 +225,34 @@ function refuseRawOnly(path: string, ctx: ToolContext): string {
   const map = resolveMapPath(ctx.mapPath, ctx.cwd)
   const stores = [map, join(dirname(map), 'aliases.json'), join(dirname(map), 'reserved.json')]
   const own = new Set(stores.flatMap((p) => [resolve(p), realPath(p) ?? resolve(p)]))
-  const extra = projectRawOnly(ctx.cwd)
-  if (isRawOnly(path, extra) || windowsAlias(path) || own.has(resolve(ctx.cwd, path)))
+  // The project's own patterns are its root's, as the guard reads them
+  // (security review of the git and MCP changes): matched from there.
+  const project = findProjectRoot(ctx.cwd)
+  const extra = projectRawOnly(project)
+  const fromProject = relative(project, resolve(ctx.cwd, path))
+  if (
+    isRawOnly(path, []) ||
+    isRawOnly(fromProject, extra) ||
+    windowsAlias(path) ||
+    own.has(resolve(ctx.cwd, path))
+  )
     throw refuse()
   const real = safeResolve(path, ctx.cwd)
   const root = realPath(ctx.cwd) ?? ctx.cwd
-  if (isRawOnly(relative(root, real), extra) || own.has(real)) throw refuse()
+  if (
+    isRawOnly(relative(root, real), []) ||
+    isRawOnly(relative(realPath(project) ?? project, real), extra) ||
+    own.has(real)
+  )
+    throw refuse()
   return real
 }
 
 /** The project's own raw-only patterns, from `.veilio/guard.json` at the
  *  project root, read as the guard reads them (review round 1 item 10). A file
  *  that is not JSON refuses the call, as it stops the guard. */
-function projectRawOnly(cwd: string): string[] {
-  const path = join(findProjectRoot(cwd), '.veilio', 'guard.json')
+function projectRawOnly(project: string): string[] {
+  const path = join(project, '.veilio', 'guard.json')
   let text: string
   try {
     text = readFileSync(path, 'utf8')

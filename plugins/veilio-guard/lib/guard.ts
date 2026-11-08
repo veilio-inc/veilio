@@ -32,7 +32,7 @@ import {
   shortNameAlias,
   windowsAlias,
 } from './paths.ts'
-import { gitConfigRuns, restoreRefusal, shellWords, splitChain } from './shell.ts'
+import { restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -95,9 +95,6 @@ export interface GuardIO {
   chmod?(path: string): Promise<void>
   /** A file's permission bits, or undefined when they cannot be read. */
   mode?(path: string): Promise<number | undefined>
-  /** `git config --show-scope --includes --list -z` run in `dir`, or null
-   *  when it fails. Absent: a git command's configuration is not checked. */
-  gitConfig?(dir: string): Promise<string | null>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -1350,29 +1347,8 @@ export class Guard {
         e.tool === 'PowerShell' ? 'PowerShell' : 'Bash'
       )
       if (why) return this.deny(why)
-      const git = await this.gitRunsProgram(typeof command === 'string' ? command : '')
-      if (git) return this.deny(git)
     }
     return { args }
-  }
-
-  /** Review round 1 item (b): why a placeholder may not go into this
-   *  command's git part, from the repository's own configuration (read on
-   *  every call: a plain `git config` can set it between two), or null. */
-  private async gitRunsProgram(command: string): Promise<string | null> {
-    if (!this.io.gitConfig) return null
-    if (!splitChain(command)?.some((part) => shellWords(part)?.[0] === 'git')) return null
-    // A shell moved where the guard cannot follow reads as unreadable.
-    const config =
-      this.shellDir === null
-        ? null
-        : await bounded(this.io.gitConfig(this.shellDir), Date.now() + 2_000, this.clock)
-    if (config === null || config === LATE)
-      return "Veilio could not read this repository's git configuration, so a git command gets no real names back. Run it without the placeholder, or ask the user to run it"
-    const key = gitConfigRuns(config)
-    return key
-      ? `this repository's git configuration sets ${key}, which runs a program of its own, so a git command gets no real names back. Run it without the placeholder, or ask the user to remove that setting`
-      : null
   }
 
   private deny(reason: string, prefix = true): { deny: string } {

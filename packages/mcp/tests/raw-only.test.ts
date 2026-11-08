@@ -109,6 +109,26 @@ describe('raw-only paths (spec 078)', () => {
     expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
   })
 
+  // Security review of the git and MCP changes: guard.json's patterns are the
+  // project root's, so a server started in a subdirectory matches them from
+  // the root, as the guard does.
+  it("from a subdirectory, guard.json's patterns are matched from the project root", () => {
+    writeFileSync(
+      join(cwd, '.veilio', 'guard.json'),
+      '{"rawOnly":["secrets/**","app/private/**"]}\n'
+    )
+    mkdirSync(join(cwd, 'secrets'))
+    writeFileSync(join(cwd, 'secrets', 'x.yaml'), 'db_host: db.internal.example\n')
+    mkdirSync(join(cwd, 'app', 'private'), { recursive: true })
+    writeFileSync(join(cwd, 'app', 'private', 'y.yaml'), 'db_host: db.internal.example\n')
+    const sub = { ...ctx, cwd: join(cwd, 'app') }
+    for (const path of ['../secrets/x.yaml', 'private/y.yaml']) {
+      const r = callTool('anonymize_file', { path }, sub)
+      expect(`${path}: ${r.text}`).toContain(said(path))
+      expect(r.text).not.toContain('db.internal')
+    }
+  })
+
   it('a .veilio/guard.json that is not valid JSON refuses every file', () => {
     writeFileSync(join(cwd, '.veilio', 'guard.json'), '{"rawOnly": [\n')
     const r = callTool('anonymize_file', { path: 'src/pay.ts' }, ctx)

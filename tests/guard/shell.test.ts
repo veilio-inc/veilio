@@ -70,13 +70,15 @@ describe('shellRefusal (spec 069, ported by spec 078)', () => {
     'rg x --hostname-bin ./run src/__PKG__16.ts',
     'rg x --hyperlink-format=file://{path} src/__PKG__16.ts',
     'grep "a|b src/__PKG__16.ts',
+    // Security review of the git and MCP changes: git is not a reader.
+    'grep -n class src/__PKG__16.ts && git diff src/__PKG__16.ts',
   ])('refuses %j', (command) => {
     expect(shellRefusal(command)).not.toBeNull()
   })
 
   it.each([
     'cat src/__PKG__16.ts | wc -l',
-    'grep -n class src/__PKG__16.ts && git diff src/__PKG__16.ts',
+    'grep -n class src/__PKG__16.ts && wc -l src/__PKG__16.ts',
     'head -5 src/__PKG__16.ts; ls src',
     'node --test src/__PKG__16.ts',
     'rg -n "settle.*ok" src/__PKG__16.ts',
@@ -119,7 +121,6 @@ describe('restoreRefusal (spec 078)', () => {
     'rg -tpy __X__1',
     'head -n 20 src/__X__1.ts',
     'tail -20 src/__X__1.ts',
-    'git log --oneline -- src/__X__1.ts',
     'npx vitest run tests/__X__1.test.ts 2>&1 | tail -20',
     'ls src/__X__1',
     'wc -l src/__X__1.ts',
@@ -139,8 +140,6 @@ describe('restoreRefusal (spec 078)', () => {
     ['tail -c5 f', '`tail` `-c5`'],
     ['find src -printf %f', '`find` `-printf`'],
     ['find src -fprintf o %f', '`find` `-fprintf`'],
-    ['git log --format=%s', '`git` `--format=%s`'],
-    ['git show --pretty=format:%s', '`git` `--pretty=format:%s`'],
   ])('refuses the reshaping flag in %j', (command, says) => {
     expect(restoreRefusal(command, 'Bash')).toContain(says)
   })
@@ -202,24 +201,16 @@ describe('restoreRefusal (spec 078)', () => {
     ['tail --b 5 f', '`tail` `--b`'],
     ['rg --repl=y x f', '`rg` `--repl=y`'],
     ['rg --only x f', '`rg` `--only`'],
-    ['git log --form=%s', '`git` `--form=%s`'],
-    ['git show --pre=format:%s', '`git` `--pre=format:%s`'],
-    ['git diff --outp=o f', '`git` `--outp=o`'],
-    ['git diff --ext f', '`git` `--ext`'],
-    ['git diff --textc f', '`git` `--textc`'],
     ['rg --pre-g x f', '`rg` `--pre-g`'],
     ['grep --color=always x f', '`grep` `--color=always`'],
     ['grep --colour=always x f', '`grep` `--colour=always`'],
     ['rg --color always x f', '`rg` `--color`'],
-    ['git diff --color-words f', '`git` `--color-words`'],
   ])('refuses %j', (command, says) => {
     expect(restoreRefusal(command, 'Bash')).toContain(says)
   })
 
   it.each([
     'grep --color=never x src/__X__1.ts',
-    'git diff --no-color __X__1',
-    'git diff --no-ext-diff __X__1',
     'rg --hidden __X__1',
     'head -n5 src/__X__1.ts',
     'mvn -q test __X__1',
@@ -285,21 +276,44 @@ describe('restoreRefusal (spec 078)', () => {
     ['tail -5c f', '`tail` `-5c`'],
     ['tail +3c f', '`tail` `+3c`'],
     ['tail -2b f', '`tail` `-2b`'],
-    ['git diff --word-diff f', '`git` `--word-diff`'],
-    ['git diff --word-diff-regex=. f', '`git` `--word-diff-regex=.`'],
-    ['git diff --color-words f', '`git` `--color-words`'],
-    ['git diff --stat=20 f', '`git` `--stat=20`'],
-    ['git diff --stat-name-width=5 f', '`git` `--stat-name-width=5`'],
   ])('refuses %j', (command, says) => {
     expect(restoreRefusal(command, 'Bash')).toContain(says)
   })
 
-  it.each(['head -5 src/__X__1.ts', 'tail -n 3 src/__X__1.ts', 'git diff --stat __X__1'])(
+  it.each(['head -5 src/__X__1.ts', 'tail -n 3 src/__X__1.ts'])(
     'still lets %j through',
     (command) => {
       expect(restoreRefusal(command, 'Bash')).toBeNull()
     }
   )
+
+  // Security review of the git and MCP changes: git is not a reader. Its
+  // configuration can run programs no flag check sees, so a git command gets
+  // no real names back, with or without a flag.
+  it.each([
+    'git log --oneline -- src/__X__1.ts',
+    'git diff --no-color __X__1',
+    'git diff --no-ext-diff __X__1',
+    'git diff --stat __X__1',
+    'git log --format=%s',
+    'git show --pretty=format:%s',
+    'git log --form=%s',
+    'git show --pre=format:%s',
+    'git diff --outp=o f',
+    'git diff --ext f',
+    'git diff --textc f',
+    'git diff --color-words f',
+    'git diff --word-diff f',
+    'git diff --word-diff-regex=. f',
+    'git diff --stat=20 f',
+    'git diff --stat-name-width=5 f',
+    'git status __X__1',
+    'git show HEAD:src/__X__1.ts',
+  ])('refuses %j: git is not a reader', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toBe(
+      'a shell command gets real names back only when it reads files or runs tests (cat, head, tail, grep, rg, ls, find, wc, a test runner), and `git` is not one of those. Use the Edit, Write or Grep tool instead, or name the file by its full path'
+    )
+  })
 
   it('refuses every PowerShell command', () => {
     expect(restoreRefusal('Get-Content src/__X__1.ts', 'PowerShell')).toBe(

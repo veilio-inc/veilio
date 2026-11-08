@@ -30,10 +30,6 @@ const READS_OR_TESTS: readonly (readonly string[])[] = [
   ['cargo', 'test'],
   ['ruby', '-Itest'],
   ['rake', 'test'],
-  ['git', 'diff'],
-  ['git', 'status'],
-  ['git', 'log'],
-  ['git', 'show'],
   ['node', '--test'],
 ]
 
@@ -193,7 +189,6 @@ function unsafeWord(program: string, word: string): boolean {
       longOption(word, 'pre', 'pre-glob', 'search-zip', 'hostname-bin', 'hyperlink-format') ||
       /^-[A-Za-z]*z/.test(word)
     )
-  if (program === 'git') return longOption(word, 'output', 'ext-diff', 'textconv') || word === '-c'
   return false
 }
 
@@ -280,9 +275,7 @@ function grouped(word: string, valued: string): string {
  *  top of 069's flags that write or run. */
 function reshapes(program: string, word: string): boolean {
   // Colour wraps each match in escape codes, which can split a name apart.
-  const colour =
-    (longOption(word, 'color', 'colour', 'colors') && !/=never$/.test(word)) ||
-    (program === 'git' && /^--colou?r-/.test(word))
+  const colour = longOption(word, 'color', 'colour', 'colors') && !/=never$/.test(word)
   if (program === 'grep')
     return colour || longOption(word, 'only-matching') || /^-[A-Za-z]*o/.test(word)
   if (program === 'rg')
@@ -297,29 +290,11 @@ function reshapes(program: string, word: string): boolean {
       longOption(word, 'bytes') || /^-[A-Za-z]*c/.test(word) || /^[+-]\d+[A-Za-z]*[bc]/.test(word)
     )
   if (program === 'find') return /^-f?printf$/.test(word)
-  // A word diff or a narrowed stat splits or cuts a name.
-  if (program === 'git')
-    return (
-      colour ||
-      // `--stat` itself is an option of its own, not an abbreviation.
-      (word !== '--stat' &&
-        longOption(
-          word,
-          'format',
-          'pretty',
-          'word-diff',
-          'word-diff-regex',
-          'stat-name-width',
-          'stat-width',
-          'stat-graph-width'
-        )) ||
-      /^--stat=/.test(word)
-    )
   return false
 }
 
 const READS =
-  'a shell command gets real names back only when it reads files or runs tests (cat, head, tail, grep, rg, ls, find, wc, git diff/log/show/status, a test runner)'
+  'a shell command gets real names back only when it reads files or runs tests (cat, head, tail, grep, rg, ls, find, wc, a test runner)'
 const SYNTAX = (what: string) =>
   `a command that gets real names back may only read files or run tests, so it cannot use ${what}. Split it into plain commands, or use the Edit or Write tool`
 
@@ -395,22 +370,4 @@ function outsideQuotes(command: string): string {
     } else out += ch
   }
   return out
-}
-
-/** The repository settings under which a git command that only reads runs a
- *  program of the repository's choosing (review round 1 item (b)). */
-const GIT_RUNS =
-  /^(?:diff\.external|.+\.textconv|diff\..+\.command|filter\..+\.(?:clean|process)|core\.pager|pager\..+|gpg\.(?:.+\.)?program|core\.fsmonitor|core\.hookspath)$/
-
-/** The first such setting in `git config --show-scope --includes --list -z`
- *  output (`scope NUL key LF value NUL`, repeated) that the repository sets
- *  (local or worktree scope; the user's global settings are theirs), or null. */
-export function gitConfigRuns(listing: string): string | null {
-  const fields = listing.split('\0')
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    if (fields[i] !== 'local' && fields[i] !== 'worktree') continue
-    const key = fields[i + 1]!.split('\n')[0]!.toLowerCase()
-    if (GIT_RUNS.test(key)) return key
-  }
-  return null
 }
