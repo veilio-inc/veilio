@@ -383,13 +383,8 @@ export class Guard {
     await this.readSettings()
     await this.readOffRecord()
     await this.reloadMap()
-    // A committed map or aliases file: its values would be restored into
-    // commands the model only saw as placeholders.
-    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
-    if (tracked.length)
-      this.stop(
-        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
-      )
+    this.stopIfTracked(committed)
+    this.shellDir = cwd
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
@@ -724,6 +719,16 @@ export class Guard {
     )
   }
 
+  /** A committed map or aliases file: its values would be restored into
+   *  commands the model only saw as placeholders. */
+  private stopIfTracked(committed: string[] | null): void {
+    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
+    if (tracked.length)
+      this.stop(
+        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
+      )
+  }
+
   stop(reason: string): void {
     this.state = 'stopped'
     this.stoppedReason = reason
@@ -756,6 +761,8 @@ export class Guard {
       this.stoppedReason = ''
       await this.readSettings()
       await this.reloadMap()
+      // Spec 085 H14: on again is never past the stop a tracked map puts on it.
+      this.stopIfTracked(await this.trackedVeilioFiles())
     }
     return recorded
   }
@@ -1074,6 +1081,28 @@ export class Guard {
 
   // ── tool calls ────────────────────────────────────────────────────────────
 
+  /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
+   *  null once a cd went somewhere that cannot be told (`~` with no home). */
+  private shellDir: string | null = null
+  private moved(dir: string | null, target: string): string | null {
+    if (target === '~' || target.startsWith('~/'))
+      return this.home ? normalisePath(join(this.home, target.slice(1))) : null
+    if (/^[/\\]|^[A-Za-z]:/.test(target)) return normalisePath(target)
+    return dir === null ? null : normalisePath(join(dir, target))
+  }
+  /** The directories a command's relative words may be read from: where the
+   *  shell is, and where each of its own cds takes it. */
+  private shellDirsOf(command: string): string[] {
+    const dirs: string[] = []
+    let dir = this.shellDir
+    if (dir !== null && dir !== this.cwd) dirs.push(dir)
+    for (const t of cdTargets(command)) {
+      dir = this.moved(dir, t)
+      if (dir !== null) dirs.push(dir)
+    }
+    return dirs
+  }
+
   private async rawOnlyHit(path: string): Promise<boolean> {
     // As written and with `.`/`..` resolved (spec 078 FR-007).
     if (isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly))
@@ -1181,8 +1210,14 @@ export class Guard {
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
             false
           )
+        // Spec 085 H17: a word after a cd names a file in the directory the
+        // shell moved to, in this call or an earlier one: checked there too.
+        const moves = this.shellDirsOf(c)
         for (const word of pathsInCommand(c)) {
-          if (await this.rawOnlyHit(word)) {
+          const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
+          let hit = await this.rawOnlyHit(word)
+          for (const at of under) hit ||= await this.rawOnlyHit(at)
+          if (hit) {
             return this.deny(
               `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
@@ -1316,6 +1351,8 @@ export class Guard {
     // First, whatever the outcome: a failed command may have moved the shell.
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
       this.shellMoved = true
+    if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
+      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,

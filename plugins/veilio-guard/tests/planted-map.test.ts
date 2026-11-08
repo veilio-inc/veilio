@@ -324,3 +324,71 @@ test("outside git, the guard's note does not count as showing its example placeh
   expect(out.deny).toBe(NOT_SHOWN('__VAR__3'))
   expect(seen).toHaveLength(0)
 })
+
+// Spec 085 handover H11 (lead L11): a planted aliases file outside git is no
+// more trusted than a planted map.
+test('H11: outside git, a planted aliases.json placeholder the session never showed is refused', async ($, on) => {
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({}),
+      [`${ROOT}/.veilio/aliases.json`]: JSON.stringify({
+        aliases: { __VAR__8: 'fakeAliasValue()' },
+      }),
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { type: 'create', filePath: `${ROOT}/src/a.ts` } })
+  )
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__VAR__8',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__VAR__8'))
+  expect(seen).toHaveLength(0)
+})
+
+// Spec 085 handover H13 (lead L13): with .veilio a link to somewhere else,
+// neither /veilio off nor a save writes anything there.
+test('H13: with .veilio a link outside, /veilio off and a save write nothing there, and the guard stops', async ($, on) => {
+  const path = `${ROOT}/src/pay.ts`
+  const content = 'export class PaymentGatewayFake {}\n'
+  const p = project(
+    on,
+    { '/outside/keep': '', [path]: content },
+    { links: { [`${ROOT}/.veilio`]: '/outside' }, home: '/home/dev' }
+  )
+  on('tool.call', () => readOf(path, content))
+  await $.command.run({ command: 'veilio', args: 'off' })
+  await $.command.run({ command: 'veilio', args: 'on' })
+  const out = await $.tool.call({ tool: 'Read', file_path: path })
+  expect(JSON.stringify(out)).not.toContain('PaymentGatewayFake')
+  for (const f of ['guard.json', '.gitignore', 'map.json'])
+    expect(p.files[`/outside/${f}`]).toBeUndefined()
+  expect(p.writes.filter((w) => w.path.startsWith('/outside/'))).toEqual([])
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text.split('\n')[0]).toBe(LINKED)
+})
+
+// Spec 085 handover H14 (lead L14): /veilio on does not lift the stop a map
+// tracked by git puts on the guard.
+test('H14: /veilio on re-applies the tracked-map stop', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'fakePlantedValue()' }) },
+    { trackedVeilio: ['.veilio/map.json'], home: '/home/dev' }
+  )
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { type: 'create', filePath: `${ROOT}/a.js` } })
+  )
+  await $.command.run({ command: 'veilio', args: 'on' })
+  const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.js`, content: '__VAR__9' })
+  expect(out.deny).toMatch(/tracked by git/)
+  expect(seen).toHaveLength(0)
+})

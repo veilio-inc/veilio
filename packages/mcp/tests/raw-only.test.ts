@@ -78,6 +78,21 @@ describe('raw-only paths (spec 078)', () => {
       }
   })
 
+  // Spec 085 handover H10 (lead L10): comment text and the aliases file too.
+  it('H10: .npmrc and .env comment text, and .veilio/aliases.json, are refused', () => {
+    writeFileSync(join(cwd, '.npmrc'), '; legacy token notrealtoken123abc\n')
+    writeFileSync(join(cwd, '.env'), '# old key: fakeTokenPaymentGateway42\n')
+    writeFileSync(
+      join(cwd, '.veilio', 'aliases.json'),
+      '{"aliases":{"__VAR__8":"fakeAliasValue"}}\n'
+    )
+    for (const path of ['.npmrc', '.env', '.veilio/aliases.json']) {
+      const r = callTool('anonymize_file', { path }, ctx)
+      expect(r.text).toContain(said(path))
+      expect(r.text).not.toMatch(/notrealtoken123abc|fakeTokenPaymentGateway42|fakeAliasValue/)
+    }
+  })
+
   it('a source file still works', () => {
     expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
     expect(callTool('scan_secrets', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()

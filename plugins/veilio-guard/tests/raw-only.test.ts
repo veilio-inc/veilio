@@ -302,3 +302,32 @@ test('a Read of a Windows spelling of a raw-only file is refused', async ($, on)
   }
   expect(ran).toBe(false)
 })
+
+// Spec 085 handover H17 (lead L17): a word after a cd is a path in the
+// directory the cd moved to, in the same call and in the next one.
+const SUB = { [`${ROOT}/sub/notes`]: '', [`${ROOT}/.env`]: 'DB_HOST=db.example.invalid\n' }
+test('H17: cd sub && cat notes is refused when sub/notes is a link to .env', async ($, on) => {
+  project(on, SUB, { links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  let ran = false
+  on(
+    'tool.call',
+    () => ((ran = true), { result: { stdout: 'DB_HOST=db.example.invalid', stderr: '' } })
+  )
+  const out = await $.tool.call({ tool: 'Bash', command: 'cd sub && cat notes', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(ran).toBe(false)
+})
+
+test('H17: after cd sub in one call, cat notes in the next is refused', async ($, on) => {
+  project(on, SUB, { links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const first = await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })
+  expect(first.deny).toBeUndefined()
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(seen).toHaveLength(1)
+})
