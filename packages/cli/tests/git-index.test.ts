@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, truncateSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { trackedPaths } from '../src/git-index.js'
@@ -131,5 +139,27 @@ describe('the git index, read without git', () => {
       expect(t.paths.size).toBe(2000)
       expect(t.paths.has('zz/.veilio/map.json')).toBe(true)
     }
+  })
+})
+
+// Review round 2 (#9): an index rewritten in place with the same size and
+// mtime (an editor, a tool, a coarse clock) must not be answered from the
+// cache: the stamp also holds ctime and the index's own trailing checksum.
+describe('the parsed index is not reused for a different index', () => {
+  it('two indexes of one size, written over each other with the same mtime', () => {
+    const a = repo(['.veilio/map.json'])
+    const b = repo(['.veilio/map.jsox'])
+    const indexA = readFileSync(join(a, '.git', 'index'))
+    const indexB = readFileSync(join(b, '.git', 'index'))
+    expect(indexA.length).toBe(indexB.length)
+    const target = join(a, '.git', 'index')
+    const second = 1_700_000_000 // a whole second, so it can be set again exactly
+    utimesSync(target, second, second)
+    expect(trackedPaths(a)!.paths.has('.veilio/map.json')).toBe(true)
+    writeFileSync(target, indexB) // same inode, same size
+    utimesSync(target, second, second) // same mtime
+    expect(statSync(target).mtimeMs).toBe(second * 1000)
+    expect(trackedPaths(a)!.paths.has('.veilio/map.json')).toBe(false)
+    expect(trackedPaths(a)!.paths.has('.veilio/map.jsox')).toBe(true)
   })
 })

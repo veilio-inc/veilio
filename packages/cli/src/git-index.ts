@@ -7,7 +7,7 @@
 // .git, no index, an unknown version, a split index, a short or odd file - is
 // `null`: unknown, which the store treats as "not tracked", as it did before.
 
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 /** The work tree root and every path its index lists, lower-cased. */
@@ -16,8 +16,8 @@ export interface Tracked {
   paths: Set<string>
 }
 
-/** Each index file as last parsed, while its inode, mtime and size are unchanged
- *  (git replaces the file to change it): one parse per process, not per read. */
+/** Each index file as last parsed, while its inode, mtime, ctime, size and
+ *  trailing checksum are unchanged: one parse per process, not per read. */
 const parsed = new Map<string, { stamp: string; paths: Set<string> | null }>()
 
 /** The git checkout holding `from`, and what its index lists; null when unknown. */
@@ -27,7 +27,7 @@ export function trackedPaths(from: string): Tracked | null {
     if (!found) return null
     const index = join(found.gitDir, 'index')
     const st = statSync(index)
-    const stamp = `${st.ino}:${st.mtimeMs}:${st.size}`
+    const stamp = `${st.ino}:${st.mtimeMs}:${st.ctimeMs}:${st.size}:${trailer(index, st.size)}`
     let hit = parsed.get(index)
     if (hit?.stamp !== stamp) {
       hit = { stamp, paths: readIndex(readFileSync(index), hashSize(found)) }
@@ -36,6 +36,19 @@ export function trackedPaths(from: string): Tracked | null {
     return hit.paths && { root: found.root, paths: hit.paths }
   } catch {
     return null
+  }
+}
+
+/** The index's last 32 bytes: its checksum (20 bytes for SHA-1, 32 for
+ *  SHA-256), which changes with any change to the content. */
+function trailer(path: string, size: number): string {
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(Math.min(32, size))
+    readSync(fd, buf, 0, buf.length, size - buf.length)
+    return buf.toString('hex')
+  } finally {
+    closeSync(fd)
   }
 }
 

@@ -154,7 +154,6 @@ export function openStoreFile(what: string, path: string): string | null {
   return readFileSync(path, 'utf8')
 }
 
-/** 'other' when `path` exists and belongs to another user. Windows (no uid): never. */
 /**
  * Whose `path` is: 'me' for the running user, 'other' for anyone else, 'none'
  * when it is not there. Windows (no uid): always 'me'. Under sudo (root, with
@@ -226,10 +225,10 @@ export function writeStoreFile(what: string, path: string, text: string): void {
   }
 }
 
-/** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
 /** One POSIX shell word, for a string of plain characters (no quote in it). */
 const shellQuote = (s: string): string => `'${s}'`
 
+/** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
 function trackedStoreFile(path: string): { root: string; tracked: string } | null {
   const dir = dirname(path)
   const git = trackedPaths(dir)
