@@ -1620,7 +1620,7 @@ const C_STYLE = {
 // unbounded strings, and with them the old reading of a URL's `//`.
 const C_STYLE_LINE_BOUNDED = { ...C_STYLE, lineBounded: ['"', "'"] };
 const COMMENT_SYNTAX = {
-    typescript: C_STYLE_LINE_BOUNDED,
+    typescript: { ...C_STYLE_LINE_BOUNDED, regexLiterals: true },
     go: C_STYLE_LINE_BOUNDED,
     java: C_STYLE,
     csharp: C_STYLE,
@@ -1639,6 +1639,7 @@ const COMMENT_SYNTAX = {
         docstring: [],
         quotes: ['"', "'"],
         lineBounded: [],
+        blockAtLineStart: true,
     },
     php: {
         line: ['//', '#'],
@@ -1646,6 +1647,7 @@ const COMMENT_SYNTAX = {
         docstring: [],
         quotes: ['"', "'"],
         lineBounded: [],
+        notLineOpener: ['#['],
     },
     sql: {
         line: ['--'],

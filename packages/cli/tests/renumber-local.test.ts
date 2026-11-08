@@ -81,6 +81,9 @@ async function run(argv: string[]): Promise<{ code: number; out: string; err: st
     cwd,
     home,
     stdin: async () => '',
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

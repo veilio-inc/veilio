@@ -85,6 +85,33 @@ describe('maps_remove', () => {
     expect(cloud.maps).toHaveLength(1)
   })
 
+  // Spec 085 L9 (security audit run-1, Q3 = A): the refusal repeated the
+  // exact name, so the model could satisfy confirmName on its own.
+  it('a wrong confirmName is refused without naming the map, and a retry built from it removes nothing', async () => {
+    const row = cloud.add({
+      name: 'PaymentGatewayMap',
+      map_data: await sealPersonal({ a: 'b' }, 'pmk'),
+    })
+    const r = await callToolAsync(
+      'maps_remove',
+      { id: row.id, confirmName: 'x' },
+      { ...ctx, destructive: true }
+    )
+    expect(r.isError).toBe(true)
+    expect(r.text).not.toContain('PaymentGatewayMap')
+    expect(r.text).toContain("confirmName does not match this map's name, so nothing was removed.")
+    // Whatever the refusal quotes, a second call built from it removes nothing.
+    const quoted = /"([^"]*)"/.exec(r.text)?.[1] ?? r.text
+    const again = await callToolAsync(
+      'maps_remove',
+      { id: row.id, confirmName: quoted },
+      { ...ctx, destructive: true }
+    )
+    expect(again.isError).toBe(true)
+    expect(deletes()).toBe(0)
+    expect(cloud.maps).toHaveLength(1)
+  })
+
   it('on, with no confirmName at all: refused', async () => {
     const row = cloud.add({ name: 'billing', map_data: await sealPersonal({ a: 'b' }, 'pmk') })
     const r = await callToolAsync('maps_remove', { id: row.id }, { ...ctx, destructive: true })

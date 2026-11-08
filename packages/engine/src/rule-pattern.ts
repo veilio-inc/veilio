@@ -306,7 +306,7 @@ type State =
   | { k: 'eol'; out: number }
   | { k: 'match' }
 
-function compile(root: Node): { states: State[]; start: number } {
+function compile(root: Node, meter: { steps: number }): { states: State[]; start: number } {
   const states: State[] = [{ k: 'match' }]
   const add = (s: State): number => {
     if (states.length >= MAX_STATES) throw new Unsupported('a pattern too large')
@@ -320,10 +320,9 @@ function compile(root: Node): { states: State[]; start: number } {
     if (!p) preds.set(r, (p = predOf(r)))
     return p
   }
-  let steps = 0
   // Continuation style: build `node` so that it continues to state `next`.
   const build = (node: Node, next: number): number => {
-    if (++steps > MAX_BUILD_STEPS) throw new Unsupported('a pattern too large')
+    if (++meter.steps > MAX_BUILD_STEPS) throw new Unsupported('a pattern too large')
     switch (node.t) {
       case 'char':
         return add({ k: 'char', p: predFor(node.r), out: next })
@@ -396,24 +395,54 @@ export interface RuleMatcher {
 }
 
 /** Compile a custom rule's pattern, or null when it is outside the language
- *  this matcher runs (see the top of this file). */
-export function compileRulePattern(pattern: string): RuleMatcher | null {
-  let root: Node
+ *  this matcher runs (see the top of this file). The result makes matchers,
+ *  each with its own memo of answers: the compiled program can be shared,
+ *  the memo belongs to one caller (security review of spec 085). With a
+ *  budget, the compile work is charged to it (spec 085 L8: a near-limit
+ *  pattern costs about 1e5 build steps, and a thousand of them were free). */
+/** What compileRuleProgram gives: a maker of matchers, and whether a program
+ *  was compiled for it (a list of whole names is a set, compiled from nothing). */
+export interface RuleProgram {
+  make: () => RuleMatcher
+  compiled: boolean
+}
+
+export function compileRuleProgram(pattern: string, budget?: RuleBudget): RuleProgram | null {
+  const meter = { steps: pattern.length }
   try {
-    // RegExp must accept it too: the language is a subset, never a superset.
-    new RegExp(pattern)
-    root = parse(pattern)
-  } catch {
-    return null
+    let root: Node
+    try {
+      // RegExp must accept it too: the language is a subset, never a superset.
+      new RegExp(pattern)
+      root = parse(pattern)
+    } catch {
+      return null
+    }
+    const whole = wholeLiterals(root)
+    if (whole)
+      return { make: () => ({ test: (name, b) => !b?.spent && whole.has(name) }), compiled: false }
+    let program: { states: State[]; start: number }
+    try {
+      program = compile(root, meter)
+    } catch {
+      return null
+    }
+    return { make: () => matcherOf(program), compiled: true }
+  } finally {
+    if (budget) {
+      budget.left -= meter.steps
+      if (budget.left < 0) budget.spent = true
+    }
   }
-  const whole = wholeLiterals(root)
-  if (whole) return { test: (name, budget) => !budget?.spent && whole.has(name) }
-  let program: { states: State[]; start: number }
-  try {
-    program = compile(root)
-  } catch {
-    return null
-  }
+}
+
+/** One matcher for a pattern (see compileRuleProgram). Once a budget is
+ *  spent, the matcher answers no match, as every other test then does. */
+export function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMatcher | null {
+  return compileRuleProgram(pattern, budget)?.make() ?? null
+}
+
+function matcherOf(program: { states: State[]; start: number }): RuleMatcher {
   const { states, start } = program
   const answers = new Map<string, boolean>()
   return {

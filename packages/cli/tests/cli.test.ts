@@ -32,6 +32,9 @@ async function run(argv: string[], stdin = ''): Promise<Run> {
   const io: Io = {
     cwd,
     stdin: async () => stdin,
+    stdinBytes: async function* () {
+      yield Buffer.from(stdin)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }
@@ -494,6 +497,9 @@ describe('map store robustness', () => {
     const code = await main(['map'], {
       cwd: nested,
       stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
       stdout: (t) => (out += t),
       stderr: () => {},
     })

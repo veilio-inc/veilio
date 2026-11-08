@@ -37,6 +37,9 @@ async function run(
     cwd,
     home,
     stdin: async () => stdin,
+    stdinBytes: async function* () {
+      yield Buffer.from(stdin)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

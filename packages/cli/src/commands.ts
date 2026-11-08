@@ -6,6 +6,7 @@
 //   2. Summaries, warnings and errors go to stderr, so they stay visible without
 //      corrupting that pipe.
 
+import { BlobsError, parseListing, scanListedBlobs } from './staged-blobs.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -59,6 +60,9 @@ import { thirdPartyNames } from './third-party.js'
 export interface Io {
   cwd: string
   stdin: () => Promise<string>
+  /** Stdin as a stream of bytes (`scan --blobs`: git's blob stream holds any
+   *  byte, and is read as it arrives). */
+  stdinBytes: () => AsyncIterable<Buffer>
   stdout: (text: string) => void
   stderr: (text: string) => void
   /**
@@ -560,22 +564,43 @@ export async function runRestore(
 
 /** Detect-only pass for pre-commit hooks and CI. Never rewrites anything. */
 export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
-  const targets =
-    args.files.length > 0
-      ? args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
-      : [{ name: '<stdin>', text: await io.stdin() }]
-
+  if (args.stdinName !== null && args.files.length > 0) {
+    io.stderr(
+      `${BIN_NAME}: --name names what comes on stdin, so it cannot be used with file names.\n`
+    )
+    return EXIT_ERROR
+  }
+  if (args.blobsFile !== null && (args.files.length > 0 || args.stdinName !== null)) {
+    io.stderr(
+      `${BIN_NAME}: --blobs reads its files from stdin, so it cannot be used with file names or --name.\n`
+    )
+    return EXIT_ERROR
+  }
   const all: { file: string; finding: SecretFinding }[] = []
-  for (const target of targets) {
-    const fileKind = target.name === '<stdin>' ? undefined : fileKindOf(target.name)
-    const language = target.name === '<stdin>' ? null : languageOfPath(target.name)
-    for (const finding of detectCredentials(target.text, {
+  const scanOne = (name: string, text: string) => {
+    const fileKind = name === '<stdin>' ? undefined : fileKindOf(name)
+    const language = name === '<stdin>' ? null : languageOfPath(name)
+    for (const finding of detectCredentials(text, {
       ...(fileKind ? { fileKind } : {}),
       ...(language ? { language } : {}),
-    })) {
-      all.push({ file: target.name, finding })
-    }
+    }))
+      all.push({ file: name, finding })
   }
+  if (args.blobsFile !== null) {
+    // Each listed blob is scanned as it arrives (review round 2): the stream
+    // is never held whole.
+    try {
+      const listing = parseListing(readFileSync(resolve(io.cwd, args.blobsFile), 'utf8'))
+      await scanListedBlobs(listing, io.stdinBytes(), scanOne)
+    } catch (err) {
+      if (!(err instanceof BlobsError)) throw err
+      io.stderr(`${BIN_NAME}: ${err.message}, so nothing was checked.\n`)
+      return EXIT_ERROR
+    }
+  } else if (args.files.length > 0)
+    for (const f of args.files) scanOne(f, readFileSync(resolve(io.cwd, f), 'utf8'))
+  // `--name`: stdin is scanned as that file would be (spec 085 L1).
+  else scanOne(args.stdinName ?? '<stdin>', await io.stdin())
 
   if (args.json) {
     io.stdout(
@@ -640,7 +665,7 @@ EXIT CODES
 EXAMPLES
   ${BIN_NAME} scrub src/billing.ts | pbcopy
   pbpaste | ${BIN_NAME} restore
-  git diff --cached | ${BIN_NAME} scan       # pre-commit gate
+  git show :.env | ${BIN_NAME} scan --name .env   # one staged file, as the hook does
   ${BIN_NAME} scan 'src/**/*.ts' --json > findings.json
 
 Transformed code goes to stdout; everything else goes to stderr, so the CLI

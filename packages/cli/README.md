@@ -13,7 +13,7 @@ Anonymize code before it reaches an LLM, restore it after — from a terminal, a
 ```bash
 veilio scrub src/billing.ts | pbcopy     # mask, then paste anywhere
 pbpaste | veilio restore                 # bring the answer back
-git diff --cached | veilio scan          # refuse to commit a live key
+veilio scan .env config.yml             # refuse to commit a live key
 ```
 
 Full guide - terminal, Cloud sign-in, and connecting AI assistants (Claude Code, Claude Desktop, Xcode, Cursor, VS Code): [docs/USING-THE-CLI-AND-MCP.md](../../docs/USING-THE-CLI-AND-MCP.md).
@@ -313,6 +313,14 @@ a plan feature the web app couldn't.
                         update, team unlock
     --json              Machine-readable output
                         For: scan, map
+    --blobs <listing>   scan the files a `git diff --raw --no-abbrev` listing
+                        names, their content read from `git cat-file --batch`
+                        on stdin (used by the pre-commit hook and the GitHub
+                        Action)
+                        For: scan
+    --name <path>       scan stdin as if it were the file <path> (its file
+                        type decides the rules; used by the pre-commit hook)
+                        For: scan
     --strict            scan: also fail on advisory findings. restore: write
                         nothing and exit 1 if a placeholder or a redaction
                         would be left
@@ -405,18 +413,12 @@ Standard output and the exit code are never changed, so pipes keep working. The 
 | Code | Meaning                                                                                                            |
 | ---- | ------------------------------------------------------------------------------------------------------------------ |
 | 0    | Clean                                                                                                              |
-| 1    | Findings that should stop the pipeline: a credential (`scan`), or a placeholder or redaction `restore --strict` would have left |
+| 1    | Findings that should stop the pipeline: a credential (`scan`), a placeholder or redaction `restore --strict` would have left, or a map the CLI refuses to use (see [The symbol map](#the-symbol-map)) |
 | 2    | Usage or IO error                                                                                                  |
 
-As a pre-commit hook:
-
-```bash
-#!/bin/sh
-git diff --cached | veilio scan || {
-  echo "Commit blocked: credentials detected." >&2
-  exit 1
-}
-```
+As a pre-commit hook, use the one this package ships ([Pre-commit](#pre-commit)).
+It scans each staged file under its own name; a diff piped into `veilio scan`
+has no file name, so the `.env`, YAML and shell rules cannot apply to it.
 
 ## What is masked
 
@@ -438,6 +440,15 @@ are redacted whatever they are called.
 `scrub` writes `.veilio/map.json` at the project root and `restore` reads it, so placeholders stay stable across runs and across a whole session. The store is created `0600` with its own `.gitignore` — it holds the real identifier names, so committing it would undo the anonymization for anyone reading the repo.
 
 Redacted credentials are **not** in the map. `restore` cannot bring them back, by construction.
+
+The map is yours only if you made it, so the CLI refuses (exit 1) to read or write a store:
+
+- that git tracks: a `.veilio/map.json` or `.veilio/aliases.json` a repository committed is not yours to restore from. Remove it from git (`git rm --cached`), then scrub again to build your own. The CLI reads the git index itself and runs no git command.
+- through a link: `.veilio/`, `map.json`, `aliases.json` and `reserved.json` are read and written only where they appear to be.
+- that belongs to another user on this machine (macOS and Linux): a `.veilio` someone else made, say in `/tmp`, is skipped when the CLI looks for the project, and refused when named with `--map`. Under `sudo`, a store of the user who ran it (`SUDO_UID`) can be read but not written, and no store is made in a project that user owns: a file root writes there would be root's, so run `veilio` without `sudo`. To use a store someone else owns on purpose (a shared CI workspace, say), list its full path in `VEILIO_TRUST_STORE_OWNER`, as git's `safe.directory`: absolute paths separated by `:` (`;` on Windows), for example `VEILIO_TRUST_STORE_OWNER=/srv/build/.veilio`. Only a listed store is accepted, by its real path.
+- whose `.veilio/.gitignore` does not keep it out of git: an existing one must be a plain file whose only pattern is `*`. The CLI writes one when there is none and never rewrites one that is there.
+
+Outside a git checkout, the CLI cannot tell a map you made from one that came with the files. Check `.veilio/` in an unpacked archive before you restore.
 
 ## Every file is judged strictly
 
@@ -465,8 +476,11 @@ Edition release workflow, so the two are not independent.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR
-on that is how a security check gets switched off in week one. Pass `paths:` to
-scan a fixed set instead.
+on that is how a security check gets switched off in week one. Each changed file
+is scanned under its own name, as the pre-commit hook does, so a `-diff`
+attribute hides nothing; this needs a CLI with `scan --blobs`, so a `version:`
+pinned below this release fails the step. Pass `paths:` to scan a fixed set
+instead.
 
 Findings land in the job summary and, with `sarif:`, in GitHub code scanning.
 Reports carry truncated previews only — a stored, shareable artifact must never
@@ -485,6 +499,15 @@ cp packages/cli/hooks/pre-commit .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
-It scans the **staged** diff — what you are about to commit is what matters, and
-a finding in an unstaged scratch file shouldn't block you. `--no-verify`
-overrides, as usual.
+It scans what is **staged** — what you are about to commit is what matters, and
+a finding in an unstaged scratch file shouldn't block you. Each staged file
+(added, changed, renamed or retyped) is scanned under its own name, so its file
+type picks the rules; a `.gitattributes` `-diff` hides nothing, because the
+file is read, not its diff. One `veilio scan --blobs` checks the whole commit:
+git lists the staged files with their object ids, `git cat-file --batch`
+streams those blobs, and each is matched to its name by id, read as it
+arrives. Binary files and submodules are skipped; a text file over 16 MiB is
+not scanned and stops the commit as "could not check", naming it. A finding blocks the commit with the credentials
+message; anything that stops the check blocks it with "could not check" and
+the reason. The hook needs veilio 0.10.0 or later; an older one stops the
+commit with a line saying to upgrade. `--no-verify` overrides, as usual.

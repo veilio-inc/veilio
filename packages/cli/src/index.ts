@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 import { needsAction, parseArgs, UsageError, type ParsedArgs } from './args.js'
 import { feedSecret, type SecretState } from './secret-input.js'
-import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
+import {
+  EXIT_ERROR,
+  EXIT_FINDINGS,
+  HELP,
+  runMap,
+  runRestore,
+  runScan,
+  runScrub,
+  type Io,
+} from './commands.js'
 import { commandHelp } from './flags.js'
 import {
   runLogin,
@@ -22,7 +31,7 @@ import {
   teamLayerFor,
   teamNamespaceForScrub,
 } from './cloud-commands.js'
-import { resolveMapPath } from './store.js'
+import { resolveMapPath, StoreRefusal } from './store.js'
 import { guardHint } from './guard-hint.js'
 import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
@@ -141,7 +150,8 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
     }
   } catch (err) {
     io.stderr(`veilio: ${err instanceof Error ? err.message : String(err)}\n`)
-    return EXIT_ERROR
+    // A store refused for what it is (tracked, a link) stops the pipeline like a finding.
+    return err instanceof StoreRefusal ? EXIT_FINDINGS : EXIT_ERROR
   }
 }
 
@@ -247,20 +257,19 @@ function readSecret(label: string): Promise<string> {
   })
 }
 
-function readStdin(): Promise<string> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    // A TTY with no piped input would hang forever waiting for EOF. Fail with
-    // usage guidance instead of appearing to freeze.
-    if (process.stdin.isTTY) {
-      rejectPromise(new Error('no input — pass a file or pipe to stdin'))
-      return
-    }
-    let data = ''
-    process.stdin.setEncoding('utf8')
-    process.stdin.on('data', (chunk) => (data += chunk))
-    process.stdin.on('end', () => resolvePromise(data))
-    process.stdin.on('error', rejectPromise)
-  })
+/** Stdin as it arrives (`scan --blobs`: git's blob stream holds any byte). */
+async function* readStdinBytes(): AsyncIterable<Buffer> {
+  // A TTY with no piped input would hang forever waiting for EOF. Fail with
+  // usage guidance instead of appearing to freeze.
+  if (process.stdin.isTTY) throw new Error('no input — pass a file or pipe to stdin')
+  for await (const chunk of process.stdin) yield chunk as Buffer
+}
+
+/** Stdin as text: its bytes, decoded as UTF-8. */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of readStdinBytes()) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 /**
@@ -295,6 +304,7 @@ if (invokedAsProgram()) {
   const io: Io = {
     cwd: process.cwd(),
     stdin: readStdin,
+    stdinBytes: readStdinBytes,
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
     prompt: readLine,

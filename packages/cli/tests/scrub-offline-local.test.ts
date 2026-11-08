@@ -37,6 +37,9 @@ async function scrub(home: string) {
     cwd,
     home,
     stdin: async () => CODE,
+    stdinBytes: async function* () {
+      yield Buffer.from(CODE)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }

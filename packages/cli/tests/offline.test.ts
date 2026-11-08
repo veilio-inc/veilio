@@ -88,6 +88,10 @@ async function runOffline(argv: string[], stdin = ''): Promise<Run> {
   let installed = false
   const io: Io = {
     cwd,
+    // Not read by scrub; the text stdin below is.
+    stdinBytes: async function* () {
+      yield Buffer.alloc(0)
+    },
     // stdin is read during the run, so it is a free place to check that the
     // stub is actually in place for the duration rather than only around it.
     stdin: async () => {
@@ -155,6 +159,9 @@ describe('local commands work with no account and no network (FR-001, FR-002)', 
     let sawStub = false
     const io: Io = {
       cwd,
+      stdinBytes: async function* () {
+        yield Buffer.alloc(0)
+      },
       stdin: async () => {
         sawStub = typeof globalThis.fetch === 'function'
         try {

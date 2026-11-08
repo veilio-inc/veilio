@@ -111,6 +111,9 @@ async function run(argv: string[], answers: string[] = []): Promise<Run> {
     cwd,
     home,
     stdin: async () => '',
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => queue.shift() ?? '',
@@ -149,6 +152,9 @@ describe('login --device', () => {
       cwd,
       home,
       stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
       stdout: () => {},
       stderr: () => {},
       prompt: async (q) => {

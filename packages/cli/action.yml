@@ -22,7 +22,10 @@ inputs:
     required: false
     default: ''
   version:
-    description: 'Version of the Veilio CLI to run.'
+    description: >-
+      Version of the Veilio CLI to run. The diff-scoped default scans each
+      changed file with `veilio scan --blobs`, which a CLI older than this
+      action's release does not have: a pinned older version fails the step.
     required: false
     default: 'latest'
 
@@ -61,12 +64,25 @@ runs:
           base="${{ github.event.before }}"
           head="${{ github.sha }}"
         fi
-        # A new branch reports an all-zero base; fall back to the single commit.
+        # Each changed file is scanned under its own name, as the pre-commit
+        # hook does (spec 085): a diff on stdin has no file names, so the .env,
+        # YAML and shell rules could not apply, and a `-diff` attribute hid a
+        # file. The listing names the files with their object ids, deletions
+        # left out; the blobs come from `git cat-file --batch`, matched by id.
+        # A new branch reports an all-zero base; then the tip commit against
+        # its first parent (a merge included: diff-tree of a merge alone
+        # prints nothing), or, for a root commit, against nothing.
+        raw="-c core.quotepath=true"
         if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-          git diff "${head}^" "$head" > /tmp/veilio-diff.txt 2>/dev/null || git show "$head" > /tmp/veilio-diff.txt
+          if git rev-parse -q --verify "${head}^" > /dev/null; then
+            git $raw diff --raw --no-abbrev --no-renames --diff-filter=d "${head}^" "$head" > /tmp/veilio-listing.txt
+          else
+            git $raw diff-tree --no-commit-id --root -r --raw --no-abbrev --no-renames --diff-filter=d "$head" > /tmp/veilio-listing.txt
+          fi
         else
-          git diff "$base" "$head" > /tmp/veilio-diff.txt
+          git $raw diff --raw --no-abbrev --no-renames --diff-filter=d "$base" "$head" > /tmp/veilio-listing.txt
         fi
+        cut -d' ' -f4 /tmp/veilio-listing.txt | git cat-file --batch > /tmp/veilio-blobs.bin
         echo "mode=diff" >> "$GITHUB_OUTPUT"
 
     - name: Scan
@@ -92,7 +108,7 @@ runs:
         if [ "$MODE" = "paths" ]; then
           npx --yes "@veilio-inc/cli@$VERSION" scan $PATHS $args --json > /tmp/veilio.json 2> /tmp/veilio.log
         else
-          npx --yes "@veilio-inc/cli@$VERSION" scan $args --json < /tmp/veilio-diff.txt > /tmp/veilio.json 2> /tmp/veilio.log
+          npx --yes "@veilio-inc/cli@$VERSION" scan $args --json --blobs /tmp/veilio-listing.txt < /tmp/veilio-blobs.bin > /tmp/veilio.json 2> /tmp/veilio.log
         fi
         status=$?
 

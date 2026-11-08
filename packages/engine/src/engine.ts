@@ -2,7 +2,7 @@ import { credentialsAmong, isOrdinaryWord, valueSpans } from './ordinaryWords.js
 import type { ValueGrammar, ValueSpan } from './ordinaryWords.js'
 import { isEngineBase } from './rule-checks.js'
 import {
-  compileRulePattern,
+  compileRuleProgram,
   ruleBudget,
   type RuleBudget,
   type RuleMatcher,
@@ -205,10 +205,12 @@ export function withAiPreamble(anonymized: string, map?: SymbolMap): string {
 //
 // So we split source into segments, flagging only comment spans. Strings and
 // templates stay in non-comment segments (still maskable). This is a lexical
-// scanner, not a full parser, with two modes. For masking a `/` always reads as
-// division, so the rare case of a regex literal containing a quote (e.g. `/'/`)
-// is not handled. For restore's JSDoc search (`forRestore`) it also reads regex
-// literals, markdown fence lines and stray backticks - see tokenizeForMasking.
+// scanner, not a full parser, with two modes. For masking a `/` reads as
+// division, except that a TypeScript/JavaScript regex literal holding `//` or
+// `/*` is code (spec 085 L7), so the rare case of a regex literal containing
+// only a quote (e.g. `/'/`) is not handled. For restore's JSDoc search
+// (`forRestore`) it reads every regex literal, markdown fence lines and stray
+// backticks - see tokenizeForMasking.
 //
 // Comment syntax is per-language. Assuming `//` everywhere meant Python and
 // Ruby `#` comments were scanned as code and their prose masked into
@@ -291,7 +293,8 @@ function regexLiteralEnd(code: string, at: number): [boolean, number] {
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
 
 /** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
- *  in a markdown answer. Masking does not ask for it and reads as it always did.
+ *  in a markdown answer. Masking does not ask for it, and reads as it always did
+ *  except for a regex literal holding a comment opener, which is code there too.
  *  - A regex literal is code, so a quote or comment opener inside it starts nothing.
  *  - A fence line in code is code: its backticks open no template literal. One
  *    inside a comment is part of it.
@@ -356,7 +359,9 @@ function tokenizeForMasking(
       continue
     }
 
-    const lineOpener = syntax.line.find((o) => startsWithAt(o, i))
+    const lineOpener = syntax.line.find(
+      (o) => startsWithAt(o, i) && !syntax.notLineOpener?.some((t) => startsWithAt(t, i))
+    )
     if (
       lineOpener === '//' &&
       syntax.lineBounded.length > 0 &&
@@ -375,13 +380,16 @@ function tokenizeForMasking(
       continue
     }
 
-    const blockPair = syntax.block.find(([open]) => startsWithAt(open, i))
+    // Ruby's `=begin`/`=end` only at a line start: `state=begin_x(...)` is code.
+    const delimiterAt = (token: string, at: number): boolean =>
+      startsWithAt(token, at) && (!syntax.blockAtLineStart || at === 0 || code[at - 1] === '\n')
+    const blockPair = syntax.block.find(([open]) => delimiterAt(open, i))
     if (blockPair !== undefined) {
       const [open, close] = blockPair
       flush(true)
       buf += open
       i += open.length
-      while (i < n && !startsWithAt(close, i)) buf += code[i++]
+      while (i < n && !delimiterAt(close, i)) buf += code[i++]
       if (i < n) {
         buf += close
         i += close.length
@@ -390,9 +398,12 @@ function tokenizeForMasking(
       continue
     }
 
-    if (forRestore && c === '/' && i >= noRegexBefore) {
+    if ((forRestore || syntax.regexLiterals) && c === '/' && i >= noRegexBefore) {
       const [closed, end] = regexLiteralEnd(code, i)
-      if (closed) {
+      // Masking consumes only a literal that holds a comment opener (spec 085
+      // L7: `/^https?:\/\//`, `/\/*$/`), which it would otherwise read as a
+      // comment; any other literal reads exactly as it always did.
+      if (closed && (forRestore || /\/[/*]/.test(code.slice(i + 1, end)))) {
         buf += code.slice(i, end)
         i = end
         continue
@@ -930,15 +941,61 @@ function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
 
 // Custom-rule patterns run on the engine's linear-time matcher, never on
 // RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
-// Compiled once per pattern.
-const ruleMatchers = new Map<string, RuleMatcher | null>()
+// Compiled once per process, keeping what compiling cost; each budget (one
+// anonymize call, or what a caller shares one budget across) is charged that
+// cost on its first use of the pattern (spec 085 L8, review round 1), so a
+// cached pattern costs a call what a fresh one would, without the work. Only
+// the program is shared: each budget gets matchers of its own, and their
+// memo of answers goes with the budget.
+// A list of whole names (the keep rule) is parsed per call and never kept:
+// it needs no compiling, and may be long (review round 2).
+const compiledRules = new Map<string, { make: (() => RuleMatcher) | null; cost: number }>()
+/** Patterns kept compiled, at most, and their characters, at most; the least
+ *  recently used goes first. */
+const COMPILED_MAX = 512
+const COMPILED_CHARS = 128 * 1024
+let compiledChars = 0
+const ruleMatchers = new WeakMap<RuleBudget, Map<string, RuleMatcher | null>>()
+/** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
+const MAX_RULES = 1000
 
 function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean {
-  let m = ruleMatchers.get(pattern)
+  // Stopped rules compile nothing more (security review of L8).
+  if (budget.spent) return false
+  let cache = ruleMatchers.get(budget)
+  if (!cache) ruleMatchers.set(budget, (cache = new Map()))
+  let m = cache.get(pattern)
   if (m === undefined) {
-    m = compileRulePattern(pattern)
-    if (ruleMatchers.size > 1000) ruleMatchers.clear()
-    ruleMatchers.set(pattern, m)
+    // One budget compiles at most MAX_RULES patterns, even shared across calls.
+    if (cache.size >= MAX_RULES) {
+      budget.spent = true
+      return false
+    }
+    let compiled = compiledRules.get(pattern)
+    if (compiled) {
+      compiledRules.delete(pattern) // set again: now the most recent
+      compiledRules.set(pattern, compiled)
+    } else {
+      const meter = ruleBudget(Number.MAX_SAFE_INTEGER)
+      const program = compileRuleProgram(pattern, meter)
+      compiled = { make: program?.make ?? null, cost: Number.MAX_SAFE_INTEGER - meter.left }
+      if (program?.compiled !== false) {
+        while (
+          compiledRules.size > 0 &&
+          (compiledRules.size >= COMPILED_MAX || compiledChars + pattern.length > COMPILED_CHARS)
+        ) {
+          const oldest = compiledRules.keys().next().value!
+          compiledRules.delete(oldest)
+          compiledChars -= oldest.length
+        }
+        compiledRules.set(pattern, compiled)
+        compiledChars += pattern.length
+      }
+    }
+    budget.left -= compiled.cost
+    if (budget.left < 0) budget.spent = true
+    m = compiled.make?.() ?? null
+    cache.set(pattern, m)
   }
   if (m === null) return false
   try {
@@ -1414,10 +1471,17 @@ export function anonymize(
   // cannot see it, so the engine skips a replace rule under an engine base,
   // whoever sealed it. A pattern its matcher cannot run never matches
   // (safeMatch), so it needs no filter here.
-  const rules = (opts.rules ?? []).filter(isRunnableRule)
+  const runnable = (opts.rules ?? []).filter(isRunnableRule)
   // One allowance of matching steps for every rule and name in this call
   // (security audit); once spent, rule tests answer no match.
   const budget = opts.ruleBudget ?? ruleBudget()
+  // A rule set past the cap is skipped whole: every name masked as usual, and
+  // the call says the rules stopped.
+  const rules = runnable.length > MAX_RULES ? [] : runnable
+  if (runnable.length > MAX_RULES) budget.spent = true
+  // Whether a replace rule was given, dropped set included: then a spent
+  // budget turns the ordinary-word exemption off (fail closed).
+  const hadReplacers = runnable.some((r) => r.type === 'replace' && r.enabled)
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers
@@ -1687,7 +1751,7 @@ export function anonymize(
     if (
       isOrdinaryWord(name) &&
       !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
-      !(replacers.length > 0 && budget.spent)
+      !(hadReplacers && budget.spent)
     ) {
       ordinary.add(name)
       if (!valueWords.has(name)) continue

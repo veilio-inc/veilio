@@ -4,11 +4,14 @@
 # Install:
 #   cp packages/cli/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 #
-# Or, if you use the pre-commit framework, prefer .pre-commit-hooks.yaml instead.
-#
-# Scans the STAGED diff, not the working tree: what you are about to commit is
+# Scans what is STAGED, not the working tree: what you are about to commit is
 # the thing that matters, and a finding in an unstaged scratch file shouldn't
-# block you.
+# block you. Each staged file (added, changed, renamed or retyped) is scanned
+# under its own name, so its file type picks the rules (.env, YAML, shell); a
+# .gitattributes `-diff` hides nothing, because the file's content is read,
+# not its diff. One veilio process checks the whole commit: git lists the
+# staged files with their object ids, `git cat-file --batch` streams those
+# blobs, and `veilio scan --blobs` matches each blob to its name by id.
 
 set -eu
 
@@ -18,12 +21,38 @@ if ! command -v veilio >/dev/null 2>&1; then
   exit 0
 fi
 
-staged=$(git diff --cached --name-only --diff-filter=ACM)
-[ -z "$staged" ] && exit 0
-
-if git diff --cached | veilio scan --quiet; then
-  exit 0
+# `scan --blobs` came with @veilio-inc/cli 0.10.0; an older veilio would stop
+# every commit with a usage error, so say what to do instead.
+if ! veilio scan --help 2>/dev/null | grep -q -- '--blobs'; then
+  echo "Commit blocked: this hook needs veilio 0.10.0 or later (it uses \`veilio scan --blobs\`). Upgrade it: npm install -g @veilio-inc/cli" >&2
+  exit 1
 fi
+
+listing=$(mktemp "${TMPDIR:-/tmp}/veilio-staged.XXXXXX")
+errors=$(mktemp "${TMPDIR:-/tmp}/veilio-errors.XXXXXX")
+trap 'rm -f "$listing" "$errors"' EXIT
+
+# Everything the index changes except deletions, renames off (a rename is its
+# new path, added). Paths with odd characters come C-quoted, one per line.
+git -c core.quotepath=true diff --cached --raw --no-abbrev --no-renames --diff-filter=d > "$listing"
+[ -s "$listing" ] || exit 0
+
+# Field 4 is the staged object id; the path follows a tab, so it cannot shift it.
+if cut -d' ' -f4 "$listing" | git cat-file --batch | veilio scan --quiet --blobs "$listing" 2> "$errors"; then
+  exit 0
+else
+  status=$?
+fi
+
+if [ "$status" -ne 1 ]; then
+  echo "Commit blocked: veilio could not check the staged files:" >&2
+  cat "$errors" >&2
+  echo "  To override for a change you are certain about: git commit --no-verify" >&2
+  exit 1
+fi
+
+# The findings veilio listed, then what to do.
+cat "$errors" >&2
 
 cat >&2 <<'MSG'
 

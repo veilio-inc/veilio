@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -78,6 +79,12 @@ const KEY = 'sk_live_51H8xQ2ABCDEFGHIJKLMNOP'
 
 function write(name: string, content: string): void {
   writeFileSync(join(cwd, name), content)
+}
+
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
 }
 
 function call(name: string, args: Record<string, unknown> = {}) {
@@ -368,6 +375,55 @@ describe('path containment', () => {
       write('real.ts', TS)
       symlinkSync(join(cwd, 'real.ts'), join(cwd, 'alias.ts'))
       expect(call('anonymize_file', { path: 'alias.ts' }).isError).toBeUndefined()
+    })
+
+    // Spec 085 L6 (security audit run-1): a committed .veilio/map.json link
+    // made restore_text read another project's map into the model's context.
+    describe('the store itself (L6)', () => {
+      const plantOutside = () => {
+        mkdirSync(join(outside, '.veilio'))
+        writeFileSync(
+          join(outside, '.veilio', 'map.json'),
+          JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+        )
+        writeFileSync(
+          join(outside, '.veilio', 'aliases.json'),
+          JSON.stringify({ version: 1, aliases: { __CLS__1: 'PaymentGateway' } })
+        )
+      }
+      for (const file of ['map.json', 'aliases.json']) {
+        it(`restore_text and symbol_map_summary refuse a linked ${file}`, () => {
+          plantOutside()
+          mkdirSync(join(cwd, '.git'))
+          mkdirSync(join(cwd, '.veilio'))
+          symlinkSync(join(outside, '.veilio', file), join(cwd, '.veilio', file))
+          const restored = call('restore_text', { text: '__CLS__1' })
+          expect(restored.isError).toBe(true)
+          expect(restored.text).toContain('is a link')
+          expect(restored.text).not.toContain('PaymentGateway')
+          if (file === 'map.json') {
+            const summary = call('symbol_map_summary')
+            expect(summary.isError).toBe(true)
+            expect(summary.text).toContain('is a link')
+          }
+        })
+      }
+
+      it('restore_text and symbol_map_summary refuse a map git tracks', () => {
+        execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore', env: GIT_ENV })
+        writeMap({ __CLS__1: 'PaymentGateway' })
+        execFileSync('git', ['add', '-f', '.veilio/map.json'], {
+          cwd,
+          stdio: 'ignore',
+          env: GIT_ENV,
+        })
+        for (const tool of ['restore_text', 'symbol_map_summary']) {
+          const res = call(tool, tool === 'restore_text' ? { text: '__CLS__1' } : {})
+          expect(res.isError).toBe(true)
+          expect(res.text).toContain('`.veilio/map.json` is tracked by git')
+          expect(res.text).not.toContain('PaymentGateway')
+        }
+      })
     })
 
     it('allows a root that is itself reached through a link', () => {

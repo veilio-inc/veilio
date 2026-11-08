@@ -291,7 +291,7 @@ function parse(src) {
         throw new Unsupported('an unmatched )');
     return node;
 }
-function compile(root) {
+function compile(root, meter) {
     const states = [{ k: 'match' }];
     const add = (s) => {
         if (states.length >= MAX_STATES)
@@ -307,10 +307,9 @@ function compile(root) {
             preds.set(r, (p = predOf(r)));
         return p;
     };
-    let steps = 0;
     // Continuation style: build `node` so that it continues to state `next`.
     const build = (node, next) => {
-        if (++steps > MAX_BUILD_STEPS)
+        if (++meter.steps > MAX_BUILD_STEPS)
             throw new Unsupported('a pattern too large');
         switch (node.t) {
             case 'char':
@@ -381,28 +380,44 @@ function wholeLiterals(root) {
     }
     return out;
 }
-/** Compile a custom rule's pattern, or null when it is outside the language
- *  this matcher runs (see the top of this file). */
-export function compileRulePattern(pattern) {
-    let root;
+export function compileRuleProgram(pattern, budget) {
+    const meter = { steps: pattern.length };
     try {
-        // RegExp must accept it too: the language is a subset, never a superset.
-        new RegExp(pattern);
-        root = parse(pattern);
+        let root;
+        try {
+            // RegExp must accept it too: the language is a subset, never a superset.
+            new RegExp(pattern);
+            root = parse(pattern);
+        }
+        catch {
+            return null;
+        }
+        const whole = wholeLiterals(root);
+        if (whole)
+            return { make: () => ({ test: (name, b) => !b?.spent && whole.has(name) }), compiled: false };
+        let program;
+        try {
+            program = compile(root, meter);
+        }
+        catch {
+            return null;
+        }
+        return { make: () => matcherOf(program), compiled: true };
     }
-    catch {
-        return null;
+    finally {
+        if (budget) {
+            budget.left -= meter.steps;
+            if (budget.left < 0)
+                budget.spent = true;
+        }
     }
-    const whole = wholeLiterals(root);
-    if (whole)
-        return { test: (name, budget) => !budget?.spent && whole.has(name) };
-    let program;
-    try {
-        program = compile(root);
-    }
-    catch {
-        return null;
-    }
+}
+/** One matcher for a pattern (see compileRuleProgram). Once a budget is
+ *  spent, the matcher answers no match, as every other test then does. */
+export function compileRulePattern(pattern, budget) {
+    return compileRuleProgram(pattern, budget)?.make() ?? null;
+}
+function matcherOf(program) {
     const { states, start } = program;
     const answers = new Map();
     return {

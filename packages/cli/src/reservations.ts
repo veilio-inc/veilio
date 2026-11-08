@@ -7,10 +7,15 @@
 // it does not know. Nothing else writes these two files, and only the CLI and
 // the MCP server write them; the guard only reads `reserved.json`.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { refuseLinks } from './store.js'
+import {
+  isName,
+  openStoreFile,
+  prepareStoreWrite,
+  refuseNonNames,
+  writeStoreFile,
+} from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -70,19 +75,18 @@ const reservedPath = (mapPath: string) => join(dirname(mapPath), RESERVED_FILE)
 const aliasesPath = (mapPath: string) => join(dirname(mapPath), ALIASES_FILE)
 
 function writePrivate(path: string, value: unknown): void {
-  refuseLinks(basename(path), dirname(path), path)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  prepareStoreWrite(basename(path), path)
+  writeStoreFile(basename(path), path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 /** The member's blocks, or null before any was reserved. A malformed file is refused, never numbered from. */
 export function loadReserved(mapPath: string): ReservedFile | null {
   const path = reservedPath(mapPath)
-  if (!existsSync(path)) return null
+  const text = openStoreFile(RESERVED_FILE, path)
+  if (text === null) return null
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     throw new ReservedFileError(path, 'it is not valid JSON')
   }
@@ -317,15 +321,15 @@ export function loadAliases(mapPath: string): SymbolMap {
 
 /** Bounds on aliases.json, far above any real one. */
 const MAX_ALIASES = 1_000_000
-const MAX_NAME = 100_000
 
 /**
  * aliases.json, checked like map.json (security audit), and never thrown on
  * (security review of round 1: one bad entry cost teamNumbering every
- * retired placeholder). An entry whose name is not a string of 1 to 100000
- * characters, whose key is not a placeholder, or past the entry bound is
+ * retired placeholder). An entry whose name is not a name (isName: 1 to 100000
+ * characters, no control or line separator), whose key is not a placeholder, or past the entry bound is
  * dropped and counted in `ignored`; the rest are kept. A file that is not an
- * object of aliases is `unreadable`: no aliases, and never written over.
+ * object of aliases is `unreadable`: no aliases, and never written over. The
+ * one throw is the store's refusal of a link or a tracked file (spec 085).
  */
 export function readAliases(mapPath: string): {
   aliases: SymbolMap
@@ -334,10 +338,12 @@ export function readAliases(mapPath: string): {
 } {
   const path = aliasesPath(mapPath)
   const none = { aliases: {}, ignored: 0, unreadable: true as const }
-  if (!existsSync(path)) return { aliases: {}, ignored: 0 }
+  // A link or a tracked store is refused, not read as unreadable (spec 085 R1).
+  const text = openStoreFile(ALIASES_FILE, path)
+  if (text === null) return { aliases: {}, ignored: 0 }
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     return none
   }
@@ -348,13 +354,7 @@ export function readAliases(mapPath: string): {
   let kept = 0
   const aliases: SymbolMap = {}
   for (const [p, name] of Object.entries(raw)) {
-    if (
-      kept < MAX_ALIASES &&
-      typeof name === 'string' &&
-      name.length > 0 &&
-      name.length <= MAX_NAME &&
-      isPlaceholder(p)
-    ) {
+    if (kept < MAX_ALIASES && isName(name) && isPlaceholder(p)) {
       aliases[p] = name
       kept++
     } else ignored++
@@ -364,6 +364,7 @@ export function readAliases(mapPath: string): {
 
 /** Remember renumbered placeholders' old meanings. One old placeholder never gets a second meaning. */
 export function addAliases(mapPath: string, entries: SymbolMap): void {
+  refuseNonNames(ALIASES_FILE, entries)
   const read = readAliases(mapPath)
   // Written over, an unreadable file would lose every old meaning it holds.
   if (read.unreadable)

@@ -285,6 +285,20 @@ export const FLAGS: readonly FlagSpec[] = [
     field: 'json',
   },
   {
+    long: '--blobs',
+    value: '<listing>',
+    help: 'scan the files a `git diff --raw --no-abbrev` listing names, their content read from `git cat-file --batch` on stdin (used by the pre-commit hook and the GitHub Action)',
+    commands: ['scan'],
+    field: 'blobsFile',
+  },
+  {
+    long: '--name',
+    value: '<path>',
+    help: 'scan stdin as if it were the file <path> (its file type decides the rules; used by the pre-commit hook)',
+    commands: ['scan'],
+    field: 'stdinName',
+  },
+  {
     long: '--strict',
     help: 'scan: also fail on advisory findings. restore: write nothing and exit 1 if a placeholder or a redaction would be left',
     commands: ['scan', 'restore'],
