@@ -1637,3 +1637,50 @@ test('L16: plain-word keys stay readable, and compound identifier keys are maske
   expect(keys.slice(0, 4)).toEqual(['name', 'id', 'status', 'items'])
   expect(keys.join()).not.toMatch(/totalCount|html_url/)
 })
+
+// Review round 3 #8 (checked, not reproduced): a placeholder this session
+// showed but never saved is a quarantined name's, held with the removed
+// credential, so a planted entry under it is refused as one; a planted map
+// entry under it makes the guard fail closed (a quarantined placeholder is
+// also a saved one).
+test('R3#8: a planted aliases entry under a shown quarantine placeholder is refused', async ($, on) => {
+  const slice = KEY_TAIL.slice(2, 15)
+  const other = `export function build${slice}Total() {}\n`
+  const read = recorded('Read')
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({}),
+      [`${ROOT}/src/config.ts`]: CONFIG,
+      [`${ROOT}/src/other.ts`]: other,
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    const path = String(e.file_path ?? '')
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: path, content: p.files[path] ?? '' },
+        },
+      }
+    return { result: { type: 'create', filePath: path } }
+  })
+  await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/other.ts` })
+  const q = /__QUARANTINED__\d+/.exec(JSON.stringify(out))?.[0]
+  expect(q).toBeDefined()
+  p.files[`${ROOT}/.veilio/aliases.json`] = JSON.stringify({
+    aliases: { [q!]: 'fakePlantedValue()' },
+  })
+  p.files[`${ROOT}/src/pay.ts`] = 'export class PaymentGatewayFake {}\n'
+  await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/pay.ts` })
+  const writes = seen.length
+  const w = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/a.ts`, content: `${q}()` })
+  expect(w.deny).toBeDefined()
+  expect(seen).toHaveLength(writes)
+})

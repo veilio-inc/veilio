@@ -48,8 +48,10 @@ export type Options = {
   noGit?: boolean
   /** Files under .veilio/ that git tracks (committed to the repository). */
   trackedVeilio?: string[]
-  /** `git ls-files` answers with its output cut short. */
+  /** `git ls-files` (the whole project) answers with its output cut short. */
   listTruncated?: boolean
+  /** `git ls-files -- ':(icase).veilio'` answers with its output cut short. */
+  veilioListTruncated?: boolean
   /** `git ls-files` lists nothing: a folder inside a repository that tracks
    *  none of its files. Otherwise the checkout also tracks a README.md, as a
    *  real one tracks something (review round 1 #2: an empty listing is none). */
@@ -192,12 +194,18 @@ export function project(
       .concat(opts.emptyListing ? [] : ['README.md'])
       // `-- ':(icase).veilio'`: what git tracks under .veilio, any case.
       .filter((f) => !e.argv.includes(':(icase).veilio') || /^\.veilio(?:\/|$)/i.test(f))
+    const cut = e.argv.includes(':(icase).veilio')
+      ? opts.veilioListTruncated === true
+      : opts.listTruncated === true
     return {
       value: {
         exitCode: 0,
-        stdout: tracked.map((f) => `${f}\0`).join(''),
+        // Cut short as the host cuts it: the first entry, then a partial one.
+        stdout: cut
+          ? `${tracked.filter((f) => !/^\.veilio/i.test(f))[0] ?? ''}\0part`
+          : tracked.map((f) => `${f}\0`).join(''),
         stderr: '',
-        isStdoutTruncated: opts.listTruncated === true,
+        isStdoutTruncated: cut,
         isStderrTruncated: false,
       },
     }

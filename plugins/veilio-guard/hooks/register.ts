@@ -105,14 +105,19 @@ async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<strin
 }
 
 /** `git ls-files -z` in `root`, or null. Review round 1 #2: the repository's
- *  config cannot start a program (core.fsmonitor), and a listing cut short
- *  is no listing. */
+ *  config cannot start a program (core.fsmonitor). Cut short by the host
+ *  (4 MiB, a large repository; round 3 #3): the whole listing keeps what
+ *  came, less the last entry, which may be cut; a pathspec listing is none. */
 function gitList($: Host, root: string, pathspec: readonly string[]): Promise<string[] | null> {
   return $.process
     .run(['git', '-c', 'core.fsmonitor=false', 'ls-files', '-z', ...pathspec], { cwd: root })
     .then(
-      (r) =>
-        r.exitCode === 0 && !r.isStdoutTruncated ? r.stdout.split('\0').filter(Boolean) : null,
+      (r) => {
+        if (r.exitCode !== 0) return null
+        const files = r.stdout.split('\0').filter(Boolean)
+        if (!r.isStdoutTruncated) return files
+        return pathspec.length > 0 ? null : files.slice(0, -1)
+      },
       () => null
     )
 }

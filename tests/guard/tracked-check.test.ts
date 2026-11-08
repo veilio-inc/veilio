@@ -22,8 +22,11 @@ function host() {
     exists: async (p) => p in files || Object.keys(files).some((f) => f.startsWith(`${p}/`)),
     realPath: async (p) => p,
     list: async () => ['README.md', 'src/pay.ts'],
-    // A git that never answers.
-    listVeilio: () => (calls.listVeilio++, new Promise<string[] | null>(() => undefined)),
+    // At load nothing under .veilio is tracked; after it, a git that never answers.
+    listVeilio: () =>
+      ++calls.listVeilio === 1
+        ? Promise.resolve([])
+        : new Promise<string[] | null>(() => undefined),
     sleep: async (ms) => void calls.waits.push(ms),
   }
   return { io, files, calls }
@@ -52,7 +55,7 @@ it('a save that finds a changed map asks git for .veilio only, within the deadli
     },
     deadline
   )
-  expect(calls.listVeilio).toBe(1)
+  expect(calls.listVeilio).toBe(2) // load, and this save
   expect(calls.waits.at(-1)).toBeLessThanOrEqual(1000)
 })
 
@@ -84,7 +87,7 @@ it('git is asked once for what arrived, not again on every later save', async ()
     )
   }
   expect(files[MAP]).toContain('InvoiceBuilderFake')
-  expect(calls.listVeilio).toBe(1)
+  expect(calls.listVeilio).toBe(2) // load, and the first save
 })
 
 // Review round 1 (correctness) #5: on Windows the host answers a real path
@@ -144,8 +147,10 @@ it('a save whose git answers late asks again at the next save, and finds the map
   let asked = 0
   io.listVeilio = () =>
     ++asked === 1
-      ? new Promise<string[] | null>(() => undefined)
-      : Promise.resolve(['.veilio/map.json'])
+      ? Promise.resolve([])
+      : asked === 2
+        ? new Promise<string[] | null>(() => undefined)
+        : Promise.resolve(['.veilio/map.json'])
   const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
   await guard.load(ROOT)
   files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
@@ -178,7 +183,65 @@ it('a save whose git answers late asks again at the next save, and finds the map
   })
   expect('deny' in meanwhile && meanwhile.deny).toContain('which this session has not shown you')
   await read('InvoiceBuilderFake').catch(() => undefined)
-  expect(asked).toBe(2)
+  expect(asked).toBe(3) // load, the late save, the next save
   expect(guard.state).toBe('stopped')
   expect(guard.stoppedReason).toContain('tracked by git')
+})
+
+// Review round 3 #2: a sleep that really waits, and a result whose deadline
+// is all but spent: git still gets a short minimum (500 ms) at a save, and a
+// git that misses even that is asked again at the next save.
+function timedHost(veilio: (n: number) => Promise<string[] | null>) {
+  const h = host()
+  let n = 0
+  h.io.listVeilio = () => veilio(++n)
+  h.io.sleep = (ms) => new Promise<void>((r) => setTimeout(r, ms))
+  return { ...h, asked: () => n }
+}
+const readNamed = (guard: Guard, name: string, deadline: number) => {
+  const path = `${ROOT}/src/${name}.ts`
+  return guard.afterTool(
+    'Read',
+    { tool: 'Read', file_path: path },
+    {
+      result: {
+        type: 'text',
+        file: {
+          filePath: path,
+          content: `export class ${name} {}\n`,
+          numLines: 1,
+          startLine: 1,
+          totalLines: 1,
+        },
+      },
+    },
+    deadline
+  )
+}
+const after = (ms: number, v: string[]) => new Promise<string[]>((r) => setTimeout(() => r(v), ms))
+
+it('with the deadline 2 ms away, a git that answers in 50 ms still stops the guard at that save', async () => {
+  const { io, files } = timedHost((n) =>
+    n === 1 ? Promise.resolve([]) : after(50, ['.veilio/map.json'])
+  )
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(ROOT)
+  files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+  await readNamed(guard, 'PaymentGatewayFake', Date.now() + 2).catch(() => undefined)
+  expect(guard.state).toBe('stopped')
+  expect(guard.stoppedReason).toContain('tracked by git')
+})
+
+it('with the deadline 2 ms away, a git slower than the minimum is asked again, and the next save stops the guard', async () => {
+  const { io, files, asked } = timedHost((n) =>
+    n === 1 ? Promise.resolve([]) : n === 2 ? after(900, []) : Promise.resolve(['.veilio/map.json'])
+  )
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(ROOT)
+  files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+  await readNamed(guard, 'PaymentGatewayFake', Date.now() + 2)
+  expect(guard.state).toBe('on')
+  await readNamed(guard, 'InvoiceBuilderFake', Date.now() + 2000).catch(() => undefined)
+  expect(asked()).toBe(3)
+  expect(guard.state).toBe('stopped')
 })

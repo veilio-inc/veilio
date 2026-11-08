@@ -537,3 +537,45 @@ test('R1#8: a plain cd still runs, and a PowerShell cd with backslashes too', as
   expect(ps.deny).toBeUndefined()
   expect(seen).toHaveLength(2)
 })
+
+// Review round 3 #4: zsh qualifiers and alternation, extglob and zsh's
+// extended glob expand too: a cd target is judged only when every character
+// is on a short list (letters, digits, marks, _ . / + @ -, a leading ~).
+test('R3#4: a cd whose target zsh or extglob would expand is refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'cd ~/.ku(b|x)e',
+    'cd ~/.kube(/)',
+    'cd ~/.kub<->',
+    'cd ~/.k#ube',
+    'cd ~/.k@(u)be',
+    'cd ~/.kube~x',
+    'cd ~/.ku^xbe',
+  ]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toContain('a cd there would let a later command read it')
+  }
+  expect(seen).toHaveLength(0)
+})
+
+test('R3#4: plain cd targets still run: a scoped package folder, a home path, a non-ASCII folder', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'cd node_modules/@types',
+    'cd ~/work/project',
+    'cd docs/Übersicht',
+    'cd ../src',
+  ])
+    expect((await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny).toBeUndefined()
+  expect(seen).toHaveLength(4)
+})

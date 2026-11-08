@@ -189,6 +189,34 @@ test(
   }
 )
 
+// Review round 3 #7: a leading scheme is a URL however few slashes follow.
+test(
+  'R3#7: a map value with a file: scheme is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('file:/etc/passwd')
+)
+test(
+  'R3#7: a map value with a javascript: scheme is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('javascript:alert')
+)
+test(
+  'R3#7: a Windows drive path and a Ledger::Entry name restore into an MCP tool',
+  LOCAL_DB,
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({
+        __VAR__1: 'C:/repo/src/pay.ts',
+        __CLS__2: 'Ledger::Entry',
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __VAR__1, __CLS__2' })
+    expect(seen[0]?.sql).toBe('select C:/repo/src/pay.ts, Ledger::Entry')
+  }
+)
+
 test(
   'L18: names and paths, a non-ASCII name too, restore into an MCP tool',
   { options: { mcpRestore: ['local_db'] } },

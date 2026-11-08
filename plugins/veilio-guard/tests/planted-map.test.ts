@@ -740,11 +740,27 @@ test('R1#2: an empty git listing is no listing: a planted placeholder is refused
   expect(seen).toHaveLength(0)
 })
 
-test('R1#2: a git listing cut short is no listing either', async ($, on) => {
+// Review round 3 #3: the host cuts stdout at 4 MiB, so a large repository's
+// whole listing comes back cut short. That is still a git checkout; whether
+// .veilio is tracked comes from the .veilio-only listing.
+test('R3#3: a cut-short whole listing is still git: a tracked map stops the guard', async ($, on) => {
   project(
     on,
     { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'fakePlantedValue()' }), [PAY]: PAY_TEXT },
-    { listTruncated: true }
+    { listTruncated: true, trackedVeilio: ['.veilio/map.json'] }
+  )
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.js`, content: '__VAR__9' })
+  expect(out.deny).toMatch(/tracked by git/)
+  expect(seen).toHaveLength(0)
+})
+
+test('R1#2: a cut-short .veilio listing is no listing', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'fakePlantedValue()' }), [PAY]: PAY_TEXT },
+    { veilioListTruncated: true }
   )
   const seen: Fields[] = []
   on('tool.call', writer(seen))
@@ -1000,3 +1016,78 @@ for (const [what, path, links] of [
     expect(out.deny).toBe(NOT_SHOWN('__CLS__4'))
     expect(seen).toHaveLength(writes)
   })
+
+// Review round 3 #1: a placeholder already written in what the tool masked
+// was not minted by this call, whatever else that text holds.
+test('R3#1: a file holding both a planted placeholder and its value grounds nothing', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({}),
+    [PAY]: PAY_TEXT,
+    [`${ROOT}/src/notes.ts`]: '// see __VAR__9\n// fakePlantedValue()\n',
+  })
+  const seen: Fields[] = []
+  // The server returns the line with the placeholder, as the engine leaves it.
+  on('tool.call', veilioFile(p, seen, '// see __VAR__9'))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  p.files[`${ROOT}/.veilio/map.json`] = mapFile({ __VAR__9: 'fakePlantedValue()' })
+  await $.tool.call({ tool: 'mcp__veilio__anonymize_file', path: 'src/notes.ts' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__VAR__9',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__VAR__9'))
+  expect(seen).toHaveLength(writes)
+})
+
+// Review round 3 #5: the server's placeholder still counts when the same
+// result also brings a name the guard saves.
+test('R3#5: a Veilio MCP placeholder restores when its result also adds a name', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+    [PAY]: PAY_TEXT,
+    [`${ROOT}/src/zorb.ts`]: 'class ZorbLedgerThing extends BrandNewBaseWidget {}\n',
+  })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    if (e.tool === 'mcp__veilio__anonymize_file') {
+      seen.push(e)
+      const now = JSON.parse(p.files[`${ROOT}/.veilio/map.json`]!).map
+      p.files[`${ROOT}/.veilio/map.json`] = mapFile({ ...now, __CLS__4: 'ZorbLedgerThing' })
+      return { result: [{ type: 'text', text: 'class __CLS__4 extends BrandNewBaseWidget {}' }] }
+    }
+    return veilioServer(p, seen)(_, e)
+  })
+  const minted = await $.tool.call({ tool: 'mcp__veilio__anonymize_file', path: 'src/zorb.ts' })
+  expect(JSON.stringify(minted)).not.toContain('BrandNewBaseWidget')
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: 'new __CLS__4()',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen.at(-1)?.content).toBe('new ZorbLedgerThing()')
+})
+
+// Review round 3 #6: a read that fails while /veilio on checks stops the guard
+// with what failed, not the passing "checking" reason.
+test('R3#6: a map read that fails during /veilio on stops the guard with its own reason', async ($, on) => {
+  const fail = { now: false }
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }) },
+    { home: '/home/dev', failRead: (a) => fail.now && a.endsWith('/.veilio/map.json') }
+  )
+  on('tool.call', writer([]))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  await $.command.run({ command: 'veilio', args: 'off' })
+  fail.now = true
+  await $.command.run({ command: 'veilio', args: 'on' }).catch(() => undefined)
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  const band = status.text.split('\n')[0]!
+  expect(band).toMatch(/^Veilio guard stopped: /)
+  expect(band).not.toContain('checking the map')
+  expect(band).toContain('could not be read')
+})

@@ -186,8 +186,14 @@ const SHELL_SAFE = /^(?!-)[A-Za-z0-9_./@+:-]+$/
  *  (not a shell), and no URL or path that climbs out (review round 1 #7). */
 const NAME_OR_PATH = /^(?!-)[\p{L}\p{M}\p{N}_./@+:$-]+$/u
 const nameOrPath = (v: string) =>
-  NAME_OR_PATH.test(v) && !v.includes('://') && !/(?:^|\/)\.\.(?:\/|$)/.test(v)
+  NAME_OR_PATH.test(v) &&
+  !v.includes('://') &&
+  !/(?:^|\/)\.\.(?:\/|$)/.test(v) &&
+  // A leading scheme (`file:`, `javascript:`), not a drive letter or `::`.
+  !/^(?![A-Za-z]:\/)[A-Za-z][A-Za-z0-9+.-]*:(?!:)/.test(v)
 const MAX_RETRIES = 3
+/** The least time a save gives git to say whether .veilio is tracked. */
+const MIN_GIT_WAIT = 500
 
 export const WITHHELD_FAILED =
   'Veilio withheld this result: the guard failed while checking it. Nothing from it was sent.'
@@ -856,31 +862,42 @@ export class Guard {
    *  them; null when that cannot be known (not a git checkout, no listing in
    *  time, or no way to list). */
   private async trackedVeilioFiles(deadline = Date.now() + 5000): Promise<string[] | null> {
-    // At load, the whole project: an empty listing is a folder inside a
-    // repository that tracks none of its files, which says nothing about the
-    // map (review round 1 #2). After it, only .veilio, and only if load had
-    // a listing (review round 1, correctness #2: a save holds the map's lock).
+    // At load, the whole project says whether this is a git checkout: an
+    // empty listing is a folder inside a repository that tracks none of its
+    // files (review round 1 #2); one the host cut short (a large repository)
+    // is still git (round 3 #3). The verdict on .veilio always comes from the
+    // .veilio-only listing when the host has one; after load, only it is
+    // asked, and only if load had a listing (a save holds the map's lock).
     const whole = !this.loaded
     if (!whole && !this.listed) return null
-    const list = whole ? this.io.list : (this.io.listVeilio ?? this.io.list)
-    if (!list) return null
-    let listed: string[] | null
     // shortcut: a git that answers in no 5 s (or before the result's deadline)
-    // counts as no listing - guard.json may then only tighten, but a committed
-    // map is not detected, and what was adopted restores only once shown;
-    // upgrade if a slow-git bypass of that is shown.
-    const wait = Math.max(0, Math.min(5000, deadline - Date.now()))
+    // counts as no listing - guard.json may then only tighten, a committed
+    // map is not detected yet (the next save asks again), and what was
+    // adopted restores only once shown; upgrade if a slow-git bypass is shown.
+    // Round 3 #2: at least 500 ms, however little of the result's time is left.
+    const wait = Math.min(5000, Math.max(MIN_GIT_WAIT, deadline - Date.now()))
     const late = this.io.sleep ? this.io.sleep(wait).then(() => null) : null
+    const answer = (p: Promise<string[] | null>) => (late ? Promise.race([p, late]) : p)
+    const veilioOnly = this.io.listVeilio?.bind(this.io)
+    let listed: string[] | null
     try {
-      const listing = list.call(this.io, this.root)
-      listed = await (late ? Promise.race([listing, late]) : listing)
+      if (whole) {
+        if (!this.io.list) return null
+        const all = await answer(this.io.list(this.root))
+        if (all === null || all.length === 0) return null
+        this.listed = true
+        listed = veilioOnly ? await answer(veilioOnly(this.root)) : all
+      } else {
+        const list = veilioOnly ?? this.io.list?.bind(this.io)
+        if (!list) return null
+        listed = await answer(list(this.root))
+      }
     } catch {
       return null
     }
     // Case-insensitive (a macOS checkout reads .Veilio/Map.json as the map),
     // and a tracked `.veilio` entry is a committed link to somewhere else.
-    if (listed === null || (whole && listed.length === 0)) return null
-    if (whole) this.listed = true
+    if (listed === null) return null
     const files = new Set(listed.map((f) => f.toLowerCase()))
     if (files.has('.veilio')) return ['.veilio']
     return ['.veilio/map.json', '.veilio/aliases.json', '.veilio/guard.json'].filter((f) =>
@@ -937,10 +954,16 @@ export class Guard {
     // again and git is asked, so no call runs on what was not checked; on
     // only if none of that stopped it.
     this.stop(SWITCHING_ON)
-    await this.readSettings()
-    await this.reloadMap()
-    // Spec 085 H14: on again is never past the stop a tracked map puts on it.
-    this.stopIfTracked(await this.trackedVeilioFiles())
+    try {
+      await this.readSettings()
+      await this.reloadMap()
+      // Spec 085 H14: on again is never past the stop a tracked map puts on it.
+      this.stopIfTracked(await this.trackedVeilioFiles())
+    } catch {
+      // Round 3 #6: what failed, not the passing "checking" reason; a fixed
+      // text, as the host's error can name a path and a stop reaches the model.
+      this.stop(ON_FAILED)
+    }
     if (this.stoppedReason === SWITCHING_ON) {
       this.state = 'on'
       this.stoppedReason = ''
@@ -1111,7 +1134,12 @@ export class Guard {
    *  and its name is in what the tool was asked to mask: the text given to
    *  `anonymize_text`, or the file `anonymize_file` names, read by the guard
    *  itself inside the project and not through a link. Anything else: not. */
-  private async seeMinted(tool: string, texts: readonly string[], args: ToolEvent): Promise<void> {
+  private async seeMinted(
+    tool: string,
+    texts: readonly string[],
+    args: ToolEvent,
+    readBefore: SymbolMap
+  ): Promise<void> {
     const servers = mcpServersOf(tool)
     if (servers.length !== 1 || servers[0] !== 'veilio') return
     const source = await this.mintSource(tool.slice('mcp__veilio__'.length), args)
@@ -1128,9 +1156,11 @@ export class Guard {
     for (const t of texts.join('\n').match(token) ?? [])
       if (
         Object.hasOwn(map, t) &&
-        !Object.hasOwn(this.onDisk, t) &&
+        !Object.hasOwn(readBefore, t) &&
         !written.has(t) &&
         source.includes(map[t]!) &&
+        // Written in the source already: not minted by this call (round 3 #1).
+        !source.includes(t) &&
         !this.shown.has(t)
       ) {
         this.shown.add(t)
@@ -1521,10 +1551,15 @@ export class Guard {
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
-        // Review round 1 #8: so could one the shell still expands (braces, a
-        // variable, ANSI-C quoting, an escape; PowerShell's `\` is a separator).
-        const unjudged = e.tool === 'PowerShell' ? /[*?[{$`]/ : /[*?[{$`\\]/
-        const into = cdTargetsToJudge(c).find((t) => unjudged.test(t) || cdIntoRawOnly(t, dirs))
+        // Review rounds 1 #8 and 3 #4: so could one the shell still expands
+        // (braces, variables, quoting, escapes, zsh's and extglob's patterns):
+        // judged only when every character is on a short list, a leading `~`
+        // and, in PowerShell, a drive letter and `\` as a separator.
+        const judged =
+          e.tool === 'PowerShell'
+            ? /^(?:~|[A-Za-z]:)?[\p{L}\p{N}\p{M}_./+@\\-]*$/u
+            : /^~?[\p{L}\p{N}\p{M}_./+@-]*$/u
+        const into = cdTargetsToJudge(c).find((t) => !judged.test(t) || cdIntoRawOnly(t, dirs))
         if (into !== undefined)
           return this.deny(
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
@@ -1697,6 +1732,8 @@ export class Guard {
       for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
+    // Round 3 #5: the map as read before this result's saves, for seeMinted.
+    const readBefore = this.onDisk
     // Spec 085 L16: an MCP result's keys are data, read and masked as its strings.
     const keys = isMcpTool(tool) ? mcpDataKeys : undefined
     // Spec 050: the files this result names are indexed before it is masked,
@@ -1940,7 +1977,7 @@ export class Guard {
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
       const given = texts.join('\n')
       deepRewrite(value, (s) => this.see(s, given), undefined, keys)
-      await this.seeMinted(tool, texts, args)
+      await this.seeMinted(tool, texts, args, readBefore)
       return { result: value }
     }
     return this.withhold(
@@ -2208,6 +2245,10 @@ class DecodedOnce {
 
 /** Review round 1 #6 (strings.md, pending): the stop while /veilio on checks. */
 const SWITCHING_ON = 'Veilio is checking the map before it switches back on; try again in a moment'
+
+/** Round 3 #6 (strings.md, pending): a read failed while /veilio on checked. */
+const ON_FAILED =
+  'the settings or the map could not be read when the guard was switched back on. Fix that, then /veilio on'
 
 /** strings.md #12 (spec 085 L16), as `withheld` completes it. */
 const KEY_CLASH =
