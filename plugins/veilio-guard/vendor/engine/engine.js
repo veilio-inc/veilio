@@ -782,9 +782,14 @@ function isRunnableRule(r) {
 // cached pattern costs a call what a fresh one would, without the work. Only
 // the program is shared: each budget gets matchers of its own, and their
 // memo of answers goes with the budget.
+// A list of whole names (the keep rule) is parsed per call and never kept:
+// it needs no compiling, and may be long (review round 2).
 const compiledRules = new Map();
-/** Patterns kept compiled, at most; the least recently used goes first. */
+/** Patterns kept compiled, at most, and their characters, at most; the least
+ *  recently used goes first. */
 const COMPILED_MAX = 512;
+const COMPILED_CHARS = 128 * 1024;
+let compiledChars = 0;
 const ruleMatchers = new WeakMap();
 /** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
 const MAX_RULES = 1000;
@@ -803,16 +808,25 @@ function safeMatch(pattern, name, budget) {
             return false;
         }
         let compiled = compiledRules.get(pattern);
-        if (compiled)
-            compiledRules.delete(pattern); // re-set below: now the most recent
+        if (compiled) {
+            compiledRules.delete(pattern); // set again: now the most recent
+            compiledRules.set(pattern, compiled);
+        }
         else {
             const meter = ruleBudget(Number.MAX_SAFE_INTEGER);
-            const make = compileRuleProgram(pattern, meter);
-            compiled = { make, cost: Number.MAX_SAFE_INTEGER - meter.left };
-            if (compiledRules.size >= COMPILED_MAX)
-                compiledRules.delete(compiledRules.keys().next().value);
+            const program = compileRuleProgram(pattern, meter);
+            compiled = { make: program?.make ?? null, cost: Number.MAX_SAFE_INTEGER - meter.left };
+            if (program?.compiled !== false) {
+                while (compiledRules.size > 0 &&
+                    (compiledRules.size >= COMPILED_MAX || compiledChars + pattern.length > COMPILED_CHARS)) {
+                    const oldest = compiledRules.keys().next().value;
+                    compiledRules.delete(oldest);
+                    compiledChars -= oldest.length;
+                }
+                compiledRules.set(pattern, compiled);
+                compiledChars += pattern.length;
+            }
         }
-        compiledRules.set(pattern, compiled);
         budget.left -= compiled.cost;
         if (budget.left < 0)
             budget.spent = true;

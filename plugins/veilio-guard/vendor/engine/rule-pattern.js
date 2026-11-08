@@ -380,15 +380,6 @@ function wholeLiterals(root) {
     }
     return out;
 }
-/** The longest pattern the matcher compiles: the rule limit (rule-checks.ts).
- *  A list of whole names (the keep rule) needs no compiling and may be longer. */
-const MAX_PATTERN = 500;
-/** Compile a custom rule's pattern, or null when it is outside the language
- *  this matcher runs (see the top of this file). The result makes matchers,
- *  each with its own memo of answers: the compiled program can be shared,
- *  the memo belongs to one caller (security review of spec 085). With a
- *  budget, the compile work is charged to it (spec 085 L8: a near-limit
- *  pattern costs about 1e5 build steps, and a thousand of them were free). */
 export function compileRuleProgram(pattern, budget) {
     const meter = { steps: pattern.length };
     try {
@@ -403,9 +394,7 @@ export function compileRuleProgram(pattern, budget) {
         }
         const whole = wholeLiterals(root);
         if (whole)
-            return () => ({ test: (name, b) => !b?.spent && whole.has(name) });
-        if (pattern.length > MAX_PATTERN)
-            return null;
+            return { make: () => ({ test: (name, b) => !b?.spent && whole.has(name) }), compiled: false };
         let program;
         try {
             program = compile(root, meter);
@@ -413,7 +402,7 @@ export function compileRuleProgram(pattern, budget) {
         catch {
             return null;
         }
-        return () => matcherOf(program);
+        return { make: () => matcherOf(program), compiled: true };
     }
     finally {
         if (budget) {
@@ -426,7 +415,7 @@ export function compileRuleProgram(pattern, budget) {
 /** One matcher for a pattern (see compileRuleProgram). Once a budget is
  *  spent, the matcher answers no match, as every other test then does. */
 export function compileRulePattern(pattern, budget) {
-    return compileRuleProgram(pattern, budget)?.() ?? null;
+    return compileRuleProgram(pattern, budget)?.make() ?? null;
 }
 function matcherOf(program) {
     const { states, start } = program;

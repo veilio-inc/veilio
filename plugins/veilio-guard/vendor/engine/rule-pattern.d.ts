@@ -22,7 +22,13 @@ export interface RuleMatcher {
  *  the memo belongs to one caller (security review of spec 085). With a
  *  budget, the compile work is charged to it (spec 085 L8: a near-limit
  *  pattern costs about 1e5 build steps, and a thousand of them were free). */
-export declare function compileRuleProgram(pattern: string, budget?: RuleBudget): (() => RuleMatcher) | null;
+/** What compileRuleProgram gives: a maker of matchers, and whether a program
+ *  was compiled for it (a list of whole names is a set, compiled from nothing). */
+export interface RuleProgram {
+    make: () => RuleMatcher;
+    compiled: boolean;
+}
+export declare function compileRuleProgram(pattern: string, budget?: RuleBudget): RuleProgram | null;
 /** One matcher for a pattern (see compileRuleProgram). Once a budget is
  *  spent, the matcher answers no match, as every other test then does. */
 export declare function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMatcher | null;

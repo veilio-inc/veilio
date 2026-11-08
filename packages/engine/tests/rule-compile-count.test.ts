@@ -118,15 +118,45 @@ describe('only the compiled program is shared across calls', () => {
     expect(calls.n).toBe(before + 2)
   })
 
-  it('a pattern past the rule limit that needs the matcher is never compiled; a list of names may be longer', () => {
-    // One state for the long class: the state cap does not stop it, the length does.
+  // Review round 2 (#5): a long pattern that needs the matcher is compiled
+  // like any other (the state cap and the build-step limit bound it, charged
+  // to the budget), so no rule silently stops matching.
+  it('a long pattern that needs the matcher still matches', () => {
+    // One state for the long class: over 500 characters, well under the state cap.
     const long = `^(?:Payment[A-Za-z0-9]+|[${'q'.repeat(490)}]z)$`
-    const r = anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, long)] })
-    expect(r.anonymized).not.toContain('PaymentGatewayAlpha1')
-    const keep = `^(?:${Array.from({ length: 200 }, (_, i) => `PaymentGatewayAlpha${i + 1}`).join('|')})$`
-    expect(keep.length).toBeGreaterThan(500)
+    expect(long.length).toBeGreaterThan(500)
     expect(
-      anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, keep)] }).anonymized
+      anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, long)] }).anonymized
     ).toContain('PaymentGatewayAlpha1')
+  })
+})
+
+// Review round 2 (#4): a list of whole names (the keep rule) needs no
+// compiling and is parsed per call, outside the shared cache; the cache is
+// bounded by the characters it holds as well as by its count.
+describe('what the shared cache holds', () => {
+  it('a keep list is parsed per call, a compiled pattern once', () => {
+    const keep = `^(?:${Array.from({ length: 50 }, (_, i) => `KeepName${i}`).join('|')})$`
+    const one = (p: string) => anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, p)] })
+    one(keep)
+    one(keep)
+    expect(calls.n).toBe(2)
+    one('^kc[a-c]+$')
+    one('^kc[a-c]+$')
+    expect(calls.n).toBe(3)
+  })
+
+  it('long compiled patterns are evicted by their total length before the count is reached', () => {
+    const one = (p: string) => anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, p)] })
+    const long = (i: number) => `^(?:tl${i}[a-c]+|[${'q'.repeat(470)}]z)$`
+    for (let i = 0; i < 300; i++) one(long(i))
+    const before = calls.n
+    one(long(0)) // 300 x ~490 characters is past the length bound: the first is gone
+    expect(calls.n).toBe(before + 1)
+    const short = (i: number) => `^ts${i}[a-c]+$`
+    for (let i = 0; i < 300; i++) one(short(i))
+    const after = calls.n
+    one(short(0)) // 300 short ones fit: still cached
+    expect(calls.n).toBe(after)
   })
 })
