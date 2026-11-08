@@ -30,6 +30,13 @@ export interface CommentSyntax {
      * strings are bounded like this is the `//` of a URL read as code.
      */
     lineBounded: readonly string[];
+    /** `/…/` regex literals exist, so masking reads one holding `//` or `/*` as
+     *  code, not as a comment opener (spec 085 L7). */
+    regexLiterals?: true;
+    /** Text that starts with a line opener and is code: PHP 8's `#[` attribute. */
+    notLineOpener?: readonly string[];
+    /** Block delimiters count only at the start of a line: Ruby's `=begin`/`=end`. */
+    blockAtLineStart?: true;
 }
 export declare function commentSyntaxFor(language: Language): CommentSyntax;
 export interface LanguageGuess {

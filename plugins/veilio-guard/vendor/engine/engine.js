@@ -208,7 +208,8 @@ function regexLiteralEnd(code, at) {
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
 /** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
- *  in a markdown answer. Masking does not ask for it and reads as it always did.
+ *  in a markdown answer. Masking does not ask for it, and reads as it always did
+ *  except for a regex literal holding a comment opener, which is code there too.
  *  - A regex literal is code, so a quote or comment opener inside it starts nothing.
  *  - A fence line in code is code: its backticks open no template literal. One
  *    inside a comment is part of it.
@@ -265,7 +266,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             flush(false);
             continue;
         }
-        const lineOpener = syntax.line.find((o) => startsWithAt(o, i));
+        const lineOpener = syntax.line.find((o) => startsWithAt(o, i) && !syntax.notLineOpener?.some((t) => startsWithAt(t, i)));
         if (lineOpener === '//' &&
             syntax.lineBounded.length > 0 &&
             URL_SCHEME_BEFORE.test(code.slice(Math.max(0, i - 16), i))) {
@@ -282,13 +283,15 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             flush(false);
             continue;
         }
-        const blockPair = syntax.block.find(([open]) => startsWithAt(open, i));
+        // Ruby's `=begin`/`=end` only at a line start: `state=begin_x(...)` is code.
+        const delimiterAt = (token, at) => startsWithAt(token, at) && (!syntax.blockAtLineStart || at === 0 || code[at - 1] === '\n');
+        const blockPair = syntax.block.find(([open]) => delimiterAt(open, i));
         if (blockPair !== undefined) {
             const [open, close] = blockPair;
             flush(true);
             buf += open;
             i += open.length;
-            while (i < n && !startsWithAt(close, i))
+            while (i < n && !delimiterAt(close, i))
                 buf += code[i++];
             if (i < n) {
                 buf += close;
@@ -297,9 +300,12 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             flush(false);
             continue;
         }
-        if (forRestore && c === '/' && i >= noRegexBefore) {
+        if ((forRestore || syntax.regexLiterals) && c === '/' && i >= noRegexBefore) {
             const [closed, end] = regexLiteralEnd(code, i);
-            if (closed) {
+            // Masking consumes only a literal that holds a comment opener (spec 085
+            // L7: `/^https?:\/\//`, `/\/*$/`), which it would otherwise read as a
+            // comment; any other literal reads exactly as it always did.
+            if (closed && (forRestore || /\/[/*]/.test(code.slice(i + 1, end)))) {
                 buf += code.slice(i, end);
                 i = end;
                 continue;
