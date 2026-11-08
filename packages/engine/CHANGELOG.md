@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.17.0](https://github.com/veilio-inc/veilio/compare/engine-v1.16.3...engine-v1.17.0) (2026-11-08)
+
+### Features
+
+* **engine:** a credential preview shows only its last four characters and its length; the MCP server refuses raw-only files and offers restore_text only with VEILIO_MCP_RESTORE=1 (spec 078 T023-T026, FR-016 to FR-018) ([972da18](https://github.com/veilio-inc/veilio/commit/972da185544e3ec575e6b376473c28ad1196ca9f))
+
+### Fixes
+
+* **engine:** a Windows 8.3 short name in a shell word is refused; the guard refuses test runners' program-running flags, more reshaping flags, a cd hidden in a glob, substitution or nested shell, and settings writes found after a cd or through a link (spec 078, review round 1 items 2, 3, 6, 9, d) ([80a1d97](https://github.com/veilio-inc/veilio/commit/80a1d9754b8db7bbec0a05d48100d734424a7424))
+* **engine:** raw-only matching reads a Windows stream or trailing-dot spelling as its file; the MCP server and the guard's file tools refuse streams and 8.3 short names, and the MCP server its own map files wherever they live (spec 078, security review of the MCP raw-only refusal) ([768d8fb](https://github.com/veilio-inc/veilio/commit/768d8fb2ea4b7fe3890a1e81c317dbd7c1a300dc))
+
+### Refactoring
+
+* **engine:** the raw-only list lives in the engine, so the guard and the MCP server share one list (spec 078 T004) ([d7b05fa](https://github.com/veilio-inc/veilio/commit/d7b05fa55f0fc0912f201039bfaf424e9a7ac03b))
+
 ## [1.16.3](https://github.com/veilio-inc/veilio/compare/engine-v1.16.2...engine-v1.16.3) (2026-11-08)
 
 ### Fixes
