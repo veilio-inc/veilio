@@ -17,5 +17,8 @@ export interface RuleMatcher {
     test(name: string, budget?: RuleBudget): boolean;
 }
 /** Compile a custom rule's pattern, or null when it is outside the language
- *  this matcher runs (see the top of this file). */
-export declare function compileRulePattern(pattern: string): RuleMatcher | null;
+ *  this matcher runs (see the top of this file). With a budget, the compile
+ *  work is charged to it (spec 085 L8: a near-limit pattern costs about 1e5
+ *  build steps, and a thousand of them were free). Once that spends the
+ *  budget, the matcher answers no match, as every other test then does. */
+export declare function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMatcher | null;

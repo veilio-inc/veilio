@@ -941,15 +941,20 @@ function isRunnableRule(r: CustomRuleReplace | CustomRuleWhitelist): boolean {
 
 // Custom-rule patterns run on the engine's linear-time matcher, never on
 // RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
-// Compiled once per pattern.
-const ruleMatchers = new Map<string, RuleMatcher | null>()
+// Compiled once per budget (one anonymize call, or what a caller shares one
+// budget across), and the compile is charged to it (spec 085 L8). No cap and
+// no clear: at most MAX_RULES patterns per call, so the cost cannot step.
+const ruleMatchers = new WeakMap<RuleBudget, Map<string, RuleMatcher | null>>()
+/** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
+const MAX_RULES = 1000
 
 function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean {
-  let m = ruleMatchers.get(pattern)
+  let cache = ruleMatchers.get(budget)
+  if (!cache) ruleMatchers.set(budget, (cache = new Map()))
+  let m = cache.get(pattern)
   if (m === undefined) {
-    m = compileRulePattern(pattern)
-    if (ruleMatchers.size > 1000) ruleMatchers.clear()
-    ruleMatchers.set(pattern, m)
+    m = compileRulePattern(pattern, budget)
+    cache.set(pattern, m)
   }
   if (m === null) return false
   try {
@@ -1429,6 +1434,8 @@ export function anonymize(
   // One allowance of matching steps for every rule and name in this call
   // (security audit); once spent, rule tests answer no match.
   const budget = opts.ruleBudget ?? ruleBudget()
+  // A rule set past the cap is not applied at all: every name masked as usual.
+  if (rules.length > MAX_RULES) budget.spent = true
   const { language, fallback: languageFallback } = describeLanguage(code, opts.language)
 
   // Redact BEFORE extraction: a credential that reaches extractIdentifiers

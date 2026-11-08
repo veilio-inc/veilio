@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize, ruleBudget, type CustomRule } from '../src/index.js'
+import { RULE_WORK_BUDGET } from '../src/rule-pattern.js'
 
 // Security audit: MAX_WORK bounds one test of one rule against one name, but
 // nothing bounded a call testing every rule against every name - hostile
@@ -72,5 +73,56 @@ describe('a budget the caller shares across calls (security review of round 1)',
     expect(later.anonymized).not.toMatch(/\bphoenix\b/)
     // Without it, a fresh budget.
     expect(anonymize('const phoenix = 2\n', { rules }).rulesStopped).toBeUndefined()
+  })
+})
+
+// Spec 085 L8 (security audit run-1): compiling a rule was not charged to the
+// budget, and the matcher cache was cleared past 1000 patterns, so a large
+// sealed rule set could stall every teammate's scrub. Checked on the budget
+// itself, not on the clock: the steps a call spends are deterministic.
+describe('rule compile work is charged to the budget (L8)', () => {
+  // About 98,900 build steps each, and it matches nothing (the audit's shape).
+  const heavy = (i: number) => `(((){50}){50}){38}[]x${i}`
+  const ALPHA = Array.from({ length: 50 }, (_, i) => `PaymentGatewayAlpha${i + 1}`)
+  const ALPHA_CODE = ALPHA.map((n) => `const ${n} = 1`).join('\n')
+  const spent = (rules: CustomRule[], code = ALPHA_CODE) => {
+    const budget = ruleBudget()
+    const r = anonymize(code, { rules, ruleBudget: budget })
+    return { steps: RULE_WORK_BUDGET - budget.left, stopped: r.rulesStopped === true, r }
+  }
+
+  it('compiling alone can spend the budget, and the call says so', () => {
+    const rules = Array.from({ length: 600 }, (_, i) => rule(i, 'whitelist', heavy(i)))
+    expect(spent(rules, 'const PaymentGatewayAlpha1 = 1').stopped).toBe(true)
+  })
+
+  it('a rule after the budget ran out keeps nothing readable: the name stays masked', () => {
+    const rules = [
+      ...Array.from({ length: 600 }, (_, i) => rule(i, 'whitelist', heavy(i))),
+      rule(600, 'whitelist', '^PaymentGatewayAlpha1$'),
+    ]
+    const { r, stopped } = spent(rules, 'const PaymentGatewayAlpha1 = 1')
+    expect(stopped).toBe(true)
+    expect(r.anonymized).not.toContain('PaymentGatewayAlpha1')
+  })
+
+  it('more than 1000 rules in one call stop the rules, and say so', () => {
+    const cheap = (n: number) =>
+      Array.from({ length: n }, (_, i) => rule(i, 'whitelist', `^zz${i}[a-c]+$`))
+    expect(spent(cheap(1000)).stopped).toBe(false)
+    expect(spent(cheap(1001)).stopped).toBe(true)
+  })
+
+  it('the steps grow linearly with the rules, and a repeat call spends the same', () => {
+    const cheap = (n: number) =>
+      Array.from({ length: n }, (_, i) => rule(i, 'whitelist', `^zz${i}[a-c]+$`))
+    const s250 = spent(cheap(250)).steps
+    const s500 = spent(cheap(500)).steps
+    const s1000 = spent(cheap(1000)).steps
+    expect(s1000 / s500).toBeGreaterThan(1.8)
+    expect(s1000 / s500).toBeLessThan(2.2)
+    expect(s500 / s250).toBeLessThan(2.2)
+    // Compiled per call: a second call is charged the compile again.
+    expect(spent(cheap(1000)).steps).toBe(s1000)
   })
 })
