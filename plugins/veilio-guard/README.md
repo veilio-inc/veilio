@@ -6,15 +6,15 @@ A Claude Code plugin that keeps your project's real identifiers and secrets away
 >
 > - **veilio-guard (this plugin)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
 > - **[The CLI](../../packages/cli/README.md) (`@veilio-inc/cli`)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
-> - **[The MCP server](../../packages/mcp/README.md) (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+> - **[The MCP server](../../packages/mcp/README.md) (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer (opt-in), scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
 >
 > **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
 
 Claude Code reads files and runs commands itself, so code you would never paste into a chat reaches the model anyway. veilio-guard sits between Claude Code's tools and the model:
 
 - **What Claude reads** (files, command output, search results, MCP results, what you type, and the reminders and instruction files Claude Code adds) reaches the model with identifiers replaced by placeholders such as `__CLS__1`, and with credentials removed. One exception: the entries of Claude Code's skill and agent listings that come from Claude Code itself or from a plugin installed from the official Anthropic marketplace are public, and are sent as written. Your project's and your own skills and agents, and plugins from any other marketplace, are masked.
-- **What Claude writes** (edits, commands, searches) gets the real names back before it runs. An edit or shell command that names a placeholder the map doesn't know, or a removed credential, is refused, so a file never receives a token that means nothing.
-- **`.env`, private keys, credential stores and `.veilio/`** are refused before Claude reads them. Credential stores include `.git-credentials`, `.htpasswd`, `.pgpass`, `.npmrc`, `.netrc`, `kubeconfig`, `.kube/`, `.docker/config.json`, `.aws/credentials`, `.azure/`, `.config/gcloud/`, and `*.jks`, `*.keystore` and `*.p8` keys.
+- **What Claude writes** (edits, searches, and shell commands that only read files or run tests) gets the real names back before it runs. Any other shell command that names a placeholder - one that reshapes it, sends it over the network, or writes - is refused before it runs, and nothing is restored into it; to commit with a message that names one, write the message to a file with the Write tool, then run `git commit -F <file>`. PowerShell commands get no real names back yet. An edit or shell command that names a placeholder the map doesn't know, or a removed credential, is refused, so a file never receives a token that means nothing.
+- **`.env`, private keys, credential stores and `.veilio/`** are refused before Claude reads them. Credential stores include `.git-credentials`, `.htpasswd`, `.pgpass`, `.npmrc`, `.netrc`, `kubeconfig`, `.kube/`, `.docker/config.json`, `.aws/credentials`, `.azure/`, `.config/gcloud/`, and `*.jks`, `*.keystore` and `*.p8` keys. A path is checked as written and with `..` resolved, and a `cd` or `pushd` into one of those directories is refused.
 - **You see the real names** in Claude's replies, tool rows, diffs and command output, on your machine only. The session's transcript keeps the placeholders, with one exception COVERAGE.md describes: some Claude Code versions store CLAUDE.md as written.
 - **If the guard can't do its job, it fails closed:** a result it can't check is withheld, and a prompt it can't check isn't sent.
 
@@ -52,7 +52,8 @@ Veilio guard on · 42 names in the map · custom rules: 3 · 0 withheld · 0 ref
 ```
 
 - `/veilio` shows the state, the map, and what is covered.
-- `/veilio off` switches the guard off for this project. Claude then reads raw code, and the line above the prompt says so on every turn.
+- `/veilio off` switches the guard off for this project. It is recorded in `~/.veilio/guard-state.json`, outside the project, where the agent's tools cannot reach it. Claude then reads raw code, and the line above the prompt says so on every turn.
+- When the plugin's settings name MCP servers that get real names, the line above the prompt ends with ` · real names to: <server>, <server>`.
 - `/veilio on` switches it back on.
 
 Your account's custom rules apply too. The guard reads the rules `veilio rules pull` keeps on this machine, for the account you are signed in as, and never fetches them itself: run `veilio rules pull` after a rule changes, then start a new session. Replace rules mask what they match, an ordinary word such as `phoenix` included, in files Claude reads, command output and your prompts; whitelist rules keep their names readable. The line above the prompt says how many apply (`custom rules: 3`), or that none are pulled, and how many were not applied and why (vault locked, team key locked, refused). A cached rule applies only while the key it was opened with is still on this machine: after `veilio vault lock` or `veilio team lock`, or once the key expires, those rules are not applied and count as vault locked or team key locked. A session already running keeps the rules it loaded until you start a new one.
@@ -61,17 +62,16 @@ To clear the map (`veilio map --clear`), close Claude Code first: an open sessio
 
 ## Configure
 
-In `.veilio/guard.json` in the project, or in the plugin's settings (`/config`). A `guard.json` committed to the repository is its author's, not yours: it can only add `rawOnly` paths, and its `mcpRestore` and `enabled` are ignored. The same holds in a project that is not a git checkout, where whose file it is cannot be told: put `mcpRestore` in the plugin's settings there. A committed `.veilio/map.json` or `aliases.json` stops the guard until it is removed from git.
+In the plugin's settings (`/config`). `.veilio/guard.json` in the project can add `rawOnly` paths and nothing else, committed or not, because a file in the project can be written by the agent: its `mcpRestore` and `enabled` are ignored, and the guard says so once. The agent may not write Claude Code's settings files (`.claude/settings.json`, `.claude/settings.local.json`, `~/.claude/settings.json`), which could switch the guard off. A committed `.veilio/map.json` or `aliases.json` stops the guard until it is removed from git. Outside a git checkout, only placeholders this session showed are restored.
 
 ```json
 {
-  "rawOnly": ["secrets/**", "*.sqlite"],
-  "mcpRestore": ["local_db"]
+  "rawOnly": ["secrets/**", "*.sqlite"]
 }
 ```
 
 - `rawOnly`: more files Claude must never read. These are added to the built-in list; the built-in list can't be shortened.
-- `mcpRestore`: MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do.
+- `mcpRestore` (plugin settings only): MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do.
 - `publicMarketplaces` (plugin settings only, not `guard.json`): plugin marketplaces you know are public, each as `<name>=<source>`, where the source is what Claude Code records for it in `~/.claude/plugins/known_marketplaces.json`, such as `acme-oss=github:acme/oss-plugins`. The skill and agent listings of their plugins are then sent as written. The name and the source must both match exactly. An entry with no source is ignored, and the guard says so once.
 
 ## For a team
