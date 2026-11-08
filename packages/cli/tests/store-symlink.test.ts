@@ -1,17 +1,20 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadMap, resolveMapPath, saveMap } from '../src/store.js'
+import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
 
 // Security audit 2026-11-01 (LOW, confirmed): saveMap followed links, so a
 // repository that committed .veilio/map.json (or .veilio itself) as a link
@@ -245,5 +248,96 @@ describe('the map is written only where .gitignore keeps it out of git (L4)', ()
       /does not keep it out of git/
     )
     expect(existsSync(join(cwd, '.veilio', 'aliases.json'))).toBe(false)
+  })
+})
+
+// Spec 085 L2 (security audit run-1, Q2 = A): on a shared machine the CLI
+// walked up to a /tmp/.veilio another user made, and wrote the real names into
+// that user's file. No second account in CI: process.getuid is stubbed, so
+// every file the test made looks like another user's.
+describe('a store another user owns is never used (L2)', () => {
+  const posix = process.platform !== 'win32'
+  const setup = () => {
+    const base = mkdtempSync(join(tmpdir(), 'veilio-own-'))
+    const proj = join(base, 'proj')
+    mkdirSync(join(proj, '.veilio'), { recursive: true })
+    mkdirSync(join(proj, 'work'))
+    writeFileSync(join(proj, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(join(proj, '.veilio', 'map.json'), '{"version":1,"map":{}}\n', { mode: 0o666 })
+    return { base, proj, mapPath: join(proj, '.veilio', 'map.json') }
+  }
+  const asAnotherUser = () => {
+    const me = process.getuid!()
+    vi.spyOn(process, 'getuid').mockReturnValue(me + 1)
+  }
+  const refusal = (dir: string) =>
+    `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory.`
+  afterEach(() => vi.restoreAllMocks())
+
+  it.runIf(posix)('findProjectRoot skips a .veilio another user owns', () => {
+    const { proj } = setup()
+    expect(findProjectRoot(join(proj, 'work'))).toBe(proj)
+    asAnotherUser()
+    expect(findProjectRoot(join(proj, 'work'))).toBe(join(proj, 'work'))
+  })
+
+  it.runIf(posix)("an explicit map in another user's store is refused, read and write", () => {
+    const { proj, mapPath } = setup()
+    asAnotherUser()
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(
+      refusal(join(proj, '.veilio'))
+    )
+    expect(readFileSync(mapPath, 'utf8')).not.toContain('PaymentGateway')
+  })
+
+  it.runIf(posix)(
+    "a forced write into another user's store, with no map there yet, is refused",
+    () => {
+      const { proj, mapPath } = setup()
+      rmSync(mapPath)
+      asAnotherUser()
+      expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' }, { force: true })).toThrow(
+        refusal(join(proj, '.veilio'))
+      )
+      expect(existsSync(mapPath)).toBe(false)
+    }
+  )
+
+  it.runIf(posix)('reserved.json, written without a read first, is refused there too', async () => {
+    const { saveReserved } = await import('../src/reservations.js')
+    const { proj, mapPath } = setup()
+    asAnotherUser()
+    expect(() =>
+      saveReserved(mapPath, {
+        version: 1,
+        instance: 'https://x',
+        account: 'a',
+        teamId: 't',
+        blocks: {},
+      })
+    ).toThrow(refusal(join(proj, '.veilio')))
+    expect(existsSync(join(proj, '.veilio', 'reserved.json'))).toBe(false)
+  })
+
+  it.runIf(posix)('the side files are held to the same rule', async () => {
+    const { addAliases } = await import('../src/reservations.js')
+    const { mapPath } = setup()
+    asAnotherUser()
+    expect(() => addAliases(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(/another user/)
+  })
+
+  it('the map is replaced by a new file, never written through the one there', () => {
+    const { base, mapPath } = setup()
+    // A hard link: the same file under two names, which a link check cannot see.
+    const outside = join(base, 'outside.json')
+    writeFileSync(outside, '{"version":1,"map":{}}\n')
+    rmSync(mapPath)
+    linkSync(outside, mapPath)
+    saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
+    expect(readFileSync(outside, 'utf8')).not.toContain('PaymentGateway')
+    expect(loadMap(mapPath)).toEqual({ __CLS__1: 'PaymentGateway' })
+    if (posix) expect(statSync(mapPath).mode & 0o777).toBe(0o600)
+    expect(readdirSync(join(base, 'proj', '.veilio')).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 })

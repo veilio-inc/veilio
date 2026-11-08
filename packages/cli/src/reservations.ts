@@ -7,10 +7,9 @@
 // it does not know. Nothing else writes these two files, and only the CLI and
 // the MCP server write them; the guard only reads `reserved.json`.
 
-import { chmodSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { isName, openStoreFile, prepareStoreWrite } from './store.js'
+import { isName, openStoreFile, prepareStoreWrite, writeStoreFile } from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -71,8 +70,7 @@ const aliasesPath = (mapPath: string) => join(dirname(mapPath), ALIASES_FILE)
 
 function writePrivate(path: string, value: unknown): void {
   prepareStoreWrite(basename(path), path)
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeStoreFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 /** The member's blocks, or null before any was reserved. A malformed file is refused, never numbered from. */

@@ -10,14 +10,18 @@
 // for anyone reading the repo.
 
 import {
-  chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
 import { trackedPaths } from './git-index.js'
@@ -31,7 +35,11 @@ export const STORE_FILE = 'map.json'
 export function findProjectRoot(from: string): string {
   let dir = resolve(from)
   for (;;) {
-    if (existsSync(join(dir, STORE_DIR)) || existsSync(join(dir, '.git'))) return dir
+    // Another user's .veilio is not this project's store (spec 085 L2): on a
+    // shared machine anyone can make /tmp/.veilio.
+    const store = join(dir, STORE_DIR)
+    if ((existsSync(store) && ownerOf(store) !== 'other') || existsSync(join(dir, '.git')))
+      return dir
     const parent = dirname(dir)
     if (parent === dir) return resolve(from)
     dir = parent
@@ -117,8 +125,48 @@ export function openStoreFile(what: string, path: string): string | null {
       throw new StoreRefusal(
         `refusing to read ${what}: ${p} is a link. The map is read only where it appears to be.`
       )
+  refuseOthers(dir, path)
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf8')
+}
+
+/** 'other' when `path` exists and belongs to another user. Windows (no uid): never. */
+function ownerOf(path: string): 'me' | 'other' | 'none' {
+  const me = process.getuid?.()
+  try {
+    return me === undefined || lstatSync(path).uid === me ? 'me' : 'other'
+  } catch {
+    return 'none'
+  }
+}
+
+/** The store directory and its file are this user's, or not used (spec 085 L2, Q2 = A). */
+function refuseOthers(dir: string, path: string): void {
+  if (ownerOf(dir) === 'other' || ownerOf(path) === 'other')
+    throw new StoreRefusal(
+      `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory.`
+    )
+}
+
+/**
+ * Write a store file as a new file beside it, then rename it into place
+ * (spec 085 L2): never written through the file already there, which may be
+ * another name for a file elsewhere (a hard link) or another user's.
+ */
+export function writeStoreFile(path: string, text: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`)
+  const fd = openSync(tmp, 'wx', 0o600)
+  try {
+    try {
+      writeSync(fd, text)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmp, path)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw err
+  }
 }
 
 /** The store path git tracks, as git names it, or null (none, or no way to tell). */
@@ -224,10 +272,8 @@ export function saveMap(
   // does not quietly erase the provenance a `pull` recorded.
   const remote = options.remote ?? loadRemote(path)
   const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
-  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
-  // writeFileSync only applies `mode` when creating the file; enforce it on
-  // rewrite too so a pre-existing world-readable map gets locked down.
-  chmodSync(path, 0o600)
+  // A new 0600 file each time, so a world-readable map already there is replaced too.
+  writeStoreFile(path, `${JSON.stringify(payload, null, 2)}\n`)
 }
 
 /**
@@ -243,6 +289,7 @@ export function saveMap(
 export function prepareStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
   refuseLinks(what, dir, path)
+  refuseOthers(dir, path)
   mkdirSync(dir, { recursive: true })
   if (basename(dir) !== STORE_DIR) return
   const ignore = join(dir, '.gitignore')
