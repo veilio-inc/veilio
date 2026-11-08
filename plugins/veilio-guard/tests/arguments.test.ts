@@ -604,3 +604,25 @@ test('a hand-marked value inside a word with a letter outside ASCII is still ref
   expect(no.deny).toContain('marked by hand')
   expect(ran).toBe(0)
 })
+
+// Round 5 additions #6: a placeholder that is never written back says so,
+// shown or not.
+test('R5b#6: outside git, an unshown hand-marked placeholder is refused as never written back', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __MANUAL__1: 'Contoso Harbour Bank' }) },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { type: 'create', filePath: `${ROOT}/a.js` } })
+  )
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/a.js`,
+    content: 'bank = "__MANUAL__1"',
+  })
+  expect(out.deny).toContain('which is never written back')
+  expect(seen).toHaveLength(0)
+})

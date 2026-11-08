@@ -13,6 +13,7 @@ import {
   recordedPrompt,
   ROOT,
   res,
+  ownEnv,
 } from './helpers.ts'
 import { COLD_FILES } from './fixtures/cold.ts'
 import type { Fields } from './fixtures/recorded.ts'
@@ -52,6 +53,7 @@ function cache(rules: unknown[], owner = ME, skipped?: Record<string, number>): 
 }
 
 function home(on: TestOn): void {
+  ownEnv(on)
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
 }
 

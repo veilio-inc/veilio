@@ -240,14 +240,19 @@ test('a nested cd does not move the shell: a write to settings.json after cd .cl
   )
   const calls: [string, string | undefined][] = [
     ['cd .claude', undefined],
-    ['echo $(cd /tmp && pwd)', undefined],
+    // Spec 085 review round 5: a cd in a substitution is no followed cd, so
+    // it is refused (#44); the point here holds either way.
+    [
+      'echo $(cd /tmp && pwd)',
+      'Veilio refused this call: a cd Veilio cannot follow (`cd`) could let a later command read a file Veilio keeps away from the model. Only a cd with one plain path, at the start of its command, is followed (a bare folder name only while CDPATH is unset: write ./folder). Name the files by their full path, or ask the user.',
+    ],
     ["echo '{}' > settings.json", SETTINGS_REFUSED],
   ]
   for (const [command, want] of calls) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
     expect(`${command} -> ${out.deny}`).toBe(`${command} -> ${want}`)
   }
-  expect(seen).toHaveLength(2)
+  expect(seen).toHaveLength(1)
 })
 
 test('the off switch in ~/.veilio cannot be written by a shell command', async ($, on) => {

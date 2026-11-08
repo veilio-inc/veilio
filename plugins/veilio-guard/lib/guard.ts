@@ -117,6 +117,9 @@ export interface GuardIO {
   isLink?(path: string): Promise<boolean>
   /** Whether the machine is Windows. Absent: the engine reads the platform. */
   windows?(): Promise<boolean>
+  /** CDPATH in the guard process's environment, which the agent's shell
+   *  inherits. Absent: CDPATH may be set (review round 5). */
+  cdpath?(): Promise<string | undefined>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -464,6 +467,17 @@ export class Guard {
           .then(() => host())
           .catch(() => undefined)
       : undefined
+    // Review round 5: a bare relative cd is followed only while CDPATH is
+    // known to be unset; an environment that cannot be read may set it.
+    const cdpath = this.io.cdpath
+    this.cdpathMaybe = cdpath
+      ? await Promise.resolve()
+          .then(() => cdpath.call(this.io))
+          .then(
+            (v) => v !== undefined && v !== '',
+            () => true
+          )
+      : true
     await this.readSettings()
     await this.readOffRecord()
     await this.reloadMap()
@@ -1418,6 +1432,10 @@ export class Guard {
   /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
    *  null once a cd went somewhere that cannot be told (`~` with no home). */
   private shellDir: string | null = null
+  /** CDPATH may be set in the shell the agent's commands run in (round 5). */
+  private cdpathMaybe = true
+  /** A command named HOME: a `~` cd target no longer says where it goes. */
+  private homeUnknown = false
   /** Windows, as the host says; undefined: the engine reads the platform. */
   private windows: boolean | undefined
   private moved(dir: string | null, target: string): string | null {
@@ -1488,7 +1506,12 @@ export class Guard {
       // __FILE__ and __CLASS__ belong to the language and stay as written.
       r.unresolved.filter((p) => /\d$/.test(p)).forEach((p) => unresolved.add(p))
       r.altered.forEach((p) => altered.add(p))
-      restoresWhat ??= restoresNeverRestored(s, r.resolved, this.restoreMap)
+      // Round 5 #6: a kind never written back says so, shown or not.
+      restoresWhat ??= restoresNeverRestored(
+        s,
+        [...r.resolved, ...r.unresolved.filter((p) => Object.hasOwn(from, p))],
+        this.restoreMap
+      )
       return r.text
     }
 
@@ -1577,7 +1600,8 @@ export class Guard {
           ? /^(?:~(?=\/|$)|[A-Za-z]:)?[\p{L}\p{N}\p{M}_./+@-]*$/u
           : /^(?:~(?=\/|$))?[\p{L}\p{N}\p{M}_./+@-]*$/u
         const literal = literalCdTargets(c, ps)
-        const plain = (t: string) => judged.test(literal.has(t) ? t.replace(/ /g, '') : t)
+        // Round 5 #7: a literal target may hold spaces and parentheses.
+        const plain = (t: string) => judged.test(literal.has(t) ? t.replace(/[ ()]/g, '') : t)
         const into = cdTargetsToJudge(c, ps).find((t) => !plain(t) || cdIntoRawOnly(t, dirs))
         if (into !== undefined) {
           const shown = ps ? into.replace(/\//g, '\\') : into
@@ -1586,10 +1610,14 @@ export class Guard {
             false
           )
         }
-        const unplaced = cdNotFollowed(c, ps)
+        // The shell keeps what a command exports: once a command names
+        // CDPATH or HOME, neither is trusted for the rest of the session.
+        if (/\bCDPATH\b/i.test(c)) this.cdpathMaybe = true
+        if (/\bHOME\b/.test(c)) this.homeUnknown = true
+        const unplaced = cdNotFollowed(c, ps, this.cdpathMaybe, this.homeUnknown)
         if (unplaced !== undefined)
           return this.deny(
-            `a cd Veilio cannot follow (\`${this.applyText(unplaced, 'result', undefined, budget)}\`: CDPATH, cd -, the directory stack or more than one target) could let a later command read a file Veilio keeps away from the model. Use cd with one plain path, or name the files by their full path`
+            `a cd Veilio cannot follow (\`${this.applyText(unplaced, 'result', undefined, budget)}\`) could let a later command read a file Veilio keeps away from the model. Only a cd with one plain path, at the start of its command, is followed (a bare folder name only while CDPATH is unset: write ./folder). Name the files by their full path, or ask the user`
           )
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.

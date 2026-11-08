@@ -118,7 +118,8 @@ export function cdTargets(command: string, powershell = false): string[] {
         (words[k] === '' || words[k] === 'builtin' || words[k] === 'command')
       )
         k++
-      if (!CD_PROGRAMS.has((words[k] ?? '').toLowerCase())) continue
+      // A module-qualified cmdlet is the cmdlet (round 5 #4); `\` is `/` here.
+      if (!CD_PROGRAMS.has((words[k] ?? '').replace(MODULE, '').toLowerCase())) continue
       const target = words.slice(k + 1).find((w) => w !== '' && !(w.startsWith('-') && w !== '-'))
       if (target !== undefined && target !== '-') targets.push(target)
     }
@@ -137,7 +138,7 @@ export function allCdTargets(command: string, powershell = false): string[] {
   const hidden = [
     ...command.matchAll(
       new RegExp(
-        `(?:^|[\\s;&|(\`'"$])(?:${programs})\\s+(?:(?:-[A-Za-z@]+|--)\\s+)*['"]?([^\\s;&|)'"\`]+)`,
+        `(?:^|[\\s;&|(\`'"$${powershell ? '/' : ''}])(?:${programs})\\s+(?:(?:-[A-Za-z@]+|--)\\s+)*['"]?([^\\s;&|)'"\`]+)`,
         powershell ? 'gi' : 'g'
       )
     ),
@@ -162,12 +163,64 @@ export function literalCdTargets(command: string, powershell = false): Set<strin
   return out
 }
 
-/** A cd whose directory its words do not give (review round 4 #5): `CDPATH=`
- *  anywhere, `cd -` or a directory-stack entry (`+1`, `-2`), or more than one
- *  target (zsh's `cd old new`). Says which, or undefined. */
-export function cdNotFollowed(command: string, powershell = false): string | undefined {
-  if (/(?:^|[\s;&|(`'"$])CDPATH=/i.test(command)) return 'CDPATH'
+/** Wrappers that run the next word as a program: only `builtin` and
+ *  `command` may stand before a followed cd (review round 5). */
+const WRAPPERS = new Set(['builtin', 'command', 'env', 'exec', 'nohup', 'sudo', 'nice'])
+/** Shell words that may stand before a command and run it (round 5 #2). */
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time', '!'])
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
+/** A redirection operator alone (`>`, `2>`, `>>`, `<`), whose file is the next word. */
+const REDIRECT_ALONE = /^(?:\d*|&)?[<>]{1,2}$/
+/** A redirection with its file or descriptor in the same word (`>/dev/null`, `2>&1`). */
+const REDIRECT = /^(?:\d*|&)?[<>]{1,2}&?./
+/** PowerShell common parameters that take a value (`-ErrorAction Stop`). */
+const PS_VALUED = /^-(?:\w*Action|\w*Variable|OutBuffer|StackName)$/i
+/** A module-qualified cmdlet (`Microsoft.PowerShell.Management\Set-Location`). */
+const MODULE = /^[\w.]+\//
+
+/** Review rounds 4 #5 and 5: a cd is followed only in the one form whose
+ *  directory its words give - the cd program first (after shell keywords
+ *  such as `if` or `time`), or after `builtin` or `command`, with no `NAME=`
+ *  before it; exactly one target, redirections and a comment aside; and that
+ *  target absolute (`/`, `~`, `~/…`, a drive), `.`/`..`-led, or bare relative
+ *  only while CDPATH is known to be unset (PowerShell has no CDPATH). A
+ *  command with a cd that mentions CDPATH or DIRSTACK, one that sets HOME
+ *  beside a `~` target, and any cd the simple-command reading did not account
+ *  for are refused too, as is a `cd -`, a stack entry or two targets anywhere
+ *  in the text. Says what is refused, or undefined. `cdpathMaybe`: CDPATH may
+ *  be set for the shell. */
+export function cdNotFollowed(
+  command: string,
+  powershell = false,
+  cdpathMaybe = true,
+  homeUnknown = false
+): string | undefined {
   command = asWritten(command, powershell)
+  const programs = powershell ? 'cd|pushd|chdir|set-location|sl|push-location' : 'cd|pushd|chdir'
+  const edge = powershell ? `[\\s;&|(\`'"$/]` : `[\\s;&|(\`'"$]`
+  const judged = asJudged(command)
+  const mentioned = [
+    ...judged.matchAll(new RegExp(`(?:^|${edge})(?:${programs})(?=$|[\\s;&|)\`'"])`, 'gi')),
+  ].length
+  // DIRSTACK steers popd, which runs with no cd in sight (round 5 #5).
+  if (/\bDIRSTACK\b/i.test(command)) return 'DIRSTACK'
+  if (mentioned === 0) return undefined
+  if (/\bCDPATH\b/i.test(command)) return 'CDPATH'
+  // Anywhere in the text, inside another command included (round 5 #2).
+  const opts = '(?:(?:-[A-Za-z@]+|--)\\s+)*'
+  const stack = new RegExp(
+    `(?:^|${edge})(?:${programs})\\s+${opts}([-+]\\d*)(?=$|[\\s;&|)\`'"])`,
+    'i'
+  ).exec(judged)
+  if (stack) return stack[1]
+  const word = `[^\\s;&|)'"\`#<>-][^\\s;&|)'"\`<>]*`
+  const two = new RegExp(
+    `(?:^|${edge})(?:${programs})\\s+${opts}(${word})\\s+(${word})(?=$|[\\s;&|)])`,
+    'i'
+  ).exec(judged)
+  if (two && !(powershell && PS_VALUED.test(two[1]!))) return `${two[1]} ${two[2]}`
+  let followed = 0
+  const targets: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
     const chain = splitChain(piece)
     for (const part of chain ?? [piece]) {
@@ -175,19 +228,47 @@ export function cdNotFollowed(command: string, powershell = false): string | und
         .map((w) => w.replace(/^[({]+|[)}]+$/g, ''))
         .filter((w) => w !== '')
       let k = 0
-      while (k < words.length && (words[k] === 'builtin' || words[k] === 'command')) k++
-      if (!CD_PROGRAMS.has((words[k] ?? '').toLowerCase())) continue
+      let prefixed = false
+      while (k < words.length) {
+        const w = words[k]!
+        if (ASSIGNMENT.test(w)) prefixed = true
+        else if (KEYWORDS.has(w)) {
+          // `time` and `!` run what follows; the others start a clause.
+        } else if (WRAPPERS.has(w)) prefixed ||= w !== 'builtin' && w !== 'command'
+        else if (!(k > 0 && WRAPPERS.has(words[k - 1]!) && w.startsWith('-'))) break
+        k++
+      }
+      const raw = words[k]
+      const program = powershell && raw ? raw.replace(MODULE, '') : raw
+      if (!program || !CD_PROGRAMS.has(program.toLowerCase())) continue
+      if (prefixed) return words.slice(0, k + 1).join(' ')
       const positional: string[] = []
       let options = true
-      for (const w of words.slice(k + 1)) {
-        if (options && w === '--') options = false
+      const rest = words.slice(k + 1)
+      for (let i = 0; i < rest.length; i++) {
+        const w = rest[i]!
+        if (w.startsWith('#')) break
+        if (REDIRECT_ALONE.test(w)) i++
+        else if (REDIRECT.test(w) || /^&\d*$/.test(w)) continue
+        else if (powershell && PS_VALUED.test(w)) i++
+        else if (options && w === '--') options = false
         else if (options && /^-[A-Za-z@]/.test(w)) continue
         else positional.push(w)
       }
-      if (positional.length > 1) return positional.join(' ')
-      if (positional[0] !== undefined && /^[-+]\d*$/.test(positional[0])) return positional[0]
+      if (positional.length !== 1) return [program, ...positional].join(' ')
+      const t = positional[0]!
+      // `cd -` (OLDPWD) and the directory stack (`+1`, `-2`).
+      if (/^[-+]\d*$/.test(t)) return t
+      const placed =
+        /^(?:\/|~(?:\/|$)|[A-Za-z]:\/|\.\.?(?:\/|$))/.test(t) || powershell || !cdpathMaybe
+      if (!placed) return t
+      targets.push(t)
+      followed++
     }
   }
+  if (followed < mentioned) return 'cd'
+  if ((homeUnknown || /\bHOME\b/.test(command)) && targets.some((t) => t.startsWith('~')))
+    return 'HOME'
   return undefined
 }
 
@@ -229,11 +310,16 @@ function textOnly(words: readonly string[]): boolean {
  *  (`grep "cd *" scripts/`; never `echo "cd x" | sh`). Split as cdTargets
  *  splits, and read with the shell's own quoting. */
 export function cdTargetsToJudge(command: string, powershell = false): string[] {
-  command = asWritten(command, powershell)
+  return allCdTargets(asJudged(asWritten(command, powershell)), powershell)
+}
+
+/** The command as a cd check reads it: with quoted text left out only when
+ *  every part of it is a TEXT_ONLY program (see cdTargetsToJudge). */
+function asJudged(command: string): string {
   const parts: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
     const chain = splitChain(piece)
-    if (chain === null) return allCdTargets(command, powershell)
+    if (chain === null) return command
     parts.push(...chain)
   }
   const text =
@@ -246,7 +332,7 @@ export function cdTargetsToJudge(command: string, powershell = false): string[] 
         !/[(){}<>]/.test(outsideQuotes(part))
       )
     })
-  return allCdTargets(text ? parts.map(outsideQuotes).join(' ; ') : command, powershell)
+  return text ? parts.map(outsideQuotes).join(' ; ') : command
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

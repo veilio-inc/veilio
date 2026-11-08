@@ -1,7 +1,7 @@
 // Spec 033 FR-004: files that must never reach the model are refused before
 // the tool runs, whatever spelling reaches them.
 import { expect, test } from 'claude-code/testing'
-import { mapFile, project, ROOT, STRIPE, res } from './helpers.ts'
+import { mapFile, ownEnv, project, ROOT, STRIPE, res } from './helpers.ts'
 import type { Fields } from './fixtures/recorded.ts'
 
 const ENV = { [`${ROOT}/.env`]: `STRIPE_SECRET_KEY=${STRIPE}\n` }
@@ -238,8 +238,24 @@ test('the two-call form: the cd is refused, so the next short name cannot inheri
   expect(seen.length).toBe(0)
 })
 
-// `cd -` left this list in review round 4 #5: it goes to OLDPWD, which the words do not give.
-for (const command of ['cd packages/cli && npm test', 'cd src', 'cd ..', 'cd ~', 'cd'])
+// `cd -` left this list in review round 4 #5 (it goes to OLDPWD), and a bare
+// `cd` in round 5 (exactly one target; HOME may have been set before it).
+// Round 5 additions #1: redirections and comments are not targets.
+for (const command of [
+  'cd packages/cli && npm test',
+  'cd src',
+  'cd ..',
+  'cd ~',
+  'cd src 2>/dev/null || exit 1',
+  'cd packages/cli > /dev/null && npm test',
+  'pushd packages/cli > /dev/null && npm test && popd > /dev/null',
+  'cd src >/dev/null 2>&1',
+  'cd src </dev/null',
+  'cd src # into src',
+  'cd "my folder" 2>&1',
+  'if cd src; then ls; fi',
+  'time cd src',
+])
   test(`an ordinary cd still runs: ${command}`, async ($, on) => {
     project(on, SECRETS)
     let ran = false
@@ -662,4 +678,187 @@ test('R4#3: a Set-Location inside a subexpression is refused too', async ($, on)
     expect(`${command} -> ${out.deny}`).toContain('a cd there would let a later command read it')
   }
   expect(seen).toHaveLength(0)
+})
+
+// Review round 5: a cd is followed only in the one form whose directory its
+// words give - the cd program first (or after builtin/command), one plain
+// target, and a bare relative one only while CDPATH is known to be unset.
+// Anything else that runs a cd, and any mention of CDPATH, is refused (#44).
+test('R5: cd forms that set CDPATH or prefix the cd are refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'read CDPATH <<< ~/.config; cd gcloud',
+    'CDPATH+=:~/.config; cd gcloud',
+    ': ${CDPATH:=~/.config}; cd gcloud',
+    'printf -v CDPATH ~/.config; cd gcloud',
+    'HOME=~/.kube cd; cat config',
+    'OLDPWD=~/.kube cd -',
+    'env HOME=~/.kube cd',
+    'exec cd src',
+    'LC_ALL=C cd src',
+    'cd',
+    // Not among the reviewer's: a cd inside another command, and HOME set
+    // beside a `~` target.
+    "bash -c 'HOME=~/.kube cd; cat config'",
+    'HOME=~/.kube; cd ~; cat config',
+  ]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+  }
+  expect(seen).toHaveLength(0)
+})
+
+test('R5: with CDPATH in the environment, a bare relative cd is refused and ./ is followed', async ($, on) => {
+  project(on, SECRETS, { shellEnv: { CDPATH: '/home/dev/.config' } })
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  expect(
+    (await $.tool.call({ tool: 'Bash', command: 'cd gcloud', description: 'x' })).deny
+  ).toBeDefined()
+  expect(seen).toHaveLength(0)
+  expect(
+    (await $.tool.call({ tool: 'Bash', command: 'cd ./gcloud', description: 'x' })).deny
+  ).toBeUndefined()
+  expect(seen).toHaveLength(1)
+})
+
+test('R5: plain cds still run while CDPATH is unset', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const commands = [
+    'cd src',
+    'cd ./src',
+    'cd /abs/path',
+    'cd "my folder"',
+    'builtin cd src',
+    'cd ~',
+  ]
+  for (const command of commands)
+    expect(
+      `${command} -> ${(await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny}`
+    ).toBe(`${command} -> undefined`)
+  expect(seen).toHaveLength(commands.length)
+})
+
+test('R5: an environment the guard cannot read may set CDPATH: a bare relative cd is refused', async ($, on) => {
+  ownEnv(on)
+  on('env.get', () => ({ deny: 'no environment' }))
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  expect(
+    (await $.tool.call({ tool: 'Bash', command: 'cd src', description: 'x' })).deny
+  ).toBeDefined()
+  expect(
+    (await $.tool.call({ tool: 'Bash', command: 'cd ./src', description: 'x' })).deny
+  ).toBeUndefined()
+  expect(seen).toHaveLength(1)
+})
+
+test('R5b#1: PowerShell cds with a common parameter or a redirection still run', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const commands = [
+    'Set-Location src -ErrorAction Stop',
+    'Push-Location src > $null',
+    'Set-Location src -ErrorVariable err',
+    "cd 'C:\\Program Files (x86)\\App'",
+  ]
+  for (const command of commands)
+    expect(
+      `${command} -> ${(await $.tool.call({ tool: 'PowerShell', command, description: 'x' })).deny}`
+    ).toBe(`${command} -> undefined`)
+  expect(seen).toHaveLength(commands.length)
+})
+
+// Round 5 additions #2-#5: a cd behind a prefix, a shell keyword or a module
+// name is still a cd, and DIRSTACK is CDPATH's kin.
+test('R5b#2: a cd behind NAME=, if, time, ! or bash -c, a module-qualified Set-Location, and DIRSTACK are refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const [tool, command] of [
+    ['Bash', 'OLDPWD=~/.aws cd -'],
+    ['Bash', 'X= cd project .kube'],
+    ['Bash', 'if cd project .kube; then cat config; fi'],
+    ['Bash', 'if true; then cd -; fi'],
+    ['Bash', 'time cd -'],
+    ['Bash', '! cd -'],
+    ['Bash', "bash -c 'cd - && cat config'"],
+    ['Bash', 'cdpath+=(~/.config); cd gcloud'],
+    ['Bash', 'DIRSTACK[1]=~/.kube; pushd +1'],
+    ['Bash', 'dirstack=(~/.kube); cd ~1'],
+    ['PowerShell', 'Microsoft.PowerShell.Management\\Set-Location ~\\.aws; gc credentials'],
+  ] as const) {
+    const out = await $.tool.call({ tool, command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+  }
+  expect(seen).toHaveLength(0)
+})
+
+// A shell keeps what a command exports: CDPATH or HOME set in one call is
+// still set in the next, so the guard stops trusting either from then on.
+test('R5b#3: CDPATH or HOME set in one call is not trusted in the next', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await run('export CDPATH=~/.config')).deny).toBeUndefined()
+  expect((await run('cd gcloud')).deny).toBeDefined()
+  expect((await run('cd ./gcloud')).deny).toBeUndefined()
+  expect((await run('export HOME=~/.kube')).deny).toBeUndefined()
+  expect((await run('cd ~')).deny).toBeDefined()
+  expect(seen).toHaveLength(3)
+})
+
+test('R5b#3: a path under /home does not count as naming HOME', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await run('ls /home/dev/work')).deny).toBeUndefined()
+  expect((await run('cd ~')).deny).toBeUndefined()
+  expect(seen).toHaveLength(2)
+})
+
+test('R5b#5: a DIRSTACK assignment is refused with no cd in the command, and a plain popd runs', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await run('DIRSTACK[1]=~/.kube; popd; cat config')).deny).toBeDefined()
+  expect(seen).toHaveLength(0)
+  expect((await run('popd')).deny).toBeUndefined()
+  expect(seen).toHaveLength(1)
 })
