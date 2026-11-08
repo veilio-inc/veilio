@@ -7,10 +7,10 @@
 // it does not know. Nothing else writes these two files, and only the CLI and
 // the MCP server write them; the guard only reads `reserved.json`.
 
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { isName, openStoreFile, refuseLinks } from './store.js'
+import { isName, openStoreFile, prepareStoreWrite } from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -70,8 +70,7 @@ const reservedPath = (mapPath: string) => join(dirname(mapPath), RESERVED_FILE)
 const aliasesPath = (mapPath: string) => join(dirname(mapPath), ALIASES_FILE)
 
 function writePrivate(path: string, value: unknown): void {
-  refuseLinks(basename(path), dirname(path), path)
-  mkdirSync(dirname(path), { recursive: true })
+  prepareStoreWrite(basename(path), path)
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
 }

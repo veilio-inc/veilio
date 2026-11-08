@@ -219,17 +219,7 @@ export function saveMap(
       )
     }
   }
-  const dir = dirname(path)
-  // Security audit 2026-11-01: a store that is a link (one a repository
-  // committed) would put the real names in a file outside the project.
-  refuseLinks('the map', dir, path)
-  mkdirSync(dir, { recursive: true })
-  // A store directory inside a repo must never be committed — it holds the real
-  // names the anonymization exists to hide.
-  const ignore = join(dir, '.gitignore')
-  if (dir.endsWith(STORE_DIR) && !existsSync(ignore)) {
-    writeFileSync(ignore, '*\n', { mode: 0o600 })
-  }
+  prepareStoreWrite('the map', path)
   // Carried forward when the caller does not supply one, so an ordinary `scrub`
   // does not quietly erase the provenance a `pull` recorded.
   const remote = options.remote ?? loadRemote(path)
@@ -238,6 +228,36 @@ export function saveMap(
   // writeFileSync only applies `mode` when creating the file; enforce it on
   // rewrite too so a pre-existing world-readable map gets locked down.
   chmodSync(path, 0o600)
+}
+
+/**
+ * Everything that must hold before a store file is written: neither the store
+ * directory nor the file is a link (security audit 2026-11-01: a link a
+ * repository committed would put the real names outside the project), and a
+ * `.veilio` directory carries a `.gitignore` that keeps it out of git. One
+ * there already must be a plain file with a line `*` (spec 085 L4: a
+ * repository can commit its own, which ignores nothing); a missing one is
+ * written. It is never rewritten: it may be tracked, and a silent change to a
+ * tracked file is worse than a refusal.
+ */
+export function prepareStoreWrite(what: string, path: string): void {
+  const dir = dirname(path)
+  refuseLinks(what, dir, path)
+  mkdirSync(dir, { recursive: true })
+  if (basename(dir) !== STORE_DIR) return
+  const ignore = join(dir, '.gitignore')
+  let st
+  try {
+    st = lstatSync(ignore)
+  } catch {
+    // None there: written, and never through a link planted after the check.
+    writeFileSync(ignore, '*\n', { mode: 0o600, flag: 'wx' })
+    return
+  }
+  if (!st.isFile() || !readFileSync(ignore, 'utf8').split(/\r?\n/).includes('*'))
+    throw new StoreRefusal(
+      `refusing to write ${what}: ${dir}/.gitignore does not keep it out of git (it must be a plain file with a line \`*\`). Fix that file, then run again.`
+    )
 }
 
 /** Throws when any of `paths` is a link: the store's files are written only

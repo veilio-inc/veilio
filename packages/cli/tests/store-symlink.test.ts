@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { loadMap, resolveMapPath, saveMap } from '../src/store.js'
@@ -141,5 +150,77 @@ describe('the store is never read through a link (L6)', () => {
     const { cwd } = setup()
     saveMap(resolveMapPath(null, cwd), { __CLS__1: 'QuasarLedger' })
     expect(loadMap(resolveMapPath(null, cwd))).toEqual({ __CLS__1: 'QuasarLedger' })
+  })
+})
+
+// Spec 085 L4 (security audit run-1): saveMap trusted any existing
+// .veilio/.gitignore, so a repository that committed one without `*` left the
+// real names unignored, and a dangling link there was followed.
+describe('the map is written only where .gitignore keeps it out of git (L4)', () => {
+  const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const setup = () => {
+    const base = mkdtempSync(join(tmpdir(), 'veilio-ign-'))
+    const cwd = join(base, 'proj')
+    mkdirSync(join(cwd, '.veilio'), { recursive: true })
+    return { base, cwd, mapPath: resolveMapPath(null, cwd) }
+  }
+  const refusal = (dir: string) =>
+    `refusing to write the map: ${dir}/.gitignore does not keep it out of git (it must be a plain file with a line \`*\`). Fix that file, then run again.`
+
+  it('a committed .gitignore without `*` is refused, and no name is written', () => {
+    const { cwd, mapPath } = setup()
+    execFileSync('git', ['init', '-q'], { cwd, env: GIT_ENV, stdio: 'ignore' })
+    writeFileSync(join(cwd, '.veilio', '.gitignore'), '# kept\n')
+    execFileSync('git', ['add', '.veilio/.gitignore'], { cwd, env: GIT_ENV, stdio: 'ignore' })
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(
+      refusal(join(cwd, '.veilio'))
+    )
+    expect(existsSync(mapPath)).toBe(false)
+  })
+
+  it('a .gitignore that is a dangling link is refused, and its target is not created', () => {
+    const { base, cwd, mapPath } = setup()
+    symlinkSync(join(base, 'target'), join(cwd, '.veilio', '.gitignore'))
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(
+      refusal(join(cwd, '.veilio'))
+    )
+    expect(existsSync(join(base, 'target'))).toBe(false)
+    expect(existsSync(mapPath)).toBe(false)
+  })
+
+  it('a .gitignore that is a link to a file holding `*` is refused too', () => {
+    const { base, cwd, mapPath } = setup()
+    writeFileSync(join(base, 'star'), '*\n')
+    symlinkSync(join(base, 'star'), join(cwd, '.veilio', '.gitignore'))
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(
+      /does not keep it out of git/
+    )
+  })
+
+  it("an older CLI's `*` file passes, and so does one with other lines too", () => {
+    for (const body of ['*\n', '*', '# veilio\n*\r\n!keep\n']) {
+      const { cwd, mapPath } = setup()
+      writeFileSync(join(cwd, '.veilio', '.gitignore'), body)
+      saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
+      expect(existsSync(mapPath)).toBe(true)
+    }
+  })
+
+  it('no .gitignore: one is written, `*`, 0600', () => {
+    const { cwd, mapPath } = setup()
+    saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
+    const ignore = join(cwd, '.veilio', '.gitignore')
+    expect(readFileSync(ignore, 'utf8')).toBe('*\n')
+    if (process.platform !== 'win32') expect(statSync(ignore).mode & 0o777).toBe(0o600)
+  })
+
+  it('the side files are held to the same rule', async () => {
+    const { addAliases } = await import('../src/reservations.js')
+    const { cwd, mapPath } = setup()
+    writeFileSync(join(cwd, '.veilio', '.gitignore'), '# kept\n')
+    expect(() => addAliases(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(
+      /does not keep it out of git/
+    )
+    expect(existsSync(join(cwd, '.veilio', 'aliases.json'))).toBe(false)
   })
 })
