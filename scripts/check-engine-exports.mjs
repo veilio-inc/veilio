@@ -89,7 +89,9 @@ function importsOf(text, dep, into) {
 function entryOf(manifest, sub) {
   const exp = manifest.exports
   if (exp === undefined) return sub === '.' ? (manifest.main ?? 'index.js') : sub
-  const target = typeof exp === 'string' ? (sub === '.' ? exp : undefined) : exp[sub]
+  // An object with no `.`-keys is conditions alone: the `.` entry (round 3).
+  const conditions = typeof exp === 'object' && !Object.keys(exp).some((k) => k.startsWith('.'))
+  const target = typeof exp === 'string' || conditions ? (sub === '.' ? exp : undefined) : exp[sub]
   if (target === undefined || target === null) return null
   return typeof target === 'string' ? target : (target.import ?? target.default ?? null)
 }

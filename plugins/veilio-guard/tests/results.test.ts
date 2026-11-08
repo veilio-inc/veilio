@@ -1449,6 +1449,26 @@ test('after a private key is removed, another key of the same kind is not withhe
   expect(head.deny).toBeUndefined()
 })
 
+// Review round 3 #2: a key body too short to skip the shared prefix is
+// learned whole, never as an empty string that matches every text.
+test('after a short private key is removed, its body is still removed and other text is not withheld', async ($, on) => {
+  const body = btoa('short fake key, not real')
+  const short = `-----BEGIN EC PRIVATE KEY-----\n${body}\n-----END EC PRIVATE KEY-----\n`
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = short
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(one)).not.toContain(body)
+  // Learned: it comes back spaced and is withheld.
+  stdout = `${[...body].join(' ')}\n`
+  const two = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(two.deny).toBe(RESHAPED)
+  stdout = 'all tests passed\n'
+  const three = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(res(three).stdout).toBe('all tests passed\n')
+})
+
 test('after a private key is removed, a name like parseRsaPrivateKey is saved, not quarantined', async ($, on) => {
   const parse = 'export function parseRsaPrivateKey(pem: string) {}\n'
   const p = await afterPemRemoved($, on, () => '', parse)

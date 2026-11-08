@@ -264,9 +264,12 @@ export function projectRawOnly(project: string): string[] {
   try {
     return guardJson.get(project, mtimeMs, () => readFileSync(path, 'utf8'))
   } catch (err) {
-    if (!(err instanceof SyntaxError)) return []
+    // Unreadable (EACCES, swapped away) refuses too, as it stops the guard
+    // (review round 3): never read as "no patterns".
     throw new ToolError(
-      '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+      err instanceof SyntaxError
+        ? '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+        : 'Veilio could not read .veilio/guard.json, so it cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
     )
   }
 }

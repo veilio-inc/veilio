@@ -404,7 +404,13 @@ export class Guard {
     // Spec 078 R7: with no listing, nobody can tell who wrote the map.
     this.noListing = committed === null
     this.home = home
-    this.windows = this.io.windows ? await this.io.windows().catch(() => undefined) : undefined
+    // A host may answer with a promise or a plain boolean (review round 3).
+    const host = this.io.windows
+    this.windows = host
+      ? await Promise.resolve()
+          .then(() => host())
+          .catch(() => undefined)
+      : undefined
     await this.readSettings()
     await this.readOffRecord()
     await this.reloadMap()

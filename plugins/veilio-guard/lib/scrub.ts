@@ -868,7 +868,10 @@ function pemBody(block: string): string {
     .trim()
   let at = 0
   for (let shared = 64; at < body.length && shared > 0; at++) if (!/\s/.test(body[at]!)) shared--
-  return body.slice(at).trim()
+  // Too short to skip the prefix and keep 16 characters: learned whole
+  // (review round 3), never as an empty string.
+  const rest = body.slice(at).trim()
+  return rest.replace(/\s+/g, '').length >= 16 ? rest : body
 }
 
 /** `text` with each finding of `scan` removed as applyMap removes it: a

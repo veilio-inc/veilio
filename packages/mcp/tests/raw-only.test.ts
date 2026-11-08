@@ -2,7 +2,7 @@
 // file on the guard's raw-only list - one list, the engine's - as written or
 // through a link.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { callTool, type ToolContext } from '../src/tools.js'
@@ -128,6 +128,26 @@ describe('raw-only paths (spec 078)', () => {
       expect(r.text).not.toContain('db.internal')
     }
   })
+
+  // Review round 3 #3: a guard.json that cannot be read refuses, as it
+  // stops the guard; it is never read as "no patterns".
+  it.skipIf(process.getuid?.() === 0)(
+    'a .veilio/guard.json that cannot be read refuses every file',
+    () => {
+      const path = join(cwd, '.veilio', 'guard.json')
+      writeFileSync(path, '{"rawOnly":["secrets/**"]}\n')
+      chmodSync(path, 0o000)
+      try {
+        const r = callTool('anonymize_file', { path: 'src/pay.ts' }, ctx)
+        expect(r.isError).toBe(true)
+        expect(r.text).toContain(
+          'Veilio could not read .veilio/guard.json, so it cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+        )
+      } finally {
+        chmodSync(path, 0o600)
+      }
+    }
+  )
 
   it('a .veilio/guard.json that is not valid JSON refuses every file', () => {
     writeFileSync(join(cwd, '.veilio', 'guard.json'), '{"rawOnly": [\n')

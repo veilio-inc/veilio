@@ -133,26 +133,34 @@ export function allCdTargets(command: string): string[] {
   return [...new Set([...cdTargets(command), ...hidden])]
 }
 
-// The programs that never run what they are given (second security review
-// of round 2): only their quoted arguments are read as text.
-const TEXT_ONLY = new Set(['grep', 'rg', 'echo', 'printf'])
+// The programs that never run what they are given (security reviews of
+// round 2 and 3): only they can make quoted text plain text.
+const TEXT_ONLY = new Set(['grep', 'rg', 'echo', 'printf', 'wc', 'head', 'sort', 'uniq'])
 
 /** The cd targets a refusal judges: allCdTargets over the whole command
- *  (fail closed), with one exception: the quoted arguments of grep, rg, echo
- *  or printf, in a part with nothing the shell expands, are text (`grep "cd *"`).
- *  Split as cdTargets splits, and read with the shell's own quoting. */
+ *  (fail closed). Quoted text is read as text only when every part of the
+ *  chain is a TEXT_ONLY program, nothing expands, and no part has a
+ *  subshell, brace, process substitution or redirection outside quotes
+ *  (`grep "cd *" scripts/`; never `echo "cd x" | sh`). Split as cdTargets
+ *  splits, and read with the shell's own quoting. */
 export function cdTargetsToJudge(command: string): string[] {
-  const kept: string[] = []
+  const parts: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
-    const parts = splitChain(piece)
-    if (parts === null) return allCdTargets(command)
-    for (const part of parts) {
-      const words = shellWords(part)
-      const text = words !== null && TEXT_ONLY.has(words[0] ?? '') && !shellExpands(part)
-      kept.push(text ? outsideQuotes(part) : part)
-    }
+    const chain = splitChain(piece)
+    if (chain === null) return allCdTargets(command)
+    parts.push(...chain)
   }
-  return allCdTargets(kept.join(' ; '))
+  const text =
+    !shellExpands(command) &&
+    parts.every((part) => {
+      const words = shellWords(part)
+      return (
+        words !== null &&
+        (words.length === 0 || TEXT_ONLY.has(words[0]!)) &&
+        !/[(){}<>]/.test(outsideQuotes(part))
+      )
+    })
+  return allCdTargets(text ? parts.map(outsideQuotes).join(' ; ') : command)
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

@@ -84,6 +84,25 @@ describe('the engine exports the published tools import', () => {
     expect(r.status).toBe(0)
   })
 
+  // Review round 3 #4: `exports` written as conditions alone is the `.` entry.
+  it('reads an exports field of conditions alone as the package entry', () => {
+    put(
+      'engine/package.json',
+      JSON.stringify({
+        name: '@veilio-inc/engine',
+        type: 'module',
+        exports: { import: './dist/index.js', default: './dist/index.js' },
+      })
+    )
+    put(
+      'engine/dist/index.js',
+      'export const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\n'
+    )
+    const r = run()
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+
   it('fails when a package has no build to read', () => {
     put('engine/dist/index.js', 'export const restore = 1\n')
     rmSync(join(base, 'tools/packages/cli/dist'), { recursive: true })

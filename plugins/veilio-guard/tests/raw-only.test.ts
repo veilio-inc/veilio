@@ -374,6 +374,13 @@ for (const command of [
   'grep -n x README.md\ncd .a*s && cat credentials',
   'echo "$x" "cd .a*s && cat credentials"',
   'git commit -m "ci: cd [skip ci]"',
+  // Round 3 security review: text piped into a shell, and substitutions,
+  // braces or redirections beside a text-only program.
+  'echo "cd .aws && cat credentials" | sh',
+  "printf 'cd .kube\\ncat config' | bash",
+  'echo <(cd .aws; cat credentials)',
+  'grep -h "cd .aws" notes.txt > >(sh)',
+  'echo "cd .aws" | { sh; }',
 ])
   test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
     project(on, {})
@@ -410,7 +417,12 @@ test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on)
   project(on, {})
   const seen: string[] = []
   on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
-  const commands = ['grep -rn "cd *" scripts/', 'echo "next: cd [the folder]"']
+  const commands = [
+    'grep -rn "cd *" scripts/',
+    'echo "next: cd [the folder]"',
+    'grep "cd x" notes.txt | wc -l',
+    'grep -h "cd *" notes.txt | sort | uniq | head -3',
+  ]
   for (const command of commands) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
     expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
