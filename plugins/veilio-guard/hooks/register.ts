@@ -182,7 +182,6 @@ async function ready($: Host): Promise<Guard> {
         return undefined
       },
       windows: async () => windows,
-      cdpath: () => $.env.get('CDPATH'),
       list: (root) => gitList($, root, []),
       listVeilio: (root) => gitList($, root, ['--', ':(icase).veilio']),
     }

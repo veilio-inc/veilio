@@ -8,7 +8,7 @@
 import { expect, test } from 'claude-code/testing'
 import { generate } from './fixtures/generate.ts'
 import { leaks } from './fixtures/oracle.ts'
-import { eventOf, mapFile, ownEnv, project, recorded, recordedPrompt, ROOT } from './helpers.ts'
+import { eventOf, mapFile, project, recorded, recordedPrompt, ROOT } from './helpers.ts'
 import type { ToolEvent } from '../lib/guard.ts'
 import type { Fields } from './fixtures/recorded.ts'
 import type { TestHost, TestOn } from './kit.ts'
@@ -50,7 +50,6 @@ function property(entry: (typeof ENTRY)[number]) {
     )
     const map: Record<string, string> = {}
     for (const c of cases) Object.assign(map, c.map)
-    ownEnv(on)
     project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) })
     let next: (e: ToolEvent) => Fields = () => ({})
     on('tool.call', (_, e) => next(e))

@@ -1,6 +1,6 @@
 // Spec 085 review round 1 (correctness) #2: the git check a save makes asks
 // git for .veilio only, and waits no longer than the result's own deadline.
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { Guard, type GuardIO } from '../../plugins/veilio-guard/lib/guard.ts'
 
 const ROOT = '/work/project'
@@ -188,9 +188,9 @@ it('a save whose git answers late asks again at the next save, and finds the map
   expect(guard.stoppedReason).toContain('tracked by git')
 })
 
-// Review round 3 #2: a sleep that really waits, and a result whose deadline
-// is all but spent: git still gets a short minimum (500 ms) at a save, and a
-// git that misses even that is asked again at the next save.
+// Review round 3 #2, made deterministic in round 6b: vitest's fake timers
+// drive both the guard's sleep and git's answer, and Date.now, so the minimum
+// wait is checked by what resolves first, not by how loaded the machine is.
 function timedHost(veilio: (n: number) => Promise<string[] | null>) {
   const h = host()
   let n = 0
@@ -219,33 +219,49 @@ const readNamed = (guard: Guard, name: string, deadline: number) => {
   )
 }
 const after = (ms: number, v: string[]) => new Promise<string[]>((r) => setTimeout(() => r(v), ms))
+/** Runs `work` with every timer it sets fired in order of its due time. */
+async function settled<T>(work: Promise<T>): Promise<T | undefined> {
+  const done = work.catch(() => undefined)
+  await vi.advanceTimersByTimeAsync(10_000)
+  return done
+}
 
-it('with the deadline 2 ms away, a git that answers in 50 ms still stops the guard at that save', async () => {
-  const { io, files } = timedHost((n) =>
-    n === 1 ? Promise.resolve([]) : after(50, ['.veilio/map.json'])
-  )
-  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
-  await guard.load(ROOT)
-  files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
-  await readNamed(guard, 'PaymentGatewayFake', Date.now() + 2).catch(() => undefined)
-  expect(guard.state).toBe('stopped')
-  expect(guard.stoppedReason).toContain('tracked by git')
+it('with the deadline 2 ms away, a git that answers at 50 ms (before the 500 ms minimum) stops the guard at that save', async () => {
+  vi.useFakeTimers()
+  try {
+    const { io, files } = timedHost((n) =>
+      n === 1 ? Promise.resolve([]) : after(50, ['.veilio/map.json'])
+    )
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await settled(guard.load(ROOT))
+    files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+    await settled(readNamed(guard, 'PaymentGatewayFake', Date.now() + 2))
+    expect(guard.state).toBe('stopped')
+    expect(guard.stoppedReason).toContain('tracked by git')
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
-it('with the deadline 2 ms away, a git slower than the minimum is asked again, and the next save stops the guard', async () => {
-  const { io, files, asked } = timedHost((n) =>
-    n === 1
-      ? Promise.resolve([])
-      : n === 2
-        ? new Promise<string[] | null>(() => undefined)
-        : Promise.resolve(['.veilio/map.json'])
-  )
-  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
-  await guard.load(ROOT)
-  files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
-  await readNamed(guard, 'PaymentGatewayFake', Date.now() + 2)
-  expect(guard.state).toBe('on')
-  await readNamed(guard, 'InvoiceBuilderFake', Date.now() + 2000).catch(() => undefined)
-  expect(asked()).toBe(3)
-  expect(guard.state).toBe('stopped')
+it('with the deadline 2 ms away, a git that answers after the 500 ms minimum is asked again, and the next save stops the guard', async () => {
+  vi.useFakeTimers()
+  try {
+    const { io, files, asked } = timedHost((n) =>
+      n === 1
+        ? Promise.resolve([])
+        : n === 2
+          ? after(600, [])
+          : Promise.resolve(['.veilio/map.json'])
+    )
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await settled(guard.load(ROOT))
+    files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+    await settled(readNamed(guard, 'PaymentGatewayFake', Date.now() + 2))
+    expect(guard.state).toBe('on')
+    await settled(readNamed(guard, 'InvoiceBuilderFake', Date.now() + 2000))
+    expect(asked()).toBe(3)
+    expect(guard.state).toBe('stopped')
+  } finally {
+    vi.useRealTimers()
+  }
 })

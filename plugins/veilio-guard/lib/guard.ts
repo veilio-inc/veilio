@@ -30,9 +30,6 @@ import {
 import {
   allCdTargets,
   cdIntoRawOnly,
-  cdNotFollowed,
-  literalCdTargets,
-  SETS_HOME,
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
@@ -118,9 +115,6 @@ export interface GuardIO {
   isLink?(path: string): Promise<boolean>
   /** Whether the machine is Windows. Absent: the engine reads the platform. */
   windows?(): Promise<boolean>
-  /** CDPATH in the guard process's environment, which the agent's shell
-   *  inherits. Absent: CDPATH may be set (review round 5). */
-  cdpath?(): Promise<string | undefined>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -468,17 +462,6 @@ export class Guard {
           .then(() => host())
           .catch(() => undefined)
       : undefined
-    // Review round 5: a bare relative cd is followed only while CDPATH is
-    // known to be unset; an environment that cannot be read may set it.
-    const cdpath = this.io.cdpath
-    this.cdpathMaybe = cdpath
-      ? await Promise.resolve()
-          .then(() => cdpath.call(this.io))
-          .then(
-            (v) => v !== undefined && v !== '',
-            () => true
-          )
-      : true
     await this.readSettings()
     await this.readOffRecord()
     await this.reloadMap()
@@ -1433,8 +1416,6 @@ export class Guard {
   /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
    *  null once a cd went somewhere that cannot be told (`~` with no home). */
   private shellDir: string | null = null
-  /** CDPATH may be set in the shell the agent's commands run in (round 5). */
-  private cdpathMaybe = true
   /** Windows, as the host says; undefined: the engine reads the platform. */
   private windows: boolean | undefined
   private moved(dir: string | null, target: string): string | null {
@@ -1445,11 +1426,11 @@ export class Guard {
   }
   /** The directories a command's relative words may be read from: where the
    *  shell is, and where each of its own cds takes it. */
-  private shellDirsOf(command: string, powershell = false): string[] {
+  private shellDirsOf(command: string): string[] {
     const dirs: string[] = []
     let dir = this.shellDir
     if (dir !== null && dir !== this.cwd) dirs.push(dir)
-    for (const t of allCdTargets(command, powershell)) {
+    for (const t of allCdTargets(command)) {
       dir = this.moved(dir, t)
       if (dir !== null) dirs.push(dir)
     }
@@ -1587,42 +1568,15 @@ export class Guard {
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
-        // Review rounds 1 #8 and 3 #4: so could one the shell still expands
-        // (braces, variables, quoting, escapes, zsh's and extglob's patterns):
-        // judged only when every character is on a short list, a leading `~`
-        // and, in PowerShell, a drive letter and `\` as a separator.
-        // Round 4: PowerShell's `\` is read as `/`; `~` only as a home
-        // (`~/…`, not `~name`); a target quoted so nothing in it expands is
-        // its text, spaces included; a cd its words cannot place is refused.
-        const ps = e.tool === 'PowerShell'
-        const judged = ps
-          ? /^(?:~(?=\/|$)|[A-Za-z]:)?[\p{L}\p{N}\p{M}_./+@-]*$/u
-          : /^(?:~(?=\/|$))?[\p{L}\p{N}\p{M}_./+@-]*$/u
-        const literal = literalCdTargets(c, ps)
-        // Round 5 #7: a literal target may hold spaces and parentheses.
-        const plain = (t: string) => judged.test(literal.has(t) ? t.replace(/[ ()]/g, '') : t)
-        const into = cdTargetsToJudge(c, ps).find((t) => !plain(t) || cdIntoRawOnly(t, dirs))
-        if (into !== undefined) {
-          const shown = ps ? into.replace(/\//g, '\\') : into
+        const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
+        if (into !== undefined)
           return this.deny(
-            `Veilio keeps \`${this.applyText(shown, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+            `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
             false
-          )
-        }
-        // HOME and CDPATH are judged per command (round 6 #2): the Bash tool
-        // keeps no environment between calls.
-        const unplaced = cdNotFollowed(c, ps, this.cdpathMaybe)
-        if (unplaced === SETS_HOME)
-          return this.deny(
-            'it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user'
-          )
-        if (unplaced !== undefined)
-          return this.deny(
-            `a cd Veilio cannot follow (\`${this.applyText(unplaced, 'result', undefined, budget)}\`) could let a later command read a file Veilio keeps away from the model. Only a cd with one plain path, at the start of its command, is followed (a bare folder name only while CDPATH is unset: write ./folder). Name the files by their full path, or ask the user`
           )
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.
-        const moves = this.shellDirsOf(c, ps)
+        const moves = this.shellDirsOf(c)
         for (const word of pathsInCommand(c)) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
@@ -1784,8 +1738,7 @@ export class Guard {
     if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
       // Only a top-level cd moves the shell the next call runs in; one in a
       // substitution or a nested shell does not (review round 2 of spec 078).
-      for (const t of cdTargets(args.command, tool === 'PowerShell'))
-        this.shellDir = this.moved(this.shellDir, t)
+      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Round 3 #5: the map as read before this result's saves, for seeMinted.

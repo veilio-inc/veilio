@@ -7,7 +7,7 @@
 // ($.command.list, agent.offer) and the plugin cache, never from the text.
 // Shapes recorded from Claude Code 2.1.310 (research R7).
 import { expect, mock, test } from 'claude-code/testing'
-import { CANARY, mapFile, ownEnv, project, ROOT, STRIPE, type Options } from './helpers.ts'
+import { CANARY, mapFile, project, ROOT, STRIPE, type Options } from './helpers.ts'
 import type { TestHost, TestOn } from './kit.ts'
 
 const CONFIG = '/home/dev/.claude'
@@ -96,7 +96,6 @@ function setUp(
   } = {}
 ) {
   const files = { [`${ROOT}/.veilio/map.json`]: mapFile(MAP), ...CACHED, ...opts.files }
-  ownEnv(on)
   const p = project(on, files, opts)
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   on('agent.offer', (_, e) => ({ isOffered: !opts.withdrawn?.includes(e.agent) }))

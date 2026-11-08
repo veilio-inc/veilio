@@ -10,12 +10,6 @@ import type { TestOn } from './kit.ts'
 
 export const ROOT = '/work/project'
 
-/** The `on`s of tests that answer $.env.get themselves: project() then
- *  registers no answer of its own (the kit allows one per event). */
-const OWN_ENV = new WeakSet<object>()
-export function ownEnv(on: object): void {
-  OWN_ENV.add(on)
-}
 export const CANARY = 'QuasarLedgerReconciler'
 export const STRIPE = 'sk_live_' + '51HbFakeFakeFake0123456789abcdefABCDEF'
 
@@ -76,8 +70,6 @@ export type Options = {
   windows?: boolean
   /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record). */
   home?: string
-  /** The rest of the guard process's environment ($.env), e.g. CDPATH. */
-  shellEnv?: Record<string, string>
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -230,15 +222,10 @@ export function project(
       return { value: undefined }
     })
   }
-  // A test that answers $.env itself marks `on` with ownEnv first.
-  if (!OWN_ENV.has(on))
+  if (opts.windows || opts.home)
     on('env.get', (_, e) => ({
       value:
-        e.name === 'OS' && opts.windows
-          ? 'Windows_NT'
-          : e.name === 'HOME'
-            ? opts.home
-            : opts.shellEnv?.[e.name],
+        e.name === 'OS' && opts.windows ? 'Windows_NT' : e.name === 'HOME' ? opts.home : undefined,
     }))
   const policy = opts.policy ?? {}
   on('settings.read', () => ({ value: policy }))

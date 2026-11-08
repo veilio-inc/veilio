@@ -1,7 +1,7 @@
 // Spec 033 R7: the developer reads the real names; the model and the stored
 // transcript keep the placeholders. And the band says what the guard is doing.
 import { expect, mock, test } from 'claude-code/testing'
-import { CANARY, mapFile, ownEnv, project, ROOT } from './helpers.ts'
+import { CANARY, mapFile, project, ROOT } from './helpers.ts'
 import type { Fields } from './fixtures/recorded.ts'
 import type { TestHost, TestOn } from './kit.ts'
 
@@ -222,7 +222,6 @@ const RULE = {
 }
 
 async function band($: TestHost, on: TestOn, files: Record<string, string>): Promise<string> {
-  ownEnv(on)
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   await loaded($, on, {
     [`${HOME}/.veilio/credential.json`]: JSON.stringify({ token: 't', ...ME }),
