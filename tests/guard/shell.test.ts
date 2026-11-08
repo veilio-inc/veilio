@@ -438,9 +438,20 @@ describe('restoreRefusal: the runners the benchmark needed (spec 078 review roun
     'mvn -f=pom.xml test',
     'mvn --file pom.xml test',
     'mvn -fpom.xml test',
-    // Maven reads no POM from a URL or stdin; a device path is refused all the same.
+    // A -f or --root value is a relative path inside the project, never empty.
     'cat ledger/pom.xml | mvn -f /dev/stdin test',
     'mvn -f /dev/fd/0 test',
+    'mvn -f /tmp/x/pom.xml test',
+    'mvn -f ../x/pom.xml test',
+    'mvn -f a/../../x/pom.xml test',
+    'mvn -f ~/x/pom.xml test',
+    'mvn -f "" test',
+    'npx vitest run --root /tmp/x',
+    'npx vitest run --root ..',
+    'npx vitest run --root=',
+    'npx vitest run --root=/tmp/x tests/__PKG__16.test.ts',
+    'npx vitest run --root gateway/../.. tests/__PKG__16.test.ts',
+    'npx vitest run --root ~ tests/__PKG__16.test.ts',
     'mvn -q test __X__1',
     // vitest: --config stays off, and a reporter is a built-in name only.
     'npx vitest --config x',

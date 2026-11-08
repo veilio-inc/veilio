@@ -17,11 +17,21 @@ const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find'
 
 // Review round 2 #1: each test runner with the only options it may be given
 // (true: the option takes a value, as the next word or after `=`; a list: the
-// value must be one of it). Any other option makes the command not a test
-// run: an allow-list, since a runner's options that load code or run a
-// program keep growing. Positional words (paths, filters, vitest's `run`) are
-// free.
-type Allowed = Readonly<Record<string, boolean | readonly string[]>>
+// value must be one of it; 'path': a path inside the project). Any other
+// option makes the command not a test run: an allow-list, since a runner's
+// options that load code or run a program keep growing. Positional words
+// (paths, filters, vitest's `run`) are free.
+type Allowed = Readonly<Record<string, boolean | 'path' | readonly string[]>>
+
+/** Whether a -f or --root value is a relative path inside the project: not
+ *  empty (the current directory under another config), not absolute, not
+ *  from home or a variable, and no `..` (review round 4). */
+function inProject(value: string): boolean {
+  return (
+    value !== '' && !/^[/~]/.test(value) && !value.includes('$') && !value.split('/').includes('..')
+  )
+}
+
 const PYTEST = { '-k': true, '-x': false, '-q': false, '-v': false }
 const SCRIPT = { '--': false }
 // Review round 4: --root is the full-path form a refused cd asks for. A
@@ -31,7 +41,7 @@ const VITEST: Allowed = {
   '-t': true,
   '--testNamePattern': true,
   '--run': false,
-  '--root': true,
+  '--root': 'path',
   '--reporter': ['default', 'verbose', 'dot', 'json', 'junit', 'tap', 'tap-flat'],
 }
 const RUNNERS: readonly [readonly string[], Allowed][] = [
@@ -72,8 +82,7 @@ function mavenTest(rest: readonly string[]): boolean {
     if (w === 'test') goals++
     else if (w === '-f') {
       const value = rest[++i]
-      // A POM from a pipe (`/dev/stdin`) is not a file the project holds.
-      if (value === undefined || value.startsWith('-') || value.startsWith('/dev/')) return false
+      if (value === undefined || value.startsWith('-') || !inProject(value)) return false
     } else if (!MVN_FLAGS.has(w) && !MVN_PROPS.test(w)) return false
   }
   return goals === 1
@@ -96,7 +105,8 @@ function onlyAllowed(rest: readonly string[], allowed: Allowed): boolean {
     // review of round 2: `-t --config x` would pass `--config` as -t's value).
     const value = eq === -1 ? rest[++i] : w.slice(eq + 1)
     if (value === undefined || (eq === -1 && value.startsWith('-'))) return false
-    if (takes !== true && !takes.includes(value)) return false
+    if (takes === 'path' ? !inProject(value) : takes !== true && !takes.includes(value))
+      return false
   }
   return true
 }
