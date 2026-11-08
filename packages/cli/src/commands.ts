@@ -6,6 +6,7 @@
 //   2. Summaries, warnings and errors go to stderr, so they stay visible without
 //      corrupting that pipe.
 
+import { BlobsError, parseBatch, parseListing } from './staged-blobs.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -59,6 +60,8 @@ import { thirdPartyNames } from './third-party.js'
 export interface Io {
   cwd: string
   stdin: () => Promise<string>
+  /** Stdin as bytes, for `scan --blobs`. Undefined: stdin's text as UTF-8. */
+  stdinBytes?: () => Promise<Buffer>
   stdout: (text: string) => void
   stderr: (text: string) => void
   /**
@@ -558,6 +561,23 @@ export async function runRestore(
   return EXIT_OK
 }
 
+/** The files a `--blobs` listing names, with their content: submodules and
+ *  binary blobs (a NUL in the first 8000 bytes) left out; a listed blob the
+ *  stream does not hold is an error, never a pass. */
+function stagedTargets(listing: string, batch: Buffer): { name: string; text: string }[] {
+  const blobs = parseBatch(batch)
+  const targets: { name: string; text: string }[] = []
+  for (const entry of parseListing(listing)) {
+    if (entry.mode === '160000') continue
+    const blob = blobs.get(entry.id)
+    if (!blob)
+      throw new BlobsError(`could not read the staged ${JSON.stringify(entry.path)} from git`)
+    if (blob.subarray(0, 8000).includes(0)) continue
+    targets.push({ name: entry.path, text: blob.toString('utf8') })
+  }
+  return targets
+}
+
 /** Detect-only pass for pre-commit hooks and CI. Never rewrites anything. */
 export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
   if (args.stdinName !== null && args.files.length > 0) {
@@ -566,12 +586,31 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
     )
     return EXIT_ERROR
   }
+  if (args.blobsFile !== null && (args.files.length > 0 || args.stdinName !== null)) {
+    io.stderr(
+      `${BIN_NAME}: --blobs reads its files from stdin, so it cannot be used with file names or --name.\n`
+    )
+    return EXIT_ERROR
+  }
   // `--name`: stdin is scanned as that file would be (spec 085 L1), so the
   // pre-commit hook gets the .env, YAML and shell rules for each staged file.
-  const targets =
-    args.files.length > 0
-      ? args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
-      : [{ name: args.stdinName ?? '<stdin>', text: await io.stdin() }]
+  let targets: { name: string; text: string }[]
+  if (args.blobsFile !== null) {
+    try {
+      targets = stagedTargets(
+        readFileSync(resolve(io.cwd, args.blobsFile), 'utf8'),
+        io.stdinBytes ? await io.stdinBytes() : Buffer.from(await io.stdin(), 'utf8')
+      )
+    } catch (err) {
+      if (!(err instanceof BlobsError)) throw err
+      io.stderr(`${BIN_NAME}: ${err.message}, so nothing was checked.\n`)
+      return EXIT_ERROR
+    }
+  } else
+    targets =
+      args.files.length > 0
+        ? args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
+        : [{ name: args.stdinName ?? '<stdin>', text: await io.stdin() }]
 
   const all: { file: string; finding: SecretFinding }[] = []
   for (const target of targets) {

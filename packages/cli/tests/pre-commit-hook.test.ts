@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -61,7 +63,12 @@ function stage(files: Record<string, string | Buffer>) {
   }
   git('add', '--', ...Object.keys(files))
 }
-const hook = () => spawnSync('sh', [HOOK], { cwd: repo, env: env(), encoding: 'utf8' })
+const hook = (path = bin) =>
+  spawnSync('sh', [HOOK], {
+    cwd: repo,
+    env: { ...env(), PATH: `${path}:${process.env.PATH}` },
+    encoding: 'utf8',
+  })
 
 describe('the pre-commit hook scans each staged file under its own name (L1)', () => {
   it('a staged .env beside a TypeScript change blocks the commit', () => {
@@ -147,5 +154,58 @@ describe('the pre-commit hook scans each staged file under its own name (L1)', (
     expect(hook().status).toBe(0)
     stage({ 'src/gateway.ts': TS, 'README.md': '# PaymentGateway\n' })
     expect(hook().status).toBe(0)
+  })
+
+  // Review round 1 (#1): the hook read `:<path>`, which git parses as a
+  // revision: a staged `0:foo` scanned foo's blob instead.
+  it('a staged path that reads as revision syntax is scanned as itself', () => {
+    stage({ foo: 'nothing here\n' })
+    git('commit', '-qm', 'one')
+    stage({ '0:foo': ENV })
+    expect(hook().status).toBe(1)
+    git('reset', '-q')
+    stage({ '1:x': ENV })
+    expect(hook().status).toBe(1)
+  })
+
+  // Review round 1 (#2): one veilio process for the whole commit.
+  it('300 staged files are checked in one go', () => {
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 300; i++) files[`src/m${i}.ts`] = `export const v${i} = ${i}\n`
+    stage(files)
+    const started = Date.now()
+    expect(hook().status).toBe(0)
+    // One node start; a process per file took about 0.3 s each here.
+    expect(Date.now() - started).toBeLessThan(20_000)
+  }, 60_000)
+
+  // Review round 1 (#9): a finding and a failure to check say different things.
+  it('a finding says credentials; a failure to check says it could not check, and both block', () => {
+    stage({ '.env': ENV })
+    const found = hook()
+    expect(found.status).toBe(1)
+    expect(found.stderr).toContain('Commit blocked: credentials detected in the staged changes.')
+    const broken = mkdtempSync(join(tmpdir(), 'veilio-hook-broken-'))
+    writeFileSync(
+      join(broken, 'veilio'),
+      '#!/bin/sh\necho "veilio: something broke here" >&2\nexit 2\n'
+    )
+    chmodSync(join(broken, 'veilio'), 0o755)
+    const failed = hook(broken)
+    expect(failed.status).toBe(1)
+    expect(failed.stderr).toContain(
+      'Commit blocked: veilio could not check the staged files: veilio: something broke here'
+    )
+    expect(failed.stderr).not.toContain('credentials detected')
+  })
+
+  // Review round 1 (#10): the header named a .pre-commit-hooks.yaml the
+  // repository does not have. A file the hook names must exist.
+  it('the hook names no pre-commit framework file that is not there', () => {
+    const text = readFileSync(HOOK, 'utf8')
+    const named = text.includes('.pre-commit-hooks.yaml')
+    expect(
+      named && !existsSync(resolve(import.meta.dirname, '..', '..', '..', '.pre-commit-hooks.yaml'))
+    ).toBe(false)
   })
 })

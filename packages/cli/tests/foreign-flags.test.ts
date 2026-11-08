@@ -31,6 +31,7 @@ const VALUES: Record<string, string> = {
   '--secrets': 'warn',
   '--map': 'some/map.json',
   '--name': '.env',
+  '--blobs': 'staged.raw',
   '--days': '3',
   '--instance': 'https://veilio.example.com',
 }

@@ -313,6 +313,11 @@ a plan feature the web app couldn't.
                         update, team unlock
     --json              Machine-readable output
                         For: scan, map
+    --blobs <listing>   scan the files a `git diff --raw --no-abbrev` listing
+                        names, their content read from `git cat-file --batch`
+                        on stdin (used by the pre-commit hook and the GitHub
+                        Action)
+                        For: scan
     --name <path>       scan stdin as if it were the file <path> (its file
                         type decides the rules; used by the pre-commit hook)
                         For: scan
@@ -493,7 +498,11 @@ chmod +x .git/hooks/pre-commit
 
 It scans what is **staged** — what you are about to commit is what matters, and
 a finding in an unstaged scratch file shouldn't block you. Each staged file
-(added, changed, renamed or retyped) is scanned on its own, under its own name,
-with `veilio scan --name <path>`, so its file type picks the rules; a
-`.gitattributes` `-diff` hides nothing, because the file is read, not its diff.
-Binary files are skipped. `--no-verify` overrides, as usual.
+(added, changed, renamed or retyped) is scanned under its own name, so its file
+type picks the rules; a `.gitattributes` `-diff` hides nothing, because the
+file is read, not its diff. One `veilio scan --blobs` checks the whole commit:
+git lists the staged files with their object ids, `git cat-file --batch`
+streams those blobs, and each is matched to its name by id. Binary files and
+submodules are skipped. A finding blocks the commit with the credentials
+message; anything that stops the check blocks it with "could not check" and
+the reason. `--no-verify` overrides, as usual.

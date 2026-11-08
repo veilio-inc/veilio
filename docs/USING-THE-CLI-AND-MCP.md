@@ -68,7 +68,7 @@ veilio map                               # show the current symbol map (--clear 
   owns (list a store's full path in `VEILIO_TRUST_STORE_OWNER` to accept it on purpose), and a `.veilio/.gitignore` whose only pattern is not `*`. Outside git they
   cannot tell a map you made from one that came with the files.
 - The pre-commit hook (`packages/cli/hooks/pre-commit`) scans each staged file under
-  its own name with `veilio scan --name <path>`.
+  its own name, the whole commit in one `veilio scan --blobs` run.
 - `--language` forces a language when auto-detection guesses wrong;
   `--secrets warn|off` changes how detected credentials are handled (default: redact,
   irreversibly).

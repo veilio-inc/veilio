@@ -257,6 +257,20 @@ function readSecret(label: string): Promise<string> {
   })
 }
 
+/** Stdin as bytes (`scan --blobs`: git's blob stream holds any byte). */
+function readStdinBytes(): Promise<Buffer> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    if (process.stdin.isTTY) {
+      rejectPromise(new Error('no input — pass a file or pipe to stdin'))
+      return
+    }
+    const chunks: Buffer[] = []
+    process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk))
+    process.stdin.on('end', () => resolvePromise(Buffer.concat(chunks)))
+    process.stdin.on('error', rejectPromise)
+  })
+}
+
 function readStdin(): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     // A TTY with no piped input would hang forever waiting for EOF. Fail with
@@ -305,6 +319,7 @@ if (invokedAsProgram()) {
   const io: Io = {
     cwd: process.cwd(),
     stdin: readStdin,
+    stdinBytes: readStdinBytes,
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
     prompt: readLine,
