@@ -231,3 +231,21 @@ describe('shortNameAlias is Windows-only (spec 078 review round 2)', () => {
     expect(shortNameAlias('ENV~1')).toBe(process.platform === 'win32')
   })
 })
+
+// Spec 085 L19: the audit's spellings. Each component is read as the file it
+// names on NTFS (stream and trailing dots or spaces dropped), not only the last.
+describe('Windows names of a raw-only path (spec 085 L19)', () => {
+  it.each([
+    'C:/repo/.npmrc::$DATA',
+    'C:/repo/.env::$DATA',
+    'C:/repo/.veilio::$INDEX_ALLOCATION/map.json',
+    'C:/repo/.npmrc.',
+    'C:/repo/.env:notes',
+    '/repo/.env. ',
+  ])('isRawOnly(%j)', (path) => {
+    expect(isRawOnly(path, [])).toBe(true)
+  })
+  it.each(['src/a.ts', 'C:/repo/src/time:12.ts'])('isRawOnly(%j) is false', (path) => {
+    expect(isRawOnly(path, [])).toBe(false)
+  })
+})

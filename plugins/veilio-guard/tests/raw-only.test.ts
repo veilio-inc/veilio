@@ -332,6 +332,45 @@ test('H17: after cd sub in one call, cat notes in the next is refused', async ($
   expect(seen).toHaveLength(1)
 })
 
+// Spec 085 L17, what 078's H17 tests leave: a plain file after a cd still
+// runs, and a cd outside the project is followed too (078 follows the shell
+// anywhere, which refuses more than research R2b's "inside the root").
+test('L17: after cd sub, cat readme.md (a plain file) runs', async ($, on) => {
+  project(
+    on,
+    { ...SUB, [`${ROOT}/sub/readme.md`]: '# notes\n' },
+    { links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } }
+  )
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat readme.md', description: 'x' })
+  expect(out.deny).toBeUndefined()
+  const same = await $.tool.call({
+    tool: 'Bash',
+    command: 'cd sub && cat readme.md',
+    description: 'x',
+  })
+  expect(same.deny).toBeUndefined()
+  expect(seen).toHaveLength(3)
+})
+
+test('L17: after a cd outside the project, a link there to .env is still refused', async ($, on) => {
+  project(on, { ...SUB, '/outside/notes': '' }, { links: { '/outside/notes': `${ROOT}/.env` } })
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  await $.tool.call({ tool: 'Bash', command: 'cd /outside', description: 'x' })
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(seen).toHaveLength(1)
+})
+
 // Review round 1 (T030) #9: a cd hidden from the chain split - a glob, a
 // command substitution, backticks, a nested shell or eval - and (d) a Windows
 // short name in a shell word.
@@ -439,4 +478,20 @@ test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on)
     expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
   }
   expect(seen).toEqual(commands)
+})
+
+// Spec 085 L19: a kit Read of the audit's spellings, under the project root.
+test('L19: a Read of .npmrc::$DATA, .npmrc. or .veilio::$INDEX_ALLOCATION/map.json is refused', async ($, on) => {
+  project(on, { [`${ROOT}/.npmrc`]: 'registry=https://registry.example.invalid/\n' })
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: 'x' }))
+  for (const path of [
+    `${ROOT}/.npmrc::$DATA`,
+    `${ROOT}/.npmrc.`,
+    `${ROOT}/.veilio::$INDEX_ALLOCATION/map.json`,
+  ]) {
+    const out = await $.tool.call({ tool: 'Read', file_path: path })
+    expect(`${path} -> ${out.deny}`).toContain('away from the model')
+  }
+  expect(ran).toBe(false)
 })
