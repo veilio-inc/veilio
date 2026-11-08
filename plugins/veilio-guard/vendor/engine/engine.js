@@ -783,11 +783,19 @@ const ruleMatchers = new WeakMap();
 /** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
 const MAX_RULES = 1000;
 function safeMatch(pattern, name, budget) {
+    // Stopped rules compile nothing more (security review of L8).
+    if (budget.spent)
+        return false;
     let cache = ruleMatchers.get(budget);
     if (!cache)
         ruleMatchers.set(budget, (cache = new Map()));
     let m = cache.get(pattern);
     if (m === undefined) {
+        // One budget compiles at most MAX_RULES patterns, even shared across calls.
+        if (cache.size >= MAX_RULES) {
+            budget.spent = true;
+            return false;
+        }
         m = compileRulePattern(pattern, budget);
         cache.set(pattern, m);
     }
@@ -1210,12 +1218,14 @@ export function anonymize(code, options = {}) {
     // cannot see it, so the engine skips a replace rule under an engine base,
     // whoever sealed it. A pattern its matcher cannot run never matches
     // (safeMatch), so it needs no filter here.
-    const rules = (opts.rules ?? []).filter(isRunnableRule);
+    const runnable = (opts.rules ?? []).filter(isRunnableRule);
     // One allowance of matching steps for every rule and name in this call
     // (security audit); once spent, rule tests answer no match.
     const budget = opts.ruleBudget ?? ruleBudget();
-    // A rule set past the cap is not applied at all: every name masked as usual.
-    if (rules.length > MAX_RULES)
+    // A rule set past the cap is skipped whole: every name masked as usual, and
+    // the call says the rules stopped.
+    const rules = runnable.length > MAX_RULES ? [] : runnable;
+    if (runnable.length > MAX_RULES)
         budget.spent = true;
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
