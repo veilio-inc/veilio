@@ -1552,7 +1552,10 @@ test('L16: two keys that would mask to the same text withhold the result', async
   expect(JSON.stringify(out)).not.toContain('PaymentGateway')
 })
 
-test('L16: a __proto__ key keeps its subtree, masked', async ($, on) => {
+// The guard keeps a `__proto__` key as an own property (tests/guard/fields.test.ts
+// pins that); whether it survives the trip back to Claude Code depends on the
+// runtime (2.1.288 drops it, 2.1.319 keeps it). Either way no raw name gets through.
+test('L16: a __proto__ key never carries a raw name: its subtree is kept masked or dropped', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
   on('tool.call', () =>
     mcpResult({ structuredContent: JSON.parse('{"__proto__": {"owner": "PaymentGateway"}}') })
@@ -1560,7 +1563,10 @@ test('L16: a __proto__ key keeps its subtree, masked', async ($, on) => {
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
   const text = JSON.stringify(out)
   expect(text).not.toContain('PaymentGateway')
-  expect(text).toContain('"__proto__":{"owner":"__CLS__1"}')
+  const sc = JSON.stringify((outcome(out).result as Fields).structuredContent)
+  const kept = sc === '{"__proto__":{"owner":"__CLS__1"}}'
+  console.log(`__proto__ key ${kept ? 'kept, masked' : 'dropped'} by this runtime`)
+  expect(kept || sc === '{}').toBe(true)
 })
 
 test("L16: a built-in tool's record keeps its own keys", async ($, on) => {
