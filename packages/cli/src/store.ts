@@ -126,12 +126,15 @@ export function openStoreFile(what: string, path: string): string | null {
   const found = trackedStoreFile(path)
   if (found !== null) {
     const { root, tracked } = found
-    // The path comes from the checkout: shown without control characters, and
-    // a command only when neither it nor the root holds one; both quoted.
+    // The path comes from the checkout: shown without control characters. A
+    // command only off Windows (its shells read quotes differently) and only
+    // for a root and path of plain characters; both single-quoted.
     const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
-    const how = NOT_IN_A_NAME.test(tracked + root)
-      ? ''
-      : ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
+    const plain = /^[A-Za-z0-9._/ -]+$/
+    const how =
+      process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
+        ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
+        : ''
     throw new StoreRefusal(
       `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
         `Remove it from git${how}, then scrub again to build your own.`
@@ -188,8 +191,8 @@ export function writeStoreFile(what: string, path: string, text: string): void {
 }
 
 /** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
-/** One shell word: single quotes, an embedded quote closed, escaped and reopened. */
-const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+/** One POSIX shell word, for a string of plain characters (no quote in it). */
+const shellQuote = (s: string): string => `'${s}'`
 
 function trackedStoreFile(path: string): { root: string; tracked: string } | null {
   const dir = dirname(path)

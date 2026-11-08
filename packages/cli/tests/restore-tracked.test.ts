@@ -266,9 +266,44 @@ describe('the suggested git command', () => {
     plantIn('-x')
     expect(messageFor('-x')).toContain(`rm --cached -- '-x/.veilio/map.json'`)
   })
-  it('a quote in the path is escaped for the shell', () => {
+  // Security review: no command for a path with a shell character, and none
+  // on Windows, whose shells do not read single quotes as POSIX does.
+  for (const dir of ["it's", 'a$b', 'a;b', 'a`b']) {
+    it(`no command for a path holding ${JSON.stringify(dir.replace(/[a-z]/g, ''))}`, () => {
+      git(cwd, 'init', '-q')
+      plantIn(dir)
+      const m = messageFor(dir)
+      expect(m).toContain('is tracked by git')
+      expect(m).not.toContain('git -C')
+      expect(m).toContain('Remove it from git, then scrub again to build your own.')
+    })
+  }
+  it('no command when the root holds a shell character', () => {
+    const root = join(cwd, 'r$t')
+    mkdirSync(join(root, '.veilio'), { recursive: true })
+    git(root, 'init', '-q')
+    writeFileSync(join(root, '.veilio', 'map.json'), JSON.stringify({ version: 1, map: {} }))
+    git(root, 'add', '-f', '.veilio/map.json')
+    let m = ''
+    try {
+      loadMap(join(root, '.veilio', 'map.json'))
+    } catch (err) {
+      m = (err as Error).message
+    }
+    expect(m).toContain('is tracked by git')
+    expect(m).not.toContain('git -C')
+  })
+
+  it('no command on Windows', () => {
     git(cwd, 'init', '-q')
-    plantIn("it's")
-    expect(messageFor("it's")).toContain(`rm --cached -- 'it'\\''s/.veilio/map.json'`)
+    plantIn('plain')
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      expect(messageFor('plain')).not.toContain('git -C')
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+    }
+    expect(messageFor('plain')).toContain(`rm --cached -- 'plain/.veilio/map.json'`)
   })
 })
