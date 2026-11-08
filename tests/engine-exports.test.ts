@@ -218,6 +218,76 @@ describe('the engine exports the published tools import', () => {
       })
   })
 
+  // The CLI and the MCP server are released together by changesets: the MCP
+  // server's CLI range names a CLI version that is not on npm until the same
+  // run publishes it, so the workspace CLI is the one checked.
+  it('checks a sibling tool released in the same run against the workspace copy, not npm', () => {
+    put(
+      'engine/dist/index.js',
+      'export const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\n'
+    )
+    put(
+      'tools/packages/cli/package.json',
+      JSON.stringify({
+        name: '@veilio-inc/cli',
+        version: '97.3.0',
+        type: 'module',
+        exports: { './store': './dist/store.js' },
+        dependencies: { '@veilio-inc/engine': '^1.0.0' },
+      })
+    )
+    put('tools/packages/cli/dist/store.js', 'export const openStore = 1\n')
+    put(
+      'tools/packages/mcp/package.json',
+      JSON.stringify({
+        name: '@veilio-inc/mcp',
+        dependencies: { '@veilio-inc/engine': '^1.0.0', '@veilio-inc/cli': '^97.3.0' },
+      })
+    )
+    put('tools/packages/mcp/dist/c.js', "import { openStore } from '@veilio-inc/cli/store'\n")
+    const r = run()
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('@veilio-inc/cli@97.3.0 (^97.3.0)')
+  })
+
+  // Outside the caret range the workspace copy is not used (npm is asked, and
+  // has no such version here): a higher major, a lower patch, and for 0.x a
+  // higher minor.
+  for (const [local, range] of [
+    ['98.0.0', '^97.3.0'],
+    ['97.2.9', '^97.3.0'],
+    ['0.11.0', '^0.10.0'],
+  ])
+    it(`does not use a workspace sibling at ${local} for ${range}`, () => {
+      put(
+        'engine/dist/index.js',
+        'export const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\n'
+      )
+      put(
+        'tools/packages/cli/package.json',
+        JSON.stringify({
+          name: '@veilio-inc/cli',
+          version: local,
+          type: 'module',
+          exports: { './store': './dist/store.js' },
+          dependencies: { '@veilio-inc/engine': '^1.0.0' },
+        })
+      )
+      put('tools/packages/cli/dist/store.js', 'export const openStore = 1\n')
+      put(
+        'tools/packages/mcp/package.json',
+        JSON.stringify({
+          name: '@veilio-inc/mcp',
+          dependencies: { '@veilio-inc/engine': '^1.0.0', '@veilio-inc/cli': range },
+        })
+      )
+      put('tools/packages/mcp/dist/c.js', "import { openStore } from '@veilio-inc/cli/store'\n")
+      const r = run()
+      expect(r.status).not.toBe(0)
+      expect(r.stdout).not.toContain(`@veilio-inc/cli@${local}`)
+    })
+
   it('runs in the publish workflow after the build and before anything is published', () => {
     const lines = readFileSync(WORKFLOW, 'utf8').split('\n')
     const at = (re: RegExp) => lines.findIndex((l) => re.test(l))

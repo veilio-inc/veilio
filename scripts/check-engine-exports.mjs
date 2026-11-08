@@ -96,6 +96,29 @@ function entryOf(manifest, sub) {
   return typeof target === 'string' ? target : (target.import ?? target.default ?? null)
 }
 
+// The tools released together by changesets in the same run. The engine is
+// released on its own (semantic-release), so it is always read from npm.
+const SIBLINGS = { '@veilio-inc/cli': 'cli' }
+
+/** Whether `version` satisfies a caret range `^x.y.z` (0.x keeps the minor). */
+function caret(range, version) {
+  const m = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range)
+  const v = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '')
+  if (!m || !v) return false
+  const [a, b] = [m.slice(1).map(Number), v.slice(1).map(Number)]
+  if (b[0] !== a[0] || (a[0] === 0 && b[1] !== a[1])) return false
+  for (let i = 0; i < 3; i++) if (b[i] !== a[i]) return b[i] > a[i]
+  return true
+}
+
+/** The workspace copy of a sibling tool when its version satisfies `range`. */
+function sibling(dep, range) {
+  const dir = SIBLINGS[dep] && join(root, 'packages', SIBLINGS[dep])
+  if (!dir || !existsSync(join(dir, 'package.json'))) return undefined
+  const version = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version
+  return caret(range, version) ? dir : undefined
+}
+
 /** `dep` as npm installs it for `range`, unpacked under a temporary prefix. */
 function installed(dep, range, temps) {
   const prefix = mkdtempSync(join(tmpdir(), 'engine-exports-'))
@@ -140,7 +163,7 @@ try {
       const wanted = new Map()
       for (const text of files) importsOf(text, dep, wanted)
       if (wanted.size === 0) continue
-      const at = fixed[dep] ?? installed(dep, range, temps)
+      const at = fixed[dep] ?? sibling(dep, range) ?? installed(dep, range, temps)
       const target = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8'))
       const version = target.version ?? '(fixture)'
       let count = 0
