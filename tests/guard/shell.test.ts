@@ -213,7 +213,7 @@ describe('restoreRefusal (spec 078)', () => {
     'grep --color=never x src/__X__1.ts',
     'rg --hidden __X__1',
     'head -n5 src/__X__1.ts',
-    'mvn -q test __X__1',
+    'mvn -q test -Dtest=__X__1',
     'python3 -m pytest tests/__X__1.py',
   ])('still lets %j through', (command) => {
     expect(restoreRefusal(command, 'Bash')).toBeNull()
@@ -235,7 +235,7 @@ describe('restoreRefusal (spec 078)', () => {
     'pytest -p ./plug tests/__X__1.py',
     'python3 -m pytest -pplug tests/__X__1.py',
     'mvn -DargLine=x test -Dtest=__X__1',
-    'mvn -f other.xml test __X__1',
+    'mvn -s other.xml test -Dtest=__X__1',
     'rake test -e x __X__1',
   ])('refuses the runner flag in %j', (command) => {
     expect(restoreRefusal(command, 'Bash')).not.toBeNull()
@@ -384,5 +384,96 @@ describe('restoreRefusal (spec 078)', () => {
       'git -c diff.external=./run diff f',
     ])
       expect(restoreRefusal(command, 'Bash')).not.toBeNull()
+  })
+})
+
+// Review round 4 (benchmark, plugin e3a7697): ordinary test runs the bench
+// sessions were refused on. Fixtures are the bench's command strings, with
+// its placeholders.
+describe('restoreRefusal: the runners the benchmark needed (spec 078 review round 4)', () => {
+  it.each([
+    'mvn -q -o -f __VAR__499/pom.xml test -Dtest=__CLS__346 2>&1 | head -40',
+    'mvn -q -o -f __VAR__499/pom.xml test -Dtest=__CLS__346',
+    'cat /dev/null; ls ledger; mvn -q -o -f ledger/pom.xml test -Dtest=__CLS__316 2>&1 | head -30',
+    'mvn -q -o -f ledger/pom.xml test -Dtest=__CLS__346 2>&1 | tail -30',
+    'mvn -q -o test -Dtest=__CLS__307 2>&1',
+    'mvn -B test',
+    'mvn test -Dtest=__CLS__307 -DfailIfNoTests=false',
+    'mvn -q test -Dtest=__CLS__307 -Dsurefire.failIfNoSpecifiedTests=false',
+    'mvn -f ledger test',
+    'npx vitest run --root gateway tests/__PKG__16.test.ts 2>&1 | head -40; head -30 gateway/tests/__PKG__16.test.ts',
+    'npx vitest run --root gateway tests/__PKG__16.test.ts 2>&1 | tail -30',
+    'npx vitest run --root=gateway tests/__PKG__16.test.ts',
+    'vitest run --root gateway tests/__PKG__16.test.ts',
+    'vitest run --root gateway tests/__PKG__72.test.ts 2>&1 | tail -20',
+    'node_modules/.bin/vitest run --root gateway tests/__PKG__16.test.ts 2>&1 | tail -30',
+    './node_modules/.bin/vitest run --root gateway tests/__PKG__16.test.ts 2>&1 | tail -30',
+    'npx vitest run --reporter verbose tests/__PKG__16.test.ts',
+    'npx vitest run --reporter=dot tests/__PKG__16.test.ts',
+    'vitest run -t "pays the order" tests/__PKG__16.test.ts',
+    // The example the cd refusal gives must itself get real names.
+    'npx vitest run __DIR__1/x.test.ts',
+  ])('lets %j through', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toBeNull()
+  })
+
+  it.each([
+    // Maven: only the test goal, and only these options.
+    'mvn -s evil.xml test',
+    'mvn test exec:java',
+    'mvn exec:java test',
+    'mvn -Dexec.x=1 test',
+    'mvn -P evil test',
+    'mvn -am test',
+    'mvn install',
+    'mvn -q -o',
+    'mvn -Dtest=__CLS__1',
+    'mvn test test',
+    'mvn test -Dtest __CLS__1',
+    'mvn test -Dtest',
+    'mvn test -DfailIfNoTests=true',
+    'mvn -qo test',
+    'mvn -f -q test',
+    'mvn -f',
+    'mvn -f=pom.xml test',
+    'mvn --file pom.xml test',
+    'mvn -fpom.xml test',
+    // Maven reads no POM from a URL or stdin; a device path is refused all the same.
+    'cat ledger/pom.xml | mvn -f /dev/stdin test',
+    'mvn -f /dev/fd/0 test',
+    'mvn -q test __X__1',
+    // vitest: --config stays off, and a reporter is a built-in name only.
+    'npx vitest --config x',
+    'vitest run --config x.ts tests/__PKG__16.test.ts',
+    'node_modules/.bin/vitest run --config x.ts tests/__PKG__16.test.ts',
+    'npx vitest run --reporter ./x.ts tests/__PKG__16.test.ts',
+    'npx vitest run --reporter blob tests/__PKG__16.test.ts',
+    'npx vitest run --reporter html tests/__PKG__16.test.ts',
+    // Built in only in some vitest versions; elsewhere the name is imported as a package.
+    'npx vitest run --reporter basic tests/__PKG__16.test.ts',
+    'npx vitest run --reporter agent tests/__PKG__16.test.ts',
+    'npx vitest run --reporter minimal tests/__PKG__16.test.ts',
+    'npx vitest run --reporter tree tests/__PKG__16.test.ts',
+    'npx vitest run --root -t x tests/__PKG__16.test.ts',
+    'npx vitest run tests/__PKG__16.test.ts --root',
+    'npx vitest run -r gateway tests/__PKG__16.test.ts',
+    '/tmp/x/node_modules/.bin/vitest run tests/__PKG__16.test.ts',
+    'gateway/node_modules/.bin/vitest run tests/__PKG__16.test.ts',
+    'vitest.sh run tests/__PKG__16.test.ts',
+  ])('refuses %j: not on the runner allow-list', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toMatch(
+      /^a shell command gets real names back only when it reads files or runs tests .*is not one of those/
+    )
+    expect(shellRefusal(command)).not.toBeNull()
+  })
+
+  // 078 decisions with their own tests; round 4 does not widen them.
+  it.each([
+    "sed -i 's/a/b/' planner/dwell/__VAR__842.py",
+    'cd gateway && npx vitest run tests/__PKG__16.test.ts',
+    'cat ledger/src/main/java/com/__VAR__528/ledger/tariff/*.java',
+    'cat planner/tide/{__VAR__785,__FN__1590}.py',
+  ])('still refuses %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).not.toBeNull()
   })
 })

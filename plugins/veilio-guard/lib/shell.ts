@@ -16,14 +16,29 @@
 const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find'])
 
 // Review round 2 #1: each test runner with the only options it may be given
-// (true: the option takes a value, as the next word or after `=`). Any other
-// option makes the command not a test run: an allow-list, since a runner's
-// options that load code or run a program keep growing. Positional words
-// (paths, filters, vitest's `run`) are free.
+// (true: the option takes a value, as the next word or after `=`; a list: the
+// value must be one of it). Any other option makes the command not a test
+// run: an allow-list, since a runner's options that load code or run a
+// program keep growing. Positional words (paths, filters, vitest's `run`) are
+// free.
+type Allowed = Readonly<Record<string, boolean | readonly string[]>>
 const PYTEST = { '-k': true, '-x': false, '-q': false, '-v': false }
 const SCRIPT = { '--': false }
-const RUNNERS: readonly [readonly string[], Readonly<Record<string, boolean>>][] = [
-  [['npx', 'vitest'], { '-t': true, '--testNamePattern': true, '--run': false }],
+// Review round 4: --root is the full-path form a refused cd asks for. A
+// reporter is a name built in to every vitest from 1 to 4 only: any other
+// name is imported as a module, and blob and html write files.
+const VITEST: Allowed = {
+  '-t': true,
+  '--testNamePattern': true,
+  '--run': false,
+  '--root': true,
+  '--reporter': ['default', 'verbose', 'dot', 'json', 'junit', 'tap', 'tap-flat'],
+}
+const RUNNERS: readonly [readonly string[], Allowed][] = [
+  [['npx', 'vitest'], VITEST],
+  [['vitest'], VITEST],
+  [['node_modules/.bin/vitest'], VITEST],
+  [['./node_modules/.bin/vitest'], VITEST],
   [['npm', 'test'], SCRIPT],
   [['npm', 'run', 'test'], SCRIPT],
   [['pnpm', 'test'], SCRIPT],
@@ -40,25 +55,48 @@ const RUNNERS: readonly [readonly string[], Readonly<Record<string, boolean>>][]
   [['ruby', '-Itest'], {}],
   [['rake', 'test'], {}],
   [['node', '--test'], {}],
-  [['mvn', 'test'], {}],
-  [['mvn', '-q', 'test'], {}],
 ]
 
+// Review round 4: Maven takes its options before the goal, and every other
+// word is a goal or a plugin to run, so its words are never free: the `test`
+// goal once, and only these options. `-D` only with `=`, since `-Dtest Foo`
+// is the property `test` and the goal `Foo`.
+const MVN_FLAGS = new Set(['-q', '-o', '-B'])
+const MVN_PROPS = /^-D(test=.+|failIfNoTests=false|surefire\.failIfNoSpecifiedTests=false)$/
+
+/** Whether Maven's words after `mvn` run the test goal and nothing else. */
+function mavenTest(rest: readonly string[]): boolean {
+  let goals = 0
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i]!
+    if (w === 'test') goals++
+    else if (w === '-f') {
+      const value = rest[++i]
+      // A POM from a pipe (`/dev/stdin`) is not a file the project holds.
+      if (value === undefined || value.startsWith('-') || value.startsWith('/dev/')) return false
+    } else if (!MVN_FLAGS.has(w) && !MVN_PROPS.test(w)) return false
+  }
+  return goals === 1
+}
+
 /** Whether every option in `rest` is on `allowed`. */
-function onlyAllowed(rest: readonly string[], allowed: Readonly<Record<string, boolean>>): boolean {
+function onlyAllowed(rest: readonly string[], allowed: Allowed): boolean {
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!
     if (!w.startsWith('-')) continue
     const eq = w.indexOf('=')
     const name = eq === -1 ? w : w.slice(0, eq)
     if (!Object.hasOwn(allowed, name)) return false
-    if (allowed[name] === false && eq !== -1) return false
+    const takes = allowed[name]!
+    if (takes === false) {
+      if (eq !== -1) return false
+      continue
+    }
     // A value given as the next word is never an option itself (security
     // review of round 2: `-t --config x` would pass `--config` as -t's value).
-    if (allowed[name] && eq === -1) {
-      const value = rest[++i]
-      if (value === undefined || value.startsWith('-')) return false
-    }
+    const value = eq === -1 ? rest[++i] : w.slice(eq + 1)
+    if (value === undefined || (eq === -1 && value.startsWith('-'))) return false
+    if (takes !== true && !takes.includes(value)) return false
   }
   return true
 }
@@ -67,6 +105,7 @@ function onlyAllowed(rest: readonly string[], allowed: Readonly<Record<string, b
  *  options on its allow-list. */
 function readsOrTests(words: readonly string[]): boolean {
   if (READERS.has(words[0] ?? '')) return true
+  if (words[0] === 'mvn') return mavenTest(words.slice(1))
   for (const [start, allowed] of RUNNERS)
     if (start.every((w, i) => words[i] === w))
       return onlyAllowed(words.slice(start.length), allowed)
