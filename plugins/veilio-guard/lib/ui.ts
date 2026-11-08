@@ -86,6 +86,11 @@ function teamNumbers(g: Guard): string {
     : ' · no usable team numbers (run veilio maps pull)'
 }
 
+/** strings.md #8 (spec 085 L14): the reply to /veilio on while a stop holds. */
+export function stillStopped(reason: string): string {
+  return `Veilio stays stopped: ${reason}. \`/veilio on\` cannot lift this; fix the cause first.`
+}
+
 export function statusText(g: Guard, managed: boolean): string {
   return [
     bandText(g),

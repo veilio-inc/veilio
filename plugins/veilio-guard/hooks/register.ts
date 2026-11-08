@@ -12,7 +12,7 @@ import {
   type GuardIO,
   type ToolEvent,
 } from '../lib/guard.ts'
-import { bandText, MODEL_NOTE, statusText } from '../lib/ui.ts'
+import { bandText, MODEL_NOTE, statusText, stillStopped } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
   commandRows,
@@ -104,6 +104,24 @@ async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<strin
   return Promise.race([work, late]).catch((): string[] => [])
 }
 
+/** `git ls-files -z` in `root`, or null. Review round 1 #2: the repository's
+ *  config cannot start a program (core.fsmonitor). Cut short by the host
+ *  (4 MiB, a large repository; round 3 #3): the whole listing keeps what
+ *  came, less the last entry, which may be cut; a pathspec listing is none. */
+function gitList($: Host, root: string, pathspec: readonly string[]): Promise<string[] | null> {
+  return $.process
+    .run(['git', '-c', 'core.fsmonitor=false', 'ls-files', '-z', ...pathspec], { cwd: root })
+    .then(
+      (r) => {
+        if (r.exitCode !== 0) return null
+        const files = r.stdout.split('\0').filter(Boolean)
+        if (!r.isStdoutTruncated) return files
+        return pathspec.length > 0 ? null : files.slice(0, -1)
+      },
+      () => null
+    )
+}
+
 // The guard is loaded by whichever event comes first: the first prompt's
 // context can arrive before session.start has finished.
 async function ready($: Host): Promise<Guard> {
@@ -121,6 +139,13 @@ async function ready($: Host): Promise<Guard> {
         $.fs.stat(path, { resolve: true }).then(
           (s) => s.realPath,
           () => undefined
+        ),
+      // Review round 1 #5: the path itself, not where it leads (a link that
+      // leads nowhere yet included).
+      isLink: (path) =>
+        $.fs.stat(path).then(
+          (s) => s.isLink === true,
+          () => false
         ),
       // Spec 074: a search's line is cut at a path only when it is a file.
       isFile: (path) =>
@@ -157,11 +182,8 @@ async function ready($: Host): Promise<Guard> {
         return undefined
       },
       windows: async () => windows,
-      list: (root) =>
-        $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
-          (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),
-          () => null
-        ),
+      list: (root) => gitList($, root, []),
+      listVeilio: (root) => gitList($, root, ['--', ':(icase).veilio']),
     }
     const g = new Guard(io, config)
     // Where the CLI keeps its rules cache (spec 065); none known, no rules.
@@ -262,6 +284,7 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'stopped')
       return { deny: `Veilio refused this call: ${g.stoppedReason}. Run /veilio.` }
     const before = await g.beforeTool(e, budget)
+    for (const text of g.notices.splice(0)) $.ui.log(text)
     if ('deny' in before) {
       $.ui.log(before.deny)
       $.ui.invalidate('ui.render')
@@ -422,6 +445,11 @@ export function register(on: On, options: Options = {}) {
       $.ui.invalidate('ui.render')
     }
     const text = statusText(g, managed)
+    // Spec 085 L14 (strings.md #8): on does not lift a stop, and says so.
+    if (arg === 'on' && g.state === 'stopped') {
+      const [, ...rest] = text.split('\n')
+      return { text: [stillStopped(g.stoppedReason), ...rest].join('\n') }
+    }
     if (arg !== 'off' || !recorded) return { text }
     // strings.md #17, on the first line of the reply.
     const [first, ...rest] = text.split('\n')

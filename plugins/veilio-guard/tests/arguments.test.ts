@@ -123,6 +123,168 @@ test(
   }
 )
 
+// Spec 085 L18 (Q1 = A, strings.md #10): a real name goes into an MCP tool's
+// arguments only when it is shaped like a name or a path; Edit and Write
+// content keeps a teammate's value as written (strings.md #15).
+const UNSHAPED = (p: string) =>
+  `Veilio refused this call: the real name for ${p} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call.`
+
+function unshapedRefused(value: string) {
+  return async ($: TestHost, on: TestOn) => {
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: value }) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    const out = await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
+    expect(out.deny).toBe(UNSHAPED('__CLS__1'))
+    expect(seen).toHaveLength(0)
+  }
+}
+const LOCAL_DB = { options: { mcpRestore: ['local_db'] } }
+
+test(
+  'L18: a map value holding SQL is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('users; DELETE FROM accounts')
+)
+test(
+  'L18: a map value holding a line break is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('users\nDROP TABLE accounts')
+)
+test(
+  'L18: a map value holding a space is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('Payment Gateway')
+)
+test(
+  'L18: a map value holding an option is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('--all')
+)
+
+// Review round 1 #7: a URL or a path that climbs out is not a name either.
+test(
+  'R1#7: a map value that is a URL is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('https://evil.example/x')
+)
+test(
+  'R1#7: a map value with a .. segment is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('src/../../etc/passwd')
+)
+
+test(
+  'R1#7: a decomposed non-ASCII name and a name with $ restore into an MCP tool',
+  LOCAL_DB,
+  async ($, on) => {
+    const nfd = 'Zahlungstu\u0308r'
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: nfd, __VAR__2: 'ledger$entry' }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __CLS__1, __VAR__2' })
+    expect(seen[0]?.sql).toBe(`select ${nfd}, ledger$entry`)
+  }
+)
+
+// Review round 3 #7: a leading scheme is a URL however few slashes follow.
+test(
+  'R3#7: a map value with a file: scheme is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('file:/etc/passwd')
+)
+test(
+  'R7: a protocol-relative URL map value is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('//evil.example/x')
+)
+test(
+  'R3#7: a map value with a javascript: scheme is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('javascript:alert')
+)
+test(
+  'R3#7: a Windows drive path and a Ledger::Entry name restore into an MCP tool',
+  LOCAL_DB,
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({
+        __VAR__1: 'C:/repo/src/pay.ts',
+        __CLS__2: 'Ledger::Entry',
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __VAR__1, __CLS__2' })
+    expect(seen[0]?.sql).toBe('select C:/repo/src/pay.ts, Ledger::Entry')
+  }
+)
+
+test(
+  'L18: names and paths, a non-ASCII name too, restore into an MCP tool',
+  { options: { mcpRestore: ['local_db'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({
+        __CLS__1: 'PaymentGateway',
+        __VAR__2: 'src/pay.ts',
+        __CLS__3: 'ZahlungsTür',
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __CLS__1, __VAR__2, __CLS__3' })
+    expect(seen[0]?.sql).toBe('select PaymentGateway, src/pay.ts, ZahlungsTür')
+  }
+)
+
+test('L18: an Edit still restores a value with a line break, as written', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__1: 'first\nsecond' }) })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), edit.r))
+  await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'const a = __VAR__1' })
+  expect(seen[0]?.new_string).toBe('const a = first\nsecond')
+})
+
+// Spec 085 L20 (strings.md #11): the server is the tool name's exact prefix,
+// and a tool name that splits into a server and a tool in more than one way
+// gets no real names, whichever of its servers the settings list.
+const AMBIGUOUS =
+  'Veilio: mcp__jira__helper__search could belong to more than one MCP server, so it gets placeholders, not real names.'
+const PAYMENT = { __CLS__1: 'PaymentGateway' }
+const MCP_OK = { result: [{ type: 'text', text: 'ok' }] }
+
+test(
+  'L20: mcpRestore jira restores into mcp__jira__search, not into mcp__jira__helper__search',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'find __CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'again __CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__search', q: 'find __CLS__1' })
+    expect(seen.map((e) => e.q)).toEqual(['find __CLS__1', 'again __CLS__1', 'find PaymentGateway'])
+    expect(p.logs.filter((l) => l === AMBIGUOUS)).toHaveLength(1)
+  }
+)
+
+test(
+  'L20: with jira and jira__helper both listed, mcp__jira__helper__search still gets placeholders',
+  { options: { mcpRestore: ['jira', 'jira__helper'] } },
+  async ($, on) => {
+    const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'find __CLS__1' })
+    expect(seen[0]?.q).toBe('find __CLS__1')
+    expect(p.logs).toContain(AMBIGUOUS)
+  }
+)
+
 test("Claude Code's own refusal, which quotes the restored command, reaches the model masked", async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
   // The permission check refuses the call it was given - the restored one.
@@ -446,4 +608,26 @@ test('a hand-marked value inside a word with a letter outside ASCII is still ref
   })
   expect(no.deny).toContain('marked by hand')
   expect(ran).toBe(0)
+})
+
+// Round 5 additions #6: a placeholder that is never written back says so,
+// shown or not.
+test('R5b#6: outside git, an unshown hand-marked placeholder is refused as never written back', async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __MANUAL__1: 'Contoso Harbour Bank' }) },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { type: 'create', filePath: `${ROOT}/a.js` } })
+  )
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/a.js`,
+    content: 'bank = "__MANUAL__1"',
+  })
+  expect(out.deny).toContain('which is never written back')
+  expect(seen).toHaveLength(0)
 })

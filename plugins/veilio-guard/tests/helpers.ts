@@ -9,6 +9,7 @@ import type { TestOn } from './kit.ts'
 ;(globalThis as { __veilioStrictMaps?: boolean }).__veilioStrictMaps = true
 
 export const ROOT = '/work/project'
+
 export const CANARY = 'QuasarLedgerReconciler'
 export const STRIPE = 'sk_live_' + '51HbFakeFakeFake0123456789abcdefABCDEF'
 
@@ -28,6 +29,8 @@ export type Project = {
   modes: Record<string, number>
   /** Writes and chmods, in order: `write <path> <text>` / `chmod <path>`. */
   ops: string[]
+  /** Every git command line the guard ran. */
+  git: string[][]
 }
 
 export type Options = {
@@ -46,6 +49,16 @@ export type Options = {
   noGit?: boolean
   /** Files under .veilio/ that git tracks (committed to the repository). */
   trackedVeilio?: string[]
+  /** The session's working directory ($.session.cwd); ROOT when absent. */
+  cwd?: string
+  /** `git ls-files` (the whole project) answers with its output cut short. */
+  listTruncated?: boolean
+  /** `git ls-files -- ':(icase).veilio'` answers with its output cut short. */
+  veilioListTruncated?: boolean
+  /** `git ls-files` lists nothing: a folder inside a repository that tracks
+   *  none of its files. Otherwise the checkout also tracks a README.md, as a
+   *  real one tracks something (review round 1 #2: an empty listing is none). */
+  emptyListing?: boolean
   /** Leave $.clock to the test (mock.clock): no never-ending sleep, no
    *  recorded timers. */
   ownClock?: boolean
@@ -76,12 +89,13 @@ export function project(
     mtimes: {},
     modes: {},
     ops: [],
+    git: [],
   }
   const exists = (path: string) => {
     const a = abs(path)
     return a in p.files || Object.keys(p.files).some((f) => f.startsWith(`${a}/`))
   }
-  on('session.cwd', () => ({ value: ROOT }))
+  on('session.cwd', () => ({ value: opts.cwd ?? ROOT }))
   let existsCalls = 0
   on('fs.exists', (_, e) => {
     if (
@@ -118,6 +132,9 @@ export function project(
     // folder too); one that leads nowhere is not there.
     if (link) {
       const t = abs(link)
+      // Not resolved (an lstat): the link itself, whether or not it leads anywhere.
+      if (!(e as { resolve?: boolean }).resolve)
+        return { value: { kind: 'link', size: 0, mtimeMs: 0, isLink: true, realPath: a } }
       if (!exists(t)) return { deny: `ENOENT: ${a}` }
       const kind = t in p.files ? 'file' : 'directory'
       return {
@@ -172,16 +189,26 @@ export function project(
       return ok(`${(p.modes[a] ?? 0o644).toString(8)}\n`)
     }
     if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }
+    p.git.push([...e.argv])
     const tracked = Object.keys(p.files)
       .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
       .map((f) => f.slice(ROOT.length + 1))
       .concat(opts.trackedVeilio ?? [])
+      .concat(opts.emptyListing ? [] : ['README.md'])
+      // `-- ':(icase).veilio'`: what git tracks under .veilio, any case.
+      .filter((f) => !e.argv.includes(':(icase).veilio') || /^\.veilio(?:\/|$)/i.test(f))
+    const cut = e.argv.includes(':(icase).veilio')
+      ? opts.veilioListTruncated === true
+      : opts.listTruncated === true
     return {
       value: {
         exitCode: 0,
-        stdout: tracked.map((f) => `${f}\0`).join(''),
+        // Cut short as the host cuts it: the first entry, then a partial one.
+        stdout: cut
+          ? `${tracked.filter((f) => !/^\.veilio/i.test(f))[0] ?? ''}\0part`
+          : tracked.map((f) => `${f}\0`).join(''),
         stderr: '',
-        isStdoutTruncated: false,
+        isStdoutTruncated: cut,
         isStderrTruncated: false,
       },
     }

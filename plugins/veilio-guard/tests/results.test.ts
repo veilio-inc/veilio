@@ -1502,3 +1502,185 @@ test('the documented limit: a removed credential under 16 characters comes back 
   expect(two.deny).toBeUndefined()
   expect(res(two).stdout).toContain('P q 7 r')
 })
+
+// Spec 085 L16: an MCP result's object keys are data like its values: masked
+// and scanned, with no value lost. Two keys that would mask to one text
+// withhold the result rather than merge.
+const GATEWAY = { __CLS__1: 'PaymentGateway' }
+const mcpResult = (extra: Record<string, unknown>) => ({
+  result: { content: [{ type: 'text', text: 'found' }], ...extra },
+})
+
+test('L16: a structuredContent key holding a project name is masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 'src/pay.ts' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+  const sc = (outcome(out).result as Fields).structuredContent as Fields
+  expect(Object.keys(sc)).toEqual(['__CLS__1'])
+})
+
+test('L16: the keys of an MCP result with no content blocks (a deep result) are masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({ result: { PaymentGateway: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('L16: a key that is a provider-shaped credential never reaches the model', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { [STRIPE]: 'src/pay.ts' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain(STRIPE.slice(8))
+})
+
+// Review round 2 #3: a key the map does not have yet is masked as a value
+// is, minted and saved, so a new project identifier used as a key never
+// reaches the model as written.
+test('L16: a never-seen identifier-shaped key is masked and saved', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { [CANARY]: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+})
+
+test('L16: two keys that would mask to the same text withhold the result', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 1, __CLS__1: 2 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBe(
+    'Veilio withheld this result: two keys of its result would read the same once masked, so they could not both be sent. Nothing from it was sent.'
+  )
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+// The guard keeps a `__proto__` key as an own property (tests/guard/fields.test.ts
+// pins that); whether it survives the trip back to Claude Code depends on the
+// runtime (2.1.288 drops it, 2.1.319 keeps it). Either way no raw name gets through.
+test('L16: a __proto__ key never carries a raw name: its subtree is kept masked or dropped', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () =>
+    mcpResult({ structuredContent: JSON.parse('{"__proto__": {"owner": "PaymentGateway"}}') })
+  )
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  const text = JSON.stringify(out)
+  expect(text).not.toContain('PaymentGateway')
+  const sc = JSON.stringify((outcome(out).result as Fields).structuredContent)
+  const kept = sc === '{"__proto__":{"owner":"__CLS__1"}}'
+  console.warn(`__proto__ key ${kept ? 'kept, masked' : 'dropped'} by this runtime`)
+  expect(kept || sc === '{}').toBe(true)
+})
+
+test("L16: a built-in tool's record keeps its own keys", async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__4: 'file', __VAR__5: 'content' }) })
+  on('tool.call', () => read.r)
+  const out = await $.tool.call(eventOf(read))
+  expect(Object.keys(res(out))).toEqual(Object.keys(read.r.result))
+  expect(Object.keys(res(out).file)).toEqual(Object.keys(read.r.result.file as Fields))
+})
+
+// Review round 1 (security) #3: any tool named mcp__… is an MCP tool, a name
+// that is underscores after the server included.
+test('R1#3: an MCP tool whose name ends in underscores still has its keys masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes___', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('R1#3: an MCP tool whose name ends in underscores still has an image result withheld', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({
+    result: { content: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }] },
+  }))
+  const out = await $.tool.call({ tool: 'mcp__notes___', q: 'x' })
+  expect(outcome(out).deny).toMatch(/^Veilio withheld this result: MCP results other than text/)
+})
+
+// Review round 1 (security) #4: in an MCP result only a content block's
+// `type` is an enum; a `status` or `mode` at its root is the server's data.
+test('R1#4: an MCP result root status or mode holding a name is masked and saved', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({ result: { status: CANARY, mode: 'InvoiceBuilderService' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  const text = JSON.stringify(out)
+  expect(text).not.toContain(CANARY)
+  expect(text).not.toContain('InvoiceBuilderService')
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+})
+
+// Review round 2 #3: keys follow the engine's own rule for values: a plain
+// word stays, a compound identifier (`totalCount`, `html_url`) is masked. A
+// tool with a strict output schema may then fail - an error, not a leak.
+test('L16: plain-word keys stay readable, and compound identifier keys are masked like values', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () =>
+    mcpResult({
+      structuredContent: {
+        name: 'z',
+        id: 1,
+        status: 'open',
+        items: [],
+        totalCount: 3,
+        html_url: 'y',
+      },
+    })
+  )
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
+  const keys = Object.keys((outcome(out).result as Fields).structuredContent as Fields)
+  expect(keys.slice(0, 4)).toEqual(['name', 'id', 'status', 'items'])
+  expect(keys.join()).not.toMatch(/totalCount|html_url/)
+})
+
+// Review round 3 #8 (checked, not reproduced): a placeholder this session
+// showed but never saved is a quarantined name's, held with the removed
+// credential, so a planted entry under it is refused as one; a planted map
+// entry under it makes the guard fail closed (a quarantined placeholder is
+// also a saved one).
+test('R3#8: a planted aliases entry under a shown quarantine placeholder is refused', async ($, on) => {
+  const slice = KEY_TAIL.slice(2, 15)
+  const other = `export function build${slice}Total() {}\n`
+  const read = recorded('Read')
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({}),
+      [`${ROOT}/src/config.ts`]: CONFIG,
+      [`${ROOT}/src/other.ts`]: other,
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    const path = String(e.file_path ?? '')
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: path, content: p.files[path] ?? '' },
+        },
+      }
+    return { result: { type: 'create', filePath: path } }
+  })
+  await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/other.ts` })
+  const q = /__QUARANTINED__\d+/.exec(JSON.stringify(out))?.[0]
+  expect(q).toBeDefined()
+  p.files[`${ROOT}/.veilio/aliases.json`] = JSON.stringify({
+    aliases: { [q!]: 'fakePlantedValue()' },
+  })
+  p.files[`${ROOT}/src/pay.ts`] = 'export class PaymentGatewayFake {}\n'
+  await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/pay.ts` })
+  const writes = seen.length
+  const w = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/a.ts`, content: `${q}()` })
+  expect(w.deny).toBeDefined()
+  expect(seen).toHaveLength(writes)
+})
