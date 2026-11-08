@@ -153,7 +153,8 @@ function refuseOthers(dir: string, path: string): void {
  * (spec 085 L2): never written through the file already there, which may be
  * another name for a file elsewhere (a hard link) or another user's.
  */
-export function writeStoreFile(path: string, text: string): void {
+export function writeStoreFile(what: string, path: string, text: string): void {
+  checkStoreWrite(what, path)
   const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`)
   const fd = openSync(tmp, 'wx', 0o600)
   try {
@@ -273,7 +274,7 @@ export function saveMap(
   const remote = options.remote ?? loadRemote(path)
   const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
   // A new 0600 file each time, so a world-readable map already there is replaced too.
-  writeStoreFile(path, `${JSON.stringify(payload, null, 2)}\n`)
+  writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
 }
 
 /**
@@ -288,9 +289,16 @@ export function saveMap(
  */
 export function prepareStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
-  refuseLinks(what, dir, path)
-  refuseOthers(dir, path)
-  mkdirSync(dir, { recursive: true })
+  checkStoreWrite(what, path)
+  // Made 0700 and not recursively, so a directory already there is checked
+  // again rather than taken: another user may have swapped it in meanwhile.
+  mkdirSync(dirname(dir), { recursive: true })
+  try {
+    mkdirSync(dir, { mode: 0o700 })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+  }
+  checkStoreWrite(what, path)
   if (basename(dir) !== STORE_DIR) return
   const ignore = join(dir, '.gitignore')
   let st
@@ -305,6 +313,26 @@ export function prepareStoreWrite(what: string, path: string): void {
     throw new StoreRefusal(
       `refusing to write ${what}: ${dir}/.gitignore does not keep it out of git (it must be a plain file whose only pattern is \`*\`). Fix that file, then run again.`
     )
+}
+
+/**
+ * The store directory is a real directory and neither it nor the file is a
+ * link or another user's. Run before mkdir, after it, and again right before
+ * the rename (security review). Node has no openat, so a window remains
+ * between the last check and the rename; the 0700 directory bounds it.
+ */
+function checkStoreWrite(what: string, path: string): void {
+  const dir = dirname(path)
+  refuseLinks(what, dir, path)
+  let st
+  try {
+    st = lstatSync(dir)
+  } catch {
+    st = null // not made yet
+  }
+  if (st && !st.isDirectory())
+    throw new Error(`refusing to write ${what}: ${dir} is not a directory`)
+  refuseOthers(dir, path)
 }
 
 /**

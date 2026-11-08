@@ -341,3 +341,79 @@ describe('a store another user owns is never used (L2)', () => {
     expect(readdirSync(join(base, 'proj', '.veilio')).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 })
+
+// Security review: the checks ran before mkdir and the write, so another local
+// user could swap .veilio in between. The swap is planted from inside the
+// stubbed process.getuid, on its n-th call, i.e. right after an earlier check.
+describe('a store swapped between the checks and the write is refused', () => {
+  const posix = process.platform !== 'win32'
+  afterEach(() => vi.restoreAllMocks())
+  const setup = () => {
+    const base = mkdtempSync(join(tmpdir(), 'veilio-race-'))
+    const proj = join(base, 'proj')
+    const outside = join(base, 'outside')
+    mkdirSync(join(proj, '.veilio'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(proj, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(join(outside, '.gitignore'), '*\n')
+    return {
+      proj,
+      outside,
+      store: join(proj, '.veilio'),
+      mapPath: join(proj, '.veilio', 'map.json'),
+    }
+  }
+  /** On getuid call `at`, run `swap`; from then on, if `foreign`, answer another uid. */
+  const plantAt = (at: number, swap: () => void, foreign = false) => {
+    const me = process.getuid!()
+    let calls = 0
+    vi.spyOn(process, 'getuid').mockImplementation(() => {
+      calls++
+      if (calls === at) swap()
+      return foreign && calls >= at ? me + 1 : me
+    })
+  }
+  const RESERVED = {
+    version: 1,
+    instance: 'https://x',
+    account: 'a',
+    teamId: 't',
+    blocks: {},
+  } as const
+
+  it.runIf(posix)('a link planted after the first check (no read before the write)', async () => {
+    const { saveReserved } = await import('../src/reservations.js')
+    const { store, outside, mapPath } = setup()
+    plantAt(2, () => {
+      rmSync(store, { recursive: true })
+      symlinkSync(outside, store)
+    })
+    expect(() => saveReserved(mapPath, RESERVED)).toThrow(/is a link/)
+    expect(existsSync(join(outside, 'reserved.json'))).toBe(false)
+  })
+
+  it.runIf(posix)("another user's directory planted after the first check", async () => {
+    const { saveReserved } = await import('../src/reservations.js')
+    const { store, mapPath } = setup()
+    plantAt(2, () => {}, true)
+    expect(() => saveReserved(mapPath, RESERVED)).toThrow(/belongs to another user/)
+    expect(existsSync(join(store, 'reserved.json'))).toBe(false)
+  })
+
+  it.runIf(posix)('a link planted after mkdir, just before the write', () => {
+    const { store, outside, mapPath } = setup()
+    // Calls 1-4: the first check and the re-check after mkdir; 5-6: loadRemote.
+    plantAt(6, () => {
+      rmSync(store, { recursive: true })
+      symlinkSync(outside, store)
+    })
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' })).toThrow(/is a link/)
+    expect(existsSync(join(outside, 'map.json'))).toBe(false)
+  })
+
+  it.runIf(posix)('a new store directory is made 0700', () => {
+    const base = mkdtempSync(join(tmpdir(), 'veilio-race-'))
+    saveMap(join(base, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
+    expect(statSync(join(base, '.veilio')).mode & 0o777).toBe(0o700)
+  })
+})

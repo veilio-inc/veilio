@@ -70,7 +70,7 @@ const aliasesPath = (mapPath: string) => join(dirname(mapPath), ALIASES_FILE)
 
 function writePrivate(path: string, value: unknown): void {
   prepareStoreWrite(basename(path), path)
-  writeStoreFile(path, `${JSON.stringify(value, null, 2)}\n`)
+  writeStoreFile(basename(path), path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 /** The member's blocks, or null before any was reserved. A malformed file is refused, never numbered from. */
