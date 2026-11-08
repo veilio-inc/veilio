@@ -293,6 +293,39 @@ describe('a store another user owns is never used (L2)', () => {
     expect(readFileSync(mapPath, 'utf8')).not.toContain('PaymentGateway')
   })
 
+  // Review round 2 (#1): in a fresh checkout there is no store yet, so the
+  // owner checks saw nothing, and root made a .veilio the user could not use.
+  it.runIf(posix)(
+    'under sudo, no store is made in a project the user who ran sudo owns',
+    async () => {
+      const { saveReserved } = await import('../src/reservations.js')
+      const base = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
+      const store = join(base, '.veilio')
+      vi.stubEnv('SUDO_UID', String(process.getuid!()))
+      asRoot()
+      const hint = `refusing to write ${store} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
+      expect(() => saveMap(join(store, 'map.json'), { __CLS__1: 'PaymentGateway' })).toThrow(hint)
+      expect(() =>
+        saveReserved(join(store, 'map.json'), {
+          version: 1,
+          instance: 'https://x',
+          account: 'a',
+          teamId: 't',
+          blocks: {},
+        })
+      ).toThrow(hint)
+      expect(existsSync(store)).toBe(false)
+    }
+  )
+
+  it.runIf(posix)('root with no sudo still writes where it owns the project', () => {
+    const base = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
+    vi.stubEnv('SUDO_UID', '')
+    vi.spyOn(process, 'getuid').mockReturnValue(process.getuid!())
+    saveMap(join(base, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
+    expect(existsSync(join(base, '.veilio', 'map.json'))).toBe(true)
+  })
+
   it.runIf(posix)('root without SUDO_UID, or with another one, refuses it', () => {
     const { proj, mapPath } = setup()
     vi.stubEnv('SUDO_UID', '')

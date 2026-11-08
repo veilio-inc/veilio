@@ -190,13 +190,15 @@ function trustedStore(dir: string): boolean {
   return listed.some((p) => real(p) === here)
 }
 
+const sudoWriteRefusal = (dir: string) =>
+  new StoreRefusal(
+    `refusing to write ${dir} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
+  )
+
 /** The store directory and its file are this user's, or not used (spec 085 L2, Q2 = A). */
 function refuseOthers(dir: string, path: string, write = false): void {
   const owners = [ownerOf(dir), ownerOf(path)]
-  if (owners.includes('sudo') && write && !trustedStore(dir))
-    throw new StoreRefusal(
-      `refusing to write ${dir} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
-    )
+  if (owners.includes('sudo') && write && !trustedStore(dir)) throw sudoWriteRefusal(dir)
   if (owners.includes('other') && !trustedStore(dir))
     throw new StoreRefusal(
       `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, add its full path to VEILIO_TRUST_STORE_OWNER.`
@@ -349,6 +351,9 @@ export function saveMap(
  */
 export function prepareStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
+  // Under sudo, in a project the invoking user owns, root would make a store
+  // that user cannot use (review round 2): refused before anything is made.
+  if (ownerOf(dirname(dir)) === 'sudo') throw sudoWriteRefusal(dir)
   checkStoreWrite(what, path)
   // Made 0700 and not recursively, so a directory already there is checked
   // again rather than taken: another user may have swapped it in meanwhile.
