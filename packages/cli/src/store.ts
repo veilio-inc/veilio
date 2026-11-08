@@ -110,11 +110,15 @@ export class StoreRefusal extends Error {}
  */
 export function openStoreFile(what: string, path: string): string | null {
   const dir = dirname(path)
-  const tracked = trackedStoreFile(path)
-  if (tracked !== null) {
-    // The path comes from the checkout: a command is offered only for a plain one.
+  const found = trackedStoreFile(path)
+  if (found !== null) {
+    const { root, tracked } = found
+    // The path comes from the checkout: shown without control characters, and
+    // a command only when neither it nor the root holds one; both quoted.
     const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
-    const how = /^[A-Za-z0-9._/-]+$/.test(tracked) ? ` (\`git rm --cached ${tracked}\`)` : ''
+    const how = NOT_IN_A_NAME.test(tracked + root)
+      ? ''
+      : ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
     throw new StoreRefusal(
       `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
         `Remove it from git${how}, then scrub again to build your own.`
@@ -170,8 +174,11 @@ export function writeStoreFile(what: string, path: string, text: string): void {
   }
 }
 
-/** The store path git tracks, as git names it, or null (none, or no way to tell). */
-function trackedStoreFile(path: string): string | null {
+/** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
+/** One shell word: single quotes, an embedded quote closed, escaped and reopened. */
+const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+
+function trackedStoreFile(path: string): { root: string; tracked: string } | null {
   const dir = dirname(path)
   const git = trackedPaths(dir)
   if (!git) return null
@@ -181,7 +188,8 @@ function trackedStoreFile(path: string): string | null {
     candidates.unshift(dir, join(dir, STORE_FILE), join(dir, 'aliases.json'))
   for (const p of candidates) {
     const name = rel(p)
-    if (name && !name.startsWith('..') && git.paths.has(name.toLowerCase())) return name
+    if (name && !name.startsWith('..') && git.paths.has(name.toLowerCase()))
+      return { root: git.root, tracked: name }
   }
   return null
 }

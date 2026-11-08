@@ -62,7 +62,7 @@ describe('a map the repository commits is not restored from (L3)', () => {
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.out).not.toContain('injectedCall')
     expect(r.err).toContain(
-      'veilio: `.veilio/map.json` is tracked by git: a map in the repository is not yours to restore from. Remove it from git (`git rm --cached .veilio/map.json`), then scrub again to build your own.'
+      `veilio: \`.veilio/map.json\` is tracked by git: a map in the repository is not yours to restore from. Remove it from git (\`git -C '${cwd}' rm --cached -- '.veilio/map.json'\`), then scrub again to build your own.`
     )
   })
 
@@ -234,5 +234,41 @@ describe('every store refusal exits 1', () => {
     writeFileSync(join(cwd, '.veilio'), 'not a directory')
     const r = await run(['scrub', '--map', '.veilio/map.json'], 'export class QuasarLedger {}')
     expect(r.code).toBe(EXIT_FINDINGS)
+  })
+})
+
+// Review round 1 (#6): the command names the checkout's root and ends the
+// options, with both shell-quoted, so it works from a nested package and for
+// a path that starts with a dash or holds a quote.
+describe('the suggested git command', () => {
+  const plantIn = (dir: string) => {
+    mkdirSync(join(cwd, dir, '.veilio'), { recursive: true })
+    writeFileSync(join(cwd, dir, '.veilio', 'map.json'), JSON.stringify({ version: 1, map: {} }))
+    git(cwd, 'add', '-f', '--', `${dir}/.veilio/map.json`)
+  }
+  const messageFor = (dir: string) => {
+    try {
+      loadMap(join(cwd, dir, '.veilio', 'map.json'))
+    } catch (err) {
+      return (err as Error).message
+    }
+    return ''
+  }
+  it('from a nested package: -C the root, the path from the root', () => {
+    git(cwd, 'init', '-q')
+    plantIn('packages/pay')
+    expect(messageFor('packages/pay')).toContain(
+      `(\`git -C '${cwd}' rm --cached -- 'packages/pay/.veilio/map.json'\`)`
+    )
+  })
+  it('a path that starts with a dash is after --', () => {
+    git(cwd, 'init', '-q')
+    plantIn('-x')
+    expect(messageFor('-x')).toContain(`rm --cached -- '-x/.veilio/map.json'`)
+  })
+  it('a quote in the path is escaped for the shell', () => {
+    git(cwd, 'init', '-q')
+    plantIn("it's")
+    expect(messageFor("it's")).toContain(`rm --cached -- 'it'\\''s/.veilio/map.json'`)
   })
 })
