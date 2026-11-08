@@ -125,22 +125,28 @@ const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype',
 /** deepRewrite, with the key each string sits under. */
 // The key is passed only at the record's top level, and in the blocks of a root
 // list (an MCP result's `type`), as `keep` works in fields.ts; deeper it is ''.
-// `at`: the string's place in the record, in the field-list syntax. Keys stay
-// as written here: they get the map's names and the credential strip in the
-// passes before, never a name of their own (review round 1, correctness #4).
+// `at`: the string's place in the record, in the field-list syntax. `keys`:
+// the keys that are data (an MCP result's), masked as a value is, minting
+// included, so a new identifier used as a key never reaches the model as
+// written (spec 085 L16, review round 2 #3).
 function rewriteKeyed(
   value: unknown,
   fn: (s: string, key: string, at: string) => string,
+  keys?: DataKeys,
   key = '',
   top = true,
   at = ''
 ): unknown {
   if (typeof value === 'string') return fn(value, key, at)
-  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, '', top, `${at}[]`))
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, keys, '', top, `${at}[]`))
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value))
-      setOnce(out, k, rewriteKeyed(v, fn, top ? k : '', false, at === '' ? k : `${at}.${k}`))
+      setOnce(
+        out,
+        keys?.(k, at) ? fn(k, '', '') : k,
+        rewriteKeyed(v, fn, keys, top ? k : '', false, at === '' ? k : `${at}.${k}`)
+      )
     return out
   }
   return value
@@ -781,6 +787,8 @@ export class Guard {
    *  file): any change sends a save to git (review round 1 #1). */
   private mapText = ''
   private aliasesText = ''
+  /** The last save's git check had no answer: the next one asks again. */
+  private recheck = false
   private loaded = false
   /** Load had a git listing (spec 085 review round 1). */
   private listed = false
@@ -1095,27 +1103,56 @@ export class Guard {
     }
     return text
   }
-  /** Review round 1 (correctness) #1: Veilio's own MCP server (the user's
-   *  config names it `veilio`) writes the placeholders it returns into the
-   *  map. One in its result that is in the map now but was not when the
-   *  guard last read it, and that the model did not write into the call,
-   *  was minted by it: shown. */
-  private async seeMinted(texts: readonly string[], args: ToolEvent): Promise<void> {
+  /** Review round 1 (correctness) #1, round 2 #1: Veilio's own MCP server
+   *  (the one server the tool name parses to is exactly `veilio`, from the
+   *  user's config) writes the placeholders it returns into the map. One in
+   *  its result counts as shown only when it is in the map now and was not
+   *  when the guard last read it, the model did not write it into the call,
+   *  and its name is in what the tool was asked to mask: the text given to
+   *  `anonymize_text`, or the file `anonymize_file` names, read by the guard
+   *  itself inside the project and not through a link. Anything else: not. */
+  private async seeMinted(tool: string, texts: readonly string[], args: ToolEvent): Promise<void> {
+    const servers = mcpServersOf(tool)
+    if (servers.length !== 1 || servers[0] !== 'veilio') return
+    const source = await this.mintSource(tool.slice('mcp__veilio__'.length), args)
+    if (source === null) return
     if (!(await this.io.exists(this.mapPath))) return
     const parsed = parseMapFile(await this.io.read(this.mapPath))
     if (!parsed.ok) return
+    const map = parsed.stored.map
     const token = /__[A-Z0-9_]+__\d*/g
     const written = new Set<string>()
     for (const [k, v] of Object.entries(args))
       if (!RESERVED.has(k))
         deepRewrite(v, (s) => (s.match(token)?.forEach((t) => written.add(t)), s))
     for (const t of texts.join('\n').match(token) ?? [])
-      if (Object.hasOwn(parsed.stored.map, t) && !Object.hasOwn(this.onDisk, t) && !written.has(t))
-        if (!this.shown.has(t)) {
-          this.shown.add(t)
-          this.shownVersion++
-        }
+      if (
+        Object.hasOwn(map, t) &&
+        !Object.hasOwn(this.onDisk, t) &&
+        !written.has(t) &&
+        source.includes(map[t]!) &&
+        !this.shown.has(t)
+      ) {
+        this.shown.add(t)
+        this.shownVersion++
+      }
   }
+
+  /** What a Veilio MCP tool was asked to mask, or null when the guard cannot
+   *  tell (review round 2 #1). */
+  private async mintSource(name: string, args: ToolEvent): Promise<string | null> {
+    if (name === 'anonymize_text') return typeof args.text === 'string' ? args.text : null
+    if (name !== 'anonymize_file' || typeof args.path !== 'string') return null
+    const path = normalisePath(
+      /^[/\\]|^[A-Za-z]:/.test(args.path) ? args.path : join(this.root, args.path)
+    )
+    if (!path.startsWith(`${this.root}/`) || isRawOnly(path, this.extraRawOnly)) return null
+    const root = (await this.io.realPath(this.root)) ?? this.root
+    if (!this.samePath(await this.io.realPath(path), join(root, path.slice(this.root.length + 1))))
+      return null
+    return this.io.read(path).catch(() => null)
+  }
+
   private shownCache: {
     from: SymbolMap
     size: number
@@ -1865,20 +1902,24 @@ export class Guard {
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
       const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
-      value = rewriteKeyed(value, (s, key, at) => {
-        if (keep.has(key)) return s
-        // An enum is one bare token at the top of a record; a sentence under
-        // `status`, or a value deeper down, is masked like any other. In an
-        // MCP result only a content block's `type` is one (review round 1 #4).
-        const enumKey = keys ? MCP_BLOCK_TYPE.test(at) : ENUM_KEYS.has(key)
-        if (policy.kind !== 'text' && enumKey && /^[\w$.-]+$/.test(s)) return s
-        return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c, this.numbering)
-          grow(working, shaped.additions)
-          grow(additions, shaped.additions)
-          return shaped.text
-        })
-      })
+      value = rewriteKeyed(
+        value,
+        (s, key, at) => {
+          if (keep.has(key)) return s
+          // An enum is one bare token at the top of a record; a sentence under
+          // `status`, or a value deeper down, is masked like any other. In an
+          // MCP result only a content block's `type` is one (review round 1 #4).
+          const enumKey = keys ? MCP_BLOCK_TYPE.test(at) : ENUM_KEYS.has(key)
+          if (policy.kind !== 'text' && enumKey && /^[\w$.-]+$/.test(s)) return s
+          return perLine(s, (t, c) => {
+            const shaped = maskShaped(t, working, c, this.numbering)
+            grow(working, shaped.additions)
+            grow(additions, shaped.additions)
+            return shaped.text
+          })
+        },
+        keys
+      )
 
       if (Object.keys(additions).length > 0) {
         const { status: saved } = await this.save(additions, deadline)
@@ -1899,7 +1940,7 @@ export class Guard {
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
       const given = texts.join('\n')
       deepRewrite(value, (s) => this.see(s, given), undefined, keys)
-      if (tool.startsWith('mcp__veilio__')) await this.seeMinted(texts, args)
+      await this.seeMinted(tool, texts, args)
       return { result: value }
     }
     return this.withhold(
@@ -2113,8 +2154,12 @@ export class Guard {
       // against git before any of them is merged; so is any change to either
       // file, new names or not (review round 1 #1).
       const adopted = this.adopt(onDisk.map, aliases)
-      if (adopted || mapText !== this.mapText || this.aliasesText !== aliasesText) {
-        this.stopIfTracked(await this.trackedVeilioFiles(deadline))
+      if (adopted || this.recheck || mapText !== this.mapText || this.aliasesText !== aliasesText) {
+        const tracked = await this.trackedVeilioFiles(deadline)
+        // Review round 2 #2: a git that did not answer leaves it open; the
+        // next save asks again (what arrived stays shown-gated meanwhile).
+        this.recheck = tracked === null && this.listed
+        this.stopIfTracked(tracked)
         if (this.state === 'stopped') throw new Error(this.stoppedReason)
       }
       this.onDisk = onDisk.map

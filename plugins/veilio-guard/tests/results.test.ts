@@ -1536,20 +1536,16 @@ test('L16: a key that is a provider-shaped credential never reaches the model', 
   expect(JSON.stringify(out)).not.toContain(STRIPE.slice(8))
 })
 
-// Review round 1 (correctness) #4: a key gets the names the map already has
-// and the credential strip, never a new name of its own: schema keys
-// (`totalCount`, `createdAt`, `html_url`) stay readable and out of the map.
-test('L16: ordinary schema keys stay readable, and no name is minted from a key', async ($, on) => {
+// Review round 2 #3: a key the map does not have yet is masked as a value
+// is, minted and saved, so a new project identifier used as a key never
+// reaches the model as written.
+test('L16: a never-seen identifier-shaped key is masked and saved', async ($, on) => {
   const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
-  on('tool.call', () =>
-    mcpResult({ structuredContent: { totalCount: 3, createdAt: 'x', html_url: 'y', [CANARY]: 1 } })
-  )
+  on('tool.call', () => mcpResult({ structuredContent: { [CANARY]: 1 } }))
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
   expect(outcome(out).deny).toBeUndefined()
-  const sc = (outcome(out).result as Fields).structuredContent as Fields
-  expect(Object.keys(sc)).toEqual(['totalCount', 'createdAt', 'html_url', CANARY])
-  const saved = p.files[`${ROOT}/.veilio/map.json`]!
-  for (const k of ['totalCount', 'createdAt', 'html_url', CANARY]) expect(saved).not.toContain(k)
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
 })
 
 test('L16: two keys that would mask to the same text withhold the result', async ($, on) => {
@@ -1616,4 +1612,28 @@ test('R1#4: an MCP result root status or mode holding a name is masked and saved
   expect(text).not.toContain(CANARY)
   expect(text).not.toContain('InvoiceBuilderService')
   expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+})
+
+// Review round 2 #3: keys follow the engine's own rule for values: a plain
+// word stays, a compound identifier (`totalCount`, `html_url`) is masked. A
+// tool with a strict output schema may then fail - an error, not a leak.
+test('L16: plain-word keys stay readable, and compound identifier keys are masked like values', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () =>
+    mcpResult({
+      structuredContent: {
+        name: 'z',
+        id: 1,
+        status: 'open',
+        items: [],
+        totalCount: 3,
+        html_url: 'y',
+      },
+    })
+  )
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
+  const keys = Object.keys((outcome(out).result as Fields).structuredContent as Fields)
+  expect(keys.slice(0, 4)).toEqual(['name', 'id', 'status', 'items'])
+  expect(keys.join()).not.toMatch(/totalCount|html_url/)
 })

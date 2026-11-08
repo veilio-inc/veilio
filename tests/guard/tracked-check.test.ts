@@ -58,6 +58,8 @@ it('a save that finds a changed map asks git for .veilio only, within the deadli
 
 it('git is asked once for what arrived, not again on every later save', async () => {
   const { io, files, calls } = host()
+  // A git that answers: nothing under .veilio is tracked.
+  io.listVeilio = () => (calls.listVeilio++, Promise.resolve([]))
   const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
   await guard.load(ROOT)
   files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
@@ -133,4 +135,50 @@ it('on Windows, a real path with backslashes and another case is the same store'
   )
   expect(guard.state).toBe('on')
   expect(files[`${W}/.veilio/map.json`]).toContain('PaymentGatewayFake')
+})
+
+// Review round 2 #2: a git that answers late leaves the question open: the
+// next save asks again, and what arrived stays shown-gated meanwhile.
+it('a save whose git answers late asks again at the next save, and finds the map tracked', async () => {
+  const { io, files } = host()
+  let asked = 0
+  io.listVeilio = () =>
+    ++asked === 1
+      ? new Promise<string[] | null>(() => undefined)
+      : Promise.resolve(['.veilio/map.json'])
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(ROOT)
+  files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+  const read = (name: string) => {
+    const path = `${ROOT}/src/${name}.ts`
+    return guard.afterTool(
+      'Read',
+      { tool: 'Read', file_path: path },
+      {
+        result: {
+          type: 'text',
+          file: {
+            filePath: path,
+            content: `export class ${name} {}\n`,
+            numLines: 1,
+            startLine: 1,
+            totalLines: 1,
+          },
+        },
+      },
+      Date.now() + 1000
+    )
+  }
+  await read('PaymentGatewayFake')
+  expect(guard.state).toBe('on')
+  const meanwhile = await guard.beforeTool({
+    tool: 'Write',
+    file_path: `${ROOT}/a.ts`,
+    content: '__VAR__9',
+  })
+  expect('deny' in meanwhile && meanwhile.deny).toContain('which this session has not shown you')
+  await read('InvoiceBuilderFake').catch(() => undefined)
+  expect(asked).toBe(2)
+  expect(guard.state).toBe('stopped')
+  expect(guard.stoppedReason).toContain('tracked by git')
 })
