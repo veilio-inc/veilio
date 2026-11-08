@@ -188,6 +188,8 @@ const NAME_OR_PATH = /^(?!-)[\p{L}\p{M}\p{N}_./@+:$-]+$/u
 const nameOrPath = (v: string) =>
   NAME_OR_PATH.test(v) &&
   !v.includes('://') &&
+  // A protocol-relative URL (`//host/x`) too (final review).
+  !v.startsWith('//') &&
   !/(?:^|\/)\.\.(?:\/|$)/.test(v) &&
   // A leading scheme (`file:`, `javascript:`), not a drive letter or `::`.
   !/^(?![A-Za-z]:\/)[A-Za-z][A-Za-z0-9+.-]*:(?!:)/.test(v)

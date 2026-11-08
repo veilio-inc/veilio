@@ -196,6 +196,11 @@ test(
   unshapedRefused('file:/etc/passwd')
 )
 test(
+  'R7: a protocol-relative URL map value is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('//evil.example/x')
+)
+test(
   'R3#7: a map value with a javascript: scheme is not restored into an MCP tool',
   LOCAL_DB,
   unshapedRefused('javascript:alert')
