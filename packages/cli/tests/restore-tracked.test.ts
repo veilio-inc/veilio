@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import { EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
-import { loadMap, resolveMapPath } from '../src/store.js'
+import { StoreRefusal, loadMap, resolveMapPath, saveMap } from '../src/store.js'
 import { readAliases } from '../src/reservations.js'
 
 // Spec 085 L3 (security audit run-1): a cloned repository that commits
@@ -208,5 +208,31 @@ describe('security review of the store reader', () => {
     }
     writeFileSync(join(cwd, '.veilio', 'map.json'), JSON.stringify({ version: 1, map }))
     expect(loadMap(resolveMapPath(null, cwd))).toEqual(map)
+  })
+})
+
+// Review round 1 (#7): a store refused for a link or a non-directory is a
+// store refusal like the others: exit 1, not the usage/IO exit 2.
+describe('every store refusal exits 1', () => {
+  it('scrub into a .veilio that is a link', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'veilio-trk-out-'))
+    symlinkSync(outside, join(cwd, '.veilio'))
+    const r = await run(['scrub'], 'export class QuasarLedger {}')
+    expect(r.err).toContain('is a link')
+    expect(r.code).toBe(EXIT_FINDINGS)
+  })
+
+  it('a write through a link is a StoreRefusal', async () => {
+    mkdirSync(join(cwd, '.veilio'))
+    symlinkSync(join(cwd, 'gone.json'), join(cwd, '.veilio', 'map.json'))
+    expect(() =>
+      saveMap(join(cwd, '.veilio', 'map.json'), { __CLS__1: 'QuasarLedger' }, { force: true })
+    ).toThrow(StoreRefusal)
+  })
+
+  it('scrub where .veilio is a plain file', async () => {
+    writeFileSync(join(cwd, '.veilio'), 'not a directory')
+    const r = await run(['scrub', '--map', '.veilio/map.json'], 'export class QuasarLedger {}')
+    expect(r.code).toBe(EXIT_FINDINGS)
   })
 })

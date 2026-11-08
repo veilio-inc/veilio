@@ -331,7 +331,7 @@ function checkStoreWrite(what: string, path: string): void {
     st = null // not made yet
   }
   if (st && !st.isDirectory())
-    throw new Error(`refusing to write ${what}: ${dir} is not a directory`)
+    throw new StoreRefusal(`refusing to write ${what}: ${dir} is not a directory`)
   refuseOthers(dir, path)
 }
 
@@ -350,7 +350,8 @@ function onlyStar(text: string): boolean {
 /** Throws when any of `paths` is a link: the store's files are written only
  *  where they appear to be (security audit 2026-11-01). */
 export function refuseLinks(what: string, ...paths: string[]): void {
-  for (const p of paths) if (isLink(p)) throw new Error(`refusing to write ${what}: ${p} is a link`)
+  for (const p of paths)
+    if (isLink(p)) throw new StoreRefusal(`refusing to write ${what}: ${p} is a link`)
 }
 
 function isLink(path: string): boolean {
