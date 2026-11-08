@@ -238,7 +238,8 @@ test('the two-call form: the cd is refused, so the next short name cannot inheri
   expect(seen.length).toBe(0)
 })
 
-for (const command of ['cd packages/cli && npm test', 'cd src', 'cd ..', 'cd ~', 'cd', 'cd -'])
+// `cd -` left this list in review round 4 #5: it goes to OLDPWD, which the words do not give.
+for (const command of ['cd packages/cli && npm test', 'cd src', 'cd ..', 'cd ~', 'cd'])
   test(`an ordinary cd still runs: ${command}`, async ($, on) => {
     project(on, SECRETS)
     let ran = false
@@ -578,4 +579,87 @@ test('R3#4: plain cd targets still run: a scoped package folder, a home path, a 
   ])
     expect((await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny).toBeUndefined()
   expect(seen).toHaveLength(4)
+})
+
+// Review round 4 #3: PowerShell's own cd commands, with `\` a separator.
+test('R4#3: PowerShell Set-Location, sl and Push-Location into a raw-only folder are refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const [command, shown] of [
+    ['Set-Location C:\\Users\\dev\\.aws; Get-Content credentials', 'C:\\Users\\dev\\.aws'],
+    ['sl ~\\.kube; gc config', '~\\.kube'],
+    ['Push-Location ~\\.aws; gc credentials', '~\\.aws'],
+    ['Set-Location -Path ~\\.kube; gc config', '~\\.kube'],
+  ] as const) {
+    const out = await $.tool.call({ tool: 'PowerShell', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toBe(`${command} -> ${CD(shown)}`)
+  }
+  expect(seen).toHaveLength(0)
+})
+
+// Review round 4 #4: a target quoted so that nothing in it expands is read as
+// its text, spaces included, and judged as any other.
+test('R4#4: literally quoted cd targets run, and a quoted raw-only folder is still refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const [tool, command] of [
+    ['Bash', 'cd "my folder"'],
+    ['Bash', 'cd "src/My Component"'],
+    ['Bash', "cd 'my folder'"],
+    ['PowerShell', "cd 'C:\\Program Files\\App'"],
+    ['PowerShell', 'cd "C:\\Users\\me\\My Documents"'],
+  ] as const)
+    expect(`${command} -> ${(await $.tool.call({ tool, command, description: 'x' })).deny}`).toBe(
+      `${command} -> undefined`
+    )
+  expect(seen).toHaveLength(5)
+  for (const command of ['cd ".kube"', "cd '.aws'", 'cd "$HOME/x"'])
+    expect((await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny).toBeDefined()
+  expect(seen).toHaveLength(5)
+})
+
+// Review round 4 #5: cd forms whose directory the words do not give.
+test('R4#5: CDPATH, two targets, cd - and ~name are refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'CDPATH=~/.config cd gcloud',
+    'cd x .kube',
+    'OLDPWD=~/.kube; cd -',
+    'cd ~k',
+    'pushd +1',
+  ]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+  }
+  expect(seen).toHaveLength(0)
+})
+
+test('R4#3: a Set-Location inside a subexpression is refused too', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'Write-Output $(Set-Location ~\\.kube; gc config)',
+    'echo "$(sl ~\\.aws)"',
+  ]) {
+    const out = await $.tool.call({ tool: 'PowerShell', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toContain('a cd there would let a later command read it')
+  }
+  expect(seen).toHaveLength(0)
 })

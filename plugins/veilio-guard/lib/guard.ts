@@ -30,6 +30,8 @@ import {
 import {
   allCdTargets,
   cdIntoRawOnly,
+  cdNotFollowed,
+  literalCdTargets,
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
@@ -192,6 +194,8 @@ const nameOrPath = (v: string) =>
   // A leading scheme (`file:`, `javascript:`), not a drive letter or `::`.
   !/^(?![A-Za-z]:\/)[A-Za-z][A-Za-z0-9+.-]*:(?!:)/.test(v)
 const MAX_RETRIES = 3
+/** What the engine mints a placeholder for: a name (round 4 #2). */
+const MINTED_NAME = /^[\p{L}_$][\p{L}\p{N}_$]*$/u
 /** The least time a save gives git to say whether .veilio is tracked. */
 const MIN_GIT_WAIT = 500
 
@@ -673,8 +677,11 @@ export class Guard {
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
     let settings: { enabled?: unknown; rawOnly?: unknown; mcpRestore?: unknown }
+    // A read that fails throws to the caller (round 4 #6: /veilio on stops
+    // with #43); only text that is not JSON stops the guard here.
+    const text = await this.io.read(this.settingsPath)
     try {
-      settings = JSON.parse(await this.io.read(this.settingsPath))
+      settings = JSON.parse(text)
     } catch {
       this.stop(`.veilio/guard.json is not valid JSON`)
       return
@@ -886,6 +893,8 @@ export class Guard {
         const all = await answer(this.io.list(this.root))
         if (all === null || all.length === 0) return null
         this.listed = true
+        // An IO with no .veilio-only listing (tests, another host) gets the
+        // verdict from the whole one; the hooks always give one.
         listed = veilioOnly ? await answer(veilioOnly(this.root)) : all
       } else {
         const list = veilioOnly ?? this.io.list?.bind(this.io)
@@ -1158,6 +1167,9 @@ export class Guard {
         Object.hasOwn(map, t) &&
         !Object.hasOwn(readBefore, t) &&
         !written.has(t) &&
+        // Round 4 #2: the engine mints names only; a value that is not one
+        // was not minted, whatever the file says now.
+        MINTED_NAME.test(map[t]!) &&
         source.includes(map[t]!) &&
         // Written in the source already: not minted by this call (round 3 #1).
         !source.includes(t) &&
@@ -1173,8 +1185,10 @@ export class Guard {
   private async mintSource(name: string, args: ToolEvent): Promise<string | null> {
     if (name === 'anonymize_text') return typeof args.text === 'string' ? args.text : null
     if (name !== 'anonymize_file' || typeof args.path !== 'string') return null
+    // Round 4 #1: a relative path from the session's directory, as the
+    // server reads it, not from the project root.
     const path = normalisePath(
-      /^[/\\]|^[A-Za-z]:/.test(args.path) ? args.path : join(this.root, args.path)
+      /^[/\\]|^[A-Za-z]:/.test(args.path) ? args.path : join(this.cwd || this.root, args.path)
     )
     if (!path.startsWith(`${this.root}/`) || isRawOnly(path, this.extraRawOnly)) return null
     const root = (await this.io.realPath(this.root)) ?? this.root
@@ -1414,11 +1428,11 @@ export class Guard {
   }
   /** The directories a command's relative words may be read from: where the
    *  shell is, and where each of its own cds takes it. */
-  private shellDirsOf(command: string): string[] {
+  private shellDirsOf(command: string, powershell = false): string[] {
     const dirs: string[] = []
     let dir = this.shellDir
     if (dir !== null && dir !== this.cwd) dirs.push(dir)
-    for (const t of allCdTargets(command)) {
+    for (const t of allCdTargets(command, powershell)) {
       dir = this.moved(dir, t)
       if (dir !== null) dirs.push(dir)
     }
@@ -1555,19 +1569,31 @@ export class Guard {
         // (braces, variables, quoting, escapes, zsh's and extglob's patterns):
         // judged only when every character is on a short list, a leading `~`
         // and, in PowerShell, a drive letter and `\` as a separator.
-        const judged =
-          e.tool === 'PowerShell'
-            ? /^(?:~|[A-Za-z]:)?[\p{L}\p{N}\p{M}_./+@\\-]*$/u
-            : /^~?[\p{L}\p{N}\p{M}_./+@-]*$/u
-        const into = cdTargetsToJudge(c).find((t) => !judged.test(t) || cdIntoRawOnly(t, dirs))
-        if (into !== undefined)
+        // Round 4: PowerShell's `\` is read as `/`; `~` only as a home
+        // (`~/…`, not `~name`); a target quoted so nothing in it expands is
+        // its text, spaces included; a cd its words cannot place is refused.
+        const ps = e.tool === 'PowerShell'
+        const judged = ps
+          ? /^(?:~(?=\/|$)|[A-Za-z]:)?[\p{L}\p{N}\p{M}_./+@-]*$/u
+          : /^(?:~(?=\/|$))?[\p{L}\p{N}\p{M}_./+@-]*$/u
+        const literal = literalCdTargets(c, ps)
+        const plain = (t: string) => judged.test(literal.has(t) ? t.replace(/ /g, '') : t)
+        const into = cdTargetsToJudge(c, ps).find((t) => !plain(t) || cdIntoRawOnly(t, dirs))
+        if (into !== undefined) {
+          const shown = ps ? into.replace(/\//g, '\\') : into
           return this.deny(
-            `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+            `Veilio keeps \`${this.applyText(shown, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
             false
+          )
+        }
+        const unplaced = cdNotFollowed(c, ps)
+        if (unplaced !== undefined)
+          return this.deny(
+            `a cd Veilio cannot follow (\`${this.applyText(unplaced, 'result', undefined, budget)}\`: CDPATH, cd -, the directory stack or more than one target) could let a later command read a file Veilio keeps away from the model. Use cd with one plain path, or name the files by their full path`
           )
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.
-        const moves = this.shellDirsOf(c)
+        const moves = this.shellDirsOf(c, ps)
         for (const word of pathsInCommand(c)) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
@@ -1729,7 +1755,8 @@ export class Guard {
     if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
       // Only a top-level cd moves the shell the next call runs in; one in a
       // substitution or a nested shell does not (review round 2 of spec 078).
-      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
+      for (const t of cdTargets(args.command, tool === 'PowerShell'))
+        this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Round 3 #5: the map as read before this result's saves, for seeMinted.

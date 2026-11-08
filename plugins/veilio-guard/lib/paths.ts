@@ -97,9 +97,15 @@ function part(pattern: string, name: string): boolean {
 
 const CD_PROGRAMS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl', 'push-location'])
 
+/** PowerShell reads `\` as a separator, never an escape (its escape is the
+ *  backtick): its commands are read with `/` for it (review round 4 #3). */
+const asWritten = (command: string, powershell: boolean) =>
+  powershell ? command.replace(/\\/g, '/') : command
+
 /** The targets of every cd or pushd in a command, wherever it stands: after
  *  `&&`, `||`, `;`, `|`, a lone `&` or a newline, or inside a subshell. */
-export function cdTargets(command: string): string[] {
+export function cdTargets(command: string, powershell = false): string[] {
+  command = asWritten(command, powershell)
   const targets: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
     const chain = splitChain(piece)
@@ -123,14 +129,66 @@ export function cdTargets(command: string): string[] {
 /** Every cd target, the ones the chain split cannot see included: inside
  *  `$(...)`, backticks, `bash -c '...'` or `eval "..."` (review round 1 of
  *  spec 078). Read over the whole command, quotes ignored. */
-export function allCdTargets(command: string): string[] {
+export function allCdTargets(command: string, powershell = false): string[] {
+  command = asWritten(command, powershell)
+  // A target may be quoted, and follow `--` (review round 2 of spec 078) or,
+  // in PowerShell, `-Path`/`-LiteralPath` (review round 4 #3).
+  const programs = powershell ? 'cd|pushd|chdir|set-location|sl|push-location' : 'cd|pushd|chdir'
   const hidden = [
-    // A target may be quoted, and follow `--` (review round 2 of spec 078).
     ...command.matchAll(
-      /(?:^|[\s;&|(`'"$])(?:cd|pushd|chdir)\s+(?:(?:-[LPe@]+|--)\s+)*['"]?([^\s;&|)'"`]+)/g
+      new RegExp(
+        `(?:^|[\\s;&|(\`'"$])(?:${programs})\\s+(?:(?:-[A-Za-z@]+|--)\\s+)*['"]?([^\\s;&|)'"\`]+)`,
+        powershell ? 'gi' : 'g'
+      )
     ),
   ].map((m) => m[1]!)
   return [...new Set([...cdTargets(command), ...hidden])]
+}
+
+/** The cd targets written in quotes that keep them as written - single
+ *  quotes with no quote inside, or double quotes with none of `$`, a
+ *  backtick, `!` or (outside PowerShell) `\` - unquoted (review round 4 #4). */
+export function literalCdTargets(command: string, powershell = false): Set<string> {
+  const programs = powershell ? 'cd|pushd|chdir|set-location|sl|push-location' : 'cd|pushd|chdir'
+  const out = new Set<string>()
+  const re = new RegExp(
+    `(?:^|[\\s;&|(])(?:${programs})\\s+(?:(?:-[A-Za-z@]+|--)\\s+)*(?:'([^']*)'|"([^"]*)")(?=$|[\\s;&|)])`,
+    powershell ? 'gi' : 'g'
+  )
+  for (const m of command.matchAll(re)) {
+    if (m[1] !== undefined) out.add(asWritten(m[1], powershell))
+    else if (!(powershell ? /[$`!]/ : /[$`!\\]/).test(m[2]!)) out.add(asWritten(m[2]!, powershell))
+  }
+  return out
+}
+
+/** A cd whose directory its words do not give (review round 4 #5): `CDPATH=`
+ *  anywhere, `cd -` or a directory-stack entry (`+1`, `-2`), or more than one
+ *  target (zsh's `cd old new`). Says which, or undefined. */
+export function cdNotFollowed(command: string, powershell = false): string | undefined {
+  if (/(?:^|[\s;&|(`'"$])CDPATH=/i.test(command)) return 'CDPATH'
+  command = asWritten(command, powershell)
+  for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
+    const chain = splitChain(piece)
+    for (const part of chain ?? [piece]) {
+      const words = (shellWords(part) ?? part.split(/\s+/))
+        .map((w) => w.replace(/^[({]+|[)}]+$/g, ''))
+        .filter((w) => w !== '')
+      let k = 0
+      while (k < words.length && (words[k] === 'builtin' || words[k] === 'command')) k++
+      if (!CD_PROGRAMS.has((words[k] ?? '').toLowerCase())) continue
+      const positional: string[] = []
+      let options = true
+      for (const w of words.slice(k + 1)) {
+        if (options && w === '--') options = false
+        else if (options && /^-[A-Za-z@]/.test(w)) continue
+        else positional.push(w)
+      }
+      if (positional.length > 1) return positional.join(' ')
+      if (positional[0] !== undefined && /^[-+]\d*$/.test(positional[0])) return positional[0]
+    }
+  }
+  return undefined
 }
 
 // The programs that never run what they are given, each with the only
@@ -170,11 +228,12 @@ function textOnly(words: readonly string[]): boolean {
  *  subshell, brace, process substitution or redirection outside quotes
  *  (`grep "cd *" scripts/`; never `echo "cd x" | sh`). Split as cdTargets
  *  splits, and read with the shell's own quoting. */
-export function cdTargetsToJudge(command: string): string[] {
+export function cdTargetsToJudge(command: string, powershell = false): string[] {
+  command = asWritten(command, powershell)
   const parts: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
     const chain = splitChain(piece)
-    if (chain === null) return allCdTargets(command)
+    if (chain === null) return allCdTargets(command, powershell)
     parts.push(...chain)
   }
   const text =
@@ -187,7 +246,7 @@ export function cdTargetsToJudge(command: string): string[] {
         !/[(){}<>]/.test(outsideQuotes(part))
       )
     })
-  return allCdTargets(text ? parts.map(outsideQuotes).join(' ; ') : command)
+  return allCdTargets(text ? parts.map(outsideQuotes).join(' ; ') : command, powershell)
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

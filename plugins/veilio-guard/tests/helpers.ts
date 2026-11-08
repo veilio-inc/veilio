@@ -48,6 +48,8 @@ export type Options = {
   noGit?: boolean
   /** Files under .veilio/ that git tracks (committed to the repository). */
   trackedVeilio?: string[]
+  /** The session's working directory ($.session.cwd); ROOT when absent. */
+  cwd?: string
   /** `git ls-files` (the whole project) answers with its output cut short. */
   listTruncated?: boolean
   /** `git ls-files -- ':(icase).veilio'` answers with its output cut short. */
@@ -92,7 +94,7 @@ export function project(
     const a = abs(path)
     return a in p.files || Object.keys(p.files).some((f) => f.startsWith(`${a}/`))
   }
-  on('session.cwd', () => ({ value: ROOT }))
+  on('session.cwd', () => ({ value: opts.cwd ?? ROOT }))
   let existsCalls = 0
   on('fs.exists', (_, e) => {
     if (

@@ -1091,3 +1091,116 @@ test('R3#6: a map read that fails during /veilio on stops the guard with its own
   expect(band).not.toContain('checking the map')
   expect(band).toContain('could not be read')
 })
+
+// Review round 4 #1: Veilio's MCP server reads a relative path from the
+// session's directory, so the guard grounds a mint in that same file.
+const SUBDIR = `${ROOT}/packages/a`
+function mintsZorb(
+  p: { files: Record<string, string> },
+  seen: Fields[],
+  value = 'ZorbLedgerThing'
+) {
+  return (_: unknown, e: Fields) => {
+    if (e.tool === 'mcp__veilio__anonymize_file') {
+      seen.push(e)
+      const now = JSON.parse(p.files[`${ROOT}/.veilio/map.json`]!).map
+      p.files[`${ROOT}/.veilio/map.json`] = mapFile({ ...now, __CLS__4: value })
+      return { result: [{ type: 'text', text: 'class __CLS__4 {}' }] }
+    }
+    return veilioServer(p, seen)(_, e)
+  }
+}
+
+test('R4#1: from a subfolder, a mint grounded in the file the server read there restores', async ($, on) => {
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [PAY]: PAY_TEXT,
+      [`${SUBDIR}/src/zorb.ts`]: 'class ZorbLedgerThing {}\n',
+    },
+    { cwd: SUBDIR }
+  )
+  const seen: Fields[] = []
+  on('tool.call', mintsZorb(p, seen))
+  await $.tool.call({ tool: 'mcp__veilio__anonymize_file', path: 'src/zorb.ts' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: 'new __CLS__4()',
+  })
+  expect(out.deny).toBeUndefined()
+  expect(seen.at(-1)?.content).toBe('new ZorbLedgerThing()')
+})
+
+test('R4#1: from a subfolder, a file of that name at the root grounds nothing', async ($, on) => {
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [PAY]: PAY_TEXT,
+      [`${SUBDIR}/src/zorb.ts`]: 'class SomethingElse {}\n',
+      [`${ROOT}/src/zorb.ts`]: 'class ZorbLedgerThing {}\n',
+    },
+    { cwd: SUBDIR }
+  )
+  const seen: Fields[] = []
+  on('tool.call', mintsZorb(p, seen))
+  await $.tool.call({ tool: 'mcp__veilio__anonymize_file', path: 'src/zorb.ts' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__CLS__4',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__CLS__4'))
+  expect(seen).toHaveLength(writes)
+})
+
+// Review round 4 #2: the engine mints names, so a value that is not one was
+// not minted, whatever the file holds (the file may change between reads).
+test('R4#2: a value that is not a name is never counted as minted', async ($, on) => {
+  const value = 'zorb(); ledger'
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+    [PAY]: PAY_TEXT,
+    [`${ROOT}/src/zorb.ts`]: `${value}\n`,
+  })
+  const seen: Fields[] = []
+  on('tool.call', mintsZorb(p, seen, value))
+  await $.tool.call({ tool: 'mcp__veilio__anonymize_file', path: 'src/zorb.ts' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__CLS__4',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__CLS__4'))
+  expect(seen).toHaveLength(writes)
+})
+
+// Review round 4 #6: a guard.json that cannot be read is not invalid JSON:
+// during /veilio on it stops the guard with #43.
+test('R4#6: a guard.json read that fails during /veilio on stops the guard with #43', async ($, on) => {
+  const fail = { now: false }
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+      [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }),
+    },
+    { home: '/home/dev', failRead: (a) => fail.now && a.endsWith('/.veilio/guard.json') }
+  )
+  on('tool.call', writer([]))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  await $.command.run({ command: 'veilio', args: 'off' })
+  fail.now = true
+  await $.command.run({ command: 'veilio', args: 'on' }).catch(() => undefined)
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text.split('\n')[0]).toBe(
+    'Veilio guard stopped: the settings or the map could not be read when the guard was switched back on. Fix that, then /veilio on. Every tool call is refused.'
+  )
+})
