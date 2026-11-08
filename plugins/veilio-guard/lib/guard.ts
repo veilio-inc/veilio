@@ -21,14 +21,15 @@ import {
   type SymbolMap,
 } from './mapfile.ts'
 import {
+  allCdTargets,
   cdIntoRawOnly,
-  cdTargets,
   DEFAULT_RAW_ONLY,
   isRawOnly,
   isWriteProtected,
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
+  shortNameAlias,
   windowsAlias,
 } from './paths.ts'
 import { restoreRefusal } from './shell.ts'
@@ -1097,18 +1098,31 @@ export class Guard {
     const dirs: string[] = []
     let dir = this.shellDir
     if (dir !== null && dir !== this.cwd) dirs.push(dir)
-    for (const t of cdTargets(command)) {
+    for (const t of allCdTargets(command)) {
       dir = this.moved(dir, t)
       if (dir !== null) dirs.push(dir)
     }
     return dirs
   }
 
+  /** Spec 078 FR-012: a write-protected path, as written or where it leads. */
+  private async protectedHit(path: string): Promise<boolean> {
+    if (isWriteProtected(path)) return true
+    const real = await this.io.realPath(this.here(path))
+    return real !== undefined && isWriteProtected(real)
+  }
+
+  /** A relative path from the session's directory: the host resolves one
+   *  from the mod's own, which is not where the agent's shell is. */
+  private here(path: string): string {
+    return /^[/\\~]|^[A-Za-z]:/.test(path) || !this.cwd ? path : join(this.cwd, path)
+  }
+
   private async rawOnlyHit(path: string): Promise<boolean> {
     // As written and with `.`/`..` resolved (spec 078 FR-007).
     if (isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly))
       return true
-    const real = await this.io.realPath(path)
+    const real = await this.io.realPath(this.here(path))
     return real !== undefined && isRawOnly(real, this.extraRawOnly)
   }
 
@@ -1182,11 +1196,8 @@ export class Guard {
     if (WRITE_TOOLS.has(e.tool))
       for (const field of policy.paths)
         for (const p of [e[field], args[field]])
-          if (typeof p === 'string' && isWriteProtected(p)) return this.deny(SETTINGS_PROTECTED)
-    if (policy.command)
-      for (const c of [e[policy.command], args[policy.command]])
-        if (typeof c === 'string' && pathsInCommand(c).some(isWriteProtected))
-          return this.deny(SETTINGS_PROTECTED)
+          if (typeof p === 'string' && (await this.protectedHit(p)))
+            return this.deny(SETTINGS_PROTECTED)
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
@@ -1205,7 +1216,8 @@ export class Guard {
         if (typeof c !== 'string') continue
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
-        const into = cdTargets(c).find((t) => cdIntoRawOnly(t, dirs))
+        // A glob target could be any of them (review round 1 of spec 078).
+        const into = allCdTargets(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
         if (into !== undefined)
           return this.deny(
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
@@ -1216,7 +1228,10 @@ export class Guard {
         const moves = this.shellDirsOf(c)
         for (const word of pathsInCommand(c)) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
-          let hit = await this.rawOnlyHit(word)
+          // Spec 078 FR-012, found the way raw-only files are (review round 1).
+          for (const at of [word, ...under])
+            if (await this.protectedHit(at)) return this.deny(SETTINGS_PROTECTED)
+          let hit = (await this.rawOnlyHit(word)) || shortNameAlias(word)
           for (const at of under) hit ||= await this.rawOnlyHit(at)
           if (hit) {
             return this.deny(
@@ -1353,7 +1368,7 @@ export class Guard {
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
       this.shellMoved = true
     if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
-      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
+      for (const t of allCdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,

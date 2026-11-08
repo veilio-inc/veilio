@@ -76,10 +76,13 @@ function matches(path, pattern) {
  *  (`a:b`, past a drive letter) or shaped like an 8.3 short name (`ENV~1`),
  *  which may stand for any long name. Callers that read files refuse it. */
 export function windowsAlias(path) {
-    return path
-        .split(/[\\/]/)
-        .some((seg, i) => (seg.includes(':') && !(i === 0 && /^[A-Za-z]:$/.test(seg))) ||
-        /^[^~]{1,6}~\d+(\.[^.]*)?$/.test(seg));
+    return (shortNameAlias(path) ||
+        path.split(/[\\/]/).some((seg, i) => seg.includes(':') && !(i === 0 && /^[A-Za-z]:$/.test(seg))));
+}
+/** A segment shaped like an 8.3 short name (`ENV~1`): the part of
+ *  windowsAlias that also holds for a shell word, where a colon is common. */
+export function shortNameAlias(path) {
+    return path.split(/[\\/]/).some((seg) => /^[^~]{1,6}~\d+(\.[^.]*)?$/.test(seg));
 }
 export function isRawOnly(path, extra) {
     const normal = path.replace(/\\/g, '/');

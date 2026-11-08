@@ -64,6 +64,28 @@ const CONTROL = /\n|\r|(^|[^&])&([^&]|$)|[(){}]|<</
 const WRITES_OR_RUNS =
   /[>`]|\$\(|\btee\b|(^|\s)(-i|--in-place)\b|\b(sed|awk|perl)\b|\bpython3?\s+-c\b|\bnode\s+-e\b|\s-(exec|execdir|delete|ok|okdir)\b/
 
+/** A test runner's flag that runs another program or loads code of its own
+ *  choosing (review round 1 of spec 078): the offending word, if any. */
+export function runnerFlag(words: readonly string[]): string | undefined {
+  const p = words[0]
+  const rest = words.slice(1)
+  if (p === 'go') return rest.find((w) => /^--?(toolexec|exec)(=|$)/.test(w))
+  if (p === 'cargo') return rest.find((w) => /^--config(=|$)|^-Z/.test(w))
+  if (p === 'npm' || p === 'pnpm' || p === 'yarn') {
+    // Options of the package manager itself, before the script's own `--`.
+    const end = rest.indexOf('--')
+    return (end === -1 ? rest : rest.slice(0, end)).find((w) => w.startsWith('-'))
+  }
+  if (p === 'pytest' || ((p === 'python' || p === 'python3') && words[2] === 'pytest'))
+    return rest.find((w) => /^-p/.test(w))
+  if (p === 'mvn')
+    return rest.find((w) => /^-D|^-f$|^--file(=|$)|^-g?s$|^--(global-)?settings(=|$)/.test(w))
+  // Paths only after `-Itest`, as `node --test`; rake takes no flags.
+  if (p === 'ruby') return words.slice(2).find((w) => w.startsWith('-'))
+  if (p === 'rake') return rest.find((w) => w.startsWith('-'))
+  return undefined
+}
+
 /** A command's words as the shell passes them: quotes and backslashes
  *  removed, so a quoted flag is judged as the program will see it (security
  *  review). */
@@ -194,7 +216,7 @@ export function shellRefusal(command: string): string | null {
     if (words === null)
       return 'a command that names a file by its placeholder may only read or test it: its quotes do not close'
     const program = words[0] ?? ''
-    if (words.slice(1).some((w) => unsafeWord(program, w)))
+    if (words.slice(1).some((w) => unsafeWord(program, w)) || runnerFlag(words) !== undefined)
       return `a command that names a file by its placeholder may only read or test it, and ${program} is given an option that writes or runs`
     // node --test takes paths only: its options load or run code.
     if (
@@ -242,6 +264,18 @@ const WRAPPERS = new Set([
 ])
 const GIT_NETWORK = new Set(['push', 'fetch', 'clone', 'pull', 'ls-remote', 'remote', 'submodule'])
 
+/** The letters of a group of short flags (`-nwo`) up to the first one that
+ *  takes a value, which swallows the rest (`-tpy` is `-t py`). */
+function grouped(word: string, valued: string): string {
+  if (!/^-[A-Za-z]/.test(word)) return ''
+  let out = ''
+  for (const c of word.slice(1)) {
+    out += c
+    if (valued.includes(c) || !/[A-Za-z]/.test(c)) break
+  }
+  return out
+}
+
 /** Spec 078 R1: flags of a reader that slice or reshape what it prints, on
  *  top of 069's flags that write or run. */
 function reshapes(program: string, word: string): boolean {
@@ -252,11 +286,35 @@ function reshapes(program: string, word: string): boolean {
   if (program === 'grep')
     return colour || longOption(word, 'only-matching') || /^-[A-Za-z]*o/.test(word)
   if (program === 'rg')
-    return colour || longOption(word, 'replace', 'only-matching') || /^-[A-Za-z]*[ro]/.test(word)
+    return (
+      colour ||
+      longOption(word, 'replace', 'only-matching', 'pretty') ||
+      /[rop]/.test(grouped(word, 'ABCeEfgjmMrtT'))
+    )
+  // `-4c` and `+3c` are the obsolete forms of a byte count; `b` counts blocks.
   if (program === 'head' || program === 'tail')
-    return longOption(word, 'bytes') || /^-[A-Za-z]*c/.test(word)
+    return (
+      longOption(word, 'bytes') || /^-[A-Za-z]*c/.test(word) || /^[+-]\d+[A-Za-z]*[bc]/.test(word)
+    )
   if (program === 'find') return /^-f?printf$/.test(word)
-  if (program === 'git') return colour || longOption(word, 'format', 'pretty')
+  // A word diff or a narrowed stat splits or cuts a name.
+  if (program === 'git')
+    return (
+      colour ||
+      // `--stat` itself is an option of its own, not an abbreviation.
+      (word !== '--stat' &&
+        longOption(
+          word,
+          'format',
+          'pretty',
+          'word-diff',
+          'word-diff-regex',
+          'stat-name-width',
+          'stat-width',
+          'stat-graph-width'
+        )) ||
+      /^--stat=/.test(word)
+    )
   return false
 }
 
@@ -307,7 +365,8 @@ export function restoreRefusal(command: string, tool: 'Bash' | 'PowerShell'): st
   }
   for (const w of words) {
     const program = w[0] ?? ''
-    const flag = w.slice(1).find((x) => reshapes(program, x) || unsafeWord(program, x))
+    const flag =
+      w.slice(1).find((x) => reshapes(program, x) || unsafeWord(program, x)) ?? runnerFlag(w)
     if (flag !== undefined)
       return `\`${program}\` \`${flag}\` can reshape or write what it reads, so it gets no real names back. Run it without the placeholder, or without \`${flag}\``
   }

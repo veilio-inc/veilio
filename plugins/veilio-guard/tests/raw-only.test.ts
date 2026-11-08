@@ -331,3 +331,25 @@ test('H17: after cd sub in one call, cat notes in the next is refused', async ($
   expect(out.deny).toContain('away from the model')
   expect(seen).toHaveLength(1)
 })
+
+// Review round 1 (T030) #9: a cd hidden from the chain split - a glob, a
+// command substitution, backticks, a nested shell or eval - and (d) a Windows
+// short name in a shell word.
+for (const command of [
+  'cd .a*s && cat credentials',
+  'echo $(cd .aws && cat credentials)',
+  'echo `cd .aws; cat credentials`',
+  "bash -c 'cd .aws && cat credentials'",
+  'eval "cd .aws && cat credentials"',
+  // A glob after the hidden cd: only the cd itself can be judged.
+  "bash -c 'cd .aws && cat cred*'",
+  'cat ENV~1',
+])
+  test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
+    project(on, {})
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny).toContain('away from the model')
+    expect(ran).toBe(false)
+  })

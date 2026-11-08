@@ -228,6 +228,79 @@ describe('restoreRefusal (spec 078)', () => {
     expect(restoreRefusal(command, 'Bash')).toBeNull()
   })
 
+  // Review round 1 (T030) #2: inline code for every interpreter, and the
+  // test runners' flags that run another program or load code.
+  it.each([
+    'ruby -Itest -e "x" tests/__X__1.rb',
+    'ruby -Itest -rx tests/__X__1.rb',
+    'go test -toolexec ./x ./__X__1',
+    'go test -exec=./x ./__X__1',
+    'cargo test --config x __X__1',
+    'cargo test -Zx __X__1',
+    'npm test --script-shell=./x -- __X__1',
+    'npm run test --node-options=--require=./x __X__1',
+    'pnpm test --script-shell ./x __X__1',
+    'yarn test --x __X__1',
+    'pytest -p ./plug tests/__X__1.py',
+    'python3 -m pytest -pplug tests/__X__1.py',
+    'mvn -DargLine=x test -Dtest=__X__1',
+    'mvn -f other.xml test __X__1',
+    'rake test -e x __X__1',
+  ])('refuses the runner flag in %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).not.toBeNull()
+    expect(shellRefusal(command)).not.toBeNull()
+  })
+
+  it.each([
+    'perl -e x __X__1',
+    'perl -E x __X__1',
+    'php -r x __X__1',
+    'deno eval x __X__1',
+    'bun -e x __X__1',
+    'lua -e x __X__1',
+    'Rscript -e x __X__1',
+    'ruby -e x __X__1',
+  ])('refuses the inline code in %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).not.toBeNull()
+    expect(shellRefusal(command)).not.toBeNull()
+  })
+
+  it.each([
+    'npm test -- tests/__X__1.test.ts',
+    'go test ./__X__1/...',
+    'cargo test __X__1',
+    'pytest tests/__X__1.py -k x',
+    'mvn -q test',
+    'ruby -Itest tests/__X__1.rb',
+    'rake test',
+  ])('a plain test run still gets real names: %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toBeNull()
+  })
+
+  // Review round 1 (T030) #3: more flags that slice or reshape output.
+  it.each([
+    ['rg -p x f', '`rg` `-p`'],
+    ['rg --pretty x f', '`rg` `--pretty`'],
+    ['head -4c f', '`head` `-4c`'],
+    ['tail -5c f', '`tail` `-5c`'],
+    ['tail +3c f', '`tail` `+3c`'],
+    ['tail -2b f', '`tail` `-2b`'],
+    ['git diff --word-diff f', '`git` `--word-diff`'],
+    ['git diff --word-diff-regex=. f', '`git` `--word-diff-regex=.`'],
+    ['git diff --color-words f', '`git` `--color-words`'],
+    ['git diff --stat=20 f', '`git` `--stat=20`'],
+    ['git diff --stat-name-width=5 f', '`git` `--stat-name-width=5`'],
+  ])('refuses %j', (command, says) => {
+    expect(restoreRefusal(command, 'Bash')).toContain(says)
+  })
+
+  it.each(['head -5 src/__X__1.ts', 'tail -n 3 src/__X__1.ts', 'git diff --stat __X__1'])(
+    'still lets %j through',
+    (command) => {
+      expect(restoreRefusal(command, 'Bash')).toBeNull()
+    }
+  )
+
   it('refuses every PowerShell command', () => {
     expect(restoreRefusal('Get-Content src/__X__1.ts', 'PowerShell')).toBe(
       'PowerShell commands get no real names back yet. Use the Read, Edit, Write or Grep tool'

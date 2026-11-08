@@ -10,7 +10,12 @@
 
 // The list and its matcher live in the engine (spec 078 FR-016), shared with
 // the MCP server.
-export { DEFAULT_RAW_ONLY, isRawOnly, windowsAlias } from '../vendor/engine/index.js'
+export {
+  DEFAULT_RAW_ONLY,
+  isRawOnly,
+  shortNameAlias,
+  windowsAlias,
+} from '../vendor/engine/index.js'
 import { shellWords, splitChain } from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
@@ -112,6 +117,16 @@ export function cdTargets(command: string): string[] {
     }
   }
   return targets
+}
+
+/** Every cd target, the ones the chain split cannot see included: inside
+ *  `$(...)`, backticks, `bash -c '...'` or `eval "..."` (review round 1 of
+ *  spec 078). Read over the whole command, quotes ignored. */
+export function allCdTargets(command: string): string[] {
+  const hidden = [
+    ...command.matchAll(/(?:^|[\s;&|(`'"$])(?:cd|pushd|chdir)\s+(?:-[LPe@]+\s+)*([^\s;&|)'"`]+)/g),
+  ].map((m) => m[1]!)
+  return [...new Set([...cdTargets(command), ...hidden])]
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

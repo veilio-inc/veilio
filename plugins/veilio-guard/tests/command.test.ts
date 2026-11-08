@@ -198,3 +198,46 @@ test("a Read of Claude Code's project settings still runs", async ($, on) => {
   expect(out.deny).toBeUndefined()
   expect(ran).toBe(true)
 })
+
+// Review round 1 (T030) #6: the settings and the off switch are found the
+// way raw-only files are - after a cd, across calls, and through a link.
+test("a write to Claude Code's settings after a cd, in the next call, or through a link is refused", async ($, on) => {
+  project(
+    on,
+    { [`${ROOT}/.claude/settings.json`]: '{}', [`${ROOT}/cfg.json`]: '' },
+    { home: HOME, links: { [`${ROOT}/cfg.json`]: `${ROOT}/.claude/settings.json` } }
+  )
+  const seen: Record<string, unknown>[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const calls: [Record<string, unknown>, string | undefined][] = [
+    [
+      { tool: 'Bash', command: "cd .claude && echo '{}' > settings.json", description: 'x' },
+      SETTINGS_REFUSED,
+    ],
+    [{ tool: 'Bash', command: "echo '{}' > cfg.json", description: 'x' }, SETTINGS_REFUSED],
+    [{ tool: 'Write', file_path: `${ROOT}/cfg.json`, content: '{}' }, SETTINGS_REFUSED],
+    [{ tool: 'Bash', command: 'cd .claude', description: 'x' }, undefined],
+    [{ tool: 'Bash', command: "echo '{}' > settings.json", description: 'x' }, SETTINGS_REFUSED],
+  ]
+  for (const [call, want] of calls) {
+    const out = await $.tool.call(call)
+    expect(`${JSON.stringify(call)} -> ${out.deny}`).toBe(`${JSON.stringify(call)} -> ${want}`)
+  }
+  expect(seen).toHaveLength(1)
+})
+
+test('the off switch in ~/.veilio cannot be written by a shell command', async ($, on) => {
+  project(on, {}, { home: HOME })
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const out = await $.tool.call({
+    tool: 'Bash',
+    command: `echo '{"version":1,"projects":{}}' > ~/.veilio/guard-state.json`,
+    description: 'x',
+  })
+  expect(out.deny).toContain('away from the model')
+  expect(ran).toBe(false)
+})
