@@ -89,6 +89,21 @@ describe('the pre-commit hook scans each staged file under its own name (L1)', (
     expect(hook().status).toBe(1)
   })
 
+  // A submodule entry is a commit of another repository: there is no blob
+  // here to scan, and it must not block the commit.
+  it('a staged submodule is skipped, and a credential beside it still blocks', () => {
+    git(
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${'0123456789abcdef'.repeat(2)}01234567,sub`
+    )
+    stage({ 'src/gateway.ts': TS })
+    expect(hook().status).toBe(0)
+    stage({ '.env': ENV })
+    expect(hook().status).toBe(1)
+  })
+
   it('a staged binary file is skipped', () => {
     stage({ 'logo.bin': Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(ENV)]) })
     expect(hook().status).toBe(0)

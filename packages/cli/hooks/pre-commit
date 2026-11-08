@@ -28,6 +28,8 @@ list() { git diff --cached --name-only --no-renames -z --diff-filter=d; }
 # One staged file, given as $1. Exits 1 on a finding.
 scan_one='
   p=$1
+  # A submodule (mode 160000) is a commit of another repository: no blob to scan.
+  case "$(git --literal-pathspecs ls-files -s -- "$p")" in 160000\ *) exit 0 ;; esac
   # Fail closed: a blob git cannot show is not passed as an empty one.
   git cat-file -e ":$p" 2>/dev/null || { echo "veilio: cannot read the staged $p" >&2; exit 1; }
   # A NUL in the first 8000 bytes is a binary file, as git decides it.
