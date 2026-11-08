@@ -69,11 +69,16 @@ runs:
         # YAML and shell rules could not apply, and a `-diff` attribute hid a
         # file. The listing names the files with their object ids, deletions
         # left out; the blobs come from `git cat-file --batch`, matched by id.
-        # A new branch reports an all-zero base; then the single commit, a
-        # root commit included.
+        # A new branch reports an all-zero base; then the tip commit against
+        # its first parent (a merge included: diff-tree of a merge alone
+        # prints nothing), or, for a root commit, against nothing.
         raw="-c core.quotepath=true"
         if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-          git $raw diff-tree --no-commit-id --root -r --raw --no-abbrev --no-renames --diff-filter=d "$head" > /tmp/veilio-listing.txt
+          if git rev-parse -q --verify "${head}^" > /dev/null; then
+            git $raw diff --raw --no-abbrev --no-renames --diff-filter=d "${head}^" "$head" > /tmp/veilio-listing.txt
+          else
+            git $raw diff-tree --no-commit-id --root -r --raw --no-abbrev --no-renames --diff-filter=d "$head" > /tmp/veilio-listing.txt
+          fi
         else
           git $raw diff --raw --no-abbrev --no-renames --diff-filter=d "$base" "$head" > /tmp/veilio-listing.txt
         fi

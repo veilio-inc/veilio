@@ -113,6 +113,21 @@ describe('the GitHub Action scans each changed file under its own name', () => {
     expect(action('0'.repeat(40), head).status).toBe(1)
   })
 
+  // Review round 2 (#2): for a merge, diff-tree with one commit prints
+  // nothing, so a new branch whose tip is a merge was not scanned at all.
+  it('a new branch whose tip is a merge scans what the merge brings in', () => {
+    commit({ 'README.md': '# PaymentGateway\n' })
+    const main = git('rev-parse', '--abbrev-ref', 'HEAD')
+    git('checkout', '-q', '-b', 'side')
+    commit({ '.env': ENV })
+    git('checkout', '-q', main)
+    commit({ 'src/gateway.ts': TS })
+    git('merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+    const head = git('rev-parse', 'HEAD')
+    expect(git('rev-list', '--parents', '-n', '1', head).split(' ')).toHaveLength(3)
+    expect(action('0'.repeat(40), head).status).toBe(1)
+  })
+
   it('a change that deletes a file passes', () => {
     const base = commit({ 'old.ts': TS })
     git('rm', '-q', 'old.ts')
