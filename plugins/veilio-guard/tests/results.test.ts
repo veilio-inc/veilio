@@ -1524,6 +1524,7 @@ test('L16: the keys of an MCP result with no content blocks (a deep result) are 
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
   on('tool.call', () => ({ result: { PaymentGateway: 1 } }))
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
   expect(JSON.stringify(out)).not.toContain('PaymentGateway')
 })
 
@@ -1531,15 +1532,24 @@ test('L16: a key that is a provider-shaped credential never reaches the model', 
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
   on('tool.call', () => mcpResult({ structuredContent: { [STRIPE]: 'src/pay.ts' } }))
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toBeUndefined()
   expect(JSON.stringify(out)).not.toContain(STRIPE.slice(8))
 })
 
-test('L16: an identifier-shaped key the map does not have yet is masked and saved', async ($, on) => {
+// Review round 1 (correctness) #4: a key gets the names the map already has
+// and the credential strip, never a new name of its own: schema keys
+// (`totalCount`, `createdAt`, `html_url`) stay readable and out of the map.
+test('L16: ordinary schema keys stay readable, and no name is minted from a key', async ($, on) => {
   const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
-  on('tool.call', () => mcpResult({ structuredContent: { [CANARY]: 1 } }))
+  on('tool.call', () =>
+    mcpResult({ structuredContent: { totalCount: 3, createdAt: 'x', html_url: 'y', [CANARY]: 1 } })
+  )
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
-  expect(JSON.stringify(out)).not.toContain(CANARY)
-  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+  expect(outcome(out).deny).toBeUndefined()
+  const sc = (outcome(out).result as Fields).structuredContent as Fields
+  expect(Object.keys(sc)).toEqual(['totalCount', 'createdAt', 'html_url', CANARY])
+  const saved = p.files[`${ROOT}/.veilio/map.json`]!
+  for (const k of ['totalCount', 'createdAt', 'html_url', CANARY]) expect(saved).not.toContain(k)
 })
 
 test('L16: two keys that would mask to the same text withhold the result', async ($, on) => {
@@ -1565,7 +1575,7 @@ test('L16: a __proto__ key never carries a raw name: its subtree is kept masked 
   expect(text).not.toContain('PaymentGateway')
   const sc = JSON.stringify((outcome(out).result as Fields).structuredContent)
   const kept = sc === '{"__proto__":{"owner":"__CLS__1"}}'
-  console.log(`__proto__ key ${kept ? 'kept, masked' : 'dropped'} by this runtime`)
+  console.warn(`__proto__ key ${kept ? 'kept, masked' : 'dropped'} by this runtime`)
   expect(kept || sc === '{}').toBe(true)
 })
 
@@ -1576,4 +1586,34 @@ test("L16: a built-in tool's record keeps its own keys", async ($, on) => {
   const out = await $.tool.call(eventOf(read))
   expect(Object.keys(res(out))).toEqual(Object.keys(read.r.result))
   expect(Object.keys(res(out).file)).toEqual(Object.keys(read.r.result.file as Fields))
+})
+
+// Review round 1 (security) #3: any tool named mcp__… is an MCP tool, a name
+// that is underscores after the server included.
+test('R1#3: an MCP tool whose name ends in underscores still has its keys masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes___', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('R1#3: an MCP tool whose name ends in underscores still has an image result withheld', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({
+    result: { content: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }] },
+  }))
+  const out = await $.tool.call({ tool: 'mcp__notes___', q: 'x' })
+  expect(outcome(out).deny).toMatch(/^Veilio withheld this result: MCP results other than text/)
+})
+
+// Review round 1 (security) #4: in an MCP result only a content block's
+// `type` is an enum; a `status` or `mode` at its root is the server's data.
+test('R1#4: an MCP result root status or mode holding a name is masked and saved', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({ result: { status: CANARY, mode: 'InvoiceBuilderService' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  const text = JSON.stringify(out)
+  expect(text).not.toContain(CANARY)
+  expect(text).not.toContain('InvoiceBuilderService')
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
 })

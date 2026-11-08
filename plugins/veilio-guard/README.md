@@ -71,7 +71,7 @@ In the plugin's settings (`/config`). `.veilio/guard.json` in the project can ad
 ```
 
 - `rawOnly`: more files Claude must never read. These are added to the built-in list; the built-in list can't be shortened.
-- `mcpRestore` (plugin settings only): MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do. A listed server gets real names only when the tool name matches it exactly (a tool name that could belong to more than one server, such as `mcp__jira__helper__search` with `jira` listed, gets placeholders), and only for values shaped like a name or a path: a call whose real name holds a space, a line break, shell or SQL syntax, or starts with `-`, is refused.
+- `mcpRestore` (plugin settings only): MCP servers that get the real names in their arguments. By default every MCP server gets placeholders, and web fetches and web searches always do. A listed server gets real names only when the tool name matches it exactly (a tool name that could belong to more than one server, such as `mcp__jira__helper__search` with `jira` listed, gets placeholders), and only for values shaped like a name or a path: a call whose real name holds a space, a line break, shell or SQL syntax, or starts with `-`, is refused, as is one that holds a URL (`://`) or a `..` path segment; `$` and letters of any script, accents written as combining marks included, are fine.
 - `publicMarketplaces` (plugin settings only, not `guard.json`): plugin marketplaces you know are public, each as `<name>=<source>`, where the source is what Claude Code records for it in `~/.claude/plugins/known_marketplaces.json`, such as `acme-oss=github:acme/oss-plugins`. The skill and agent listings of their plugins are then sent as written. The name and the source must both match exactly. An entry with no source is ignored, and the guard says so once.
 
 ## For a team
@@ -85,7 +85,9 @@ To run the guard for everyone, an administrator lists it in Claude Code's [manag
 }
 ```
 
-When the organisation runs it, `/veilio` says so, and neither `/veilio off` nor a project's `guard.json` can switch it off. The team's shared map comes through the CLI: `veilio maps pull` writes it to the project's map, and the guard uses it as is.
+When the organisation runs it, `/veilio` says so, and neither `/veilio off` nor a project's `guard.json` can switch it off. The team's shared map comes through the CLI: `veilio maps pull` writes it to the project's map. Pulled before the session, the guard uses it as is; pulled while a session is open, the teammates' names it brings restore only once the session has shown them (read the file again), and if the map is now tracked by git the guard stops.
+
+To commit `.veilio/guard.json` for the team, add it with `git add -f .veilio/guard.json`. Leave `.veilio/.gitignore` as it is, a file whose only pattern is `*`: the guard writes no name while it ignores less (a `!guard.json` line included), and stops.
 
 `veilio maps pull` also reserves you a block of the team's placeholder numbers (`.veilio/reserved.json`), and the guard numbers new names inside it, offline, so two teammates working at once never give one placeholder two meanings. When no block can be reserved (the day's limit, offline, the plan), the line above the prompt says so for the whole session (`team numbers refused (cap): new names numbered here, next block 09:14`), and the guard numbers new names in this checkout's local family, `__LOCAL_<TAG>_<KIND>__n`: your machine restores them, a teammate's restore leaves them as written, and your next team publish (`veilio maps push --team` or `veilio maps update`) renumbers them and keeps the old ones in `.veilio/aliases.json`, which the guard reads so edits written with them still land.
 

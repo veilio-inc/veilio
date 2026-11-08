@@ -65,9 +65,10 @@ const ARGUMENTS: Record<string, ArgumentPolicy> = {
   PowerShell: { mode: 'lenient', restore: ['command'], paths: [], command: 'command' },
 }
 
-export function mcpServerOf(tool: string): string | null {
-  const m = /^mcp__(.+?)__[^_].*$/.exec(tool)
-  return m?.[1] ?? null
+/** Any tool Claude Code names `mcp__…` is an MCP server's, whatever follows
+ *  (review round 1 #3: `mcp__notes___` too). */
+export function isMcpTool(tool: string): boolean {
+  return tool.startsWith('mcp__')
 }
 
 /** Every server an MCP tool name could belong to: each way `mcp__<server>__<tool>`
@@ -268,7 +269,7 @@ export function resultPolicy(tool: string, result: unknown, filePath: string): R
         keep: ['type'],
       }
   }
-  if (mcpServerOf(tool) !== null) {
+  if (isMcpTool(tool)) {
     const blocks = Array.isArray(result)
       ? result
       : Array.isArray(record.content)

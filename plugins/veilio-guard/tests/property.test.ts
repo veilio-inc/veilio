@@ -236,7 +236,9 @@ test(
           structuredContent: { rows: Object.fromEntries(names.map((n, i) => [n, i])) },
         },
       }
-      const out = JSON.stringify(await $.tool.call({ tool: 'mcp__notes__rows', q: 'x' }))
+      const got = await $.tool.call({ tool: 'mcp__notes__rows', q: 'x' })
+      if (got.deny !== undefined) failures.push(`case ${k}: withheld (${got.deny})`)
+      const out = JSON.stringify(got)
       for (const n of names) if (out.includes(`"${n}"`)) failures.push(`case ${k}: ${n} came back`)
     }
     expect(failures).toEqual([])

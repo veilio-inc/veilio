@@ -17,7 +17,13 @@ export interface Host {
     stat(
       path: string,
       options?: { resolve?: boolean }
-    ): Promise<{ realPath?: string; mtimeMs?: number; kind?: string; size?: number }>
+    ): Promise<{
+      realPath?: string
+      mtimeMs?: number
+      kind?: string
+      size?: number
+      isLink?: boolean
+    }>
   }
   readonly clock: {
     sleep(ms: number): Promise<void>
@@ -27,7 +33,7 @@ export interface Host {
     run(
       argv: readonly string[],
       init?: { cwd?: string }
-    ): Promise<{ exitCode: number; stdout: string; stderr?: string }>
+    ): Promise<{ exitCode: number; stdout: string; stderr?: string; isStdoutTruncated?: boolean }>
   }
   readonly session: { cwd(): Promise<string> }
   readonly settings: { read(args: { source: 'policy' }): Promise<unknown> }

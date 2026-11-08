@@ -495,3 +495,45 @@ test('L19: a Read of .npmrc::$DATA, .npmrc. or .veilio::$INDEX_ALLOCATION/map.js
   }
   expect(ran).toBe(false)
 })
+
+// Review round 1 (security) #8: a cd target the shell would still expand -
+// braces, a variable, ANSI-C quoting, an escape - cannot be judged by its
+// words, so it is refused, as a glob is. An allow-list of plain targets.
+test('R1#8: a cd whose target the shell expands is refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of [
+    'cd ~/.kub{e..e}',
+    'D=~/.kube; cd $D',
+    "cd ~/.kub$'\\x65'",
+    'cd .vei{l..l}io',
+    'cd .ku\\be',
+    'cd `echo .kube`',
+  ]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toContain('a cd there would let a later command read it')
+  }
+  expect(seen).toHaveLength(0)
+})
+
+test('R1#8: a plain cd still runs, and a PowerShell cd with backslashes too', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const bash = await $.tool.call({ tool: 'Bash', command: 'cd src && ls', description: 'x' })
+  expect(bash.deny).toBeUndefined()
+  const ps = await $.tool.call({
+    tool: 'PowerShell',
+    command: 'cd C:\\work\\project\\src',
+    description: 'x',
+  })
+  expect(ps.deny).toBeUndefined()
+  expect(seen).toHaveLength(2)
+})

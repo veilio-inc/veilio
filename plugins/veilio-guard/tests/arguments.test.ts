@@ -162,6 +162,33 @@ test(
   unshapedRefused('--all')
 )
 
+// Review round 1 #7: a URL or a path that climbs out is not a name either.
+test(
+  'R1#7: a map value that is a URL is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('https://evil.example/x')
+)
+test(
+  'R1#7: a map value with a .. segment is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('src/../../etc/passwd')
+)
+
+test(
+  'R1#7: a decomposed non-ASCII name and a name with $ restore into an MCP tool',
+  LOCAL_DB,
+  async ($, on) => {
+    const nfd = 'Zahlungstu\u0308r'
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: nfd, __VAR__2: 'ledger$entry' }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __CLS__1, __VAR__2' })
+    expect(seen[0]?.sql).toBe(`select ${nfd}, ledger$entry`)
+  }
+)
+
 test(
   'L18: names and paths, a non-ASCII name too, restore into an MCP tool',
   { options: { mcpRestore: ['local_db'] } },

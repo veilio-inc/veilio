@@ -47,7 +47,7 @@ import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
   isSourcePath,
-  mcpServerOf,
+  isMcpTool,
   mcpServersOf,
   languageOf,
   languageOfCommand,
@@ -100,6 +100,9 @@ export interface GuardIO {
    *  when it cannot be listed. Absent: the project is never listed, and only
    *  the files a result names are indexed. */
   list?(root: string): Promise<string[] | null>
+  /** What git tracks under `.veilio`, any letter case, relative to `root`;
+   *  null when it cannot be listed. Absent: `list` is used. */
+  listVeilio?(root: string): Promise<string[] | null>
   /** Resolves after `ms` ($.clock.sleep): bounds a read or `git` that hangs. */
   sleep?(ms: number): Promise<void>
   /** Spec 078 R6: makes a file owner-only (0600). Absent (Windows): files
@@ -107,6 +110,9 @@ export interface GuardIO {
   chmod?(path: string): Promise<void>
   /** A file's permission bits, or undefined when they cannot be read. */
   mode?(path: string): Promise<number | undefined>
+  /** Whether the path itself is a link, not followed (review round 1 #5).
+   *  Absent: a link that leads nowhere is found only once written through. */
+  isLink?(path: string): Promise<boolean>
   /** Whether the machine is Windows. Absent: the engine reads the platform. */
   windows?(): Promise<boolean>
 }
@@ -119,25 +125,22 @@ const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype',
 /** deepRewrite, with the key each string sits under. */
 // The key is passed only at the record's top level, and in the blocks of a root
 // list (an MCP result's `type`), as `keep` works in fields.ts; deeper it is ''.
-// `keys`: the keys that are data (spec 085 L16), masked as a deep string.
+// `at`: the string's place in the record, in the field-list syntax. Keys stay
+// as written here: they get the map's names and the credential strip in the
+// passes before, never a name of their own (review round 1, correctness #4).
 function rewriteKeyed(
   value: unknown,
-  fn: (s: string, key: string) => string,
-  keys?: DataKeys,
+  fn: (s: string, key: string, at: string) => string,
   key = '',
   top = true,
   at = ''
 ): unknown {
-  if (typeof value === 'string') return fn(value, key)
-  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, keys, '', top, `${at}[]`))
+  if (typeof value === 'string') return fn(value, key, at)
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, '', top, `${at}[]`))
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value))
-      setOnce(
-        out,
-        keys?.(k, at) ? fn(k, '') : k,
-        rewriteKeyed(v, fn, keys, top ? k : '', false, at === '' ? k : `${at}.${k}`)
-      )
+      setOnce(out, k, rewriteKeyed(v, fn, top ? k : '', false, at === '' ? k : `${at}.${k}`))
     return out
   }
   return value
@@ -148,6 +151,7 @@ function rewriteKeyed(
  *  a key not named here is masked. */
 const MCP_RESULT_KEYS = new Set(['content', 'structuredContent', 'isError', '_meta'])
 const MCP_BLOCK_KEYS = new Set(['type', 'text', 'annotations'])
+const MCP_BLOCK_TYPE = /^(?:content)?\[\]\.type$/
 const mcpDataKeys: DataKeys = (key, at) =>
   !(at === '' && MCP_RESULT_KEYS.has(key)) &&
   !((at === '[]' || at === 'content[]') && MCP_BLOCK_KEYS.has(key))
@@ -172,8 +176,11 @@ const RESERVED = new Set(['tool', 'tool_use_id', 'consent', 'agentId'])
  *  allowlist, after the review of 638edbf showed `--output=...` passing). */
 const SHELL_SAFE = /^(?!-)[A-Za-z0-9_./@+:-]+$/
 /** What a placeholder may put into an MCP tool's arguments (spec 085 L18):
- *  SHELL_SAFE with letters and digits of any script, for names outside ASCII. */
-const NAME_OR_PATH = /^(?!-)[\p{L}\p{N}_./@+:-]+$/u
+ *  SHELL_SAFE with letters, combining marks and digits of any script and `$`
+ *  (not a shell), and no URL or path that climbs out (review round 1 #7). */
+const NAME_OR_PATH = /^(?!-)[\p{L}\p{M}\p{N}_./@+:$-]+$/u
+const nameOrPath = (v: string) =>
+  NAME_OR_PATH.test(v) && !v.includes('://') && !/(?:^|\/)\.\.(?:\/|$)/.test(v)
 const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
@@ -537,7 +544,7 @@ export class Guard {
       let saved: 'saved' | 'conflict'
       let quarantined: number
       try {
-        ;({ status: saved, quarantined } = await this.save(this.unsaved))
+        ;({ status: saved, quarantined } = await this.save(this.unsaved, deadline))
       } catch (err) {
         // Not left marked as indexed: their names were never saved.
         for (const rel of this.batch) this.index.forget(rel)
@@ -735,13 +742,16 @@ export class Guard {
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
       this.onDisk = {}
+      this.mapText = ''
       return
     }
-    const parsed = parseMapFile(await this.io.read(this.mapPath))
+    const text = await this.io.read(this.mapPath)
+    const parsed = parseMapFile(text)
     if (!parsed.ok) {
       this.stop(`the map at .veilio/map.json could not be read: ${parsed.reason}`)
       return
     }
+    this.mapText = text
     // Review round 1 item (c): a map already there that others can read
     // (an older guard's, a copy) is made owner-only, and checked. One with
     // names stops the guard; one without is said once, and a save stops it
@@ -767,7 +777,13 @@ export class Guard {
 
   /** Spec 085 L12: the map as this guard last read or wrote it. */
   private onDisk: SymbolMap = {}
+  /** The map's and aliases file's text as last read or written ('' for no
+   *  file): any change sends a save to git (review round 1 #1). */
+  private mapText = ''
+  private aliasesText = ''
   private loaded = false
+  /** Load had a git listing (spec 085 review round 1). */
+  private listed = false
   /** Placeholders taken from the disk after load, or from a map git tracked:
    *  restored only once this session has shown them (078's shown set). */
   private adopted = new Set<string>()
@@ -776,22 +792,33 @@ export class Guard {
    *  held; says whether there was any. A new placeholder for a name the guard
    *  held is not: a CLI publish renumbers the guard's own names (spec 066). */
   private adopt(map: SymbolMap, aliasesBefore: SymbolMap): boolean {
+    // Only names under placeholders this guard trusts: a second placeholder
+    // for an adopted name is adopted too (review round 1 #1).
+    const trusted = (m: SymbolMap) =>
+      Object.entries(m)
+        .filter(([p]) => !this.adopted.has(p))
+        .map(([, name]) => name)
     const known = new Set([
-      ...Object.values(this.onDisk),
-      ...Object.values(this.stored.map),
-      ...Object.values(aliasesBefore),
+      ...trusted(this.onDisk),
+      ...trusted(this.stored.map),
+      ...trusted(aliasesBefore),
     ])
     const changed =
       (before: SymbolMap) =>
       ([p, name]: [string, string]) =>
-        !known.has(name) || (Object.hasOwn(before, p) && before[p] !== name)
+        // One already judged keeps its verdict until its name changes.
+        Object.hasOwn(before, p) ? before[p] !== name : !known.has(name)
     const foreign = [
       ...Object.entries(map).filter(changed(this.onDisk)),
       ...Object.entries(this.aliases).filter(changed(aliasesBefore)),
     ].map(([p]) => p)
     for (const p of foreign) {
       this.adopted.add(p)
-      if (this.shown.delete(p)) this.shownVersion++
+      // Shown under another name: shown again before it restores. A new one
+      // was shown only by its minter (seeMinted), or outside git.
+      const before = this.onDisk[p] ?? aliasesBefore[p]
+      if (before !== undefined && before !== (map[p] ?? this.aliases[p]) && this.shown.delete(p))
+        this.shownVersion++
     }
     return foreign.length > 0
   }
@@ -801,9 +828,12 @@ export class Guard {
   /** Never fatal: a missing or unreadable file restores nothing extra. */
   private async readAliases(): Promise<SymbolMap> {
     const path = join(this.root, '.veilio', 'aliases.json')
+    this.aliasesText = ''
     try {
       if (!(await this.io.exists(path))) return {}
-      const parsed = JSON.parse(await this.io.read(path)) as { aliases?: unknown }
+      const text = await this.io.read(path)
+      this.aliasesText = text
+      const parsed = JSON.parse(text) as { aliases?: unknown }
       const a = parsed?.aliases
       if (!a || typeof a !== 'object' || Array.isArray(a)) return {}
       return Object.fromEntries(
@@ -817,22 +847,32 @@ export class Guard {
   /** `.veilio/map.json`, `aliases.json` and `guard.json` when git tracks
    *  them; null when that cannot be known (not a git checkout, no listing in
    *  time, or no way to list). */
-  private async trackedVeilioFiles(): Promise<string[] | null> {
-    if (!this.io.list) return null
+  private async trackedVeilioFiles(deadline = Date.now() + 5000): Promise<string[] | null> {
+    // At load, the whole project: an empty listing is a folder inside a
+    // repository that tracks none of its files, which says nothing about the
+    // map (review round 1 #2). After it, only .veilio, and only if load had
+    // a listing (review round 1, correctness #2: a save holds the map's lock).
+    const whole = !this.loaded
+    if (!whole && !this.listed) return null
+    const list = whole ? this.io.list : (this.io.listVeilio ?? this.io.list)
+    if (!list) return null
     let listed: string[] | null
-    // shortcut: a git that answers in no 5 s counts as no listing - guard.json
-    // may then only tighten, but a committed map is not detected (the shell
-    // allowlist still holds); upgrade if a slow-git bypass of that is shown.
-    const late = this.io.sleep ? this.io.sleep(5000).then(() => null) : null
+    // shortcut: a git that answers in no 5 s (or before the result's deadline)
+    // counts as no listing - guard.json may then only tighten, but a committed
+    // map is not detected, and what was adopted restores only once shown;
+    // upgrade if a slow-git bypass of that is shown.
+    const wait = Math.max(0, Math.min(5000, deadline - Date.now()))
+    const late = this.io.sleep ? this.io.sleep(wait).then(() => null) : null
     try {
-      const listing = this.io.list(this.root)
+      const listing = list.call(this.io, this.root)
       listed = await (late ? Promise.race([listing, late]) : listing)
     } catch {
       return null
     }
     // Case-insensitive (a macOS checkout reads .Veilio/Map.json as the map),
     // and a tracked `.veilio` entry is a committed link to somewhere else.
-    if (listed === null) return null
+    if (listed === null || (whole && listed.length === 0)) return null
+    if (whole) this.listed = true
     const files = new Set(listed.map((f) => f.toLowerCase()))
     if (files.has('.veilio')) return ['.veilio']
     return ['.veilio/map.json', '.veilio/aliases.json', '.veilio/guard.json'].filter((f) =>
@@ -881,26 +921,44 @@ export class Guard {
       this.offRecordUnreadable = false
       recorded = true
     }
-    this.state = enabled ? 'on' : 'off'
-    if (enabled) {
+    if (!enabled) {
+      this.state = 'off'
+      return recorded
+    }
+    // Review round 1 #6: stopped while the settings and the map are read
+    // again and git is asked, so no call runs on what was not checked; on
+    // only if none of that stopped it.
+    this.stop(SWITCHING_ON)
+    await this.readSettings()
+    await this.reloadMap()
+    // Spec 085 H14: on again is never past the stop a tracked map puts on it.
+    this.stopIfTracked(await this.trackedVeilioFiles())
+    if (this.stoppedReason === SWITCHING_ON) {
+      this.state = 'on'
       this.stoppedReason = ''
-      await this.readSettings()
-      await this.reloadMap()
-      // Spec 085 H14: on again is never past the stop a tracked map puts on it.
-      this.stopIfTracked(await this.trackedVeilioFiles())
     }
     return recorded
   }
 
   /** Spec 078 FR-014: .veilio and the map must be where they appear, not a
    *  link to somewhere else (the CLI's refuseLinks, through the host's stat). */
+  /** A real path the host gave and one the guard built name one file: on
+   *  Windows with either separator and in any letter case (review round 1,
+   *  correctness #5). */
+  private samePath(real: string | undefined, built: string): boolean {
+    if (real === undefined) return false
+    // On Windows only: elsewhere a backslash is a character of a name.
+    const norm = (p: string) => (this.windows ? p.replace(/\\/g, '/').toLowerCase() : p)
+    return norm(real) === norm(built)
+  }
+
   private async refuseLinks(): Promise<void> {
     const root = (await this.io.realPath(this.root)) ?? this.root
     const dir = await this.io.realPath(join(this.root, '.veilio'))
     const map = await this.io.realPath(this.mapPath)
     if (
-      (dir !== undefined && dir !== join(root, '.veilio')) ||
-      (map !== undefined && map !== join(root, '.veilio', 'map.json'))
+      (dir !== undefined && !this.samePath(dir, join(root, '.veilio'))) ||
+      (map !== undefined && !this.samePath(map, join(root, '.veilio', 'map.json')))
     ) {
       this.stop(
         'the map at .veilio/map.json is a link to somewhere else, so Veilio will not write the real names there. Fix it, then start a new session'
@@ -909,21 +967,25 @@ export class Guard {
     }
   }
 
-  /** Run before a name is written: the store holds the real names, and must
-   *  never be committed. Spec 085 L4: one already there must be a plain file
-   *  whose only pattern is `*` (a repository can commit its own); it is never
-   *  rewritten. Checked after a write too: with no lstat, a dangling link is
-   *  found only once written through, and no name has been written then. */
+  /** Run in save(), after refuseLinks and before a name is written: the
+   *  store holds the real names, and must never be committed. Spec 085 L4:
+   *  one already there must be a plain file whose only pattern is `*` (a
+   *  repository can commit its own); it is never rewritten. A missing one is
+   *  written unless the path is a link (one that leads nowhere included), and
+   *  the file is checked where it leads after that write as well. */
   private async ensureIgnored(): Promise<void> {
     const ignore = join(this.root, '.veilio', '.gitignore')
-    await this.refuseLinks()
     if (!(await this.io.exists(ignore))) {
+      if (await this.io.isLink?.(ignore)) {
+        this.stop(IGNORE_STOP)
+        throw new Error(this.stoppedReason)
+      }
       await this.createOwnerOnly(ignore, '', false)
       await this.io.write(ignore, '*\n')
     }
     const root = (await this.io.realPath(this.root)) ?? this.root
     if (
-      (await this.io.realPath(ignore)) !== join(root, '.veilio', '.gitignore') ||
+      !this.samePath(await this.io.realPath(ignore), join(root, '.veilio', '.gitignore')) ||
       !onlyStar(await this.io.read(ignore))
     ) {
       this.stop(IGNORE_STOP)
@@ -1032,6 +1094,27 @@ export class Guard {
       this.shownVersion++
     }
     return text
+  }
+  /** Review round 1 (correctness) #1: Veilio's own MCP server (the user's
+   *  config names it `veilio`) writes the placeholders it returns into the
+   *  map. One in its result that is in the map now but was not when the
+   *  guard last read it, and that the model did not write into the call,
+   *  was minted by it: shown. */
+  private async seeMinted(texts: readonly string[], args: ToolEvent): Promise<void> {
+    if (!(await this.io.exists(this.mapPath))) return
+    const parsed = parseMapFile(await this.io.read(this.mapPath))
+    if (!parsed.ok) return
+    const token = /__[A-Z0-9_]+__\d*/g
+    const written = new Set<string>()
+    for (const [k, v] of Object.entries(args))
+      if (!RESERVED.has(k))
+        deepRewrite(v, (s) => (s.match(token)?.forEach((t) => written.add(t)), s))
+    for (const t of texts.join('\n').match(token) ?? [])
+      if (Object.hasOwn(parsed.stored.map, t) && !Object.hasOwn(this.onDisk, t) && !written.has(t))
+        if (!this.shown.has(t)) {
+          this.shown.add(t)
+          this.shownVersion++
+        }
   }
   private shownCache: {
     from: SymbolMap
@@ -1372,7 +1455,7 @@ export class Guard {
     // shape of a name or a path; a planted or pulled value could be SQL or a
     // query the model never saw.
     const unshaped = policy.mcp
-      ? [...resolved].find((p) => !NAME_OR_PATH.test(this.restoreMap[p] ?? ''))
+      ? [...resolved].find((p) => !nameOrPath(this.restoreMap[p] ?? ''))
       : undefined
     if (unshaped !== undefined)
       return this.deny(
@@ -1401,7 +1484,10 @@ export class Guard {
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
-        const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
+        // Review round 1 #8: so could one the shell still expands (braces, a
+        // variable, ANSI-C quoting, an escape; PowerShell's `\` is a separator).
+        const unjudged = e.tool === 'PowerShell' ? /[*?[{$`]/ : /[*?[{$`\\]/
+        const into = cdTargetsToJudge(c).find((t) => unjudged.test(t) || cdIntoRawOnly(t, dirs))
         if (into !== undefined)
           return this.deny(
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
@@ -1529,7 +1615,7 @@ export class Guard {
     )
     if (
       Object.keys(shaped.additions).length > 0 &&
-      (await this.save(shaped.additions)).status === 'conflict'
+      (await this.save(shaped.additions, deadline)).status === 'conflict'
     )
       return this.withhold(
         'another program changed .veilio/map.json while Veilio was writing to it'
@@ -1575,7 +1661,7 @@ export class Guard {
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 085 L16: an MCP result's keys are data, read and masked as its strings.
-    const keys = mcpServerOf(tool) !== null ? mcpDataKeys : undefined
+    const keys = isMcpTool(tool) ? mcpDataKeys : undefined
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
@@ -1779,25 +1865,23 @@ export class Guard {
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
       const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
-      value = rewriteKeyed(
-        value,
-        (s, key) => {
-          if (keep.has(key)) return s
-          // An enum is one bare token at the top of a record; a sentence under
-          // `status`, or a value deeper down, is masked like any other.
-          if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
-          return perLine(s, (t, c) => {
-            const shaped = maskShaped(t, working, c, this.numbering)
-            grow(working, shaped.additions)
-            grow(additions, shaped.additions)
-            return shaped.text
-          })
-        },
-        keys
-      )
+      value = rewriteKeyed(value, (s, key, at) => {
+        if (keep.has(key)) return s
+        // An enum is one bare token at the top of a record; a sentence under
+        // `status`, or a value deeper down, is masked like any other. In an
+        // MCP result only a content block's `type` is one (review round 1 #4).
+        const enumKey = keys ? MCP_BLOCK_TYPE.test(at) : ENUM_KEYS.has(key)
+        if (policy.kind !== 'text' && enumKey && /^[\w$.-]+$/.test(s)) return s
+        return perLine(s, (t, c) => {
+          const shaped = maskShaped(t, working, c, this.numbering)
+          grow(working, shaped.additions)
+          grow(additions, shaped.additions)
+          return shaped.text
+        })
+      })
 
       if (Object.keys(additions).length > 0) {
-        const { status: saved } = await this.save(additions)
+        const { status: saved } = await this.save(additions, deadline)
         if (saved === 'conflict') continue
       }
 
@@ -1815,6 +1899,7 @@ export class Guard {
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
       const given = texts.join('\n')
       deepRewrite(value, (s) => this.see(s, given), undefined, keys)
+      if (tool.startsWith('mcp__veilio__')) await this.seeMinted(texts, args)
       return { result: value }
     }
     return this.withhold(
@@ -1986,7 +2071,8 @@ export class Guard {
    *  Says how many names went to the quarantine instead
    *  (review of 6e14ec6: returned, not shared through guard state). */
   private save(
-    additions: SymbolMap
+    additions: SymbolMap,
+    deadline?: number
   ): Promise<{ status: 'saved' | 'conflict'; quarantined: number }> {
     // No credential Veilio destroyed is ever minted into the map (security
     // review of 933156e).
@@ -2011,8 +2097,9 @@ export class Guard {
       await this.refuseLinks()
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
+      const mapText = existed ? await this.io.read(this.mapPath) : ''
       if (existed) {
-        const parsed = parseMapFile(await this.io.read(this.mapPath))
+        const parsed = parseMapFile(mapText)
         if (!parsed.ok) {
           this.stop(`the map at .veilio/map.json could not be read: ${parsed.reason}`)
           throw new Error(this.stoppedReason)
@@ -2020,14 +2107,18 @@ export class Guard {
         onDisk = parsed.stored
       }
       const aliases = this.aliases
+      const aliasesText = this.aliasesText
       await this.reloadSideFiles()
       // Spec 085 L12: entries another program wrote (a git pull) are checked
-      // against git before any of them is merged.
-      if (this.adopt(onDisk.map, aliases)) {
-        this.stopIfTracked(await this.trackedVeilioFiles())
+      // against git before any of them is merged; so is any change to either
+      // file, new names or not (review round 1 #1).
+      const adopted = this.adopt(onDisk.map, aliases)
+      if (adopted || mapText !== this.mapText || this.aliasesText !== aliasesText) {
+        this.stopIfTracked(await this.trackedVeilioFiles(deadline))
         if (this.state === 'stopped') throw new Error(this.stoppedReason)
       }
       this.onDisk = onDisk.map
+      this.mapText = mapText
       // Everything this guard knows, not only the new entries: a writer that
       // dropped ours (two programs saving at once) gets them back.
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })
@@ -2047,8 +2138,10 @@ export class Guard {
       await this.ensureIgnored()
       if (!existed)
         await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
-      await this.io.write(this.mapPath, serialiseMapFile(next))
+      const written = serialiseMapFile(next)
+      await this.io.write(this.mapPath, written)
       this.onDisk = next.map
+      this.mapText = written
       this.stored = next
       return { status: 'saved' as const, quarantined }
     })
@@ -2067,6 +2160,9 @@ class DecodedOnce {
     return this.last.runs
   }
 }
+
+/** Review round 1 #6 (strings.md, pending): the stop while /veilio on checks. */
+const SWITCHING_ON = 'Veilio is checking the map before it switches back on; try again in a moment'
 
 /** strings.md #12 (spec 085 L16), as `withheld` completes it. */
 const KEY_CLASH =

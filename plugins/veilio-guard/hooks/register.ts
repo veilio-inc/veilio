@@ -104,6 +104,19 @@ async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<strin
   return Promise.race([work, late]).catch((): string[] => [])
 }
 
+/** `git ls-files -z` in `root`, or null. Review round 1 #2: the repository's
+ *  config cannot start a program (core.fsmonitor), and a listing cut short
+ *  is no listing. */
+function gitList($: Host, root: string, pathspec: readonly string[]): Promise<string[] | null> {
+  return $.process
+    .run(['git', '-c', 'core.fsmonitor=false', 'ls-files', '-z', ...pathspec], { cwd: root })
+    .then(
+      (r) =>
+        r.exitCode === 0 && !r.isStdoutTruncated ? r.stdout.split('\0').filter(Boolean) : null,
+      () => null
+    )
+}
+
 // The guard is loaded by whichever event comes first: the first prompt's
 // context can arrive before session.start has finished.
 async function ready($: Host): Promise<Guard> {
@@ -121,6 +134,13 @@ async function ready($: Host): Promise<Guard> {
         $.fs.stat(path, { resolve: true }).then(
           (s) => s.realPath,
           () => undefined
+        ),
+      // Review round 1 #5: the path itself, not where it leads (a link that
+      // leads nowhere yet included).
+      isLink: (path) =>
+        $.fs.stat(path).then(
+          (s) => s.isLink === true,
+          () => false
         ),
       // Spec 074: a search's line is cut at a path only when it is a file.
       isFile: (path) =>
@@ -157,11 +177,8 @@ async function ready($: Host): Promise<Guard> {
         return undefined
       },
       windows: async () => windows,
-      list: (root) =>
-        $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
-          (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),
-          () => null
-        ),
+      list: (root) => gitList($, root, []),
+      listVeilio: (root) => gitList($, root, ['--', ':(icase).veilio']),
     }
     const g = new Guard(io, config)
     // Where the CLI keeps its rules cache (spec 065); none known, no rules.
