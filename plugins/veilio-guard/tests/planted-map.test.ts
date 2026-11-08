@@ -392,3 +392,32 @@ test('H14: /veilio on re-applies the tracked-map stop', async ($, on) => {
   expect(out.deny).toMatch(/tracked by git/)
   expect(seen).toHaveLength(0)
 })
+
+// Self review of the shown set: a placeholder is shown only when masking put
+// it there. One the model wrote itself and got echoed back - in a refusal, a
+// tool's result or Claude Code's own denial - is not shown.
+for (const [via, first] of [
+  [
+    'a raw-only refusal that quotes it',
+    { tool: 'Bash', command: 'cat __VAR__9/.env', description: 'x' },
+  ],
+  ['an MCP result that echoes it', { tool: 'mcp__notes__echo', text: '__VAR__9' }],
+  ["Claude Code's denial that quotes it", { tool: 'Grep', pattern: '__VAR__9' }],
+] as const)
+  test(`outside git, a placeholder echoed back through ${via} is still not shown`, async ($, on) => {
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'evil();' }) }, { noGit: true })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => {
+      seen.push(e)
+      if (e.tool === 'mcp__notes__echo')
+        return { result: [{ type: 'text', text: 'you said __VAR__9' }] }
+      if (e.tool === 'Grep')
+        return { deny: 'Permission to use Grep with pattern __VAR__9 was denied.' }
+      return { result: { type: 'create', filePath: `${ROOT}/a.js` } }
+    })
+    await $.tool.call({ ...first })
+    const writes = seen.length
+    const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.js`, content: '__VAR__9' })
+    expect(out.deny).toBe(NOT_SHOWN('__VAR__9'))
+    expect(seen).toHaveLength(writes)
+  })

@@ -819,7 +819,7 @@ export class Guard {
     scan?: ScanResult,
     budget: RuleBudget = ruleBudget()
   ): string {
-    return this.gate(this.maskText(text, kind, scan, budget))
+    return this.gate(this.maskText(text, kind, scan, budget), text)
   }
 
   /** Spec 065: the names a replace rule matches in text bound for the model
@@ -861,24 +861,25 @@ export class Guard {
 
   /** The same last gate as a tool's result: a credential still here fails the
    *  text (the hook drops the prompt or leaves the text out). */
-  private gate(out: string): string {
+  private gate(out: string, before: string): string {
     if (survivingSecrets(out, this.map).length > 0)
       throw new Error('a credential remained after masking')
-    return this.see(out)
+    return this.see(out, before)
   }
 
   /** Spec 078 R7: the placeholders this session put into text bound for the
-   *  model. Outside git only these are restored. The guard's own note names
-   *  example placeholders, which are not shown ones. */
+   *  model. Outside git only these are restored. Only what masking put there
+   *  counts: a token already in `before` - one the model wrote and got
+   *  echoed back in a refusal, a result or a denial - is not shown. So are
+   *  not the example placeholders of the guard's own note, which comes in
+   *  with the text. */
   private shown = new Set<string>()
   private noListing = false
-  private see(text: string): string {
+  private see(text: string, before: string): string {
     if (!this.noListing) return text
-    for (const m of text
-      .split(MODEL_NOTE)
-      .join('')
-      .matchAll(/__[A-Z0-9_]+__\d*/g))
-      this.shown.add(m[0])
+    const token = /__[A-Z0-9_]+__\d*/g
+    const had = new Set(before.match(token) ?? [])
+    for (const m of text.matchAll(token)) if (!had.has(m[0])) this.shown.add(m[0])
     return text
   }
   private shownCache: { from: SymbolMap; size: number; map: SymbolMap } | null = null
@@ -1019,7 +1020,7 @@ export class Guard {
     budget: RuleBudget,
     back: (key: string) => string
   ): string {
-    const full = () => this.gate(this.maskText(text, 'result', undefined, budget))
+    const full = () => this.gate(this.maskText(text, 'result', undefined, budget), text)
     if (text.includes('\u0000') || text.includes('\u0001')) return full()
     const marks = new Map<string, string>()
     let marked = ''
@@ -1036,7 +1037,7 @@ export class Guard {
     for (const [key, mark] of marks) out = out.split(mark).join(back(key))
     if (out.includes('\u0000') || out.includes('\u0001')) return full()
     if (survivingSecrets(out, this.map).length > 0) return full()
-    return this.see(out)
+    return this.see(out, text)
   }
 
   /** What masking knows about a text of `language` (spec 050). */
@@ -1336,7 +1337,7 @@ export class Guard {
     const left = survivingSecrets(shaped.text, { ...this.map, ...shaped.additions })
     if (left.length > 0)
       return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-    return { deny: this.see(shaped.text) }
+    return { deny: this.see(shaped.text, raw) }
   }
 
   /** After the tool ran: the listed fields scrubbed, new names saved, then the secret re-scan. */
@@ -1564,7 +1565,8 @@ export class Guard {
       })
       if (left.length > 0)
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-      deepRewrite(value, (s) => this.see(s))
+      const given = texts.join('\n')
+      deepRewrite(value, (s) => this.see(s, given))
       return { result: value }
     }
     return this.withhold(
