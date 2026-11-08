@@ -2,15 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Security review of spec 085 L8: a spent budget, or a rule set past the cap,
 // still compiled every new pattern, so a huge sealed rule set still cost its
-// full compile time. Counted at the compiler itself.
+// full compile time. Counted at the compiler itself (compileRuleProgram).
 const calls = vi.hoisted(() => ({ n: 0 }))
 vi.mock('../src/rule-pattern.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/rule-pattern.js')>()
   return {
     ...real,
-    compileRulePattern: (...args: Parameters<typeof real.compileRulePattern>) => {
+    compileRuleProgram: (...args: Parameters<typeof real.compileRuleProgram>) => {
       calls.n++
-      return real.compileRulePattern(...args)
+      return real.compileRuleProgram(...args)
     },
   }
 })
@@ -86,5 +86,47 @@ describe('a pattern is compiled once per process and charged to every budget', (
     const compiled = calls.n
     expect(anonymize('const PaymentGatewayAlpha1 = 1', { rules: heavy }).rulesStopped).toBe(true)
     expect(calls.n).toBe(compiled)
+  })
+})
+
+// Security review of #8: the shared cache kept each matcher's per-name memo
+// for the life of the process. Only the compiled program is shared now; each
+// budget gets its own memo, so a second call is charged the matching again.
+describe('only the compiled program is shared across calls', () => {
+  it('a second call with the same rules and names spends exactly what the first did', () => {
+    const rules = Array.from({ length: 20 }, (_, i) => rule(i, `^pp${i}(?:[a-c]|d)+$`))
+    const steps = () => {
+      const b = ruleBudget()
+      anonymize(CODE, { rules, ruleBudget: b })
+      return ruleBudget().left - b.left
+    }
+    const first = steps()
+    expect(first).toBeGreaterThan(0)
+    expect(steps()).toBe(first)
+  })
+
+  it('at most 512 patterns stay compiled; the least recently used goes first', () => {
+    const one = (p: string) => anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, p)] })
+    one('^lru0[a-c]+$')
+    for (let i = 1; i < 512; i++) one(`^lru${i}[a-c]+$`)
+    one('^lru0[a-c]+$') // used again: now the most recent
+    const before = calls.n
+    one('^lru512[a-c]+$') // the 513th: evicts lru1, not lru0
+    one('^lru0[a-c]+$')
+    expect(calls.n).toBe(before + 1)
+    one('^lru1[a-c]+$')
+    expect(calls.n).toBe(before + 2)
+  })
+
+  it('a pattern past the rule limit that needs the matcher is never compiled; a list of names may be longer', () => {
+    // One state for the long class: the state cap does not stop it, the length does.
+    const long = `^(?:Payment[A-Za-z0-9]+|[${'q'.repeat(490)}]z)$`
+    const r = anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, long)] })
+    expect(r.anonymized).not.toContain('PaymentGatewayAlpha1')
+    const keep = `^(?:${Array.from({ length: 200 }, (_, i) => `PaymentGatewayAlpha${i + 1}`).join('|')})$`
+    expect(keep.length).toBeGreaterThan(500)
+    expect(
+      anonymize('const PaymentGatewayAlpha1 = 1', { rules: [rule(0, keep)] }).anonymized
+    ).toContain('PaymentGatewayAlpha1')
   })
 })

@@ -394,12 +394,20 @@ export interface RuleMatcher {
   test(name: string, budget?: RuleBudget): boolean
 }
 
+/** The longest pattern the matcher compiles: the rule limit (rule-checks.ts).
+ *  A list of whole names (the keep rule) needs no compiling and may be longer. */
+const MAX_PATTERN = 500
+
 /** Compile a custom rule's pattern, or null when it is outside the language
- *  this matcher runs (see the top of this file). With a budget, the compile
- *  work is charged to it (spec 085 L8: a near-limit pattern costs about 1e5
- *  build steps, and a thousand of them were free). Once that spends the
- *  budget, the matcher answers no match, as every other test then does. */
-export function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMatcher | null {
+ *  this matcher runs (see the top of this file). The result makes matchers,
+ *  each with its own memo of answers: the compiled program can be shared,
+ *  the memo belongs to one caller (security review of spec 085). With a
+ *  budget, the compile work is charged to it (spec 085 L8: a near-limit
+ *  pattern costs about 1e5 build steps, and a thousand of them were free). */
+export function compileRuleProgram(
+  pattern: string,
+  budget?: RuleBudget
+): (() => RuleMatcher) | null {
   const meter = { steps: pattern.length }
   try {
     let root: Node
@@ -411,20 +419,27 @@ export function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMa
       return null
     }
     const whole = wholeLiterals(root)
-    if (whole) return { test: (name, b) => !b?.spent && whole.has(name) }
+    if (whole) return () => ({ test: (name, b) => !b?.spent && whole.has(name) })
+    if (pattern.length > MAX_PATTERN) return null
     let program: { states: State[]; start: number }
     try {
       program = compile(root, meter)
     } catch {
       return null
     }
-    return matcherOf(program)
+    return () => matcherOf(program)
   } finally {
     if (budget) {
       budget.left -= meter.steps
       if (budget.left < 0) budget.spent = true
     }
   }
+}
+
+/** One matcher for a pattern (see compileRuleProgram). Once a budget is
+ *  spent, the matcher answers no match, as every other test then does. */
+export function compileRulePattern(pattern: string, budget?: RuleBudget): RuleMatcher | null {
+  return compileRuleProgram(pattern, budget)?.() ?? null
 }
 
 function matcherOf(program: { states: State[]; start: number }): RuleMatcher {
