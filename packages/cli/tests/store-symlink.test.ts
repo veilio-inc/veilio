@@ -271,8 +271,51 @@ describe('a store another user owns is never used (L2)', () => {
     vi.spyOn(process, 'getuid').mockReturnValue(me + 1)
   }
   const refusal = (dir: string) =>
-    `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory.`
-  afterEach(() => vi.restoreAllMocks())
+    `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, set VEILIO_TRUST_STORE_OWNER=1.`
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  // Review round 1 (#4), git's rule: root accepts the store of the user who
+  // ran sudo; anything else needs the person's explicit opt-in.
+  const asRoot = () => vi.spyOn(process, 'getuid').mockReturnValue(0)
+  it.runIf(posix)('root accepts a store owned by SUDO_UID', () => {
+    const { mapPath } = setup()
+    vi.stubEnv('SUDO_UID', String(process.getuid!()))
+    asRoot()
+    expect(loadMap(mapPath)).toEqual({})
+    saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
+    expect(loadMap(mapPath)).toEqual({ __CLS__1: 'PaymentGateway' })
+  })
+
+  it.runIf(posix)('root without SUDO_UID, or with another one, refuses it', () => {
+    const { proj, mapPath } = setup()
+    vi.stubEnv('SUDO_UID', '')
+    asRoot()
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+    vi.stubEnv('SUDO_UID', String(process.getuid!() + 7))
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+  })
+
+  it.runIf(posix)('SUDO_UID counts for root only', () => {
+    const { proj, mapPath } = setup()
+    vi.stubEnv('SUDO_UID', String(process.getuid!()))
+    asAnotherUser()
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+  })
+
+  it.runIf(posix)(
+    "VEILIO_TRUST_STORE_OWNER=1 accepts another user's store; any other value does not",
+    () => {
+      const { proj, mapPath } = setup()
+      asAnotherUser()
+      vi.stubEnv('VEILIO_TRUST_STORE_OWNER', 'yes')
+      expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+      vi.stubEnv('VEILIO_TRUST_STORE_OWNER', '1')
+      expect(loadMap(mapPath)).toEqual({})
+    }
+  )
 
   it.runIf(posix)('findProjectRoot skips a .veilio another user owns', () => {
     const { proj } = setup()

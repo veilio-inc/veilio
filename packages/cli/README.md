@@ -440,7 +440,7 @@ The map is yours only if you made it, so the CLI refuses (exit 1) to read or wri
 
 - that git tracks: a `.veilio/map.json` or `.veilio/aliases.json` a repository committed is not yours to restore from. Remove it from git (`git rm --cached`), then scrub again to build your own. The CLI reads the git index itself and runs no git command.
 - through a link: `.veilio/`, `map.json`, `aliases.json` and `reserved.json` are read and written only where they appear to be.
-- that belongs to another user on this machine (macOS and Linux): a `.veilio` someone else made, say in `/tmp`, is skipped when the CLI looks for the project, and refused when named with `--map`.
+- that belongs to another user on this machine (macOS and Linux): a `.veilio` someone else made, say in `/tmp`, is skipped when the CLI looks for the project, and refused when named with `--map`. Under `sudo`, a store of the user who ran it (`SUDO_UID`) counts as yours, as git does. To use a store someone else owns on purpose (a shared CI workspace, say), set `VEILIO_TRUST_STORE_OWNER=1`.
 - whose `.veilio/.gitignore` does not keep it out of git: an existing one must be a plain file whose only pattern is `*`. The CLI writes one when there is none and never rewrites one that is there.
 
 Outside a git checkout, the CLI cannot tell a map you made from one that came with the files. Check `.veilio/` in an unpacked archive before you restore.

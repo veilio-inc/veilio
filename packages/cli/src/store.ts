@@ -153,18 +153,27 @@ export function openStoreFile(what: string, path: string): string | null {
 /** 'other' when `path` exists and belongs to another user. Windows (no uid): never. */
 function ownerOf(path: string): 'me' | 'other' | 'none' {
   const me = process.getuid?.()
+  let uid: number
   try {
-    return me === undefined || lstatSync(path).uid === me ? 'me' : 'other'
+    uid = lstatSync(path).uid
   } catch {
     return 'none'
   }
+  // git's rule (safe.directory): root, through sudo, owns what SUDO_UID owns;
+  // anything else only with the person's explicit opt-in.
+  const mine =
+    me === undefined ||
+    uid === me ||
+    (me === 0 && process.env.SUDO_UID === String(uid)) ||
+    process.env.VEILIO_TRUST_STORE_OWNER === '1'
+  return mine ? 'me' : 'other'
 }
 
 /** The store directory and its file are this user's, or not used (spec 085 L2, Q2 = A). */
 function refuseOthers(dir: string, path: string): void {
   if (ownerOf(dir) === 'other' || ownerOf(path) === 'other')
     throw new StoreRefusal(
-      `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory.`
+      `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, set VEILIO_TRUST_STORE_OWNER=1.`
     )
 }
 
