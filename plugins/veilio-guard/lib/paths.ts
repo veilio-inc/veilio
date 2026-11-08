@@ -17,7 +17,7 @@ export {
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
-import { shellWords, splitChain } from './shell.ts'
+import { outsideQuotes, shellExpands, shellWords, splitChain } from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
  *  whitespace, shell operators, braces and commas, and each piece around `=`
@@ -133,32 +133,26 @@ export function allCdTargets(command: string): string[] {
   return [...new Set([...cdTargets(command), ...hidden])]
 }
 
-// A shell by its basename, and the wrappers that run what follows them.
-const SHELLS = /^(?:sh|bash|zsh|dash|ksh|fish)$/
-const WRAPPERS = new Set(['eval', 'env', 'command', 'exec', 'source', '.'])
+// The programs that never run what they are given (second security review
+// of round 2): only their quoted arguments are read as text.
+const TEXT_ONLY = new Set(['grep', 'rg', 'echo', 'printf'])
 
 /** The cd targets a refusal judges: allCdTargets over the whole command
- *  (fail closed), except text quoted as an argument of a program that is no
- *  shell and no wrapper, with no word of its part that is one either, and
- *  with no `$` or backtick in it (`grep "cd *"`, `git commit -m "cd [x]"`).
- *  Security review of round 2 of spec 078. */
+ *  (fail closed), with one exception: the quoted arguments of grep, rg, echo
+ *  or printf, in a part with nothing the shell expands, are text (`grep "cd *"`).
+ *  Split as cdTargets splits, and read with the shell's own quoting. */
 export function cdTargetsToJudge(command: string): string[] {
-  const parts = splitChain(command)
-  if (parts === null) return allCdTargets(command)
-  const kept = parts.map((part) => {
-    const words = shellWords(part) ?? []
-    const runs = words.some((w) => SHELLS.test(w.split(/[\\/]/).pop() ?? '') || WRAPPERS.has(w))
-    return runs ? part : blankQuoted(part)
-  })
+  const kept: string[] = []
+  for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/)) {
+    const parts = splitChain(piece)
+    if (parts === null) return allCdTargets(command)
+    for (const part of parts) {
+      const words = shellWords(part)
+      const text = words !== null && TEXT_ONLY.has(words[0] ?? '') && !shellExpands(part)
+      kept.push(text ? outsideQuotes(part) : part)
+    }
+  }
   return allCdTargets(kept.join(' ; '))
-}
-
-/** `part` with the inside of each quoted span blanked, unless the span holds
- *  a `$` or a backtick, which the shell still expands. */
-function blankQuoted(part: string): string {
-  return part.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (span) =>
-    /[$`]/.test(span) ? span : span[0] + ' '.repeat(span.length - 2) + span[0]
-  )
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

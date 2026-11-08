@@ -361,7 +361,7 @@ export function restoreRefusal(command: string, tool: 'Bash' | 'PowerShell'): st
 
 /** The command with every quoted span blanked, so an operator inside quotes
  *  is not read as one (an unclosed quote was refused before this). */
-function outsideQuotes(command: string): string {
+export function outsideQuotes(command: string): string {
   let out = ''
   let quote: string | null = null
   for (let i = 0; i < command.length; i++) {

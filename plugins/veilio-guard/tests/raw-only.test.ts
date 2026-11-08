@@ -360,6 +360,20 @@ for (const command of [
   "xargs sh -c 'cd .a*s && cat credentials'",
   'cat <(cd .a*s && cat credentials)',
   'echo $( (cd .a*s && cat credentials) )',
+  // Second security review of round 2: quoted text is read as text only for
+  // grep, rg, echo and printf with nothing the shell expands.
+  "sudo bash -c 'cd .aws && cat credentials'",
+  "xargs sh -c 'cd .kube; cat config'",
+  "find . -exec sh -c 'cd .aws && cat credentials' \\;",
+  "$x -c 'cd .aws && cat credentials'",
+  "/bin/ba?h -c 'cd .aws && cat credentials'",
+  `python -c "import os; os.system('cd .aws && cat credentials')"`,
+  "su -c 'cd .aws && cat credentials'",
+  "watch 'cd .a*s && cat credentials'",
+  "grep 'x\\' ; cd .a*s ; cat credentials",
+  'grep -n x README.md\ncd .a*s && cat credentials',
+  'echo "$x" "cd .a*s && cat credentials"',
+  'git commit -m "ci: cd [skip ci]"',
 ])
   test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
     project(on, {})
@@ -396,7 +410,7 @@ test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on)
   project(on, {})
   const seen: string[] = []
   on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
-  const commands = ['grep -rn "cd *" scripts/', 'git commit -m "ci: cd [skip ci]"']
+  const commands = ['grep -rn "cd *" scripts/', 'echo "next: cd [the folder]"']
   for (const command of commands) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
     expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
