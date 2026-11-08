@@ -21,6 +21,13 @@ if ! command -v veilio >/dev/null 2>&1; then
   exit 0
 fi
 
+# `scan --blobs` came with @veilio-inc/cli 0.10.0; an older veilio would stop
+# every commit with a usage error, so say what to do instead.
+if ! veilio scan --help 2>/dev/null | grep -q -- '--blobs'; then
+  echo "Commit blocked: this hook needs veilio 0.10.0 or later (it uses \`veilio scan --blobs\`). Upgrade it: npm install -g @veilio-inc/cli" >&2
+  exit 1
+fi
+
 listing=$(mktemp "${TMPDIR:-/tmp}/veilio-staged.XXXXXX")
 errors=$(mktemp "${TMPDIR:-/tmp}/veilio-errors.XXXXXX")
 trap 'rm -f "$listing" "$errors"' EXIT
@@ -36,14 +43,16 @@ if cut -d' ' -f4 "$listing" | git cat-file --batch | veilio scan --quiet --blobs
 else
   status=$?
 fi
-cat "$errors" >&2
 
 if [ "$status" -ne 1 ]; then
-  echo "" >&2
-  echo "Commit blocked: veilio could not check the staged files: $(cat "$errors")" >&2
+  echo "Commit blocked: veilio could not check the staged files:" >&2
+  cat "$errors" >&2
   echo "  To override for a change you are certain about: git commit --no-verify" >&2
   exit 1
 fi
+
+# The findings veilio listed, then what to do.
+cat "$errors" >&2
 
 cat >&2 <<'MSG'
 

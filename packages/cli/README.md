@@ -508,4 +508,5 @@ git lists the staged files with their object ids, `git cat-file --batch`
 streams those blobs, and each is matched to its name by id. Binary files and
 submodules are skipped. A finding blocks the commit with the credentials
 message; anything that stops the check blocks it with "could not check" and
-the reason. `--no-verify` overrides, as usual.
+the reason. The hook needs veilio 0.10.0 or later; an older one stops the
+commit with a line saying to upgrade. `--no-verify` overrides, as usual.

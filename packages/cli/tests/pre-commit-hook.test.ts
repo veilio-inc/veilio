@@ -179,24 +179,52 @@ describe('the pre-commit hook scans each staged file under its own name (L1)', (
     expect(Date.now() - started).toBeLessThan(20_000)
   }, 60_000)
 
-  // Review round 1 (#9): a finding and a failure to check say different things.
-  it('a finding says credentials; a failure to check says it could not check, and both block', () => {
+  // Review round 1 (#9), round 2 (#6): a finding and a failure to check say
+  // different things, both block, and nothing is printed twice.
+  const stub = (body: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'veilio-hook-stub-'))
+    writeFileSync(join(dir, 'veilio'), `#!/bin/sh\n${body}\n`)
+    chmodSync(join(dir, 'veilio'), 0o755)
+    return dir
+  }
+  const count = (text: string, part: string) => text.split(part).length - 1
+  it('a finding says credentials and lists it once; both block', () => {
     stage({ '.env': ENV })
     const found = hook()
     expect(found.status).toBe(1)
-    expect(found.stderr).toContain('Commit blocked: credentials detected in the staged changes.')
-    const broken = mkdtempSync(join(tmpdir(), 'veilio-hook-broken-'))
-    writeFileSync(
-      join(broken, 'veilio'),
-      '#!/bin/sh\necho "veilio: something broke here" >&2\nexit 2\n'
+    expect(count(found.stderr, 'Commit blocked: credentials detected in the staged changes.')).toBe(
+      1
     )
-    chmodSync(join(broken, 'veilio'), 0o755)
-    const failed = hook(broken)
+    expect(count(found.stderr, '.env')).toBe(1)
+  })
+
+  it('a failure to check says so, then the reason, once', () => {
+    stage({ '.env': ENV })
+    const failed = hook(
+      stub(
+        '[ "$2" = --help ] && { echo "--blobs <listing>"; exit 0; }\necho "veilio: something broke here" >&2\nexit 2'
+      )
+    )
     expect(failed.status).toBe(1)
-    expect(failed.stderr).toContain(
-      'Commit blocked: veilio could not check the staged files: veilio: something broke here'
-    )
     expect(failed.stderr).not.toContain('credentials detected')
+    expect(count(failed.stderr, 'something broke here')).toBe(1)
+    expect(
+      failed.stderr.indexOf('Commit blocked: veilio could not check the staged files:')
+    ).toBeLessThan(failed.stderr.indexOf('veilio: something broke here'))
+  })
+
+  // Review round 2 (#7): a veilio older than `scan --blobs` would fail every
+  // commit with a usage error; the hook says what to do instead.
+  it('an older veilio, without --blobs, is told to upgrade, and the commit stops', () => {
+    stage({ 'src/gateway.ts': TS })
+    const old = hook(
+      stub('[ "$2" = --help ] && { echo "--name <path>"; exit 0; }\necho "ran a scan" >&2\nexit 0')
+    )
+    expect(old.status).toBe(1)
+    expect(old.stderr).toContain(
+      'Commit blocked: this hook needs veilio 0.10.0 or later (it uses `veilio scan --blobs`). Upgrade it: npm install -g @veilio-inc/cli'
+    )
+    expect(old.stderr).not.toContain('ran a scan')
   })
 
   // Review round 1 (#10): the header named a .pre-commit-hooks.yaml the
