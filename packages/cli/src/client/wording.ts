@@ -357,8 +357,9 @@ export const WORDING: Record<RefusalCode, Words> = {
     resolve:
       'The person running it can allow it by starting the server with VEILIO_MCP_DESTRUCTIVE=1, or do it in a terminal with `veilio maps rm` or `veilio maps update --allow-drop`.',
   }),
-  confirm_name: (p) => ({
-    message: `confirmName must repeat the map's exact name ("${p.name}"), so nothing was removed.`,
+  // No name here (spec 085 L9): repeating it let the model confirm alone.
+  confirm_name: () => ({
+    message: "confirmName does not match this map's name, so nothing was removed.",
     resolve: 'Ask the person to confirm which map, then call again with its exact name.',
   }),
   confirm_unknown: (p) => ({
