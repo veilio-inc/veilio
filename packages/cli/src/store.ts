@@ -353,7 +353,7 @@ export function prepareStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
   // Under sudo, in a project the invoking user owns, root would make a store
   // that user cannot use (review round 2): refused before anything is made.
-  if (ownerOf(dirname(dir)) === 'sudo') throw sudoWriteRefusal(dir)
+  if (ownerOf(dirname(dir)) === 'sudo' && !trustedStore(dir)) throw sudoWriteRefusal(dir)
   checkStoreWrite(what, path)
   // Made 0700 and not recursively, so a directory already there is checked
   // again rather than taken: another user may have swapped it in meanwhile.

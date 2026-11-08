@@ -318,6 +318,25 @@ describe('a store another user owns is never used (L2)', () => {
     }
   )
 
+  // Review round 2b: the trust list applies to the fresh-checkout check too,
+  // as it does to the owner check: a listed store can be written under sudo.
+  it.runIf(posix)(
+    'under sudo, a store listed in VEILIO_TRUST_STORE_OWNER is writable; an unlisted one is not',
+    () => {
+      const listed = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
+      const unlisted = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
+      vi.stubEnv('SUDO_UID', String(process.getuid!()))
+      vi.stubEnv('VEILIO_TRUST_STORE_OWNER', join(listed, '.veilio'))
+      asRoot()
+      saveMap(join(listed, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
+      expect(loadMap(join(listed, '.veilio', 'map.json'))).toEqual({ __CLS__1: 'PaymentGateway' })
+      expect(() =>
+        saveMap(join(unlisted, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
+      ).toThrow(/as root: it belongs to the user who ran sudo/)
+      expect(existsSync(join(unlisted, '.veilio'))).toBe(false)
+    }
+  )
+
   it.runIf(posix)('root with no sudo still writes where it owns the project', () => {
     const base = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
     vi.stubEnv('SUDO_UID', '')
