@@ -313,6 +313,9 @@ a plan feature the web app couldn't.
                         update, team unlock
     --json              Machine-readable output
                         For: scan, map
+    --name <path>       scan stdin as if it were the file <path> (its file
+                        type decides the rules; used by the pre-commit hook)
+                        For: scan
     --strict            scan: also fail on advisory findings. restore: write
                         nothing and exit 1 if a placeholder or a redaction
                         would be left

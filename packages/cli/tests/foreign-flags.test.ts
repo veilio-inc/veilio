@@ -30,6 +30,7 @@ const VALUES: Record<string, string> = {
   '--language': 'go',
   '--secrets': 'warn',
   '--map': 'some/map.json',
+  '--name': '.env',
   '--days': '3',
   '--instance': 'https://veilio.example.com',
 }

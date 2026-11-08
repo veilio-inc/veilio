@@ -6,9 +6,11 @@
 #
 # Or, if you use the pre-commit framework, prefer .pre-commit-hooks.yaml instead.
 #
-# Scans the STAGED diff, not the working tree: what you are about to commit is
+# Scans what is STAGED, not the working tree: what you are about to commit is
 # the thing that matters, and a finding in an unstaged scratch file shouldn't
-# block you.
+# block you. Each staged file is scanned on its own, under its own name, so its
+# file type picks the rules (.env, YAML, shell); a .gitattributes `-diff` hides
+# nothing, because the file's content is read, not its diff.
 
 set -eu
 
@@ -18,12 +20,32 @@ if ! command -v veilio >/dev/null 2>&1; then
   exit 0
 fi
 
-staged=$(git diff --cached --name-only --diff-filter=ACM)
+staged=$(git -c core.quotepath=off diff --cached --name-only --diff-filter=ACM)
 [ -z "$staged" ] && exit 0
 
-if git diff --cached | veilio scan --quiet; then
-  exit 0
-fi
+found=0
+while IFS= read -r path; do
+  case "$path" in
+    \"*)
+      # git quotes a name holding a newline or other control character: it
+      # cannot be named safely here, so the commit stops.
+      echo "Commit blocked: veilio cannot scan a staged file whose name git has to quote (\`$path\`). Rename it, or commit with --no-verify if you are certain." >&2
+      exit 1
+      ;;
+  esac
+  # Fail closed: a blob git cannot show is not passed as an empty one.
+  git cat-file -e ":$path" 2>/dev/null || { echo "veilio: cannot read the staged $path" >&2; exit 1; }
+  # A NUL in the first 8000 bytes is a binary file, as git decides it.
+  all=$(git cat-file blob ":$path" | head -c 8000 | wc -c)
+  text=$(git cat-file blob ":$path" | head -c 8000 | tr -d '\000' | wc -c)
+  [ "$all" -ne "$text" ] && continue
+  case "$path" in -*) name="./$path" ;; *) name=$path ;; esac
+  git cat-file blob ":$path" | veilio scan --quiet --name "$name" || found=1
+done <<EOF_STAGED
+$staged
+EOF_STAGED
+
+[ "$found" -eq 0 ] && exit 0
 
 cat >&2 <<'MSG'
 

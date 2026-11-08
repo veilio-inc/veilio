@@ -560,10 +560,18 @@ export async function runRestore(
 
 /** Detect-only pass for pre-commit hooks and CI. Never rewrites anything. */
 export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
+  if (args.stdinName !== null && args.files.length > 0) {
+    io.stderr(
+      `${BIN_NAME}: --name names what comes on stdin, so it cannot be used with file names.\n`
+    )
+    return EXIT_ERROR
+  }
+  // `--name`: stdin is scanned as that file would be (spec 085 L1), so the
+  // pre-commit hook gets the .env, YAML and shell rules for each staged file.
   const targets =
     args.files.length > 0
       ? args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
-      : [{ name: '<stdin>', text: await io.stdin() }]
+      : [{ name: args.stdinName ?? '<stdin>', text: await io.stdin() }]
 
   const all: { file: string; finding: SecretFinding }[] = []
   for (const target of targets) {
@@ -640,7 +648,7 @@ EXIT CODES
 EXAMPLES
   ${BIN_NAME} scrub src/billing.ts | pbcopy
   pbpaste | ${BIN_NAME} restore
-  git diff --cached | ${BIN_NAME} scan       # pre-commit gate
+  git show :.env | ${BIN_NAME} scan --name .env   # one staged file, as the hook does
   ${BIN_NAME} scan 'src/**/*.ts' --json > findings.json
 
 Transformed code goes to stdout; everything else goes to stderr, so the CLI

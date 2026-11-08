@@ -285,6 +285,13 @@ export const FLAGS: readonly FlagSpec[] = [
     field: 'json',
   },
   {
+    long: '--name',
+    value: '<path>',
+    help: 'scan stdin as if it were the file <path> (its file type decides the rules; used by the pre-commit hook)',
+    commands: ['scan'],
+    field: 'stdinName',
+  },
+  {
     long: '--strict',
     help: 'scan: also fail on advisory findings. restore: write nothing and exit 1 if a placeholder or a redaction would be left',
     commands: ['scan', 'restore'],

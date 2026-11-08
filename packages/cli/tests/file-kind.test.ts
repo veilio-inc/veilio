@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
-import { EXIT_OK, type Io } from '../src/commands.js'
+import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
 
 // Engine spec 013 R19: the CLI passes each file's kind (fileKindOf), never its
 // path, so the environment-style credential rules reach `veilio scrub` and
@@ -76,5 +76,50 @@ describe('veilio scan: the file kind reaches the engine', () => {
     const r = await run(['scan', '--json', '.env'])
     const findings = JSON.parse(r.out) as unknown[]
     expect(findings.length).toBeGreaterThan(0)
+  })
+})
+
+// Spec 085 L1 (security audit run-1): the pre-commit hook piped the whole
+// staged diff into `veilio scan`, which then had no file name, so the .env,
+// YAML and shell rules were off. `--name` gives stdin the name it has.
+describe('veilio scan --name: stdin scanned as the file it names (L1)', () => {
+  const ENV = 'DB_PASSWORD=NotARealPass9\n'
+  it('the audit case 1: `scan .env` blocks', async () => {
+    writeFileSync(join(cwd, '.env'), ENV)
+    expect((await run(['scan', '--quiet', '.env'])).code).toBe(EXIT_FINDINGS)
+  })
+
+  it('the same text on stdin with --name .env blocks, and names the file', async () => {
+    const r = await run(['scan', '--name', '.env'], ENV)
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain('.env')
+    expect(r.err).not.toContain('<stdin>')
+  })
+
+  it('--name config/prod.env reads it as a .env file too', async () => {
+    expect((await run(['scan', '--quiet', '--name', 'config/prod.env'], ENV)).code).toBe(
+      EXIT_FINDINGS
+    )
+  })
+
+  it('--name src/gateway.ts with code holding no credential passes', async () => {
+    const r = await run(
+      ['scan', '--quiet', '--name', 'src/gateway.ts'],
+      'export const PaymentGateway = (x: number) => x\n'
+    )
+    expect(r.code).toBe(EXIT_OK)
+  })
+
+  it('--name with file names is a usage error', async () => {
+    writeFileSync(join(cwd, '.env'), ENV)
+    const r = await run(['scan', '--name', '.env', '.env'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain(
+      'veilio: --name names what comes on stdin, so it cannot be used with file names.'
+    )
+  })
+
+  it('--name belongs to scan only', async () => {
+    expect((await run(['scrub', '--name', '.env'], ENV)).code).toBe(EXIT_ERROR)
   })
 })

@@ -43,6 +43,8 @@ export interface ParsedArgs {
   strict: boolean
   /** Keep JSDoc blocks when restoring. */
   keepDocs: boolean
+  /** `scan --name <path>`: the file name stdin stands for (spec 085 L1). */
+  stdinName: string | null
   /** Allow a map write that would drop entries already on disk. */
   force: boolean
   /**
@@ -193,6 +195,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     clear: false,
     strict: false,
     keepDocs: false,
+    stdinName: null,
     force: false,
     team: false,
     device: false,
@@ -341,6 +344,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         break
       case '--keep-docs':
         parsed.keepDocs = true
+        break
+      case '--name':
+        parsed.stdinName = requireValue(arg, argv[++i])
         break
       case '--team':
         parsed.team = true
