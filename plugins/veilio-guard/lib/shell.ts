@@ -43,23 +43,15 @@ const VITEST: Allowed = {
   '--root': 'path',
   '--reporter': ['default', 'verbose', 'dot', 'json', 'junit', 'tap', 'tap-flat'],
 }
-// Review round 4b #2: vitest's commands other than run (init installs
-// packages). Refused as any positional word, wherever the options put it.
-const VITEST_COMMANDS = new Set([
-  'init',
-  'bench',
-  'doctor',
-  'list',
-  'watch',
-  'dev',
-  'related',
-  'typecheck',
-])
-const RUNNERS: readonly [readonly string[], Allowed, ReadonlySet<string>?][] = [
-  [['npx', 'vitest'], VITEST, VITEST_COMMANDS],
-  [['vitest'], VITEST, VITEST_COMMANDS],
-  [['node_modules/.bin/vitest'], VITEST, VITEST_COMMANDS],
-  [['./node_modules/.bin/vitest'], VITEST, VITEST_COMMANDS],
+// Review round 4c: each positional word of a vitest run is `run` or a test
+// path (a / or a ., inside the project): an allow-list, so init, bench and
+// any later command are refused, and so is a bare filter word (use -t).
+const vitestWord = (w: string) => w === 'run' || (/[/.]/.test(w) && inProject(w))
+const RUNNERS: readonly [readonly string[], Allowed, ((w: string) => boolean)?][] = [
+  [['npx', 'vitest'], VITEST, vitestWord],
+  [['vitest'], VITEST, vitestWord],
+  [['node_modules/.bin/vitest'], VITEST, vitestWord],
+  [['./node_modules/.bin/vitest'], VITEST, vitestWord],
   [['npm', 'test'], SCRIPT],
   [['npm', 'run', 'test'], SCRIPT],
   [['pnpm', 'test'], SCRIPT],
@@ -99,17 +91,17 @@ function mavenTest(rest: readonly string[]): boolean {
   return goals === 1
 }
 
-/** Whether every option in `rest` is on `allowed`, and no positional word is
- *  one of the runner's `commands` that is not a test run. */
+/** Whether every option in `rest` is on `allowed`, and every positional word
+ *  passes the runner's `positional` check when it has one. */
 function onlyAllowed(
   rest: readonly string[],
   allowed: Allowed,
-  commands?: ReadonlySet<string>
+  positional?: (w: string) => boolean
 ): boolean {
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!
     if (!w.startsWith('-')) {
-      if (commands?.has(w)) return false
+      if (positional && !positional(w)) return false
       continue
     }
     const eq = w.indexOf('=')
@@ -135,9 +127,9 @@ function onlyAllowed(
 function readsOrTests(words: readonly string[]): boolean {
   if (READERS.has(words[0] ?? '')) return true
   if (words[0] === 'mvn') return mavenTest(words.slice(1))
-  for (const [start, allowed, commands] of RUNNERS)
+  for (const [start, allowed, positional] of RUNNERS)
     if (start.every((w, i) => words[i] === w))
-      return onlyAllowed(words.slice(start.length), allowed, commands)
+      return onlyAllowed(words.slice(start.length), allowed, positional)
   return false
 }
 

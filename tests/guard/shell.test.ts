@@ -417,6 +417,9 @@ describe('restoreRefusal: the runners the benchmark needed (spec 078 review roun
     'npx vitest run --root ./gateway tests/__PKG__16.test.ts',
     'mvn -q -o -f ledger/pom.xml test -Dtest=__CLS__1#pays+refunds',
     'npx vitest tests/__PKG__16.test.ts',
+    'npx vitest run x.test.ts',
+    'npx vitest run -t pays tests/__PKG__16.test.ts',
+    'npx vitest run tests/ -t pays',
   ])('lets %j through', (command) => {
     expect(restoreRefusal(command, 'Bash')).toBeNull()
   })
@@ -476,6 +479,15 @@ describe('restoreRefusal: the runners the benchmark needed (spec 078 review roun
     'npx vitest typecheck __X__1',
     'npx vitest -t pays init __X__1',
     'node_modules/.bin/vitest --root gateway bench __X__1',
+    // Review round 4c: a positional word is run or a test path, nothing else.
+    'npx vitest frobnicate __X__1',
+    'npx vitest run pays',
+    'vitest __X__1',
+    'npx vitest run tests/__PKG__16.test.ts pays',
+    'npx vitest run tests/../../x.test.ts',
+    'npx vitest run /tmp/x.test.ts',
+    `npx vitest run '"/tmp/x.test.ts"'`,
+    'npx vitest run "tests/a b.test.ts"',
     // Review round 4b #3: -Dtest takes a pattern only, never a second property.
     'mvn test "-Dtest=a -Dmaven.ext.class.path=/tmp/e.jar"',
     `mvn test '-Dtest="a"'`,
