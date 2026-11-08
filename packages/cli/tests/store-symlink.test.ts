@@ -198,7 +198,7 @@ describe('the map is written only where .gitignore keeps it out of git (L4)', ()
   })
 
   it("an older CLI's `*` file passes, and so does one with comments and blank lines", () => {
-    for (const body of ['*\n', '*', '# veilio\n*\r\n', '\n*  \n\n# kept by veilio\n']) {
+    for (const body of ['*\n', '*', '*\r\n', '# veilio\n*\r\n', '\n*\n\n# kept by veilio\n']) {
       const { cwd, mapPath } = setup()
       writeFileSync(join(cwd, '.veilio', '.gitignore'), body)
       saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
@@ -217,6 +217,8 @@ describe('the map is written only where .gitignore keeps it out of git (L4)', ()
       '# only a comment\n\n',
       'map.json\n',
       '  *\n',
+      '*\t\n',
+      '* \n',
     ]) {
       const { cwd, mapPath } = setup()
       writeFileSync(join(cwd, '.veilio', '.gitignore'), body)

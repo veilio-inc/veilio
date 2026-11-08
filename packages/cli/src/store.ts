@@ -263,14 +263,12 @@ export function prepareStoreWrite(what: string, path: string): void {
 /**
  * A .gitignore whose only pattern is `*` (security review): `*` then
  * `!map.json` would let git track the map, and the CLI cannot ask git which
- * files it ignores. Blank lines and `#` comments are allowed; git drops
- * trailing spaces but keeps leading ones, so `  *` is another pattern.
+ * files it ignores. Blank lines and `#` comments are allowed. No trimming:
+ * git keeps leading spaces and a trailing tab (`  *`, `*\t` match nothing), so
+ * only a line that is exactly `*` (CRLF accepted) counts.
  */
 function onlyStar(text: string): boolean {
-  const patterns = text
-    .split(/\r?\n/)
-    .map((l) => l.trimEnd())
-    .filter((l) => l !== '' && !l.startsWith('#'))
+  const patterns = text.split(/\r?\n/).filter((l) => l !== '' && !l.startsWith('#'))
   return patterns.length > 0 && patterns.every((l) => l === '*')
 }
 
