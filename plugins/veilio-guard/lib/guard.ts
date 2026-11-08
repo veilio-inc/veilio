@@ -29,6 +29,7 @@ import {
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
+  windowsAlias,
 } from './paths.ts'
 import { restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
@@ -1159,7 +1160,8 @@ export class Guard {
 
     for (const field of policy.paths) {
       for (const p of [e[field], args[field]]) {
-        if (typeof p === 'string' && (await this.rawOnlyHit(p))) {
+        // A Windows stream or short name may stand for a raw-only file.
+        if (typeof p === 'string' && (windowsAlias(p) || (await this.rawOnlyHit(p)))) {
           return this.deny(
             `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
             false

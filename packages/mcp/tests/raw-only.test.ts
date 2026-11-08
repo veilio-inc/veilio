@@ -50,6 +50,34 @@ describe('raw-only paths (spec 078)', () => {
         expect(r.text).not.toContain('PaymentGateway')
       })
 
+  // Security review of the MCP raw-only refusal: Windows spellings, string-level
+  // (a live Windows check is still owed).
+  for (const tool of ['anonymize_file', 'scan_secrets'])
+    for (const path of ['.env::$DATA', '.env:x', '.env.', 'ENV~1', 'keys/id_rsa.'])
+      it(`${tool} refuses the Windows spelling ${path}`, () => {
+        const r = callTool(tool, { path }, ctx)
+        expect(r.isError).toBe(true)
+        expect(r.text).toContain(said(path))
+      })
+
+  it('the configured map file, and its aliases and reservations beside it, are refused wherever they live', () => {
+    mkdirSync(join(cwd, 'store'))
+    writeFileSync(
+      join(cwd, 'store', 'custom-map.json'),
+      '{"version":1,"map":{"__CLS__1":"PaymentGateway"}}\n'
+    )
+    writeFileSync(join(cwd, 'store', 'aliases.json'), '{"aliases":{"__CLS__9":"InvoiceBuilder"}}\n')
+    writeFileSync(join(cwd, 'store', 'reserved.json'), '{}\n')
+    const custom = { ...ctx, mapPath: 'store/custom-map.json' }
+    for (const tool of ['anonymize_file', 'scan_secrets'])
+      for (const path of ['store/custom-map.json', 'store/aliases.json', 'store/reserved.json']) {
+        const r = callTool(tool, { path }, custom)
+        expect(`${tool} ${path}: ${r.text}`).toContain(said(path))
+        expect(r.text).not.toContain('PaymentGateway')
+        expect(r.text).not.toContain('InvoiceBuilder')
+      }
+  })
+
   it('a source file still works', () => {
     expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
     expect(callTool('scan_secrets', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()

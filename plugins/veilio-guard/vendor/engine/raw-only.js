@@ -57,7 +57,12 @@ function globToRegExp(glob) {
 }
 function matches(path, pattern) {
     const re = globToRegExp(pattern);
-    const parts = path.split('/').filter((p) => p !== '' && p !== '.');
+    // NTFS opens `.env::$DATA`, `.env:x` and `.env.` as `.env`: a segment is
+    // read without its stream and trailing dots or spaces (spec 078 review).
+    const parts = path
+        .split('/')
+        .map((p) => (p === '..' ? p : p.replace(/:.*$/, '').replace(/[. ]+$/, '')))
+        .filter((p) => p !== '' && p !== '.');
     // A pattern with no slash matches a file name anywhere; one with a slash
     // matches any tail of the path, so `secrets/**` holds at any depth.
     if (!pattern.includes('/'))
@@ -66,6 +71,15 @@ function matches(path, pattern) {
         if (re.test(parts.slice(i).join('/')))
             return true;
     return false;
+}
+/** A path no name match can judge on Windows: a segment holding a stream
+ *  (`a:b`, past a drive letter) or shaped like an 8.3 short name (`ENV~1`),
+ *  which may stand for any long name. Callers that read files refuse it. */
+export function windowsAlias(path) {
+    return path
+        .split(/[\\/]/)
+        .some((seg, i) => (seg.includes(':') && !(i === 0 && /^[A-Za-z]:$/.test(seg))) ||
+        /^[^~]{1,6}~\d+(\.[^.]*)?$/.test(seg));
 }
 export function isRawOnly(path, extra) {
     const normal = path.replace(/\\/g, '/');

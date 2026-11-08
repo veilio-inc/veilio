@@ -280,3 +280,25 @@ test('a Read of a path with .. that resolves to a raw-only file is refused', asy
   expect(ran).toBe(false)
   expect(out.deny).toContain('away from the model')
 })
+
+// Security review of the MCP raw-only refusal (the same gap in the guard's
+// file tools): NTFS streams, trailing dots and 8.3 short names.
+test('a Read of a Windows spelling of a raw-only file is refused', async ($, on) => {
+  project(on, ENV)
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: 'x' }
+  })
+  for (const path of [
+    '.env::$DATA',
+    '.env:x',
+    '.env.',
+    'ENV~1',
+    'C:\\work\\project\\.env::$DATA',
+  ]) {
+    const out = await $.tool.call({ tool: 'Read', file_path: path })
+    expect(`${path} -> ${out.deny}`).toContain('away from the model')
+  }
+  expect(ran).toBe(false)
+})

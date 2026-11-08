@@ -6,6 +6,7 @@ import {
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
+  windowsAlias,
 } from '../../plugins/veilio-guard/lib/paths.ts'
 
 // FR-004: files that must never reach the model are refused before the tool
@@ -184,4 +185,34 @@ describe('normalisePath, rawOnlyDirectories, cdTargets (spec 078)', () => {
   ])('finds the cd targets of %j', (command, want) => {
     expect(cdTargets(command)).toEqual(want)
   })
+})
+
+// Security review of the MCP raw-only refusal: Windows spellings of a
+// raw-only file. NTFS opens `.env::$DATA`, `.env:x` and `.env.` as `.env`, and
+// `ENV~1` is its 8.3 short name. String-level here; a live Windows check is
+// still owed.
+describe('Windows spellings of a raw-only path (spec 078)', () => {
+  it.each([
+    '.env::$DATA',
+    '.env:x',
+    '.env.',
+    '.env. .',
+    'C:\\work\\.env::$DATA',
+    'keys/id_rsa.',
+    '.veilio./map.json',
+  ])('isRawOnly(%j)', (path) => {
+    expect(isRawOnly(path, [])).toBe(true)
+  })
+  it.each(['C:\\work\\a:b.txt', 'src/x.ts:stream', 'ENV~1', 'C:\\PROGRA~1\\x', 'keys/ID_RSA~2'])(
+    'windowsAlias(%j): a stream or a short name, which no name match can judge',
+    (path) => {
+      expect(windowsAlias(path)).toBe(true)
+    }
+  )
+  it.each(['C:\\work\\src\\a.ts', 'src/a.ts', '/home/dev/notes~.md', 'a~b/c.ts'])(
+    'windowsAlias(%j) is false',
+    (path) => {
+      expect(windowsAlias(path)).toBe(false)
+    }
+  )
 })

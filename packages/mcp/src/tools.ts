@@ -45,6 +45,7 @@ import {
   fileKindOf,
   isLocalPlaceholder,
   isRawOnly,
+  windowsAlias,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -172,7 +173,8 @@ function isInside(root: string, target: string): boolean {
  *  permission), which the caller refuses: fail closed. */
 function realPath(path: string): string | undefined {
   try {
-    return realpathSync(path)
+    // The canonical long name: on Windows an 8.3 short name resolves too.
+    return realpathSync.native(path)
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
     // ENOENT for a link that exists means its target does not: dangling.
@@ -211,14 +213,23 @@ function safeResolve(path: string, cwd: string): string {
   return realTarget
 }
 
-/** Spec 078 FR-016: the guard's raw-only list (one list, the engine's), on
- *  the path as given and where it really leads, before anything is read. */
-function refuseRawOnly(path: string, real: string, cwd: string): void {
-  const root = realPath(cwd) ?? cwd
-  if (isRawOnly(path, []) || isRawOnly(relative(root, real), []))
-    throw new ToolError(
+/** Spec 078 FR-016: the guard's raw-only list (one list, the engine's), a
+ *  Windows stream or short name, and this server's own map files wherever the
+ *  configuration puts them - on the path as given, before it is resolved, and
+ *  where it really leads, before anything is read. */
+function refuseRawOnly(path: string, ctx: ToolContext): string {
+  const refuse = () =>
+    new ToolError(
       `"${path}" is on Veilio's raw-only list (.env, private keys, credential stores, .veilio/); Veilio never reads it. Ask the user for what you need from it.`
     )
+  const map = resolveMapPath(ctx.mapPath, ctx.cwd)
+  const stores = [map, join(dirname(map), 'aliases.json'), join(dirname(map), 'reserved.json')]
+  const own = new Set(stores.flatMap((p) => [resolve(p), realPath(p) ?? resolve(p)]))
+  if (isRawOnly(path, []) || windowsAlias(path) || own.has(resolve(ctx.cwd, path))) throw refuse()
+  const real = safeResolve(path, ctx.cwd)
+  const root = realPath(ctx.cwd) ?? ctx.cwd
+  if (isRawOnly(relative(root, real), []) || own.has(real)) throw refuse()
+  return real
 }
 
 function readTarget(
@@ -231,8 +242,7 @@ function readTarget(
     throw new ToolError('pass either "path" or "text", not both')
   }
   if (path !== undefined) {
-    const abs = safeResolve(path, ctx.cwd)
-    refuseRawOnly(path, abs, ctx.cwd)
+    const abs = refuseRawOnly(path, ctx)
     try {
       return { text: readFileSync(abs, 'utf8'), label: path }
     } catch {
@@ -461,8 +471,7 @@ export const TOOLS: ToolDefinition[] = [
     },
     handler: (args, ctx) => {
       const path = str(args, 'path', true)
-      const abs = safeResolve(path, ctx.cwd)
-      refuseRawOnly(path, abs, ctx.cwd)
+      const abs = refuseRawOnly(path, ctx)
       let source: string
       try {
         source = readFileSync(abs, 'utf8')

@@ -10,7 +10,7 @@
 
 // The list and its matcher live in the engine (spec 078 FR-016), shared with
 // the MCP server.
-export { DEFAULT_RAW_ONLY, isRawOnly } from '../vendor/engine/index.js'
+export { DEFAULT_RAW_ONLY, isRawOnly, windowsAlias } from '../vendor/engine/index.js'
 import { shellWords, splitChain } from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
