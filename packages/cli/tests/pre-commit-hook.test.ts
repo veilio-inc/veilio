@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -39,6 +47,10 @@ const env = () => ({
   PATH: `${bin}:${process.env.PATH}`,
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_AUTHOR_NAME: 't',
+  GIT_AUTHOR_EMAIL: 't@example.invalid',
+  GIT_COMMITTER_NAME: 't',
+  GIT_COMMITTER_EMAIL: 't@example.invalid',
 })
 const git = (...args: string[]) =>
   execFileSync('git', args, { cwd: repo, env: env(), stdio: 'ignore' })
@@ -82,14 +94,31 @@ describe('the pre-commit hook scans each staged file under its own name (L1)', (
     expect(hook().status).toBe(0)
   })
 
-  it('a staged path git has to quote blocks the commit, with the reason', () => {
+  it('a staged path with a newline in its name is scanned like any other', () => {
     stage({ 'odd\nname.ts': TS })
-    const r = hook()
-    expect(r.status).toBe(1)
-    expect(r.stderr).toContain(
-      'Commit blocked: veilio cannot scan a staged file whose name git has to quote'
-    )
-    expect(r.stderr).not.toContain('cannot read the staged')
+    expect(hook().status).toBe(0)
+    stage({ 'odd\nname.env': ENV })
+    expect(hook().status).toBe(1)
+  })
+
+  // Security review: `--diff-filter=ACM` left out renames and type changes.
+  it('a credential added to a file the commit renames blocks', () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `SETTING_${i}=value${i}`).join('\n')
+    stage({ 'old.env': `${lines}\n` })
+    git('commit', '-qm', 'one')
+    git('mv', 'old.env', 'new.env')
+    writeFileSync(join(repo, 'new.env'), `${lines}\n${ENV}`)
+    git('add', 'new.env')
+    expect(hook().status).toBe(1)
+  })
+
+  it('a credential in a file that was a link and is now a plain file blocks', () => {
+    symlinkSync('elsewhere.txt', join(repo, 'config.env'))
+    git('add', 'config.env')
+    git('commit', '-qm', 'one')
+    unlinkSync(join(repo, 'config.env'))
+    stage({ 'config.env': ENV })
+    expect(hook().status).toBe(1)
   })
 
   it('a staged path that starts with a dash is scanned', () => {

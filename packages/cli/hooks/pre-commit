@@ -20,32 +20,26 @@ if ! command -v veilio >/dev/null 2>&1; then
   exit 0
 fi
 
-staged=$(git -c core.quotepath=off diff --cached --name-only --diff-filter=ACM)
-[ -z "$staged" ] && exit 0
+# Everything the index changes except deletions, renames off (a rename is its
+# new path, added), NUL-separated so any file name is passed as it is.
+list() { git diff --cached --name-only --no-renames -z --diff-filter=d; }
+[ "$(list | head -c 1 | wc -c)" -eq 0 ] && exit 0
 
-found=0
-while IFS= read -r path; do
-  case "$path" in
-    \"*)
-      # git quotes a name holding a newline or other control character: it
-      # cannot be named safely here, so the commit stops.
-      echo "Commit blocked: veilio cannot scan a staged file whose name git has to quote (\`$path\`). Rename it, or commit with --no-verify if you are certain." >&2
-      exit 1
-      ;;
-  esac
+# One staged file, given as $1. Exits 1 on a finding.
+scan_one='
+  p=$1
   # Fail closed: a blob git cannot show is not passed as an empty one.
-  git cat-file -e ":$path" 2>/dev/null || { echo "veilio: cannot read the staged $path" >&2; exit 1; }
+  git cat-file -e ":$p" 2>/dev/null || { echo "veilio: cannot read the staged $p" >&2; exit 1; }
   # A NUL in the first 8000 bytes is a binary file, as git decides it.
-  all=$(git cat-file blob ":$path" | head -c 8000 | wc -c)
-  text=$(git cat-file blob ":$path" | head -c 8000 | tr -d '\000' | wc -c)
-  [ "$all" -ne "$text" ] && continue
-  case "$path" in -*) name="./$path" ;; *) name=$path ;; esac
-  git cat-file blob ":$path" | veilio scan --quiet --name "$name" || found=1
-done <<EOF_STAGED
-$staged
-EOF_STAGED
-
-[ "$found" -eq 0 ] && exit 0
+  all=$(git cat-file blob ":$p" | head -c 8000 | wc -c)
+  text=$(git cat-file blob ":$p" | head -c 8000 | tr -d "\\000" | wc -c)
+  [ "$all" -ne "$text" ] && exit 0
+  case "$p" in -*) name="./$p" ;; *) name=$p ;; esac
+  git cat-file blob ":$p" | veilio scan --quiet --name "$name"
+'
+if list | xargs -0 -n 1 sh -c "$scan_one" sh; then
+  exit 0
+fi
 
 cat >&2 <<'MSG'
 
