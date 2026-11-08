@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RECORDED } from '../../plugins/veilio-guard/tests/fixtures/recorded.ts'
-import { deepRewrite, rewriteFields } from '../../plugins/veilio-guard/lib/fields.ts'
+import { deepRewrite, KeyClash, rewriteFields } from '../../plugins/veilio-guard/lib/fields.ts'
 
 // A rewritten tool result must keep the tool's schema: Claude Code validates a
 // hook's answer and refuses one whose enum fields changed ("Tool output
@@ -90,5 +90,36 @@ describe('deepRewrite keep: top-level enums only', () => {
       new Set(['type'])
     )
     expect(out).toEqual([{ type: 'text', text: 'A', meta: { type: 'B' } }])
+  })
+})
+
+// Spec 085 L16: an MCP result's keys are data, rewritten like its strings; a
+// `__proto__` key is a key like any other; two keys rewritten to one withhold.
+describe('keys as data (spec 085 L16)', () => {
+  const upper = (s: string) => s.toUpperCase()
+  it('a __proto__ key keeps its subtree', () => {
+    const out = deepRewrite(JSON.parse('{"__proto__": {"owner": "x"}}'), upper) as object
+    expect(Object.keys(out)).toEqual(['__proto__'])
+    expect(JSON.stringify(out)).toBe('{"__proto__":{"owner":"X"}}')
+  })
+  it('keys the rule names as data are rewritten, at any depth; others are kept', () => {
+    const out = deepRewrite({ a: { b: 'c' }, type: 'd' }, upper, undefined, (k) => k !== 'type')
+    expect(out).toEqual({ A: { B: 'C' }, type: 'D' })
+  })
+  it('the rule is told where the record stands', () => {
+    const at: string[] = []
+    deepRewrite(
+      { content: [{ type: 't' }], s: { k: 1 } },
+      (s) => s,
+      undefined,
+      (k, path) => {
+        at.push(`${path}|${k}`)
+        return false
+      }
+    )
+    expect(at).toEqual(['|content', 'content[]|type', '|s', 's|k'])
+  })
+  it('two keys rewritten to one text throw, never merge', () => {
+    expect(() => deepRewrite({ ab: 1, AB: 2 }, upper, undefined, () => true)).toThrow(KeyClash)
   })
 })

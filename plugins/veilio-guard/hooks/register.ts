@@ -262,6 +262,7 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'stopped')
       return { deny: `Veilio refused this call: ${g.stoppedReason}. Run /veilio.` }
     const before = await g.beforeTool(e, budget)
+    for (const text of g.notices.splice(0)) $.ui.log(text)
     if ('deny' in before) {
       $.ui.log(before.deny)
       $.ui.invalidate('ui.render')

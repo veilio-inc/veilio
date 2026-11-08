@@ -10,7 +10,14 @@
 //  - new map entries are written to .veilio/map.json before the text that uses
 //    them is returned, so a placeholder the model sees can always be restored;
 //  - the secret re-scan is the last thing before a result is returned.
-import { deepRewrite, deepRewritePaths, rewriteFields } from './fields.ts'
+import {
+  deepRewrite,
+  deepRewritePaths,
+  record as bareRecord,
+  rewriteFields,
+  setOnce,
+  type DataKeys,
+} from './fields.ts'
 import {
   mergeAdditions,
   parseMapFile,
@@ -40,6 +47,8 @@ import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
   isSourcePath,
+  mcpServerOf,
+  mcpServersOf,
   languageOf,
   languageOfCommand,
   isCode,
@@ -110,20 +119,38 @@ const ENUM_KEYS = new Set(['type', 'status', 'mode', 'kind', 'state', 'subtype',
 /** deepRewrite, with the key each string sits under. */
 // The key is passed only at the record's top level, and in the blocks of a root
 // list (an MCP result's `type`), as `keep` works in fields.ts; deeper it is ''.
+// `keys`: the keys that are data (spec 085 L16), masked as a deep string.
 function rewriteKeyed(
   value: unknown,
   fn: (s: string, key: string) => string,
+  keys?: DataKeys,
   key = '',
-  top = true
+  top = true,
+  at = ''
 ): unknown {
   if (typeof value === 'string') return fn(value, key)
-  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, '', top))
-  if (value && typeof value === 'object')
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, rewriteKeyed(v, fn, top ? k : '', false)])
-    )
+  if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, keys, '', top, `${at}[]`))
+  if (value && typeof value === 'object') {
+    const out = bareRecord()
+    for (const [k, v] of Object.entries(value))
+      setOnce(
+        out,
+        keys?.(k, at) ? fn(k, '') : k,
+        rewriteKeyed(v, fn, keys, top ? k : '', false, at === '' ? k : `${at}.${k}`)
+      )
+    return out
+  }
   return value
 }
+
+/** Spec 085 L16: the keys of an MCP result that are data - every key but
+ *  the CallToolResult's own at its root and a content block's. An allow-list:
+ *  a key not named here is masked. */
+const MCP_RESULT_KEYS = new Set(['content', 'structuredContent', 'isError', '_meta'])
+const MCP_BLOCK_KEYS = new Set(['type', 'text', 'annotations'])
+const mcpDataKeys: DataKeys = (key, at) =>
+  !(at === '' && MCP_RESULT_KEYS.has(key)) &&
+  !((at === '[]' || at === 'content[]') && MCP_BLOCK_KEYS.has(key))
 
 export interface GuardConfig {
   rawOnly: readonly string[]
@@ -144,6 +171,9 @@ const RESERVED = new Set(['tool', 'tool_use_id', 'consent', 'agentId'])
  *  path-shaped ASCII word, never an option (security audit 2026-11-01; an
  *  allowlist, after the review of 638edbf showed `--output=...` passing). */
 const SHELL_SAFE = /^(?!-)[A-Za-z0-9_./@+:-]+$/
+/** What a placeholder may put into an MCP tool's arguments (spec 085 L18):
+ *  SHELL_SAFE with letters and digits of any script, for names outside ASCII. */
+const NAME_OR_PATH = /^(?!-)[\p{L}\p{N}_./@+:-]+$/u
 const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
@@ -1267,6 +1297,9 @@ export class Guard {
     budget: RuleBudget = ruleBudget()
   ): Promise<{ deny: string } | { args: ToolEvent }> {
     const policy = argumentPolicy(e.tool, this.mcpRestore)
+    const servers = mcpServersOf(e.tool)
+    if (servers.length > 1 && servers.some((s) => this.mcpRestore.includes(s)))
+      this.notice(ambiguousServer(e.tool))
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const resolved = new Set<string>()
@@ -1329,6 +1362,16 @@ export class Guard {
     if (policy.command && [...resolved].some((p) => !SHELL_SAFE.test(this.restoreMap[p] ?? '')))
       return this.deny(
         'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
+      )
+    // Spec 085 L18 (strings.md #10): an MCP tool gets a real name only in the
+    // shape of a name or a path; a planted or pulled value could be SQL or a
+    // query the model never saw.
+    const unshaped = policy.mcp
+      ? [...resolved].find((p) => !NAME_OR_PATH.test(this.restoreMap[p] ?? ''))
+      : undefined
+    if (unshaped !== undefined)
+      return this.deny(
+        `the real name for ${unshaped} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call`
       )
 
     const named: [string, { written: boolean; rawOnly: boolean }][] = []
@@ -1510,13 +1553,20 @@ export class Guard {
       for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
+    // Spec 085 L16: an MCP result's keys are data, read and masked as its strings.
+    const keys = mcpServerOf(tool) !== null ? mcpDataKeys : undefined
     // Spec 050: the files this result names are indexed before it is masked,
     // so their names are in the map even if Claude never read them.
     const texts: string[] = []
-    deepRewrite(outcome.isError ? (outcome.text ?? outcome.result ?? '') : outcome.result, (s) => {
-      texts.push(s)
-      return s
-    })
+    deepRewrite(
+      outcome.isError ? (outcome.text ?? outcome.result ?? '') : outcome.result,
+      (s) => {
+        texts.push(s)
+        return s
+      },
+      undefined,
+      keys
+    )
     const unchecked = await this.indexNamed(args, texts, deadline, budget)
     if (unchecked) return this.withhold(unchecked)
     // What any scan of this result destroys is removed from all of it, as
@@ -1553,10 +1603,15 @@ export class Guard {
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
     const sent: string[] = []
-    deepRewrite(outcome.result, (s) => {
-      sent.push(s)
-      return s
-    })
+    deepRewrite(
+      outcome.result,
+      (s) => {
+        sent.push(s)
+        return s
+      },
+      undefined,
+      keys
+    )
     // One scan per string, for learning here and for masking below while the
     // string is as scanned. A Grep result mixes files the guard cannot tell
     // apart safely (a secret file named by its path, a .pgpass line, a search
@@ -1593,7 +1648,8 @@ export class Guard {
             : deepRewrite(
                 outcome.result,
                 strip,
-                new Set(policy.kind === 'fields' ? policy.keep : [])
+                new Set(policy.kind === 'fields' ? policy.keep : []),
+                keys
               ),
       }
 
@@ -1607,13 +1663,18 @@ export class Guard {
     const runs = new DecodedOnce()
     let reshaped = false
     let encoded = false
-    deepRewrite(outcome.result, (s) => {
-      // Exact copies left in a kept field are the last scan's (it names them).
-      const stripped = strip(s)
-      reshaped ||= this.destroyed.reshaped(stripped, () => runs.of(stripped))
-      if (shell) encoded ||= encodedName(s, this.map, () => runs.of(s)) !== null
-      return s
-    })
+    deepRewrite(
+      outcome.result,
+      (s) => {
+        // Exact copies left in a kept field are the last scan's (it names them).
+        const stripped = strip(s)
+        reshaped ||= this.destroyed.reshaped(stripped, () => runs.of(stripped))
+        if (shell) encoded ||= encodedName(s, this.map, () => runs.of(s)) !== null
+        return s
+      },
+      undefined,
+      keys
+    )
     if (reshaped) return this.withhold(RESHAPED_CREDENTIAL)
     if (encoded) return this.withhold(ENCODED_NAME)
 
@@ -1662,7 +1723,7 @@ export class Guard {
           ? perLine(s, (t, c) => applyMap(t, working, c, { scanned: true }))
           : apply(s)
       if (policy.kind === 'text') value = apply(value as string)
-      else if (policy.kind === 'deep') value = deepRewrite(value, apply)
+      else if (policy.kind === 'deep') value = deepRewrite(value, apply, undefined, keys)
       else {
         for (const field of policy.fields) {
           const r = rewriteFields(value, [field.path], (s) => {
@@ -1692,23 +1753,27 @@ export class Guard {
         // Every string, the listed ones included: in a source file this masks
         // the names the map already has where the engine leaves text as
         // written, in comments. Everyday words from literals are not applied.
-        value = deepRewritePaths(value, again, new Set(policy.keep))
+        value = deepRewritePaths(value, again, new Set(policy.keep), keys)
       }
       // A name shaped like an identifier that is still here - in a file the
       // index has not reached - is masked and added (spec 050 R1).
       const keep = policy.kind === 'fields' ? new Set(policy.keep) : new Set<string>()
-      value = rewriteKeyed(value, (s, key) => {
-        if (keep.has(key)) return s
-        // An enum is one bare token at the top of a record; a sentence under
-        // `status`, or a value deeper down, is masked like any other.
-        if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
-        return perLine(s, (t, c) => {
-          const shaped = maskShaped(t, working, c, this.numbering)
-          grow(working, shaped.additions)
-          grow(additions, shaped.additions)
-          return shaped.text
-        })
-      })
+      value = rewriteKeyed(
+        value,
+        (s, key) => {
+          if (keep.has(key)) return s
+          // An enum is one bare token at the top of a record; a sentence under
+          // `status`, or a value deeper down, is masked like any other.
+          if (policy.kind !== 'text' && ENUM_KEYS.has(key) && /^[\w$.-]+$/.test(s)) return s
+          return perLine(s, (t, c) => {
+            const shaped = maskShaped(t, working, c, this.numbering)
+            grow(working, shaped.additions)
+            grow(additions, shaped.additions)
+            return shaped.text
+          })
+        },
+        keys
+      )
 
       if (Object.keys(additions).length > 0) {
         const { status: saved } = await this.save(additions)
@@ -1716,14 +1781,19 @@ export class Guard {
       }
 
       const left: string[] = []
-      deepRewrite(value, (s) => {
-        left.push(...survivingSecrets(s, working))
-        return s
-      })
+      deepRewrite(
+        value,
+        (s) => {
+          left.push(...survivingSecrets(s, working))
+          return s
+        },
+        undefined,
+        keys
+      )
       if (left.length > 0)
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
       const given = texts.join('\n')
-      deepRewrite(value, (s) => this.see(s, given))
+      deepRewrite(value, (s) => this.see(s, given), undefined, keys)
       return { result: value }
     }
     return this.withhold(
@@ -1976,6 +2046,10 @@ class DecodedOnce {
     return this.last.runs
   }
 }
+
+/** strings.md #11 (spec 085 L20), said once a session per tool. */
+const ambiguousServer = (tool: string) =>
+  `Veilio: ${tool} could belong to more than one MCP server, so it gets placeholders, not real names.`
 
 /** strings.md #9 (spec 085 L4), as the band completes it. */
 const IGNORE_STOP =

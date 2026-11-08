@@ -25,6 +25,8 @@ export type ArgumentPolicy = {
   paths: string[]
   /** The argument holding a shell command, whose path-like words are checked too. */
   command?: string
+  /** An MCP server's tool the plugin's settings list in mcpRestore. */
+  mcp?: true
 }
 
 export type FieldMode = 'source' | 'apply'
@@ -68,12 +70,24 @@ export function mcpServerOf(tool: string): string | null {
   return m?.[1] ?? null
 }
 
+/** Every server an MCP tool name could belong to: each way `mcp__<server>__<tool>`
+ *  splits it (spec 085 L20). One server: the name is unambiguous. */
+export function mcpServersOf(tool: string): string[] {
+  if (!tool.startsWith('mcp__')) return []
+  const rest = tool.slice(5)
+  const servers: string[] = []
+  for (let i = rest.indexOf('__', 1); i > 0; i = rest.indexOf('__', i + 1))
+    if (i + 2 < rest.length) servers.push(rest.slice(0, i))
+  return servers
+}
+
 export function argumentPolicy(tool: string, mcpRestore: readonly string[]): ArgumentPolicy {
   const known = ARGUMENTS[tool]
   if (known) return known
-  const server = mcpServerOf(tool)
-  if (server !== null && mcpRestore.includes(server))
-    return { mode: 'lenient', restore: ['*'], paths: [] }
+  // Spec 085 L20: only a name that splits one way, into a listed server.
+  const servers = mcpServersOf(tool)
+  if (servers.length === 1 && mcpRestore.includes(servers[0]!))
+    return { mode: 'lenient', restore: ['*'], paths: [], mcp: true }
   return NONE
 }
 

@@ -215,3 +215,30 @@ test(
     expect([...new Set(failures)]).toEqual([])
   }
 )
+
+// Spec 085 L16: random map names used as an MCP result's keys never come back.
+test(
+  'map names as the keys of an MCP result never reach the model, over random cases',
+  SLOW,
+  async ($, on) => {
+    const cases = Array.from({ length: 60 }, (_, i) => generate(i + 8501))
+    const map: Record<string, string> = {}
+    for (const c of cases) Object.assign(map, c.map)
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) })
+    let next: Fields = {}
+    on('tool.call', () => next)
+    const failures: string[] = []
+    for (const [k, c] of cases.entries()) {
+      const names = Object.values(c.map)
+      next = {
+        result: {
+          content: [{ type: 'text', text: 'ok' }],
+          structuredContent: { rows: Object.fromEntries(names.map((n, i) => [n, i])) },
+        },
+      }
+      const out = JSON.stringify(await $.tool.call({ tool: 'mcp__notes__rows', q: 'x' }))
+      for (const n of names) if (out.includes(`"${n}"`)) failures.push(`case ${k}: ${n} came back`)
+    }
+    expect(failures).toEqual([])
+  }
+)

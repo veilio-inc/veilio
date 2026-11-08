@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { RECORDED } from '../../plugins/veilio-guard/tests/fixtures/recorded.ts'
-import { argumentPolicy, languageOf, resultPolicy } from '../../plugins/veilio-guard/lib/policy.ts'
+import {
+  argumentPolicy,
+  languageOf,
+  mcpServersOf,
+  resultPolicy,
+} from '../../plugins/veilio-guard/lib/policy.ts'
 
 // Spec 033 data-model tables A and B, as data. What a tool's arguments get
 // before it runs, and which fields of its result the model reads.
@@ -47,8 +52,21 @@ describe('argumentPolicy (table A)', () => {
       mode: 'lenient',
       restore: ['*'],
       paths: [],
+      mcp: true,
     })
     expect(argumentPolicy('mcp__local_db_extra__query', ['local_db']).restore).toEqual([])
+  })
+
+  // Spec 085 L20: every way a tool name splits into a server and a tool.
+  it.each([
+    ['mcp__jira__search', ['jira']],
+    ['mcp__jira__search_issues', ['jira']],
+    ['mcp__jira__helper__search', ['jira', 'jira__helper']],
+    ['mcp__a___b', ['a', 'a_']],
+    ['mcp__jira__', []],
+    ['Read', []],
+  ])('mcpServersOf(%j)', (tool, servers) => {
+    expect(mcpServersOf(tool)).toEqual(servers)
   })
 
   it('restores nothing for a tool it does not know, and nothing for a subagent prompt', () => {

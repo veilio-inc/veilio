@@ -59,30 +59,54 @@ export function rewriteFields(record: unknown, paths: readonly string[], fn: Rew
   }
 }
 
+/** Which keys of a value are data, rewritten like its strings (spec 085 L16:
+ *  an MCP result's keys): told the key and where its record stands, in the
+ *  field-list syntax ('' for the root). */
+export type DataKeys = (key: string, at: string) => boolean
+
+/** Two keys of one record rewritten to the same text: the caller withholds
+ *  the value rather than merge them (spec 085 L16). */
+export class KeyClash extends Error {}
+
 /** Every string in a value, at any depth, except the top-level keys in `keep`
  *  (a tool's enum fields, such as Read's `type`). Used for results of tools the
  *  guard has no field list for, and for the fields of a known tool's record
  *  that its list does not name: nothing escapes it, at the risk of Claude Code
- *  refusing a record whose enum it changed - an error, never a leak. */
+ *  refusing a record whose enum it changed - an error, never a leak. With
+ *  `keys`, the keys it names go through `fn` too. */
 export function deepRewrite(
   value: unknown,
   fn: Rewrite,
-  keep: ReadonlySet<string> = NONE
+  keep: ReadonlySet<string> = NONE,
+  keys?: DataKeys
 ): unknown {
-  return deepRewritePaths(value, (s) => fn(s), keep)
+  return deepRewritePaths(value, (s) => fn(s), keep, keys)
 }
 
 const NONE: ReadonlySet<string> = new Set()
 
 /** As deepRewrite, with each string's place in the record in the field-list
  *  syntax (`file.content`, `filenames[]`, `[].text`), so a caller can tell a
- *  listed field from any other by where it stands, not by what it says. */
+ *  listed field from any other by where it stands, not by what it says. A key
+ *  is passed with its record's place. */
 export function deepRewritePaths(
   value: unknown,
   fn: (text: string, path: string) => string,
-  keep: ReadonlySet<string> = NONE
+  keep: ReadonlySet<string> = NONE,
+  keys?: DataKeys
 ): unknown {
-  return pathsDeep(value, fn, keep, true, '')
+  return pathsDeep(value, fn, keep, true, '', keys)
+}
+
+/** A record with no prototype: a `__proto__` key is kept as a key (spec 085). */
+export function record(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>
+}
+
+/** Sets `out[key]`, refusing a key already there. */
+export function setOnce(out: Record<string, unknown>, key: string, v: unknown): void {
+  if (Object.hasOwn(out, key)) throw new KeyClash('two keys of a record rewrite to the same text')
+  out[key] = v
 }
 
 function pathsDeep(
@@ -90,15 +114,17 @@ function pathsDeep(
   fn: (text: string, path: string) => string,
   keep: ReadonlySet<string>,
   top: boolean,
-  path: string
+  path: string,
+  keys: DataKeys | undefined
 ): unknown {
   if (typeof value === 'string') return fn(value, path)
-  if (Array.isArray(value)) return value.map((v) => pathsDeep(v, fn, keep, top, `${path}[]`))
+  if (Array.isArray(value)) return value.map((v) => pathsDeep(v, fn, keep, top, `${path}[]`, keys))
   if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
+    const out = record()
     for (const [k, v] of Object.entries(value)) {
       const at = path === '' ? k : `${path}.${k}`
-      out[k] = top && keep.has(k) ? v : pathsDeep(v, fn, keep, false, at)
+      const key = keys?.(k, path) ? fn(k, path) : k
+      setOnce(out, key, top && keep.has(k) ? v : pathsDeep(v, fn, keep, false, at, keys))
     }
     return out
   }

@@ -123,6 +123,94 @@ test(
   }
 )
 
+// Spec 085 L18 (Q1 = A, strings.md #10): a real name goes into an MCP tool's
+// arguments only when it is shaped like a name or a path; Edit and Write
+// content keeps a teammate's value as written (strings.md #15).
+const UNSHAPED = (p: string) =>
+  `Veilio refused this call: the real name for ${p} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call.`
+
+for (const [what, value] of [
+  ['SQL', 'users; DELETE FROM accounts'],
+  ['a line break', 'users\nDROP TABLE accounts'],
+  ['a space', 'Payment Gateway'],
+  ['an option', '--all'],
+] as const)
+  test(
+    `L18: a map value holding ${what} is not restored into an MCP tool`,
+    { options: { mcpRestore: ['local_db'] } },
+    async ($, on) => {
+      project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: value }) })
+      const seen: Fields[] = []
+      on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+      const out = await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
+      expect(out.deny).toBe(UNSHAPED('__CLS__1'))
+      expect(seen).toHaveLength(0)
+    }
+  )
+
+test(
+  'L18: names and paths, a non-ASCII name too, restore into an MCP tool',
+  { options: { mcpRestore: ['local_db'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({
+        __CLS__1: 'PaymentGateway',
+        __VAR__2: 'src/pay.ts',
+        __CLS__3: 'ZahlungsTür',
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select __CLS__1, __VAR__2, __CLS__3' })
+    expect(seen[0]?.sql).toBe('select PaymentGateway, src/pay.ts, ZahlungsTür')
+  }
+)
+
+test('L18: an Edit still restores a value with a line break, as written', async ($, on) => {
+  const edit = recorded('Edit')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__1: 'first\nsecond' }) })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), edit.r))
+  await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'const a = __VAR__1' })
+  expect(seen[0]?.new_string).toBe('const a = first\nsecond')
+})
+
+// Spec 085 L20 (strings.md #11): the server is the tool name's exact prefix,
+// and a tool name that splits into a server and a tool in more than one way
+// gets no real names, whichever of its servers the settings list.
+const AMBIGUOUS =
+  'Veilio: mcp__jira__helper__search could belong to more than one MCP server, so it gets placeholders, not real names.'
+const PAYMENT = { __CLS__1: 'PaymentGateway' }
+const MCP_OK = { result: [{ type: 'text', text: 'ok' }] }
+
+test(
+  'L20: mcpRestore jira restores into mcp__jira__search, not into mcp__jira__helper__search',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'find __CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'again __CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__search', q: 'find __CLS__1' })
+    expect(seen.map((e) => e.q)).toEqual(['find __CLS__1', 'again __CLS__1', 'find PaymentGateway'])
+    expect(p.logs.filter((l) => l === AMBIGUOUS)).toHaveLength(1)
+  }
+)
+
+test(
+  'L20: with jira and jira__helper both listed, mcp__jira__helper__search still gets placeholders',
+  { options: { mcpRestore: ['jira', 'jira__helper'] } },
+  async ($, on) => {
+    const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__helper__search', q: 'find __CLS__1' })
+    expect(seen[0]?.q).toBe('find __CLS__1')
+    expect(p.logs).toContain(AMBIGUOUS)
+  }
+)
+
 test("Claude Code's own refusal, which quotes the restored command, reaches the model masked", async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
   // The permission check refuses the call it was given - the restored one.

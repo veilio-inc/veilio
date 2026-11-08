@@ -1502,3 +1502,70 @@ test('the documented limit: a removed credential under 16 characters comes back 
   expect(two.deny).toBeUndefined()
   expect(res(two).stdout).toContain('P q 7 r')
 })
+
+// Spec 085 L16: an MCP result's object keys are data like its values: masked
+// and scanned, with no value lost. Two keys that would mask to one text
+// withhold the result rather than merge.
+const GATEWAY = { __CLS__1: 'PaymentGateway' }
+const mcpResult = (extra: Record<string, unknown>) => ({
+  result: { content: [{ type: 'text', text: 'found' }], ...extra },
+})
+
+test('L16: a structuredContent key holding a project name is masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 'src/pay.ts' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+  const sc = (outcome(out).result as Fields).structuredContent as Fields
+  expect(Object.keys(sc)).toEqual(['__CLS__1'])
+})
+
+test('L16: the keys of an MCP result with no content blocks (a deep result) are masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => ({ result: { PaymentGateway: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('L16: a key that is a provider-shaped credential never reaches the model', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { [STRIPE]: 'src/pay.ts' } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain(STRIPE.slice(8))
+})
+
+test('L16: an identifier-shaped key the map does not have yet is masked and saved', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { [CANARY]: 1 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain(CANARY)
+})
+
+test('L16: two keys that would mask to the same text withhold the result', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 1, __CLS__1: 2 } }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(outcome(out).deny).toMatch(/^Veilio withheld this result/)
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('L16: a __proto__ key keeps its subtree, masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () =>
+    mcpResult({ structuredContent: JSON.parse('{"__proto__": {"owner": "PaymentGateway"}}') })
+  )
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  const text = JSON.stringify(out)
+  expect(text).not.toContain('PaymentGateway')
+  expect(text).toContain('"__proto__":{"owner":"__CLS__1"}')
+})
+
+test("L16: a built-in tool's record keeps its own keys", async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__4: 'file', __VAR__5: 'content' }) })
+  on('tool.call', () => read.r)
+  const out = await $.tool.call(eventOf(read))
+  expect(Object.keys(res(out))).toEqual(Object.keys(read.r.result))
+  expect(Object.keys(res(out).file)).toEqual(Object.keys(read.r.result.file as Fields))
+})
