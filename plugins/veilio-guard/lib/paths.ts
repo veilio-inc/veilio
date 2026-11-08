@@ -100,7 +100,7 @@ const CD_PROGRAMS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl', 'push
 /** PowerShell reads `\` as a separator, never an escape (its escape is the
  *  backtick): its commands are read with `/` for it (review round 4 #3). */
 const asWritten = (command: string, powershell: boolean) =>
-  powershell ? command.replace(/\\/g, '/') : command
+  powershell ? command.replace(/\\/g, '/') : command.replace(/\\\r?\n/g, ' ')
 
 /** The targets of every cd or pushd in a command, wherever it stands: after
  *  `&&`, `||`, `;`, `|`, a lone `&` or a newline, or inside a subshell. */
@@ -191,9 +191,60 @@ function quoteRemovedWords(command: string, powershell = false): string[] {
   const words: string[] = []
   for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/))
     for (const part of splitChain(piece) ?? [piece])
-      words.push(...(shellWords(part) ?? part.split(/\s+/)))
+      words.push(...(powershell ? psWords(part) : (shellWords(part) ?? part.split(/\s+/))))
   return words
 }
+
+/** PowerShell's words (round 6 additions #2): a backtick escapes the next
+ *  character, `'…'` is literal, `"…"` takes backtick escapes. */
+function psWords(text: string): string[] {
+  const words: string[] = []
+  let word = ''
+  let quote: '' | "'" | '"' = ''
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    if (quote === "'") {
+      if (ch === "'") quote = ''
+      else word += ch
+    } else if (ch === '`' && i + 1 < text.length) word += text[++i]
+    else if (quote === '"') {
+      if (ch === '"') quote = ''
+      else word += ch
+    } else if (ch === "'" || ch === '"') quote = ch
+    else if (/\s/.test(ch)) {
+      if (word) words.push(word)
+      word = ''
+    } else word += ch
+  }
+  if (word) words.push(word)
+  return words
+}
+
+/** Where a simple command's program word stands: past `NAME=` assignments,
+ *  shell keywords and wrappers (and a wrapper's options); whether anything
+ *  but `builtin`/`command` and the keywords came before it. */
+function programAt(words: readonly string[]): { k: number; prefixed: boolean } {
+  let k = 0
+  let prefixed = false
+  while (k < words.length) {
+    const w = words[k]!
+    if (ASSIGNMENT.test(w)) prefixed = true
+    else if (KEYWORDS.has(w)) {
+      // `time` and `!` run what follows; the others start a clause.
+    } else if (WRAPPERS.has(w)) prefixed ||= w !== 'builtin' && w !== 'command'
+    else if (!(k > 0 && WRAPPERS.has(words[k - 1]!) && w.startsWith('-'))) break
+    k++
+  }
+  return { k, prefixed }
+}
+
+/** Round 6 additions #3: an assignment whose variable name the shell builds
+ *  (`export $'CD'PATH=…`, `declare "${x}"=…`, `$'CD'PATH=…`) may set any. */
+const BUILT_NAME = [
+  /(?:^|[\s;&|(])[^\s=;&|(){}$]*(?:\$['"(A-Za-z_]|`)[^\s=;&|()]*=/,
+  /\b(?:export|declare|typeset|local|readonly)\b(?:\s+-\w+)*\s+[^\s=;&|]*[$`'"][^\s=;&|]*=/,
+  /\bprintf\s+-v\s*\S*[$`]/,
+]
 
 /** Review rounds 4 #5 and 5: a cd is followed only in the one form whose
  *  directory its words give - the cd program first (after shell keywords
@@ -209,8 +260,7 @@ function quoteRemovedWords(command: string, powershell = false): string[] {
 export function cdNotFollowed(
   command: string,
   powershell = false,
-  cdpathMaybe = true,
-  homeUnknown = false
+  cdpathMaybe = true
 ): string | undefined {
   command = asWritten(command, powershell)
   const programs = powershell ? 'cd|pushd|chdir|set-location|sl|push-location' : 'cd|pushd|chdir'
@@ -219,25 +269,44 @@ export function cdNotFollowed(
   const mentioned = [
     ...judged.matchAll(new RegExp(`(?:^|${edge})(?:${programs})(?=$|[\\s;&|)\`'"])`, 'gi')),
   ].length
-  // DIRSTACK steers popd, which runs with no cd in sight (round 5 #5).
-  if (/\bDIRSTACK\b/i.test(`${command} ${quoteRemoved(command)}`)) return 'DIRSTACK'
   // Round 5b: a cd the text does not show but its words do (`c""d`, `\\cd`)
   // is one the guard cannot follow.
-  const words = quoteRemovedWords(command)
+  const words = quoteRemovedWords(command, powershell)
   const unquoted = words.join(' ')
+  const said = `${command} ${unquoted}`
+  const built = !powershell && BUILT_NAME.some((re) => re.test(command))
+  // Round 6 #2: a command that sets HOME and names `~` anywhere, cd or not.
+  const tilde = /(?:^|[\s;&|(=:'"])~/.test(command)
+  if (setsVariable(said, 'HOME') && tilde) return SETS_HOME
   const spelled = words.some((w) => CD_PROGRAMS.has(w.replace(MODULE, '').toLowerCase()))
+  // Round 6 additions #1: a program word the shell still expands could be cd
+  // (`$'\\x63d'`, a backtick), unless it ends in a literal path (`$(npm bin)/jest`),
+  // which names a program on disk, never the cd builtin. Not in PowerShell,
+  // where `$x = …` starts a line.
+  const expands = !powershell && expandsToProgram(command)
+  if (
+    (mentioned > 0 || spelled || expands) &&
+    (built || setsVariable(said, 'CDPATH') || /\bcdpath\+?=\(/.test(said))
+  )
+    return 'CDPATH'
+  if (built && tilde) return SETS_HOME
+  // DIRSTACK steers popd, which runs with no cd in sight (round 5 #5); set
+  // in this command, as CDPATH (round 6 additions #4).
+  if (built || setsVariable(said, 'DIRSTACK') || /\bdirstack\+?=\(/.test(said)) return 'DIRSTACK'
+  if (expands) return 'cd'
   if (mentioned === 0) return spelled ? 'cd' : undefined
-  if (/\bCDPATH\b/i.test(`${command} ${unquoted}`)) return 'CDPATH'
   // Anywhere in the text, inside another command included (round 5 #2).
-  const opts = '(?:(?:-[A-Za-z@]+|--)\\s+)*'
+  // Round 6 #1: spaces only, never a newline (which ends a command).
+  const sp = '[^\\S\\r\\n]+'
+  const opts = `(?:(?:-[A-Za-z@]+|--)${sp})*`
   const stack = new RegExp(
-    `(?:^|${edge})(?:${programs})\\s+${opts}([-+]\\d*)(?=$|[\\s;&|)\`'"])`,
+    `(?:^|${edge})(?:${programs})${sp}${opts}([-+]\\d*)(?=$|[\\s;&|)\`'"])`,
     'i'
   ).exec(judged)
   if (stack) return stack[1]
   const word = `[^\\s;&|)'"\`#<>-][^\\s;&|)'"\`<>]*`
   const two = new RegExp(
-    `(?:^|${edge})(?:${programs})\\s+${opts}(${word})\\s+(${word})(?=$|[\\s;&|)])`,
+    `(?:^|${edge})(?:${programs})${sp}${opts}(${word})${sp}(${word})(?=$|[\\s;&|)])`,
     'i'
   ).exec(judged)
   if (two && !(powershell && PS_VALUED.test(two[1]!))) return `${two[1]} ${two[2]}`
@@ -249,17 +318,7 @@ export function cdNotFollowed(
       const words = (shellWords(part) ?? part.split(/\s+/))
         .map((w) => w.replace(/^[({]+|[)}]+$/g, ''))
         .filter((w) => w !== '')
-      let k = 0
-      let prefixed = false
-      while (k < words.length) {
-        const w = words[k]!
-        if (ASSIGNMENT.test(w)) prefixed = true
-        else if (KEYWORDS.has(w)) {
-          // `time` and `!` run what follows; the others start a clause.
-        } else if (WRAPPERS.has(w)) prefixed ||= w !== 'builtin' && w !== 'command'
-        else if (!(k > 0 && WRAPPERS.has(words[k - 1]!) && w.startsWith('-'))) break
-        k++
-      }
+      const { k, prefixed } = programAt(words)
       const raw = words[k]
       const program = powershell && raw ? raw.replace(MODULE, '') : raw
       if (!program || !CD_PROGRAMS.has(program.toLowerCase())) continue
@@ -289,12 +348,70 @@ export function cdNotFollowed(
     }
   }
   if (followed < mentioned) return 'cd'
-  if (
-    (homeUnknown || /\bHOME\b/.test(`${command} ${unquoted}`)) &&
-    targets.some((t) => t.startsWith('~'))
-  )
-    return 'HOME'
   return undefined
+}
+
+/** Whether a simple command's program word holds an expansion (`$`, a
+ *  backtick) and does not end in a literal path segment. Read on the raw
+ *  words, before quote removal. */
+function expandsToProgram(command: string): boolean {
+  for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/))
+    for (const part of splitChain(piece) ?? [piece]) {
+      const { k } = programAt(rawWords(part))
+      const words = rawWords(part)
+      const w = words[k]
+      if (w !== undefined && /[$`]/.test(w) && !/\/[\w.+-]+["']?$/.test(w)) return true
+    }
+  return false
+}
+
+/** A command's words as written, quotes kept: split on spaces outside
+ *  quotes and `$(…)`/backticks. */
+function rawWords(text: string): string[] {
+  const words: string[] = []
+  let word = ''
+  let quote = ''
+  let depth = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    if (quote) {
+      if (ch === '\\' && quote === '"') word += ch + (text[++i] ?? '')
+      else {
+        if (ch === quote) quote = ''
+        word += ch
+      }
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch === '`' && depth === 0 ? '`' : ch
+    if (ch === '(' && text[i - 1] === '$') depth++
+    else if (ch === ')' && depth > 0) depth--
+    if (/\s/.test(ch) && depth === 0 && !quote) {
+      if (word) words.push(word)
+      word = ''
+    } else word += ch
+  }
+  if (word) words.push(word)
+  return words
+}
+
+/** cdNotFollowed's answer for a command that sets HOME and names `~`. */
+export const SETS_HOME = 'HOME'
+
+/** Round 6 #2: whether a command sets `name` - an assignment, `export`,
+ *  `declare`, `typeset`, `local`, `readonly`, `read`, `printf -v`,
+ *  `${name:=…}` or `unset` - not merely reads it (`$HOME`, `${HOME:-x}`, a
+ *  word in grep's arguments). Judged per command: the Bash tool keeps no
+ *  environment between calls. */
+function setsVariable(text: string, name: string): boolean {
+  const n = name
+  return [
+    new RegExp(`(?:^|[\\s;&|(\`'"])${n}(?:\\[[^\\]]*\\])?\\+?=`),
+    new RegExp(`\\b(?:export|declare|typeset|local|readonly)\\b[^;&|\\n]*\\b${n}\\b`),
+    new RegExp(`\\bread\\b[^;&|\\n]*\\b${n}\\b`),
+    new RegExp(`\\bprintf\\b[^;&|\\n]*-v\\s*${n}\\b`),
+    new RegExp(`\\$\\{${n}:?=`),
+    new RegExp(`\\bunset\\b[^;&|\\n]*\\b${n}\\b`),
+  ].some((re) => re.test(text))
 }
 
 // The programs that never run what they are given, each with the only

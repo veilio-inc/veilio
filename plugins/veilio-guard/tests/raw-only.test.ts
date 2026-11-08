@@ -189,6 +189,49 @@ test('prose that mentions a raw-only file is not a path: a subagent prompt or an
 // command - in the same call or the next - can read it by a short name.
 const CD = (dir: string) =>
   `Veilio keeps \`${dir}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.`
+const SETS_HOME =
+  'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user.'
+// Review round 6 #3: each refused cd form with the reason it must be refused for.
+const REASON: Record<string, string> = {
+  'CDPATH=~/.config cd gcloud': 'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  'cd x .kube': 'Veilio refused this call: a cd Veilio cannot follow (`x .kube`)',
+  'OLDPWD=~/.kube; cd -': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  'cd ~k': 'Veilio keeps `~k` away from the model',
+  'pushd +1': 'Veilio refused this call: a cd Veilio cannot follow (`+1`)',
+  'read CDPATH <<< ~/.config; cd gcloud':
+    'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  'CDPATH+=:~/.config; cd gcloud': 'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  ': ${CDPATH:=~/.config}; cd gcloud':
+    'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  'printf -v CDPATH ~/.config; cd gcloud':
+    'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  'HOME=~/.kube cd; cat config': 'Veilio refused this call: it sets HOME and names `~`',
+  'OLDPWD=~/.kube cd -': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  'env HOME=~/.kube cd': 'Veilio refused this call: it sets HOME and names `~`',
+  'exec cd src': 'Veilio refused this call: a cd Veilio cannot follow (`exec cd`)',
+  'LC_ALL=C cd src': 'Veilio refused this call: a cd Veilio cannot follow (`LC_ALL=C cd`)',
+  cd: 'Veilio refused this call: a cd Veilio cannot follow (`cd`)',
+  "bash -c 'HOME=~/.kube cd; cat config'": 'Veilio refused this call: it sets HOME and names `~`',
+  'HOME=~/.kube; cd ~; cat config': 'Veilio refused this call: it sets HOME and names `~`',
+  'OLDPWD=~/.aws cd -': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  'X= cd project .kube': 'Veilio refused this call: a cd Veilio cannot follow (`project .kube`)',
+  'if cd project .kube; then cat config; fi':
+    'Veilio refused this call: a cd Veilio cannot follow (`project .kube`)',
+  'if true; then cd -; fi': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  'time cd -': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  '! cd -': 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  "bash -c 'cd - && cat config'": 'Veilio refused this call: a cd Veilio cannot follow (`-`)',
+  'cdpath+=(~/.config); cd gcloud':
+    'Veilio refused this call: a cd Veilio cannot follow (`CDPATH`)',
+  'DIRSTACK[1]=~/.kube; pushd +1':
+    'Veilio refused this call: a cd Veilio cannot follow (`DIRSTACK`)',
+  'dirstack=(~/.kube); cd ~1': 'Veilio keeps `~1` away from the model',
+  'Microsoft.PowerShell.Management\\Set-Location ~\\.aws; gc credentials':
+    'Veilio keeps `~\\.aws` away from the model',
+  'c""d ~/.kube; cat config': 'Veilio keeps `~/.kube` away from the model',
+  '\\cd ~/.kube; cat config': 'Veilio keeps `~/.kube` away from the model',
+  "c''d src": 'Veilio refused this call: a cd Veilio cannot follow (`cd`)',
+}
 const SECRETS = { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }) }
 
 const CD_REFUSED: [string, string][] = [
@@ -255,6 +298,11 @@ for (const command of [
   'cd "my folder" 2>&1',
   'if cd src; then ls; fi',
   'time cd src',
+  // Review round 6 #1: a newline ends a command; a backslash-newline joins two lines.
+  'cd src\nls',
+  'set -e\ncd packages/cli\nnpm test',
+  'cd ..\nnpm test',
+  'cd src \\\n  && ls',
 ])
   test(`an ordinary cd still runs: ${command}`, async ($, on) => {
     project(on, SECRETS)
@@ -658,7 +706,7 @@ test('R4#5: CDPATH, two targets, cd - and ~name are refused', async ($, on) => {
     'pushd +1',
   ]) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
-    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+    expect(`${command} -> ${out.deny}`).toContain(`${command} -> ${REASON[command]}`)
   }
   expect(seen).toHaveLength(0)
 })
@@ -708,7 +756,7 @@ test('R5: cd forms that set CDPATH or prefix the cd are refused', async ($, on) 
     'HOME=~/.kube; cd ~; cat config',
   ]) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
-    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+    expect(`${command} -> ${out.deny}`).toContain(`${command} -> ${REASON[command]}`)
   }
   expect(seen).toHaveLength(0)
 })
@@ -813,14 +861,16 @@ test('R5b#2: a cd behind NAME=, if, time, ! or bash -c, a module-qualified Set-L
     ['PowerShell', 'Microsoft.PowerShell.Management\\Set-Location ~\\.aws; gc credentials'],
   ] as const) {
     const out = await $.tool.call({ tool, command, description: 'x' })
-    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+    expect(`${command} -> ${out.deny}`).toContain(`${command} -> ${REASON[command]}`)
   }
   expect(seen).toHaveLength(0)
 })
 
 // A shell keeps what a command exports: CDPATH or HOME set in one call is
 // still set in the next, so the guard stops trusting either from then on.
-test('R5b#3: CDPATH or HOME set in one call is not trusted in the next', async ($, on) => {
+test('R5b#3: CDPATH or HOME exported in one call does not carry to the next (the Bash tool keeps no environment)', async ($, on) => {
+  // Round 6 #2 replaces round 5's session-wide distrust: the Bash tool runs
+  // each call in a fresh shell, so an export ends with its call.
   project(on, SECRETS)
   const seen: Fields[] = []
   on(
@@ -828,12 +878,14 @@ test('R5b#3: CDPATH or HOME set in one call is not trusted in the next', async (
     (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
   )
   const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
-  expect((await run('export CDPATH=~/.config')).deny).toBeUndefined()
-  expect((await run('cd gcloud')).deny).toBeDefined()
-  expect((await run('cd ./gcloud')).deny).toBeUndefined()
-  expect((await run('export HOME=~/.kube')).deny).toBeUndefined()
-  expect((await run('cd ~')).deny).toBeDefined()
-  expect(seen).toHaveLength(3)
+  for (const command of [
+    'export CDPATH=~/.config',
+    'cd gcloud',
+    'export HOME=/tmp/elsewhere',
+    'cd ~',
+  ])
+    expect(`${command} -> ${(await run(command)).deny}`).toBe(`${command} -> undefined`)
+  expect(seen).toHaveLength(4)
 })
 
 test('R5b#3: a path under /home does not count as naming HOME', async ($, on) => {
@@ -865,7 +917,7 @@ test('R5b#5: a DIRSTACK assignment is refused with no cd in the command, and a p
 
 // Review round 5b: the shell removes quotes and backslashes before it runs a
 // word, so the checks read the words that way too, as well as the text.
-test('R5c: CDPATH or HOME spelled with quotes or a backslash is still not trusted afterwards', async ($, on) => {
+test('R5c: CDPATH or HOME set with quotes or a backslash in the same command is still judged set', async ($, on) => {
   project(on, SECRETS)
   const seen: Fields[] = []
   on(
@@ -873,24 +925,27 @@ test('R5c: CDPATH or HOME spelled with quotes or a backslash is still not truste
     (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
   )
   const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
-  expect((await run('export C""DPATH=~/.config')).deny).toBeUndefined()
-  expect((await run('cd gcloud')).deny).toBeDefined()
-  expect((await run('export H""OME=~/.kube')).deny).toBeUndefined()
-  expect((await run('cd ~')).deny).toBeDefined()
-  expect(seen).toHaveLength(2)
+  expect((await run('export C""DPATH=~/.config; cd gcloud')).deny).toContain(
+    'a cd Veilio cannot follow (`CDPATH`)'
+  )
+  expect((await run('export H""OME=~/.kube; cd ~')).deny).toBe(SETS_HOME)
+  expect(seen).toHaveLength(0)
 })
 
-test('R5c: CDPATH spelled with a backslash inside is not trusted afterwards', async ($, on) => {
+test('R5c: CDPATH set with a backslash inside in the same command is still judged set', async ($, on) => {
   project(on, SECRETS)
   const seen: Fields[] = []
   on(
     'tool.call',
     (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
   )
-  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
-  expect((await run('export CD\\PATH=~/.config')).deny).toBeUndefined()
-  expect((await run('cd gcloud')).deny).toBeDefined()
-  expect(seen).toHaveLength(1)
+  const out = await $.tool.call({
+    tool: 'Bash',
+    command: 'export CD\\PATH=~/.config; cd gcloud',
+    description: 'x',
+  })
+  expect(out.deny).toContain('a cd Veilio cannot follow (`CDPATH`)')
+  expect(seen).toHaveLength(0)
 })
 
 test('R5c: a cd spelled with quotes or a backslash is refused', async ($, on) => {
@@ -902,7 +957,116 @@ test('R5c: a cd spelled with quotes or a backslash is refused', async ($, on) =>
   )
   for (const command of ['c""d ~/.kube; cat config', '\\cd ~/.kube; cat config', "c''d src"]) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
-    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+    expect(`${command} -> ${out.deny}`).toContain(`${command} -> ${REASON[command]}`)
   }
   expect(seen).toHaveLength(0)
+})
+
+test('R6#1: a PowerShell Set-Location then a command on the next line runs, and cd forms across lines stay refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const ps = await $.tool.call({
+    tool: 'PowerShell',
+    command: 'Set-Location -Path src\nls',
+    description: 'x',
+  })
+  expect(ps.deny).toBeUndefined()
+  for (const command of ['cd x .kube\nls', 'cd -\nls', 'cd src\ncd -'])
+    expect((await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny).toContain(
+      'a cd Veilio cannot follow'
+    )
+  expect(seen).toHaveLength(1)
+})
+
+// Review round 6 #2: the Bash tool keeps no environment between calls, so
+// HOME and CDPATH are judged per command, and only where a command sets them.
+test('R6#2: naming HOME or CDPATH without setting them breaks no later cd', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const commands = [
+    'echo $HOME',
+    'cd ~ && ls',
+    'export PATH="$HOME/.local/bin:$PATH"',
+    'cd ~/code',
+    'ls ${HOME}/.npm ${HOME:-/tmp}',
+    'grep -r CDPATH scripts/',
+    'cd packages/cli',
+    'echo $HOME && cd ~/code',
+    'ls ~/.npm; echo ${HOME:-none}',
+  ]
+  for (const command of commands)
+    expect(
+      `${command} -> ${(await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny}`
+    ).toBe(`${command} -> undefined`)
+  expect(seen).toHaveLength(commands.length)
+})
+
+test('R6#2: a command that sets HOME or CDPATH is judged with them set', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  for (const command of [
+    'HOME=~/.kube; cd ~',
+    'export HOME=/tmp/x; cat ~/credentials',
+    'read HOME <<< /tmp/x; ls ~',
+    ': ${HOME:=/tmp/x}; cat ~/config',
+  ])
+    expect(`${command} -> ${(await run(command)).deny}`).toBe(`${command} -> ${SETS_HOME}`)
+  for (const command of ['export CDPATH=~/.config; cd gcloud', 'cdpath+=(~/.config); cd gcloud'])
+    expect((await run(command)).deny).toContain('a cd Veilio cannot follow (`CDPATH`)')
+  expect(seen).toHaveLength(0)
+})
+
+// Round 6 additions: a program word the shell still expands could be cd;
+// PowerShell's backtick escape is read as PowerShell reads it; an assignment
+// whose name the shell builds may set CDPATH, HOME or DIRSTACK.
+test('R6b: a cd spelled with ANSI-C quoting or a PowerShell backtick, or a built variable name, is refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const bash = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await bash("$'\\x63d' ~/.kube; cat config")).deny).toContain('a cd Veilio cannot follow')
+  expect((await bash('`echo cd` ~/.kube; cat config')).deny).toContain('a cd Veilio cannot follow')
+  expect((await bash("export $'CD'PATH=~/.config; cd gcloud")).deny).toContain(
+    'a cd Veilio cannot follow (`CDPATH`)'
+  )
+  expect((await bash('declare "${x}"=~/.config; cd gcloud')).deny).toContain(
+    'a cd Veilio cannot follow (`CDPATH`)'
+  )
+  const ps = await $.tool.call({
+    tool: 'PowerShell',
+    command: 'c`d ~\\.kube; gc config',
+    description: 'x',
+  })
+  expect(ps.deny).toBeDefined()
+  expect(seen).toHaveLength(0)
+})
+
+test('R6b: a program word that is a path built at run time still runs, and reading DIRSTACK is fine', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of ['"$(npm bin)/jest" src', 'echo $DIRSTACK; popd'])
+    expect(
+      `${command} -> ${(await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny}`
+    ).toBe(`${command} -> undefined`)
+  expect(seen).toHaveLength(2)
 })

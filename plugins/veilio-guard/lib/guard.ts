@@ -32,7 +32,7 @@ import {
   cdIntoRawOnly,
   cdNotFollowed,
   literalCdTargets,
-  quoteRemoved,
+  SETS_HOME,
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
@@ -1435,8 +1435,6 @@ export class Guard {
   private shellDir: string | null = null
   /** CDPATH may be set in the shell the agent's commands run in (round 5). */
   private cdpathMaybe = true
-  /** A command named HOME: a `~` cd target no longer says where it goes. */
-  private homeUnknown = false
   /** Windows, as the host says; undefined: the engine reads the platform. */
   private windows: boolean | undefined
   private moved(dir: string | null, target: string): string | null {
@@ -1611,13 +1609,13 @@ export class Guard {
             false
           )
         }
-        // The shell keeps what a command exports: once a command names
-        // CDPATH or HOME, neither is trusted for the rest of the session.
-        // Read as the text and as the shell reads its words (round 5b).
-        const said = `${c} ${quoteRemoved(c, ps)}`
-        if (/\bCDPATH\b/i.test(said)) this.cdpathMaybe = true
-        if (/\bHOME\b/.test(said)) this.homeUnknown = true
-        const unplaced = cdNotFollowed(c, ps, this.cdpathMaybe, this.homeUnknown)
+        // HOME and CDPATH are judged per command (round 6 #2): the Bash tool
+        // keeps no environment between calls.
+        const unplaced = cdNotFollowed(c, ps, this.cdpathMaybe)
+        if (unplaced === SETS_HOME)
+          return this.deny(
+            'it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user'
+          )
         if (unplaced !== undefined)
           return this.deny(
             `a cd Veilio cannot follow (\`${this.applyText(unplaced, 'result', undefined, budget)}\`) could let a later command read a file Veilio keeps away from the model. Only a cd with one plain path, at the start of its command, is followed (a bare folder name only while CDPATH is unset: write ./folder). Name the files by their full path, or ask the user`

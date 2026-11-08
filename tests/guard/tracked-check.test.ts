@@ -234,7 +234,11 @@ it('with the deadline 2 ms away, a git that answers in 50 ms still stops the gua
 
 it('with the deadline 2 ms away, a git slower than the minimum is asked again, and the next save stops the guard', async () => {
   const { io, files, asked } = timedHost((n) =>
-    n === 1 ? Promise.resolve([]) : n === 2 ? after(900, []) : Promise.resolve(['.veilio/map.json'])
+    n === 1
+      ? Promise.resolve([])
+      : n === 2
+        ? new Promise<string[] | null>(() => undefined)
+        : Promise.resolve(['.veilio/map.json'])
   )
   const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
   await guard.load(ROOT)
