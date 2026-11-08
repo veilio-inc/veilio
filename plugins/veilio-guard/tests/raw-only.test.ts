@@ -343,7 +343,13 @@ for (const command of [
   'eval "cd .aws && cat credentials"',
   // A glob after the hidden cd: only the cd itself can be judged.
   "bash -c 'cd .aws && cat cred*'",
-  'cat ENV~1',
+  // Review round 2 #4: a quoted target, and `--`, inside a nested shell.
+  `bash -c 'cd ".aws" && cat credentials'`,
+  `sh -c "cd '.aws' && cat credentials"`,
+  "bash -c 'cd -- .aws && cat credentials'",
+  // Review round 2 #5: a glob target of a real cd, however nested.
+  "bash -c 'cd .a*s && cat credentials'",
+  'echo "$(cd .a*s && cat credentials)"',
 ])
   test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
     project(on, {})
@@ -353,3 +359,37 @@ for (const command of [
     expect(out.deny).toContain('away from the model')
     expect(ran).toBe(false)
   })
+
+// Review round 2 #2: a short name is refused on Windows only.
+test('on Windows a short name in a shell word is refused', async ($, on) => {
+  project(on, {}, { windows: true })
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat ENV~1', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(ran).toBe(false)
+})
+
+test('off Windows HEAD~1 and main~3 in a shell word run', async ($, on) => {
+  project(on, {})
+  const seen: string[] = []
+  on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
+  for (const command of ['cat HEAD~1', 'ls main~3']) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
+  }
+  expect(seen).toEqual(['cat HEAD~1', 'ls main~3'])
+})
+
+// Review round 2 #5: a glob after the letters "cd" in quoted text is not a cd.
+test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on) => {
+  project(on, {})
+  const seen: string[] = []
+  on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
+  const commands = ['grep -rn "cd *" scripts/', 'git commit -m "ci: cd [skip ci]"']
+  for (const command of commands) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
+  }
+  expect(seen).toEqual(commands)
+})

@@ -156,6 +156,7 @@ async function ready($: Host): Promise<Guard> {
         }
         return undefined
       },
+      windows: () => windows,
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
           (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),

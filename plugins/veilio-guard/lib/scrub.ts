@@ -856,14 +856,19 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
 }
 
 /** A private key's body: its BEGIN and END lines and its `Name: value`
- *  headers dropped, which every key of a kind shares (review round 1 item 8). */
+ *  headers dropped, which every key of a kind shares (review round 1 item 8),
+ *  and its first 64 base64 characters, where keys of one kind share the
+ *  ASN.1 or OpenSSH header (review round 2). */
 function pemBody(block: string): string {
-  return block
+  const body = block
     .replace(/-----(?:BEGIN|END) [A-Z0-9 ]+-----/g, '')
     .split('\n')
     .filter((line) => !/^[A-Za-z-]+:/.test(line.trim()))
     .join('\n')
     .trim()
+  let at = 0
+  for (let shared = 64; at < body.length && shared > 0; at++) if (!/\s/.test(body[at]!)) shared--
+  return body.slice(at).trim()
 }
 
 /** `text` with each finding of `scan` removed as applyMap removes it: a

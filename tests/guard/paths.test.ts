@@ -6,6 +6,7 @@ import {
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
+  shortNameAlias,
   windowsAlias,
 } from '../../plugins/veilio-guard/lib/paths.ts'
 
@@ -215,4 +216,18 @@ describe('Windows spellings of a raw-only path (spec 078)', () => {
       expect(windowsAlias(path)).toBe(false)
     }
   )
+})
+
+// Review round 2 #2: an 8.3 short name is a Windows thing; elsewhere `~1` in
+// a shell word is git's or a backup's (`HEAD~1`, `main~3`).
+describe('shortNameAlias is Windows-only (spec 078 review round 2)', () => {
+  it.each(['HEAD~1', 'main~3', 'ENV~1'])('%j is not a short name off Windows', (word) => {
+    expect(shortNameAlias(word, false)).toBe(false)
+  })
+  it.each(['ENV~1', 'C:\\PROGRA~1\\x'])('%j is a short name on Windows', (word) => {
+    expect(shortNameAlias(word, true)).toBe(true)
+  })
+  it('defaults to the platform it runs on', () => {
+    expect(shortNameAlias('ENV~1')).toBe(process.platform === 'win32')
+  })
 })

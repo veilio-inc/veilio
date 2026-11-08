@@ -1426,6 +1426,29 @@ test('after a private key is removed, a result holding only its BEGIN line is no
   expect(res(out).stdout).toContain('-----BEGIN RSA PRIVATE ')
 })
 
+// Review round 2 #6: keys of one kind share their first bytes (the ASN.1 or
+// OpenSSH header). Another key of the same kind is not the removed one.
+test('after a private key is removed, another key of the same kind is not withheld as reshaped', async ($, on) => {
+  const shared = btoa('fake-asn1-header-shared-by-every-key-of-a-kind!!').slice(0, 64)
+  const tail = (s: string) => wrap(shared + btoa(`${s} ${'tail-material-'.repeat(8)}`), 64)
+  const other = `-----BEGIN RSA PRIVATE KEY-----\n${tail('second')}\n-----END RSA PRIVATE KEY-----\n`
+  const first = `-----BEGIN RSA PRIVATE KEY-----\n${tail('first')}\n-----END RSA PRIVATE KEY-----\n`
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = first
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(one)).not.toContain(shared.slice(0, 24))
+  stdout = other
+  const two = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(two.deny).toBeUndefined()
+  expect(JSON.stringify(two)).not.toContain(shared.slice(0, 24))
+  // Its first lines alone (as `head -2` prints them), which the scanner does not take for a key.
+  stdout = other.split('\n').slice(0, 2).join('\n') + '\n'
+  const head = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(head.deny).toBeUndefined()
+})
+
 test('after a private key is removed, a name like parseRsaPrivateKey is saved, not quarantined', async ($, on) => {
   const parse = 'export function parseRsaPrivateKey(pem: string) {}\n'
   const p = await afterPemRemoved($, on, () => '', parse)

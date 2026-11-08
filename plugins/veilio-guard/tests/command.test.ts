@@ -229,6 +229,27 @@ test("a write to Claude Code's settings after a cd, in the next call, or through
   expect(seen).toHaveLength(1)
 })
 
+// Review round 2 #3: a cd inside a substitution or a nested shell never
+// moves the shell the next call runs in.
+test('a nested cd does not move the shell: a write to settings.json after cd .claude is still refused', async ($, on) => {
+  project(on, { [`${ROOT}/.claude/settings.json`]: '{}' }, { home: HOME })
+  const seen: Record<string, unknown>[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const calls: [string, string | undefined][] = [
+    ['cd .claude', undefined],
+    ['echo $(cd /tmp && pwd)', undefined],
+    ["echo '{}' > settings.json", SETTINGS_REFUSED],
+  ]
+  for (const [command, want] of calls) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toBe(`${command} -> ${want}`)
+  }
+  expect(seen).toHaveLength(2)
+})
+
 test('the off switch in ~/.veilio cannot be written by a shell command', async ($, on) => {
   project(on, {}, { home: HOME })
   let ran = false

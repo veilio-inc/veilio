@@ -276,6 +276,31 @@ test('an existing map that stays readable by others after chmod stops the guard'
   )
 })
 
+// Review round 2 #7: a map with no names in it is no reason to stop; the
+// guard stops before it would write a name there instead.
+const EMPTY_READABLE =
+  'Veilio: .veilio/map.json is readable by other users and could not be made owner-only. It holds no names yet; Veilio will stop before it writes one there.'
+test('an existing map with no names that cannot be made 0600 logs one line, and the guard stays on until a name would be written', async ($, on) => {
+  const read = recorded('Read')
+  const map = `${ROOT}/.veilio/map.json`
+  const p = project(on, { [map]: mapFile({}) }, { chmodIgnored: true })
+  let calls = 0
+  on('tool.call', (_, e) =>
+    e.tool === 'Read' ? read.r : (calls++, { result: { stdout: 'ok\n', stderr: '' } })
+  )
+  const bash = await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  expect(bash.deny).toBeUndefined()
+  expect(p.logs.filter((l) => l === EMPTY_READABLE)).toHaveLength(1)
+  const band = await $.command.run({ command: 'veilio', args: '' })
+  expect(band.text).not.toContain('Veilio guard stopped')
+  const out = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  expect(p.writes.some((w) => w.text.includes(CANARY))).toBe(false)
+  const after = await $.command.run({ command: 'veilio', args: '' })
+  expect(after.text).toContain('is readable by other users')
+  expect(calls).toBe(1)
+})
+
 test('on Windows no chmod is run, and the map is written as before', async ($, on) => {
   const read = recorded('Read')
   const p = project(on, {}, { windows: true })

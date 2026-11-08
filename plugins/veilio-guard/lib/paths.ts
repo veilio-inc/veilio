@@ -13,6 +13,7 @@
 export {
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  rawOnlyOf,
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
@@ -124,9 +125,31 @@ export function cdTargets(command: string): string[] {
  *  spec 078). Read over the whole command, quotes ignored. */
 export function allCdTargets(command: string): string[] {
   const hidden = [
-    ...command.matchAll(/(?:^|[\s;&|(`'"$])(?:cd|pushd|chdir)\s+(?:-[LPe@]+\s+)*([^\s;&|)'"`]+)/g),
+    // A target may be quoted, and follow `--` (review round 2 of spec 078).
+    ...command.matchAll(
+      /(?:^|[\s;&|(`'"$])(?:cd|pushd|chdir)\s+(?:(?:-[LPe@]+|--)\s+)*['"]?([^\s;&|)'"`]+)/g
+    ),
   ].map((m) => m[1]!)
   return [...new Set([...cdTargets(command), ...hidden])]
+}
+
+/** The targets of real cd words: parsed outside quotes, at the top level and
+ *  inside `$(...)`, backticks, `sh|bash|zsh -c '...'` and `eval` (review
+ *  round 2 of spec 078), so quoted text that only holds "cd" is not one. */
+export function realCdTargets(command: string, depth = 0): string[] {
+  const out = cdTargets(command)
+  if (depth > 4) return out
+  const nested: string[] = []
+  for (const m of command.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) nested.push(m[1] ?? m[2] ?? '')
+  for (const part of splitChain(command) ?? []) {
+    const w = shellWords(part) ?? []
+    if (/^(?:ba|z|da)?sh$/.test(w[0] ?? '')) {
+      const c = w.findIndex((x, i) => i > 0 && /^-[a-z]*c[a-z]*$/.test(x))
+      if (c > 0 && w[c + 1] !== undefined) nested.push(w[c + 1]!)
+    } else if (w[0] === 'eval') nested.push(w.slice(1).join(' '))
+  }
+  for (const n of nested) out.push(...realCdTargets(n, depth + 1))
+  return out
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

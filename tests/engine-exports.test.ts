@@ -92,6 +92,113 @@ describe('the engine exports the published tools import', () => {
     expect(r.stderr).toContain('@veilio-inc/cli')
   })
 
+  // Review round 2 #8: every import form, and mcp's imports from the CLI
+  // against the CLI's own range.
+  describe('every import form', () => {
+    const ENGINE_ALL =
+      'export const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\n'
+    beforeEach(() => {
+      put('engine/dist/index.js', ENGINE_ALL)
+      put(
+        'tools/packages/mcp/package.json',
+        JSON.stringify({
+          name: '@veilio-inc/mcp',
+          dependencies: { '@veilio-inc/engine': '^1.0.0', '@veilio-inc/cli': '^0.9.0' },
+        })
+      )
+      put(
+        'cli/package.json',
+        JSON.stringify({
+          name: '@veilio-inc/cli',
+          version: '0.9.0',
+          type: 'module',
+          exports: { '.': './dist/index.js', './store': './dist/store.js' },
+        })
+      )
+      put('cli/dist/index.js', 'export const main = 1\n')
+      put('cli/dist/store.js', 'export const loadMap = 1, saveMap = 1\n')
+    })
+    const runAll = () =>
+      spawnSync(
+        process.execPath,
+        [
+          SCRIPT,
+          '--root',
+          join(base, 'tools'),
+          '--engine',
+          join(base, 'engine'),
+          '--cli',
+          join(base, 'cli'),
+        ],
+        { encoding: 'utf8' }
+      )
+
+    it('passes when every form finds what it imports', () => {
+      put(
+        'tools/packages/cli/dist/c.js',
+        "import * as engine from '@veilio-inc/engine'\nengine.restore(engine.isRawOnly)\n"
+      )
+      put(
+        'tools/packages/mcp/dist/d.js',
+        "import { loadMap } from '@veilio-inc/cli/store'\nconst m = await import('@veilio-inc/engine')\nm.scanSecrets()\n"
+      )
+      const r = runAll()
+      expect(r.stderr).toBe('')
+      expect(r.status).toBe(0)
+    })
+
+    for (const [form, file, text, says] of [
+      [
+        'a namespace member',
+        'cli/dist/c.js',
+        "import * as engine from '@veilio-inc/engine'\nengine.parseThings()\n",
+        '@veilio-inc/cli imports parseThings',
+      ],
+      [
+        'a default import',
+        'cli/dist/c.js',
+        "import engine from '@veilio-inc/engine'\n",
+        '@veilio-inc/cli imports default',
+      ],
+      [
+        'a dynamic import, destructured',
+        'mcp/dist/d.js',
+        "const { parseThings } = await import('@veilio-inc/engine')\n",
+        '@veilio-inc/mcp imports parseThings',
+      ],
+      [
+        'a dynamic import, as a namespace',
+        'mcp/dist/d.js',
+        'const e = await import("@veilio-inc/engine")\ne.parseThings()\n',
+        '@veilio-inc/mcp imports parseThings',
+      ],
+      [
+        'a subpath the engine does not export',
+        'cli/dist/c.js',
+        "import { x } from '@veilio-inc/engine/internal'\n",
+        '@veilio-inc/cli imports @veilio-inc/engine/internal',
+      ],
+      [
+        'a CLI subpath the CLI does not export',
+        'mcp/dist/d.js',
+        "import { y } from '@veilio-inc/cli/missing'\n",
+        '@veilio-inc/mcp imports @veilio-inc/cli/missing',
+      ],
+      [
+        'a CLI export the CLI lacks',
+        'mcp/dist/d.js',
+        "import { loadMap, dropMap } from '@veilio-inc/cli/store'\n",
+        '@veilio-inc/mcp imports dropMap',
+      ],
+    ] as const)
+      it(`fails on ${form}`, () => {
+        put(`tools/packages/${file}`, text)
+        const r = runAll()
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain(says)
+      })
+  })
+
   it('runs in the publish workflow after the build and before anything is published', () => {
     const lines = readFileSync(WORKFLOW, 'utf8').split('\n')
     const at = (re: RegExp) => lines.findIndex((l) => re.test(l))

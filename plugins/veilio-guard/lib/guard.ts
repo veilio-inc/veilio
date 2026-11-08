@@ -23,12 +23,15 @@ import {
 import {
   allCdTargets,
   cdIntoRawOnly,
+  cdTargets,
   DEFAULT_RAW_ONLY,
   isRawOnly,
   isWriteProtected,
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
+  rawOnlyOf,
+  realCdTargets,
   shortNameAlias,
   windowsAlias,
 } from './paths.ts'
@@ -95,6 +98,8 @@ export interface GuardIO {
   chmod?(path: string): Promise<void>
   /** A file's permission bits, or undefined when they cannot be read. */
   mode?(path: string): Promise<number | undefined>
+  /** Whether the machine is Windows. Absent: the engine reads the platform. */
+  windows?(): Promise<boolean>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -399,6 +404,7 @@ export class Guard {
     // Spec 078 R7: with no listing, nobody can tell who wrote the map.
     this.noListing = committed === null
     this.home = home
+    this.windows = this.io.windows ? await this.io.windows().catch(() => undefined) : undefined
     await this.readSettings()
     await this.readOffRecord()
     await this.reloadMap()
@@ -617,9 +623,7 @@ export class Guard {
       this.stop(`.veilio/guard.json is not valid JSON`)
       return
     }
-    if (Array.isArray(settings.rawOnly)) {
-      this.extraRawOnly.push(...settings.rawOnly.filter((p): p is string => typeof p === 'string'))
-    }
+    this.extraRawOnly.push(...rawOnlyOf(settings))
     if (settings.enabled === false) this.notice(BACK_ON)
     if (settings.mcpRestore !== undefined) this.notice(MCP_IGNORED)
   }
@@ -694,22 +698,31 @@ export class Guard {
       this.stored = { version: 1, map: {} }
       return
     }
-    // Review round 1 item (c): a map already there that others can read
-    // (an older guard's, a copy) is made owner-only, and checked, first.
-    if (this.io.chmod && !(await this.ownerOnly(this.mapPath))) {
-      await this.io.chmod(this.mapPath).catch(() => undefined)
-      if (!(await this.ownerOnly(this.mapPath))) {
-        this.stopReadable()
-        return
-      }
-    }
     const parsed = parseMapFile(await this.io.read(this.mapPath))
     if (!parsed.ok) {
       this.stop(`the map at .veilio/map.json could not be read: ${parsed.reason}`)
       return
     }
+    // Review round 1 item (c): a map already there that others can read
+    // (an older guard's, a copy) is made owner-only, and checked. One with
+    // names stops the guard; one without is said once, and a save stops it
+    // before a name is written there (review round 2).
+    this.mapReadable = false
+    if (this.io.chmod && !(await this.ownerOnly(this.mapPath))) {
+      await this.io.chmod(this.mapPath).catch(() => undefined)
+      if (!(await this.ownerOnly(this.mapPath))) {
+        if (Object.keys(parsed.stored.map).length > 0) {
+          this.stopReadable()
+          return
+        }
+        this.mapReadable = true
+        this.notice(EMPTY_MAP_READABLE)
+      }
+    }
     this.stored = parsed.stored
   }
+  /** The map at load was readable by others and held no names (round 2). */
+  private mapReadable = false
 
   /** Never fatal: a missing or unreadable file restores nothing extra. */
   private async readAliases(): Promise<SymbolMap> {
@@ -1127,6 +1140,8 @@ export class Guard {
   /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
    *  null once a cd went somewhere that cannot be told (`~` with no home). */
   private shellDir: string | null = null
+  /** Windows, as the host says; undefined: the engine reads the platform. */
+  private windows: boolean | undefined
   private moved(dir: string | null, target: string): string | null {
     if (target === '~' || target.startsWith('~/'))
       return this.home ? normalisePath(join(this.home, target.slice(1))) : null
@@ -1146,25 +1161,25 @@ export class Guard {
     return dirs
   }
 
-  /** Spec 078 FR-012: a write-protected path, as written or where it leads. */
-  private async protectedHit(path: string): Promise<boolean> {
-    if (isWriteProtected(path)) return true
-    const real = await this.io.realPath(this.here(path))
-    return real !== undefined && isWriteProtected(real)
-  }
-
   /** A relative path from the session's directory: the host resolves one
    *  from the mod's own, which is not where the agent's shell is. */
   private here(path: string): string {
     return /^[/\\~]|^[A-Za-z]:/.test(path) || !this.cwd ? path : join(this.cwd, path)
   }
 
-  private async rawOnlyHit(path: string): Promise<boolean> {
-    // As written and with `.`/`..` resolved (spec 078 FR-007).
-    if (isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly))
-      return true
+  /** Whether a path is write-protected (spec 078 FR-012) and whether it is
+   *  raw-only (as written, with `.`/`..` resolved, FR-007), each as written
+   *  or where it leads: resolved once for both (review round 2). */
+  private async pathHits(path: string): Promise<{ written: boolean; rawOnly: boolean }> {
+    const raw =
+      isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
+    const written = isWriteProtected(path)
+    if (raw && written) return { written, rawOnly: raw }
     const real = await this.io.realPath(this.here(path))
-    return real !== undefined && isRawOnly(real, this.extraRawOnly)
+    return {
+      written: written || (real !== undefined && isWriteProtected(real)),
+      rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
+    }
   }
 
   /** Before the tool runs: the raw-only check, then the arguments restored. */
@@ -1233,24 +1248,21 @@ export class Guard {
         'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
       )
 
+    const named: [string, { written: boolean; rawOnly: boolean }][] = []
+    for (const field of policy.paths)
+      for (const p of [e[field], args[field]])
+        if (typeof p === 'string') named.push([p, await this.pathHits(p)])
     // Spec 078 FR-012: Claude Code's settings, in every permission mode.
-    if (WRITE_TOOLS.has(e.tool))
-      for (const field of policy.paths)
-        for (const p of [e[field], args[field]])
-          if (typeof p === 'string' && (await this.protectedHit(p)))
-            return this.deny(SETTINGS_PROTECTED)
+    if (WRITE_TOOLS.has(e.tool) && named.some(([, h]) => h.written))
+      return this.deny(SETTINGS_PROTECTED)
 
-    for (const field of policy.paths) {
-      for (const p of [e[field], args[field]]) {
-        // A Windows stream or short name may stand for a raw-only file.
-        if (typeof p === 'string' && (windowsAlias(p) || (await this.rawOnlyHit(p)))) {
-          return this.deny(
-            `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
-            false
-          )
-        }
-      }
-    }
+    // A Windows stream or short name may stand for a raw-only file.
+    for (const [p, h] of named)
+      if (windowsAlias(p) || h.rawOnly)
+        return this.deny(
+          `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+          false
+        )
     if (policy.command) {
       const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
@@ -1258,7 +1270,9 @@ export class Guard {
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
-        const into = allCdTargets(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
+        const into =
+          realCdTargets(c).find((t) => /[*?[]/.test(t)) ??
+          allCdTargets(c).find((t) => cdIntoRawOnly(t, dirs))
         if (into !== undefined)
           return this.deny(
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
@@ -1270,10 +1284,11 @@ export class Guard {
         for (const word of pathsInCommand(c)) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
-          for (const at of [word, ...under])
-            if (await this.protectedHit(at)) return this.deny(SETTINGS_PROTECTED)
-          let hit = (await this.rawOnlyHit(word)) || shortNameAlias(word)
-          for (const at of under) hit ||= await this.rawOnlyHit(at)
+          const hits = []
+          for (const at of [word, ...under]) hits.push(await this.pathHits(at))
+          if (hits.some((h) => h.written)) return this.deny(SETTINGS_PROTECTED)
+          const hit =
+            hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
           if (hit) {
             return this.deny(
               `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
@@ -1294,7 +1309,7 @@ export class Guard {
         }
         for (const s of strings) {
           // A path, not prose that mentions one: no whitespace.
-          if (isPathLike(s) && (await this.rawOnlyHit(s))) {
+          if (isPathLike(s) && (await this.pathHits(s)).rawOnly) {
             return this.deny(
               `Veilio keeps ${this.applyText(s, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
@@ -1409,7 +1424,9 @@ export class Guard {
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
       this.shellMoved = true
     if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
-      for (const t of allCdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
+      // Only a top-level cd moves the shell the next call runs in; one in a
+      // substitution or a nested shell does not (review round 2 of spec 078).
+      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
@@ -1839,6 +1856,14 @@ export class Guard {
         return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
+      if (existed && this.mapReadable && this.io.chmod) {
+        await this.io.chmod(this.mapPath).catch(() => undefined)
+        if (!(await this.ownerOnly(this.mapPath))) {
+          this.stopReadable()
+          throw new Error(this.stoppedReason)
+        }
+        this.mapReadable = false
+      }
       if (!existed)
         await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       await this.io.write(this.mapPath, serialiseMapFile(next))
@@ -1861,6 +1886,10 @@ class DecodedOnce {
     return this.last.runs
   }
 }
+
+/** Review round 2 #7: said once, when a map with no names cannot be made 0600. */
+const EMPTY_MAP_READABLE =
+  'Veilio: .veilio/map.json is readable by other users and could not be made owner-only. It holds no names yet; Veilio will stop before it writes one there.'
 
 /** The tools whose result is a shell's output. */
 const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])

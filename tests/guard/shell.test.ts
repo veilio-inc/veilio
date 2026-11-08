@@ -268,6 +268,57 @@ describe('restoreRefusal (spec 078)', () => {
     expect(restoreRefusal(command, 'Bash')).toBeNull()
   })
 
+  // Review round 2 #1: a test runner gets real names only when every option
+  // it is given is on its own allow-list; anything else is refused with #1.
+  it.each([
+    'npx vitest run --config ./x.ts tests/__X__1.test.ts',
+    'npx vitest run --globalSetup ./x.ts tests/__X__1.test.ts',
+    'npx vitest run --reporter=./x.ts tests/__X__1.test.ts',
+    'mvn --define x=y test',
+    'mvn -fX test',
+    'mvn -t x.xml test',
+    'pytest -o x=y tests/__X__1.py',
+    'pytest --override-ini=x=y tests/__X__1.py',
+    'pytest --pdbcls=x:y tests/__X__1.py',
+    'pytest -c x.ini tests/__X__1.py',
+    'python3 -m pytest -c x.ini tests/__X__1.py',
+    'go test -C other ./__X__1',
+    'go test -overlay x.json ./__X__1',
+    'go test -o out ./__X__1',
+    'cargo test --manifest-path x/Cargo.toml __X__1',
+    'cargo test __X__1 -- --nocapture',
+    'npm test -- --config ./x tests/__X__1.test.ts',
+    'npm test --silent tests/__X__1.test.ts',
+    'node --test --watch tests/__X__1.test.mjs',
+  ])('refuses %j: an option not on the runner allow-list', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toMatch(
+      /^a shell command gets real names back only when it reads files or runs tests .*is not one of those/
+    )
+  })
+
+  it.each([
+    'npx vitest run tests/__X__1.test.ts',
+    'npx vitest run -t "pays the order" tests/__X__1.test.ts',
+    'npx vitest run --testNamePattern=pays tests/__X__1.test.ts',
+    'npx vitest --run tests/__X__1.test.ts',
+    'pytest -k pay -x -q -v tests/__X__1.py',
+    'python -m pytest -q tests/__X__1.py',
+    'python3 -m unittest -v tests/__X__1.py',
+    'go test -run TestPay -v -count=1 ./__X__1/...',
+    'cargo test __X__1',
+    'cargo test __X__1 --',
+    'npm test',
+    'npm test -- tests/__X__1.test.ts',
+    'pnpm run test tests/__X__1.test.ts',
+    'mvn -q test',
+    'mvn test',
+    'ruby -Itest tests/__X__1.rb',
+    'rake test',
+    'node --test tests/__X__1.test.mjs',
+  ])('a runner given only allowed options gets real names: %j', (command) => {
+    expect(restoreRefusal(command, 'Bash')).toBeNull()
+  })
+
   // Review round 1 (T030) #3: more flags that slice or reshape output.
   it.each([
     ['rg -p x f', '`rg` `-p`'],

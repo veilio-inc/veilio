@@ -13,32 +13,59 @@
 // Matched word by word, never as a prefix of the command line: `cat.sh`,
 // `ls-foo` and `cat=x curl` are not `cat` or `ls` (security review of
 // 232d48f; spec 069's regex list had the same hole).
-const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find', 'pytest'])
-const READS_OR_TESTS: readonly (readonly string[])[] = [
-  ['npx', 'vitest'],
-  ['npm', 'test'],
-  ['npm', 'run', 'test'],
-  ['pnpm', 'test'],
-  ['pnpm', 'run', 'test'],
-  ['yarn', 'test'],
-  ['yarn', 'run', 'test'],
-  ['python', '-m', 'unittest'],
-  ['python', '-m', 'pytest'],
-  ['python3', '-m', 'unittest'],
-  ['python3', '-m', 'pytest'],
-  ['go', 'test'],
-  ['cargo', 'test'],
-  ['ruby', '-Itest'],
-  ['rake', 'test'],
-  ['node', '--test'],
+const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find'])
+
+// Review round 2 #1: each test runner with the only options it may be given
+// (true: the option takes a value, as the next word or after `=`). Any other
+// option makes the command not a test run: an allow-list, since a runner's
+// options that load code or run a program keep growing. Positional words
+// (paths, filters, vitest's `run`) are free.
+const PYTEST = { '-k': true, '-x': false, '-q': false, '-v': false }
+const SCRIPT = { '--': false }
+const RUNNERS: readonly [readonly string[], Readonly<Record<string, boolean>>][] = [
+  [['npx', 'vitest'], { '-t': true, '--testNamePattern': true, '--run': false }],
+  [['npm', 'test'], SCRIPT],
+  [['npm', 'run', 'test'], SCRIPT],
+  [['pnpm', 'test'], SCRIPT],
+  [['pnpm', 'run', 'test'], SCRIPT],
+  [['yarn', 'test'], SCRIPT],
+  [['yarn', 'run', 'test'], SCRIPT],
+  [['pytest'], PYTEST],
+  [['python', '-m', 'pytest'], PYTEST],
+  [['python3', '-m', 'pytest'], PYTEST],
+  [['python', '-m', 'unittest'], { '-v': false }],
+  [['python3', '-m', 'unittest'], { '-v': false }],
+  [['go', 'test'], { '-run': true, '-v': false, '-count': true }],
+  [['cargo', 'test'], { '--': false }],
+  [['ruby', '-Itest'], {}],
+  [['rake', 'test'], {}],
+  [['node', '--test'], {}],
+  [['mvn', 'test'], {}],
+  [['mvn', '-q', 'test'], {}],
 ]
 
-/** Whether a command's words start with a reader or a test runner. */
+/** Whether every option in `rest` is on `allowed`. */
+function onlyAllowed(rest: readonly string[], allowed: Readonly<Record<string, boolean>>): boolean {
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i]!
+    if (!w.startsWith('-')) continue
+    const eq = w.indexOf('=')
+    const name = eq === -1 ? w : w.slice(0, eq)
+    if (!Object.hasOwn(allowed, name)) return false
+    if (allowed[name] === false && eq !== -1) return false
+    if (allowed[name] && eq === -1) i++
+  }
+  return true
+}
+
+/** Whether a command's words are a reader, or a test runner given only the
+ *  options on its allow-list. */
 function readsOrTests(words: readonly string[]): boolean {
   if (READERS.has(words[0] ?? '')) return true
-  // mvn, its options, then test.
-  if (words[0] === 'mvn') return words.slice(1).find((w) => !w.startsWith('-')) === 'test'
-  return READS_OR_TESTS.some((start) => start.every((w, i) => words[i] === w))
+  for (const [start, allowed] of RUNNERS)
+    if (start.every((w, i) => words[i] === w))
+      return onlyAllowed(words.slice(start.length), allowed)
+  return false
 }
 
 /** Whether `word` is the long option `--name`, or an abbreviation of it that
@@ -59,28 +86,6 @@ const CONTROL = /\n|\r|(^|[^&])&([^&]|$)|[(){}]|<</
 // Anything that could write, run code or rewrite the command line.
 const WRITES_OR_RUNS =
   /[>`]|\$\(|\btee\b|(^|\s)(-i|--in-place)\b|\b(sed|awk|perl)\b|\bpython3?\s+-c\b|\bnode\s+-e\b|\s-(exec|execdir|delete|ok|okdir)\b/
-
-/** A test runner's flag that runs another program or loads code of its own
- *  choosing (review round 1 of spec 078): the offending word, if any. */
-export function runnerFlag(words: readonly string[]): string | undefined {
-  const p = words[0]
-  const rest = words.slice(1)
-  if (p === 'go') return rest.find((w) => /^--?(toolexec|exec)(=|$)/.test(w))
-  if (p === 'cargo') return rest.find((w) => /^--config(=|$)|^-Z/.test(w))
-  if (p === 'npm' || p === 'pnpm' || p === 'yarn') {
-    // Options of the package manager itself, before the script's own `--`.
-    const end = rest.indexOf('--')
-    return (end === -1 ? rest : rest.slice(0, end)).find((w) => w.startsWith('-'))
-  }
-  if (p === 'pytest' || ((p === 'python' || p === 'python3') && words[2] === 'pytest'))
-    return rest.find((w) => /^-p/.test(w))
-  if (p === 'mvn')
-    return rest.find((w) => /^-D|^-f$|^--file(=|$)|^-g?s$|^--(global-)?settings(=|$)/.test(w))
-  // Paths only after `-Itest`, as `node --test`; rake takes no flags.
-  if (p === 'ruby') return words.slice(2).find((w) => w.startsWith('-'))
-  if (p === 'rake') return rest.find((w) => w.startsWith('-'))
-  return undefined
-}
 
 /** A command's words as the shell passes them: quotes and backslashes
  *  removed, so a quoted flag is judged as the program will see it (security
@@ -211,7 +216,7 @@ export function shellRefusal(command: string): string | null {
     if (words === null)
       return 'a command that names a file by its placeholder may only read or test it: its quotes do not close'
     const program = words[0] ?? ''
-    if (words.slice(1).some((w) => unsafeWord(program, w)) || runnerFlag(words) !== undefined)
+    if (words.slice(1).some((w) => unsafeWord(program, w)))
       return `a command that names a file by its placeholder may only read or test it, and ${program} is given an option that writes or runs`
     // node --test takes paths only: its options load or run code.
     if (
@@ -340,8 +345,7 @@ export function restoreRefusal(command: string, tool: 'Bash' | 'PowerShell'): st
   }
   for (const w of words) {
     const program = w[0] ?? ''
-    const flag =
-      w.slice(1).find((x) => reshapes(program, x) || unsafeWord(program, x)) ?? runnerFlag(w)
+    const flag = w.slice(1).find((x) => reshapes(program, x) || unsafeWord(program, x))
     if (flag !== undefined)
       return `\`${program}\` \`${flag}\` can reshape or write what it reads, so it gets no real names back. Run it without the placeholder, or without \`${flag}\``
   }

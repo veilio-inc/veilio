@@ -18,7 +18,7 @@
 
 // First: every request this process makes is labelled as the MCP server's.
 import './identity.js'
-import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   detectCredentials,
@@ -44,6 +44,7 @@ import {
   type LanguageOption,
   fileKindOf,
   isLocalPlaceholder,
+  GuardJsonCache,
   isRawOnly,
   windowsAlias,
 } from '@veilio-inc/engine'
@@ -249,28 +250,27 @@ function refuseRawOnly(path: string, ctx: ToolContext): string {
 }
 
 /** The project's own raw-only patterns, from `.veilio/guard.json` at the
- *  project root, read as the guard reads them (review round 1 item 10). A file
- *  that is not JSON refuses the call, as it stops the guard. */
-function projectRawOnly(project: string): string[] {
+ *  project root, through the engine's loader the guard reads them with
+ *  (review round 1 item 10, round 2), cached by the file's mtime. A file that
+ *  is not JSON refuses the call, as it stops the guard. */
+export function projectRawOnly(project: string): string[] {
   const path = join(project, '.veilio', 'guard.json')
-  let text: string
+  let mtimeMs: number | undefined
   try {
-    text = readFileSync(path, 'utf8')
+    mtimeMs = statSync(path).mtimeMs
   } catch {
-    return []
+    mtimeMs = undefined
   }
-  let settings: { rawOnly?: unknown }
   try {
-    settings = JSON.parse(text) as { rawOnly?: unknown }
-  } catch {
+    return guardJson.get(project, mtimeMs, () => readFileSync(path, 'utf8'))
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) return []
     throw new ToolError(
       '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
     )
   }
-  return Array.isArray(settings?.rawOnly)
-    ? settings.rawOnly.filter((p): p is string => typeof p === 'string')
-    : []
 }
+const guardJson = new GuardJsonCache()
 
 function readTarget(
   args: Record<string, unknown>,
