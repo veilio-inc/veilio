@@ -350,6 +350,16 @@ for (const command of [
   // Review round 2 #5: a glob target of a real cd, however nested.
   "bash -c 'cd .a*s && cat credentials'",
   'echo "$(cd .a*s && cat credentials)"',
+  // Security review of round 2: wrappers, a shell by its path, process
+  // substitution and a nested subshell.
+  "env bash -c 'cd .a*s && cat credentials'",
+  "command bash -c 'cd .a*s && cat credentials'",
+  "exec bash -c 'cd .a*s && cat credentials'",
+  "/bin/bash -c 'cd .a*s && cat credentials'",
+  "nohup /usr/bin/zsh -c 'cd .aws && cat credentials'",
+  "xargs sh -c 'cd .a*s && cat credentials'",
+  'cat <(cd .a*s && cat credentials)',
+  'echo $( (cd .a*s && cat credentials) )',
 ])
   test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
     project(on, {})

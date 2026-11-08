@@ -24,6 +24,7 @@ import {
   allCdTargets,
   cdIntoRawOnly,
   cdTargets,
+  cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
   isRawOnly,
   isWriteProtected,
@@ -31,7 +32,6 @@ import {
   pathsInCommand,
   rawOnlyDirectories,
   rawOnlyOf,
-  realCdTargets,
   shortNameAlias,
   windowsAlias,
 } from './paths.ts'
@@ -1270,9 +1270,7 @@ export class Guard {
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
-        const into =
-          realCdTargets(c).find((t) => /[*?[]/.test(t)) ??
-          allCdTargets(c).find((t) => cdIntoRawOnly(t, dirs))
+        const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
         if (into !== undefined)
           return this.deny(
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,

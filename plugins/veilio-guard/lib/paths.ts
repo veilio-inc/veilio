@@ -133,23 +133,32 @@ export function allCdTargets(command: string): string[] {
   return [...new Set([...cdTargets(command), ...hidden])]
 }
 
-/** The targets of real cd words: parsed outside quotes, at the top level and
- *  inside `$(...)`, backticks, `sh|bash|zsh -c '...'` and `eval` (review
- *  round 2 of spec 078), so quoted text that only holds "cd" is not one. */
-export function realCdTargets(command: string, depth = 0): string[] {
-  const out = cdTargets(command)
-  if (depth > 4) return out
-  const nested: string[] = []
-  for (const m of command.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) nested.push(m[1] ?? m[2] ?? '')
-  for (const part of splitChain(command) ?? []) {
-    const w = shellWords(part) ?? []
-    if (/^(?:ba|z|da)?sh$/.test(w[0] ?? '')) {
-      const c = w.findIndex((x, i) => i > 0 && /^-[a-z]*c[a-z]*$/.test(x))
-      if (c > 0 && w[c + 1] !== undefined) nested.push(w[c + 1]!)
-    } else if (w[0] === 'eval') nested.push(w.slice(1).join(' '))
-  }
-  for (const n of nested) out.push(...realCdTargets(n, depth + 1))
-  return out
+// A shell by its basename, and the wrappers that run what follows them.
+const SHELLS = /^(?:sh|bash|zsh|dash|ksh|fish)$/
+const WRAPPERS = new Set(['eval', 'env', 'command', 'exec', 'source', '.'])
+
+/** The cd targets a refusal judges: allCdTargets over the whole command
+ *  (fail closed), except text quoted as an argument of a program that is no
+ *  shell and no wrapper, with no word of its part that is one either, and
+ *  with no `$` or backtick in it (`grep "cd *"`, `git commit -m "cd [x]"`).
+ *  Security review of round 2 of spec 078. */
+export function cdTargetsToJudge(command: string): string[] {
+  const parts = splitChain(command)
+  if (parts === null) return allCdTargets(command)
+  const kept = parts.map((part) => {
+    const words = shellWords(part) ?? []
+    const runs = words.some((w) => SHELLS.test(w.split(/[\\/]/).pop() ?? '') || WRAPPERS.has(w))
+    return runs ? part : blankQuoted(part)
+  })
+  return allCdTargets(kept.join(' ; '))
+}
+
+/** `part` with the inside of each quoted span blanked, unless the span holds
+ *  a `$` or a backtick, which the shell still expands. */
+function blankQuoted(part: string): string {
+  return part.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (span) =>
+    /[$`]/.test(span) ? span : span[0] + ' '.repeat(span.length - 2) + span[0]
+  )
 }
 
 /** Whether a cd to `target` would put the shell in or inside one of `dirs`

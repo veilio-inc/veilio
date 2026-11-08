@@ -290,6 +290,11 @@ describe('restoreRefusal (spec 078)', () => {
     'npm test -- --config ./x tests/__X__1.test.ts',
     'npm test --silent tests/__X__1.test.ts',
     'node --test --watch tests/__X__1.test.mjs',
+    // Security review of round 2: a value given as the next word is never an option.
+    'npx vitest run -t --config /tmp/x.mjs tests/__X__1.test.ts',
+    'pytest -k -p evil tests/__X__1.py',
+    'go test -run -exec x ./__X__1',
+    'npx vitest run tests/__X__1.test.ts -t',
   ])('refuses %j: an option not on the runner allow-list', (command) => {
     expect(restoreRefusal(command, 'Bash')).toMatch(
       /^a shell command gets real names back only when it reads files or runs tests .*is not one of those/

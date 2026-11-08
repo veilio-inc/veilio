@@ -53,7 +53,12 @@ function onlyAllowed(rest: readonly string[], allowed: Readonly<Record<string, b
     const name = eq === -1 ? w : w.slice(0, eq)
     if (!Object.hasOwn(allowed, name)) return false
     if (allowed[name] === false && eq !== -1) return false
-    if (allowed[name] && eq === -1) i++
+    // A value given as the next word is never an option itself (security
+    // review of round 2: `-t --config x` would pass `--config` as -t's value).
+    if (allowed[name] && eq === -1) {
+      const value = rest[++i]
+      if (value === undefined || value.startsWith('-')) return false
+    }
   }
   return true
 }
