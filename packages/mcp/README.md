@@ -20,7 +20,7 @@ The primary tools here take a **file path**. The server reads the file in its ow
 
 That holds on the way in. On the way back, `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in its configuration. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
 
-`anonymize_file` and `scan_secrets` never read a file on the guard's raw-only list (.env, private keys, credential stores, .veilio/): they refuse it, as written or through a link.
+`anonymize_file` and `scan_secrets` never read a file on the guard's raw-only list (.env, private keys, credential stores, .veilio/), or on the project's own list in `.veilio/guard.json` (`rawOnly`): they refuse it, as written or through a link.
 
 ```
 tools/call anonymize_file { "path": "src/gateway.ts" }

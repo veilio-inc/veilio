@@ -156,6 +156,14 @@ async function ready($: Host): Promise<Guard> {
         }
         return undefined
       },
+      // Review round 1 item (b): the repository's settings that run a program.
+      gitConfig: (dir) =>
+        $.process
+          .run(['git', 'config', '--show-scope', '--includes', '--list', '-z'], { cwd: dir })
+          .then(
+            (r) => (r.exitCode === 0 ? r.stdout : null),
+            () => null
+          ),
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
           (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),

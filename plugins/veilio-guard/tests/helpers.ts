@@ -53,6 +53,9 @@ export type Options = {
   slowRead?: (path: string) => Promise<void> | undefined
   /** `chmod` runs but leaves the mode as it was (a file system that ignores it). */
   chmodIgnored?: boolean
+  /** What `git config --show-scope --includes --list -z` prints (review
+   *  round 1 item (b)); none: the listing every other git command gets. */
+  gitConfig?: string
   /** The machine is Windows ($.env OS=Windows_NT): no chmod, no stat. */
   windows?: boolean
   /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record). */
@@ -172,6 +175,10 @@ export function project(
       return ok(`${(p.modes[a] ?? 0o644).toString(8)}\n`)
     }
     if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }
+    if (opts.gitConfig !== undefined && e.argv[1] === 'config') {
+      p.ops.push(`git ${e.argv.slice(1).join(' ')} in ${e.init?.cwd}`)
+      return ok(opts.gitConfig)
+    }
     const tracked = Object.keys(p.files)
       .filter((f) => f.startsWith(`${ROOT}/`) && !/\/\.(git|veilio)\//.test(f))
       .map((f) => f.slice(ROOT.length + 1))

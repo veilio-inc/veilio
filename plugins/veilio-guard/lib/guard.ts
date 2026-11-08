@@ -32,7 +32,7 @@ import {
   shortNameAlias,
   windowsAlias,
 } from './paths.ts'
-import { restoreRefusal } from './shell.ts'
+import { gitConfigRuns, restoreRefusal, shellWords, splitChain } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -47,6 +47,7 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  decodedRuns,
   encodedName,
   restoreAdds,
   grow,
@@ -94,6 +95,9 @@ export interface GuardIO {
   chmod?(path: string): Promise<void>
   /** A file's permission bits, or undefined when they cannot be read. */
   mode?(path: string): Promise<number | undefined>
+  /** `git config --show-scope --includes --list -z` run in `dir`, or null
+   *  when it fails. Absent: a git command's configuration is not checked. */
+  gitConfig?(dir: string): Promise<string | null>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -286,25 +290,38 @@ export class Guard {
 
   /** What a tool's arguments are restored from: the saved map, and the
    *  renumbered old placeholders where the map does not give them another
-   *  name (a contested one is in neither, as in the CLI). Quarantine never. */
+   *  name (a contested one is in neither, as in the CLI). Quarantine never,
+   *  and no alias whose name shares 12 characters with a removed credential
+   *  (FR-006, review round 1 item 4). */
   private get restoreMap(): SymbolMap {
     this.settle()
     const map = this.stored.map
     const keys = Object.keys(this.aliases)
     if (keys.length === 0) return map
-    // One object per (map, aliases): restoreArgs caches its matcher by map object.
+    // One object per (map, aliases, removed credentials): restoreArgs caches
+    // its matcher by map object.
     const c = this.restoreCache
-    if (c && c.map === map && c.aliases === this.aliases && c.version === versionOf(map))
+    const learned = this.destroyed.version
+    if (
+      c &&
+      c.map === map &&
+      c.aliases === this.aliases &&
+      c.version === versionOf(map) &&
+      c.learned === learned
+    )
       return c.out
     const out: SymbolMap = { ...this.aliases, ...map }
-    for (const p of keys) if (p in map && map[p] !== this.aliases[p]) delete out[p]
-    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), out }
+    for (const p of keys)
+      if ((p in map && map[p] !== this.aliases[p]) || this.destroyed.sharesWindow(this.aliases[p]!))
+        delete out[p]
+    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), learned, out }
     return out
   }
   private restoreCache: {
     map: SymbolMap
     aliases: SymbolMap
     version: number
+    learned: number
     out: SymbolMap
   } | null = null
 
@@ -334,16 +351,20 @@ export class Guard {
     const map = this.stored.map
     const out = Object.entries(map).filter(([, name]) => !this.destroyed.sharesWindow(name))
     if (out.length < Object.keys(map).length) {
-      for (const [, name] of Object.entries(map)) {
-        if (!this.destroyed.sharesWindow(name) || this.quarantinedNames.has(name)) continue
-        const own = `__QUARANTINED__${++this.quarantineNext}`
-        this.quarantinedNames.set(name, own)
-        this.quarantine[own] = name
-        this.destroyed.hold(name, own)
-      }
+      for (const [, name] of Object.entries(map))
+        if (this.destroyed.sharesWindow(name)) this.quarantineName(name)
       this.stored = { ...this.stored, map: ownedMap(Object.fromEntries(out)) }
     }
     this.settledFor = { stored: this.stored, version: this.destroyed.version }
+  }
+
+  /** `name` under a placeholder of its own namespace, which no saved entry
+   *  can share (review of 58d3dae): masked this session, never saved. */
+  private quarantineName(name: string, hold = true): void {
+    const own = this.quarantinedNames.get(name) ?? `__QUARANTINED__${++this.quarantineNext}`
+    this.quarantinedNames.set(name, own)
+    this.quarantine[own] = name
+    if (hold) this.destroyed.hold(name, own)
   }
 
   /** What masking reads: the saved map and this session's quarantine. */
@@ -407,7 +428,13 @@ export class Guard {
         )
         this.counts.outsideReserved += outside
         if (rulesStopped) this.counts.rulesStopped++
-        grow(this.unsaved, additions)
+        // A file holding a removed credential in another form (pieces under
+        // 12 characters each, review round 1 item 7): its names are masked
+        // this session and never saved. Not swept as held names: a result
+        // that shows the pieces must still read as reshaped, and be withheld.
+        if (this.destroyed.reshaped(text))
+          for (const name of Object.values(additions)) this.quarantineName(name, false)
+        else grow(this.unsaved, additions)
         this.batch.push(rel)
       },
       (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
@@ -670,6 +697,15 @@ export class Guard {
       this.stored = { version: 1, map: {} }
       return
     }
+    // Review round 1 item (c): a map already there that others can read
+    // (an older guard's, a copy) is made owner-only, and checked, first.
+    if (this.io.chmod && !(await this.ownerOnly(this.mapPath))) {
+      await this.io.chmod(this.mapPath).catch(() => undefined)
+      if (!(await this.ownerOnly(this.mapPath))) {
+        this.stopReadable()
+        return
+      }
+    }
     const parsed = parseMapFile(await this.io.read(this.mapPath))
     if (!parsed.ok) {
       this.stop(`the map at .veilio/map.json could not be read: ${parsed.reason}`)
@@ -802,13 +838,21 @@ export class Guard {
     await this.io.write(path, empty)
     if (!this.io.chmod) return
     await this.io.chmod(path).catch(() => undefined)
-    const mode = this.io.mode ? await this.io.mode(path).catch(() => undefined) : undefined
-    if (names && (mode === undefined || (mode & 0o077) !== 0)) {
-      this.stop(
-        'the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session'
-      )
+    if (names && !(await this.ownerOnly(path))) {
+      this.stopReadable()
       throw new Error(this.stoppedReason)
     }
+  }
+
+  private async ownerOnly(path: string): Promise<boolean> {
+    const mode = this.io.mode ? await this.io.mode(path).catch(() => undefined) : undefined
+    return mode !== undefined && (mode & 0o077) === 0
+  }
+
+  private stopReadable(): void {
+    this.stop(
+      'the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session'
+    )
   }
 
   // ── text ──────────────────────────────────────────────────────────────────
@@ -1306,8 +1350,29 @@ export class Guard {
         e.tool === 'PowerShell' ? 'PowerShell' : 'Bash'
       )
       if (why) return this.deny(why)
+      const git = await this.gitRunsProgram(typeof command === 'string' ? command : '')
+      if (git) return this.deny(git)
     }
     return { args }
+  }
+
+  /** Review round 1 item (b): why a placeholder may not go into this
+   *  command's git part, from the repository's own configuration (read on
+   *  every call: a plain `git config` can set it between two), or null. */
+  private async gitRunsProgram(command: string): Promise<string | null> {
+    if (!this.io.gitConfig) return null
+    if (!splitChain(command)?.some((part) => shellWords(part)?.[0] === 'git')) return null
+    // A shell moved where the guard cannot follow reads as unreadable.
+    const config =
+      this.shellDir === null
+        ? null
+        : await bounded(this.io.gitConfig(this.shellDir), Date.now() + 2_000, this.clock)
+    if (config === null || config === LATE)
+      return "Veilio could not read this repository's git configuration, so a git command gets no real names back. Run it without the placeholder, or ask the user to run it"
+    const key = gitConfigRuns(config)
+    return key
+      ? `this repository's git configuration sets ${key}, which runs a program of its own, so a git command gets no real names back. Run it without the placeholder, or ask the user to remove that setting`
+      : null
   }
 
   private deny(reason: string, prefix = true): { deny: string } {
@@ -1388,7 +1453,8 @@ export class Guard {
     // (review of 99325ba). Enum fields are left for the last scan, which
     // withholds the result.
     const strip = (s: string) => redactKnown(s, this.destroyed)
-    const shell = tool === 'Bash' || tool === 'PowerShell'
+    // A shell's stdout, read now or later from a background shell (review round 1 item 5).
+    const shell = SHELL_OUTPUT.has(tool)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
@@ -1396,9 +1462,13 @@ export class Guard {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
       // A failed command's text reaches the model too (security review of
       // the encoded-name check).
-      if (shell && encodedName(raw, this.map) !== null) return this.withhold(ENCODED_NAME)
+      const runs = new DecodedOnce()
+      if (shell && encodedName(raw, this.map, () => runs.of(raw)) !== null)
+        return this.withhold(ENCODED_NAME)
       this.destroyed.learn(destroyedValues([raw], this.map))
-      if (this.destroyed.reshaped(strip(raw))) return this.withhold(RESHAPED_CREDENTIAL)
+      const stripped = strip(raw)
+      if (this.destroyed.reshaped(stripped, () => runs.of(stripped)))
+        return this.withhold(RESHAPED_CREDENTIAL)
       return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
@@ -1456,24 +1526,22 @@ export class Guard {
     // Spec 078 FR-005: what the sweep above removed whole may still be here
     // reformatted, sliced or encoded; read before masking, which would mint
     // a slice as a name.
+    // Spec 078 FR-018a: a shell can print a project name encoded, which
+    // masking does not read; read before masking, which would mint it. Each
+    // string's base64 and hex runs are decoded once for both checks (review
+    // round 1 item (f)).
+    const runs = new DecodedOnce()
     let reshaped = false
+    let encoded = false
     deepRewrite(outcome.result, (s) => {
       // Exact copies left in a kept field are the last scan's (it names them).
-      reshaped ||= this.destroyed.reshaped(strip(s))
+      const stripped = strip(s)
+      reshaped ||= this.destroyed.reshaped(stripped, () => runs.of(stripped))
+      if (shell) encoded ||= encodedName(s, this.map, () => runs.of(s)) !== null
       return s
     })
     if (reshaped) return this.withhold(RESHAPED_CREDENTIAL)
-
-    // Spec 078 FR-018a: a shell can print a project name encoded, which
-    // masking does not read; read before masking, which would mint it.
-    if (shell) {
-      let encoded = false
-      deepRewrite(outcome.result, (s) => {
-        encoded ||= encodedName(s, this.map) !== null
-        return s
-      })
-      if (encoded) return this.withhold(ENCODED_NAME)
-    }
+    if (encoded) return this.withhold(ENCODED_NAME)
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const working: SymbolMap = ownedMap(this.map)
@@ -1766,14 +1834,9 @@ export class Guard {
       for (const [placeholder, name] of Object.entries(additions)) {
         // Spec 078 FR-006: 12 characters of one is enough (N1).
         if (learned.some((v) => name.includes(v)) || this.destroyed.sharesWindow(name)) {
-          // A namespace of its own, which no saved entry can share (review
-          // of 58d3dae). Minted before any text holds the engine's number:
-          // only indexing raw files sends a name here.
-          const own = this.quarantinedNames.get(name) ?? `__QUARANTINED__${++this.quarantineNext}`
-          void placeholder
-          this.quarantinedNames.set(name, own)
-          this.quarantine[own] = name
-          this.destroyed.hold(name, own)
+          // Minted before any text holds the engine's number: only indexing
+          // raw files sends a name here.
+          this.quarantineName(name)
           quarantined++
         } else kept[placeholder] = name
       }
@@ -1812,6 +1875,19 @@ export class Guard {
     return run
   }
 }
+
+/** Each text's decoded base64 and hex runs, decoded when a check first asks
+ *  (one that needs none never does), and once for two checks of one text. */
+class DecodedOnce {
+  private last: { text: string; runs: string[] } | null = null
+  of(text: string): readonly string[] {
+    if (this.last?.text !== text) this.last = { text, runs: decodedRuns(text) }
+    return this.last.runs
+  }
+}
+
+/** The tools whose result is a shell's output. */
+const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])
 
 /** A command that changes the shell's directory: `cd`, `pushd` or `popd`
  *  at its start or after `&&`, `||`, `;`, `|`, a lone `&`, a newline or `(`. */

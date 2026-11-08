@@ -93,6 +93,32 @@ describe('raw-only paths (spec 078)', () => {
     }
   })
 
+  // Review round 1 item 10: the project's own raw-only patterns, from
+  // .veilio/guard.json as the guard reads them, as written and through a link.
+  it("a path on the project's own raw-only list in .veilio/guard.json is refused", () => {
+    writeFileSync(join(cwd, '.veilio', 'guard.json'), '{"rawOnly":["secrets/**"]}\n')
+    mkdirSync(join(cwd, 'secrets'))
+    writeFileSync(join(cwd, 'secrets', 'prod.yaml'), 'db_host: db.internal.example\n')
+    symlinkSync(join(cwd, 'secrets', 'prod.yaml'), join(cwd, 'prod-notes.txt'))
+    for (const tool of ['anonymize_file', 'scan_secrets'])
+      for (const path of ['secrets/prod.yaml', 'prod-notes.txt']) {
+        const r = callTool(tool, { path }, ctx)
+        expect(`${tool} ${path}: ${r.text}`).toContain(said(path))
+        expect(r.text).not.toContain('db.internal')
+      }
+    expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
+  })
+
+  it('a .veilio/guard.json that is not valid JSON refuses every file', () => {
+    writeFileSync(join(cwd, '.veilio', 'guard.json'), '{"rawOnly": [\n')
+    const r = callTool('anonymize_file', { path: 'src/pay.ts' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain(
+      '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+    )
+    expect(r.text).not.toContain('PaymentGateway')
+  })
+
   it('a source file still works', () => {
     expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
     expect(callTool('scan_secrets', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()

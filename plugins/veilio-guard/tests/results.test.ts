@@ -1061,6 +1061,24 @@ test('the documented limit: a re-cased copy of a file still reaches the model (t
   expect(res(out).stdout).toContain('paymentgateway')
 })
 
+// COVERAGE.md, Not covered: Tests the agent writes - the forms the
+// encoded-name check does not read (review round 1 item (e)).
+const od = (s: string) =>
+  wrap([...s].map((c) => (c === '\n' ? '  \\n' : `   ${c}`)).join(''), 64)
+    .split('\n')
+    .map((l, i) => `${(i * 16).toString(8).padStart(7, '0')} ${l}`)
+    .join('\n') + '\n'
+const LIMITS: [string, string][] = [
+  ['od -c src/pay.ts', od(PAY)],
+  ['cat src/pay.ts | fold -w5', wrap(PAY.replace(/\n/g, ''), 5) + '\n'],
+  ['node tests/pay.mjs', `build/${b64('PaymentGateway')}\n`],
+]
+for (const [command, stdout] of LIMITS)
+  test(`the documented limit: a project name in a form the guard does not decode still reaches the model: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout)
+    expect(out.deny).toBeUndefined()
+  })
+
 const ORDINARY: [string, string, Record<string, string>?][] = [
   ['npm ls', 'app@1.0.0 /work/project\n├── payment-gateway@2.1.0\n└── paymentgateway@1.0.0\n'],
   [
@@ -1103,6 +1121,26 @@ test('a failed command whose error text holds a name encoded is withheld', async
   expect(out.deny).toBe(ENCODED)
 })
 
+// Review round 1 item 5: a background shell's output, read later, is a
+// shell's stdout too.
+for (const tool of ['BashOutput', 'TaskOutput'])
+  test(`a background shell's output holding a name encoded is withheld: ${tool}`, async ($, on) => {
+    const bash = recorded('Bash')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'PaymentGateway' }) })
+    const stdout = `${b64('PaymentGateway')}\n`
+    on('tool.call', () => ({
+      ...bash.r,
+      result: { shellId: 'bash_1', status: 'running', stdout, stderr: '', stdoutLines: 1 },
+    }))
+    const out = await $.tool.call({
+      tool,
+      bash_id: 'bash_1',
+      task_id: 'bash_1',
+      agentId: bash.e.agentId,
+    })
+    expect(out.deny).toBe(ENCODED)
+  })
+
 // Spec 078 US2 (A#2, N1, research R3): a credential removed earlier stays
 // removed when it comes back reformatted, sliced or encoded. The key is the
 // helpers' fake STRIPE value, built by concatenation; every form of it is
@@ -1117,12 +1155,14 @@ async function afterKeyRead(
   $: Parameters<Parameters<typeof test>[1]>[0],
   on: Parameters<Parameters<typeof test>[1]>[1],
   answer: (e: Record<string, unknown>) => unknown,
-  map: Record<string, string> = PAY_MAP
+  map: Record<string, string> = PAY_MAP,
+  files: Record<string, string> = {}
 ) {
   const read = recorded('Read')
   const p = project(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile(map),
     [`${ROOT}/src/config.ts`]: CONFIG,
+    ...files,
   })
   let first = true
   on('tool.call', (_, e) => {
@@ -1149,6 +1189,9 @@ const bashOut = (stdout: string) => {
   return { ...bash.r, result: { ...bash.r.result, stdout, stderr: '' } }
 }
 
+/** The key in 8-character pieces joined by `sep`, as text. */
+const eights = (sep: string) => STRIPE.match(/.{1,8}/g)!.join(sep)
+
 const KEY_FORMS: [string, string][] = [
   ['spaced', [...STRIPE].join(' ')],
   ['comma', [...STRIPE].join(',')],
@@ -1162,6 +1205,12 @@ const KEY_FORMS: [string, string][] = [
     'upper-cased and spaced in a test runner',
     `FAIL expected ${[...STRIPE.toUpperCase()].join(' ')}`,
   ],
+  // Review round 1 item 7: escape sequences written as text, in 8-character
+  // pieces (each under the 12 a name is held to).
+  ...['\\n', '\\t', '\\r', '\\0', '\\x0a', '\\u000a'].map((esc): [string, string] => [
+    `in pieces joined by ${esc}`,
+    eights(esc),
+  ]),
 ]
 for (const [form, text] of KEY_FORMS)
   test(`a removed credential that comes back ${form} through Bash is withheld`, async ($, on) => {
@@ -1170,6 +1219,35 @@ for (const [form, text] of KEY_FORMS)
     const out = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
     expect(out.deny).toBe(RESHAPED)
   })
+
+test('a removed credential in 8-character pieces joined by backslash-n in a Read is withheld, and no piece is saved', async ($, on) => {
+  const split = `export const parts = "${eights('\\n')}"\n`
+  const read = recorded('Read')
+  const p = await afterKeyRead($, on, () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: { ...read.r.result.file, filePath: `${ROOT}/src/split.ts`, content: split },
+    },
+  }))
+  p.files[`${ROOT}/src/split.ts`] = split
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/split.ts` })
+  expect(out.deny).toBe(RESHAPED)
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  for (const piece of STRIPE.match(/.{1,8}/g)!) expect(saved).not.toContain(piece)
+  expect(saved.filter((n) => STRIPE.includes(n) && n.length >= 4)).toEqual([])
+})
+
+test('a removed credential in 8-character pieces joined by backslash-0 is withheld when a cat names its file', async ($, on) => {
+  const split = `export const parts = "${eights('\\0')}"\n`
+  const p = await afterKeyRead($, on, () => bashOut(split))
+  p.files[`${ROOT}/src/split.ts`] = split
+  const bash = recorded('Bash')
+  const out = await $.tool.call({ ...eventOf(bash), command: 'cat src/split.ts' })
+  expect(out.deny).toBe(RESHAPED)
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  expect(saved.filter((n) => STRIPE.includes(n.replace(/^0/, '')) && n.length >= 4)).toEqual([])
+})
 
 test('a slice of a removed credential inside a Grep result is withheld', async ($, on) => {
   const grep = recorded('Grep')
@@ -1238,6 +1316,124 @@ test('at load: a map entry sharing 12 characters with a removed credential is ne
   const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'use(__VAR__8)' })
   expect(out.deny).toContain('Veilio refused this call')
   expect(seen.length).toBe(0)
+})
+
+// Review round 1 item 4: the old placeholders a publish renumbered
+// (.veilio/aliases.json) get the same quarantine as the map. Numbered apart
+// from what the Read mints (a contested placeholder restores from neither).
+const ALIASES = `${ROOT}/.veilio/aliases.json`
+test('at load: neither a map entry nor an alias sharing 12 characters with a removed credential is restored', async ($, on) => {
+  const seen: Record<string, unknown>[] = []
+  const edit = recorded('Edit')
+  await afterKeyRead(
+    $,
+    on,
+    (e) => {
+      seen.push(e)
+      return edit.r
+    },
+    { ...PAY_MAP, __VAR__90201: `use${KEY_TAIL.slice(0, 12)}` },
+    {
+      [ALIASES]: JSON.stringify({
+        version: 1,
+        aliases: { __VAR__902: `old${KEY_TAIL.slice(12, 24)}`, __VAR__903: 'settledTotal' },
+      }),
+    }
+  )
+  for (const p of ['__VAR__90201', '__VAR__902']) {
+    const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: `${p}()` })
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+  expect(seen.length).toBe(0)
+  // An alias that holds no credential still restores.
+  await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: '__VAR__903()' })
+  expect(seen[0]?.new_string).toBe('settledTotal()')
+})
+
+test('an alias restored before a credential is removed is not restored after it', async ($, on) => {
+  const planted = `use${KEY_TAIL.slice(0, 12)}`
+  const edit = recorded('Edit')
+  const read = recorded('Read')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP),
+    [`${ROOT}/src/config.ts`]: CONFIG,
+    [ALIASES]: JSON.stringify({ version: 1, aliases: { __VAR__902: planted } }),
+  })
+  const seen: Record<string, unknown>[] = []
+  on('tool.call', (_, e) => {
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/config.ts`, content: CONFIG },
+        },
+      }
+    seen.push(e)
+    return edit.r
+  })
+  const call = { ...eventOf(edit), old_string: 'x', new_string: '__VAR__902()' }
+  expect((await $.tool.call(call)).deny).toBeUndefined()
+  expect(seen[0]?.new_string).toBe(`${planted}()`)
+  const shown = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  expect(JSON.stringify(shown)).not.toContain(KEY_TAIL)
+  expect((await $.tool.call(call)).deny).toContain('Veilio refused this call')
+  expect(seen.length).toBe(1)
+})
+
+// Review round 1 item 8: of a private key, only the body between its BEGIN
+// and END lines is learned, never the armor every key shares.
+const PEM_BODY = wrap(btoa(`not a real key ${'fake-material-'.repeat(12)}`), 64)
+const PEM = `-----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY}\n-----END RSA PRIVATE KEY-----\n`
+/** A session in which a shell printed a private key (removed), answering
+ *  later Bash calls with `next()`'s stdout and Reads with src/parse.ts. */
+async function afterPemRemoved(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  next: () => string,
+  parse = ''
+) {
+  const read = recorded('Read')
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP),
+    [`${ROOT}/src/parse.ts`]: parse,
+  })
+  let first = true
+  on('tool.call', (_, e) => {
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/parse.ts`, content: parse },
+        },
+      }
+    const stdout = first ? PEM : next()
+    first = false
+    return bashOut(stdout)
+  })
+  const shown = await $.tool.call({ ...eventOf(recorded('Bash')), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(shown)).not.toContain(PEM_BODY.slice(0, 40))
+  return p
+}
+
+test('after a private key is removed, a result holding only its BEGIN line is not withheld', async ($, on) => {
+  await afterPemRemoved($, on, () => '-----BEGIN RSA PRIVATE KEY-----\n')
+  const out = await $.tool.call({ ...eventOf(recorded('Bash')), command: 'node tests/key.mjs' })
+  expect(out.deny).toBeUndefined()
+  // A fresh session prints this line the same way (its `KEY-----` is taken
+  // as a keyed value): only the withholding is this check's.
+  expect(res(out).stdout).toContain('-----BEGIN RSA PRIVATE ')
+})
+
+test('after a private key is removed, a name like parseRsaPrivateKey is saved, not quarantined', async ($, on) => {
+  const parse = 'export function parseRsaPrivateKey(pem: string) {}\n'
+  const p = await afterPemRemoved($, on, () => '', parse)
+  const out = await $.tool.call({ ...eventOf(recorded('Read')), file_path: `${ROOT}/src/parse.ts` })
+  expect(JSON.stringify(out)).not.toContain('__QUARANTINED__')
+  expect(Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map)).toContain(
+    'parseRsaPrivateKey'
+  )
 })
 
 test('ordinary output with 16-character git SHAs is not withheld when no SHA was removed', async ($, on) => {

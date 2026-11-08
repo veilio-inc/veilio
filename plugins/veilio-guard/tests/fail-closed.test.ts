@@ -244,6 +244,38 @@ test('a created map that stays readable by others after chmod stops the guard, a
   )
 })
 
+// Review round 1 item (c): a map that is already there, readable by others
+// (an older guard's, or one copied in), is made 0600 when the guard loads.
+test('an existing map readable by others is made 0600 when the guard loads', async ($, on) => {
+  const read = recorded('Read')
+  const map = `${ROOT}/.veilio/map.json`
+  const p = project(on, { [map]: mapFile({ __CLS__1: CANARY }) })
+  expect(p.modes[map]).toBeUndefined() // the stub's stat answers 644
+  on('tool.call', () => read.r)
+  const out = await $.tool.call(eventOf(read))
+  expect(out.deny).toBeUndefined()
+  expect(p.ops).toContain(`chmod ${map}`)
+  expect(p.modes[map]).toBe(0o600)
+})
+
+test('an existing map that stays readable by others after chmod stops the guard', async ($, on) => {
+  const read = recorded('Read')
+  const map = `${ROOT}/.veilio/map.json`
+  project(on, { [map]: mapFile({ __CLS__1: CANARY }) }, { chmodIgnored: true })
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return read.r
+  })
+  const out = await $.tool.call(eventOf(read))
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('is readable by other users')
+  const band = await $.command.run({ command: 'veilio', args: '' })
+  expect(band.text).toContain(
+    'Veilio guard stopped: the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session. Every tool call is refused.'
+  )
+})
+
 test('on Windows no chmod is run, and the map is written as before', async ($, on) => {
   const read = recorded('Read')
   const p = project(on, {}, { windows: true })

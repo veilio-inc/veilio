@@ -396,3 +396,21 @@ function outsideQuotes(command: string): string {
   }
   return out
 }
+
+/** The repository settings under which a git command that only reads runs a
+ *  program of the repository's choosing (review round 1 item (b)). */
+const GIT_RUNS =
+  /^(?:diff\.external|.+\.textconv|diff\..+\.command|filter\..+\.(?:clean|process)|core\.pager|pager\..+|gpg\.(?:.+\.)?program|core\.fsmonitor|core\.hookspath)$/
+
+/** The first such setting in `git config --show-scope --includes --list -z`
+ *  output (`scope NUL key LF value NUL`, repeated) that the repository sets
+ *  (local or worktree scope; the user's global settings are theirs), or null. */
+export function gitConfigRuns(listing: string): string | null {
+  const fields = listing.split('\0')
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    if (fields[i] !== 'local' && fields[i] !== 'worktree') continue
+    const key = fields[i + 1]!.split('\n')[0]!.toLowerCase()
+    if (GIT_RUNS.test(key)) return key
+  }
+  return null
+}

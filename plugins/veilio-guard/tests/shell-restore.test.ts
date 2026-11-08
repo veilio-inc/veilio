@@ -153,3 +153,22 @@ test('a command with no placeholder runs as before', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'echo hi | base64', description: 'x' })
   expect(seen[0]?.command).toBe('echo hi | base64')
 })
+
+// Review round 1 item (b), through the plugin's own host: the repository's
+// configuration is read with git, in the project, on each git command.
+test('a git command gets no real names back while the repository configuration sets a pager', async ($, on) => {
+  const p = project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) },
+    { gitConfig: 'global\0core.pager\nless\0local\0core.pager\n./x.sh\0' }
+  )
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  const out = await $.tool.call({ tool: 'Bash', command: 'git diff -- src/__CLS__1.ts' })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('sets core.pager, which runs a program of its own')
+  expect(p.ops).toContain(`git config --show-scope --includes --list -z in ${ROOT}`)
+})

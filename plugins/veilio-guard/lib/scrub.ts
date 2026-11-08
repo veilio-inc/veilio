@@ -847,10 +847,23 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     const core = text.slice(start, matched)
     if (names.has(core) && HEURISTIC.has(type)) continue
-    for (const v of end > matched ? [core, text.slice(start, end)] : [core])
+    for (const whole of end > matched ? [core, text.slice(start, end)] : [core]) {
+      const v = type === 'private-key' ? pemBody(whole) : whole
       if (carriedForward(type, v)) out.push(v)
+    }
   }
   return out
+}
+
+/** A private key's body: its BEGIN and END lines and its `Name: value`
+ *  headers dropped, which every key of a kind shares (review round 1 item 8). */
+function pemBody(block: string): string {
+  return block
+    .replace(/-----(?:BEGIN|END) [A-Z0-9 ]+-----/g, '')
+    .split('\n')
+    .filter((line) => !/^[A-Za-z-]+:/.test(line.trim()))
+    .join('\n')
+    .trim()
 }
 
 /** `text` with each finding of `scan` removed as applyMap removes it: a
@@ -1206,8 +1219,14 @@ function periodOf(value: string): number {
 const WINDOW = 16
 const NAME_WINDOW = 12
 /** Letters and digits only, lower case: the form two copies of a value share
- *  whatever separators or case they were printed with. */
-const compact = (text: string) => text.replace(/[^A-Za-z0-9]+/g, '').toLowerCase()
+ *  whatever separators or case they were printed with. An escape sequence
+ *  written as text (`\\n`, `\\x0a`, `\\u000a`) is a separator too (review
+ *  round 1 item 7): its letters would split a window. */
+const compact = (text: string) =>
+  text
+    .replace(/\\(?:[ntr0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .toLowerCase()
 
 /** The credentials a session has destroyed, held in memory only, each with
  *  one token: the same secret reads as the same token everywhere, two
@@ -1253,11 +1272,11 @@ export class Destroyed {
   /** Whether `text` holds 16 characters of a learned value in another form:
    *  separators or case changed, sliced, reversed, or base64/hex encoded
    *  (spec 078 FR-005). Linear in the text. */
-  reshaped(text: string): boolean {
+  reshaped(text: string, runs?: () => readonly string[]): boolean {
     if (this.windows16.size === 0) return false
     // Compaction joins a column and drops separators; reversed windows are
-    // in the set: only the encoded runs need decoding.
-    for (const form of [text, ...decodedRuns(text)]) {
+    // in the set: only the encoded runs need decoding (`runs`: done already).
+    for (const form of [text, ...(runs ? runs() : decodedRuns(text))]) {
       const c = compact(form)
       for (let i = 0; i + WINDOW <= c.length; i++)
         if (this.windows16.has(c.slice(i, i + WINDOW))) return true
@@ -1663,9 +1682,9 @@ function decodeHex(run: string): string | null {
  *  read: base64, base64url and hex runs decoded (lines of a wrapped run
  *  joined first), each line reversed, and a column of 4 or more lines of 1-3
  *  characters joined. Linear in the text. */
-export function encodedForms(text: string): string[] {
+export function encodedForms(text: string, runs?: readonly string[]): string[] {
   const lines = text.split('\n')
-  const out = decodedRuns(text, lines)
+  const out = runs ? [...runs] : decodedRuns(text, lines)
   out.push(lines.map((l) => [...l].reverse().join('')).join('\n'))
   let column: string[] = []
   for (const line of [...lines, '']) {
@@ -1712,7 +1731,11 @@ const nameSets = new WeakMap<SymbolMap, ReadonlySet<string>>()
 /** A masked name of 4 or more characters that one of `text`'s encoded forms
  *  holds, or null. Readable ordinary words (spec 064) are not masked, so
  *  they are not looked for; no case-folding (FR-018a). */
-export function encodedName(text: string, map: SymbolMap): string | null {
+export function encodedName(
+  text: string,
+  map: SymbolMap,
+  runs?: () => readonly string[]
+): string | null {
   const view = readableView(map)
   let names = nameSets.get(view)
   if (!names) {
@@ -1723,7 +1746,7 @@ export function encodedName(text: string, map: SymbolMap): string | null {
   // shortcut: names are matched as whole words of the decoded text, so one
   // glued to other word characters is missed; upgrade to a substring
   // automaton if that is shown to matter.
-  for (const form of encodedForms(text))
+  for (const form of encodedForms(text, runs?.()))
     for (const word of form.split(/[^A-Za-z0-9_$.\-/]+/)) {
       if (names.has(word)) return word
       for (const piece of word.split(/[.\-/]+/)) if (names.has(piece)) return piece

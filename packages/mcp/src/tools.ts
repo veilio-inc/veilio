@@ -47,7 +47,7 @@ import {
   isRawOnly,
   windowsAlias,
 } from '@veilio-inc/engine'
-import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
   confirmProject,
   getNamespace,
@@ -225,11 +225,37 @@ function refuseRawOnly(path: string, ctx: ToolContext): string {
   const map = resolveMapPath(ctx.mapPath, ctx.cwd)
   const stores = [map, join(dirname(map), 'aliases.json'), join(dirname(map), 'reserved.json')]
   const own = new Set(stores.flatMap((p) => [resolve(p), realPath(p) ?? resolve(p)]))
-  if (isRawOnly(path, []) || windowsAlias(path) || own.has(resolve(ctx.cwd, path))) throw refuse()
+  const extra = projectRawOnly(ctx.cwd)
+  if (isRawOnly(path, extra) || windowsAlias(path) || own.has(resolve(ctx.cwd, path)))
+    throw refuse()
   const real = safeResolve(path, ctx.cwd)
   const root = realPath(ctx.cwd) ?? ctx.cwd
-  if (isRawOnly(relative(root, real), []) || own.has(real)) throw refuse()
+  if (isRawOnly(relative(root, real), extra) || own.has(real)) throw refuse()
   return real
+}
+
+/** The project's own raw-only patterns, from `.veilio/guard.json` at the
+ *  project root, read as the guard reads them (review round 1 item 10). A file
+ *  that is not JSON refuses the call, as it stops the guard. */
+function projectRawOnly(cwd: string): string[] {
+  const path = join(findProjectRoot(cwd), '.veilio', 'guard.json')
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  let settings: { rawOnly?: unknown }
+  try {
+    settings = JSON.parse(text) as { rawOnly?: unknown }
+  } catch {
+    throw new ToolError(
+      '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+    )
+  }
+  return Array.isArray(settings?.rawOnly)
+    ? settings.rawOnly.filter((p): p is string => typeof p === 'string')
+    : []
 }
 
 function readTarget(
