@@ -18,7 +18,7 @@
 
 // First: every request this process makes is labelled as the MCP server's.
 import './identity.js'
-import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   detectCredentials,
@@ -44,8 +44,11 @@ import {
   type LanguageOption,
   fileKindOf,
   isLocalPlaceholder,
+  GuardJsonCache,
+  isRawOnly,
+  windowsAlias,
 } from '@veilio-inc/engine'
-import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
+import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
   confirmProject,
   getNamespace,
@@ -101,6 +104,13 @@ export interface ToolContext {
    * person's choice, never a tool argument's.
    */
   destructive?: boolean
+  /**
+   * restore_text offered (spec 078 FR-018). Set ONLY from VEILIO_MCP_RESTORE=1
+   * when the server starts: its answers put the real names into the agent's
+   * context, where an instruction hidden in a file the agent reads could ask
+   * for them.
+   */
+  restoreText?: boolean
   /**
    * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
    * repository's `.mcp.json` `env`, it pins that repository's project for
@@ -164,7 +174,8 @@ function isInside(root: string, target: string): boolean {
  *  permission), which the caller refuses: fail closed. */
 function realPath(path: string): string | undefined {
   try {
-    return realpathSync(path)
+    // The canonical long name: on Windows an 8.3 short name resolves too.
+    return realpathSync.native(path)
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
     // ENOENT for a link that exists means its target does not: dangling.
@@ -203,6 +214,67 @@ function safeResolve(path: string, cwd: string): string {
   return realTarget
 }
 
+/** Spec 078 FR-016: the guard's raw-only list (one list, the engine's), a
+ *  Windows stream or short name, and this server's own map files wherever the
+ *  configuration puts them - on the path as given, before it is resolved, and
+ *  where it really leads, before anything is read. */
+function refuseRawOnly(path: string, ctx: ToolContext): string {
+  const refuse = () =>
+    new ToolError(
+      `"${path}" is on Veilio's raw-only list (.env, private keys, credential stores, .veilio/); Veilio never reads it. Ask the user for what you need from it.`
+    )
+  const map = resolveMapPath(ctx.mapPath, ctx.cwd)
+  const stores = [map, join(dirname(map), 'aliases.json'), join(dirname(map), 'reserved.json')]
+  const own = new Set(stores.flatMap((p) => [resolve(p), realPath(p) ?? resolve(p)]))
+  // The project's own patterns are its root's, as the guard reads them
+  // (security review of the git and MCP changes): matched from there.
+  const project = findProjectRoot(ctx.cwd)
+  const extra = projectRawOnly(project)
+  const fromProject = relative(project, resolve(ctx.cwd, path))
+  if (
+    isRawOnly(path, []) ||
+    isRawOnly(fromProject, extra) ||
+    windowsAlias(path) ||
+    own.has(resolve(ctx.cwd, path))
+  )
+    throw refuse()
+  const real = safeResolve(path, ctx.cwd)
+  const root = realPath(ctx.cwd) ?? ctx.cwd
+  if (
+    isRawOnly(relative(root, real), []) ||
+    isRawOnly(relative(realPath(project) ?? project, real), extra) ||
+    own.has(real)
+  )
+    throw refuse()
+  return real
+}
+
+/** The project's own raw-only patterns, from `.veilio/guard.json` at the
+ *  project root, through the engine's loader the guard reads them with
+ *  (review round 1 item 10, round 2), cached by the file's mtime. A file that
+ *  is not JSON refuses the call, as it stops the guard. */
+export function projectRawOnly(project: string): string[] {
+  const path = join(project, '.veilio', 'guard.json')
+  let mtimeMs: number | undefined
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    mtimeMs = undefined
+  }
+  try {
+    return guardJson.get(project, mtimeMs, () => readFileSync(path, 'utf8'))
+  } catch (err) {
+    // Unreadable (EACCES, swapped away) refuses too, as it stops the guard
+    // (review round 3): never read as "no patterns".
+    throw new ToolError(
+      err instanceof SyntaxError
+        ? '.veilio/guard.json is not valid JSON, so Veilio cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+        : 'Veilio could not read .veilio/guard.json, so it cannot tell which files are raw-only. Fix it, or ask the user for what you need.'
+    )
+  }
+}
+const guardJson = new GuardJsonCache()
+
 function readTarget(
   args: Record<string, unknown>,
   ctx: ToolContext
@@ -213,7 +285,7 @@ function readTarget(
     throw new ToolError('pass either "path" or "text", not both')
   }
   if (path !== undefined) {
-    const abs = safeResolve(path, ctx.cwd)
+    const abs = refuseRawOnly(path, ctx)
     try {
       return { text: readFileSync(abs, 'utf8'), label: path }
     } catch {
@@ -424,7 +496,8 @@ export const TOOLS: ToolDefinition[] = [
       `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so the real ` +
       `identifiers never enter your context — you only ever see the masked form. Use it before ` +
       `reasoning about, quoting, or forwarding proprietary source. The symbol map is stored ` +
-      `locally so restore_text can reverse it later.`,
+      `locally so the developer can restore an answer later. Files on the raw-only list ` +
+      `(.env, private keys, credential stores, .veilio/) are refused, never read.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -441,7 +514,7 @@ export const TOOLS: ToolDefinition[] = [
     },
     handler: (args, ctx) => {
       const path = str(args, 'path', true)
-      const abs = safeResolve(path, ctx.cwd)
+      const abs = refuseRawOnly(path, ctx)
       let source: string
       try {
         source = readFileSync(abs, 'utf8')
@@ -619,8 +692,9 @@ export const TOOLS: ToolDefinition[] = [
     description:
       `Detect credentials — API keys, tokens, private keys, connection-string passwords, ` +
       `emails, private IPs — without modifying anything and WITHOUT putting the values in your ` +
-      `context (findings carry truncated previews only). Run this on a file before reading it, ` +
-      `or on a diff before committing.`,
+      `context (a finding shows only a value's last four characters and its length). Run this ` +
+      `on a file before reading it, or on a diff before committing. Files on the raw-only list ` +
+      `(.env, private keys, credential stores, .veilio/) are refused, never read.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -680,7 +754,7 @@ export function callTool(
   args: Record<string, unknown>,
   ctx: ToolContext
 ): ToolResult {
-  const tool = TOOLS_BY_NAME.get(name)
+  const tool = offered(name, ctx) ? TOOLS_BY_NAME.get(name) : undefined
   if (!tool) return { text: `Unknown tool "${name}".`, isError: true }
   try {
     return tool.handler(args, ctx)
@@ -700,7 +774,13 @@ export function callTool(
  * server runs is picked up without a restart.
  */
 export function listTools(ctx: ToolContext): (ToolDefinition | CloudToolDefinition)[] {
-  return readCredential(ctx.home) ? [...TOOLS, ...CLOUD_TOOLS] : TOOLS
+  const tools = TOOLS.filter((t) => offered(t.name, ctx))
+  return readCredential(ctx.home) ? [...tools, ...CLOUD_TOOLS] : tools
+}
+
+/** restore_text only when the person started the server with it (FR-018). */
+function offered(name: string, ctx: ToolContext): boolean {
+  return name !== 'restore_text' || ctx.restoreText === true
 }
 
 /**

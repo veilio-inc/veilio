@@ -53,7 +53,7 @@ afterEach(() => {
 function newCtx(): ToolContext {
   const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-work-'))
   homes.push(cwd) // reuse cleanup list; not actually a home, just needs removing
-  return { cwd, mapPath: null }
+  return { cwd, mapPath: null, restoreText: true }
 }
 
 const TEAM_NAMESPACE = { __CLS__1: 'PaymentGateway' }

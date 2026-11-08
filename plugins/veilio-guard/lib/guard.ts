@@ -20,7 +20,22 @@ import {
   type StoredMap,
   type SymbolMap,
 } from './mapfile.ts'
-import { isRawOnly, pathsInCommand } from './paths.ts'
+import {
+  allCdTargets,
+  cdIntoRawOnly,
+  cdTargets,
+  cdTargetsToJudge,
+  DEFAULT_RAW_ONLY,
+  isRawOnly,
+  isWriteProtected,
+  normalisePath,
+  pathsInCommand,
+  rawOnlyDirectories,
+  rawOnlyOf,
+  shortNameAlias,
+  windowsAlias,
+} from './paths.ts'
+import { restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -35,6 +50,8 @@ import {
   applyMap,
   Destroyed,
   destroyedValues,
+  decodedRuns,
+  encodedName,
   restoreAdds,
   grow,
   ownedMap,
@@ -76,6 +93,13 @@ export interface GuardIO {
   list?(root: string): Promise<string[] | null>
   /** Resolves after `ms` ($.clock.sleep): bounds a read or `git` that hangs. */
   sleep?(ms: number): Promise<void>
+  /** Spec 078 R6: makes a file owner-only (0600). Absent (Windows): files
+   *  are written as the host makes them. */
+  chmod?(path: string): Promise<void>
+  /** A file's permission bits, or undefined when they cannot be read. */
+  mode?(path: string): Promise<number | undefined>
+  /** Whether the machine is Windows. Absent: the engine reads the platform. */
+  windows?(): Promise<boolean>
 }
 
 // Keys whose value in a record is an enum or a status (`type`, `status`):
@@ -124,6 +148,21 @@ const MAX_RETRIES = 3
 
 export const WITHHELD_FAILED =
   'Veilio withheld this result: the guard failed while checking it. Nothing from it was sent.'
+/** strings.md #11, as `withheld` completes it. */
+export const RESHAPED_CREDENTIAL =
+  'a credential removed earlier in this session came back in another form (spaced, split, sliced or encoded). Nothing from it was sent'
+/** strings.md #12, as `withheld` completes it. */
+export const ENCODED_NAME =
+  'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
+/** strings.md #15 and #16. */
+export const BACK_ON =
+  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off for this project, run /veilio off.'
+export const MCP_IGNORED =
+  "Veilio: mcpRestore in .veilio/guard.json was ignored, because a file in the project can be written by the agent. Set it in the plugin's settings (/config)."
+/** strings.md #9. */
+const SETTINGS_PROTECTED =
+  "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
 
@@ -158,9 +197,13 @@ const withheldText = (w: Withheld) =>
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
-  /** guard.json is the repository's, or cannot be shown to be this checkout's. */
-  private settingsFromRepository = false
   root = ''
+  /** The user's home ($HOME): where the off record is kept (spec 078 FR-010). */
+  home: string | undefined
+  /** Said once a session (register.ts logs them): settings the guard ignored. */
+  notices: string[] = []
+  /** The off record could not be read: the guard stays on, and the band says so. */
+  offRecordUnreadable = false
   /** The session's working directory: what a search's paths are read from. */
   cwd = ''
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
@@ -249,24 +292,38 @@ export class Guard {
 
   /** What a tool's arguments are restored from: the saved map, and the
    *  renumbered old placeholders where the map does not give them another
-   *  name (a contested one is in neither, as in the CLI). Quarantine never. */
+   *  name (a contested one is in neither, as in the CLI). Quarantine never,
+   *  and no alias whose name shares 12 characters with a removed credential
+   *  (FR-006, review round 1 item 4). */
   private get restoreMap(): SymbolMap {
+    this.settle()
     const map = this.stored.map
     const keys = Object.keys(this.aliases)
     if (keys.length === 0) return map
-    // One object per (map, aliases): restoreArgs caches its matcher by map object.
+    // One object per (map, aliases, removed credentials): restoreArgs caches
+    // its matcher by map object.
     const c = this.restoreCache
-    if (c && c.map === map && c.aliases === this.aliases && c.version === versionOf(map))
+    const learned = this.destroyed.version
+    if (
+      c &&
+      c.map === map &&
+      c.aliases === this.aliases &&
+      c.version === versionOf(map) &&
+      c.learned === learned
+    )
       return c.out
     const out: SymbolMap = { ...this.aliases, ...map }
-    for (const p of keys) if (p in map && map[p] !== this.aliases[p]) delete out[p]
-    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), out }
+    for (const p of keys)
+      if ((p in map && map[p] !== this.aliases[p]) || this.destroyed.sharesWindow(this.aliases[p]!))
+        delete out[p]
+    this.restoreCache = { map, aliases: this.aliases, version: versionOf(map), learned, out }
     return out
   }
   private restoreCache: {
     map: SymbolMap
     aliases: SymbolMap
     version: number
+    learned: number
     out: SymbolMap
   } | null = null
 
@@ -285,8 +342,36 @@ export class Guard {
   private quarantineNext = 0
   private merged: { base: SymbolMap; size: number; map: SymbolMap } | null = null
 
+  /** Spec 078 FR-006, at load: a saved entry sharing 12 characters with a
+   *  credential removed this session goes to the quarantine, in memory only,
+   *  so it is never restored. Re-run when the map or that set changes. */
+  private settledFor: { stored: StoredMap; version: number } | null = null
+  private quarantinedNames = new Map<string, string>()
+  private settle(): void {
+    const s = this.settledFor
+    if (s && s.stored === this.stored && s.version === this.destroyed.version) return
+    const map = this.stored.map
+    const out = Object.entries(map).filter(([, name]) => !this.destroyed.sharesWindow(name))
+    if (out.length < Object.keys(map).length) {
+      for (const [, name] of Object.entries(map))
+        if (this.destroyed.sharesWindow(name)) this.quarantineName(name)
+      this.stored = { ...this.stored, map: ownedMap(Object.fromEntries(out)) }
+    }
+    this.settledFor = { stored: this.stored, version: this.destroyed.version }
+  }
+
+  /** `name` under a placeholder of its own namespace, which no saved entry
+   *  can share (review of 58d3dae): masked this session, never saved. */
+  private quarantineName(name: string, hold = true): void {
+    const own = this.quarantinedNames.get(name) ?? `__QUARANTINED__${++this.quarantineNext}`
+    this.quarantinedNames.set(name, own)
+    this.quarantine[own] = name
+    if (hold) this.destroyed.hold(name, own)
+  }
+
   /** What masking reads: the saved map and this session's quarantine. */
   get map(): SymbolMap {
+    this.settle()
     const size = Object.keys(this.quarantine).length
     if (size === 0) return this.stored.map
     if (!this.merged || this.merged.base !== this.stored.map || this.merged.size !== size) {
@@ -316,18 +401,21 @@ export class Guard {
     // Security audit 2026-11-01: files under .veilio/ committed to the
     // repository are its author's, not this checkout's.
     const committed = await this.trackedVeilioFiles()
-    // Unknown (no git listing, or a late one): nobody can tell whose
-    // guard.json it is, so it may only tighten (review of a7b6a1b).
-    this.settingsFromRepository = committed === null || committed.includes('.veilio/guard.json')
+    // Spec 078 R7: with no listing, nobody can tell who wrote the map.
+    this.noListing = committed === null
+    this.home = home
+    // A host may answer with a promise or a plain boolean (review round 3).
+    const host = this.io.windows
+    this.windows = host
+      ? await Promise.resolve()
+          .then(() => host())
+          .catch(() => undefined)
+      : undefined
     await this.readSettings()
+    await this.readOffRecord()
     await this.reloadMap()
-    // A committed map or aliases file: its values would be restored into
-    // commands the model only saw as placeholders.
-    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
-    if (tracked.length)
-      this.stop(
-        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
-      )
+    this.stopIfTracked(committed)
+    this.shellDir = cwd
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
@@ -349,7 +437,13 @@ export class Guard {
         )
         this.counts.outsideReserved += outside
         if (rulesStopped) this.counts.rulesStopped++
-        grow(this.unsaved, additions)
+        // A file holding a removed credential in another form (pieces under
+        // 12 characters each, review round 1 item 7): its names are masked
+        // this session and never saved. Not swept as held names: a result
+        // that shows the pieces must still read as reshaped, and be withheld.
+        if (this.destroyed.reshaped(text))
+          for (const name of Object.values(additions)) this.quarantineName(name, false)
+        else grow(this.unsaved, additions)
         this.batch.push(rel)
       },
       (rel) => isRawOnly(join(this.root, rel), this.extraRawOnly)
@@ -521,10 +615,10 @@ export class Guard {
     return null
   }
 
-  /** `fromRepository`: guard.json is committed, so it may only tighten - add
-   *  raw-only paths - never widen what reaches an MCP server or switch the
-   *  guard off (security audit 2026-11-01). */
-  private async readSettings(fromRepository = this.settingsFromRepository): Promise<void> {
+  /** Spec 078 FR-009: guard.json, which the agent's tools can write by some
+   *  route, may only tighten - add raw-only paths - whoever wrote it, tracked
+   *  or not. Its mcpRestore and enabled are ignored, and said once. */
+  private async readSettings(): Promise<void> {
     this.extraRawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
     if (!(await this.io.exists(this.settingsPath))) return
@@ -535,14 +629,49 @@ export class Guard {
       this.stop(`.veilio/guard.json is not valid JSON`)
       return
     }
-    if (Array.isArray(settings.rawOnly)) {
-      this.extraRawOnly.push(...settings.rawOnly.filter((p): p is string => typeof p === 'string'))
+    this.extraRawOnly.push(...rawOnlyOf(settings))
+    if (settings.enabled === false) this.notice(BACK_ON)
+    if (settings.mcpRestore !== undefined) this.notice(MCP_IGNORED)
+  }
+
+  private said = new Set<string>()
+  private notice(text: string): void {
+    if (this.said.has(text)) return
+    this.said.add(text)
+    this.notices.push(text)
+  }
+
+  get offRecordPath(): string | undefined {
+    return this.home ? join(this.home, '.veilio', 'guard-state.json') : undefined
+  }
+
+  /** The project's key in the off record: the root's real path. */
+  private async recordKey(): Promise<string> {
+    return (await this.io.realPath(this.root)) ?? this.root
+  }
+
+  /** The off record, or null when there is none; throws when it cannot be read. */
+  private async offRecord(): Promise<{ version: 1; projects: Record<string, unknown> } | null> {
+    const path = this.offRecordPath
+    if (!path || !(await this.io.exists(path))) return null
+    const parsed: unknown = JSON.parse(await this.io.read(path))
+    const projects = (parsed as { projects?: unknown } | null)?.projects
+    if (!projects || typeof projects !== 'object' || Array.isArray(projects))
+      throw new Error('not an off record')
+    return { version: 1, projects: projects as Record<string, unknown> }
+  }
+
+  /** Spec 078 FR-010: whether /veilio off was run for this project. An
+   *  unreadable record never turns the guard off. */
+  private async readOffRecord(): Promise<void> {
+    this.offRecordUnreadable = false
+    try {
+      const record = await this.offRecord()
+      const entry = record?.projects[await this.recordKey()] as { enabled?: unknown } | undefined
+      if (entry?.enabled === false && this.state === 'on') this.state = 'off'
+    } catch {
+      this.offRecordUnreadable = true
     }
-    if (fromRepository) return
-    if (Array.isArray(settings.mcpRestore)) {
-      this.mcpRestore.push(...settings.mcpRestore.filter((p): p is string => typeof p === 'string'))
-    }
-    if (settings.enabled === false) this.state = 'off'
   }
 
   /** Spec 063: read the member's blocks. Never fatal: without them the guard numbers as it always did. */
@@ -580,8 +709,26 @@ export class Guard {
       this.stop(`the map at .veilio/map.json could not be read: ${parsed.reason}`)
       return
     }
+    // Review round 1 item (c): a map already there that others can read
+    // (an older guard's, a copy) is made owner-only, and checked. One with
+    // names stops the guard; one without is said once, and a save stops it
+    // before a name is written there (review round 2).
+    this.mapReadable = false
+    if (this.io.chmod && !(await this.ownerOnly(this.mapPath))) {
+      await this.io.chmod(this.mapPath).catch(() => undefined)
+      if (!(await this.ownerOnly(this.mapPath))) {
+        if (Object.keys(parsed.stored.map).length > 0) {
+          this.stopReadable()
+          return
+        }
+        this.mapReadable = true
+        this.notice(EMPTY_MAP_READABLE)
+      }
+    }
     this.stored = parsed.stored
   }
+  /** The map at load was readable by others and held no names (round 2). */
+  private mapReadable = false
 
   /** Never fatal: a missing or unreadable file restores nothing extra. */
   private async readAliases(): Promise<SymbolMap> {
@@ -625,41 +772,103 @@ export class Guard {
     )
   }
 
+  /** A committed map or aliases file: its values would be restored into
+   *  commands the model only saw as placeholders. */
+  private stopIfTracked(committed: string[] | null): void {
+    const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
+    if (tracked.length)
+      this.stop(
+        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
+      )
+  }
+
   stop(reason: string): void {
     this.state = 'stopped'
     this.stoppedReason = reason
   }
 
-  async setEnabled(enabled: boolean): Promise<void> {
-    // Merged into what the file holds, so the project's own lists survive.
-    let settings: Record<string, unknown> = {}
-    if (await this.io.exists(this.settingsPath)) {
+  /** /veilio off|on: recorded in ~/.veilio/guard-state.json (spec 078
+   *  FR-010), never in the project. Says whether it was recorded. */
+  async setEnabled(enabled: boolean): Promise<boolean> {
+    const path = this.offRecordPath
+    let recorded = false
+    if (path) {
+      let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
       try {
-        const parsed: unknown = JSON.parse(await this.io.read(this.settingsPath))
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-          settings = parsed as Record<string, unknown>
+        record = (await this.offRecord()) ?? record
       } catch {
-        // An unreadable file is replaced; readSettings stopped the guard on it.
+        // An unreadable record is replaced: this is the user's own choice.
       }
+      const key = await this.recordKey()
+      const projects = { ...record.projects }
+      if (enabled) delete projects[key]
+      else projects[key] = { enabled: false, changedAt: new Date().toISOString().slice(0, 10) }
+      const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
+      if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
+      await this.io.write(path, text)
+      this.offRecordUnreadable = false
+      recorded = true
     }
-    const changedAt = new Date().toISOString().slice(0, 10)
-    await this.io.write(
-      this.settingsPath,
-      `${JSON.stringify({ ...settings, enabled, changedAt }, null, 2)}\n`
-    )
-    await this.ensureIgnored()
     this.state = enabled ? 'on' : 'off'
     if (enabled) {
       this.stoppedReason = ''
       await this.readSettings()
       await this.reloadMap()
+      // Spec 085 H14: on again is never past the stop a tracked map puts on it.
+      this.stopIfTracked(await this.trackedVeilioFiles())
+    }
+    return recorded
+  }
+
+  /** Spec 078 FR-014: .veilio and the map must be where they appear, not a
+   *  link to somewhere else (the CLI's refuseLinks, through the host's stat). */
+  private async refuseLinks(): Promise<void> {
+    const root = (await this.io.realPath(this.root)) ?? this.root
+    const dir = await this.io.realPath(join(this.root, '.veilio'))
+    const map = await this.io.realPath(this.mapPath)
+    if (
+      (dir !== undefined && dir !== join(root, '.veilio')) ||
+      (map !== undefined && map !== join(root, '.veilio', 'map.json'))
+    ) {
+      this.stop(
+        'the map at .veilio/map.json is a link to somewhere else, so Veilio will not write the real names there. Fix it, then start a new session'
+      )
+      throw new Error(this.stoppedReason)
     }
   }
 
   private async ensureIgnored(): Promise<void> {
     // The store holds the real names; it must never be committed.
     const ignore = join(this.root, '.veilio', '.gitignore')
-    if (!(await this.io.exists(ignore))) await this.io.write(ignore, '*\n')
+    await this.refuseLinks()
+    if (!(await this.io.exists(ignore))) {
+      await this.createOwnerOnly(ignore, '', false)
+      await this.io.write(ignore, '*\n')
+    }
+  }
+
+  /** Spec 078 R6: a file the guard creates is written with no names in it,
+   *  made 0600, and checked, before its content is written. `names`: a file
+   *  that holds them stops the guard when it cannot be made owner-only. */
+  private async createOwnerOnly(path: string, empty: string, names = true): Promise<void> {
+    await this.io.write(path, empty)
+    if (!this.io.chmod) return
+    await this.io.chmod(path).catch(() => undefined)
+    if (names && !(await this.ownerOnly(path))) {
+      this.stopReadable()
+      throw new Error(this.stoppedReason)
+    }
+  }
+
+  private async ownerOnly(path: string): Promise<boolean> {
+    const mode = this.io.mode ? await this.io.mode(path).catch(() => undefined) : undefined
+    return mode !== undefined && (mode & 0o077) === 0
+  }
+
+  private stopReadable(): void {
+    this.stop(
+      'the map at .veilio/map.json is readable by other users, so Veilio will not write the real names there. Fix it, then start a new session'
+    )
   }
 
   // ── text ──────────────────────────────────────────────────────────────────
@@ -671,7 +880,7 @@ export class Guard {
     scan?: ScanResult,
     budget: RuleBudget = ruleBudget()
   ): string {
-    return this.gate(this.maskText(text, kind, scan, budget))
+    return this.gate(this.maskText(text, kind, scan, budget), text)
   }
 
   /** Spec 065: the names a replace rule matches in text bound for the model
@@ -713,10 +922,36 @@ export class Guard {
 
   /** The same last gate as a tool's result: a credential still here fails the
    *  text (the hook drops the prompt or leaves the text out). */
-  private gate(out: string): string {
+  private gate(out: string, before: string): string {
     if (survivingSecrets(out, this.map).length > 0)
       throw new Error('a credential remained after masking')
-    return out
+    return this.see(out, before)
+  }
+
+  /** Spec 078 R7: the placeholders this session put into text bound for the
+   *  model. Outside git only these are restored. Only what masking put there
+   *  counts: a token already in `before` - one the model wrote and got
+   *  echoed back in a refusal, a result or a denial - is not shown. So are
+   *  not the example placeholders of the guard's own note, which comes in
+   *  with the text. */
+  private shown = new Set<string>()
+  private noListing = false
+  private see(text: string, before: string): string {
+    if (!this.noListing) return text
+    const token = /__[A-Z0-9_]+__\d*/g
+    const had = new Set(before.match(token) ?? [])
+    for (const m of text.matchAll(token)) if (!had.has(m[0])) this.shown.add(m[0])
+    return text
+  }
+  private shownCache: { from: SymbolMap; size: number; map: SymbolMap } | null = null
+  /** What restores outside git: the entries of `from` this session showed. */
+  private shownMap(from: SymbolMap): SymbolMap {
+    const c = this.shownCache
+    if (c && c.from === from && c.size === this.shown.size) return c.map
+    const map: SymbolMap = {}
+    for (const p of this.shown) if (Object.hasOwn(from, p)) map[p] = from[p]!
+    this.shownCache = { from, size: this.shown.size, map }
+    return map
   }
 
   /** Texts that reach the model together (a prompt and its context, the
@@ -846,7 +1081,7 @@ export class Guard {
     budget: RuleBudget,
     back: (key: string) => string
   ): string {
-    const full = () => this.gate(this.maskText(text, 'result', undefined, budget))
+    const full = () => this.gate(this.maskText(text, 'result', undefined, budget), text)
     if (text.includes('\u0000') || text.includes('\u0001')) return full()
     const marks = new Map<string, string>()
     let marked = ''
@@ -863,7 +1098,7 @@ export class Guard {
     for (const [key, mark] of marks) out = out.split(mark).join(back(key))
     if (out.includes('\u0000') || out.includes('\u0001')) return full()
     if (survivingSecrets(out, this.map).length > 0) return full()
-    return out
+    return this.see(out, text)
   }
 
   /** What masking knows about a text of `language` (spec 050). */
@@ -908,10 +1143,49 @@ export class Guard {
 
   // ── tool calls ────────────────────────────────────────────────────────────
 
-  private async rawOnlyHit(path: string): Promise<boolean> {
-    if (isRawOnly(path, this.extraRawOnly)) return true
-    const real = await this.io.realPath(path)
-    return real !== undefined && isRawOnly(real, this.extraRawOnly)
+  /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
+   *  null once a cd went somewhere that cannot be told (`~` with no home). */
+  private shellDir: string | null = null
+  /** Windows, as the host says; undefined: the engine reads the platform. */
+  private windows: boolean | undefined
+  private moved(dir: string | null, target: string): string | null {
+    if (target === '~' || target.startsWith('~/'))
+      return this.home ? normalisePath(join(this.home, target.slice(1))) : null
+    if (/^[/\\]|^[A-Za-z]:/.test(target)) return normalisePath(target)
+    return dir === null ? null : normalisePath(join(dir, target))
+  }
+  /** The directories a command's relative words may be read from: where the
+   *  shell is, and where each of its own cds takes it. */
+  private shellDirsOf(command: string): string[] {
+    const dirs: string[] = []
+    let dir = this.shellDir
+    if (dir !== null && dir !== this.cwd) dirs.push(dir)
+    for (const t of allCdTargets(command)) {
+      dir = this.moved(dir, t)
+      if (dir !== null) dirs.push(dir)
+    }
+    return dirs
+  }
+
+  /** A relative path from the session's directory: the host resolves one
+   *  from the mod's own, which is not where the agent's shell is. */
+  private here(path: string): string {
+    return /^[/\\~]|^[A-Za-z]:/.test(path) || !this.cwd ? path : join(this.cwd, path)
+  }
+
+  /** Whether a path is write-protected (spec 078 FR-012) and whether it is
+   *  raw-only (as written, with `.`/`..` resolved, FR-007), each as written
+   *  or where it leads: resolved once for both (review round 2). */
+  private async pathHits(path: string): Promise<{ written: boolean; rawOnly: boolean }> {
+    const raw =
+      isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
+    const written = isWriteProtected(path)
+    if (raw && written) return { written, rawOnly: raw }
+    const real = await this.io.realPath(this.here(path))
+    return {
+      written: written || (real !== undefined && isWriteProtected(real)),
+      rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
+    }
   }
 
   /** Before the tool runs: the raw-only check, then the arguments restored. */
@@ -923,9 +1197,13 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const resolved = new Set<string>()
+    const from = this.restoreMap
+    const restorable = this.noListing ? this.shownMap(from) : from
+    const unshown = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
-      const r = restoreArgs(s, this.restoreMap)
+      const r = restoreArgs(s, restorable)
+      r.unresolved.filter((p) => Object.hasOwn(from, p)).forEach((p) => unshown.add(p))
       r.resolved.forEach((p) => resolved.add(p))
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
@@ -976,21 +1254,46 @@ export class Guard {
         'a placeholder in it stands for text that is not a plain name or path (spaces, shell syntax or an option), which is never put back into a shell command. Ask the user to run it'
       )
 
-    for (const field of policy.paths) {
-      for (const p of [e[field], args[field]]) {
-        if (typeof p === 'string' && (await this.rawOnlyHit(p))) {
-          return this.deny(
-            `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
-            false
-          )
-        }
-      }
-    }
+    const named: [string, { written: boolean; rawOnly: boolean }][] = []
+    for (const field of policy.paths)
+      for (const p of [e[field], args[field]])
+        if (typeof p === 'string') named.push([p, await this.pathHits(p)])
+    // Spec 078 FR-012: Claude Code's settings, in every permission mode.
+    if (WRITE_TOOLS.has(e.tool) && named.some(([, h]) => h.written))
+      return this.deny(SETTINGS_PROTECTED)
+
+    // A Windows stream or short name may stand for a raw-only file.
+    for (const [p, h] of named)
+      if (windowsAlias(p) || h.rawOnly)
+        return this.deny(
+          `Veilio keeps ${this.applyText(p, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+          false
+        )
     if (policy.command) {
+      const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
         if (typeof c !== 'string') continue
+        // Spec 078 FR-008: a cd there would let a later command read it by a
+        // short name, in this call or the next (the shell keeps its directory).
+        // A glob target could be any of them (review round 1 of spec 078).
+        const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
+        if (into !== undefined)
+          return this.deny(
+            `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+            false
+          )
+        // Spec 085 H17: a word after a cd names a file in the directory the
+        // shell moved to, in this call or an earlier one: checked there too.
+        const moves = this.shellDirsOf(c)
         for (const word of pathsInCommand(c)) {
-          if (await this.rawOnlyHit(word)) {
+          const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
+          // Spec 078 FR-012, found the way raw-only files are (review round 1).
+          const hits = []
+          for (const at of [word, ...under]) hits.push(await this.pathHits(at))
+          if (hits.some((h) => h.written)) return this.deny(SETTINGS_PROTECTED)
+          const hit =
+            hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
+          if (hit) {
             return this.deny(
               `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
@@ -1010,7 +1313,7 @@ export class Guard {
         }
         for (const s of strings) {
           // A path, not prose that mentions one: no whitespace.
-          if (isPathLike(s) && (await this.rawOnlyHit(s))) {
+          if (isPathLike(s) && (await this.pathHits(s)).rawOnly) {
             return this.deny(
               `Veilio keeps ${this.applyText(s, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
@@ -1044,12 +1347,25 @@ export class Guard {
 
     if (writes && (unresolved.size > 0 || altered.size > 0)) {
       const names = [...unresolved, ...altered].join(', ')
+      // strings.md #10: outside git, a planted entry is one never shown.
+      const which = [...unresolved].every((p) => unshown.has(p)) && altered.size === 0
       return this.deny(
-        `the call names ${names}, which the project's map does not have` +
+        `the call names ${names}, ${which ? 'which this session has not shown you' : "which the project's map does not have"}` +
           (altered.size ? ' (a placeholder was changed: keep its exact spelling)' : '') +
           '. Read the file again and use the placeholders it shows' +
           viaEdit
       )
+    }
+    // Spec 078 R1 (A#1): a placeholder goes back into a shell command only
+    // when the command reads files or runs tests; anything else could reshape
+    // the real name or send it off the machine.
+    if (policy.command && resolved.size > 0) {
+      const command = e[policy.command]
+      const why = restoreRefusal(
+        typeof command === 'string' ? command : '',
+        e.tool === 'PowerShell' ? 'PowerShell' : 'Bash'
+      )
+      if (why) return this.deny(why)
     }
     return { args }
   }
@@ -1096,7 +1412,7 @@ export class Guard {
     const left = survivingSecrets(shaped.text, { ...this.map, ...shaped.additions })
     if (left.length > 0)
       return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-    return { deny: shaped.text }
+    return { deny: this.see(shaped.text, raw) }
   }
 
   /** After the tool ran: the listed fields scrubbed, new names saved, then the secret re-scan. */
@@ -1111,6 +1427,10 @@ export class Guard {
     // First, whatever the outcome: a failed command may have moved the shell.
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
       this.shellMoved = true
+    if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
+      // Only a top-level cd moves the shell the next call runs in; one in a
+      // substitution or a nested shell does not (review round 2 of spec 078).
+      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Spec 050: the files this result names are indexed before it is masked,
@@ -1130,12 +1450,22 @@ export class Guard {
     // (review of 99325ba). Enum fields are left for the last scan, which
     // withholds the result.
     const strip = (s: string) => redactKnown(s, this.destroyed)
+    // A shell's stdout, read now or later from a background shell (review round 1 item 5).
+    const shell = SHELL_OUTPUT.has(tool)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
       const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      // A failed command's text reaches the model too (security review of
+      // the encoded-name check).
+      const runs = new DecodedOnce()
+      if (shell && encodedName(raw, this.map, () => runs.of(raw)) !== null)
+        return this.withhold(ENCODED_NAME)
       this.destroyed.learn(destroyedValues([raw], this.map))
+      const stripped = strip(raw)
+      if (this.destroyed.reshaped(stripped, () => runs.of(stripped)))
+        return this.withhold(RESHAPED_CREDENTIAL)
       return this.maskMessage(strip(raw), args, deadline, budget, true)
     }
     const filePath = typeof args.file_path === 'string' ? args.file_path : ''
@@ -1189,6 +1519,26 @@ export class Guard {
                 new Set(policy.kind === 'fields' ? policy.keep : [])
               ),
       }
+
+    // Spec 078 FR-005: what the sweep above removed whole may still be here
+    // reformatted, sliced or encoded; read before masking, which would mint
+    // a slice as a name.
+    // Spec 078 FR-018a: a shell can print a project name encoded, which
+    // masking does not read; read before masking, which would mint it. Each
+    // string's base64 and hex runs are decoded once for both checks (review
+    // round 1 item (f)).
+    const runs = new DecodedOnce()
+    let reshaped = false
+    let encoded = false
+    deepRewrite(outcome.result, (s) => {
+      // Exact copies left in a kept field are the last scan's (it names them).
+      const stripped = strip(s)
+      reshaped ||= this.destroyed.reshaped(stripped, () => runs.of(stripped))
+      if (shell) encoded ||= encodedName(s, this.map, () => runs.of(s)) !== null
+      return s
+    })
+    if (reshaped) return this.withhold(RESHAPED_CREDENTIAL)
+    if (encoded) return this.withhold(ENCODED_NAME)
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const working: SymbolMap = ownedMap(this.map)
@@ -1295,6 +1645,8 @@ export class Guard {
       })
       if (left.length > 0)
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
+      const given = texts.join('\n')
+      deepRewrite(value, (s) => this.see(s, given))
       return { result: value }
     }
     return this.withhold(
@@ -1477,20 +1829,18 @@ export class Guard {
     if (learned.length > 0) {
       const kept: SymbolMap = {}
       for (const [placeholder, name] of Object.entries(additions)) {
-        if (learned.some((v) => name.includes(v))) {
-          // A namespace of its own, which no saved entry can share (review
-          // of 58d3dae). Minted before any text holds the engine's number:
-          // only indexing raw files sends a name here.
-          const own = `__QUARANTINED__${++this.quarantineNext}`
-          void placeholder
-          this.quarantine[own] = name
-          this.destroyed.hold(name, own)
+        // Spec 078 FR-006: 12 characters of one is enough (N1).
+        if (learned.some((v) => name.includes(v)) || this.destroyed.sharesWindow(name)) {
+          // Minted before any text holds the engine's number: only indexing
+          // raw files sends a name here.
+          this.quarantineName(name)
           quarantined++
         } else kept[placeholder] = name
       }
       additions = kept
     }
     const run = this.writes.then(async () => {
+      await this.refuseLinks()
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
       if (existed) {
@@ -1510,6 +1860,16 @@ export class Guard {
         return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
+      if (existed && this.mapReadable && this.io.chmod) {
+        await this.io.chmod(this.mapPath).catch(() => undefined)
+        if (!(await this.ownerOnly(this.mapPath))) {
+          this.stopReadable()
+          throw new Error(this.stoppedReason)
+        }
+        this.mapReadable = false
+      }
+      if (!existed)
+        await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       await this.io.write(this.mapPath, serialiseMapFile(next))
       if (!existed) await this.ensureIgnored()
       this.stored = next
@@ -1521,9 +1881,26 @@ export class Guard {
   }
 }
 
+/** Each text's decoded base64 and hex runs, decoded when a check first asks
+ *  (one that needs none never does), and once for two checks of one text. */
+class DecodedOnce {
+  private last: { text: string; runs: string[] } | null = null
+  of(text: string): readonly string[] {
+    if (this.last?.text !== text) this.last = { text, runs: decodedRuns(text) }
+    return this.last.runs
+  }
+}
+
+/** Review round 2 #7: said once, when a map with no names cannot be made 0600. */
+const EMPTY_MAP_READABLE =
+  'Veilio: .veilio/map.json is readable by other users and could not be made owner-only. It holds no names yet; Veilio will stop before it writes one there.'
+
+/** The tools whose result is a shell's output. */
+const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])
+
 /** A command that changes the shell's directory: `cd`, `pushd` or `popd`
- *  at its start or after `&&`, `||`, `;` or `|`. */
-const MOVES = /(?:^|&&|\|\||[;|])\s*(?:cd|pushd|popd)(?:\s|$)/
+ *  at its start or after `&&`, `||`, `;`, `|`, a lone `&`, a newline or `(`. */
+const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers
  *  unless `-n` is false, context lines when asked for, no path when `path`

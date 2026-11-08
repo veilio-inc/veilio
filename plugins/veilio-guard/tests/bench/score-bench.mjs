@@ -219,6 +219,35 @@ for (const [label, test] of reasons)
   out.push(`| ${label} | ${arms.map((a) => of(a).filter(test).length).join(' | ')} |`)
 out.push('')
 
+// Spec 078: the guard's time per afterTool call (p95 bound: 50 ms over the
+// baseline guard), and what every refusal and withhold met.
+const timed = runs.filter((r) => r.guardHookMs)
+if (timed.length) {
+  out.push('## Guard time per tool result', '')
+  out.push('| arm | calls | p50 ms | p95 ms (worst session) | max ms |', '|---|---|---|---|---|')
+  for (const a of arms) {
+    const rs = timed.filter((r) => r.arm === a)
+    if (!rs.length) continue
+    const n = rs.reduce((x, r) => x + r.guardHookMs.n, 0)
+    const p50 = median(rs.map((r) => r.guardHookMs.p50))
+    const p95 = Math.max(...rs.map((r) => r.guardHookMs.p95))
+    const max = Math.max(...rs.map((r) => r.guardHookMs.max))
+    out.push(`| ${a} | ${n} | ${p50} | ${p95} | ${max} |`)
+  }
+  out.push('')
+}
+const stopped = runs.filter((r) => r.guardStops?.length)
+if (stopped.length) {
+  out.push('## Refused and withheld, one by one', '')
+  out.push('| session | kind | call | reason |', '|---|---|---|---|')
+  for (const r of stopped)
+    for (const st of r.guardStops)
+      out.push(
+        `| ${r.task} ${r.arm} #${r.rep} | ${st.kind} | \`${st.call.replace(/[|`\n]/g, ' ')}\` | ${st.reason.replace(/[|\n]/g, ' ')} |`
+      )
+  out.push('')
+}
+
 out.push('## Per task', '')
 out.push(`| task | ${arms.map((a) => `${a}: fixed · turns · cost`).join(' | ')} |`)
 out.push(`|---|${arms.map(() => '---').join('|')}|`)

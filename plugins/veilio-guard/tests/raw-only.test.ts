@@ -183,3 +183,260 @@ test('prose that mentions a raw-only file is not a path: a subagent prompt or an
   expect(b.deny).toBeUndefined()
   expect(seen.length).toBe(2)
 })
+
+// Spec 078 US3 (A#4, research R4): `..` is resolved before the raw-only
+// check, and a cd or pushd toward a raw-only directory is refused, so no later
+// command - in the same call or the next - can read it by a short name.
+const CD = (dir: string) =>
+  `Veilio keeps \`${dir}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.`
+const SECRETS = { [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }) }
+
+const CD_REFUSED: [string, string][] = [
+  ['cd .kube; cat config', '.kube'],
+  ['cd ~/.aws && cat credentials', '~/.aws'],
+  ['pushd .veilio && cat map.json', '.veilio'],
+  ['cd secrets && cat db.txt', 'secrets'],
+  ["cd .veilio && printf '{}' > guard.json", '.veilio'],
+  ['cd .aws', '.aws'],
+  ['cd ~/.config && cat gcloud/credentials.db', '~/.config'],
+  ['cd .docker', '.docker'],
+  ['pushd .kube', '.kube'],
+  ['cd ./secrets/', './secrets/'],
+  ['cd x && cd ../.veilio', '../.veilio'],
+  ['ls; cd .azure/profiles', '.azure/profiles'],
+  ['ls & cd .aws', '.aws'],
+  ['ls\ncd .aws', '.aws'],
+  ['(cd .aws && ls)', '.aws'],
+  ['cd -P .aws', '.aws'],
+  ['cd /home/dev/.config/gcloud', '/home/dev/.config/gcloud'],
+]
+test('a cd or pushd toward a raw-only directory is refused, wherever it stands in the command', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  for (const [command, dir] of CD_REFUSED) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${JSON.stringify(command)} -> ${out.deny}`).toBe(
+      `${JSON.stringify(command)} -> ${CD(dir)}`
+    )
+  }
+  expect(seen.length).toBe(0)
+})
+
+test('the two-call form: the cd is refused, so the next short name cannot inherit it', async ($, on) => {
+  project(on, {})
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  const first = await $.tool.call({ tool: 'Bash', command: 'cd .aws', description: 'x' })
+  expect(first.deny).toBe(CD('.aws'))
+  expect(seen.length).toBe(0)
+})
+
+for (const command of ['cd packages/cli && npm test', 'cd src', 'cd ..', 'cd ~', 'cd', 'cd -'])
+  test(`an ordinary cd still runs: ${command}`, async ($, on) => {
+    project(on, SECRETS)
+    let ran = false
+    on('tool.call', () => {
+      ran = true
+      return { result: { stdout: '', stderr: '', interrupted: false } }
+    })
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+
+for (const command of [
+  'cat .aws/sso/../credentials',
+  'cat a/../.aws/credentials',
+  'cat ./.kube/./config',
+  'cat src/../.veilio/./map.json',
+])
+  test(`a path with . or .. is checked as resolved too: ${command}`, async ($, on) => {
+    project(on, {})
+    let ran = false
+    on('tool.call', () => {
+      ran = true
+      return { result: { stdout: '', stderr: '', interrupted: false } }
+    })
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain('away from the model')
+  })
+
+test('a Read of a path with .. that resolves to a raw-only file is refused', async ($, on) => {
+  project(on, {})
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: 'x' }
+  })
+  const out = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/.aws/sso/../credentials` })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('away from the model')
+})
+
+// Security review of the MCP raw-only refusal (the same gap in the guard's
+// file tools): NTFS streams, trailing dots and 8.3 short names.
+test('a Read of a Windows spelling of a raw-only file is refused', async ($, on) => {
+  project(on, ENV)
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: 'x' }
+  })
+  for (const path of [
+    '.env::$DATA',
+    '.env:x',
+    '.env.',
+    'ENV~1',
+    'C:\\work\\project\\.env::$DATA',
+  ]) {
+    const out = await $.tool.call({ tool: 'Read', file_path: path })
+    expect(`${path} -> ${out.deny}`).toContain('away from the model')
+  }
+  expect(ran).toBe(false)
+})
+
+// Spec 085 handover H17 (lead L17): a word after a cd is a path in the
+// directory the cd moved to, in the same call and in the next one.
+const SUB = { [`${ROOT}/sub/notes`]: '', [`${ROOT}/.env`]: 'DB_HOST=db.example.invalid\n' }
+test('H17: cd sub && cat notes is refused when sub/notes is a link to .env', async ($, on) => {
+  project(on, SUB, { links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  let ran = false
+  on(
+    'tool.call',
+    () => ((ran = true), { result: { stdout: 'DB_HOST=db.example.invalid', stderr: '' } })
+  )
+  const out = await $.tool.call({ tool: 'Bash', command: 'cd sub && cat notes', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(ran).toBe(false)
+})
+
+test('H17: after cd sub in one call, cat notes in the next is refused', async ($, on) => {
+  project(on, SUB, { links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const first = await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })
+  expect(first.deny).toBeUndefined()
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(seen).toHaveLength(1)
+})
+
+// Review round 1 (T030) #9: a cd hidden from the chain split - a glob, a
+// command substitution, backticks, a nested shell or eval - and (d) a Windows
+// short name in a shell word.
+for (const command of [
+  'cd .a*s && cat credentials',
+  'echo $(cd .aws && cat credentials)',
+  'echo `cd .aws; cat credentials`',
+  "bash -c 'cd .aws && cat credentials'",
+  'eval "cd .aws && cat credentials"',
+  // A glob after the hidden cd: only the cd itself can be judged.
+  "bash -c 'cd .aws && cat cred*'",
+  // Review round 2 #4: a quoted target, and `--`, inside a nested shell.
+  `bash -c 'cd ".aws" && cat credentials'`,
+  `sh -c "cd '.aws' && cat credentials"`,
+  "bash -c 'cd -- .aws && cat credentials'",
+  // Review round 2 #5: a glob target of a real cd, however nested.
+  "bash -c 'cd .a*s && cat credentials'",
+  'echo "$(cd .a*s && cat credentials)"',
+  // Security review of round 2: wrappers, a shell by its path, process
+  // substitution and a nested subshell.
+  "env bash -c 'cd .a*s && cat credentials'",
+  "command bash -c 'cd .a*s && cat credentials'",
+  "exec bash -c 'cd .a*s && cat credentials'",
+  "/bin/bash -c 'cd .a*s && cat credentials'",
+  "nohup /usr/bin/zsh -c 'cd .aws && cat credentials'",
+  "xargs sh -c 'cd .a*s && cat credentials'",
+  'cat <(cd .a*s && cat credentials)',
+  'echo $( (cd .a*s && cat credentials) )',
+  // Second security review of round 2: quoted text is read as text only for
+  // grep, rg, echo and printf with nothing the shell expands.
+  "sudo bash -c 'cd .aws && cat credentials'",
+  "xargs sh -c 'cd .kube; cat config'",
+  "find . -exec sh -c 'cd .aws && cat credentials' \\;",
+  "$x -c 'cd .aws && cat credentials'",
+  "/bin/ba?h -c 'cd .aws && cat credentials'",
+  `python -c "import os; os.system('cd .aws && cat credentials')"`,
+  "su -c 'cd .aws && cat credentials'",
+  "watch 'cd .a*s && cat credentials'",
+  "grep 'x\\' ; cd .a*s ; cat credentials",
+  'grep -n x README.md\ncd .a*s && cat credentials',
+  'echo "$x" "cd .a*s && cat credentials"',
+  'git commit -m "ci: cd [skip ci]"',
+  // Round 3 security review: text piped into a shell, and substitutions,
+  // braces or redirections beside a text-only program.
+  'echo "cd .aws && cat credentials" | sh',
+  "printf 'cd .kube\\ncat config' | bash",
+  'echo <(cd .aws; cat credentials)',
+  'grep -h "cd .aws" notes.txt > >(sh)',
+  'echo "cd .aws" | { sh; }',
+  // Round 3, second security review: options that run a program, and any
+  // option off the per-program list.
+  'grep -h "cd .aws" notes.txt | sort --compress-program=sh',
+  'rg --pre=sh "cd .aws" notes.txt',
+  'rg --pre-glob "*" "cd .aws" notes.txt',
+  'grep --include=x "cd .a*s" notes.txt',
+  'grep -h "cd .a*s" notes.txt | sort',
+])
+  test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
+    project(on, {})
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny).toContain('away from the model')
+    expect(ran).toBe(false)
+  })
+
+// Review round 2 #2: a short name is refused on Windows only.
+test('on Windows a short name in a shell word is refused', async ($, on) => {
+  project(on, {}, { windows: true })
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat ENV~1', description: 'x' })
+  expect(out.deny).toContain('away from the model')
+  expect(ran).toBe(false)
+})
+
+test('off Windows HEAD~1 and main~3 in a shell word run', async ($, on) => {
+  project(on, {})
+  const seen: string[] = []
+  on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
+  for (const command of ['cat HEAD~1', 'ls main~3']) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
+  }
+  expect(seen).toEqual(['cat HEAD~1', 'ls main~3'])
+})
+
+// Review round 2 #5: a glob after the letters "cd" in quoted text is not a cd.
+test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on) => {
+  project(on, {})
+  const seen: string[] = []
+  on('tool.call', (_, e) => (seen.push(String(e.command)), { result: { stdout: '', stderr: '' } }))
+  const commands = [
+    'grep -rn "cd *" scripts/',
+    'echo "next: cd [the folder]"',
+    'grep "cd x" notes.txt | wc -l',
+    'grep -h "cd *" notes.txt | uniq -c | head -n 3',
+    'grep -rniw -e "cd *" scripts/',
+    'rg -n -t sh "cd *" scripts/',
+    'echo -n "cd [x]" | wc -l',
+    "printf 'cd *' | wc -c",
+  ]
+  for (const command of commands) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny ?? 'ran'}`).toBe(`${command} -> ran`)
+  }
+  expect(seen).toEqual(commands)
+})

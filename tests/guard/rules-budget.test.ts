@@ -56,6 +56,7 @@ describe('the guard and the rule budget', () => {
         skipped: { vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 },
       },
       counts: { withheld: 0, denied: 0, outsideReserved: 0, rulesStopped: 1 },
+      mcpRestore: [],
     } as unknown as Guard
     expect(bandText(g)).toContain('custom rules stopped matching: too much work')
   })

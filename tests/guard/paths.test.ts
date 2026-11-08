@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cdTargets,
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  normalisePath,
   pathsInCommand,
+  rawOnlyDirectories,
+  shortNameAlias,
+  windowsAlias,
 } from '../../plugins/veilio-guard/lib/paths.ts'
 
 // FR-004: files that must never reach the model are refused before the tool
@@ -143,4 +148,86 @@ describe('isRawOnly: case', () => {
       expect(isRawOnly(p, [])).toBe(true)
     }
   )
+})
+
+// Spec 078 R4: `.`/`..` resolved, and the directories a cd may not enter,
+// derived from the patterns (never a hand-kept list).
+describe('normalisePath, rawOnlyDirectories, cdTargets (spec 078)', () => {
+  it.each([
+    ['.aws/sso/../credentials', '.aws/credentials'],
+    ['./.kube/./config', '.kube/config'],
+    ['a/../../.veilio', '../.veilio'],
+    ['/x/../.aws', '/.aws'],
+    ['~/.aws/', '~/.aws'],
+    ['..', '..'],
+    ['.', '.'],
+  ])('normalises %j to %j', (path, want) => {
+    expect(normalisePath(path)).toBe(want)
+  })
+
+  it('derives the directories of the slash patterns, with each leading part', () => {
+    const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, 'secrets/**', 'config/prod/*.yaml'])
+    for (const d of ['.veilio', '.kube', '.aws', '.azure', '.config', '.config/gcloud', '.docker'])
+      expect(dirs).toContain(d)
+    expect(dirs).toContain('secrets')
+    expect(dirs).toContain('config/prod')
+    expect(dirs).toContain('config')
+    expect(dirs).not.toContain('.env')
+  })
+
+  it.each([
+    ['cd .aws', ['.aws']],
+    ['ls && cd a; pushd b', ['a', 'b']],
+    ['cd -P x', ['x']],
+    ['cd', []],
+    ['grep cd src', []],
+    ['ls & cd y', ['y']],
+    ['(cd z)', ['z']],
+  ])('finds the cd targets of %j', (command, want) => {
+    expect(cdTargets(command)).toEqual(want)
+  })
+})
+
+// Security review of the MCP raw-only refusal: Windows spellings of a
+// raw-only file. NTFS opens `.env::$DATA`, `.env:x` and `.env.` as `.env`, and
+// `ENV~1` is its 8.3 short name. String-level here; a live Windows check is
+// still owed.
+describe('Windows spellings of a raw-only path (spec 078)', () => {
+  it.each([
+    '.env::$DATA',
+    '.env:x',
+    '.env.',
+    '.env. .',
+    'C:\\work\\.env::$DATA',
+    'keys/id_rsa.',
+    '.veilio./map.json',
+  ])('isRawOnly(%j)', (path) => {
+    expect(isRawOnly(path, [])).toBe(true)
+  })
+  it.each(['C:\\work\\a:b.txt', 'src/x.ts:stream', 'ENV~1', 'C:\\PROGRA~1\\x', 'keys/ID_RSA~2'])(
+    'windowsAlias(%j): a stream or a short name, which no name match can judge',
+    (path) => {
+      expect(windowsAlias(path)).toBe(true)
+    }
+  )
+  it.each(['C:\\work\\src\\a.ts', 'src/a.ts', '/home/dev/notes~.md', 'a~b/c.ts'])(
+    'windowsAlias(%j) is false',
+    (path) => {
+      expect(windowsAlias(path)).toBe(false)
+    }
+  )
+})
+
+// Review round 2 #2: an 8.3 short name is a Windows thing; elsewhere `~1` in
+// a shell word is git's or a backup's (`HEAD~1`, `main~3`).
+describe('shortNameAlias is Windows-only (spec 078 review round 2)', () => {
+  it.each(['HEAD~1', 'main~3', 'ENV~1'])('%j is not a short name off Windows', (word) => {
+    expect(shortNameAlias(word, false)).toBe(false)
+  })
+  it.each(['ENV~1', 'C:\\PROGRA~1\\x'])('%j is a short name on Windows', (word) => {
+    expect(shortNameAlias(word, true)).toBe(true)
+  })
+  it('defaults to the platform it runs on', () => {
+    expect(shortNameAlias('ENV~1')).toBe(process.platform === 'win32')
+  })
 })

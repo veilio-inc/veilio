@@ -62,7 +62,7 @@ beforeEach(() => {
   mkdirSync(join(cwd, '.git'), { recursive: true })
   cloud = new FakeCloud()
   vi.stubGlobal('fetch', cloud.fetch)
-  ctx = { cwd, mapPath: null, home, destructive: false }
+  ctx = { cwd, mapPath: null, restoreText: true, home, destructive: false }
 })
 
 afterEach(() => {

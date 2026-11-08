@@ -139,16 +139,26 @@ describe('previews never carry the secret', () => {
     })
   }
 
-  it('masks all but the first two characters of a short value', () => {
-    expect(previewSecret('abcdef')).toBe('ab••••')
+  // Spec 078 FR-017 (strings.md #18, #19): no leading characters, ever.
+  it('shows only the length of a value of 12 characters or fewer', () => {
+    expect(previewSecret('abcdef')).toBe('•••• (6 chars)')
+    expect(previewSecret('abcdefghijkl')).toBe('•••• (12 chars)')
   })
 
   it('handles a one-character value without producing an empty mask', () => {
-    expect(previewSecret('a')).toBe('a•')
+    expect(previewSecret('a')).toBe('•••• (1 chars)')
   })
 
-  it('shows head, tail and length for a long value', () => {
-    expect(previewSecret('abcdefghijklmnop')).toBe('abcd…mnop (16 chars)')
+  it('shows the last four characters and the length for a long value', () => {
+    expect(previewSecret('abcdefghijklmnop')).toBe('…mnop (16 chars)')
+    expect(previewSecret('abcdefghijklm')).toBe('…jklm (13 chars)')
+  })
+
+  it('shows no leading character in any finding of the credential corpus', () => {
+    for (const { type, code } of SAMPLES) {
+      const finding = detectSecrets(code).find((f) => f.type === type)!
+      expect(`${type}: ${finding.preview}`).toMatch(/: (…\S{4}|••••) \(\d+ chars\)$/)
+    }
   })
 
   it('collapses whitespace so multi-line keys preview on one line', () => {

@@ -64,6 +64,8 @@ import {
   schedule,
   sessionEnv,
   veilioFingerprint,
+  guardStops,
+  hookTimes,
 } from './bench-lib.mjs'
 import { pathToFileURL } from 'node:url'
 
@@ -345,6 +347,7 @@ function readStream(path) {
     }
   }
   sent.push(...toolResults)
+  const stops = guardStops(lines)
   const u = result.usage ?? {}
   const final = String(result.result ?? '')
   return {
@@ -363,6 +366,8 @@ function readStream(path) {
     guardRefused: toolResults.filter((t) => /Veilio refused this call|away from the model/.test(t))
       .length,
     guardWithheld: toolResults.filter((t) => /Veilio withheld this result/.test(t)).length,
+    // Spec 078: what each refusal and withhold met, to explain them per task.
+    guardStops: stops,
     // A team arm's in-session `veilio scrub` or MCP call that met Cloud's rate
     // limit (300 / 15 min): a cost of the arm, not a product failure.
     rateLimited: toolResults.filter((t) => /Too many requests|\b429\b/.test(t)).length,
@@ -425,7 +430,11 @@ async function session(task, arm, rep, outDir, member) {
     const started = Date.now()
     // Async, so the sessions of one wave run side by side.
     const run = await new Promise((done) => {
-      const env = sessionEnv(a, { bin: a.veilioOnPath ? veilioBin(a.home ?? CLI_HOME) : '' })
+      const env = {
+        ...sessionEnv(a, { bin: a.veilioOnPath ? veilioBin(a.home ?? CLI_HOME) : '' }),
+        // Spec 078: the guard writes its time per afterTool call here.
+        ...(a.guard ? { VEILIO_GUARD_TIMING: `${base}.timing` } : {}),
+      }
       const child = spawn('claude', args, { cwd: repo, env, stdio: ['ignore', streamFd, errFd] })
       const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60_000)
       child.on('error', (error) => (clearTimeout(timer), done({ error })))
@@ -502,6 +511,9 @@ async function session(task, arm, rep, outDir, member) {
       mapBefore,
       mapAfter: mapSize(repo),
       wallMs,
+      guardHookMs: existsSync(`${base}.timing`)
+        ? hookTimes(readFileSync(`${base}.timing`, 'utf8'))
+        : null,
       ...stream,
     }
     // What the team made of it: published or refused, restored or not.

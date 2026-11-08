@@ -64,7 +64,7 @@ let ctx: ToolContext
 
 beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-'))
-  ctx = { cwd, mapPath: null }
+  ctx = { cwd, mapPath: null, restoreText: true }
 })
 
 afterEach(() => {
@@ -350,7 +350,9 @@ describe('path containment', () => {
       // Otherwise "cannot read" against "outside the project root" tells the
       // agent which files exist outside the root.
       symlinkSync(outside, join(cwd, 'link-outside'), 'junction')
-      const missing = call('anonymize_file', { path: 'link-outside/.ssh/id_rsa' })
+      // Spec 078: a raw-only name (`.ssh/id_rsa`) is now refused by name first,
+      // which tells nothing about the disk either; a plain name is probed here.
+      const missing = call('anonymize_file', { path: 'link-outside/src/missing.ts' })
       expect(missing.isError).toBe(true)
       expect(missing.text).toContain('outside the project root')
     })
@@ -430,7 +432,11 @@ describe('path containment', () => {
       write('a.ts', TS)
       const linkedRoot = join(outside, 'root-link')
       symlinkSync(cwd, linkedRoot, 'junction')
-      const res = callTool('anonymize_file', { path: 'a.ts' }, { cwd: linkedRoot, mapPath: null })
+      const res = callTool(
+        'anonymize_file',
+        { path: 'a.ts' },
+        { cwd: linkedRoot, mapPath: null, restoreText: true }
+      )
       expect(res.isError).toBeUndefined()
     })
   })

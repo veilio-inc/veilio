@@ -11,10 +11,12 @@ import { isolateHome } from './helpers/isolated-home.js'
 isolateHome()
 
 const FILES: Record<string, string> = {
-  '.env': 'DB_PASSWORD=Tr0ub4dor zebra91\nAPP_ENV=production\n',
+  // Spec 078 FR-016: `.env` itself is raw-only and never read; `app.env` is
+  // the same dotenv kind under a name that is not.
+  'app.env': 'DB_PASSWORD=Tr0ub4dor zebra91\nAPP_ENV=production\n',
   'compose.yml': 'services:\n  db:\n    environment:\n      API_TOKEN: Tr0ub4dor zebra91\n',
   'deploy.sh': 'export STRIPE_SECRET_KEY=Tr0ub4dorZebra91\nnode server.js\n',
-  'tests/fixtures/.env': 'PGPASSWORD=postgres\n',
+  'tests/fixtures/app.env': 'PGPASSWORD=postgres\n',
 }
 
 let base: string
@@ -34,7 +36,7 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 describe('anonymize_file: the file kind reaches the engine', () => {
-  for (const file of ['.env', 'compose.yml', 'deploy.sh']) {
+  for (const file of ['app.env', 'compose.yml', 'deploy.sh']) {
     it(`${file}: the value is redacted and no piece of it is in the map`, () => {
       const out = callTool('anonymize_file', { path: file }, ctx).text
       expect(out).toMatch(/__REDACTED_[A-Z_]+_\d+__/)
@@ -44,7 +46,7 @@ describe('anonymize_file: the file kind reaches the engine', () => {
   }
 
   it('a test file is not relaxed: a weak fixed-name value is still redacted', () => {
-    const out = callTool('anonymize_file', { path: 'tests/fixtures/.env' }, ctx).text
+    const out = callTool('anonymize_file', { path: 'tests/fixtures/app.env' }, ctx).text
     expect(out).not.toContain('PGPASSWORD=postgres')
     expect(out).toContain('__REDACTED_')
   })
@@ -58,8 +60,8 @@ describe('anonymize_file: the file kind reaches the engine', () => {
 })
 
 describe('scan_secrets: the file kind reaches the engine', () => {
-  it('reports the credential in a .env file', () => {
-    const out = callTool('scan_secrets', { path: '.env' }, ctx).text
+  it('reports the credential in a dotenv file', () => {
+    const out = callTool('scan_secrets', { path: 'app.env' }, ctx).text
     expect(out).not.toMatch(/no credentials|nothing found/i)
     expect(out).toMatch(/credential/i)
   })

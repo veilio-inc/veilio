@@ -29,7 +29,13 @@ export function contextFromArgv(
   argv: readonly string[],
   env: Record<string, string | undefined> = process.env
 ): ToolContext {
-  return { ...parseCliContext(argv), destructive: env.VEILIO_MCP_DESTRUCTIVE === '1', env }
+  return {
+    ...parseCliContext(argv),
+    destructive: env.VEILIO_MCP_DESTRUCTIVE === '1',
+    // Spec 078 FR-018: the same pattern, read once here.
+    restoreText: env.VEILIO_MCP_RESTORE === '1',
+    env,
+  }
 }
 
 function parseCliContext(argv: readonly string[]): ToolContext {
@@ -49,6 +55,10 @@ async function start(): Promise<void> {
   const ctx = contextFromArgv(process.argv.slice(2))
   ctx.guardHint = guardHint('mcp', process.env)
   if (ctx.guardHint) process.stderr.write(`${ctx.guardHint}\n`)
+  if (ctx.restoreText)
+    process.stderr.write(
+      "veilio: restore_text is on (VEILIO_MCP_RESTORE=1). Its answers put the real names into the agent's context.\n"
+    )
   const send = (response: JsonRpcResponse): void => {
     process.stdout.write(`${JSON.stringify(response)}\n`)
   }

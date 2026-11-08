@@ -48,7 +48,7 @@ describe('with no sign-in, the MCP server is the offline tool', () => {
     ['anonymize_file', { path: 'ledger.ts' }],
     ['anonymize_text', { text: 'export class LedgerService {}' }],
   ])('%s answers from the local map, saying so, and makes no request', (name, args) => {
-    const r = callTool(name, args, { cwd, mapPath: null })
+    const r = callTool(name, args, { cwd, mapPath: null, restoreText: true })
     expect(r.isError ?? false).toBe(false)
     expect(r.text).toMatch(/Namespace: local/)
     expect(r.text).toContain('__CLS__1')
@@ -56,13 +56,19 @@ describe('with no sign-in, the MCP server is the offline tool', () => {
   })
 
   it('restore_text, scan_secrets and symbol_map_summary answer with no error', () => {
-    callTool('anonymize_text', { text: 'export class LedgerService {}' }, { cwd, mapPath: null })
+    callTool(
+      'anonymize_text',
+      { text: 'export class LedgerService {}' },
+      { cwd, mapPath: null, restoreText: true }
+    )
     for (const [name, args] of [
       ['restore_text', { text: 'export class __CLS__1 {}' }],
       ['scan_secrets', { path: 'ledger.ts' }],
       ['symbol_map_summary', {}],
     ] as const) {
-      expect(callTool(name, args, { cwd, mapPath: null }).isError ?? false).toBe(false)
+      expect(callTool(name, args, { cwd, mapPath: null, restoreText: true }).isError ?? false).toBe(
+        false
+      )
     }
     expect(fetch).not.toHaveBeenCalled()
   })

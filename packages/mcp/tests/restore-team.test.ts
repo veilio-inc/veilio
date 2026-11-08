@@ -34,7 +34,7 @@ afterEach(() => {
 function ctxWith(own: Record<string, string>) {
   const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-restore-'))
   if (Object.keys(own).length) saveMap(resolveMapPath(null, cwd), own)
-  return { cwd, mapPath: null }
+  return { cwd, mapPath: null, restoreText: true }
 }
 const restoredPart = (text: string) => text.split('--- restored ---\n')[1] ?? ''
 

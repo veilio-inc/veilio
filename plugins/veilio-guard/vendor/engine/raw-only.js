@@ -1,0 +1,124 @@
+// Files a model must never read (guard spec 033 FR-004; spec 078 FR-016).
+//
+// One list for every tool that reads files on an agent's behalf: the Claude
+// Code guard refuses them before a tool runs, and the MCP server refuses to
+// read them. A project adds patterns; it cannot remove these.
+export const DEFAULT_RAW_ONLY = [
+    '.env',
+    '.env.*',
+    '*.pem',
+    '*.key',
+    '*.p12',
+    '*.pfx',
+    'id_rsa*',
+    'id_dsa*',
+    'id_ecdsa*',
+    'id_ed25519*',
+    '.veilio/**',
+    '.npmrc',
+    '.netrc',
+    '.pgpass',
+    // Credential stores and keystores.
+    '.git-credentials',
+    '.htpasswd',
+    '*.jks',
+    '*.keystore',
+    '*.p8',
+    'kubeconfig',
+    '.docker/config.json',
+    // Cloud and cluster credentials, where their tools keep them.
+    '.kube/config',
+    '.kube/**',
+    '.aws/credentials',
+    '.azure/**',
+    '.config/gcloud/**',
+];
+// Matched ignoring case: NTFS and APFS, the default file systems on Windows and
+// macOS, open `.ENV` as `.env`. On a case-sensitive one this refuses a little
+// more than it must, which is the side to err on.
+function globToRegExp(glob) {
+    let re = '';
+    for (let i = 0; i < glob.length; i++) {
+        const c = glob.charAt(i);
+        if (c === '*' && glob[i + 1] === '*') {
+            re += '.*';
+            i++;
+            if (glob[i + 1] === '/')
+                i++;
+        }
+        else if (c === '*')
+            re += '[^/]*';
+        else if (c === '?')
+            re += '[^/]';
+        else
+            re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${re}$`, 'i');
+}
+function matches(path, pattern) {
+    const re = globToRegExp(pattern);
+    // NTFS opens `.env::$DATA`, `.env:x` and `.env.` as `.env`: a segment is
+    // read without its stream and trailing dots or spaces (spec 078 review).
+    const parts = path
+        .split('/')
+        .map((p) => (p === '..' ? p : p.replace(/:.*$/, '').replace(/[. ]+$/, '')))
+        .filter((p) => p !== '' && p !== '.');
+    // A pattern with no slash matches a file name anywhere; one with a slash
+    // matches any tail of the path, so `secrets/**` holds at any depth.
+    if (!pattern.includes('/'))
+        return parts.some((p) => re.test(p));
+    for (let i = 0; i < parts.length; i++)
+        if (re.test(parts.slice(i).join('/')))
+            return true;
+    return false;
+}
+/** A path no name match can judge on Windows: a segment holding a stream
+ *  (`a:b`, past a drive letter) or shaped like an 8.3 short name (`ENV~1`),
+ *  which may stand for any long name. Callers that read files refuse it. */
+export function windowsAlias(path) {
+    return (SHORT_NAME(path) ||
+        path.split(/[\\/]/).some((seg, i) => seg.includes(':') && !(i === 0 && /^[A-Za-z]:$/.test(seg))));
+}
+const SHORT_NAME = (path) => path.split(/[\\/]/).some((seg) => /^[^~]{1,6}~\d+(\.[^.]*)?$/.test(seg));
+const onWindows = () => globalThis.process?.platform === 'win32';
+/** A segment shaped like an 8.3 short name (`ENV~1`): the part of
+ *  windowsAlias that also holds for a shell word, where a colon is common.
+ *  On Windows only (review round 2 of spec 078): elsewhere `HEAD~1` and
+ *  `main~3` are git's. `windows`: the platform, when the caller knows it. */
+export function shortNameAlias(path, windows = onWindows()) {
+    return windows && SHORT_NAME(path);
+}
+export function isRawOnly(path, extra) {
+    const normal = path.replace(/\\/g, '/');
+    const patterns = [...DEFAULT_RAW_ONLY, ...extra.filter((p) => p && !p.startsWith('!'))];
+    return patterns.some((p) => matches(normal, p));
+}
+/** The project's own raw-only patterns in `.veilio/guard.json` (`rawOnly`):
+ *  its strings, as written. One reader for the Claude Code guard and the MCP
+ *  server (spec 078 review round 2), so both refuse the same files. Throws a
+ *  SyntaxError when the file is not JSON; the caller fails closed. */
+export function guardJsonRawOnly(text) {
+    return rawOnlyOf(JSON.parse(text));
+}
+/** `rawOnly` of an already parsed guard.json. */
+export function rawOnlyOf(settings) {
+    const list = settings?.rawOnly;
+    return Array.isArray(list) ? list.filter((p) => typeof p === 'string') : [];
+}
+/** guardJsonRawOnly per project root, read again only when the file's mtime
+ *  changes. `mtimeMs` undefined: there is no file, and no patterns. */
+export class GuardJsonCache {
+    byRoot = new Map();
+    get(root, mtimeMs, read) {
+        if (mtimeMs === undefined) {
+            this.byRoot.delete(root);
+            return [];
+        }
+        const hit = this.byRoot.get(root);
+        if (hit && hit.mtimeMs === mtimeMs)
+            return hit.patterns;
+        const patterns = guardJsonRawOnly(read());
+        this.byRoot.set(root, { mtimeMs, patterns });
+        return patterns;
+    }
+}

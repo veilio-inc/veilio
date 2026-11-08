@@ -25,6 +25,10 @@ import type { Io } from '../src/commands.js'
  * line was checked to be that change and the renumbering and counts that follow
  * from it, nothing else.
  *
+ * Re-recorded once for spec 078 (founder, strings.md #18-#19): a credential
+ * preview shows no leading characters (`AKIA…MPLE` is `…MPLE`). Every changed
+ * line was checked to be that change, nothing else.
+ *
  * Spec 067 (founder, 1 Nov): `restore` names a redaction it leaves, because
  * text holding one is not the file. One line added by hand to "scrub then
  * restore" - the fixture was not regenerated.

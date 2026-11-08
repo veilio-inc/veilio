@@ -19,7 +19,13 @@ export function bandText(g: Guard): string {
       : index?.state === 'unavailable'
         ? ` · index off (${index.reason})`
         : ''
-  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${customRules(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused`
+  // Spec 078 FR-011 (strings.md #14): who gets real names, last.
+  const restores = g.mcpRestore.length ? ` · real names to: ${g.mcpRestore.join(', ')}` : ''
+  // Not in strings.md yet: awaiting the founder's approval.
+  const record = g.offRecordUnreadable
+    ? ' · ~/.veilio/guard-state.json could not be read, so the guard stays on'
+    : ''
+  return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${customRules(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused${record}${restores}`
 }
 
 /** Spec 065: whether the account's custom rules apply, and why not - the

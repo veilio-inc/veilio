@@ -34,7 +34,7 @@ function ctxWith(own: Record<string, string>, aliases: Record<string, string> = 
   const mapPath = resolveMapPath(null, cwd)
   if (Object.keys(own).length) saveMap(mapPath, own)
   if (Object.keys(aliases).length) addAliases(mapPath, aliases)
-  return { cwd, mapPath: null }
+  return { cwd, mapPath: null, restoreText: true }
 }
 const restoredPart = (text: string) => text.split('--- restored ---\n')[1] ?? ''
 

@@ -12,7 +12,7 @@ Veilio ships two command-line packages:
 >
 > - **[veilio-guard](../plugins/veilio-guard/README.md)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
 > - **The CLI (`@veilio-inc/cli`)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
-> - **The MCP server (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+> - **The MCP server (`@veilio-inc/mcp`)** gives the agent tools of its own: read a file masked, restore an answer (opt-in), scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
 >
 > **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
 
@@ -144,10 +144,10 @@ Veilio Cloud, eight more for maps, the team and projects (below):
 
 | Tool | What it does |
 |---|---|
-| `anonymize_file` | Reads a file inside the project root and returns it anonymized - the real code never enters the assistant's context. |
+| `anonymize_file` | Reads a file inside the project root and returns it anonymized - the real code never enters the assistant's context. A raw-only file (.env, private keys, credential stores, .veilio/) is refused, never read. |
 | `anonymize_text` | Anonymizes text you or the assistant pass in. |
-| `restore_text` | Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder or a redaction. A redacted value (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so it is always named: that text is not the original file. |
-| `scan_secrets` | Reports credentials without putting their values in context. |
+| `restore_text` | Off unless the server is started with `VEILIO_MCP_RESTORE=1` (below). Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder or a redaction. A redacted value (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so it is always named: that text is not the original file. |
+| `scan_secrets` | Reports credentials without putting their values in context: a finding shows only a value's last four characters and its length. A raw-only file is refused, never read. |
 | `symbol_map_summary` | Counts and categories in the current map, never the names. |
 
 Signed in, the assistant also gets `maps_list`, `maps_pull`, `maps_create`,
@@ -286,15 +286,13 @@ Veilio is a standard **stdio** MCP server: command `npx`, arguments
 1. In the assistant: *"Anonymize `src/payments/refund.ts` with veilio and review it."*
    The assistant calls `anonymize_file` and gets placeholders back (what it reads with its own tools is not masked - see the note at the top).
 2. It answers in placeholders.
-3. *"Restore that answer with veilio."* - `restore_text` gives back real names.
-   Anything it could not restore is listed, never guessed. Ask for `strict` when
-   the answer is going straight into a file.
-   The restored text is in the assistant's context from then on; to keep the real
-   names out of it, restore in the terminal instead (`pbpaste | veilio restore`).
+3. Restore the answer in a terminal: `pbpaste | veilio restore`. Anything it
+   could not restore is listed, never guessed. Use `--strict` when the answer is
+   going straight into a file.
+   `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in its configuration. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
 
 Tell your assistant once, for example in `CLAUDE.md` or your client's rules file:
-*"Before reading source files, use the veilio `anonymize_file` tool; restore answers
-with `restore_text`."*
+*"Before reading source files, use the veilio `anonymize_file` tool."*
 
 ---
 

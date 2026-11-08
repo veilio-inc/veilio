@@ -4,6 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   CANARY,
+  STRIPE,
   eventOf,
   mapFile,
   project,
@@ -990,4 +991,514 @@ test('a weak value redacted after its credential-named key is not swept from lat
   stdout = 'the sunshine2026 campaign\n'
   const two = await $.tool.call(eventOf(bash))
   expect(res(two).stdout).toContain('sunshine2026')
+})
+
+// Spec 078 FR-018a (research R2, N2): a shell command can print a source
+// file's names encoded, with no placeholder in the command. Each encoded form
+// is computed here from the plain names, never written out.
+const PAY = 'class PaymentGateway {\n  chargeCard(order: OrderService) {}\n}\n'
+const PAY_MAP = {
+  __CLS__1: 'PaymentGateway',
+  __FN__1: 'chargeCard',
+  __CLS__2: 'OrderService',
+  __CLS__3: 'InvoiceBuilder',
+}
+const ENCODED =
+  'Veilio withheld this result: it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent.'
+// The mod runtime has no Buffer: ASCII text, encoded with the web's btoa.
+const b64 = (s: string) => btoa(s)
+const b64url = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const hex = (s: string) => [...s].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+const wrap = (s: string, n: number) => s.match(new RegExp(`.{1,${n}}`, 'gs'))!.join('\n')
+const reversed = (s: string) =>
+  s
+    .split('\n')
+    .map((l) => [...l].reverse().join(''))
+    .join('\n')
+
+async function shellPrints(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  command: string,
+  stdout: string,
+  map: Record<string, string> = PAY_MAP
+) {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map), [`${ROOT}/src/pay.ts`]: PAY })
+  on('tool.call', () => ({ ...bash.r, result: { ...bash.r.result, stdout, stderr: '' } }))
+  return $.tool.call({ ...eventOf(bash), command })
+}
+
+const ENCODED_FORMS: [string, string][] = [
+  ['base64 src/pay.ts', wrap(b64(PAY), 76) + '\n'],
+  ['cat src/pay.ts | fold -w3', wrap(PAY.replace(/\n/g, ''), 3) + '\n'],
+  ['cat src/pay.ts | fold -w1', wrap('PaymentGateway', 1) + '\n'],
+  ['xxd -p src/pay.ts', wrap(hex(PAY), 60) + '\n'],
+  [
+    'od -An -tx1 src/pay.ts',
+    wrap(hex(PAY), 32)
+      .split('\n')
+      .map((l) => ' ' + l.match(/../g)!.join(' '))
+      .join('\n') + '\n',
+  ],
+  ['rev src/pay.ts', reversed(PAY)],
+  [
+    'npx vitest run tests/pay.test.ts',
+    ` ✓ tests/pay.test.ts (1)\nstdout | encoded: ${b64('PaymentGateway')}\n`,
+  ],
+  ['node tests/pay.mjs', `${b64url('chargeCard(order)?')}\n`],
+]
+for (const [command, stdout] of ENCODED_FORMS)
+  test(`a project name printed encoded is withheld: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout)
+    expect(out.deny).toBe(ENCODED)
+  })
+
+// COVERAGE.md, Not covered: Tests the agent writes (re-cased output, strings.md #24).
+test('the documented limit: a re-cased copy of a file still reaches the model (tr A-Z a-z)', async ($, on) => {
+  const out = await shellPrints($, on, 'tr A-Z a-z < src/pay.ts', PAY.toLowerCase())
+  expect(out.deny).toBeUndefined()
+  expect(res(out).stdout).toContain('paymentgateway')
+})
+
+// COVERAGE.md, Not covered: Tests the agent writes - the forms the
+// encoded-name check does not read (review round 1 item (e)).
+const od = (s: string) =>
+  wrap([...s].map((c) => (c === '\n' ? '  \\n' : `   ${c}`)).join(''), 64)
+    .split('\n')
+    .map((l, i) => `${(i * 16).toString(8).padStart(7, '0')} ${l}`)
+    .join('\n') + '\n'
+const LIMITS: [string, string][] = [
+  ['od -c src/pay.ts', od(PAY)],
+  ['cat src/pay.ts | fold -w5', wrap(PAY.replace(/\n/g, ''), 5) + '\n'],
+  ['node tests/pay.mjs', `build/${b64('PaymentGateway')}\n`],
+]
+for (const [command, stdout] of LIMITS)
+  test(`the documented limit: a project name in a form the guard does not decode still reaches the model: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout)
+    expect(out.deny).toBeUndefined()
+  })
+
+const ORDINARY: [string, string, Record<string, string>?][] = [
+  ['npm ls', 'app@1.0.0 /work/project\n├── payment-gateway@2.1.0\n└── paymentgateway@1.0.0\n'],
+  [
+    'git log --oneline',
+    'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 fix: totals\n0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6 docs\n',
+  ],
+  [
+    'cat tests/fixtures/logo.b64',
+    btoa(String.fromCharCode(...Array.from({ length: 96 }, (_, i) => (i * 37 + 11) % 256))) + '\n',
+  ],
+  // A spec 064 ordinary word is readable as itself: so is its encoding.
+  [
+    'cat tests/fixtures/total.b64',
+    `${b64('the total is 42 today')}\n`,
+    { ...PAY_MAP, __VAR__5: 'total' },
+  ],
+  // Under 4 characters, a name is too short to tell from ordinary text.
+  [
+    'cat tests/fixtures/short.b64',
+    `${b64('Hello Gx and friends')}\n`,
+    { ...PAY_MAP, __CLS__7: 'Gx' },
+  ],
+  // No case-folding for names: the lower-case npm package name is not PaymentGateway.
+  ['npm view paymentgateway --json', `${b64('{"name":"paymentgateway"}')}\n`],
+]
+for (const [command, stdout, map] of ORDINARY)
+  test(`ordinary output is not withheld: ${command}`, async ($, on) => {
+    const out = await shellPrints($, on, command, stdout, map)
+    expect(out.deny).toBeUndefined()
+  })
+
+// Security review of the encoded-name check (HIGH): a failed command's error
+// text reaches the model too.
+test('a failed command whose error text holds a name encoded is withheld', async ($, on) => {
+  const failed = recordedRaw('Bash', 1)
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP), [`${ROOT}/src/pay.ts`]: PAY })
+  const text = `Exit code 1\nunexpected token: ${b64('class PaymentGateway {}')}`
+  on('tool.call', () => ({ ...failed.r, result: `Error: ${text}`, text, isError: true }))
+  const out = await $.tool.call({ ...eventOf(failed), command: 'node tests/pay.mjs' })
+  expect(out.deny).toBe(ENCODED)
+})
+
+// Review round 1 item 5: a background shell's output, read later, is a
+// shell's stdout too.
+for (const tool of ['BashOutput', 'TaskOutput'])
+  test(`a background shell's output holding a name encoded is withheld: ${tool}`, async ($, on) => {
+    const bash = recorded('Bash')
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'PaymentGateway' }) })
+    const stdout = `${b64('PaymentGateway')}\n`
+    on('tool.call', () => ({
+      ...bash.r,
+      result: { shellId: 'bash_1', status: 'running', stdout, stderr: '', stdoutLines: 1 },
+    }))
+    const out = await $.tool.call({
+      tool,
+      bash_id: 'bash_1',
+      task_id: 'bash_1',
+      agentId: bash.e.agentId,
+    })
+    expect(out.deny).toBe(ENCODED)
+  })
+
+// Spec 078 US2 (A#2, N1, research R3): a credential removed earlier stays
+// removed when it comes back reformatted, sliced or encoded. The key is the
+// helpers' fake STRIPE value, built by concatenation; every form of it is
+// computed here.
+const RESHAPED =
+  'Veilio withheld this result: a credential removed earlier in this session came back in another form (spaced, split, sliced or encoded). Nothing from it was sent.'
+const KEY_TAIL = STRIPE.slice('sk_live_'.length) // starts with a digit
+const CONFIG = `export const stripeKey = '${STRIPE}'\n`
+
+/** A session that has read src/config.ts (removing the key), then runs `tool`. */
+async function afterKeyRead(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  answer: (e: Record<string, unknown>) => unknown,
+  map: Record<string, string> = PAY_MAP,
+  files: Record<string, string> = {}
+) {
+  const read = recorded('Read')
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(map),
+    [`${ROOT}/src/config.ts`]: CONFIG,
+    ...files,
+  })
+  let first = true
+  on('tool.call', (_, e) => {
+    if (first) {
+      first = false
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/config.ts`, content: CONFIG },
+        },
+      }
+    }
+    return answer(e)
+  })
+  const shown = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  expect(JSON.stringify(shown)).not.toContain(KEY_TAIL)
+  expect(JSON.stringify(shown)).toContain('__REDACTED_CREDENTIAL_')
+  return p
+}
+
+const bashOut = (stdout: string) => {
+  const bash = recorded('Bash')
+  return { ...bash.r, result: { ...bash.r.result, stdout, stderr: '' } }
+}
+
+/** The key in 8-character pieces joined by `sep`, as text. */
+const eights = (sep: string) => STRIPE.match(/.{1,8}/g)!.join(sep)
+
+const KEY_FORMS: [string, string][] = [
+  ['spaced', [...STRIPE].join(' ')],
+  ['comma', [...STRIPE].join(',')],
+  ['a 22-character slice starting with a digit', KEY_TAIL.slice(0, 22)],
+  ['dash groups of 4', KEY_TAIL.match(/.{1,4}/g)!.join('-')],
+  ['lines of 6', KEY_TAIL.match(/.{1,6}/g)!.join('\n')],
+  ['reversed', [...STRIPE].reverse().join('')],
+  ['base64', btoa(STRIPE)],
+  ['hex', hex(STRIPE)],
+  [
+    'upper-cased and spaced in a test runner',
+    `FAIL expected ${[...STRIPE.toUpperCase()].join(' ')}`,
+  ],
+  // Review round 1 item 7: escape sequences written as text, in 8-character
+  // pieces (each under the 12 a name is held to).
+  ...['\\n', '\\t', '\\r', '\\0', '\\x0a', '\\u000a'].map((esc): [string, string] => [
+    `in pieces joined by ${esc}`,
+    eights(esc),
+  ]),
+]
+for (const [form, text] of KEY_FORMS)
+  test(`a removed credential that comes back ${form} through Bash is withheld`, async ($, on) => {
+    await afterKeyRead($, on, () => bashOut(`${text}\n`))
+    const bash = recorded('Bash')
+    const out = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+    expect(out.deny).toBe(RESHAPED)
+  })
+
+test('a removed credential in 8-character pieces joined by backslash-n in a Read is withheld, and no piece is saved', async ($, on) => {
+  const split = `export const parts = "${eights('\\n')}"\n`
+  const read = recorded('Read')
+  const p = await afterKeyRead($, on, () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: { ...read.r.result.file, filePath: `${ROOT}/src/split.ts`, content: split },
+    },
+  }))
+  p.files[`${ROOT}/src/split.ts`] = split
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/split.ts` })
+  expect(out.deny).toBe(RESHAPED)
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  for (const piece of STRIPE.match(/.{1,8}/g)!) expect(saved).not.toContain(piece)
+  expect(saved.filter((n) => STRIPE.includes(n) && n.length >= 4)).toEqual([])
+})
+
+test('a removed credential in 8-character pieces joined by backslash-0 is withheld when a cat names its file', async ($, on) => {
+  const split = `export const parts = "${eights('\\0')}"\n`
+  const p = await afterKeyRead($, on, () => bashOut(split))
+  p.files[`${ROOT}/src/split.ts`] = split
+  const bash = recorded('Bash')
+  const out = await $.tool.call({ ...eventOf(bash), command: 'cat src/split.ts' })
+  expect(out.deny).toBe(RESHAPED)
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  expect(saved.filter((n) => STRIPE.includes(n.replace(/^0/, '')) && n.length >= 4)).toEqual([])
+})
+
+test('a slice of a removed credential inside a Grep result is withheld', async ($, on) => {
+  const grep = recorded('Grep')
+  await afterKeyRead($, on, () => ({
+    ...grep.r,
+    result: {
+      ...grep.r.result,
+      content: `src/notes.md:3:see ${KEY_TAIL.slice(2, 24)} here`,
+      numLines: 1,
+    },
+  }))
+  const out = await $.tool.call(eventOf(grep))
+  expect(out.deny).toBe(RESHAPED)
+})
+
+test('a slice of a removed credential inside an MCP text result is withheld', async ($, on) => {
+  const mcp = recordedRaw('mcp__veilio__anonymize_text')
+  await afterKeyRead($, on, () => ({
+    ...mcp.r,
+    result: [{ type: 'text', text: `k=${KEY_TAIL.slice(4, 24)}` }],
+  }))
+  const out = await $.tool.call(eventOf(mcp))
+  expect(out.deny).toBe(RESHAPED)
+})
+
+// N1: a 12-15-character slice is not withheld (under 16), and no name holding
+// it is ever saved: an identifier built on it is masked under a quarantine
+// placeholder instead, so the map a team shares never carries it.
+test('a name holding a short slice of a removed credential is never saved to the map', async ($, on) => {
+  const slice = KEY_TAIL.slice(2, 15) // 13 characters
+  const other = `export function build${slice}Total() {}\n`
+  const read = recorded('Read')
+  const p = await afterKeyRead($, on, () => ({
+    ...read.r,
+    result: {
+      ...read.r.result,
+      file: { ...read.r.result.file, filePath: `${ROOT}/src/other.ts`, content: other },
+    },
+  }))
+  p.files[`${ROOT}/src/other.ts`] = other
+  const out = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/other.ts` })
+  expect(JSON.stringify(out)).not.toContain(slice)
+  expect(res(out).file.content).toMatch(/__QUARANTINED__\d+/)
+  const compact = STRIPE.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+  const saved = Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map) as string[]
+  for (const name of saved) {
+    const c = name.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+    for (let k = 0; k + 12 <= c.length; k++)
+      expect(`${name}: ${compact.includes(c.slice(k, k + 12))}`).toBe(`${name}: false`)
+  }
+})
+
+test('at load: a map entry sharing 12 characters with a removed credential is never restored', async ($, on) => {
+  const planted = KEY_TAIL.slice(0, 14)
+  const seen: Record<string, unknown>[] = []
+  const edit = recorded('Edit')
+  await afterKeyRead(
+    $,
+    on,
+    (e) => {
+      seen.push(e)
+      return edit.r
+    },
+    { ...PAY_MAP, __VAR__8: planted }
+  )
+  const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'use(__VAR__8)' })
+  expect(out.deny).toContain('Veilio refused this call')
+  expect(seen.length).toBe(0)
+})
+
+// Review round 1 item 4: the old placeholders a publish renumbered
+// (.veilio/aliases.json) get the same quarantine as the map. Numbered apart
+// from what the Read mints (a contested placeholder restores from neither).
+const ALIASES = `${ROOT}/.veilio/aliases.json`
+test('at load: neither a map entry nor an alias sharing 12 characters with a removed credential is restored', async ($, on) => {
+  const seen: Record<string, unknown>[] = []
+  const edit = recorded('Edit')
+  await afterKeyRead(
+    $,
+    on,
+    (e) => {
+      seen.push(e)
+      return edit.r
+    },
+    { ...PAY_MAP, __VAR__90201: `use${KEY_TAIL.slice(0, 12)}` },
+    {
+      [ALIASES]: JSON.stringify({
+        version: 1,
+        aliases: { __VAR__902: `old${KEY_TAIL.slice(12, 24)}`, __VAR__903: 'settledTotal' },
+      }),
+    }
+  )
+  for (const p of ['__VAR__90201', '__VAR__902']) {
+    const out = await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: `${p}()` })
+    expect(out.deny).toContain('Veilio refused this call')
+  }
+  expect(seen.length).toBe(0)
+  // An alias that holds no credential still restores.
+  await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: '__VAR__903()' })
+  expect(seen[0]?.new_string).toBe('settledTotal()')
+})
+
+test('an alias restored before a credential is removed is not restored after it', async ($, on) => {
+  const planted = `use${KEY_TAIL.slice(0, 12)}`
+  const edit = recorded('Edit')
+  const read = recorded('Read')
+  project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP),
+    [`${ROOT}/src/config.ts`]: CONFIG,
+    [ALIASES]: JSON.stringify({ version: 1, aliases: { __VAR__902: planted } }),
+  })
+  const seen: Record<string, unknown>[] = []
+  on('tool.call', (_, e) => {
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/config.ts`, content: CONFIG },
+        },
+      }
+    seen.push(e)
+    return edit.r
+  })
+  const call = { ...eventOf(edit), old_string: 'x', new_string: '__VAR__902()' }
+  expect((await $.tool.call(call)).deny).toBeUndefined()
+  expect(seen[0]?.new_string).toBe(`${planted}()`)
+  const shown = await $.tool.call({ ...eventOf(read), file_path: `${ROOT}/src/config.ts` })
+  expect(JSON.stringify(shown)).not.toContain(KEY_TAIL)
+  expect((await $.tool.call(call)).deny).toContain('Veilio refused this call')
+  expect(seen.length).toBe(1)
+})
+
+// Review round 1 item 8: of a private key, only the body between its BEGIN
+// and END lines is learned, never the armor every key shares.
+const PEM_BODY = wrap(btoa(`not a real key ${'fake-material-'.repeat(12)}`), 64)
+const PEM = `-----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY}\n-----END RSA PRIVATE KEY-----\n`
+/** A session in which a shell printed a private key (removed), answering
+ *  later Bash calls with `next()`'s stdout and Reads with src/parse.ts. */
+async function afterPemRemoved(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  next: () => string,
+  parse = ''
+) {
+  const read = recorded('Read')
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP),
+    [`${ROOT}/src/parse.ts`]: parse,
+  })
+  let first = true
+  on('tool.call', (_, e) => {
+    if (e.tool === 'Read')
+      return {
+        ...read.r,
+        result: {
+          ...read.r.result,
+          file: { ...read.r.result.file, filePath: `${ROOT}/src/parse.ts`, content: parse },
+        },
+      }
+    const stdout = first ? PEM : next()
+    first = false
+    return bashOut(stdout)
+  })
+  const shown = await $.tool.call({ ...eventOf(recorded('Bash')), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(shown)).not.toContain(PEM_BODY.slice(0, 40))
+  return p
+}
+
+test('after a private key is removed, a result holding only its BEGIN line is not withheld', async ($, on) => {
+  await afterPemRemoved($, on, () => '-----BEGIN RSA PRIVATE KEY-----\n')
+  const out = await $.tool.call({ ...eventOf(recorded('Bash')), command: 'node tests/key.mjs' })
+  expect(out.deny).toBeUndefined()
+  // A fresh session prints this line the same way (its `KEY-----` is taken
+  // as a keyed value): only the withholding is this check's.
+  expect(res(out).stdout).toContain('-----BEGIN RSA PRIVATE ')
+})
+
+// Review round 2 #6: keys of one kind share their first bytes (the ASN.1 or
+// OpenSSH header). Another key of the same kind is not the removed one.
+test('after a private key is removed, another key of the same kind is not withheld as reshaped', async ($, on) => {
+  const shared = btoa('fake-asn1-header-shared-by-every-key-of-a-kind!!').slice(0, 64)
+  const tail = (s: string) => wrap(shared + btoa(`${s} ${'tail-material-'.repeat(8)}`), 64)
+  const other = `-----BEGIN RSA PRIVATE KEY-----\n${tail('second')}\n-----END RSA PRIVATE KEY-----\n`
+  const first = `-----BEGIN RSA PRIVATE KEY-----\n${tail('first')}\n-----END RSA PRIVATE KEY-----\n`
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = first
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(one)).not.toContain(shared.slice(0, 24))
+  stdout = other
+  const two = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(two.deny).toBeUndefined()
+  expect(JSON.stringify(two)).not.toContain(shared.slice(0, 24))
+  // Its first lines alone (as `head -2` prints them), which the scanner does not take for a key.
+  stdout = other.split('\n').slice(0, 2).join('\n') + '\n'
+  const head = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(head.deny).toBeUndefined()
+})
+
+// Review round 3 #2: a key body too short to skip the shared prefix is
+// learned whole, never as an empty string that matches every text.
+test('after a short private key is removed, its body is still removed and other text is not withheld', async ($, on) => {
+  const body = btoa('short fake key, not real')
+  const short = `-----BEGIN EC PRIVATE KEY-----\n${body}\n-----END EC PRIVATE KEY-----\n`
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = short
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(JSON.stringify(one)).not.toContain(body)
+  // Learned: it comes back spaced and is withheld.
+  stdout = `${[...body].join(' ')}\n`
+  const two = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(two.deny).toBe(RESHAPED)
+  stdout = 'all tests passed\n'
+  const three = await $.tool.call({ ...eventOf(bash), command: 'node tests/key.mjs' })
+  expect(res(three).stdout).toBe('all tests passed\n')
+})
+
+test('after a private key is removed, a name like parseRsaPrivateKey is saved, not quarantined', async ($, on) => {
+  const parse = 'export function parseRsaPrivateKey(pem: string) {}\n'
+  const p = await afterPemRemoved($, on, () => '', parse)
+  const out = await $.tool.call({ ...eventOf(recorded('Read')), file_path: `${ROOT}/src/parse.ts` })
+  expect(JSON.stringify(out)).not.toContain('__QUARANTINED__')
+  expect(Object.values(JSON.parse(p.files[`${ROOT}/.veilio/map.json`]).map)).toContain(
+    'parseRsaPrivateKey'
+  )
+})
+
+test('ordinary output with 16-character git SHAs is not withheld when no SHA was removed', async ($, on) => {
+  await afterKeyRead($, on, () =>
+    bashOut('a1b2c3d4e5f60718 fix: totals\n0f1e2d3c4b5a6978 docs: readme\n')
+  )
+  const bash = recorded('Bash')
+  const out = await $.tool.call({ ...eventOf(bash), command: 'git log --oneline --abbrev=16' })
+  expect(out.deny).toBeUndefined()
+  expect(res(out).stdout).toContain('a1b2c3d4e5f60718')
+})
+
+// COVERAGE.md, Not covered: a credential under 16 characters is matched whole only.
+test('the documented limit: a removed credential under 16 characters comes back spaced', async ($, on) => {
+  const bash = recorded('Bash')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(PAY_MAP) })
+  let stdout = 'Location: https://app.example/cb?access_token=Pq7rT2wZx9Lm&state=1\n'
+  on('tool.call', () => bashOut(stdout))
+  const one = await $.tool.call(eventOf(bash))
+  expect(JSON.stringify(one)).not.toContain('Pq7rT2wZx9Lm')
+  stdout = `${[...'Pq7rT2wZx9Lm'].join(' ')}\n`
+  const two = await $.tool.call(eventOf(bash))
+  expect(two.deny).toBeUndefined()
+  expect(res(two).stdout).toContain('P q 7 r')
 })

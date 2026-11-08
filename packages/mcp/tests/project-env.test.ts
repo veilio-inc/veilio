@@ -38,6 +38,7 @@ let toolsMap: string
 const ctxWith = (env: Record<string, string>): ToolContext => ({
   cwd,
   mapPath: null,
+  restoreText: true,
   home,
   destructive: false,
   env,

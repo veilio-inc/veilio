@@ -55,6 +55,19 @@ const offers = new Map<string, AgentOfferInput>()
 let pinned: PublicMarketplace[] = []
 let ignored: string[] = []
 let saidIgnored = false
+// Spec 078 (bench only): when VEILIO_GUARD_TIMING names a file, the guard's
+// time per afterTool call is written there, one `after\t<ms>` line each. Read
+// once; unset, nothing is kept or written.
+let timingFile: Promise<string | undefined> | null = null
+const timings: string[] = []
+async function recordTiming($: Host, ms: number): Promise<void> {
+  timingFile ??= $.env.get('VEILIO_GUARD_TIMING').catch(() => undefined)
+  const file = await timingFile
+  if (!file) return
+  timings.push(`after\t${ms}`)
+  await $.fs.write(file, `${timings.join('\n')}\n`).catch(() => undefined)
+}
+
 // What was read of the plugin cache, by file and mtime, for the session.
 const listingCache = new ListingCache()
 
@@ -96,6 +109,10 @@ async function listingEntries($: Host, kind: 'skills' | 'agents'): Promise<strin
 async function ready($: Host): Promise<Guard> {
   if (guard) return guard
   if (!loading) {
+    const windows = $.env.get('OS').then(
+      (os) => os === 'Windows_NT',
+      () => false
+    )
     const io: GuardIO = {
       read: (path) => $.fs.read(path),
       write: (path, text) => $.fs.write(path, text),
@@ -120,6 +137,26 @@ async function ready($: Host): Promise<Guard> {
       // contains. Not a git checkout, or git missing: only the files a result
       // names are indexed.
       sleep: (ms) => $.clock.sleep(ms),
+      // Spec 078 R6: the host's write takes no mode (T020), so a created
+      // file is made owner-only by chmod, and checked with stat (macOS, then
+      // GNU). Windows: neither (ACLs, as the CLI).
+      chmod: async (path) => {
+        if (await windows) return
+        const r = await $.process.run(['chmod', '600', path])
+        if (r.exitCode !== 0) throw new Error(`chmod failed: ${r.stderr ?? ''}`)
+      },
+      mode: async (path) => {
+        if (await windows) return 0o600
+        for (const argv of [
+          ['stat', '-f', '%Lp', path],
+          ['stat', '-c', '%a', path],
+        ]) {
+          const r = await $.process.run(argv).catch(() => null)
+          if (r?.exitCode === 0 && /^[0-7]{3,4}\s*$/.test(r.stdout)) return parseInt(r.stdout, 8)
+        }
+        return undefined
+      },
+      windows: async () => windows,
       list: (root) =>
         $.process.run(['git', 'ls-files', '-z'], { cwd: root }).then(
           (r) => (r.exitCode === 0 ? r.stdout.split('\0').filter(Boolean) : null),
@@ -136,6 +173,7 @@ async function ready($: Host): Promise<Guard> {
       )
     loading = $.session.cwd().then(async (cwd) => {
       await g.load(cwd, await home)
+      for (const text of g.notices.splice(0)) $.ui.log(text)
       // The organisation's guard ignores a project's own off switch.
       if (g.state === 'off' && (await isManaged($))) g.state = 'on'
       guard = g
@@ -230,7 +268,9 @@ export function register(on: On, options: Options = {}) {
       return before
     }
     const outcome = await next(before.args)
+    const startedAt = Date.now()
     const after = await g.afterTool(e.tool, before.args, outcome, deadline(next), budget)
+    await recordTiming($, Date.now() - startedAt)
     if ('deny' in after && after.deny.startsWith('Veilio withheld')) $.ui.log(after.deny)
     $.ui.invalidate('ui.render')
     return after
@@ -375,10 +415,20 @@ export function register(on: On, options: Options = {}) {
         text: "Veilio guard is set up by your organisation's managed settings, so it can't be switched off here.",
       }
     }
+    let recorded = false
     if (arg === 'off' || arg === 'on') {
-      await g.setEnabled(arg === 'on')
+      recorded = await g.setEnabled(arg === 'on')
+      for (const text of g.notices.splice(0)) $.ui.log(text)
       $.ui.invalidate('ui.render')
     }
-    return { text: statusText(g, managed) }
+    const text = statusText(g, managed)
+    if (arg !== 'off' || !recorded) return { text }
+    // strings.md #17, on the first line of the reply.
+    const [first, ...rest] = text.split('\n')
+    return {
+      text: [`${first} Recorded for this project in ~/.veilio/guard-state.json.`, ...rest].join(
+        '\n'
+      ),
+    }
   })
 }

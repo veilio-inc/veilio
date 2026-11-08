@@ -20,6 +20,13 @@ import { resetNamespaceCache } from '../src/namespace.js'
  * Re-recorded once for spec 064 (a founder decision): single common English
  * words (ledger, core) now stay readable. Every changed line was checked to be
  * that change and the renumbering and counts that follow from it, nothing else.
+ *
+ * Re-recorded once for spec 078 (founder decisions Q1 = A, strings.md #18-#20):
+ * previews lose their leading characters (`AKIA…MPLE` is `…MPLE`), and the
+ * anonymize_file and scan_secrets descriptions say raw-only files are refused
+ * and what a preview shows. Every changed line was checked to be one of these.
+ * The recording runs with restore_text on (VEILIO_MCP_RESTORE=1), so its steps
+ * still cover it; off is tests/restore-opt-in.test.ts.
  */
 
 const GOLDEN = fileURLToPath(new URL('./fixtures/offline-golden.json', import.meta.url))
@@ -120,7 +127,7 @@ function runCase(steps: Step[]): unknown[] {
     mkdirSync(join(cwd, '.git'), { recursive: true })
     mkdirSync(join(cwd, 'src'), { recursive: true })
     writeFileSync(join(cwd, 'src', 'ledger.ts'), SOURCE)
-    const ctx = { cwd, mapPath: null }
+    const ctx = { cwd, mapPath: null, restoreText: true }
     return steps.map((step) =>
       normalise(
         'rpc' in step ? handleMessage(step.rpc, ctx) : callTool(step.tool, step.args, ctx),

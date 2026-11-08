@@ -415,6 +415,8 @@ describe('scan', () => {
     expect(parsed[0].file).toBe('leak.ts')
     expect(parsed[0].type).toBe('stripe-key')
     expect(parsed[0].preview).not.toContain('sk_live_51H8xQ2ABCDEFGHIJKLMNOP')
+    // Spec 078 FR-017: the last four characters and the length, nothing leading.
+    expect(parsed[0].preview).toMatch(/^…\S{4} \(\d+ chars\)$/)
   })
 
   it('scans several files at once', async () => {

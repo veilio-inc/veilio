@@ -4,7 +4,7 @@
 >
 > - **[veilio-guard](../../plugins/veilio-guard/README.md)** keeps your names from the model while a coding agent works: it masks everything the agent reads - files, command output, search results and your prompts. Claude Code today; other agents are in progress.
 > - **[The CLI](../cli/README.md) (`@veilio-inc/cli`)** does what the guard cannot, because the guard makes no network call: `veilio scrub` builds the map before the first session, `veilio maps pull` brings in your team's map and its numbers, `veilio rules pull` your custom rules, `veilio restore` brings back the names in an answer, and `veilio scan` stops a live key in a commit or in CI.
-> - **The MCP server (this package)** gives the agent tools of its own: read a file masked, restore an answer, scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
+> - **The MCP server (this package)** gives the agent tools of its own: read a file masked, restore an answer (opt-in), scan for secrets. In an agent the guard does not cover yet, it is the way in - with the agent's own file and shell tools turned off.
 >
 > **Without the guard, the CLI and the MCP server protect only what passes through them.** An agent that reads files and test output with its own tools sends them to the model as written: in our benchmark (spec 067, run 3), project names reached the model in 93-95 of 96 sessions with the MCP server or the CLI alone, and in 0 of 96 with the guard.
 
@@ -18,10 +18,9 @@ A naive MCP anonymizer takes source code as a tool argument. That is self-defeat
 
 The primary tools here take a **file path**. The server reads the file in its own process and returns only the masked text. From that call the agent learns `__CLS__1.__FN__2()`, not `PaymentGateway.chargeCard()`.
 
-That holds on the way in. On the way back, `restore_text` returns the restored
-text — the real names in it — to whoever called it. When the agent calls it, the
-names are in its context from then on. To keep them out, have the agent hand the
-reply over and restore it in a terminal: `veilio restore` reads the same map.
+That holds on the way in. On the way back, `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in its configuration. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
+
+`anonymize_file` and `scan_secrets` never read a file on the guard's raw-only list (.env, private keys, credential stores, .veilio/), or on the project's own list in `.veilio/guard.json` (`rawOnly`): they refuse it, as written or through a link.
 
 ```
 tools/call anonymize_file { "path": "src/gateway.ts" }
@@ -61,10 +60,10 @@ masked, and a value whose key contains a credential word (`password: sunshine`,
 
 | Tool                 | Purpose                                                                                                                                                                                                                                                                                        |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `anonymize_file`     | Read a file and return only its masked form. **Preferred.**                                                                                                                                                                                                                                    |
+| `anonymize_file`     | Read a file and return only its masked form. **Preferred.** A raw-only file (.env, private keys, credential stores, .veilio/) is refused, never read. |
 | `anonymize_text`     | Mask text the agent already holds (a user paste). Not for file contents.                                                                                                                                                                                                                       |
-| `restore_text`       | Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). A value redacted one-way is named too: it cannot be restored. With `strict: true`, it returns an error naming them instead of the text. |
-| `scan_secrets`       | Detect credentials without modifying anything, and without putting the values in context.                                                                                                                                                                                                      |
+| `restore_text`       | **Off unless the server is started with `VEILIO_MCP_RESTORE=1`.** Swap placeholders back and strip AI-generated noise — the team's placeholders too, under the rule below. A placeholder it cannot restore is left in and named, including one whose shape the AI changed (`__fn__1`). A value redacted one-way is named too: it cannot be restored. With `strict: true`, it returns an error naming them instead of the text. |
+| `scan_secrets`       | Detect credentials without modifying anything, and without putting the values in context: a finding shows only a value's last four characters and its length (`…vJKx (39 chars)`; `•••• (9 chars)` for 12 characters or fewer). A raw-only file is refused, never read. |
 | `symbol_map_summary` | Placeholder counts by kind. Returns keys only, never real names.                                                                                                                                                                                                                               |
 
 ### Map, team and project tools (signed in to Veilio Cloud)

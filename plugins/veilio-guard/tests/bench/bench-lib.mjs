@@ -244,3 +244,44 @@ export function teamTable(runs) {
     ],
   }
 }
+
+/** Spec 078: each call the guard refused and each result it withheld, with the
+ *  command or tool that met it, from a session's stream-json lines. */
+export function guardStops(lines) {
+  const calls = new Map()
+  const stops = []
+  for (const l of lines)
+    for (const c of l.message?.content ?? []) {
+      if (c.type === 'tool_use')
+        calls.set(c.id, c.name === 'Bash' ? String(c.input?.command ?? '') : c.name)
+      if (c.type !== 'tool_result') continue
+      const body = Array.isArray(c.content)
+        ? c.content.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('')
+        : String(c.content ?? '')
+      const kind = /Veilio refused this call|away from the model/.test(body)
+        ? 'refused'
+        : /Veilio withheld this result/.test(body)
+          ? 'withheld'
+          : null
+      if (kind)
+        stops.push({
+          kind,
+          call: (calls.get(c.tool_use_id) ?? '').slice(0, 160),
+          reason: body.slice(0, 200),
+        })
+    }
+  return stops
+}
+
+/** Spec 078: the guard's time per afterTool call (ms), from the lines the
+ *  guard writes when VEILIO_GUARD_TIMING names a file: p50, p95, max, count. */
+export function hookTimes(text) {
+  const ms = String(text ?? '')
+    .split('\n')
+    .map((l) => Number(/^after\t(\d+(?:\.\d+)?)/.exec(l)?.[1]))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b)
+  if (ms.length === 0) return null
+  const at = (q) => ms[Math.min(ms.length - 1, Math.ceil(q * ms.length) - 1)]
+  return { n: ms.length, p50: at(0.5), p95: at(0.95), max: ms[ms.length - 1] }
+}

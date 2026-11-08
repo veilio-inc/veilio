@@ -847,10 +847,31 @@ function learnable(text: string, scan: ReturnType<typeof scanSecrets>, map: Symb
   for (const { start, matched, end, type } of destroyedSpans(text, scan)) {
     const core = text.slice(start, matched)
     if (names.has(core) && HEURISTIC.has(type)) continue
-    for (const v of end > matched ? [core, text.slice(start, end)] : [core])
+    for (const whole of end > matched ? [core, text.slice(start, end)] : [core]) {
+      const v = type === 'private-key' ? pemBody(whole) : whole
       if (carriedForward(type, v)) out.push(v)
+    }
   }
   return out
+}
+
+/** A private key's body: its BEGIN and END lines and its `Name: value`
+ *  headers dropped, which every key of a kind shares (review round 1 item 8),
+ *  and its first 64 base64 characters, where keys of one kind share the
+ *  ASN.1 or OpenSSH header (review round 2). */
+function pemBody(block: string): string {
+  const body = block
+    .replace(/-----(?:BEGIN|END) [A-Z0-9 ]+-----/g, '')
+    .split('\n')
+    .filter((line) => !/^[A-Za-z-]+:/.test(line.trim()))
+    .join('\n')
+    .trim()
+  let at = 0
+  for (let shared = 64; at < body.length && shared > 0; at++) if (!/\s/.test(body[at]!)) shared--
+  // Too short to skip the prefix and keep 16 characters: learned whole
+  // (review round 3), never as an empty string.
+  const rest = body.slice(at).trim()
+  return rest.replace(/\s+/g, '').length >= 16 ? rest : body
 }
 
 /** `text` with each finding of `scan` removed as applyMap removes it: a
@@ -1200,6 +1221,21 @@ function periodOf(value: string): number {
   return value.length - (border[value.length - 1] ?? 0)
 }
 
+// Spec 078 R3: a removed credential's slices. 16 characters of a value with
+// letters and digits only is high-entropy enough that a chance match in
+// other text is negligible; a name is held to 12.
+const WINDOW = 16
+const NAME_WINDOW = 12
+/** Letters and digits only, lower case: the form two copies of a value share
+ *  whatever separators or case they were printed with. An escape sequence
+ *  written as text (`\\n`, `\\x0a`, `\\u000a`) is a separator too (review
+ *  round 1 item 7): its letters would split a window. */
+const compact = (text: string) =>
+  text
+    .replace(/\\(?:[ntr0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .toLowerCase()
+
 /** The credentials a session has destroyed, held in memory only, each with
  *  one token: the same secret reads as the same token everywhere, two
  *  secrets as two (review of 8aed5e8). Numbered from 1001 so they stay apart
@@ -1210,6 +1246,12 @@ export class Destroyed {
   private sweep = new Map<string, number>()
   private list: string[] | null = []
   private next = 1001
+  /** Spec 078 R3: every 16- and 12-character window of each learned value of
+   *  16 or more letters and digits, compacted, forwards and reversed. */
+  private windows16 = new Set<string>()
+  private windows12 = new Set<string>()
+  /** Grows whenever a value with windows is learned. */
+  version = 0
   learn(values: readonly string[]): void {
     // Every value is kept, one too long to search for by its bounded prefix;
     // then a too-long one fails the text that holds it (the caller withholds
@@ -1222,8 +1264,40 @@ export class Destroyed {
       this.tokenFor(v)
       this.sweep.set(v, periodOf(v))
       this.list = null
+      const c = compact(v)
+      if (c.length >= WINDOW) {
+        for (const form of [c, [...c].reverse().join('')]) {
+          for (let i = 0; i + WINDOW <= form.length; i++)
+            this.windows16.add(form.slice(i, i + WINDOW))
+          for (let i = 0; i + NAME_WINDOW <= form.length; i++)
+            this.windows12.add(form.slice(i, i + NAME_WINDOW))
+        }
+        this.version++
+      }
     }
     if (tooLong) throw new Error('a destroyed credential too long to remove safely')
+  }
+  /** Whether `text` holds 16 characters of a learned value in another form:
+   *  separators or case changed, sliced, reversed, or base64/hex encoded
+   *  (spec 078 FR-005). Linear in the text. */
+  reshaped(text: string, runs?: () => readonly string[]): boolean {
+    if (this.windows16.size === 0) return false
+    // Compaction joins a column and drops separators; reversed windows are
+    // in the set: only the encoded runs need decoding (`runs`: done already).
+    for (const form of [text, ...(runs ? runs() : decodedRuns(text))]) {
+      const c = compact(form)
+      for (let i = 0; i + WINDOW <= c.length; i++)
+        if (this.windows16.has(c.slice(i, i + WINDOW))) return true
+    }
+    return false
+  }
+  /** Whether a name shares 12 characters with a learned value (FR-006). */
+  sharesWindow(name: string): boolean {
+    if (this.windows12.size === 0) return false
+    const c = compact(name)
+    for (let i = 0; i + NAME_WINDOW <= c.length; i++)
+      if (this.windows12.has(c.slice(i, i + NAME_WINDOW))) return true
+    return false
   }
   /** A name that holds one of these credentials, with the placeholder it is
    *  masked by this session: replaced whole before the credential inside it is
@@ -1576,4 +1650,114 @@ export function restoreArgs(
     altered: r.report.altered,
     resolved: r.report.resolved,
   }
+}
+
+// ── spec 078: encoded copies (research R2 option A, R3) ──────────────────────
+
+const BASE64_RUN = /[A-Za-z0-9+/_-]{16,}={0,2}/g
+// Hex digit pairs, optionally spaced or on several lines (xxd -p, od -tx1).
+const HEX_RUN = /[0-9a-fA-F]{2}(?:[ \t\r\n]*[0-9a-fA-F]{2}){7,}/g
+
+const UTF8 = new TextDecoder('utf-8', { fatal: false })
+/** Decoded bytes as text, never judged as a whole: a name padded with binary
+ *  bytes still reads as a word between replacement characters (security
+ *  review of the encoded-name check). */
+function asText(bytes: string): string {
+  const out = new Uint8Array(bytes.length)
+  for (let i = 0; i < bytes.length; i++) out[i] = bytes.charCodeAt(i)
+  return UTF8.decode(out)
+}
+
+function decodeBase64(run: string): string | null {
+  const plain = run.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
+  if (plain.length % 4 === 1) return null
+  try {
+    return asText(atob(plain + '='.repeat((4 - (plain.length % 4)) % 4)))
+  } catch {
+    return null
+  }
+}
+
+function decodeHex(run: string): string | null {
+  const digits = run.replace(/\s+/g, '')
+  let out = ''
+  for (let i = 0; i + 1 < digits.length; i += 2)
+    out += String.fromCharCode(parseInt(digits.slice(i, i + 2), 16))
+  return asText(out)
+}
+
+/** The forms a text can carry a copy of a name in that masking does not
+ *  read: base64, base64url and hex runs decoded (lines of a wrapped run
+ *  joined first), each line reversed, and a column of 4 or more lines of 1-3
+ *  characters joined. Linear in the text. */
+export function encodedForms(text: string, runs?: readonly string[]): string[] {
+  const lines = text.split('\n')
+  const out = runs ? [...runs] : decodedRuns(text, lines)
+  out.push(lines.map((l) => [...l].reverse().join('')).join('\n'))
+  let column: string[] = []
+  for (const line of [...lines, '']) {
+    const l = line.replace(/\r$/, '')
+    if (l.length >= 1 && l.length <= 3) column.push(l)
+    else {
+      if (column.length >= 4) out.push(column.join(''))
+      column = []
+    }
+  }
+  return out
+}
+
+/** The base64, base64url and hex runs of a text, decoded. */
+export function decodedRuns(text: string, lines = text.split('\n')): string[] {
+  // The whole text, however long: every step below is linear, and a shell's
+  // output reaches the guard already capped by Claude Code.
+  const out: string[] = []
+  // A wrapped base64 run (base64's 76 columns) is one run: whole lines of
+  // base64 characters joined, line by line (a regex across lines
+  // backtracks quadratically on a long run).
+  const joined: string[] = []
+  for (const line of lines) {
+    const l = line.replace(/\r$/, '')
+    const whole = /^[A-Za-z0-9+/_-]+={0,2}$/.test(l)
+    const last = joined.length - 1
+    if (whole && last >= 0 && joined[last]!.length >= 16 && !/=$/.test(joined[last]!))
+      joined[last] += l
+    else joined.push(whole ? l : '')
+  }
+  for (const source of [text, ...joined.filter((j) => j.length > 76)])
+    for (const m of source.matchAll(BASE64_RUN)) {
+      const d = decodeBase64(m[0])
+      if (d !== null) out.push(d)
+    }
+  for (const m of text.matchAll(HEX_RUN)) {
+    const d = decodeHex(m[0])
+    if (d !== null) out.push(d)
+  }
+  return out
+}
+
+const nameSets = new WeakMap<SymbolMap, ReadonlySet<string>>()
+/** A masked name of 4 or more characters that one of `text`'s encoded forms
+ *  holds, or null. Readable ordinary words (spec 064) are not masked, so
+ *  they are not looked for; no case-folding (FR-018a). */
+export function encodedName(
+  text: string,
+  map: SymbolMap,
+  runs?: () => readonly string[]
+): string | null {
+  const view = readableView(map)
+  let names = nameSets.get(view)
+  if (!names) {
+    names = new Set([...namesOf(view)].filter((n) => n.length >= 4))
+    nameSets.set(view, names)
+  }
+  if (names.size === 0) return null
+  // shortcut: names are matched as whole words of the decoded text, so one
+  // glued to other word characters is missed; upgrade to a substring
+  // automaton if that is shown to matter.
+  for (const form of encodedForms(text, runs?.()))
+    for (const word of form.split(/[^A-Za-z0-9_$.\-/]+/)) {
+      if (names.has(word)) return word
+      for (const piece of word.split(/[.\-/]+/)) if (names.has(piece)) return piece
+    }
+  return null
 }

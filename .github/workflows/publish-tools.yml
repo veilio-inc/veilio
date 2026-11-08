@@ -128,6 +128,15 @@ jobs:
           npm run typecheck --workspaces --if-present
           npm run test --workspaces --if-present
 
+      # The workspace links the local engine, so the build and the tests above
+      # pass against exports npm may not have yet. A user's install resolves
+      # the range in packages/{cli,mcp}/package.json instead: fail here if any
+      # engine export the built tools import is missing from the engine that
+      # range resolves to (spec 078 review round 1 item 1). Raising the range
+      # is a release step of its own; this only refuses a release without it.
+      - name: Every engine export the tools import is in the engine their range resolves to
+        run: node scripts/check-engine-exports.mjs
+
       # Fail, not warn, if either tarball would ship something outside the
       # allowlist — the same check publish-engine.yml runs, for the same reason:
       # the file list does not depend on the version, so it can be verified
