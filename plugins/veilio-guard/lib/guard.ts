@@ -415,6 +415,7 @@ export class Guard {
     await this.readOffRecord()
     await this.reloadMap()
     this.stopIfTracked(committed)
+    this.loaded = true
     this.shellDir = cwd
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
@@ -699,9 +700,11 @@ export class Guard {
   }
 
   async reloadMap(): Promise<void> {
+    const aliases = this.aliases
     await this.reloadSideFiles()
     if (!(await this.io.exists(this.mapPath))) {
       this.stored = { version: 1, map: {} }
+      this.onDisk = {}
       return
     }
     const parsed = parseMapFile(await this.io.read(this.mapPath))
@@ -725,7 +728,37 @@ export class Guard {
         this.notice(EMPTY_MAP_READABLE)
       }
     }
+    // Spec 085 L12: after load, what the disk holds that this guard did not
+    // write is adopted (setEnabled checks git right after).
+    if (this.loaded) this.adopt(parsed.stored.map, aliases)
+    this.onDisk = parsed.stored.map
     this.stored = parsed.stored
+  }
+
+  /** Spec 085 L12: the map as this guard last read or wrote it. */
+  private onDisk: SymbolMap = {}
+  private loaded = false
+  /** Placeholders taken from the disk after load, or from a map git tracked:
+   *  restored only once this session has shown them (078's shown set). */
+  private adopted = new Set<string>()
+  /** Records the placeholders of `map` and the re-read aliases whose name
+   *  this guard never held; says whether there was any. By name, not by
+   *  placeholder: a CLI publish renumbers the guard's own names (spec 066),
+   *  and putting back a name the guard itself learned plants nothing. */
+  private adopt(map: SymbolMap, aliasesBefore: SymbolMap): boolean {
+    const known = new Set([
+      ...Object.values(this.onDisk),
+      ...Object.values(this.stored.map),
+      ...Object.values(aliasesBefore),
+    ])
+    const foreign = [...Object.entries(map), ...Object.entries(this.aliases)]
+      .filter(([, name]) => !known.has(name))
+      .map(([p]) => p)
+    for (const p of foreign) {
+      this.adopted.add(p)
+      if (this.shown.delete(p)) this.shownVersion++
+    }
+    return foreign.length > 0
   }
   /** The map at load was readable by others and held no names (round 2). */
   private mapReadable = false
@@ -776,10 +809,14 @@ export class Guard {
    *  commands the model only saw as placeholders. */
   private stopIfTracked(committed: string[] | null): void {
     const tracked = (committed ?? []).filter((f) => f !== '.veilio/guard.json')
-    if (tracked.length)
-      this.stop(
-        `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
-      )
+    if (tracked.length === 0) return
+    // Spec 085 L14: once git no longer tracks it, what the repository put
+    // there still restores only once shown.
+    for (const p of [...Object.keys(this.stored.map), ...Object.keys(this.aliases)])
+      this.adopted.add(p)
+    this.stop(
+      `${tracked.join(' and ')} ${tracked.length > 1 ? 'are' : 'is'} tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own`
+    )
   }
 
   stop(reason: string): void {
@@ -837,13 +874,25 @@ export class Guard {
     }
   }
 
+  /** Run before a name is written: the store holds the real names, and must
+   *  never be committed. Spec 085 L4: one already there must be a plain file
+   *  whose only pattern is `*` (a repository can commit its own); it is never
+   *  rewritten. Checked after a write too: with no lstat, a dangling link is
+   *  found only once written through, and no name has been written then. */
   private async ensureIgnored(): Promise<void> {
-    // The store holds the real names; it must never be committed.
     const ignore = join(this.root, '.veilio', '.gitignore')
     await this.refuseLinks()
     if (!(await this.io.exists(ignore))) {
       await this.createOwnerOnly(ignore, '', false)
       await this.io.write(ignore, '*\n')
+    }
+    const root = (await this.io.realPath(this.root)) ?? this.root
+    if (
+      (await this.io.realPath(ignore)) !== join(root, '.veilio', '.gitignore') ||
+      !onlyStar(await this.io.read(ignore))
+    ) {
+      this.stop(IGNORE_STOP)
+      throw new Error(this.stoppedReason)
     }
   }
 
@@ -935,22 +984,46 @@ export class Guard {
    *  not the example placeholders of the guard's own note, which comes in
    *  with the text. */
   private shown = new Set<string>()
+  /** Changes whenever `shown` does: what shownMap's cache is keyed by. */
+  private shownVersion = 0
   private noListing = false
   private see(text: string, before: string): string {
-    if (!this.noListing) return text
+    if (!this.noListing && this.adopted.size === 0) return text
     const token = /__[A-Z0-9_]+__\d*/g
     const had = new Set(before.match(token) ?? [])
-    for (const m of text.matchAll(token)) if (!had.has(m[0])) this.shown.add(m[0])
+    for (const m of text.matchAll(token)) {
+      if (had.has(m[0]) || this.shown.has(m[0])) continue
+      this.shown.add(m[0])
+      this.shownVersion++
+    }
     return text
   }
-  private shownCache: { from: SymbolMap; size: number; map: SymbolMap } | null = null
-  /** What restores outside git: the entries of `from` this session showed. */
-  private shownMap(from: SymbolMap): SymbolMap {
+  private shownCache: {
+    from: SymbolMap
+    size: number
+    only?: ReadonlySet<string>
+    onlySize: number
+    map: SymbolMap
+  } | null = null
+  /** What restores outside git: the entries of `from` this session showed.
+   *  With `only`, the entries outside it restore too (spec 085 L12). */
+  private shownMap(from: SymbolMap, only?: ReadonlySet<string>): SymbolMap {
     const c = this.shownCache
-    if (c && c.from === from && c.size === this.shown.size) return c.map
+    const onlySize = only?.size ?? 0
+    if (
+      c &&
+      c.from === from &&
+      c.size === this.shownVersion &&
+      c.only === only &&
+      c.onlySize === onlySize
+    )
+      return c.map
     const map: SymbolMap = {}
-    for (const p of this.shown) if (Object.hasOwn(from, p)) map[p] = from[p]!
-    this.shownCache = { from, size: this.shown.size, map }
+    if (only) {
+      for (const [p, name] of Object.entries(from))
+        if (!only.has(p) || this.shown.has(p)) map[p] = name
+    } else for (const p of this.shown) if (Object.hasOwn(from, p)) map[p] = from[p]!
+    this.shownCache = { from, size: this.shownVersion, only, onlySize, map }
     return map
   }
 
@@ -1198,7 +1271,11 @@ export class Guard {
     const altered = new Set<string>()
     const resolved = new Set<string>()
     const from = this.restoreMap
-    const restorable = this.noListing ? this.shownMap(from) : from
+    const restorable = this.noListing
+      ? this.shownMap(from)
+      : this.adopted.size
+        ? this.shownMap(from, this.adopted)
+        : from
     const unshown = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
@@ -1851,7 +1928,15 @@ export class Guard {
         }
         onDisk = parsed.stored
       }
+      const aliases = this.aliases
       await this.reloadSideFiles()
+      // Spec 085 L12: entries another program wrote (a git pull) are checked
+      // against git before any of them is merged.
+      if (this.adopt(onDisk.map, aliases)) {
+        this.stopIfTracked(await this.trackedVeilioFiles())
+        if (this.state === 'stopped') throw new Error(this.stoppedReason)
+      }
+      this.onDisk = onDisk.map
       // Everything this guard knows, not only the new entries: a writer that
       // dropped ours (two programs saving at once) gets them back.
       const { merged, conflicts } = mergeAdditions(onDisk.map, { ...this.stored.map, ...additions })
@@ -1868,10 +1953,11 @@ export class Guard {
         }
         this.mapReadable = false
       }
+      await this.ensureIgnored()
       if (!existed)
         await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       await this.io.write(this.mapPath, serialiseMapFile(next))
-      if (!existed) await this.ensureIgnored()
+      this.onDisk = next.map
       this.stored = next
       return { status: 'saved' as const, quarantined }
     })
@@ -1889,6 +1975,18 @@ class DecodedOnce {
     if (this.last?.text !== text) this.last = { text, runs: decodedRuns(text) }
     return this.last.runs
   }
+}
+
+/** strings.md #9 (spec 085 L4), as the band completes it. */
+const IGNORE_STOP =
+  '.veilio/.gitignore does not keep the map out of git (it must be a plain file whose only pattern is `*`). Fix it, then /veilio on'
+
+/** The CLI's rule (packages/cli/src/store.ts onlyStar): `*` then `!map.json`
+ *  would let git track the map. Blank lines and `#` comments allowed; only a
+ *  line exactly `*` (CRLF accepted) counts, as git keeps spaces and tabs. */
+function onlyStar(text: string): boolean {
+  const patterns = text.split(/\r?\n/).filter((l) => l !== '' && !l.startsWith('#'))
+  return patterns.length > 0 && patterns.every((l) => l === '*')
 }
 
 /** Review round 2 #7: said once, when a map with no names cannot be made 0600. */

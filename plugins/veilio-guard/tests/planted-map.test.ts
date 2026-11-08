@@ -421,3 +421,188 @@ for (const [via, first] of [
     expect(out.deny).toBe(NOT_SHOWN('__VAR__9'))
     expect(seen).toHaveLength(writes)
   })
+
+// Spec 085 L12: a map or aliases file that arrives in the middle of a session
+// (a git pull, a checkout) is checked against git before anything in it is
+// adopted, and what was adopted restores only once this session showed it.
+const PAY = `${ROOT}/src/pay.ts`
+const PAY_TEXT = 'export class PaymentGatewayFake {}\n'
+const INVOICE = `${ROOT}/src/invoice.ts`
+const INVOICE_TEXT = 'export class InvoiceBuilder {}\n'
+const STOPS_TRACKED =
+  /^Veilio refused this call: \.veilio\/map\.json and \.veilio\/aliases\.json are tracked by git: a map in the repository is not yours to restore from/
+
+function arrives(p: { files: Record<string, string> }, map: Record<string, string>) {
+  p.files[`${ROOT}/.veilio/map.json`] = mapFile(map)
+  p.files[`${ROOT}/.veilio/aliases.json`] = JSON.stringify({
+    aliases: { __VAR__8: 'fakeAliasValue()' },
+  })
+}
+
+function writer(seen: Fields[]) {
+  return (_: unknown, e: Fields) => {
+    seen.push(e)
+    if (e.tool === 'Read' && e.file_path === PAY) return readOf(PAY, PAY_TEXT)
+    if (e.tool === 'Read') return readOf(INVOICE, INVOICE_TEXT)
+    if (e.tool === 'Bash') return { result: OK }
+    return { result: { type: 'create', filePath: `${ROOT}/src/a.ts` } }
+  }
+}
+
+test('L12: a map that becomes tracked mid-session stops the guard at the next save', async ($, on) => {
+  const tracked: string[] = []
+  const p = project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }), [PAY]: PAY_TEXT },
+    { trackedVeilio: tracked }
+  )
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  arrives(p, { __CLS__1: 'OtherName', __VAR__9: 'fakePlantedValue()' })
+  tracked.push('.veilio/map.json', '.veilio/aliases.json')
+  const read = await $.tool.call({ tool: 'Read', file_path: PAY })
+  expect(JSON.stringify(read)).not.toContain('PaymentGatewayFake')
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__VAR__9 __VAR__8',
+  })
+  expect(out.deny).toMatch(STOPS_TRACKED)
+  expect(seen).toHaveLength(writes)
+  expect(JSON.stringify(seen)).not.toContain('fakePlantedValue')
+})
+
+test('L12: entries adopted mid-session in git restore only once this session showed them', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger' }),
+    [PAY]: PAY_TEXT,
+    [INVOICE]: INVOICE_TEXT,
+  })
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  arrives(p, {
+    __CLS__1: 'QuasarLedger',
+    __VAR__9: 'fakePlantedValue()',
+    __CLS__7: 'InvoiceBuilder',
+  })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  for (const placeholder of ['__VAR__9', '__VAR__8', '__CLS__7']) {
+    const writes = seen.length
+    const out = await $.tool.call({
+      tool: 'Write',
+      file_path: `${ROOT}/src/a.ts`,
+      content: placeholder,
+    })
+    expect(out.deny).toBe(NOT_SHOWN(placeholder))
+    expect(seen).toHaveLength(writes)
+  }
+  // Once a Read shows it, an adopted entry restores as any other.
+  const read = await $.tool.call({ tool: 'Read', file_path: INVOICE })
+  expect(JSON.stringify(read)).toContain('__CLS__7')
+  await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/a.ts`, content: 'new __CLS__7()' })
+  expect(seen.at(-1)?.content).toBe('new InvoiceBuilder()')
+  // An entry this session had before the pull still restores.
+  await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/a.ts`, content: 'new __CLS__1()' })
+  expect(seen.at(-1)?.content).toBe('new QuasarLedger()')
+})
+
+// Spec 085 L14 (strings.md #8): /veilio on does not lift the tracked stop, and
+// says so; once git no longer tracks it, on works, and what the repository
+// planted still restores only once shown.
+const STAYS =
+  'Veilio stays stopped: .veilio/map.json is tracked by git: a map in the repository is not yours to restore from. Remove it from git (git rm --cached) and pull or build your own. `/veilio on` cannot lift this; fix the cause first.'
+
+test('L14: /veilio on while the map is tracked says it stays stopped; after git rm --cached it works', async ($, on) => {
+  const tracked = ['.veilio/map.json']
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__9: 'fakePlantedValue()' }) },
+    { trackedVeilio: tracked, home: '/home/dev' }
+  )
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  const reply = await $.command.run({ command: 'veilio', args: 'on' })
+  expect(reply.text.split('\n')[0]).toBe(STAYS)
+  const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.js`, content: '__VAR__9' })
+  expect(out.deny).toMatch(/tracked by git/)
+  expect(seen).toHaveLength(0)
+  tracked.length = 0
+  const again = await $.command.run({ command: 'veilio', args: 'on' })
+  expect(again.text.split('\n')[0]).toMatch(/^Veilio guard on /)
+  const after = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/a.js`,
+    content: '__VAR__9',
+  })
+  expect(after.deny).toBe(NOT_SHOWN('__VAR__9'))
+  expect(seen).toHaveLength(0)
+})
+
+test('L12: outside git, a shown placeholder another program gives a new name must be shown again', async ($, on) => {
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'InvoiceBuilder' }),
+      [INVOICE]: INVOICE_TEXT,
+      [PAY]: PAY_TEXT,
+    },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  const read = await $.tool.call({ tool: 'Read', file_path: INVOICE })
+  expect(JSON.stringify(read)).toContain('__CLS__1')
+  p.files[`${ROOT}/.veilio/map.json`] = mapFile({ __CLS__1: 'fakePlantedValue()' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__CLS__1',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__CLS__1'))
+  expect(seen).toHaveLength(writes)
+})
+
+// Spec 085 L4 (strings.md #9): a .veilio/.gitignore the repository committed,
+// or a link, must not leave the map to git: the guard stops before a name is
+// written. Only a plain file whose only pattern is `*` (the CLI's rule) keeps it.
+const IGNORE_STOP =
+  'Veilio guard stopped: .veilio/.gitignore does not keep the map out of git (it must be a plain file whose only pattern is `*`). Fix it, then /veilio on. Every tool call is refused.'
+for (const [what, files, links] of [
+  ['holds no pattern', { [`${ROOT}/.veilio/.gitignore`]: '# kept\n' }, {}],
+  ['un-ignores the map', { [`${ROOT}/.veilio/.gitignore`]: '*\n!map.json\n' }, {}],
+  [
+    'is a link',
+    { '/outside/ignore': '*\n' },
+    { [`${ROOT}/.veilio/.gitignore`]: '/outside/ignore' },
+  ],
+] as const)
+  test(`L4: the guard writes no name while .veilio/.gitignore ${what}`, async ($, on) => {
+    const p = project(
+      on,
+      { [`${ROOT}/.veilio/map.json`]: mapFile({}), ...files, [PAY]: PAY_TEXT },
+      { links: { ...links } }
+    )
+    on('tool.call', () => readOf(PAY, PAY_TEXT))
+    const out = await $.tool.call({ tool: 'Read', file_path: PAY })
+    expect(JSON.stringify(out)).not.toContain('PaymentGatewayFake')
+    expect(p.writes.some((w) => w.text.includes('PaymentGatewayFake'))).toBe(false)
+    const status = await $.command.run({ command: 'veilio', args: '' })
+    expect(status.text.split('\n')[0]).toBe(IGNORE_STOP)
+  })
+
+test('L4: an older .gitignore of `*` and comments still keeps the map, and is not rewritten', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({}),
+    [`${ROOT}/.veilio/.gitignore`]: '# veilio\r\n*\r\n',
+    [PAY]: PAY_TEXT,
+  })
+  on('tool.call', () => readOf(PAY, PAY_TEXT))
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain('PaymentGatewayFake')
+  expect(p.writes.some((w) => w.path.endsWith('.gitignore'))).toBe(false)
+})

@@ -12,7 +12,7 @@ import {
   type GuardIO,
   type ToolEvent,
 } from '../lib/guard.ts'
-import { bandText, MODEL_NOTE, statusText } from '../lib/ui.ts'
+import { bandText, MODEL_NOTE, statusText, stillStopped } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
   commandRows,
@@ -422,6 +422,11 @@ export function register(on: On, options: Options = {}) {
       $.ui.invalidate('ui.render')
     }
     const text = statusText(g, managed)
+    // Spec 085 L14 (strings.md #8): on does not lift a stop, and says so.
+    if (arg === 'on' && g.state === 'stopped') {
+      const [, ...rest] = text.split('\n')
+      return { text: [stillStopped(g.stoppedReason), ...rest].join('\n') }
+    }
     if (arg !== 'off' || !recorded) return { text }
     // strings.md #17, on the first line of the reply.
     const [first, ...rest] = text.split('\n')
