@@ -165,7 +165,7 @@ describe('the map is written only where .gitignore keeps it out of git (L4)', ()
     return { base, cwd, mapPath: resolveMapPath(null, cwd) }
   }
   const refusal = (dir: string) =>
-    `refusing to write the map: ${dir}/.gitignore does not keep it out of git (it must be a plain file with a line \`*\`). Fix that file, then run again.`
+    `refusing to write the map: ${dir}/.gitignore does not keep it out of git (it must be a plain file whose only pattern is \`*\`). Fix that file, then run again.`
 
   it('a committed .gitignore without `*` is refused, and no name is written', () => {
     const { cwd, mapPath } = setup()
@@ -197,12 +197,33 @@ describe('the map is written only where .gitignore keeps it out of git (L4)', ()
     )
   })
 
-  it("an older CLI's `*` file passes, and so does one with other lines too", () => {
-    for (const body of ['*\n', '*', '# veilio\n*\r\n!keep\n']) {
+  it("an older CLI's `*` file passes, and so does one with comments and blank lines", () => {
+    for (const body of ['*\n', '*', '# veilio\n*\r\n', '\n*  \n\n# kept by veilio\n']) {
       const { cwd, mapPath } = setup()
       writeFileSync(join(cwd, '.veilio', '.gitignore'), body)
       saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
-      expect(existsSync(mapPath)).toBe(true)
+      expect(existsSync(mapPath), JSON.stringify(body)).toBe(true)
+    }
+  })
+
+  // Security review: `*` then `!map.json` still lets git track the map, and the
+  // CLI cannot ask git. So `*` must be the only pattern.
+  it('refuses any pattern beside `*`, a `!` line above all, and a file with no pattern', () => {
+    for (const body of [
+      '*\n!map.json\n',
+      '*\n!*.json\n',
+      '*\n*.tmp\n',
+      '',
+      '# only a comment\n\n',
+      'map.json\n',
+      '  *\n',
+    ]) {
+      const { cwd, mapPath } = setup()
+      writeFileSync(join(cwd, '.veilio', '.gitignore'), body)
+      expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' }), JSON.stringify(body)).toThrow(
+        refusal(join(cwd, '.veilio'))
+      )
+      expect(existsSync(mapPath)).toBe(false)
     }
   })
 
