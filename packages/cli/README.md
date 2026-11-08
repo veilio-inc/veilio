@@ -476,8 +476,11 @@ Edition release workflow, so the two are not independent.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR
-on that is how a security check gets switched off in week one. Pass `paths:` to
-scan a fixed set instead.
+on that is how a security check gets switched off in week one. Each changed file
+is scanned under its own name, as the pre-commit hook does, so a `-diff`
+attribute hides nothing; this needs a CLI with `scan --blobs`, so a `version:`
+pinned below this release fails the step. Pass `paths:` to scan a fixed set
+instead.
 
 Findings land in the job summary and, with `sarif:`, in GitHub code scanning.
 Reports carry truncated previews only — a stored, shareable artifact must never

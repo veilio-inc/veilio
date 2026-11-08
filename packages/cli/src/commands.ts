@@ -562,13 +562,14 @@ export async function runRestore(
 }
 
 /** The files a `--blobs` listing names, with their content: submodules and
- *  binary blobs (a NUL in the first 8000 bytes) left out; a listed blob the
+ *  deletions and binary blobs (a NUL in the first 8000 bytes) left out; a listed blob the
  *  stream does not hold is an error, never a pass. */
 function stagedTargets(listing: string, batch: Buffer): { name: string; text: string }[] {
   const blobs = parseBatch(batch)
   const targets: { name: string; text: string }[] = []
   for (const entry of parseListing(listing)) {
-    if (entry.mode === '160000') continue
+    // A submodule names another repository's commit; a deletion has no blob.
+    if (entry.mode === '160000' || entry.mode === '000000') continue
     const blob = blobs.get(entry.id)
     if (!blob)
       throw new BlobsError(`could not read the staged ${JSON.stringify(entry.path)} from git`)

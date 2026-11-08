@@ -117,6 +117,29 @@ describe('veilio scan --blobs', () => {
     expect((await scan(['--quiet', '--blobs', raw], batch)).code).toBe(EXIT_OK)
   })
 
+  it('a deleted file in the listing has no blob and is skipped', async () => {
+    stage({ 'old.ts': TS })
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'one')
+    git('rm', '-q', 'old.ts')
+    stage({ 'src/gateway.ts': TS })
+    const listing = git('diff', '--cached', '--raw', '--no-abbrev', '--no-renames').toString()
+    expect(listing).toMatch(/\tD?old\.ts|D\told\.ts/)
+    const raw = join(repo, '.git', 'veilio-raw-d')
+    writeFileSync(raw, listing)
+    const ids =
+      listing
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => l.split(' ')[3])
+        .join('\n') + '\n'
+    const batch = execFileSync('git', ['cat-file', '--batch'], {
+      cwd: repo,
+      env: { ...GIT_ENV, HOME: repo },
+      input: ids,
+    })
+    expect((await scan(['--quiet', '--blobs', raw], batch)).code).toBe(EXIT_OK)
+  })
+
   it('a blob missing from the batch is an error, never a pass', async () => {
     stage({ '.env': ENV, 'src/gateway.ts': TS })
     const { raw, batch } = staged()
