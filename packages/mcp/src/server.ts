@@ -82,8 +82,10 @@ export function handleMessage(message: unknown, ctx: ToolContext): JsonRpcRespon
           `the guard (veilio-guard, Claude Code), or turn off the agent's own file and shell ` +
           `tools so this server is the only way to the code. ` +
           `Use scan_secrets to check a file or diff for credentials without seeing their values. ` +
-          `restore_text puts the real names into your context: use it only when the developer ` +
-          `asks for restored text for their own use.` +
+          (ctx.restoreText
+            ? `restore_text puts the real names into your context: use it only when the developer ` +
+              `asks for restored text for their own use.`
+            : '') +
           (ctx.guardHint ? ` ${ctx.guardHint.replace(/^veilio: /, '')}` : ''),
       })
     }

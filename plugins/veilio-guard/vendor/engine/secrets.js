@@ -1102,9 +1102,11 @@ function projectPart(path, root) {
 /** Show enough of the value to be recognisable, never enough to be usable. */
 export function previewSecret(value) {
     const clean = value.replace(/\s+/g, ' ').trim();
+    // Spec 078 FR-017: no leading characters - a key's prefix plus its last
+    // four halved a short password. 12 or fewer: the length only.
     if (clean.length <= 12)
-        return `${clean.slice(0, 2)}${'•'.repeat(Math.max(clean.length - 2, 1))}`;
-    return `${clean.slice(0, 4)}…${clean.slice(-4)} (${clean.length} chars)`;
+        return `•••• (${clean.length} chars)`;
+    return `…${clean.slice(-4)} (${clean.length} chars)`;
 }
 function collectMatches(code, scan) {
     const found = [];

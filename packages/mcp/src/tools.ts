@@ -44,6 +44,7 @@ import {
   type LanguageOption,
   fileKindOf,
   isLocalPlaceholder,
+  isRawOnly,
 } from '@veilio-inc/engine'
 import { loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
 import {
@@ -101,6 +102,13 @@ export interface ToolContext {
    * person's choice, never a tool argument's.
    */
   destructive?: boolean
+  /**
+   * restore_text offered (spec 078 FR-018). Set ONLY from VEILIO_MCP_RESTORE=1
+   * when the server starts: its answers put the real names into the agent's
+   * context, where an instruction hidden in a file the agent reads could ask
+   * for them.
+   */
+  restoreText?: boolean
   /**
    * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
    * repository's `.mcp.json` `env`, it pins that repository's project for
@@ -203,6 +211,16 @@ function safeResolve(path: string, cwd: string): string {
   return realTarget
 }
 
+/** Spec 078 FR-016: the guard's raw-only list (one list, the engine's), on
+ *  the path as given and where it really leads, before anything is read. */
+function refuseRawOnly(path: string, real: string, cwd: string): void {
+  const root = realPath(cwd) ?? cwd
+  if (isRawOnly(path, []) || isRawOnly(relative(root, real), []))
+    throw new ToolError(
+      `"${path}" is on Veilio's raw-only list (.env, private keys, credential stores, .veilio/); Veilio never reads it. Ask the user for what you need from it.`
+    )
+}
+
 function readTarget(
   args: Record<string, unknown>,
   ctx: ToolContext
@@ -214,6 +232,7 @@ function readTarget(
   }
   if (path !== undefined) {
     const abs = safeResolve(path, ctx.cwd)
+    refuseRawOnly(path, abs, ctx.cwd)
     try {
       return { text: readFileSync(abs, 'utf8'), label: path }
     } catch {
@@ -424,7 +443,8 @@ export const TOOLS: ToolDefinition[] = [
       `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so the real ` +
       `identifiers never enter your context — you only ever see the masked form. Use it before ` +
       `reasoning about, quoting, or forwarding proprietary source. The symbol map is stored ` +
-      `locally so restore_text can reverse it later.`,
+      `locally so the developer can restore an answer later. Files on the raw-only list ` +
+      `(.env, private keys, credential stores, .veilio/) are refused, never read.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -442,6 +462,7 @@ export const TOOLS: ToolDefinition[] = [
     handler: (args, ctx) => {
       const path = str(args, 'path', true)
       const abs = safeResolve(path, ctx.cwd)
+      refuseRawOnly(path, abs, ctx.cwd)
       let source: string
       try {
         source = readFileSync(abs, 'utf8')
@@ -619,8 +640,9 @@ export const TOOLS: ToolDefinition[] = [
     description:
       `Detect credentials — API keys, tokens, private keys, connection-string passwords, ` +
       `emails, private IPs — without modifying anything and WITHOUT putting the values in your ` +
-      `context (findings carry truncated previews only). Run this on a file before reading it, ` +
-      `or on a diff before committing.`,
+      `context (a finding shows only a value's last four characters and its length). Run this ` +
+      `on a file before reading it, or on a diff before committing. Files on the raw-only list ` +
+      `(.env, private keys, credential stores, .veilio/) are refused, never read.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -680,7 +702,7 @@ export function callTool(
   args: Record<string, unknown>,
   ctx: ToolContext
 ): ToolResult {
-  const tool = TOOLS_BY_NAME.get(name)
+  const tool = offered(name, ctx) ? TOOLS_BY_NAME.get(name) : undefined
   if (!tool) return { text: `Unknown tool "${name}".`, isError: true }
   try {
     return tool.handler(args, ctx)
@@ -700,7 +722,13 @@ export function callTool(
  * server runs is picked up without a restart.
  */
 export function listTools(ctx: ToolContext): (ToolDefinition | CloudToolDefinition)[] {
-  return readCredential(ctx.home) ? [...TOOLS, ...CLOUD_TOOLS] : TOOLS
+  const tools = TOOLS.filter((t) => offered(t.name, ctx))
+  return readCredential(ctx.home) ? [...tools, ...CLOUD_TOOLS] : tools
+}
+
+/** restore_text only when the person started the server with it (FR-018). */
+function offered(name: string, ctx: ToolContext): boolean {
+  return name !== 'restore_text' || ctx.restoreText === true
 }
 
 /**

@@ -15,7 +15,7 @@ let ctx: ToolContext
 
 beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-purity-'))
-  ctx = { cwd, mapPath: null }
+  ctx = { cwd, mapPath: null, restoreText: true }
 })
 
 afterEach(() => {

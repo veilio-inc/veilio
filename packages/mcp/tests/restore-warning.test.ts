@@ -14,14 +14,16 @@ const WARNING = /real (names|identifiers)[^.]*(your|the model'?s) context/i
 describe('restore_text says what its result does', () => {
   it('in its tool description', () => {
     const home = mkdtempSync(join(tmpdir(), 'veilio-warn-'))
-    const t = listTools({ cwd: '/', mapPath: null, home }).find((x) => x.name === 'restore_text')!
+    const t = listTools({ cwd: '/', mapPath: null, restoreText: true, home }).find(
+      (x) => x.name === 'restore_text'
+    )!
     expect(t.description).toMatch(WARNING)
     expect(t.description).not.toMatch(/Use this on a reply that came back/)
   })
   it('in the server instructions', () => {
     const reply = handleMessage(
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-      { cwd: '/', mapPath: null }
+      { cwd: '/', mapPath: null, restoreText: true }
     ) as {
       result: { instructions: string }
     }

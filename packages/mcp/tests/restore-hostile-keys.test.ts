@@ -14,7 +14,7 @@ function ctxWith(map: Record<string, string>, aliases: Record<string, string>) {
   mkdirSync(dirname(mapPath), { recursive: true })
   writeFileSync(mapPath, JSON.stringify({ map }))
   writeFileSync(join(dirname(mapPath), ALIASES_FILE), JSON.stringify({ version: 1, aliases }))
-  return { cwd, mapPath: null }
+  return { cwd, mapPath: null, restoreText: true }
 }
 
 describe('restore_text with keys that are not placeholders', () => {

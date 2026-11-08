@@ -18,14 +18,17 @@ import { tmpdir } from 'node:os'
 const DIST = resolve(import.meta.dirname, '..', 'dist', 'index.js')
 const INITIALIZE = `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`
 
-function initialize(entry: string): { stdout: string; stderr: string } {
+function initialize(
+  entry: string,
+  extra: Record<string, string> = {}
+): { stdout: string; stderr: string } {
   const root = mkdtempSync(join(tmpdir(), 'veilio-mcp-root-'))
   const r = spawnSync(process.execPath, [entry, '--root', root], {
     input: INITIALIZE,
     encoding: 'utf8',
     timeout: 15_000,
     // An empty home: no stored sign-in, so startup never reaches the network.
-    env: { ...process.env, HOME: root, USERPROFILE: root },
+    env: { ...process.env, VEILIO_MCP_RESTORE: '', HOME: root, USERPROFILE: root, ...extra },
   })
   return { stdout: r.stdout, stderr: r.stderr }
 }
@@ -53,6 +56,16 @@ describe('the server, started as a binary', () => {
 
   it('answers initialize when started by its real path', () => {
     answersInitialize(DIST)
+  })
+
+  // Spec 078 FR-018 (strings.md #22): said on stderr, never on stdout.
+  it('says on start when restore_text is on, and only then', () => {
+    const NOTICE =
+      "veilio: restore_text is on (VEILIO_MCP_RESTORE=1). Its answers put the real names into the agent's context."
+    const on = initialize(DIST, { VEILIO_MCP_RESTORE: '1' })
+    expect(on.stderr).toContain(NOTICE)
+    expect(on.stdout).not.toContain('restore_text is on')
+    expect(initialize(DIST).stderr).not.toContain('restore_text is on')
   })
 
   it('answers initialize when started through a symlink, as npx and npm bins do', () => {

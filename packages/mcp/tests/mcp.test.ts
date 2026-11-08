@@ -64,7 +64,7 @@ let ctx: ToolContext
 
 beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-'))
-  ctx = { cwd, mapPath: null }
+  ctx = { cwd, mapPath: null, restoreText: true }
 })
 
 afterEach(() => {
@@ -430,7 +430,11 @@ describe('path containment', () => {
       write('a.ts', TS)
       const linkedRoot = join(outside, 'root-link')
       symlinkSync(cwd, linkedRoot, 'junction')
-      const res = callTool('anonymize_file', { path: 'a.ts' }, { cwd: linkedRoot, mapPath: null })
+      const res = callTool(
+        'anonymize_file',
+        { path: 'a.ts' },
+        { cwd: linkedRoot, mapPath: null, restoreText: true }
+      )
       expect(res.isError).toBeUndefined()
     })
   })

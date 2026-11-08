@@ -139,7 +139,7 @@ function leaks(text: string): string[] {
 
 describe('no secret in any tool result (FR-009)', () => {
   it.each([false, true])('every tool, every outcome, destructive=%s', async (destructive) => {
-    const ctx: ToolContext = { cwd, mapPath: null, home, destructive }
+    const ctx: ToolContext = { cwd, mapPath: null, restoreText: true, home, destructive }
     const listed = (await respond(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       ctx
@@ -188,7 +188,7 @@ describe('no secret in any tool result (FR-009)', () => {
   })
 
   it('a clash refusal is among the results scanned, and names its placeholder', async () => {
-    const ctx: ToolContext = { cwd, mapPath: null, home, destructive: false }
+    const ctx: ToolContext = { cwd, mapPath: null, restoreText: true, home, destructive: false }
     const team = cloud.maps.find((m) => m.name === 'shared')!
     const r = await callToolAsync('maps_update', { id: team.id }, ctx)
     expect(r.isError).toBe(true)

@@ -1,0 +1,57 @@
+// Spec 078 US7 (A#11, FR-016): anonymize_file and scan_secrets never read a
+// file on the guard's raw-only list - one list, the engine's - as written or
+// through a link.
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { callTool, type ToolContext } from '../src/tools.js'
+import { isolateHome } from './helpers/isolated-home.js'
+
+isolateHome()
+
+const said = (path: string) =>
+  `"${path}" is on Veilio's raw-only list (.env, private keys, credential stores, .veilio/); Veilio never reads it. Ask the user for what you need from it.`
+
+let cwd: string
+let ctx: ToolContext
+beforeEach(() => {
+  cwd = mkdtempSync(join(tmpdir(), 'veilio-raw-only-'))
+  ctx = { cwd, mapPath: null }
+  const put = (rel: string, text: string) => {
+    mkdirSync(dirname(join(cwd, rel)), { recursive: true })
+    writeFileSync(join(cwd, rel), text)
+  }
+  put('.env', 'DB_HOST=db.internal.example\n')
+  put('.env.local', 'DB_HOST=db.internal.example\n')
+  put('keys/id_rsa', 'not a real key\n')
+  put('config/.aws/credentials', '[default]\nregion = eu-west-1\n')
+  put('.veilio/map.json', '{"version":1,"map":{"__CLS__1":"PaymentGateway"}}\n')
+  put('src/pay.ts', 'export class PaymentGateway {}\n')
+  symlinkSync(join(cwd, '.env'), join(cwd, 'notes.txt'))
+})
+afterEach(() => rmSync(cwd, { recursive: true, force: true }))
+
+describe('raw-only paths (spec 078)', () => {
+  for (const tool of ['anonymize_file', 'scan_secrets'])
+    for (const path of [
+      '.env',
+      '.env.local',
+      'keys/id_rsa',
+      'config/.aws/credentials',
+      '.veilio/map.json',
+      'notes.txt',
+    ])
+      it(`${tool} refuses ${path}`, () => {
+        const r = callTool(tool, { path }, ctx)
+        expect(r.isError).toBe(true)
+        expect(r.text).toContain(said(path))
+        expect(r.text).not.toContain('db.internal')
+        expect(r.text).not.toContain('PaymentGateway')
+      })
+
+  it('a source file still works', () => {
+    expect(callTool('anonymize_file', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
+    expect(callTool('scan_secrets', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
+  })
+})

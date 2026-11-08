@@ -461,7 +461,7 @@ describe('placeholders the team disagrees about', () => {
     const left = callTool(
       'restore_text',
       { text: 'new __CLS__1().__FN__6()' },
-      { cwd, mapPath: null }
+      { cwd, mapPath: null, restoreText: true }
     )
     expect(left.text).toContain('new QuayLedger().__FN__6()')
     expect(left.text).toContain('WARNING: left as is: __FN__6')
@@ -470,7 +470,7 @@ describe('placeholders the team disagrees about', () => {
     const settled = callTool(
       'restore_text',
       { text: 'new __CLS__1().__FN__6()' },
-      { cwd, mapPath: null }
+      { cwd, mapPath: null, restoreText: true }
     )
     expect(settled.text).toContain('new QuayLedger().settleLedger()')
     expect(settled.text).not.toContain('left as is')
@@ -483,7 +483,11 @@ describe('placeholders the team disagrees about', () => {
     homes.push(cwd)
     saveMap(resolveMapPath(null, cwd), { __CLS__1: 'QuayLedger' })
     expect(
-      callTool('restore_text', { text: 'new __CLS__1()' }, { cwd, mapPath: null }).text
+      callTool(
+        'restore_text',
+        { text: 'new __CLS__1()' },
+        { cwd, mapPath: null, restoreText: true }
+      ).text
     ).not.toContain('left as is')
   })
 
@@ -494,7 +498,7 @@ describe('placeholders the team disagrees about', () => {
     expect((await primeNamespace(home)).highest).toEqual({ __FN__: 6, __CLS__: 1 })
     const cwd = mkdtempSync(join(tmpdir(), 'veilio-mcp-conflict-'))
     homes.push(cwd)
-    const ctx = { cwd, mapPath: null }
+    const ctx = { cwd, mapPath: null, restoreText: true }
     const out = callTool('anonymize_text', { text: 'function chargeCard() {}' }, ctx).text
     // No block held: numbered locally (spec 066), never the disputed __FN__6.
     const minted = /function (__LOCAL_[A-Z0-9]{6}_FN__1)\(\)/.exec(out)?.[1]
