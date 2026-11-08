@@ -65,7 +65,9 @@ async function run(argv: string[], password = PASSPHRASE): Promise<Run> {
     cwd,
     home,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => ACCOUNT,

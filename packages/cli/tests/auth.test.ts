@@ -58,7 +58,9 @@ async function run(argv: string[], stdin = ''): Promise<Run> {
     cwd,
     home,
     stdin: async () => stdin,
-    stdinBytes: async () => Buffer.from(stdin),
+    stdinBytes: async function* () {
+      yield Buffer.from(stdin)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async (q: string) => (/code/i.test(q) ? secondFactorAnswer : 'user@example.test'),

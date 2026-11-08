@@ -64,7 +64,9 @@ async function run(argv: string[], passphrase = PASSPHRASE): Promise<Run> {
     cwd,
     home,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',
@@ -276,7 +278,9 @@ describe('a map whose vault was never created (T032)', () => {
       cwd,
       home,
       stdin: async () => '',
-      stdinBytes: async () => Buffer.from(''),
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
       stdout: (t) => (out += t),
       stderr: (t) => (err += t),
       password: async () => {

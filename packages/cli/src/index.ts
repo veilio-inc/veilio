@@ -257,23 +257,19 @@ function readSecret(label: string): Promise<string> {
   })
 }
 
-/** Stdin as bytes (`scan --blobs`: git's blob stream holds any byte). */
-function readStdinBytes(): Promise<Buffer> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    if (process.stdin.isTTY) {
-      rejectPromise(new Error('no input — pass a file or pipe to stdin'))
-      return
-    }
-    const chunks: Buffer[] = []
-    process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk))
-    process.stdin.on('end', () => resolvePromise(Buffer.concat(chunks)))
-    process.stdin.on('error', rejectPromise)
-  })
+/** Stdin as it arrives (`scan --blobs`: git's blob stream holds any byte). */
+async function* readStdinBytes(): AsyncIterable<Buffer> {
+  // A TTY with no piped input would hang forever waiting for EOF. Fail with
+  // usage guidance instead of appearing to freeze.
+  if (process.stdin.isTTY) throw new Error('no input — pass a file or pipe to stdin')
+  for await (const chunk of process.stdin) yield chunk as Buffer
 }
 
 /** Stdin as text: its bytes, decoded as UTF-8. */
-function readStdin(): Promise<string> {
-  return readStdinBytes().then((bytes) => bytes.toString('utf8'))
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of readStdinBytes()) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 /**

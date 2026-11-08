@@ -67,26 +67,97 @@ function unquote(path: string): string {
   return Buffer.from(bytes).toString('utf8')
 }
 
-/** The blobs `git cat-file --batch` printed, by object id; a missing one is absent. */
-export function parseBatch(buf: Buffer): Map<string, Buffer> {
-  const blobs = new Map<string, Buffer>()
-  let at = 0
-  while (at < buf.length) {
-    const eol = buf.indexOf(0x0a, at)
-    if (eol === -1) throw new BlobsError('the blob stream ends inside a header')
-    const header = buf.toString('latin1', at, eol).split(' ')
-    at = eol + 1
-    if (header[1] === 'missing') continue
-    const size = Number(header[2])
-    if (
-      header.length !== 3 ||
-      !Number.isSafeInteger(size) ||
-      size < 0 ||
-      at + size + 1 > buf.length
-    )
-      throw new BlobsError('the blob stream is cut short or is not `git cat-file --batch` output')
-    if (header[1] === 'blob') blobs.set(header[0]!, buf.subarray(at, at + size))
-    at += size + 1
+/** The largest text blob scanned: past it the file is "could not check". */
+export const MAX_TEXT_BLOB = 16 * 1024 * 1024
+/** Bytes looked at to tell a binary blob (a NUL among them), as git does. */
+const SNIFF = 8000
+
+/**
+ * Read `git cat-file --batch` output as it arrives, and hand each listed text
+ * blob to `scan` with its path, one blob at a time. A binary blob keeps no
+ * more than its first SNIFF bytes are looked at; a text blob past
+ * MAX_TEXT_BLOB keeps nothing and is an error, as is a listed blob the stream
+ * lacks or a stream cut short.
+ */
+export async function scanListedBlobs(
+  listing: ListedBlob[],
+  stream: AsyncIterable<Buffer>,
+  scan: (path: string, text: string) => void
+): Promise<void> {
+  const wanted = new Map<string, string[]>()
+  for (const e of listing) {
+    // A submodule names another repository's commit; a deletion has no blob.
+    if (e.mode === '160000' || e.mode === '000000') continue
+    wanted.set(e.id, [...(wanted.get(e.id) ?? []), e.path])
   }
-  return blobs
+  const seen = new Set<string>()
+  let pending: Buffer = Buffer.alloc(0)
+  // The blob being read: content bytes still to come, and what is kept of it.
+  type Reading = {
+    id: string
+    left: number
+    size: number
+    kept: Buffer[]
+    binary?: true
+    tooBig?: true
+  }
+  let blob: Reading | null = null
+  const finish = (b: Reading) => {
+    const paths = wanted.get(b.id)
+    if (!paths) return
+    seen.add(b.id)
+    if (b.binary) return
+    if (b.tooBig)
+      throw new BlobsError(
+        `the staged ${JSON.stringify(paths[0])} is larger than 16 MiB, so it could not be checked`
+      )
+    const text = Buffer.concat(b.kept).toString('utf8')
+    for (const p of paths) scan(p, text)
+  }
+  for await (const chunk of stream) {
+    pending = pending.length ? Buffer.concat([pending, chunk]) : chunk
+    for (;;) {
+      if (blob) {
+        if (blob.left > 0) {
+          const take = Math.min(blob.left, pending.length)
+          const part = pending.subarray(0, take)
+          pending = pending.subarray(take)
+          blob.left -= take
+          if (!blob.binary && !blob.tooBig) {
+            if (blob.size < SNIFF && part.subarray(0, SNIFF - blob.size).includes(0)) {
+              blob.binary = true
+              blob.kept = []
+            } else if ((blob.size += part.length) > MAX_TEXT_BLOB) {
+              blob.tooBig = true
+              blob.kept = []
+            } else blob.kept.push(Buffer.from(part))
+          }
+          if (blob.left > 0) break
+        }
+        // git writes a LF after each blob's content.
+        if (pending.length === 0) break
+        if (pending[0] !== 0x0a)
+          throw new BlobsError('the blob stream is not `git cat-file --batch` output')
+        pending = pending.subarray(1)
+        const done: Reading = blob
+        blob = null
+        finish(done)
+        continue
+      }
+      const eol = pending.indexOf(0x0a)
+      if (eol === -1) break
+      const header = pending.toString('latin1', 0, eol).split(' ')
+      pending = pending.subarray(eol + 1)
+      if (header[1] === 'missing') continue
+      const size = Number(header[2])
+      if (header.length !== 3 || !Number.isSafeInteger(size) || size < 0)
+        throw new BlobsError('the blob stream is not `git cat-file --batch` output')
+      blob = { id: header[0]!, left: size, size: 0, kept: [] }
+    }
+  }
+  if (blob || pending.length > 0)
+    throw new BlobsError('the blob stream is cut short or is not `git cat-file --batch` output')
+  for (const [id, paths] of wanted)
+    if (!seen.has(id))
+      throw new BlobsError(`could not read the staged ${JSON.stringify(paths[0])} from git`)
 }

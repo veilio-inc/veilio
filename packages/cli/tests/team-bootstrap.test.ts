@@ -50,7 +50,9 @@ async function run(argv: string[]): Promise<{ code: number; out: string; err: st
     cwd: home,
     home,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     password: async () => PASSPHRASE,

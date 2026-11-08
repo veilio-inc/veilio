@@ -77,7 +77,9 @@ async function run(
     cwd: home,
     home,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',
@@ -446,7 +448,9 @@ describe('after unlocking, personal maps work with no passphrase', () => {
       cwd,
       home,
       stdin: async () => '',
-      stdinBytes: async () => Buffer.from(''),
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
       stdout: () => undefined,
       stderr: (t) => (err += t),
       password: async () => {

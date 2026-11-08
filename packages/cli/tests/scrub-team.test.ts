@@ -45,7 +45,9 @@ async function scrub(
     cwd,
     home,
     stdin: async () => stdin,
-    stdinBytes: async () => Buffer.from(stdin),
+    stdinBytes: async function* () {
+      yield Buffer.from(stdin)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }
@@ -187,7 +189,9 @@ describe('veilio scrub, a third-party name the team holds as code', () => {
       cwd,
       home,
       stdin: async () => '',
-      stdinBytes: async () => Buffer.alloc(0),
+      stdinBytes: async function* () {
+        yield Buffer.alloc(0)
+      },
       stdout: (t) => (out += t),
       stderr: () => {},
     }
@@ -214,7 +218,9 @@ describe('veilio scrub, the same placeholder in the project map and the team', (
       cwd,
       home,
       stdin: async () => '',
-      stdinBytes: async () => Buffer.alloc(0),
+      stdinBytes: async function* () {
+        yield Buffer.alloc(0)
+      },
       stdout: (t) => (out += t),
       stderr: () => {},
     }

@@ -86,7 +86,9 @@ async function run(
     home,
     env,
     stdin: async () => stdin,
-    stdinBytes: async () => Buffer.from(stdin),
+    stdinBytes: async function* () {
+      yield Buffer.from(stdin)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     password: async () => '',

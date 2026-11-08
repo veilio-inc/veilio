@@ -58,14 +58,17 @@ function staged(): { raw: string; batch: Buffer } {
   })
   return { raw, batch }
 }
-async function scan(argv: string[], batch: Buffer) {
+async function scan(argv: string[], batch: Buffer, byByte = false) {
   let out = ''
   let err = ''
   const io: Io = {
     cwd: repo,
     home: repo,
     stdin: async () => batch.toString('utf8'),
-    stdinBytes: async () => batch,
+    stdinBytes: async function* () {
+      if (!byByte) yield batch
+      else for (let i = 0; i < batch.length; i++) yield batch.subarray(i, i + 1)
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }
@@ -80,6 +83,15 @@ describe('veilio scan --blobs', () => {
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.err).toContain('.env')
     expect(r.err).not.toContain('<stdin>')
+  })
+
+  it('the stream read one byte at a time gives the same answer', async () => {
+    stage({ '.env': ENV, 'src/gateway.ts': TS, 'logo.bin': Buffer.from([0, 1, 2, 0x0a, 0]) })
+    const { raw, batch } = staged()
+    const whole = await scan(['--json', '--blobs', raw], batch)
+    const bytes = await scan(['--json', '--blobs', raw], batch, true)
+    expect(bytes.code).toBe(EXIT_FINDINGS)
+    expect(bytes.out).toBe(whole.out)
   })
 
   it('a clean commit passes', async () => {
@@ -191,4 +203,35 @@ describe('stdin is bytes', () => {
     expect(run.status).toBe(EXIT_FINDINGS)
     expect(run.stderr).toContain('config/legacy.env')
   })
+})
+
+// Review round 2 (#3): the stream is read as it arrives. A binary blob keeps
+// at most 8000 bytes; a text blob past 16 MiB is "could not check", naming
+// the file (exit 2: the commit is blocked, and the reason says why).
+describe('a large blob is not held in memory', () => {
+  const FIXTURE = resolve(import.meta.dirname, 'fixtures', 'big-blob-scan.mjs')
+  const big = (kind: string) => {
+    const listing = join(repo, 'big-raw')
+    writeFileSync(
+      listing,
+      `:000000 100644 ${'0'.repeat(40)} ${'ab'.repeat(20)} A\tassets/huge.${kind === 'binary' ? 'bin' : 'txt'}\n`
+    )
+    const run = spawnSync(process.execPath, [FIXTURE, listing, kind], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    return JSON.parse(run.stdout) as { code: number; rssMb: number; err: string }
+  }
+  it('a 50 MB binary blob is skipped, in bounded memory', () => {
+    const r = big('binary')
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.rssMb).toBeLessThan(160)
+  }, 60_000)
+  it('a 50 MB text blob is past the scan limit: could not check, naming it, in bounded memory', () => {
+    const r = big('text')
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain('assets/huge.txt')
+    expect(r.err).toContain('16 MiB')
+    expect(r.rssMb).toBeLessThan(160)
+  }, 60_000)
 })

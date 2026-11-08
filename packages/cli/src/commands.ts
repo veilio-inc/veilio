@@ -6,7 +6,7 @@
 //   2. Summaries, warnings and errors go to stderr, so they stay visible without
 //      corrupting that pipe.
 
-import { BlobsError, parseBatch, parseListing } from './staged-blobs.js'
+import { BlobsError, parseListing, scanListedBlobs } from './staged-blobs.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -60,8 +60,9 @@ import { thirdPartyNames } from './third-party.js'
 export interface Io {
   cwd: string
   stdin: () => Promise<string>
-  /** Stdin as bytes (`scan --blobs`: git's blob stream holds any byte). */
-  stdinBytes: () => Promise<Buffer>
+  /** Stdin as a stream of bytes (`scan --blobs`: git's blob stream holds any
+   *  byte, and is read as it arrives). */
+  stdinBytes: () => AsyncIterable<Buffer>
   stdout: (text: string) => void
   stderr: (text: string) => void
   /**
@@ -561,24 +562,6 @@ export async function runRestore(
   return EXIT_OK
 }
 
-/** The files a `--blobs` listing names, with their content: submodules and
- *  deletions and binary blobs (a NUL in the first 8000 bytes) left out; a listed blob the
- *  stream does not hold is an error, never a pass. */
-function stagedTargets(listing: string, batch: Buffer): { name: string; text: string }[] {
-  const blobs = parseBatch(batch)
-  const targets: { name: string; text: string }[] = []
-  for (const entry of parseListing(listing)) {
-    // A submodule names another repository's commit; a deletion has no blob.
-    if (entry.mode === '160000' || entry.mode === '000000') continue
-    const blob = blobs.get(entry.id)
-    if (!blob)
-      throw new BlobsError(`could not read the staged ${JSON.stringify(entry.path)} from git`)
-    if (blob.subarray(0, 8000).includes(0)) continue
-    targets.push({ name: entry.path, text: blob.toString('utf8') })
-  }
-  return targets
-}
-
 /** Detect-only pass for pre-commit hooks and CI. Never rewrites anything. */
 export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
   if (args.stdinName !== null && args.files.length > 0) {
@@ -593,37 +576,31 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
     )
     return EXIT_ERROR
   }
-  // `--name`: stdin is scanned as that file would be (spec 085 L1), so the
-  // pre-commit hook gets the .env, YAML and shell rules for each staged file.
-  let targets: { name: string; text: string }[]
+  const all: { file: string; finding: SecretFinding }[] = []
+  const scanOne = (name: string, text: string) => {
+    const fileKind = name === '<stdin>' ? undefined : fileKindOf(name)
+    const language = name === '<stdin>' ? null : languageOfPath(name)
+    for (const finding of detectCredentials(text, {
+      ...(fileKind ? { fileKind } : {}),
+      ...(language ? { language } : {}),
+    }))
+      all.push({ file: name, finding })
+  }
   if (args.blobsFile !== null) {
+    // Each listed blob is scanned as it arrives (review round 2): the stream
+    // is never held whole.
     try {
-      targets = stagedTargets(
-        readFileSync(resolve(io.cwd, args.blobsFile), 'utf8'),
-        await io.stdinBytes()
-      )
+      const listing = parseListing(readFileSync(resolve(io.cwd, args.blobsFile), 'utf8'))
+      await scanListedBlobs(listing, io.stdinBytes(), scanOne)
     } catch (err) {
       if (!(err instanceof BlobsError)) throw err
       io.stderr(`${BIN_NAME}: ${err.message}, so nothing was checked.\n`)
       return EXIT_ERROR
     }
-  } else
-    targets =
-      args.files.length > 0
-        ? args.files.map((f) => ({ name: f, text: readFileSync(resolve(io.cwd, f), 'utf8') }))
-        : [{ name: args.stdinName ?? '<stdin>', text: await io.stdin() }]
-
-  const all: { file: string; finding: SecretFinding }[] = []
-  for (const target of targets) {
-    const fileKind = target.name === '<stdin>' ? undefined : fileKindOf(target.name)
-    const language = target.name === '<stdin>' ? null : languageOfPath(target.name)
-    for (const finding of detectCredentials(target.text, {
-      ...(fileKind ? { fileKind } : {}),
-      ...(language ? { language } : {}),
-    })) {
-      all.push({ file: target.name, finding })
-    }
-  }
+  } else if (args.files.length > 0)
+    for (const f of args.files) scanOne(f, readFileSync(resolve(io.cwd, f), 'utf8'))
+  // `--name`: stdin is scanned as that file would be (spec 085 L1).
+  else scanOne(args.stdinName ?? '<stdin>', await io.stdin())
 
   if (args.json) {
     io.stdout(

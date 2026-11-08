@@ -46,7 +46,9 @@ async function scrub(cwd: string, argv = ['scrub', 'a.ts']) {
     cwd,
     home,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

@@ -57,7 +57,9 @@ async function scrub(files: string[], mapName: string) {
   const io: Io = {
     cwd,
     stdin: async () => '',
-    stdinBytes: async () => Buffer.from(''),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }
@@ -135,7 +137,9 @@ describe('what scrub may leave as written, when it cannot see everything', () =>
     const io: Io = {
       cwd,
       stdin: async () => '',
-      stdinBytes: async () => Buffer.alloc(0),
+      stdinBytes: async function* () {
+        yield Buffer.alloc(0)
+      },
       stdout: (t) => (out += t),
       stderr: () => {},
     }

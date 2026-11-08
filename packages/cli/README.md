@@ -505,8 +505,9 @@ a finding in an unstaged scratch file shouldn't block you. Each staged file
 type picks the rules; a `.gitattributes` `-diff` hides nothing, because the
 file is read, not its diff. One `veilio scan --blobs` checks the whole commit:
 git lists the staged files with their object ids, `git cat-file --batch`
-streams those blobs, and each is matched to its name by id. Binary files and
-submodules are skipped. A finding blocks the commit with the credentials
+streams those blobs, and each is matched to its name by id, read as it
+arrives. Binary files and submodules are skipped; a text file over 16 MiB is
+not scanned and stops the commit as "could not check", naming it. A finding blocks the commit with the credentials
 message; anything that stops the check blocks it with "could not check" and
 the reason. The hook needs veilio 0.10.0 or later; an older one stops the
 commit with a line saying to upgrade. `--no-verify` overrides, as usual.

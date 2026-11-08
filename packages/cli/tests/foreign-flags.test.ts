@@ -64,7 +64,9 @@ async function cli(argv: string[]): Promise<{ code: number; out: string; err: st
     home,
     env: {},
     stdin: () => Promise.resolve(''),
-    stdinBytes: () => Promise.resolve(Buffer.from('')),
+    stdinBytes: async function* () {
+      yield Buffer.from('')
+    },
     stdout: (s) => (out += s),
     stderr: (s) => (err += s),
   })
@@ -321,8 +323,9 @@ describe('the flag table and the code', () => {
       home: mkdtempSync(join(tmpdir(), 'veilio-reads-home-')),
       env: {},
       stdin: () => Promise.resolve('class PaymentService { charge(orderId) {} }\n'),
-      stdinBytes: () =>
-        Promise.resolve(Buffer.from('class PaymentService { charge(orderId) {} }\n')),
+      stdinBytes: async function* () {
+        yield Buffer.from('class PaymentService { charge(orderId) {} }\n')
+      },
       stdout: () => {},
       stderr: () => {},
       prompt: () => Promise.reject(new Error('no prompt in this test')),
