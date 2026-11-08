@@ -178,6 +178,23 @@ const PS_VALUED = /^-(?:\w*Action|\w*Variable|OutBuffer|StackName)$/i
 /** A module-qualified cmdlet (`Microsoft.PowerShell.Management\Set-Location`). */
 const MODULE = /^[\w.]+\//
 
+/** A command as the shell reads its words: quotes and backslashes removed
+ *  (round 5b), word by word, joined by spaces. Checks that read the text read
+ *  this too, so `C""DPATH` and `\\cd` are what they run as. */
+export function quoteRemoved(command: string, powershell = false): string {
+  return quoteRemovedWords(command, powershell).join(' ')
+}
+
+/** The words of quoteRemoved, each as the shell would run it. */
+function quoteRemovedWords(command: string, powershell = false): string[] {
+  command = asWritten(command, powershell)
+  const words: string[] = []
+  for (const piece of command.split(/\r?\n|(?<!&)&(?!&)/))
+    for (const part of splitChain(piece) ?? [piece])
+      words.push(...(shellWords(part) ?? part.split(/\s+/)))
+  return words
+}
+
 /** Review rounds 4 #5 and 5: a cd is followed only in the one form whose
  *  directory its words give - the cd program first (after shell keywords
  *  such as `if` or `time`), or after `builtin` or `command`, with no `NAME=`
@@ -203,9 +220,14 @@ export function cdNotFollowed(
     ...judged.matchAll(new RegExp(`(?:^|${edge})(?:${programs})(?=$|[\\s;&|)\`'"])`, 'gi')),
   ].length
   // DIRSTACK steers popd, which runs with no cd in sight (round 5 #5).
-  if (/\bDIRSTACK\b/i.test(command)) return 'DIRSTACK'
-  if (mentioned === 0) return undefined
-  if (/\bCDPATH\b/i.test(command)) return 'CDPATH'
+  if (/\bDIRSTACK\b/i.test(`${command} ${quoteRemoved(command)}`)) return 'DIRSTACK'
+  // Round 5b: a cd the text does not show but its words do (`c""d`, `\\cd`)
+  // is one the guard cannot follow.
+  const words = quoteRemovedWords(command)
+  const unquoted = words.join(' ')
+  const spelled = words.some((w) => CD_PROGRAMS.has(w.replace(MODULE, '').toLowerCase()))
+  if (mentioned === 0) return spelled ? 'cd' : undefined
+  if (/\bCDPATH\b/i.test(`${command} ${unquoted}`)) return 'CDPATH'
   // Anywhere in the text, inside another command included (round 5 #2).
   const opts = '(?:(?:-[A-Za-z@]+|--)\\s+)*'
   const stack = new RegExp(
@@ -267,7 +289,10 @@ export function cdNotFollowed(
     }
   }
   if (followed < mentioned) return 'cd'
-  if ((homeUnknown || /\bHOME\b/.test(command)) && targets.some((t) => t.startsWith('~')))
+  if (
+    (homeUnknown || /\bHOME\b/.test(`${command} ${unquoted}`)) &&
+    targets.some((t) => t.startsWith('~'))
+  )
     return 'HOME'
   return undefined
 }

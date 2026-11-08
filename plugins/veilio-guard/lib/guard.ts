@@ -32,6 +32,7 @@ import {
   cdIntoRawOnly,
   cdNotFollowed,
   literalCdTargets,
+  quoteRemoved,
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
@@ -1612,8 +1613,10 @@ export class Guard {
         }
         // The shell keeps what a command exports: once a command names
         // CDPATH or HOME, neither is trusted for the rest of the session.
-        if (/\bCDPATH\b/i.test(c)) this.cdpathMaybe = true
-        if (/\bHOME\b/.test(c)) this.homeUnknown = true
+        // Read as the text and as the shell reads its words (round 5b).
+        const said = `${c} ${quoteRemoved(c, ps)}`
+        if (/\bCDPATH\b/i.test(said)) this.cdpathMaybe = true
+        if (/\bHOME\b/.test(said)) this.homeUnknown = true
         const unplaced = cdNotFollowed(c, ps, this.cdpathMaybe, this.homeUnknown)
         if (unplaced !== undefined)
           return this.deny(

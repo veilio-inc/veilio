@@ -862,3 +862,47 @@ test('R5b#5: a DIRSTACK assignment is refused with no cd in the command, and a p
   expect((await run('popd')).deny).toBeUndefined()
   expect(seen).toHaveLength(1)
 })
+
+// Review round 5b: the shell removes quotes and backslashes before it runs a
+// word, so the checks read the words that way too, as well as the text.
+test('R5c: CDPATH or HOME spelled with quotes or a backslash is still not trusted afterwards', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await run('export C""DPATH=~/.config')).deny).toBeUndefined()
+  expect((await run('cd gcloud')).deny).toBeDefined()
+  expect((await run('export H""OME=~/.kube')).deny).toBeUndefined()
+  expect((await run('cd ~')).deny).toBeDefined()
+  expect(seen).toHaveLength(2)
+})
+
+test('R5c: CDPATH spelled with a backslash inside is not trusted afterwards', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  const run = (command: string) => $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect((await run('export CD\\PATH=~/.config')).deny).toBeUndefined()
+  expect((await run('cd gcloud')).deny).toBeDefined()
+  expect(seen).toHaveLength(1)
+})
+
+test('R5c: a cd spelled with quotes or a backslash is refused', async ($, on) => {
+  project(on, SECRETS)
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { stdout: '', stderr: '', interrupted: false } })
+  )
+  for (const command of ['c""d ~/.kube; cat config', '\\cd ~/.kube; cat config', "c''d src"]) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(`${command} -> ${out.deny}`).toMatch(/-> Veilio (keeps|refused)/)
+  }
+  expect(seen).toHaveLength(0)
+})
