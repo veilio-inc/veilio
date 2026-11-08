@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.16.3](https://github.com/veilio-inc/veilio/compare/engine-v1.16.2...engine-v1.16.3) (2026-11-08)
+
+### Fixes
+
+* **engine:** a long rule pattern is compiled, not dropped; keep lists stay out of the shared cache ([807d385](https://github.com/veilio-inc/veilio/commit/807d3852a13aa228e4e577cc4bd576be77ba7d6d)), closes [#4](https://github.com/veilio-inc/veilio/issues/4) [#5](https://github.com/veilio-inc/veilio/issues/5)
+* **engine:** a rule pattern is compiled once per process, and its cost is charged to every budget ([d434c0c](https://github.com/veilio-inc/veilio/commit/d434c0c544ff110350ad55b8f73e3100f0fbd783)), closes [#8](https://github.com/veilio-inc/veilio/issues/8)
+* **engine:** a rule set dropped past the cap still turns the ordinary-word exemption off ([2219cfb](https://github.com/veilio-inc/veilio/commit/2219cfb52fe6e14ed31ec73f8d0aaf9cd4019777))
+* **engine:** compiling a custom rule is charged to the rule budget, and one call applies at most 1000 rules ([8dd6282](https://github.com/veilio-inc/veilio/commit/8dd62827a1c29be1248bfe2edb74f0ae034e6b06))
+* **engine:** masking reads a regex literal, a PHP attribute and a mid-line =begin as code ([975b292](https://github.com/veilio-inc/veilio/commit/975b292981f8712d9c3e7f3da81b627a5070daaf))
+* **engine:** only the compiled rule program is shared; each budget keeps its own memo ([9da21a3](https://github.com/veilio-inc/veilio/commit/9da21a3a5c8da0c2569c175f3e96c30bb3e006a4)), closes [#8](https://github.com/veilio-inc/veilio/issues/8)
+* **engine:** stopped rules compile nothing more, and one budget compiles at most 1000 patterns ([4c8ab45](https://github.com/veilio-inc/veilio/commit/4c8ab458315fb3acf892f17a2148d613b1d57a48))
+
 ## [1.16.2](https://github.com/veilio-inc/veilio/compare/engine-v1.16.1...engine-v1.16.2) (2026-11-06)
 
 ### Fixes
