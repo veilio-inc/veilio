@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.8.4
+
+### Patch Changes
+
+- [#209](https://github.com/veilio-inc/veilio/pull/209) [`ac85dda`](https://github.com/veilio-inc/veilio/commit/ac85dda45ae36a011e8c13aefa25478a2f7d6863) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `restore_text`, `symbol_map_summary` and the `anonymize_*` tools refuse a map that git tracks, one reached through a link, or one another user owns (through the CLI's store), and `maps_remove` no longer names the map when `confirmName` does not match.
+- Updated dependencies [[`ac85dda`](https://github.com/veilio-inc/veilio/commit/ac85dda45ae36a011e8c13aefa25478a2f7d6863)]:
+  - @veilio-inc/cli@0.10.0
+
 ## 0.8.3
 
 ### Patch Changes
