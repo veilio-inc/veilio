@@ -9,7 +9,13 @@
 
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { isName, openStoreFile, prepareStoreWrite, writeStoreFile } from './store.js'
+import {
+  isName,
+  openStoreFile,
+  prepareStoreWrite,
+  refuseNonNames,
+  writeStoreFile,
+} from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -358,6 +364,7 @@ export function readAliases(mapPath: string): {
 
 /** Remember renumbered placeholders' old meanings. One old placeholder never gets a second meaning. */
 export function addAliases(mapPath: string, entries: SymbolMap): void {
+  refuseNonNames(ALIASES_FILE, entries)
   const read = readAliases(mapPath)
   // Written over, an unreadable file would lose every old meaning it holds.
   if (read.unreadable)

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
-import { EXIT_OK, type Io } from '../src/commands.js'
-import { STORE_DIR, STORE_FILE, loadMap } from '../src/store.js'
+import { EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
+import { STORE_DIR, STORE_FILE, StoreRefusal, loadMap, saveMap } from '../src/store.js'
 import { resolveTeamNamespace } from '../src/team-namespace.js'
 import {
   FakeCloud,
@@ -98,5 +98,31 @@ describe('a team map holding local-family keys', () => {
     if (found.status !== 'team') return
     expect(found.analysis.namespace).toEqual({ __VAR__1: 'amount' })
     expect(found.analysis.localDropped).toBe(2)
+  })
+})
+
+// Review round 1 (#3): the store reads only names (isName), so it must never
+// write anything else: the next read would refuse the whole map.
+describe('a value that is not a name is never written to the store', () => {
+  const BAD = ['PaymentGateway', 'injectedCall()'].join('\n')
+  it('maps pull of a map holding one is refused, and no map is written', async () => {
+    const id = cloud.add({
+      owner: TEAMMATE,
+      scope: 'team',
+      name: 'odd-values',
+      map_data: await sealTeam({ __VAR__1: 'amount', __CLS__1: BAD }),
+    }).id
+    const pulled = await run(['maps', 'pull', id])
+    expect(pulled.code).toBe(EXIT_FINDINGS)
+    expect(pulled.err).toContain('__CLS__1')
+    expect(existsSync(mapPath())).toBe(false)
+  })
+
+  it('saveMap and addAliases refuse one before writing', async () => {
+    const { addAliases } = await import('../src/reservations.js')
+    expect(() => saveMap(mapPath(), { __CLS__1: BAD })).toThrow(StoreRefusal)
+    expect(existsSync(mapPath())).toBe(false)
+    expect(() => addAliases(mapPath(), { __CLS__1: BAD })).toThrow(StoreRefusal)
+    expect(existsSync(join(cwd, STORE_DIR, 'aliases.json'))).toBe(false)
   })
 })

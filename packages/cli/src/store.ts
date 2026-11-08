@@ -95,6 +95,19 @@ function isSymbolMap(value: unknown): value is SymbolMap {
   return Object.values(value).every(isName)
 }
 
+/**
+ * Refuses to write a value the store would not read back (review round 1):
+ * a map with one would be refused whole on its next read. Refused, not
+ * dropped, so a pull never quietly loses a teammate's entry.
+ */
+export function refuseNonNames(what: string, map: SymbolMap): void {
+  const bad = Object.keys(map).find((k) => !isName(map[k]))
+  if (bad !== undefined)
+    throw new StoreRefusal(
+      `refusing to write ${what}: the value of ${bad.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '').slice(0, 60)} is not a name (1 to 100000 characters, no control character or line break), so nothing was written.`
+    )
+}
+
 /** A store the CLI will not use: exit 1 in the CLI, a tool error in the MCP server. */
 export class StoreRefusal extends Error {}
 
@@ -260,6 +273,7 @@ export function saveMap(
   map: SymbolMap,
   options: { force?: boolean; remote?: StoredMap['remote'] } = {}
 ): void {
+  refuseNonNames('the map', map)
   if (!options.force && existsSync(path)) {
     const dropped = Object.entries(loadMap(path)).filter(
       ([placeholder, real]) => map[placeholder] !== real
