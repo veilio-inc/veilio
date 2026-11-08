@@ -615,3 +615,33 @@ test('L4: an older .gitignore of `*` and comments still keeps the map, and is no
   expect(p.files[`${ROOT}/.veilio/map.json`]).toContain('PaymentGatewayFake')
   expect(p.writes.some((w) => w.path.endsWith('.gitignore'))).toBe(false)
 })
+
+test('L12: in git, a placeholder given another name the guard already held must be shown again', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'QuasarLedger', __CLS__2: 'InvoiceBuilder' }),
+    [PAY]: PAY_TEXT,
+  })
+  const seen: Fields[] = []
+  on('tool.call', writer(seen))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  p.files[`${ROOT}/.veilio/map.json`] = mapFile({ __CLS__1: 'InvoiceBuilder' })
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const writes = seen.length
+  const out = await $.tool.call({
+    tool: 'Write',
+    file_path: `${ROOT}/src/a.ts`,
+    content: '__CLS__1',
+  })
+  expect(out.deny).toBe(NOT_SHOWN('__CLS__1'))
+  expect(seen).toHaveLength(writes)
+})
+
+test('L4: a new store gets its .gitignore before any name is written', async ($, on) => {
+  const p = project(on, { [PAY]: PAY_TEXT })
+  on('tool.call', () => readOf(PAY, PAY_TEXT))
+  await $.tool.call({ tool: 'Read', file_path: PAY })
+  const ignored = p.ops.indexOf(`write ${ROOT}/.veilio/.gitignore *\n`)
+  const named = p.ops.findIndex((o) => o.includes('PaymentGatewayFake'))
+  expect(ignored).toBeGreaterThanOrEqual(0)
+  expect(named).toBeGreaterThan(ignored)
+})

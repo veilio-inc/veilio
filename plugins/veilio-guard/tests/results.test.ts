@@ -1546,7 +1546,9 @@ test('L16: two keys that would mask to the same text withhold the result', async
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
   on('tool.call', () => mcpResult({ structuredContent: { PaymentGateway: 1, __CLS__1: 2 } }))
   const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
-  expect(outcome(out).deny).toMatch(/^Veilio withheld this result/)
+  expect(outcome(out).deny).toBe(
+    'Veilio withheld this result: two keys of its result would read the same once masked, so they could not both be sent. Nothing from it was sent.'
+  )
   expect(JSON.stringify(out)).not.toContain('PaymentGateway')
 })
 

@@ -98,15 +98,16 @@ export function deepRewritePaths(
   return pathsDeep(value, fn, keep, true, '', keys)
 }
 
-/** A record with no prototype: a `__proto__` key is kept as a key (spec 085). */
-export function record(): Record<string, unknown> {
-  return Object.create(null) as Record<string, unknown>
-}
-
-/** Sets `out[key]`, refusing a key already there. */
+/** Sets `out[key]` as an own property, so a `__proto__` key stays a key
+ *  (spec 085), refusing a key already there. */
 export function setOnce(out: Record<string, unknown>, key: string, v: unknown): void {
   if (Object.hasOwn(out, key)) throw new KeyClash('two keys of a record rewrite to the same text')
-  out[key] = v
+  Object.defineProperty(out, key, {
+    value: v,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
 }
 
 function pathsDeep(
@@ -120,7 +121,7 @@ function pathsDeep(
   if (typeof value === 'string') return fn(value, path)
   if (Array.isArray(value)) return value.map((v) => pathsDeep(v, fn, keep, top, `${path}[]`, keys))
   if (value && typeof value === 'object') {
-    const out = record()
+    const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value)) {
       const at = path === '' ? k : `${path}.${k}`
       const key = keys?.(k, path) ? fn(k, path) : k

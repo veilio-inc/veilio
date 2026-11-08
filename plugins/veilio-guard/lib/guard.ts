@@ -13,7 +13,7 @@
 import {
   deepRewrite,
   deepRewritePaths,
-  record as bareRecord,
+  KeyClash,
   rewriteFields,
   setOnce,
   type DataKeys,
@@ -131,7 +131,7 @@ function rewriteKeyed(
   if (typeof value === 'string') return fn(value, key)
   if (Array.isArray(value)) return value.map((v) => rewriteKeyed(v, fn, keys, '', top, `${at}[]`))
   if (value && typeof value === 'object') {
-    const out = bareRecord()
+    const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value))
       setOnce(
         out,
@@ -771,19 +771,24 @@ export class Guard {
   /** Placeholders taken from the disk after load, or from a map git tracked:
    *  restored only once this session has shown them (078's shown set). */
   private adopted = new Set<string>()
-  /** Records the placeholders of `map` and the re-read aliases whose name
-   *  this guard never held; says whether there was any. By name, not by
-   *  placeholder: a CLI publish renumbers the guard's own names (spec 066),
-   *  and putting back a name the guard itself learned plants nothing. */
+  /** Records the placeholders of `map` and the re-read aliases that now
+   *  stand for another name than they did, or for a name this guard never
+   *  held; says whether there was any. A new placeholder for a name the guard
+   *  held is not: a CLI publish renumbers the guard's own names (spec 066). */
   private adopt(map: SymbolMap, aliasesBefore: SymbolMap): boolean {
     const known = new Set([
       ...Object.values(this.onDisk),
       ...Object.values(this.stored.map),
       ...Object.values(aliasesBefore),
     ])
-    const foreign = [...Object.entries(map), ...Object.entries(this.aliases)]
-      .filter(([, name]) => !known.has(name))
-      .map(([p]) => p)
+    const changed =
+      (before: SymbolMap) =>
+      ([p, name]: [string, string]) =>
+        !known.has(name) || (Object.hasOwn(before, p) && before[p] !== name)
+    const foreign = [
+      ...Object.entries(map).filter(changed(this.onDisk)),
+      ...Object.entries(this.aliases).filter(changed(aliasesBefore)),
+    ].map(([p]) => p)
     for (const p of foreign) {
       this.adopted.add(p)
       if (this.shown.delete(p)) this.shownVersion++
@@ -1543,6 +1548,22 @@ export class Guard {
     deadline = Date.now() + 6_000,
     budget: RuleBudget = ruleBudget()
   ): Promise<ToolOutcome> {
+    try {
+      return await this.afterResult(tool, args, received, deadline, budget)
+    } catch (err) {
+      // Spec 085 L16 (strings.md #12): two keys masked to one are never merged.
+      if (err instanceof KeyClash) return this.withhold(KEY_CLASH)
+      throw err
+    }
+  }
+
+  private async afterResult(
+    tool: string,
+    args: ToolEvent,
+    received: { deny?: string; result?: unknown; text?: string; isError?: boolean },
+    deadline: number,
+    budget: RuleBudget
+  ): Promise<ToolOutcome> {
     let outcome = received
     // First, whatever the outcome: a failed command may have moved the shell.
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
@@ -2046,6 +2067,10 @@ class DecodedOnce {
     return this.last.runs
   }
 }
+
+/** strings.md #12 (spec 085 L16), as `withheld` completes it. */
+const KEY_CLASH =
+  'two keys of its result would read the same once masked, so they could not both be sent. Nothing from it was sent'
 
 /** strings.md #11 (spec 085 L20), said once a session per tool. */
 const ambiguousServer = (tool: string) =>
