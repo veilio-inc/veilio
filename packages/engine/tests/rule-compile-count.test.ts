@@ -65,3 +65,26 @@ describe('no rule is compiled once the rules have stopped', () => {
     expect(budget.spent).toBe(true)
   })
 })
+
+// Review round 1 (#8): compiled once per process, but each budget is still
+// charged what compiling cost, on its first use of the pattern.
+describe('a pattern is compiled once per process and charged to every budget', () => {
+  it('a second call does not recompile, and is charged the compile again', () => {
+    const rules = Array.from({ length: 10 }, (_, i) => rule(i, `^qq${i}[a-c]+$`))
+    const first = ruleBudget()
+    anonymize(CODE, { rules, ruleBudget: first })
+    expect(calls.n).toBe(10)
+    const second = ruleBudget()
+    anonymize(CODE, { rules, ruleBudget: second })
+    expect(calls.n).toBe(10)
+    expect(second.left).toBeLessThan(ruleBudget().left)
+  })
+
+  it('cached near-limit patterns still spend a fresh budget, with no compile', () => {
+    const heavy = Array.from({ length: 600 }, (_, i) => rule(i, `(((){50}){50}){38}[]y${i}`))
+    expect(anonymize('const PaymentGatewayAlpha1 = 1', { rules: heavy }).rulesStopped).toBe(true)
+    const compiled = calls.n
+    expect(anonymize('const PaymentGatewayAlpha1 = 1', { rules: heavy }).rulesStopped).toBe(true)
+    expect(calls.n).toBe(compiled)
+  })
+})

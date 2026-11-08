@@ -776,9 +776,13 @@ function isRunnableRule(r) {
 }
 // Custom-rule patterns run on the engine's linear-time matcher, never on
 // RegExp: a teammate's pattern cannot freeze the tool applying it (spec 065).
-// Compiled once per budget (one anonymize call, or what a caller shares one
-// budget across), and the compile is charged to it (spec 085 L8). No cap and
-// no clear: at most MAX_RULES patterns per call, so the cost cannot step.
+// Compiled once per process, keeping what compiling cost; each budget (one
+// anonymize call, or what a caller shares one budget across) is charged that
+// cost on its first use of the pattern (spec 085 L8, review round 1), so a
+// cached pattern costs a call what a fresh one would, without the work.
+const compiledRules = new Map();
+/** Patterns kept compiled, at most; the oldest goes first. */
+const COMPILED_MAX = 4096;
 const ruleMatchers = new WeakMap();
 /** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
 const MAX_RULES = 1000;
@@ -796,7 +800,19 @@ function safeMatch(pattern, name, budget) {
             budget.spent = true;
             return false;
         }
-        m = compileRulePattern(pattern, budget);
+        let compiled = compiledRules.get(pattern);
+        if (!compiled) {
+            const meter = ruleBudget(Number.MAX_SAFE_INTEGER);
+            const matcher = compileRulePattern(pattern, meter);
+            compiled = { matcher, cost: Number.MAX_SAFE_INTEGER - meter.left };
+            if (compiledRules.size >= COMPILED_MAX)
+                compiledRules.delete(compiledRules.keys().next().value);
+            compiledRules.set(pattern, compiled);
+        }
+        budget.left -= compiled.cost;
+        if (budget.left < 0)
+            budget.spent = true;
+        m = compiled.matcher;
         cache.set(pattern, m);
     }
     if (m === null)
