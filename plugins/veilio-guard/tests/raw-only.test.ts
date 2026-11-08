@@ -381,6 +381,13 @@ for (const command of [
   'echo <(cd .aws; cat credentials)',
   'grep -h "cd .aws" notes.txt > >(sh)',
   'echo "cd .aws" | { sh; }',
+  // Round 3, second security review: options that run a program, and any
+  // option off the per-program list.
+  'grep -h "cd .aws" notes.txt | sort --compress-program=sh',
+  'rg --pre=sh "cd .aws" notes.txt',
+  'rg --pre-glob "*" "cd .aws" notes.txt',
+  'grep --include=x "cd .a*s" notes.txt',
+  'grep -h "cd .a*s" notes.txt | sort',
 ])
   test(`a hidden cd or a short name is refused: ${command}`, async ($, on) => {
     project(on, {})
@@ -421,7 +428,11 @@ test('quoted text that holds "cd" and a glob is not read as a cd', async ($, on)
     'grep -rn "cd *" scripts/',
     'echo "next: cd [the folder]"',
     'grep "cd x" notes.txt | wc -l',
-    'grep -h "cd *" notes.txt | sort | uniq | head -3',
+    'grep -h "cd *" notes.txt | uniq -c | head -n 3',
+    'grep -rniw -e "cd *" scripts/',
+    'rg -n -t sh "cd *" scripts/',
+    'echo -n "cd [x]" | wc -l',
+    "printf 'cd *' | wc -c",
   ]
   for (const command of commands) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })

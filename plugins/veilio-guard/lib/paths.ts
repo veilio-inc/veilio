@@ -133,13 +133,40 @@ export function allCdTargets(command: string): string[] {
   return [...new Set([...cdTargets(command), ...hidden])]
 }
 
-// The programs that never run what they are given (security reviews of
-// round 2 and 3): only they can make quoted text plain text.
-const TEXT_ONLY = new Set(['grep', 'rg', 'echo', 'printf', 'wc', 'head', 'sort', 'uniq'])
+// The programs that never run what they are given, each with the only
+// options it may have (security reviews of rounds 2 and 3: `sort
+// --compress-program`, `rg --pre` run one): short flags, combinable, and the
+// options that take the next word as their value.
+const TEXT_ONLY: Readonly<Record<string, { flags: string; values: readonly string[] }>> = {
+  grep: { flags: 'rnilchHEFwvo', values: ['-e'] },
+  rg: { flags: 'nilcwF', values: ['-t'] },
+  echo: { flags: 'ne', values: [] },
+  printf: { flags: '', values: [] },
+  wc: { flags: 'lcw', values: [] },
+  head: { flags: '', values: ['-n'] },
+  uniq: { flags: 'c', values: [] },
+}
+
+/** Whether `words` is a TEXT_ONLY program given only its own options. */
+function textOnly(words: readonly string[]): boolean {
+  const allowed = Object.hasOwn(TEXT_ONLY, words[0] ?? '') ? TEXT_ONLY[words[0]!] : undefined
+  if (!allowed) return false
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i]!
+    if (!w.startsWith('-') || w === '-') continue
+    if (allowed.values.includes(w)) {
+      if (words[++i] === undefined) return false
+      continue
+    }
+    if (!/^-[A-Za-z]+$/.test(w) || ![...w.slice(1)].every((c) => allowed.flags.includes(c)))
+      return false
+  }
+  return true
+}
 
 /** The cd targets a refusal judges: allCdTargets over the whole command
  *  (fail closed). Quoted text is read as text only when every part of the
- *  chain is a TEXT_ONLY program, nothing expands, and no part has a
+ *  chain is a TEXT_ONLY program given only its own options, nothing expands, and no part has a
  *  subshell, brace, process substitution or redirection outside quotes
  *  (`grep "cd *" scripts/`; never `echo "cd x" | sh`). Split as cdTargets
  *  splits, and read with the shell's own quoting. */
@@ -156,7 +183,7 @@ export function cdTargetsToJudge(command: string): string[] {
       const words = shellWords(part)
       return (
         words !== null &&
-        (words.length === 0 || TEXT_ONLY.has(words[0]!)) &&
+        (words.length === 0 || textOnly(words)) &&
         !/[(){}<>]/.test(outsideQuotes(part))
       )
     })
