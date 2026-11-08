@@ -413,6 +413,10 @@ describe('restoreRefusal: the runners the benchmark needed (spec 078 review roun
     'vitest run -t "pays the order" tests/__PKG__16.test.ts',
     // The example the cd refusal gives must itself get real names.
     'npx vitest run __DIR__1/x.test.ts',
+    'npx vitest run --root gateway/ tests/__PKG__16.test.ts',
+    'npx vitest run --root ./gateway tests/__PKG__16.test.ts',
+    'mvn -q -o -f ledger/pom.xml test -Dtest=__CLS__1#pays+refunds',
+    'npx vitest tests/__PKG__16.test.ts',
   ])('lets %j through', (command) => {
     expect(restoreRefusal(command, 'Bash')).toBeNull()
   })
@@ -452,6 +456,29 @@ describe('restoreRefusal: the runners the benchmark needed (spec 078 review roun
     'npx vitest run --root=/tmp/x tests/__PKG__16.test.ts',
     'npx vitest run --root gateway/../.. tests/__PKG__16.test.ts',
     'npx vitest run --root ~ tests/__PKG__16.test.ts',
+    // Review round 4b #1: vitest and Maven strip inner quotes the shell left.
+    `npx vitest run --root '"/tmp/x"' tests/__PKG__16.test.ts`,
+    `npx vitest run --root='"/tmp/x"' tests/__PKG__16.test.ts`,
+    `npx vitest run --root "'/tmp/x'" tests/__PKG__16.test.ts`,
+    `npx vitest run --root '".."' tests/__PKG__16.test.ts`,
+    `mvn -f '"/tmp/x/pom.xml"' test -Dtest=__CLS__1`,
+    `mvn -f '"../x"' test`,
+    'npx vitest run --root "my dir" tests/__PKG__16.test.ts',
+    // Review round 4b #2: a vitest command other than run is not a test run.
+    'vitest init browser __X__1',
+    'npx vitest init browser __X__1',
+    'vitest bench __X__1',
+    'vitest doctor __X__1',
+    'vitest list __X__1',
+    'vitest watch __X__1',
+    'vitest dev __X__1',
+    'vitest related __X__1',
+    'npx vitest typecheck __X__1',
+    'npx vitest -t pays init __X__1',
+    'node_modules/.bin/vitest --root gateway bench __X__1',
+    // Review round 4b #3: -Dtest takes a pattern only, never a second property.
+    'mvn test "-Dtest=a -Dmaven.ext.class.path=/tmp/e.jar"',
+    `mvn test '-Dtest="a"'`,
     'mvn -q test __X__1',
     // vitest: --config stays off, and a reporter is a built-in name only.
     'npx vitest --config x',

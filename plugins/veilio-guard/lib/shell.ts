@@ -24,12 +24,11 @@ const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'find'
 type Allowed = Readonly<Record<string, boolean | 'path' | readonly string[]>>
 
 /** Whether a -f or --root value is a relative path inside the project: not
- *  empty (the current directory under another config), not absolute, not
- *  from home or a variable, and no `..` (review round 4). */
+ *  empty (the current directory under another config), plain characters only
+ *  (vitest and Maven strip quotes the shell left in, so `'"/tmp/x"'` is
+ *  `/tmp/x` to them: review round 4b), and no `..` (review round 4). */
 function inProject(value: string): boolean {
-  return (
-    value !== '' && !/^[/~]/.test(value) && !value.includes('$') && !value.split('/').includes('..')
-  )
+  return /^[\w.@+-]+(\/[\w.@+-]+)*\/?$/.test(value) && !value.split('/').includes('..')
 }
 
 const PYTEST = { '-k': true, '-x': false, '-q': false, '-v': false }
@@ -44,11 +43,23 @@ const VITEST: Allowed = {
   '--root': 'path',
   '--reporter': ['default', 'verbose', 'dot', 'json', 'junit', 'tap', 'tap-flat'],
 }
-const RUNNERS: readonly [readonly string[], Allowed][] = [
-  [['npx', 'vitest'], VITEST],
-  [['vitest'], VITEST],
-  [['node_modules/.bin/vitest'], VITEST],
-  [['./node_modules/.bin/vitest'], VITEST],
+// Review round 4b #2: vitest's commands other than run (init installs
+// packages). Refused as any positional word, wherever the options put it.
+const VITEST_COMMANDS = new Set([
+  'init',
+  'bench',
+  'doctor',
+  'list',
+  'watch',
+  'dev',
+  'related',
+  'typecheck',
+])
+const RUNNERS: readonly [readonly string[], Allowed, ReadonlySet<string>?][] = [
+  [['npx', 'vitest'], VITEST, VITEST_COMMANDS],
+  [['vitest'], VITEST, VITEST_COMMANDS],
+  [['node_modules/.bin/vitest'], VITEST, VITEST_COMMANDS],
+  [['./node_modules/.bin/vitest'], VITEST, VITEST_COMMANDS],
   [['npm', 'test'], SCRIPT],
   [['npm', 'run', 'test'], SCRIPT],
   [['pnpm', 'test'], SCRIPT],
@@ -72,7 +83,7 @@ const RUNNERS: readonly [readonly string[], Allowed][] = [
 // goal once, and only these options. `-D` only with `=`, since `-Dtest Foo`
 // is the property `test` and the goal `Foo`.
 const MVN_FLAGS = new Set(['-q', '-o', '-B'])
-const MVN_PROPS = /^-D(test=.+|failIfNoTests=false|surefire\.failIfNoSpecifiedTests=false)$/
+const MVN_PROPS = /^-D(test=[^\s"'$`]+|failIfNoTests=false|surefire\.failIfNoSpecifiedTests=false)$/
 
 /** Whether Maven's words after `mvn` run the test goal and nothing else. */
 function mavenTest(rest: readonly string[]): boolean {
@@ -88,11 +99,19 @@ function mavenTest(rest: readonly string[]): boolean {
   return goals === 1
 }
 
-/** Whether every option in `rest` is on `allowed`. */
-function onlyAllowed(rest: readonly string[], allowed: Allowed): boolean {
+/** Whether every option in `rest` is on `allowed`, and no positional word is
+ *  one of the runner's `commands` that is not a test run. */
+function onlyAllowed(
+  rest: readonly string[],
+  allowed: Allowed,
+  commands?: ReadonlySet<string>
+): boolean {
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!
-    if (!w.startsWith('-')) continue
+    if (!w.startsWith('-')) {
+      if (commands?.has(w)) return false
+      continue
+    }
     const eq = w.indexOf('=')
     const name = eq === -1 ? w : w.slice(0, eq)
     if (!Object.hasOwn(allowed, name)) return false
@@ -116,9 +135,9 @@ function onlyAllowed(rest: readonly string[], allowed: Allowed): boolean {
 function readsOrTests(words: readonly string[]): boolean {
   if (READERS.has(words[0] ?? '')) return true
   if (words[0] === 'mvn') return mavenTest(words.slice(1))
-  for (const [start, allowed] of RUNNERS)
+  for (const [start, allowed, commands] of RUNNERS)
     if (start.every((w, i) => words[i] === w))
-      return onlyAllowed(words.slice(start.length), allowed)
+      return onlyAllowed(words.slice(start.length), allowed, commands)
   return false
 }
 
