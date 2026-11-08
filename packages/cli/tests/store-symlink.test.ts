@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -15,6 +15,27 @@ import {
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
+
+// The owner a file reads as. CI runs these tests as real root, where every
+// file the test makes is uid 0 (act, 2026-11-08): so the sudo cases give
+// their files a made-up owner, whatever the real uid. VEILIO_TEST_AS_ROOT=1
+// runs the whole file as root would: getuid 0, every file owned by 0.
+const owner = vi.hoisted(() => ({ uid: undefined as number | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs')>()
+  const lstatSync = ((...args: Parameters<typeof real.lstatSync>) => {
+    const st = real.lstatSync(...args)
+    if (owner.uid === undefined || !st) return st
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { uid: owner.uid })
+  }) as typeof real.lstatSync
+  return { ...real, lstatSync, default: { ...real, lstatSync } }
+})
+const AS_ROOT = process.env.VEILIO_TEST_AS_ROOT === '1'
+beforeEach(() => {
+  owner.uid = AS_ROOT ? 0 : undefined
+  if (AS_ROOT) vi.spyOn(process, 'getuid').mockReturnValue(0)
+})
+afterEach(() => vi.restoreAllMocks())
 
 // Security audit 2026-11-01 (LOW, confirmed): saveMap followed links, so a
 // repository that committed .veilio/map.json (or .veilio itself) as a link
@@ -280,12 +301,18 @@ describe('a store another user owns is never used (L2)', () => {
   // Review round 1 (#4), git's rule: root accepts the store of the user who
   // ran sudo; anything else needs the person's explicit opt-in.
   const asRoot = () => vi.spyOn(process, 'getuid').mockReturnValue(0)
+  // Under sudo: root runs it, and the files are the invoking user's (1000).
+  const SUDO = 1000
+  const asSudo = () => {
+    owner.uid = SUDO
+    vi.stubEnv('SUDO_UID', String(SUDO))
+    asRoot()
+  }
   // Security review: under sudo only reads are accepted. A file root wrote
   // there would be root's, so writes are refused with a hint.
   it.runIf(posix)('root reads a store owned by SUDO_UID, and refuses to write it', () => {
     const { proj, mapPath } = setup()
-    vi.stubEnv('SUDO_UID', String(process.getuid!()))
-    asRoot()
+    asSudo()
     expect(loadMap(mapPath)).toEqual({})
     expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' }, { force: true })).toThrow(
       `refusing to write ${join(proj, '.veilio')} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
@@ -301,8 +328,7 @@ describe('a store another user owns is never used (L2)', () => {
       const { saveReserved } = await import('../src/reservations.js')
       const base = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
       const store = join(base, '.veilio')
-      vi.stubEnv('SUDO_UID', String(process.getuid!()))
-      asRoot()
+      asSudo()
       const hint = `refusing to write ${store} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
       expect(() => saveMap(join(store, 'map.json'), { __CLS__1: 'PaymentGateway' })).toThrow(hint)
       expect(() =>
@@ -325,9 +351,8 @@ describe('a store another user owns is never used (L2)', () => {
     () => {
       const listed = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
       const unlisted = mkdtempSync(join(tmpdir(), 'veilio-own-fresh-'))
-      vi.stubEnv('SUDO_UID', String(process.getuid!()))
       vi.stubEnv('VEILIO_TRUST_STORE_OWNER', join(listed, '.veilio'))
-      asRoot()
+      asSudo()
       saveMap(join(listed, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
       expect(loadMap(join(listed, '.veilio', 'map.json'))).toEqual({ __CLS__1: 'PaymentGateway' })
       expect(() =>
@@ -347,17 +372,19 @@ describe('a store another user owns is never used (L2)', () => {
 
   it.runIf(posix)('root without SUDO_UID, or with another one, refuses it', () => {
     const { proj, mapPath } = setup()
+    owner.uid = SUDO
     vi.stubEnv('SUDO_UID', '')
     asRoot()
     expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
-    vi.stubEnv('SUDO_UID', String(process.getuid!() + 7))
+    vi.stubEnv('SUDO_UID', String(SUDO + 7))
     expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
   })
 
   it.runIf(posix)('SUDO_UID counts for root only', () => {
     const { proj, mapPath } = setup()
-    vi.stubEnv('SUDO_UID', String(process.getuid!()))
-    asAnotherUser()
+    owner.uid = SUDO
+    vi.stubEnv('SUDO_UID', String(SUDO))
+    vi.spyOn(process, 'getuid').mockReturnValue(SUDO + 1)
     expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
   })
 
