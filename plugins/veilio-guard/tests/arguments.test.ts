@@ -129,24 +129,38 @@ test(
 const UNSHAPED = (p: string) =>
   `Veilio refused this call: the real name for ${p} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call.`
 
-for (const [what, value] of [
-  ['SQL', 'users; DELETE FROM accounts'],
-  ['a line break', 'users\nDROP TABLE accounts'],
-  ['a space', 'Payment Gateway'],
-  ['an option', '--all'],
-] as const)
-  test(
-    `L18: a map value holding ${what} is not restored into an MCP tool`,
-    { options: { mcpRestore: ['local_db'] } },
-    async ($, on) => {
-      project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: value }) })
-      const seen: Fields[] = []
-      on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
-      const out = await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
-      expect(out.deny).toBe(UNSHAPED('__CLS__1'))
-      expect(seen).toHaveLength(0)
-    }
-  )
+function unshapedRefused(value: string) {
+  return async ($: TestHost, on: TestOn) => {
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: value }) })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    const out = await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
+    expect(out.deny).toBe(UNSHAPED('__CLS__1'))
+    expect(seen).toHaveLength(0)
+  }
+}
+const LOCAL_DB = { options: { mcpRestore: ['local_db'] } }
+
+test(
+  'L18: a map value holding SQL is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('users; DELETE FROM accounts')
+)
+test(
+  'L18: a map value holding a line break is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('users\nDROP TABLE accounts')
+)
+test(
+  'L18: a map value holding a space is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('Payment Gateway')
+)
+test(
+  'L18: a map value holding an option is not restored into an MCP tool',
+  LOCAL_DB,
+  unshapedRefused('--all')
+)
 
 test(
   'L18: names and paths, a non-ASCII name too, restore into an MCP tool',
