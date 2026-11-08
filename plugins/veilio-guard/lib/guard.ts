@@ -376,6 +376,8 @@ export class Guard {
     // Security audit 2026-11-01: files under .veilio/ committed to the
     // repository are its author's, not this checkout's.
     const committed = await this.trackedVeilioFiles()
+    // Spec 078 R7: with no listing, nobody can tell who wrote the map.
+    this.noListing = committed === null
     this.home = home
     await this.readSettings()
     await this.readOffRecord()
@@ -757,9 +759,27 @@ export class Guard {
     return recorded
   }
 
+  /** Spec 078 FR-014: .veilio and the map must be where they appear, not a
+   *  link to somewhere else (the CLI's refuseLinks, through the host's stat). */
+  private async refuseLinks(): Promise<void> {
+    const root = (await this.io.realPath(this.root)) ?? this.root
+    const dir = await this.io.realPath(join(this.root, '.veilio'))
+    const map = await this.io.realPath(this.mapPath)
+    if (
+      (dir !== undefined && dir !== join(root, '.veilio')) ||
+      (map !== undefined && map !== join(root, '.veilio', 'map.json'))
+    ) {
+      this.stop(
+        'the map at .veilio/map.json is a link to somewhere else, so Veilio will not write the real names there. Fix it, then start a new session'
+      )
+      throw new Error(this.stoppedReason)
+    }
+  }
+
   private async ensureIgnored(): Promise<void> {
     // The store holds the real names; it must never be committed.
     const ignore = join(this.root, '.veilio', '.gitignore')
+    await this.refuseLinks()
     if (!(await this.io.exists(ignore))) {
       await this.createOwnerOnly(ignore, '', false)
       await this.io.write(ignore, '*\n')
@@ -836,7 +856,32 @@ export class Guard {
   private gate(out: string): string {
     if (survivingSecrets(out, this.map).length > 0)
       throw new Error('a credential remained after masking')
-    return out
+    return this.see(out)
+  }
+
+  /** Spec 078 R7: the placeholders this session put into text bound for the
+   *  model. Outside git only these are restored. The guard's own note names
+   *  example placeholders, which are not shown ones. */
+  private shown = new Set<string>()
+  private noListing = false
+  private see(text: string): string {
+    if (!this.noListing) return text
+    for (const m of text
+      .split(MODEL_NOTE)
+      .join('')
+      .matchAll(/__[A-Z0-9_]+__\d*/g))
+      this.shown.add(m[0])
+    return text
+  }
+  private shownCache: { from: SymbolMap; size: number; map: SymbolMap } | null = null
+  /** What restores outside git: the entries of `from` this session showed. */
+  private shownMap(from: SymbolMap): SymbolMap {
+    const c = this.shownCache
+    if (c && c.from === from && c.size === this.shown.size) return c.map
+    const map: SymbolMap = {}
+    for (const p of this.shown) if (Object.hasOwn(from, p)) map[p] = from[p]!
+    this.shownCache = { from, size: this.shown.size, map }
+    return map
   }
 
   /** Texts that reach the model together (a prompt and its context, the
@@ -983,7 +1028,7 @@ export class Guard {
     for (const [key, mark] of marks) out = out.split(mark).join(back(key))
     if (out.includes('\u0000') || out.includes('\u0001')) return full()
     if (survivingSecrets(out, this.map).length > 0) return full()
-    return out
+    return this.see(out)
   }
 
   /** What masking knows about a text of `language` (spec 050). */
@@ -1045,9 +1090,13 @@ export class Guard {
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const resolved = new Set<string>()
+    const from = this.restoreMap
+    const restorable = this.noListing ? this.shownMap(from) : from
+    const unshown = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
-      const r = restoreArgs(s, this.restoreMap)
+      const r = restoreArgs(s, restorable)
+      r.unresolved.filter((p) => Object.hasOwn(from, p)).forEach((p) => unshown.add(p))
       r.resolved.forEach((p) => resolved.add(p))
       // Only tokens Veilio could have minted end in a number: __DEV__,
       // __FILE__ and __CLASS__ belong to the language and stay as written.
@@ -1185,8 +1234,10 @@ export class Guard {
 
     if (writes && (unresolved.size > 0 || altered.size > 0)) {
       const names = [...unresolved, ...altered].join(', ')
+      // strings.md #10: outside git, a planted entry is one never shown.
+      const which = [...unresolved].every((p) => unshown.has(p)) && altered.size === 0
       return this.deny(
-        `the call names ${names}, which the project's map does not have` +
+        `the call names ${names}, ${which ? 'which this session has not shown you' : "which the project's map does not have"}` +
           (altered.size ? ' (a placeholder was changed: keep its exact spelling)' : '') +
           '. Read the file again and use the placeholders it shows' +
           viaEdit
@@ -1248,7 +1299,7 @@ export class Guard {
     const left = survivingSecrets(shaped.text, { ...this.map, ...shaped.additions })
     if (left.length > 0)
       return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
-    return { deny: shaped.text }
+    return { deny: this.see(shaped.text) }
   }
 
   /** After the tool ran: the listed fields scrubbed, new names saved, then the secret re-scan. */
@@ -1474,6 +1525,7 @@ export class Guard {
       })
       if (left.length > 0)
         return this.withhold(`a secret remained after masking (${[...new Set(left)].join(', ')})`)
+      deepRewrite(value, (s) => this.see(s))
       return { result: value }
     }
     return this.withhold(
@@ -1672,6 +1724,7 @@ export class Guard {
       additions = kept
     }
     const run = this.writes.then(async () => {
+      await this.refuseLinks()
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
       if (existed) {
