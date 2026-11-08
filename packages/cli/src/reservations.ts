@@ -10,7 +10,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { openStoreFile, refuseLinks } from './store.js'
+import { isName, openStoreFile, refuseLinks } from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -318,13 +318,12 @@ export function loadAliases(mapPath: string): SymbolMap {
 
 /** Bounds on aliases.json, far above any real one. */
 const MAX_ALIASES = 1_000_000
-const MAX_NAME = 100_000
 
 /**
  * aliases.json, checked like map.json (security audit), and never thrown on
  * (security review of round 1: one bad entry cost teamNumbering every
- * retired placeholder). An entry whose name is not a string of 1 to 100000
- * characters, whose key is not a placeholder, or past the entry bound is
+ * retired placeholder). An entry whose name is not a name (isName: 1 to 100000
+ * characters, no control or line separator), whose key is not a placeholder, or past the entry bound is
  * dropped and counted in `ignored`; the rest are kept. A file that is not an
  * object of aliases is `unreadable`: no aliases, and never written over. The
  * one throw is the store's refusal of a link or a tracked file (spec 085).
@@ -352,13 +351,7 @@ export function readAliases(mapPath: string): {
   let kept = 0
   const aliases: SymbolMap = {}
   for (const [p, name] of Object.entries(raw)) {
-    if (
-      kept < MAX_ALIASES &&
-      typeof name === 'string' &&
-      name.length > 0 &&
-      name.length <= MAX_NAME &&
-      isPlaceholder(p)
-    ) {
+    if (kept < MAX_ALIASES && isName(name) && isPlaceholder(p)) {
       aliases[p] = name
       kept++
     } else ignored++
