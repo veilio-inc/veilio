@@ -113,6 +113,28 @@ describe('rule compile work is charged to the budget (L8)', () => {
     expect(spent(cheap(1001)).stopped).toBe(true)
   })
 
+  // Security review: a dropped set must not forget it held replace rules. An
+  // ordinary word stays readable only when no replace rule could claim it.
+  it('a set past the cap with a replace rule masks an ordinary word, as a spent budget does', () => {
+    const code = 'export const ledger = 1'
+    expect(anonymize(code).anonymized).toContain('ledger') // no rules: readable
+    const rules = [
+      ...Array.from({ length: 1000 }, (_, i) => rule(i, 'whitelist', `^zz${i}[a-c]+$`)),
+      rule(1000, 'replace', '^ledger$'),
+    ]
+    const r = anonymize(code, { rules })
+    expect(r.rulesStopped).toBe(true)
+    expect(r.anonymized).not.toContain('ledger')
+  })
+
+  it('a disabled replace rule in a set past the cap claims nothing: the word stays readable', () => {
+    const rules = [
+      ...Array.from({ length: 1000 }, (_, i) => rule(i, 'whitelist', `^zz${i}[a-c]+$`)),
+      { ...rule(1000, 'replace', '^ledger$'), enabled: false },
+    ]
+    expect(anonymize('export const ledger = 1', { rules }).anonymized).toContain('ledger')
+  })
+
   it('the steps grow linearly with the rules, and a repeat call spends the same', () => {
     const cheap = (n: number) =>
       Array.from({ length: n }, (_, i) => rule(i, 'whitelist', `^zz${i}[a-c]+$`))

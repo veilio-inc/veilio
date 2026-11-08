@@ -1227,6 +1227,9 @@ export function anonymize(code, options = {}) {
     const rules = runnable.length > MAX_RULES ? [] : runnable;
     if (runnable.length > MAX_RULES)
         budget.spent = true;
+    // Whether a replace rule was given, dropped set included: then a spent
+    // budget turns the ordinary-word exemption off (fail closed).
+    const hadReplacers = runnable.some((r) => r.type === 'replace' && r.enabled);
     const { language, fallback: languageFallback } = describeLanguage(code, opts.language);
     // Redact BEFORE extraction: a credential that reaches extractIdentifiers
     // becomes a reversible map value, which is worse than leaving it alone.
@@ -1468,7 +1471,7 @@ export function anonymize(code, options = {}) {
         // its codename: the word is masked rather than shown.
         if (isOrdinaryWord(name) &&
             !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
-            !(replacers.length > 0 && budget.spent)) {
+            !(hadReplacers && budget.spent)) {
             ordinary.add(name);
             if (!valueWords.has(name))
                 continue;
