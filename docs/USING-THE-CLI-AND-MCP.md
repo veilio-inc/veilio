@@ -56,14 +56,19 @@ Or run either without installing: `npx -y @veilio-inc/cli --help`.
 veilio scrub src/billing.ts | pbcopy     # anonymize; the map goes to .veilio/map.json
 pbpaste | veilio restore                 # put the real names back into the AI's answer
 pbpaste | veilio restore --strict > f.ts # the same, but write nothing if a placeholder would be left
-git diff --cached | veilio scan          # credentials only; exits 1 on a credential
+veilio scan .env config.yml             # credentials only; exits 1 on a credential
 veilio map                               # show the current symbol map (--clear to wipe it)
 ```
 
 - Output goes to **stdout**; summaries and warnings go to **stderr**, so pipes stay clean.
 - The symbol map lives in `.veilio/map.json` in the project (found by walking up to
   the git root). It holds the real names, so it is written 0600 and `.veilio/` gets
-  its own `.gitignore`: it is never committed.
+  its own `.gitignore`: it is never committed. The CLI and the MCP server refuse a
+  map that git tracks, one reached through a link, one another user on the machine
+  owns, and a `.veilio/.gitignore` whose only pattern is not `*`. Outside git they
+  cannot tell a map you made from one that came with the files.
+- The pre-commit hook (`packages/cli/hooks/pre-commit`) scans each staged file under
+  its own name with `veilio scan --name <path>`.
 - `--language` forces a language when auto-detection guesses wrong;
   `--secrets warn|off` changes how detected credentials are handled (default: redact,
   irreversibly).

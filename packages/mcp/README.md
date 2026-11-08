@@ -80,7 +80,7 @@ it refuses in the same words for the same reasons.
 | `maps_pull`     | Fetch a map into this project's local map. `force: true` to replace local entries it would drop. A team map also reserves this member's block of team numbers (`.veilio/reserved.json`), as `veilio maps pull` does. |
 | `maps_create`   | Save the local map as a new map: `scope` `personal` or `team`. A team map is checked against the team's other maps first.                                                                                            |
 | `maps_update`   | Replace a map's entries with the local map's, in place - same id, name and project. Its publisher only.                                                                                                              |
-| `maps_remove`   | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name.                                                                                                                         |
+| `maps_remove`   | Remove a map. Needs the destructive setting and `confirmName` equal to the map's exact name (a typo check; see below).                                                                                               |
 | `team_status`   | Account, team, project in use, whether the team key and the personal-maps key are unlocked here, whether a key change is owed.                                                                                       |
 | `projects_list` | The projects the team works in; `*` marks the one in use.                                                                                                                                                            |
 | `projects_use`  | Choose one, by name or id. Kept with the sign-in, so the CLI uses it too.                                                                                                                                            |
@@ -101,7 +101,9 @@ the server's variable overrides it.
   that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
   that would overwrite local entries, are refused unless you start the
   server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting the agent
-  cannot reach. Even then, a removal must repeat the map's exact name. Creating,
+  cannot reach. Removal is allowed only when the server was started with
+  `VEILIO_MCP_DESTRUCTIVE=1`. `confirmName` catches a wrong id; it is not proof
+  that the person agreed (the model can read names from `maps_list`). Creating,
   pulling, listing and updates that drop nothing always work.
 - **Personal maps need `veilio vault unlock`** in a terminal first. It keeps a
   personal-maps key on this machine (7 days) that opens personal maps and
@@ -143,7 +145,7 @@ project with `env`. Use a name or an id; an empty value counts as unset:
 }
 ```
 
-`--root <dir>` (or `-r`) scopes every path the server will read; `--map <path>` (or `-m`) overrides the symbol-map location. Paths outside the root are refused, including a link or junction inside the root that leads outside it — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
+`--root <dir>` (or `-r`) scopes every path the server will read; `--map <path>` (or `-m`) overrides the symbol-map location. The map is read through the CLI's store, so `restore_text`, `symbol_map_summary` and the `anonymize_*` tools refuse a map that git tracks, one reached through a link, or one another user owns, as `veilio` does. Paths outside the root are refused, including a link or junction inside the root that leads outside it — the server reads files on the agent's behalf, so traversal would make it an arbitrary-file-read primitive.
 
 **`--root` guards the files, not the conversation.** Everything the agent has read stays in its session. If you work on several clients' repos, a session that read client A's code still holds it when you switch to client B, and the model can repeat a name from it without reading a file. Without a team namespace, placeholders are also numbered per project: `__CLS__1` in A's repo and `__CLS__1` in B's are different classes, so an answer about A restored through B's server comes back with B's names in it. Open a fresh session per client, from that repo's root, so each session has one root, one map and one client's code.
 
