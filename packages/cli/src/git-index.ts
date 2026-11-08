@@ -16,13 +16,24 @@ export interface Tracked {
   paths: Set<string>
 }
 
+/** Each index file as last parsed, while its inode, mtime and size are unchanged
+ *  (git replaces the file to change it): one parse per process, not per read. */
+const parsed = new Map<string, { stamp: string; paths: Set<string> | null }>()
+
 /** The git checkout holding `from`, and what its index lists; null when unknown. */
 export function trackedPaths(from: string): Tracked | null {
   try {
     const found = findGitDir(resolve(from))
     if (!found) return null
-    const paths = readIndex(readFileSync(join(found.gitDir, 'index')), hashSize(found))
-    return paths && { root: found.root, paths }
+    const index = join(found.gitDir, 'index')
+    const st = statSync(index)
+    const stamp = `${st.ino}:${st.mtimeMs}:${st.size}`
+    let hit = parsed.get(index)
+    if (hit?.stamp !== stamp) {
+      hit = { stamp, paths: readIndex(readFileSync(index), hashSize(found)) }
+      parsed.set(index, hit)
+    }
+    return hit.paths && { root: found.root, paths: hit.paths }
   } catch {
     return null
   }
