@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
@@ -11,6 +11,7 @@ import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
 // from `git cat-file --batch` on stdin: one process for the whole commit, and
 // no `:path` revision syntax (a staged `0:foo` is not foo's stage-0 blob).
 
+const CLI = resolve(import.meta.dirname, '..', 'dist', 'index.js')
 const ENV = ['DB', 'PASSWORD=NotARealPass9'].join('_') + '\n'
 const TS = 'export const PaymentGateway = (x: number) => x\n'
 const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
@@ -163,5 +164,31 @@ describe('veilio scan --blobs', () => {
     writeFileSync(join(repo, 'a.ts'), TS)
     expect((await scan(['--blobs', 'x', 'a.ts'], Buffer.alloc(0))).code).toBe(EXIT_ERROR)
     expect((await scan(['--blobs', 'x', '--name', 'a.ts'], Buffer.alloc(0))).code).toBe(EXIT_ERROR)
+  })
+})
+
+// Review round 2 (#8): stdin is read as bytes, always: a blob that is not
+// UTF-8 keeps its byte length, so the stream parses. There is no text
+// fallback for an Io without bytes (it would re-encode and shift every size).
+describe('stdin is bytes', () => {
+  it('an Io must give stdin as bytes', () => {
+    // @ts-expect-error stdinBytes is required
+    const io: Io = { cwd: repo, stdin: async () => '', stdout: () => {}, stderr: () => {} }
+    expect(io.cwd).toBe(repo)
+  })
+
+  it('a blob that is not UTF-8, through the real binary', () => {
+    const latin1 = Buffer.concat([Buffer.from(ENV.trimEnd() + ' # caf'), Buffer.from([0xe9, 0x0a])])
+    stage({ 'config/legacy.env': latin1, 'notes.txt': Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]) })
+    const { raw, batch } = staged()
+    const run = spawnSync(process.execPath, [CLI, 'scan', '--quiet', '--blobs', raw], {
+      cwd: repo,
+      env: { ...GIT_ENV, HOME: repo },
+      input: batch,
+      encoding: 'utf8',
+    })
+    expect(run.stderr).not.toMatch(/cut short/)
+    expect(run.status).toBe(EXIT_FINDINGS)
+    expect(run.stderr).toContain('config/legacy.env')
   })
 })

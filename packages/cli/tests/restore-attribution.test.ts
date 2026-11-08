@@ -43,6 +43,7 @@ async function restore(text: string): Promise<{ code: number; out: string; err: 
     cwd,
     home,
     stdin: async () => text,
+    stdinBytes: async () => Buffer.from(text),
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

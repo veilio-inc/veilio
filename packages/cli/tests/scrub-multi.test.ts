@@ -57,6 +57,7 @@ async function scrub(files: string[], mapName: string) {
   const io: Io = {
     cwd,
     stdin: async () => '',
+    stdinBytes: async () => Buffer.from(''),
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
   }
@@ -131,7 +132,13 @@ describe('what scrub may leave as written, when it cannot see everything', () =>
   it('--language does not decide which files are parsed: their extensions do', async () => {
     writeFileSync(join(cwd, 'src/Ledger.java'), 'class Ledger { int tarnwickSuite; }\n')
     let out = ''
-    const io: Io = { cwd, stdin: async () => '', stdout: (t) => (out += t), stderr: () => {} }
+    const io: Io = {
+      cwd,
+      stdin: async () => '',
+      stdinBytes: async () => Buffer.alloc(0),
+      stdout: (t) => (out += t),
+      stderr: () => {},
+    }
     await main(
       [
         'scrub',

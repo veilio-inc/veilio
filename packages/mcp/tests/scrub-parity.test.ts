@@ -73,6 +73,7 @@ describe('scrub and anonymize_text, one team, one input', () => {
       cwd: checkout(),
       home,
       stdin: async () => code,
+      stdinBytes: async () => Buffer.from(code),
       stdout: (t) => (cli += t),
       stderr: () => {},
     })
@@ -107,6 +108,7 @@ describe('scrub <file> and anonymize_file, one project, one file', () => {
       // A home of its own: signed out, never the developer's ~/.veilio.
       home: fresh(),
       stdin: async () => '',
+      stdinBytes: async () => Buffer.from(''),
       stdout: (t) => (cli += t),
       stderr: () => {},
     })

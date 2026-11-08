@@ -60,8 +60,8 @@ import { thirdPartyNames } from './third-party.js'
 export interface Io {
   cwd: string
   stdin: () => Promise<string>
-  /** Stdin as bytes, for `scan --blobs`. Undefined: stdin's text as UTF-8. */
-  stdinBytes?: () => Promise<Buffer>
+  /** Stdin as bytes (`scan --blobs`: git's blob stream holds any byte). */
+  stdinBytes: () => Promise<Buffer>
   stdout: (text: string) => void
   stderr: (text: string) => void
   /**
@@ -600,7 +600,7 @@ export async function runScan(args: ParsedArgs, io: Io): Promise<number> {
     try {
       targets = stagedTargets(
         readFileSync(resolve(io.cwd, args.blobsFile), 'utf8'),
-        io.stdinBytes ? await io.stdinBytes() : Buffer.from(await io.stdin(), 'utf8')
+        await io.stdinBytes()
       )
     } catch (err) {
       if (!(err instanceof BlobsError)) throw err

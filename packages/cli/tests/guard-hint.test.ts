@@ -99,6 +99,7 @@ describe('the CLI prints it (spec 070 US1, US3)', () => {
       home,
       env,
       stdin: async () => 'class LedgerVault {}\n',
+      stdinBytes: async () => Buffer.from('class LedgerVault {}\n'),
       stdout: (t) => {
         out += t
       },

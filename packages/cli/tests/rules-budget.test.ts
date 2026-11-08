@@ -50,6 +50,7 @@ async function scrub(): Promise<{ code: number; out: string; err: string }> {
     cwd,
     home,
     stdin: async () => SOURCE,
+    stdinBytes: async () => Buffer.from(SOURCE),
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

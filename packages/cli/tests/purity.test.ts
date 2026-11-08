@@ -72,6 +72,7 @@ async function runTrapped(
     const io: Io = {
       cwd,
       stdin: async () => stdin,
+      stdinBytes: async () => Buffer.from(stdin),
       stdout: () => {},
       stderr: () => {},
     }

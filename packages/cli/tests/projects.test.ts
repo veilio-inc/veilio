@@ -46,6 +46,7 @@ async function run(
     cwd,
     home,
     stdin: async () => stdin,
+    stdinBytes: async () => Buffer.from(stdin),
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     password: async () => '',

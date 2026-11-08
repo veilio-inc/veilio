@@ -33,6 +33,7 @@ describe('the CLI names itself on every request', () => {
       cwd: home,
       home,
       stdin: async () => '',
+      stdinBytes: async () => Buffer.from(''),
       stdout: () => undefined,
       stderr: () => undefined,
     })

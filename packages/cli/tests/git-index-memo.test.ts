@@ -30,6 +30,7 @@ const scrub = () =>
     cwd,
     home,
     stdin: async () => 'export class QuasarLedger {}\n',
+    stdinBytes: async () => Buffer.from('export class QuasarLedger {}\n'),
     stdout: () => {},
     stderr: () => {},
   })

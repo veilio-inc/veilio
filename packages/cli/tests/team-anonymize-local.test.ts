@@ -108,6 +108,7 @@ describe('signed-in veilio scrub takes its numbering from reserved.json', () => 
       cwd,
       home,
       stdin: async () => '',
+      stdinBytes: async () => Buffer.from(''),
       stdout: (t) => (out += t),
       stderr: (t) => (err += t),
       prompt: async () => '',

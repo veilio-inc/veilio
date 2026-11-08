@@ -271,20 +271,9 @@ function readStdinBytes(): Promise<Buffer> {
   })
 }
 
+/** Stdin as text: its bytes, decoded as UTF-8. */
 function readStdin(): Promise<string> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    // A TTY with no piped input would hang forever waiting for EOF. Fail with
-    // usage guidance instead of appearing to freeze.
-    if (process.stdin.isTTY) {
-      rejectPromise(new Error('no input — pass a file or pipe to stdin'))
-      return
-    }
-    let data = ''
-    process.stdin.setEncoding('utf8')
-    process.stdin.on('data', (chunk) => (data += chunk))
-    process.stdin.on('end', () => resolvePromise(data))
-    process.stdin.on('error', rejectPromise)
-  })
+  return readStdinBytes().then((bytes) => bytes.toString('utf8'))
 }
 
 /**

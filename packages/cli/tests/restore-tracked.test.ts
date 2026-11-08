@@ -44,6 +44,7 @@ async function run(argv: string[], stdin = '') {
     cwd,
     home,
     stdin: async () => stdin,
+    stdinBytes: async () => Buffer.from(stdin),
     stdout: (t) => (out += t),
     stderr: (t) => (err += t),
     prompt: async () => '',

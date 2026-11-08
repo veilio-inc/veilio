@@ -43,6 +43,7 @@ async function login(): Promise<{ code: number; err: string }> {
     cwd: home,
     home,
     stdin: async () => '',
+    stdinBytes: async () => Buffer.from(''),
     stdout: () => undefined,
     stderr: (t) => (err += t),
     prompt: async () => 'me@example.test',

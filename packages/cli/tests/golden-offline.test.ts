@@ -147,6 +147,7 @@ async function runCase(steps: (typeof CASES)[number]['steps']): Promise<Recorded
         cwd,
         home,
         stdin: async () => (step.stdin === 'PREV' ? prev : (step.stdin ?? '')),
+        stdinBytes: async () => Buffer.from(step.stdin === 'PREV' ? prev : (step.stdin ?? '')),
         stdout: (t) => (out += t),
         stderr: (t) => (err += t),
         prompt: async () => '',

@@ -92,6 +92,7 @@ it('no command output holds a secret', async () => {
       cwd,
       home,
       stdin: async () => '',
+      stdinBytes: async () => Buffer.from(''),
       stdout: (t) => (all += t),
       stderr: (t) => (all += t),
       password: async () => PASSPHRASE,
