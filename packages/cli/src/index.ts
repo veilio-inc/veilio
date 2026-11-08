@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 import { needsAction, parseArgs, UsageError, type ParsedArgs } from './args.js'
 import { feedSecret, type SecretState } from './secret-input.js'
-import { EXIT_ERROR, HELP, runMap, runRestore, runScan, runScrub, type Io } from './commands.js'
+import {
+  EXIT_ERROR,
+  EXIT_FINDINGS,
+  HELP,
+  runMap,
+  runRestore,
+  runScan,
+  runScrub,
+  type Io,
+} from './commands.js'
 import { commandHelp } from './flags.js'
 import {
   runLogin,
@@ -22,7 +31,7 @@ import {
   teamLayerFor,
   teamNamespaceForScrub,
 } from './cloud-commands.js'
-import { resolveMapPath } from './store.js'
+import { resolveMapPath, StoreRefusal } from './store.js'
 import { guardHint } from './guard-hint.js'
 import { createInterface } from 'node:readline'
 import { realpathSync } from 'node:fs'
@@ -141,7 +150,8 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
     }
   } catch (err) {
     io.stderr(`veilio: ${err instanceof Error ? err.message : String(err)}\n`)
-    return EXIT_ERROR
+    // A store refused for what it is (tracked, a link) stops the pipeline like a finding.
+    return err instanceof StoreRefusal ? EXIT_FINDINGS : EXIT_ERROR
   }
 }
 

@@ -7,10 +7,10 @@
 // it does not know. Nothing else writes these two files, and only the CLI and
 // the MCP server write them; the guard only reads `reserved.json`.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomInt } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { refuseLinks } from './store.js'
+import { openStoreFile, refuseLinks } from './store.js'
 import {
   highestPerKind,
   isLocalTag,
@@ -79,10 +79,11 @@ function writePrivate(path: string, value: unknown): void {
 /** The member's blocks, or null before any was reserved. A malformed file is refused, never numbered from. */
 export function loadReserved(mapPath: string): ReservedFile | null {
   const path = reservedPath(mapPath)
-  if (!existsSync(path)) return null
+  const text = openStoreFile(RESERVED_FILE, path)
+  if (text === null) return null
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     throw new ReservedFileError(path, 'it is not valid JSON')
   }
@@ -325,7 +326,8 @@ const MAX_NAME = 100_000
  * retired placeholder). An entry whose name is not a string of 1 to 100000
  * characters, whose key is not a placeholder, or past the entry bound is
  * dropped and counted in `ignored`; the rest are kept. A file that is not an
- * object of aliases is `unreadable`: no aliases, and never written over.
+ * object of aliases is `unreadable`: no aliases, and never written over. The
+ * one throw is the store's refusal of a link or a tracked file (spec 085).
  */
 export function readAliases(mapPath: string): {
   aliases: SymbolMap
@@ -334,10 +336,12 @@ export function readAliases(mapPath: string): {
 } {
   const path = aliasesPath(mapPath)
   const none = { aliases: {}, ignored: 0, unreadable: true as const }
-  if (!existsSync(path)) return { aliases: {}, ignored: 0 }
+  // A link or a tracked store is refused, not read as unreadable (spec 085 R1).
+  const text = openStoreFile(ALIASES_FILE, path)
+  if (text === null) return { aliases: {}, ignored: 0 }
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     return none
   }

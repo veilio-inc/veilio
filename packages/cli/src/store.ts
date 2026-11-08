@@ -18,8 +18,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
+import { trackedPaths } from './git-index.js'
 
 export { STORE_DIR }
 export const STORE_FILE = 'map.json'
@@ -66,9 +67,61 @@ export interface StoredMap {
   }
 }
 
+/** The longest real name kept, as for aliases.json (reservations.ts). */
+const MAX_NAME = 100_000
+
 function isSymbolMap(value: unknown): value is SymbolMap {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  return Object.values(value).every((v) => typeof v === 'string')
+  // A name holds no line break (spec 085 R1): a value that does is not one.
+  return Object.values(value).every(
+    (v) => typeof v === 'string' && v.length <= MAX_NAME && !/[\r\n]/.test(v)
+  )
+}
+
+/** A store the CLI will not use: exit 1 in the CLI, a tool error in the MCP server. */
+export class StoreRefusal extends Error {}
+
+/**
+ * The one way a store file (map.json, aliases.json, reserved.json) is read
+ * (spec 085 R1): its text, or null when there is none. Refused, whatever the
+ * file: when `.veilio/` or the file is a link (a cloned repository can commit
+ * one to another project's map), and when git tracks `.veilio`, map.json or
+ * aliases.json (a map in the repository is not yours to restore from). Git is
+ * asked first, so a tracked map is refused even where the file is absent under
+ * this spelling. Outside git, or with an index this reader cannot follow, the
+ * tracked check cannot answer and the file is read as before.
+ */
+export function openStoreFile(what: string, path: string): string | null {
+  const dir = dirname(path)
+  const tracked = trackedStoreFile(path)
+  if (tracked !== null)
+    throw new StoreRefusal(
+      `\`${tracked}\` is tracked by git: a map in the repository is not yours to restore from. ` +
+        `Remove it from git (\`git rm --cached ${tracked}\`), then scrub again to build your own.`
+    )
+  for (const p of [dir, path])
+    if (isLink(p))
+      throw new StoreRefusal(
+        `refusing to read ${what}: ${p} is a link. The map is read only where it appears to be.`
+      )
+  if (!existsSync(path)) return null
+  return readFileSync(path, 'utf8')
+}
+
+/** The store path git tracks, as git names it, or null (none, or no way to tell). */
+function trackedStoreFile(path: string): string | null {
+  const dir = dirname(path)
+  const git = trackedPaths(dir)
+  if (!git) return null
+  const rel = (p: string) => relative(git.root, p).split(sep).join('/')
+  const candidates = [path]
+  if (basename(dir) === STORE_DIR)
+    candidates.unshift(dir, join(dir, STORE_FILE), join(dir, 'aliases.json'))
+  for (const p of candidates) {
+    const name = rel(p)
+    if (name && !name.startsWith('..') && git.paths.has(name.toLowerCase())) return name
+  }
+  return null
 }
 
 /**
@@ -79,9 +132,10 @@ function isSymbolMap(value: unknown): value is SymbolMap {
  * `remote` — which reads correctly as "this map did not come from Cloud".
  */
 export function loadRemote(path: string): StoredMap['remote'] | undefined {
-  if (!existsSync(path)) return undefined
+  const text = openStoreFile('the map', path)
+  if (text === null) return undefined
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { remote?: StoredMap['remote'] }
+    const parsed = JSON.parse(text) as { remote?: StoredMap['remote'] }
     const remote = parsed.remote
     if (!remote || typeof remote.id !== 'string' || typeof remote.updatedAt !== 'string') {
       return undefined
@@ -96,10 +150,11 @@ export function loadRemote(path: string): StoredMap['remote'] | undefined {
  *  file exists but cannot be understood — silently starting from empty there
  *  would orphan every placeholder the user already has in flight. */
 export function loadMap(path: string): SymbolMap {
-  if (!existsSync(path)) return {}
+  const text = openStoreFile('the map', path)
+  if (text === null) return {}
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     throw new Error(`map file at ${path} is not valid JSON`)
   }
