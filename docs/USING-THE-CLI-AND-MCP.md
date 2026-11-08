@@ -65,7 +65,7 @@ veilio map                               # show the current symbol map (--clear 
   the git root). It holds the real names, so it is written 0600 and `.veilio/` gets
   its own `.gitignore`: it is never committed. The CLI and the MCP server refuse a
   map that git tracks, one reached through a link, one another user on the machine
-  owns (`VEILIO_TRUST_STORE_OWNER=1` accepts one on purpose), and a `.veilio/.gitignore` whose only pattern is not `*`. Outside git they
+  owns (list a store's full path in `VEILIO_TRUST_STORE_OWNER` to accept it on purpose), and a `.veilio/.gitignore` whose only pattern is not `*`. Outside git they
   cannot tell a map you made from one that came with the files.
 - The pre-commit hook (`packages/cli/hooks/pre-commit`) scans each staged file under
   its own name with `veilio scan --name <path>`.

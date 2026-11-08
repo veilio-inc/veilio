@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
 
@@ -271,7 +271,7 @@ describe('a store another user owns is never used (L2)', () => {
     vi.spyOn(process, 'getuid').mockReturnValue(me + 1)
   }
   const refusal = (dir: string) =>
-    `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, set VEILIO_TRUST_STORE_OWNER=1.`
+    `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, add its full path to VEILIO_TRUST_STORE_OWNER.`
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
@@ -280,13 +280,17 @@ describe('a store another user owns is never used (L2)', () => {
   // Review round 1 (#4), git's rule: root accepts the store of the user who
   // ran sudo; anything else needs the person's explicit opt-in.
   const asRoot = () => vi.spyOn(process, 'getuid').mockReturnValue(0)
-  it.runIf(posix)('root accepts a store owned by SUDO_UID', () => {
-    const { mapPath } = setup()
+  // Security review: under sudo only reads are accepted. A file root wrote
+  // there would be root's, so writes are refused with a hint.
+  it.runIf(posix)('root reads a store owned by SUDO_UID, and refuses to write it', () => {
+    const { proj, mapPath } = setup()
     vi.stubEnv('SUDO_UID', String(process.getuid!()))
     asRoot()
     expect(loadMap(mapPath)).toEqual({})
-    saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
-    expect(loadMap(mapPath)).toEqual({ __CLS__1: 'PaymentGateway' })
+    expect(() => saveMap(mapPath, { __CLS__1: 'PaymentGateway' }, { force: true })).toThrow(
+      `refusing to write ${join(proj, '.veilio')} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
+    )
+    expect(readFileSync(mapPath, 'utf8')).not.toContain('PaymentGateway')
   })
 
   it.runIf(posix)('root without SUDO_UID, or with another one, refuses it', () => {
@@ -305,17 +309,53 @@ describe('a store another user owns is never used (L2)', () => {
     expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
   })
 
-  it.runIf(posix)(
-    "VEILIO_TRUST_STORE_OWNER=1 accepts another user's store; any other value does not",
-    () => {
-      const { proj, mapPath } = setup()
-      asAnotherUser()
-      vi.stubEnv('VEILIO_TRUST_STORE_OWNER', 'yes')
-      expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
-      vi.stubEnv('VEILIO_TRUST_STORE_OWNER', '1')
-      expect(loadMap(mapPath)).toEqual({})
-    }
-  )
+  // Security review: the opt-in is a list of store paths, as git's
+  // safe.directory: a listed store, by its real path, and no other.
+  it.runIf(posix)('VEILIO_TRUST_STORE_OWNER lists the stores it accepts, by real path', () => {
+    const { proj, mapPath } = setup()
+    const other = setup()
+    asAnotherUser()
+    vi.stubEnv('VEILIO_TRUST_STORE_OWNER', '1')
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+    // Listed through a path that is not its real one (macOS tmpdir is a link).
+    vi.stubEnv(
+      'VEILIO_TRUST_STORE_OWNER',
+      ['/nowhere/.veilio', join(proj, '.veilio')].join(delimiter)
+    )
+    expect(loadMap(mapPath)).toEqual({})
+    saveMap(mapPath, { __CLS__1: 'PaymentGateway' })
+    expect(() => loadMap(other.mapPath)).toThrow(refusal(join(other.proj, '.veilio')))
+  })
+
+  it.runIf(posix)('a listed store does not make another store, above or below it, trusted', () => {
+    const { proj } = setup()
+    mkdirSync(join(proj, 'work', '.veilio'), { recursive: true })
+    asAnotherUser()
+    vi.stubEnv('VEILIO_TRUST_STORE_OWNER', join(proj, 'work', '.veilio'))
+    // The project's own store is not listed: the search skips it.
+    expect(findProjectRoot(join(proj, 'work', 'deeper'))).toBe(join(proj, 'work'))
+    vi.stubEnv('VEILIO_TRUST_STORE_OWNER', join(proj, '.veilio'))
+    // The unlisted inner store is skipped; the listed outer one is found.
+    expect(findProjectRoot(join(proj, 'work'))).toBe(proj)
+    expect(() => loadMap(join(proj, 'work', '.veilio', 'map.json'))).toThrow(
+      refusal(join(proj, 'work', '.veilio'))
+    )
+  })
+
+  it.runIf(posix)('a store listed through a link to it is the same store', () => {
+    const { base, proj, mapPath } = setup()
+    symlinkSync(proj, join(base, 'alias'))
+    asAnotherUser()
+    vi.stubEnv('VEILIO_TRUST_STORE_OWNER', join(base, 'alias', '.veilio'))
+    expect(loadMap(mapPath)).toEqual({})
+  })
+
+  it.runIf(posix)('a relative entry trusts nothing', () => {
+    const { proj, mapPath } = setup()
+    asAnotherUser()
+    vi.stubEnv('VEILIO_TRUST_STORE_OWNER', '.veilio')
+    expect(() => loadMap(mapPath)).toThrow(refusal(join(proj, '.veilio')))
+  })
 
   it.runIf(posix)('findProjectRoot skips a .veilio another user owns', () => {
     const { proj } = setup()

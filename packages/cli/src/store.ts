@@ -16,13 +16,14 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
 import { trackedPaths } from './git-index.js'
 
@@ -38,7 +39,10 @@ export function findProjectRoot(from: string): string {
     // Another user's .veilio is not this project's store (spec 085 L2): on a
     // shared machine anyone can make /tmp/.veilio.
     const store = join(dir, STORE_DIR)
-    if ((existsSync(store) && ownerOf(store) !== 'other') || existsSync(join(dir, '.git')))
+    if (
+      (existsSync(store) && (ownerOf(store) !== 'other' || trustedStore(store))) ||
+      existsSync(join(dir, '.git'))
+    )
       return dir
     const parent = dirname(dir)
     if (parent === dir) return resolve(from)
@@ -151,7 +155,13 @@ export function openStoreFile(what: string, path: string): string | null {
 }
 
 /** 'other' when `path` exists and belongs to another user. Windows (no uid): never. */
-function ownerOf(path: string): 'me' | 'other' | 'none' {
+/**
+ * Whose `path` is: 'me' for the running user, 'other' for anyone else, 'none'
+ * when it is not there. Windows (no uid): always 'me'. Under sudo (root, with
+ * SUDO_UID), a file of the user who ran sudo is 'sudo': readable, not writable
+ * (security review: a file root writes there would be root's).
+ */
+function ownerOf(path: string): 'me' | 'sudo' | 'other' | 'none' {
   const me = process.getuid?.()
   let uid: number
   try {
@@ -159,21 +169,38 @@ function ownerOf(path: string): 'me' | 'other' | 'none' {
   } catch {
     return 'none'
   }
-  // git's rule (safe.directory): root, through sudo, owns what SUDO_UID owns;
-  // anything else only with the person's explicit opt-in.
-  const mine =
-    me === undefined ||
-    uid === me ||
-    (me === 0 && process.env.SUDO_UID === String(uid)) ||
-    process.env.VEILIO_TRUST_STORE_OWNER === '1'
-  return mine ? 'me' : 'other'
+  if (me === undefined || uid === me) return 'me'
+  return me === 0 && process.env.SUDO_UID === String(uid) ? 'sudo' : 'other'
+}
+
+/**
+ * The stores VEILIO_TRUST_STORE_OWNER lists (absolute paths, separated as in
+ * PATH), by real path, as git's safe.directory: each one exactly, no other.
+ */
+function trustedStore(dir: string): boolean {
+  const listed = (process.env.VEILIO_TRUST_STORE_OWNER ?? '').split(delimiter).filter(isAbsolute)
+  if (listed.length === 0) return false
+  const real = (p: string) => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return resolve(p)
+    }
+  }
+  const here = real(dir)
+  return listed.some((p) => real(p) === here)
 }
 
 /** The store directory and its file are this user's, or not used (spec 085 L2, Q2 = A). */
-function refuseOthers(dir: string, path: string): void {
-  if (ownerOf(dir) === 'other' || ownerOf(path) === 'other')
+function refuseOthers(dir: string, path: string, write = false): void {
+  const owners = [ownerOf(dir), ownerOf(path)]
+  if (owners.includes('sudo') && write && !trustedStore(dir))
     throw new StoreRefusal(
-      `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, set VEILIO_TRUST_STORE_OWNER=1.`
+      `refusing to write ${dir} as root: it belongs to the user who ran sudo, and a file root writes there would be root's. Run veilio without sudo.`
+    )
+  if (owners.includes('other') && !trustedStore(dir))
+    throw new StoreRefusal(
+      `refusing to use ${dir}: it belongs to another user on this machine. Run veilio inside your own project, or remove that directory. If you trust it, add its full path to VEILIO_TRUST_STORE_OWNER.`
     )
 }
 
@@ -366,7 +393,7 @@ function checkStoreWrite(what: string, path: string): void {
   }
   if (st && !st.isDirectory())
     throw new StoreRefusal(`refusing to write ${what}: ${dir} is not a directory`)
-  refuseOthers(dir, path)
+  refuseOthers(dir, path, true)
 }
 
 /**
