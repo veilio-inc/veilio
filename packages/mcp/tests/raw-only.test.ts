@@ -164,3 +164,34 @@ describe('raw-only paths (spec 078)', () => {
     expect(callTool('scan_secrets', { path: 'src/pay.ts' }, ctx).isError).toBeFalsy()
   })
 })
+
+// Spec 085 part 3, R2-15: guard.json's rawOnly read as the guard reads it - a
+// pattern written from the root (`/config/prod.yml`) protects the file - and a
+// pattern that can never match is a WARNING once (#61).
+describe('rawOnly patterns as the guard reads them (R2-15)', () => {
+  const guardJson = (rawOnly: string[]) => {
+    mkdirSync(join(cwd, '.veilio'), { recursive: true })
+    writeFileSync(join(cwd, '.veilio', 'guard.json'), JSON.stringify({ rawOnly }))
+  }
+  const NEVER = (p: string) =>
+    `WARNING: rawOnly pattern \`${p}\` in .veilio/guard.json can never match a file, so it protects nothing. Write it relative to the project root, such as \`config/prod.yml\` or \`secrets/**\`.`
+
+  it('anonymize_file refuses config/prod.yml under /config/prod.yml', () => {
+    mkdirSync(join(cwd, '.git'))
+    mkdirSync(join(cwd, 'config'), { recursive: true })
+    writeFileSync(join(cwd, 'config', 'prod.yml'), 'DB_HOST=db.internal.example\n')
+    guardJson(['/config/prod.yml'])
+    const r = callTool('anonymize_file', { path: 'config/prod.yml' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).not.toContain('db.internal')
+  })
+
+  it('a pattern that climbs out is a WARNING once', () => {
+    mkdirSync(join(cwd, '.git'))
+    guardJson(['../never-a-file-r215'])
+    const first = callTool('anonymize_file', { path: 'src/pay.ts' }, ctx)
+    const second = callTool('anonymize_file', { path: 'src/pay.ts' }, ctx)
+    expect(first.text).toContain(NEVER('../never-a-file-r215'))
+    expect(second.text).not.toContain('WARNING: rawOnly pattern')
+  })
+})
