@@ -837,6 +837,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
     const pins = readPins(credential, io.home)
 
     const keys: StoredTeamKey[] = []
+    let refusedAny = false
     for (const wrap of wraps) {
       let key: string
       try {
@@ -866,6 +867,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
           `Team "${teamName}": key version ${wrap.version} claims to come from your own key but does not. ` +
             'It was not stored. Tell your team administrator and support@veilio.dev.\n'
         )
+        refusedAny = true
         continue
       }
       const granter = granterLabel(wrap.wrapped_by, roster.emails)
@@ -876,6 +878,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
             `Compare the new fingerprint with ${granter} before you run \`veilio team trust\`. ` +
             'Until then nothing is written under this key.\n'
         )
+        refusedAny = true
         continue
       }
       const id = granterIdentity(from, wrap.wrapped_by)
@@ -896,6 +899,8 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       }
     }
 
+    // Refused, not unopenable: the lines above said what to do instead.
+    if (keys.length === 0 && refusedAny) return EXIT_ERROR
     if (keys.length === 0) {
       io.stderr(
         'veilio: none of the team key wraps held for this account could be opened. ' +
@@ -996,7 +1001,7 @@ function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>
 /** The team as `team trust` takes it, safe to copy: its name only when it is
  *  letters, digits, `.`, `_` and `-`; else its id. */
 function teamArg(name: string, id: string): string {
-  return /^[\p{L}\p{N}._-]+$/u.test(name) ? name : printable(id)
+  return /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u.test(name) ? name : printable(id)
 }
 
 /**

@@ -386,6 +386,8 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
         'Compare the new fingerprint with ana@example.test before you run `veilio team trust`. ' +
         'Until then nothing is written under this key.'
     )
+    // The wrap opened; it was refused. Never "grant it again".
+    expect(err).not.toContain('none of the team key wraps')
   })
 
   it('a wrap labelled as this account but made with another key is not stored, and says whom to tell', async () => {
@@ -403,6 +405,7 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
       'Team "Zespół": key version 1 claims to come from your own key but does not. It was not stored. ' +
         'Tell your team administrator and support@veilio.dev.'
     )
+    expect(err).not.toContain('none of the team key wraps')
   })
 
   it('a deleted granter is named as such and confirmed under the key itself', async () => {
@@ -460,6 +463,17 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
     expect(readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)?.teamName).toBe(
       'Zesp?[2J?ół?'
     )
+  })
+
+  it('a team name starting with a dash is named by id in the command, never read as a flag', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    ;(bodies['/api/teams/mine'] as { team: { name: string } }).team.name = '-Zespół'
+    serve(bodies)
+
+    const { out } = await run(['team', 'unlock'])
+
+    expect(out).toMatch(/run: veilio team trust team-1 [0-9a-f-]{23}\n/)
   })
 
   it('names the team by its name in the command when that name is letters, digits, dot, dash or underscore', async () => {
