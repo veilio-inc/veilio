@@ -67,7 +67,7 @@ npm install -g @veilio-inc/cli
 npx @veilio-inc/mcp   # or add to your agent's MCP config
 ```
 
-`scrub`, `restore`, `scan` and `map` need no account and make no network call.
+Signed out, `scrub`, `restore`, `scan` and `map` need no account and make no network call. Signed in to a team, `scrub` and `restore` also read the team's maps, so a teammate's placeholders mean the same thing in your terminal; `scan` and `map` stay offline either way. To keep a signed-in `scrub` offline, run `veilio logout` first.
 The Cloud commands (`login`, `whoami`, `maps`, `team`, `vault`, `projects`,
 `rules pull`), the MCP server's map, team and project tools, and its team
 namespace are released. This file is not the authority on what the registry

@@ -44,6 +44,22 @@ test("Claude's reply is drawn with the real names", async ($, on) => {
   expect(await ui.find({ type: 'Text', text: `The bug is in ${CANARY}.` })).toBeDefined()
 })
 
+test("a command's output row is drawn with the real names", async ($, on) => {
+  await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  const seen: Fields[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(
+    SITE('CommandOutput', {
+      command: 'review',
+      args: '',
+      text: 'Reviewed __CLS__1',
+      isErrored: false,
+    })
+  )
+  expect(seen[0].props.text).toBe(`Reviewed ${CANARY}`)
+})
+
 test('a tool row is drawn with the real names in its input', async ($, on) => {
   await loaded($, on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
   const seen: Fields[] = []

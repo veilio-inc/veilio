@@ -1,6 +1,8 @@
 // Spec 033 contracts/mod.md: /veilio reports the state, and switches the guard
 // off for this project only by name, with a warning that stays.
 import { expect, test } from 'claude-code/testing'
+import { PROMPT_FAILED } from '../lib/guard.ts'
+import { COLD_FILES } from './fixtures/cold.ts'
 import { CANARY, eventOf, mapFile, project, recorded, ROOT } from './helpers.ts'
 
 test('/veilio reports state, the map and coverage', async ($, on) => {
@@ -261,4 +263,210 @@ test('the off switch in ~/.veilio cannot be written by a shell command', async (
   })
   expect(out.deny).toContain('away from the model')
   expect(ran).toBe(false)
+})
+
+// Spec 083 US1 (research R2): a slash command's arguments and what it records
+// for the model are masked; a command that takes a path or a setting runs as typed.
+function commands(on: Parameters<typeof project>[0], files?: Record<string, string>) {
+  project(on, files ?? { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, {
+    home: '/home/dev',
+  })
+  const ran: { command: string; args?: string }[] = []
+  on('command.run', (_, e) => {
+    ran.push(e)
+    return { text: 'done', context: [`Reviewed ${CANARY}`] }
+  })
+  return ran
+}
+
+test("a slash command's arguments are masked before it runs", async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'review', args: `${CANARY} please` })
+  expect(ran[0].args).toBe('__CLS__1 please')
+})
+
+test("a skill command's arguments are masked too", async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'simplify', args: CANARY })
+  expect(ran[0].args).toBe('__CLS__1')
+})
+
+test('what a command records for the model is passed as the command left it', async ($, on) => {
+  commands(on)
+  const out = await $.command.run({ command: 'review', args: '' })
+  expect(out.context).toEqual([`Reviewed ${CANARY}`])
+  expect(out.text).toBe('done')
+})
+
+// Second review of spec 083: nothing says a built-in's line stays out of the
+// model's requests, so a path or a setting is masked too.
+test("a built-in command's arguments are masked too, a path or a setting included", async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
+  await $.command.run({ command: 'model', args: CANARY })
+  expect(ran.map((r) => r.args)).toEqual(['src/__CLS__1', '__CLS__1'])
+})
+
+test('/veilio keeps its own hook', async ($, on) => {
+  const ran = commands(on)
+  const out = await $.command.run({ command: 'veilio', args: '' })
+  expect(ran).toHaveLength(0)
+  expect(out.text).toMatch(/Veilio guard on/)
+})
+
+test('a command runs as typed while the guard is off', async ($, on) => {
+  const state = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
+  const ran = commands(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }),
+    '/home/dev/.veilio/guard-state.json': JSON.stringify(state),
+  })
+  await $.command.run({ command: 'review', args: CANARY })
+  expect(ran[0]?.args).toBe(CANARY)
+})
+
+test('a command is refused while the guard is stopped, with or without arguments', async ($, on) => {
+  const ran = commands(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  const out = await $.command.run({ command: 'review', args: CANARY })
+  expect(out.text).toContain('Veilio guard stopped')
+  await $.command.run({ command: 'clear', args: '' })
+  expect(ran).toHaveLength(0)
+})
+
+const UNKNOWN = (field: string) =>
+  `Veilio did not send this prompt: it carries \`${field}\`, which this version of the guard cannot check. Update the guard (\`claude plugin marketplace update veilio\`, then \`claude plugin update veilio-guard@veilio\`), then send it again.`
+
+test('a command with an unknown field that holds text does not run, and the field is named', async ($, on) => {
+  const ran = commands(on)
+  for (const [field, value] of [
+    ['note', CANARY],
+    ['extra', { body: 'x' }],
+  ] as const) {
+    const out = await $.command.run({ command: 'review', args: '', [field]: value } as never)
+    expect(out.text).toBe(UNKNOWN(field))
+  }
+  expect(ran).toHaveLength(0)
+})
+
+test('a command with an unknown field that holds no text runs', async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'review', args: '', flag: true } as never)
+  expect(ran).toHaveLength(1)
+})
+
+// Second review of spec 083: a command's output stays in the model's requests
+// unless the plugin is bundled with Claude Code (CommandRunResult), so it is
+// masked; the developer's row is drawn with the real names (ui.test.ts).
+test("a command's output text reaches the model masked, its context as the command left it", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => ({ text: `Reviewed ${CANARY}`, context: [`Notes on ${CANARY}`] }))
+  const out = await $.command.run({ command: 'review', args: '' })
+  expect(out.text).toBe('Reviewed __CLS__1')
+  expect(out.context).toEqual([`Notes on ${CANARY}`])
+})
+
+test("a name in a project file the index has not reached yet is masked in a command's arguments", async ($, on) => {
+  const ran = commands(on, COLD_FILES)
+  await $.command.run({ command: 'review', args: 'why does tarnplot fail' })
+  expect(ran[0].args).not.toContain('tarnplot')
+})
+
+test("a credential in a command's arguments under a key that is a project name is removed", async ($, on) => {
+  const ran = commands(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY, __VAR__4: 'db_password' }),
+  })
+  await $.command.run({ command: 'review', args: 'db_password = "Xk9!mQ2vLp7"' })
+  expect(ran[0].args).not.toContain('Xk9!mQ2vLp7')
+  expect(ran[0].args).toContain('__VAR__4')
+})
+
+test("a command the guard cannot check answers with the guard's failure, not its own text", async ($, on) => {
+  // The run beneath fails: the hook throws past next, and its .catch answers.
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => {
+    throw new Error(`failed on ${CANARY}`)
+  })
+  const out = await $.command.run({ command: 'review', args: `fix ${CANARY}` })
+  expect(out.text).toBe(PROMPT_FAILED)
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+})
+
+// Security review of 43b6227: while stopped nothing can be masked, so what a
+// command prints is withheld from the model, as a prompt is; /veilio still runs.
+test('nothing a command prints or records reaches the model while the guard is stopped', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  on('command.run', () => ({ text: `Cost of ${CANARY}`, context: [`Notes on ${CANARY}`] }))
+  const out = await $.command.run({ command: 'cost', args: '' })
+  expect(out.text).toMatch(/^Veilio guard stopped: .*\. Run \/veilio\.$/)
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toContain('stopped')
+})
+
+// Security review of 43b6227: /veilio's arguments run as typed only when they
+// are a switch it takes; anything else is masked like any command's.
+test('/veilio runs as typed only with a switch it takes: anything else is a command like any other', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  const refused = /^Veilio guard stopped: .*\. Run \/veilio\.$/
+  for (const args of ['', 'on', ' on ']) {
+    const out = await $.command.run({ command: 'veilio', args })
+    expect(out.text).toContain('Project: /work/project')
+    expect(out.text).not.toMatch(refused)
+  }
+  expect((await $.command.run({ command: 'veilio', args: `on ${CANARY}` })).text).toMatch(refused)
+  expect((await $.command.run({ command: 'veilio', args: ' off ' })).text).toContain('OFF')
+})
+
+test("/veilio's line with a name in it is not sent as typed", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  const base = { wait: false, origin: { kind: 'user' } } as const
+  const out = await $.prompt.submit({
+    ...base,
+    text: `/veilio on ${CANARY}`,
+    command: { name: 'veilio', args: `on ${CANARY}` },
+  } as never)
+  expect(out.drop).toContain('does not let the guard mask the line of a slash command')
+})
+
+// Final review of 0f1b04c: a command named after a project name (a skill)
+// is not sent as typed, and /veilio's status is masked like any output.
+test('a slash command whose name is a masked name is not sent as typed', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  const base = { wait: false, origin: { kind: 'user' } } as const
+  const out = await $.prompt.submit({
+    ...base,
+    text: `/${CANARY}`,
+    command: { name: CANARY, args: '' },
+  } as never)
+  expect(out.drop).toContain('does not let the guard mask the line of a slash command')
+})
+
+test("/veilio's status reaches the model masked, and reads as written otherwise", async ($, on) => {
+  const root = `/work/${CANARY}`
+  project(on, { [`${root}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, { cwd: root })
+  const out = await $.command.run({ command: 'veilio', args: '' })
+  expect(out.text).not.toContain(CANARY)
+  expect(out.text).toContain('secrets removed.')
+})
+
+test('a command whose arguments were masked says so', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => ({ text: 'done' }))
+  await $.command.run({ command: 'review', args: 'the diff' })
+  expect(p.toasts).toEqual([])
+  await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
+  expect(p.toasts).toEqual(['Veilio masked names in your prompt before sending it.'])
+})
+
+test('a command run from the composer, with where it shows, runs: origin and presentation are metadata', async ($, on) => {
+  const ran = commands(on)
+  const presentation = { isFullscreen: true, columns: 120 }
+  await $.command.run({
+    command: 'review',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation,
+  } as never)
+  expect(ran).toHaveLength(1)
 })

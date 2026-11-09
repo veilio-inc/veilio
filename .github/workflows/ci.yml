@@ -16,7 +16,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags: tests/guard/marketplace-pin.test.ts reads the
+      # guard's release tag and the plugin.json at the pinned commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # jsdom 30 (devDependency, used by the cross-realm crypto tests) requires
       # ^22.22.2 || ^24.15.0 || >=26, and its undici 8 requires >=22.19. Node 20

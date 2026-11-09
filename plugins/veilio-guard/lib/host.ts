@@ -65,6 +65,9 @@ export type RenderTable = {
 
 export type SessionStartInput = { readonly cwd: string }
 export type SessionStartResult = { readonly cwd: string }
+/** Spec 083: read for nothing but that a session ended (a /clear included). */
+export type SessionEndInput = { readonly reason: string; readonly sessionId: string }
+export type SessionEndResult = { readonly sessionId: string }
 
 /** What a tool call resolved to, as the guard's afterTool takes it. */
 export type ToolCallResult = {
@@ -78,6 +81,16 @@ export type PromptSubmitInput = {
   readonly text: string
   /** Text blocks sent with the prompt; anything else fails it closed. */
   readonly context?: unknown
+  /** The slash command the prompt runs: its arguments are masked at
+   *  `command.run`, and a rewrite of `text` is then not applied. */
+  readonly command?: { readonly name: string; readonly args: string }
+  /** Set on a prompt the user does not see; one that starts a turn takes no
+   *  rewrite. */
+  readonly isMeta?: true
+  /** Images, audio and documents: their kind, never their bytes. */
+  readonly attachments?: readonly unknown[]
+  /** The running turn's id, when the prompt was delivered into one. */
+  readonly turnId?: string
   readonly [key: string]: unknown
 }
 export type PromptSubmitResult = { readonly drop?: string; readonly [key: string]: unknown }
@@ -128,12 +141,22 @@ export type RenderInput = {
 /** A drawn tree, or nothing: the guard passes others' trees on unread. */
 export type RenderResult = unknown
 
-export type CommandRunInput = { readonly command: string; readonly args?: string }
-export type CommandRunResult = { readonly text: string }
+export type CommandRunInput = {
+  readonly command: string
+  readonly args?: string
+  readonly [key: string]: unknown
+}
+/** `text` is the command's output; `context` what it records for the model. */
+export type CommandRunResult = {
+  readonly text?: string
+  readonly context?: readonly string[]
+  readonly [key: string]: unknown
+}
 
 /** Each event the guard hooks: what the hook is given and what it answers. */
 export interface HookEvents {
   'session.start': { input: SessionStartInput; result: SessionStartResult }
+  'session.end': { input: SessionEndInput; result: SessionEndResult }
   'tool.call': { input: ToolEvent; result: ToolCallResult }
   'prompt.submit': { input: PromptSubmitInput; result: PromptSubmitResult }
   'prompt.attachment': { input: PromptAttachmentInput; result: PromptAttachmentResult }

@@ -15,6 +15,15 @@ import {
 import { bandText, MODEL_NOTE, statusText, stillStopped } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
+  attachedNotice,
+  COMMAND_LINE_REFUSED,
+  KNOWN_COMMAND_FIELDS,
+  maskedNames,
+  unknownFieldRefusal,
+  unknownTextField,
+  unseenPromptRefusal,
+} from '../lib/prompt-fields.ts'
+import {
   commandRows,
   configDirOf,
   ListingCache,
@@ -36,6 +45,8 @@ const MASK_RESERVE_MS = 2_000
 // its own, well inside the hook's budget. Past it, or on any failure, the
 // listing goes fully masked; it is never left out.
 const LISTING_MS = 300
+// What /veilio takes (its handler below): anything else is a status request.
+const VEILIO_SWITCHES: ReadonlySet<string> = new Set(['', 'on', 'off'])
 
 function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
   const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
@@ -55,6 +66,8 @@ const offers = new Map<string, AgentOfferInput>()
 let pinned: PublicMarketplace[] = []
 let ignored: string[] = []
 let saidIgnored = false
+// Spec 083 (strings.md #5): attachments are named once a session.
+let saidAttached = false
 // Spec 078 (bench only): when VEILIO_GUARD_TIMING names a file, the guard's
 // time per afterTool call is written there, one `after\t<ms>` line each. Read
 // once; unset, nothing is kept or written.
@@ -242,6 +255,7 @@ export function register(on: On, options: Options = {}) {
     Array.isArray(options.publicMarketplaces) ? options.publicMarketplaces : []
   ))
   saidIgnored = false
+  saidAttached = false
 
   on('session.start', async ($, e, next) => {
     const g = await ready($)
@@ -276,6 +290,13 @@ export function register(on: On, options: Options = {}) {
     return next(e)
   })
 
+  // Spec 083 (strings.md #5): a /clear ends the session with no session.start
+  // after it, so attachments are named again from here.
+  on('session.end', async ($, e, next) => {
+    saidAttached = false
+    return next(e)
+  })
+
   on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
     // One rule budget per hook invocation, threaded through its calls (security review).
@@ -306,6 +327,9 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+    // Spec 083: a field the guard does not know, holding text, is not sent.
+    const unknown = unknownTextField(e)
+    if (unknown !== undefined) return { drop: unknownFieldRefusal(unknown) }
     // What you type is masked with every name the index knows: give it the
     // budget to reach a few more files first (spec 050).
     const state = g.index?.state
@@ -320,10 +344,27 @@ export function register(on: On, options: Options = {}) {
     const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     await g.learnRuleNames([e.text, ...given], budget)
+    // Spec 083: a slash command's line is masked at command.run and the host
+    // applies no rewrite of it here, so it goes only when masking would not
+    // change it (its name too: a skill can be named after a project name).
     const text = g.applyText(e.text, 'prompt', scan, budget)
+    if (e.command && text !== e.text) return { drop: COMMAND_LINE_REFUSED }
     const context =
       raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined
-    if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
+    const changed = text !== e.text || (context ?? []).some((c, i) => c !== given[i])
+    // An unseen prompt that starts a turn takes no rewrite: one that needs
+    // masking is not sent.
+    if (changed && e.isMeta && e.turnId === undefined)
+      return {
+        drop: unseenPromptRefusal(maskedNames([e.text, ...given], [text, ...(context ?? [])])),
+      }
+    if (Array.isArray(e.attachments) && e.attachments.length > 0 && !saidAttached) {
+      saidAttached = true
+      const notice = attachedNotice(e.attachments.length)
+      $.ui.toast(notice)
+      $.ui.log(notice)
+    }
+    if (changed) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
 
@@ -346,7 +387,8 @@ export function register(on: On, options: Options = {}) {
       : listing
         ? g.applyListing(r.text, await listingEntries($, listing), budget)
         : g.applyText(r.text, 'result', undefined, budget)
-    return { ...r, text }
+    // Spec 083 FR-005: the masked text, and no other field.
+    return { text }
   }).catch(async () => ({ text: null }))
 
   // Recorded, never changed: the provenance of the agent listing's entries.
@@ -393,12 +435,16 @@ export function register(on: On, options: Options = {}) {
 
   // What the developer sees: the real names, drawn on this machine only. The
   // stored transcript keeps the placeholders.
-  on('ui.render', { component: ['AssistantMessage', 'UserMessage'] }, async ($, e, next) => {
-    const g = guard
-    const text = e.props?.text
-    if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
-    return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
-  })
+  on(
+    'ui.render',
+    { component: ['AssistantMessage', 'UserMessage', 'CommandOutput'] },
+    async ($, e, next) => {
+      const g = guard
+      const text = e.props?.text
+      if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
+      return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
+    }
+  )
 
   // A row's input, and its result: an edit's diff, a command's output. Only
   // placeholders change, so the result still fits the tool's schema.
@@ -428,6 +474,55 @@ export function register(on: On, options: Options = {}) {
     })
     return below ? Box({ flexDirection: 'column', children: [line, below] }) : line
   })
+
+  // Spec 083: a command's arguments are masked, a built-in's too: nothing says
+  // its line stays out of the model's requests (second review).
+  on('command.run', async ($, e, next) => {
+    const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
+    if (g.state === 'off') return next(e)
+    const unknown = unknownTextField(e, KNOWN_COMMAND_FIELDS)
+    if (unknown !== undefined) return { text: unknownFieldRefusal(unknown) }
+    const args = String(e.args ?? '')
+    // /veilio's switch runs as typed, stopped too; any other argument of it is
+    // masked like any command's (security review of 43b6227).
+    const own = e.command === 'veilio' && VEILIO_SWITCHES.has(args.trim())
+    const asTyped = own || args.trim() === ''
+    // Stopped: nothing can be masked, and what a command records for the model
+    // cannot be held back once it ran, so only /veilio's switch runs.
+    const stopped = () => `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.`
+    if (g.state === 'stopped') return own ? next(e) : { text: stopped() }
+    let masked = args
+    if (!asTyped) {
+      const state = g.index?.state
+      if (state === 'new' || state === 'indexing')
+        await g.indexProject(deadline(next), budget).catch(() => undefined)
+      const [scan] = g.learnTogether([args])
+      await g.learnRuleNames([args], budget)
+      masked = g.applyText(args, 'prompt', scan, budget)
+      if (masked !== args) $.ui.toast('Veilio masked names in your prompt before sending it.')
+    }
+    // What the command records for the model is passed as it is: the host
+    // refuses a hook that changes an entry next gave it (COVERAGE.md). Its
+    // printed text goes in the model's requests too, from a plugin not bundled
+    // with Claude Code (CommandRunResult): masked, and the row is drawn with
+    // the real names.
+    const r = await next({ ...e, args: masked })
+    // Read again: the run may have switched the guard (/veilio) or stopped it.
+    const now = g.state as Guard['state']
+    if (typeof r.text !== 'string' || now === 'off') return r
+    // Stopped while it ran (another writer's map): its text is withheld.
+    if (now === 'stopped') return own ? r : { ...r, text: stopped() }
+    await g.learnRuleNames([r.text], budget)
+    // /veilio's status is the guard's own prose, which the secret scan misreads
+    // ("secrets removed."): only the project's path in it can hold a name.
+    if (own) {
+      const root = g.root && g.applyText(g.root, 'prompt', undefined, budget)
+      return root ? { ...r, text: r.text.split(g.root).join(root) } : r
+    }
+    return { ...r, text: g.applyText(r.text, 'result', undefined, budget) }
+  }).catch(async () => ({ text: PROMPT_FAILED }))
 
   on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)
