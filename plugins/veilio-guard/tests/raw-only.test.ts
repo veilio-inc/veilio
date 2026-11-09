@@ -628,7 +628,7 @@ const ATTACKS: [string, string | undefined][] = [
   ['if cd project .kube; then cat config; fi', A1('project .kube')],
   ['~/.kube', A1('~/.kube')],
   ['.kube', undefined],
-  ['for HOME in ~/.kube; do cd; cat config; done', N1('cd', 'a cd in a loop')],
+  ['for HOME in ~/.kube; do cd; cat config; done', N1('HOME=', 'a cd in a loop')],
   ["cd ~/.kub$'\\x65'", N1("~/.kub$'\\x65'", 'ANSI-C quoting')],
   ['cd .vei{l..l}io', N1('.vei{l..l}io', 'braces')],
   ['cd `echo .kube`', N1('`echo .kube`', 'a command substitution')],
@@ -710,7 +710,7 @@ const ASSIGNED: [string, string | undefined][] = [
     'read -r CDPATH; cd deep',
     N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
   ],
-  ['for CDPATH in lib; do cd deep; done', N1('cd deep', 'a cd in a loop')],
+  ['for CDPATH in lib; do cd deep; done', N1('CDPATH=', 'a cd in a loop')],
   [
     'declare -n CDPATH=X; cd deep',
     N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
@@ -786,6 +786,26 @@ const SCOPE: [string, string | undefined][] = [
   ['function f { HOME=/x; }; f; cd', N1('f', 'a function that changes directory')],
   ['f() { cd sub; }; ls', undefined],
   ['f() { ls; }; f; cat notes', undefined],
+  // Decided where it is called, with the functions as they are then (review 2);
+  // the refusal names the one that moves the shell.
+  [
+    'g() { ls; }; f() { g; }; g() { cd sub; }; f; cat notes',
+    N1('g', 'a function that changes directory'),
+  ],
+  ['g() { cd sub; }; f() { g; }; g() { ls; }; f; cat notes', undefined],
+  ['f() { f; cd sub; }; f', N1('f', 'a function that changes directory')],
+  ['f() { cd sub; }; $x; cat notes', N1('$x', 'a function that changes directory')],
+  ['f() { ls; }; $x', undefined],
+  // `command` and `builtin` read the same way everywhere
+  ['for x in 1; do command -p cd ..; done', N1('command -p cd ..', 'a cd in a loop')],
+  ['f() { command -- cd sub; }; f', N1('f', 'a function that changes directory')],
+  ['for x in 1; do command -v cd; done', undefined],
+  // zsh AUTO_CD: a lone word naming a directory, in a loop or a function
+  ['for x in 1; do sub; done', N1('sub', 'a cd in a loop')],
+  ['f() { sub; }; f', N1('f', 'a function that changes directory')],
+  ['for x in 1; do ls; done', undefined],
+  // a subshell's cd in a loop moves nothing out here
+  ['for x in 1; do (cd sub && ls); done; cat notes', undefined],
   // more than two targets: refused, not read as an error
   ['cd a b c', N1('a b c', 'more than one target')],
   ['pushd a b c', N1('a b c', 'more than one target')],
@@ -861,3 +881,42 @@ test('086 N1 masks its target: a name from the map reaches the model as its plac
   const out = await $.tool.call({ tool: 'Bash', command: `cd "$D/${CANARY}"`, description: 'x' })
   expect(out.deny).toBe(N1('"$D/__CLS__1"', 'a variable'))
 })
+
+// T021 (US4, FR-014): contracts/cd-verdicts.md's ordinary list, each form its
+// own test, beside 078's six above; with HOME known and the tree's links.
+for (const command of [
+  'cd src 2>/dev/null || exit 1',
+  'cd packages/cli > /dev/null && npm test',
+  'pushd packages/cli > /dev/null && npm test && popd > /dev/null',
+  'cd src >/dev/null 2>&1',
+  'cd src </dev/null',
+  'cd src # into src',
+  'cd "my folder" 2>&1',
+  'if cd src; then ls; fi',
+  'time cd src',
+  'cd src\nls',
+  'set -e\ncd packages/cli\nnpm test',
+  'cd ..\nnpm test',
+  'cd src \\\n  && ls',
+  'cd /tmp/x/repo 2>/dev/null || cd "$PWD"; ls',
+  'cd /tmp/x/repo 2>/dev/null || cd "$(git rev-parse --show-toplevel)"; ls',
+  'echo $HOME && cd ~/code',
+  'export PATH="$HOME/.local/bin:$PATH"; cd ~/code',
+  'ls ${HOME}/.npm ${HOME:-/tmp}',
+  'grep -r CDPATH scripts/; cd packages/cli',
+  '"$(npm bin)/jest" src',
+  'cd "Wnioski/źródła" && ls',
+  'cd Straße',
+  'cd έγγραφα',
+])
+  test(`an ordinary cd still runs: ${JSON.stringify(command)}`, async ($, on) => {
+    let ran = false
+    project(on, TREE, TREE_LINKS)
+    on('tool.call', () => {
+      ran = true
+      return { result: { stdout: '', stderr: '', interrupted: false } }
+    })
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny).toBeUndefined()
+    expect(ran).toBe(true)
+  })

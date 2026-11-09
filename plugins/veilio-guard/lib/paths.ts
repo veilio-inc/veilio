@@ -343,9 +343,38 @@ class Walker {
   readonly landings: CdWalk['landings'] = []
   homeUnknown = false
   tilde = false
-  /** Functions the command defines: whether each moves the shell. */
-  readonly functions = new Map<string, boolean>()
+  /** Functions the command defines, by name: their bodies, walked where
+   *  they are called (the map as it is then). */
+  readonly functions = new Map<string, Node>()
+  private readonly calling = new Set<string>()
+  /** Every move of the shell the walk read: a cd that landed, or a variable
+   *  a cd reads set for the rest of the call; with the subshell depth it
+   *  was read at. The one model of "moves the shell" for loops and
+   *  functions (security review): the walk itself, not a second reading. */
+  private readonly moves: { shown: string; depth: number }[] = []
+  private depth = 0
+  private current = ''
   constructor(private readonly ctx: CdContext) {}
+
+  /** In a child shell (a subshell, `$( )`, a pipeline stage, `bash -c`):
+   *  what it moves is not this shell's. */
+  private async child<T>(f: () => Promise<T>): Promise<T> {
+    this.depth++
+    try {
+      return await f()
+    } finally {
+      this.depth--
+    }
+  }
+
+  /** The first move a list or node makes in this shell, walked from
+   *  `input`; null when it moves nothing. */
+  private async probe(what: List | Node, input: DirState): Promise<string | null> {
+    const from = this.moves.length
+    if ('items' in what) await this.list(what, input)
+    else await this.node(what, input)
+    return this.moves.slice(from).find((m) => m.depth === this.depth)?.shown ?? null
+  }
 
   async list(l: List, start: DirState): Promise<Outcome> {
     let out: Outcome = { ok: start, fail: null }
@@ -371,7 +400,7 @@ class Walker {
     else {
       // Every stage but the last runs in a subshell; the last one does in
       // bash, not in zsh (research R5): both readings kept.
-      for (const s of p.stages.slice(0, -1)) await this.node(s, input)
+      for (const s of p.stages.slice(0, -1)) await this.child(() => this.node(s, input))
       const last = await this.node(p.stages[p.stages.length - 1]!, input)
       r = { ok: merge(input, last.ok), fail: merge(input, last.fail) }
     }
@@ -383,7 +412,7 @@ class Walker {
       case 'simple':
         return this.simple(n, input)
       case 'subshell':
-        await this.list(n.list, input)
+        await this.child(() => this.list(n.list, input))
         await this.redirects(n.redirects, input)
         return both(input)
       case 'group': {
@@ -405,20 +434,14 @@ class Walker {
       case 'loop': {
         // A loop that moves the shell, or sets what a cd reads, is not
         // followed: its directory after n turns is not told (security review).
-        const mover = moverIn(n.cond, this.functions) ?? moverIn(n.body, this.functions)
+        // One turn is walked; one that moves nothing leaves the state as it was.
+        await this.words(n.words ?? [], input)
+        if (n.name !== null && (Object.hasOwn(TRACKED, n.name) || STACK_NAMES.has(n.name)))
+          N1(`${n.name}=`, 'a cd in a loop')
+        const mover =
+          (n.cond && (await this.probe(n.cond, input))) ?? (await this.probe(n.body, input))
         if (mover !== null) N1(mover, 'a cd in a loop')
-        // The rest may still run any number of times: twice, and not at all.
-        let state = input
-        if (n.name !== null && Object.hasOwn(TRACKED, n.name))
-          state = this.set(state, n.name, 'unknown')
-        await this.words(n.words ?? [], state)
-        let all = state
-        for (let k = 0; k < 2; k++) {
-          const c = n.cond ? anyOf(await this.list(n.cond, all)) : all
-          if (!c) break
-          all = merge(all, anyOf(await this.list(n.body, c)))!
-        }
-        return both(all)
+        return both(input)
       }
       case 'case': {
         await this.words([n.word], input)
@@ -427,10 +450,8 @@ class Walker {
         return both(all)
       }
       case 'function':
-        // Its words are read here; a call to one that moves the shell is
-        // refused where it is called (security review).
-        this.functions.set(n.name, nodeMover(n.body, this.functions) !== null)
-        await this.node(n.body, input)
+        // Walked where it is called, with the functions as they are then.
+        this.functions.set(n.name, n.body)
         return both(input)
     }
   }
@@ -444,22 +465,22 @@ class Walker {
 
   /** A simple command's words, read at this point; substitutions in them
    *  run in a subshell from here. */
-  private words(
-    words: readonly Word[],
-    at: DirState,
-    also: Promise<unknown>[] = []
-  ): Promise<unknown> {
+  private async words(words: readonly Word[], at: DirState): Promise<void> {
     const home = typeof at.vars.HOME === 'object' ? at.vars.HOME.value : null
     this.points.push({ dirs: at.dirs, words: [...words], home })
     for (const w of words)
       for (const p of w.parts) {
         if (p.kind === 'tilde' && p.user === '') this.tilde = true
-        if (p.kind === 'subst' && p.list) also.push(this.list(p.list, at))
+        const l = p.kind === 'subst' ? p.list : null
+        // One at a time: the depth counter is the walk's own.
+        if (l) await this.child(() => this.list(l, at))
       }
-    return Promise.all(also)
   }
 
-  private set(state: DirState, name: string, v: Var): DirState {
+  /** `record`: set for the rest of the call (not a prefix assignment). */
+  private set(state: DirState, name: string, v: Var, record = true): DirState {
+    if (record && (STACK_NAMES.has(name) || Object.hasOwn(TRACKED, name)))
+      this.moves.push({ shown: `${name}=`, depth: this.depth })
     if (STACK_NAMES.has(name)) return { ...state, stack: 'unknown' }
     const key = TRACKED[name]
     if (!key) return state
@@ -473,10 +494,10 @@ class Walker {
     return { ...state, vars: { ...state.vars, [key]: v } }
   }
 
-  private assign(state: DirState, a: Assign): DirState {
+  private assign(state: DirState, a: Assign, record = true): DirState {
     if (a.name === null) {
       let s = state
-      for (const n of ['HOME', 'CDPATH', 'PWD', 'OLDPWD']) s = this.set(s, n, 'unknown')
+      for (const n of ['HOME', 'CDPATH', 'PWD', 'OLDPWD']) s = this.set(s, n, 'unknown', record)
       return { ...s, stack: 'unknown' }
     }
     if (!Object.hasOwn(TRACKED, a.name) && !STACK_NAMES.has(a.name)) return state
@@ -491,7 +512,7 @@ class Walker {
             ? v
             : 'unknown'
     }
-    return this.set(state, a.name, v)
+    return this.set(state, a.name, v, record)
   }
 
   private async simple(n: Simple, input: DirState): Promise<Outcome> {
@@ -499,7 +520,7 @@ class Walker {
     let here = input
     for (const a of n.assigns) {
       for (const w of Array.isArray(a.value) ? a.value : [a.value]) await this.words([w], input)
-      here = this.assign(here, a)
+      here = this.assign(here, a, n.words.length === 0)
     }
     await this.words(n.words, here)
     await this.redirects(n.redirects, here)
@@ -509,8 +530,34 @@ class Walker {
       for (const p of w.parts)
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
-    if (program !== null && this.functions.get(program))
-      N1(program, 'a function that changes directory')
+    this.current = n.words.map((w) => w.raw).join(' ')
+    // A function: its body walked here, with the map as it is now; one that
+    // moves the shell is refused (security review). A name it calls that is
+    // being walked already (recursion) adds nothing new.
+    const called = programOf(n.words)
+    const fn = called?.word.literal ?? null
+    if (fn !== null && this.functions.has(fn) && !this.calling.has(fn)) {
+      this.calling.add(fn)
+      try {
+        if ((await this.probe(this.functions.get(fn)!, here)) !== null)
+          N1(fn, 'a function that changes directory')
+      } finally {
+        this.calling.delete(fn)
+      }
+      return both(after)
+    }
+    // An expanded program word may call one of them.
+    if (called && called.word.literal === null)
+      for (const [name, body] of this.functions)
+        if (!this.calling.has(name)) {
+          this.calling.add(name)
+          try {
+            if ((await this.probe(body, here)) !== null)
+              N1(called.word.raw, 'a function that changes directory')
+          } finally {
+            this.calling.delete(name)
+          }
+        }
     const args = n.words.slice(1)
     // Declaration builtins and the commands that set a variable by name.
     for (const w of args) if (w.assign) after = this.assign(after, w.assign)
@@ -531,7 +578,7 @@ class Walker {
     if (n.nested) {
       // eval runs in this shell; a nested shell in a child.
       if (program === 'eval') return this.list(n.nested, after)
-      await this.list(n.nested, here)
+      await this.child(() => this.list(n.nested!, here))
     }
     if (program === 'exit' || program === 'return') return { ok: null, fail: null }
     if (program === 'true' || program === ':') return { ok: after, fail: null }
@@ -543,19 +590,9 @@ class Walker {
    *  both outcomes unchanged when the command is not a cd. */
   private async cd(n: Simple, here: DirState, after: DirState): Promise<Outcome> {
     const words = n.words
-    let k = 0
-    while (
-      k < words.length - 1 &&
-      (words[k]!.literal === 'builtin' || words[k]!.literal === 'command')
-    ) {
-      // `command -v cd` prints, `command -p cd` runs it.
-      if (words[k]!.literal === 'command' && /^-[vV]$/.test(words[k + 1]!.literal ?? ''))
-        return both(after)
-      k++
-      while (/^-p$/.test(words[k]?.literal ?? '')) k++
-    }
-    const prog = words[k]
-    if (!prog) return both(after)
+    const found = programOf(words)
+    if (!found) return both(after)
+    const { word: prog, at: k } = found
     let program = prog.literal
     let possible = false
     // zsh AUTO_CD: a lone word naming a directory is a cd to it.
@@ -660,6 +697,7 @@ class Walker {
     const to = uniq(dirs)
     if (to.length > MAX_DIRS) N1(target, 'too many possible directories')
     this.landings.push({ target, dirs: to })
+    this.moves.push({ shown: this.current, depth: this.depth })
     const moved: DirState = { ...after, dirs: to, oldpwd: here.dirs }
     return possible ? { ok: merge(after, moved), fail: after } : { ok: moved, fail: after }
   }
@@ -761,68 +799,26 @@ class Walker {
   }
 }
 
-const MOVES_VAR = /^(?:HOME|CDPATH|cdpath|OLDPWD|PWD|DIRSTACK|dirstack)$/
-const SETS_BY_NAME = new Set(['read', 'unset', 'printf', 'mapfile'])
-
-/** The first command in a list that moves the shell or sets what a cd
- *  reads, as written; null when none does. A subshell's cannot move it. */
-function moverIn(l: List | null, fns: ReadonlyMap<string, boolean>): string | null {
-  for (const { node } of l?.items ?? [])
-    for (const n of node.stages) {
-      const m = nodeMover(n, fns)
-      if (m !== null) return m
+/** The program word of a simple command, past `builtin` and `command` with
+ *  their options and `--`: the one reading of it the walk uses. Null when
+ *  there is none, or it only prints (`command -v`/`-V`). */
+function programOf(words: readonly Word[]): { word: Word; at: number } | null {
+  let k = 0
+  while (k < words.length && /^(?:builtin|command)$/.test(words[k]!.literal ?? '')) {
+    const wrapper = words[k]!.literal
+    k++
+    for (; k < words.length; k++) {
+      const o = words[k]!.literal ?? ''
+      if (o === '--') {
+        k++
+        break
+      }
+      if (!/^-[A-Za-z]+$/.test(o)) break
+      if (wrapper === 'command' && /[vV]/.test(o)) return null
     }
-  return null
-}
-
-function nodeMover(n: Node, fns: ReadonlyMap<string, boolean>): string | null {
-  switch (n.type) {
-    case 'simple': {
-      const [first, ...args] = n.words
-      let k = 0
-      while (/^(?:builtin|command)$/.test(n.words[k]?.literal ?? '')) k++
-      const program = n.words[k]?.literal ?? null
-      const shown = n.words.map((w) => w.raw).join(' ')
-      if (program !== null && (CD_PROGRAM.has(program) || fns.get(program))) return shown
-      // An expanded program word that is not a path may be cd.
-      if (first && first.literal === null && !first.raw.includes('/')) return shown
-      if (n.words.length === 0) {
-        const a = n.assigns.find((x) => x.name === null || MOVES_VAR.test(x.name))
-        if (a) return `${a.name ?? ''}=`
-      }
-      if (args.some((w) => w.assign && (w.assign.name === null || MOVES_VAR.test(w.assign.name))))
-        return shown
-      if (SETS_BY_NAME.has(program ?? '') && args.some((w) => MOVES_VAR.test(w.literal ?? '')))
-        return shown
-      if (
-        n.words.some((w) =>
-          w.parts.some((p) => p.kind === 'param' && /^:?=/.test(p.op) && MOVES_VAR.test(p.name))
-        )
-      )
-        return shown
-      if (n.nested && program === 'eval') return moverIn(n.nested, fns)
-      return null
-    }
-    case 'subshell':
-    case 'function':
-      return null
-    case 'group':
-      return moverIn(n.list, fns)
-    case 'if':
-      for (const b of n.branches) {
-        const m = moverIn(b.cond, fns) ?? moverIn(b.body, fns)
-        if (m !== null) return m
-      }
-      return moverIn(n.else, fns)
-    case 'loop':
-      return moverIn(n.cond, fns) ?? moverIn(n.body, fns)
-    case 'case':
-      for (const a of n.arms) {
-        const m = moverIn(a, fns)
-        if (m !== null) return m
-      }
-      return null
   }
+  const word = words[k]
+  return word ? { word, at: k } : null
 }
 
 /** `$(pwd)` and `$(git rev-parse --show-toplevel)`: the two substitutions a
