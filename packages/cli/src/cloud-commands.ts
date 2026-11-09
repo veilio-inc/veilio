@@ -848,6 +848,11 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
 
     const keys: StoredTeamKey[] = []
     let refusedAny = false
+    // The newest version not stored, for `blockedVersion`.
+    let notStored: number | undefined
+    const skip = (version: number) => {
+      notStored = Math.max(notStored ?? version, version)
+    }
     for (const wrap of wraps) {
       let key: string
       try {
@@ -861,6 +866,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         // A wrap this account cannot open — from a granter whose key has since
         // changed, most likely. Skipped rather than fatal: another version may
         // still open most of the team's maps, and none opening is reported below.
+        skip(wrap.version)
         continue
       }
       const from = wrapFrom(wrap.wrapped_key)
@@ -871,13 +877,17 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         ownId,
         pins,
       })
-      if (judged.verdict === 'unreadable' || !from) continue
+      if (judged.verdict === 'unreadable' || !from) {
+        skip(wrap.version)
+        continue
+      }
       if (judged.verdict === 'refused-impersonation') {
         io.stderr(
           `Team "${teamName}": key version ${wrap.version} claims to come from your own key but does not. ` +
             'It was not stored. Tell your team administrator and support@veilio.dev.\n'
         )
         refusedAny = true
+        skip(wrap.version)
         continue
       }
       const granter = granterLabel(wrap.wrapped_by, roster.emails)
@@ -889,6 +899,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
             'Until then nothing is written under this key.\n'
         )
         refusedAny = true
+        skip(wrap.version)
         continue
       }
       const id = granterIdentity(from, wrap.wrapped_by)
@@ -934,6 +945,9 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         account: credential.account,
         teamId,
         ...(roster.name ? { teamName: roster.name } : {}),
+        ...(notStored !== undefined && notStored > Math.max(...keys.map((k) => k.version))
+          ? { blockedVersion: notStored }
+          : {}),
         expiresAt,
         keys,
       },

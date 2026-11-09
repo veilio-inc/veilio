@@ -79,6 +79,13 @@ export interface TeamUnlock {
   teamId: string
   /** For the messages printed where there is no network to ask. */
   teamName?: string
+  /**
+   * The newest version Cloud held for this account that was NOT stored -
+   * refused, or did not open - when it is above every stored one (spec 080
+   * review). Nothing is written under an older key while it is set: the
+   * team has moved past it. Recomputed by every `team unlock`.
+   */
+  blockedVersion?: number
   /** ISO-8601. Past this, reads return null and the file is ignored. */
   expiresAt: string
   keys: StoredTeamKey[]
@@ -149,7 +156,11 @@ export function readTeamUnlock(
  */
 export function writeKeyOf(unlock: TeamUnlock): StoredTeamKey | null {
   const newest = [...unlock.keys].sort((a, b) => b.version - a.version)[0]
-  return newest?.writable ? newest : null
+  if (!newest?.writable) return null
+  const blocked = unlock.blockedVersion
+  if (blocked === undefined) return newest
+  // A damaged value compares false: blocked, which fails closed.
+  return blocked <= newest.version ? newest : null
 }
 
 /** Writable only when judged so, with the granter it was judged by. */

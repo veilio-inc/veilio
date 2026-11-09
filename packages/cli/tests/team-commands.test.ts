@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential, credentialPath } from '../src/credential.js'
-import { readTeamUnlock, teamUnlockPath, writeTeamUnlock, expiryFrom } from '../src/team-unlock.js'
+import {
+  readTeamUnlock,
+  teamUnlockPath,
+  writeKeyOf,
+  writeTeamUnlock,
+  expiryFrom,
+} from '../src/team-unlock.js'
 import { confirmPin, readPins } from '../src/key-pins.js'
 import { fingerprint } from '../src/client/fingerprint.js'
 import {
@@ -100,6 +106,8 @@ async function realGrant(): Promise<{
   teamKeyRaw: Uint8Array
   granterPublic: string
   myPublic: string
+  /** A further real wrap to this account, made by a NEW granter key. */
+  wrapByNewKey: (version: number) => Promise<{ wrapped_key: string; granterPublic: string }>
 }> {
   const salt = randomVaultSalt()
   const vaultKey = await deriveVaultKey(PASSPHRASE, salt)
@@ -156,10 +164,38 @@ async function realGrant(): Promise<{
     from: granterPublic,
   })
 
+  async function wrapByNewKey(version: number) {
+    const other = (await subtle.generateKey({ name: 'X25519' }, true, [
+      'deriveBits',
+    ])) as unknown as { publicKey: CryptoKey; privateKey: CryptoKey }
+    const otherPublic = toBase64(await subtle.exportKey('raw', other.publicKey))
+    const key = await deriveWrappingKey(
+      other.privateKey as unknown as CryptoKeyLike,
+      await importPublicKey(myPublic),
+      { teamId: 'team-1', version, granterPublicKey: otherPublic, recipientPublicKey: myPublic }
+    )
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const data = await subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key as unknown as CryptoKey,
+      buf(crypto.getRandomValues(new Uint8Array(32)))
+    )
+    return {
+      granterPublic: otherPublic,
+      wrapped_key: JSON.stringify({
+        v: 1,
+        iv: toBase64(iv),
+        data: toBase64(data),
+        from: otherPublic,
+      }),
+    }
+  }
+
   return {
     teamKeyRaw,
     granterPublic,
     myPublic,
+    wrapByNewKey,
     bodies: {
       '/api/auth/me': { user: { id: 'u-me', email: ACCOUNT } },
       '/api/teams/mine': {
@@ -555,6 +591,120 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
 
     expect(code).toBe(EXIT_ERROR)
     expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+})
+
+describe('a newer version that was not stored blocks writing under an older one (spec 080 review)', () => {
+  const binding = { instance: INSTANCE, account: ACCOUNT }
+  const ROW_3 =
+    'Not saved: the newest key for team "Zespół" is not confirmed on this device. ' +
+    'Run `veilio team unlock` to see who granted it, then `veilio team trust`.'
+
+  /** v1 from ana, confirmed; v2 as `make` sets it up. Unlocked. */
+  async function withV2(
+    make: (g: Awaited<ReturnType<typeof realGrant>>) => Promise<Record<string, unknown>>
+  ): Promise<Awaited<ReturnType<typeof realGrant>>> {
+    signIn()
+    const g = await realGrant()
+    const key = g.bodies['/api/teams/team-1/key'] as { wraps: Record<string, unknown>[] }
+    key.wraps.push({ version: 2, created_at: '2026-02-01', ...(await make(g)) })
+    serve(g.bodies)
+    confirmPin(binding, 'u2', g.granterPublic, home)
+    expect((await run(['team', 'unlock'])).code).toBe(EXIT_OK)
+    return g
+  }
+
+  async function pushTeam(): Promise<Run> {
+    mkdirSync(join(cwd, '.git'), { recursive: true })
+    saveMap(join(cwd, STORE_DIR, STORE_FILE), { __CLS__1: 'Ledger' }, { force: true })
+    const served = fetchMock.getMockImplementation() as (
+      u: string,
+      i?: RequestInit
+    ) => Promise<Response>
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/maps/team-envelopes')
+        return jsonResponse(200, { maps: [], unreadable: [] })
+      if (path === '/api/maps' && init?.method === 'POST') return jsonResponse(201, { id: 'map-9' })
+      return served(url, init)
+    })
+    return run(['maps', 'push', 'shared', '--team'])
+  }
+
+  it('v2 a changed key (refused): v1 is stored, and still no write goes under it', async () => {
+    await withV2(async (g) => ({ ...(await g.wrapByNewKey(2)), wrapped_by: 'u2' }))
+    const stored = readTeamUnlock(binding, home)!
+    expect(stored.keys.map((k) => k.version)).toEqual([1])
+    expect(stored.blockedVersion).toBe(2)
+    const pushed = await pushTeam()
+    expect(pushed.code).toBe(EXIT_ERROR)
+    expect(pushed.err).toContain(ROW_3)
+  })
+
+  it('v2 labelled as this account with another key: the same', async () => {
+    await withV2(async (g) => ({ ...(await g.wrapByNewKey(2)), wrapped_by: 'u-me' }))
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+    expect((await pushTeam()).err).toContain(ROW_3)
+  })
+
+  it('v2 that does not open: the same', async () => {
+    await withV2(async () => ({
+      wrapped_by: 'u2',
+      wrapped_key: JSON.stringify({
+        v: 1,
+        iv: toBase64(new Uint8Array(12)),
+        data: toBase64(new Uint8Array(48)),
+        from: toBase64(crypto.getRandomValues(new Uint8Array(32))),
+      }),
+    }))
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+    expect((await pushTeam()).err).toContain(ROW_3)
+  })
+
+  it("an offline team trust of v1's granter keeps the block", async () => {
+    const g = await withV2(async (g) => ({ ...(await g.wrapByNewKey(2)), wrapped_by: 'u2' }))
+    const trusted = await run(['team', 'trust', 'Zespół', await fingerprint(g.granterPublic)])
+    expect(trusted.code).toBe(EXIT_OK)
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+    expect((await pushTeam()).err).toContain(ROW_3)
+  })
+
+  it('every version stored: no block, and the write goes through', async () => {
+    signIn()
+    const g = await realGrant()
+    serve(g.bodies)
+    confirmPin(binding, 'u2', g.granterPublic, home)
+    await run(['team', 'unlock'])
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBeUndefined()
+    const pushed = await pushTeam()
+    expect(pushed.code, pushed.err).toBe(EXIT_OK)
+  })
+
+  it('a version below the newest that was not stored blocks nothing', () => {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: ACCOUNT,
+        teamId: 'team-1',
+        expiresAt: expiryFrom(new Date()),
+        blockedVersion: 1,
+        keys: [
+          {
+            version: 2,
+            key: toBase64(new Uint8Array(32)),
+            granter: { id: 'u2', publicKey: 'G' },
+            writable: true,
+          },
+        ],
+      },
+      home
+    )
+    const read = readTeamUnlock(binding, home)!
+    expect(writeKeyOf(read)?.version).toBe(2)
+    expect(writeKeyOf({ ...read, blockedVersion: 2 })?.version).toBe(2)
+    expect(writeKeyOf({ ...read, blockedVersion: 3 })).toBeNull()
+    expect(writeKeyOf({ ...read, blockedVersion: 'x' as unknown as number })).toBeNull()
   })
 })
 
