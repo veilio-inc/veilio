@@ -1,6 +1,6 @@
 {
   "name": "@veilio-inc/mcp",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "description": "MCP server exposing the anonymizer to coding agents: files read through it reach the model masked. It does not stop an agent reading files directly - with a coding agent, use veilio-guard (Claude Code).",
   "type": "module",
   "bin": {
@@ -28,7 +28,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@veilio-inc/engine": "^1.17.0",
-    "@veilio-inc/cli": "^0.10.0"
+    "@veilio-inc/cli": "^0.11.0"
   },
   "scripts": {
     "build": "tsc",
