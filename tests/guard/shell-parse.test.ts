@@ -299,7 +299,9 @@ describe('parseShell, PowerShell', () => {
       'if ($a) { cd x } else { cd y }',
       'if [W((expression)) X(subst:($a))] then [W(cd) W(x)] else [W(cd) W(y)] fi',
     ],
-    ['a foreach', 'foreach ($d in $ds) { cd $d }', 'for  do [W(cd) X(param:$d)]'],
+    ['a foreach is not read', 'foreach ($d in $ds) { cd $d }', 'fail:unknown'],
+    ['a switch is not read', 'switch ($x) { 1 { cd a } }', 'fail:unknown'],
+    ['a hashtable is not read', '$h = @{ a = 1 }', 'fail:unknown'],
     ['a double-quoted backtick', 'cd "a`"b"', 'W(cd) W(a"b)'],
     [
       'a parameter with a colon',

@@ -34,9 +34,22 @@ describe('COVERAGE.md', () => {
     const names = [...source.matchAll(/^test\(\s*(['"`])((?:\\.|(?!\1).)*)\1/gm)].map((m) =>
       m[2].replace(/\\'/g, "'")
     )
-    const loop =
-      /for \(const path of[\s\S]*?test\(`Read of \$\{path\} is refused before it runs`/.test(source)
-    const generated = loop && /^Read of .+ is refused before it runs$/.test(ref.name)
+    // A test generated in a loop, its name a template (`086 attack ${…}: refused`):
+    // the name must fit one of the file's templates.
+    const templates = [...source.matchAll(/^\s*test\(\s*`((?:\\.|[^`])*)`/gm)]
+      .map((m) => m[1]!)
+      .filter((t) => t.includes('${'))
+      .map(
+        (t) =>
+          new RegExp(
+            `^${t
+              .split(/\$\{(?:[^{}]|\{[^{}]*\})*\}/)
+              .map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('.+')}$`,
+            's'
+          )
+      )
+    const generated = templates.some((re) => re.test(ref.name))
     expect(generated || names.includes(ref.name)).toBe(true)
   })
 

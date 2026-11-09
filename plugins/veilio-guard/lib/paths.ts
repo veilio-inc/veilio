@@ -587,7 +587,7 @@ class Walker {
     if (this.ps) {
       const c = psCd(words)
       if (c === null) return both(after)
-      if (c === 'error') return { ok: null, fail: after }
+      if ('refuse' in c) return N1(c.shown, c.refuse)
       return this.cdWith(c.name, c.rest, false, here, after)
     }
     const found = programOf(words)
@@ -846,6 +846,8 @@ const PS_CD: Readonly<Record<string, 'cd' | 'pushd' | 'popd'>> = {
   popd: 'popd',
 }
 // Their parameters and the common ones, with their aliases: true takes a value.
+// Every parameter the location cmdlets bind (theirs and the common ones),
+// for telling a prefix apart; true: it takes a value.
 const PS_PARAMS: Readonly<Record<string, boolean>> = {
   path: true,
   literalpath: true,
@@ -866,48 +868,37 @@ const PS_PARAMS: Readonly<Record<string, boolean>> = {
   whatif: false,
   confirm: false,
 }
-const PS_ALIASES: Readonly<Record<string, string>> = {
-  pspath: 'literalpath',
-  lp: 'literalpath',
-  ea: 'erroraction',
-  wa: 'warningaction',
-  infa: 'informationaction',
-  proga: 'progressaction',
-  ev: 'errorvariable',
-  wv: 'warningvariable',
-  iv: 'informationvariable',
-  ov: 'outvariable',
-  ob: 'outbuffer',
-  pv: 'pipelinevariable',
-  vb: 'verbose',
-  db: 'debug',
-  wi: 'whatif',
-  cf: 'confirm',
-}
+// The ones that never change where the location goes: allowed beside the path.
+const PS_HARMLESS = new Set([
+  'passthru',
+  'erroraction',
+  'warningaction',
+  'informationaction',
+  'progressaction',
+  'errorvariable',
+  'warningvariable',
+  'informationvariable',
+  'outvariable',
+  'verbose',
+  'debug',
+])
 
-/** A parameter by its name, an alias or an unambiguous prefix (as
- *  PowerShell binds it); null when it binds none or more than one. */
+/** A parameter by its name or an unambiguous prefix (as PowerShell binds
+ *  it); null when it binds none or more than one. */
 function psParam(given: string): string | null {
   const g = given.toLowerCase()
-  if (Object.hasOwn(PS_ALIASES, g)) return PS_ALIASES[g]!
   if (Object.hasOwn(PS_PARAMS, g)) return g
   const all = Object.keys(PS_PARAMS).filter((p) => p.startsWith(g))
   return all.length === 1 ? all[0]! : null
 }
 
-/** A PowerShell path word as the cd rules read one: `\` a separator, a
- *  drive path absolute, `$HOME` and `$env:USERPROFILE` HOME. Its raw text is
- *  kept for the refusal (N3). */
+/** A PowerShell path as the cd rules read one: `\` a separator, a drive
+ *  path absolute. Its raw text is kept for the refusal (N3). */
 function psPath(w: Word): Word {
   const parts = w.parts.map((p, k): Part => {
-    if (p.kind === 'lit') {
-      const t = p.text.replace(/\\/g, '/')
-      return { ...p, text: k === 0 && /^[A-Za-z]:/.test(t) ? `/${t}` : t }
-    }
-    if (p.kind === 'param' && /^(?:HOME|env:USERPROFILE|env:HOME)$/i.test(p.name))
-      return { ...p, name: 'HOME' }
-    if (p.kind === 'param' && /^PWD$/i.test(p.name)) return { ...p, name: 'PWD' }
-    return p
+    if (p.kind !== 'lit') return p
+    const t = p.text.replace(/\\/g, '/')
+    return { ...p, text: k === 0 && /^[A-Za-z]:/.test(t) ? `/${t}` : t }
   })
   const literal = parts.every((p) => p.kind === 'lit')
     ? parts.map((p) => (p as { text: string }).text).join('')
@@ -915,33 +906,68 @@ function psPath(w: Word): Word {
   return { parts, literal, raw: w.raw }
 }
 
-/** A PowerShell command as cd, pushd or popd with its targets; null when it
- *  is not one; 'error' when it cannot bind (it fails, the location stays). */
-function psCd(
-  words: readonly Word[]
-): { name: 'cd' | 'pushd' | 'popd'; rest: Word[] } | 'error' | null {
+/** Why a PowerShell location target is not followed, or null: only one
+ *  plain path - relative, `~`-based or on a drive - is (the allow-list
+ *  after review: no variable, provider path, UNC path or splatting). */
+function psTargetRefusal(w: Word): string | null {
+  const [first, ...rest] = w.parts
+  if (!first) return 'a variable'
+  const plain =
+    (first.kind === 'lit' || (first.kind === 'tilde' && first.user === '')) &&
+    rest.every((p) => p.kind === 'lit')
+  const text = w.parts
+    .map((p) => (p.kind === 'lit' ? p.text : p.kind === 'tilde' ? '~' : ''))
+    .join('')
+  if (text.startsWith('@')) return 'splatting'
+  if (!plain) return formOf(w.parts.find((p) => p.kind !== 'lit' && p.kind !== 'tilde') ?? first)
+  if (text.includes('::') || /^[\\/]/.test(text) || text.includes('@'))
+    return 'a provider or network path'
+  return null
+}
+
+export type PsCd =
+  { name: 'cd' | 'pushd' | 'popd'; rest: Word[] } | { refuse: string; shown: string } | null
+
+/** A PowerShell command as a location command Veilio follows, one it
+ *  refuses, or null when it is not one. */
+function psCd(words: readonly Word[]): PsCd {
   let k = 0
-  if (words[0]?.literal === '&') k++
-  const program = words[k]?.literal?.toLowerCase().replace(/^.*\\/, '')
+  const call = words[0]?.literal === '&' || words[0]?.literal === '.'
+  if (call) k++
+  const prog = words[k]
+  if (!prog) return null
+  const program = prog.literal?.toLowerCase().replace(/^.*\\/, '')
   const name = program === undefined ? undefined : PS_CD[program]
+  // `& $x`, `. $x`, `& 'Set-Location'`: a program Veilio cannot read as one.
+  if (call && (prog.literal === null || name)) return { refuse: 'a call operator', shown: prog.raw }
   if (!name) return null
   const rest: Word[] = []
   for (let j = k + 1; j < words.length; j++) {
     const w = words[j]!
     const m = /^-([A-Za-z]+)(:?)$/.exec(w.literal ?? '')
     if (!m) {
-      rest.push(psPath(w))
+      if (w.literal?.startsWith('-'))
+        return { refuse: 'a parameter Veilio cannot read', shown: w.raw }
+      rest.push(w)
       continue
     }
     const param = psParam(m[1]!)
-    if (param === null) return 'error'
+    if (param === null || (param !== 'path' && param !== 'literalpath' && !PS_HARMLESS.has(param)))
+      return { refuse: 'a parameter Veilio cannot read', shown: w.raw }
     if (!PS_PARAMS[param]) continue
     const value = words[++j]
-    if (!value) return 'error'
-    // A wildcard in -Path is 078's floor's (any `*`, `?` or `[` in a target).
-    if (param === 'path' || param === 'literalpath') rest.push(psPath(value))
+    if (!value) return { refuse: 'a parameter Veilio cannot read', shown: w.raw }
+    if (param === 'path' || param === 'literalpath') rest.push(value)
+    else if (value.literal === null)
+      return { refuse: 'a parameter Veilio cannot read', shown: value.raw }
   }
-  return { name, rest }
+  if (rest.length > (name === 'popd' ? 0 : 1))
+    return { refuse: 'more than one target', shown: rest.map((w) => w.raw).join(' ') }
+  for (const w of rest) {
+    const why = psTargetRefusal(w)
+    if (why) return { refuse: why, shown: w.raw }
+  }
+  return { name, rest: rest.map(psPath) }
 }
 
 /** `$(pwd)` and `$(git rev-parse --show-toplevel)`: the two substitutions a

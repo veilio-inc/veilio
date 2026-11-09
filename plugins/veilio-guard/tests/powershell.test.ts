@@ -157,8 +157,49 @@ for (const [command, expected] of [
   ['SET-LOCATION ~/.kube', A1('~/.kube')],
   ['Set-Location -Path ~\\.kube', A1('~\\.kube')],
   ['Set-Location -LiteralPath:~\\.aws', A1('~\\.aws')],
+  // Only one plain path is followed (the allow-list): a variable is refused,
+  // here after 078's floor, which reads `.aws` in the text.
   ['cd $env:USERPROFILE\\.aws', A1('$env:USERPROFILE\\.aws')],
+  ['cd $env:USERPROFILE\\src', N1('$env:USERPROFILE\\src', 'a variable')],
   ['cd $HOME\\.aws', A1('$HOME\\.aws')],
+  ['cd $HOME', N1('$HOME', 'a variable')],
+  // The review of the PowerShell path: each form refused.
+  ['& $cmd ~\\.aws', N1('$cmd', 'a call operator')],
+  ["& 'Set-Location' ~\\.aws", N1("'Set-Location'", 'a call operator')],
+  ['. Set-Location src', N1('Set-Location', 'a call operator')],
+  ['Set-Location @a', N1('@a', 'splatting')],
+  [
+    '$a = @{Path = "x"}; Set-Location @a',
+    N1('$a = @{Path = "x"}; Set-Location @a', 'a command Veilio cannot read'),
+  ],
+  [
+    'Set-Location Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws',
+    N1('Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws', 'a provider or network path'),
+  ],
+  ['Set-Location \\\\server\\share', N1('\\\\server\\share', 'a provider or network path')],
+  ['Set-Location //server/share', N1('//server/share', 'a provider or network path')],
+  ['Set-Location -Foo ~\\.aws', N1('-Foo', 'a parameter Veilio cannot read')],
+  ['Set-Location -P ~\\.aws', N1('-P', 'a parameter Veilio cannot read')],
+  ['Set-Location -Pa src', N1('-Pa', 'a parameter Veilio cannot read')],
+  ['Set-Location -StackName s src', N1('-StackName', 'a parameter Veilio cannot read')],
+  ['Set-Location src ~\\.aws', N1('src ~\\.aws', 'more than one target')],
+  ['Pop-Location src', N1('src', 'more than one target')],
+  [
+    'switch (Set-Location ~\\.aws) { default { 1 } }',
+    N1('switch (Set-Location ~\\.aws) { default { 1 } }', 'a command Veilio cannot read'),
+  ],
+  [
+    'foreach ($x in (Set-Location ~\\.aws)) { }',
+    N1('foreach ($x in (Set-Location ~\\.aws)) { }', 'a command Veilio cannot read'),
+  ],
+  [
+    'for ($i = 0; $i -lt 1; Set-Location ..) { }',
+    N1('for ($i = 0; $i -lt 1; Set-Location ..) { }', 'a command Veilio cannot read'),
+  ],
+  [
+    '$h = @{ a = (Set-Location ~\\.aws) }',
+    N1('$h = @{ a = (Set-Location ~\\.aws) }', 'a command Veilio cannot read'),
+  ],
   // 078's floor refuses a cd target with `*`, `?` or `[` first (FR-009)
   ['Set-Location ~\\.k*', A1('~.k*')],
   ['Set-Location -LiteralPath "src[1]"', A1('src[1]')],
@@ -186,6 +227,12 @@ for (const command of [
   'Set-Location src -ErrorVariable err',
   '$x = 1; Set-Location src',
   'Set-Location sub && Set-Location .. && Get-Content notes',
+  'Set-Location -Path src',
+  'Set-Location -Pat src',
+  'Set-Location src -PassThru',
+  // a construct the reader does not model, with no location command: as on main
+  'switch ($x) { 1 { "a" } }',
+  'foreach ($f in Get-ChildItem) { $f.Name }',
 ])
   test(`086 PowerShell ${JSON.stringify(command)} runs`, async ($, on) => {
     expect(await ps($, on, command)).toBeUndefined()

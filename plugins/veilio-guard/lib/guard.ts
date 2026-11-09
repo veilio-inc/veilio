@@ -1744,7 +1744,14 @@ export class Guard {
                 }
               }
             }
-        } else moves = this.shellDirsOf(c)
+        } else if (dialect === 'ps' && parsed && PS_LOCATION.test(c))
+          // A PowerShell command the reader does not model, naming a
+          // location command anywhere: refused (review of the PowerShell path).
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        else moves = this.shellDirsOf(c)
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.
         for (const word of pathsInCommand(c)) {
@@ -2456,6 +2463,9 @@ const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])
 
 /** A command that changes the shell's directory: `cd`, `pushd` or `popd`
  *  at its start or after `&&`, `||`, `;`, `|`, a lone `&`, a newline or `(`. */
+/** PowerShell's location commands, named anywhere in a command's text. */
+const PS_LOCATION =
+  /set-location|push-location|pop-location|(?<![\w-])(?:sl|cd|chdir|pushd|popd)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers

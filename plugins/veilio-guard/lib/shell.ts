@@ -1478,14 +1478,15 @@ class PsReader {
       }
       case 'foreach':
       case 'for':
+      case 'switch':
+        // Their headers are not read: the command is unreadable (review).
+        throw new Unreadable('unknown')
       case 'while': {
         this.blank(true)
         if (s[this.i] !== '(') throw new Unreadable('unknown')
         const cond = this.paren()
         const body = this.expectBlock()
-        return k === 'while'
-          ? { type: 'loop', kind: 'while', name: null, words: null, cond, body, redirects: [] }
-          : { type: 'loop', kind: 'for', name: null, words: null, cond: null, body, redirects: [] }
+        return { type: 'loop', kind: 'while', name: null, words: null, cond, body, redirects: [] }
       }
       case 'do': {
         const body = this.expectBlock()
@@ -1497,27 +1498,6 @@ class PsReader {
         if (s[this.i] !== '(') throw new Unreadable('unknown')
         const cond = this.paren()
         return { type: 'loop', kind: 'while', name: null, words: null, cond, body, redirects: [] }
-      }
-      case 'switch': {
-        while (this.i < s.length && s[this.i] !== '(' && s[this.i] !== '{') this.i++
-        if (s[this.i] === '(') this.paren()
-        this.blank(true)
-        if (s[this.i] !== '{') throw new Unreadable(this.i >= s.length ? 'unbalanced' : 'unknown')
-        this.i++
-        const arms: List[] = []
-        for (;;) {
-          this.blank(true)
-          while (s[this.i] === ';') {
-            this.i++
-            this.blank(true)
-          }
-          if (this.i >= s.length) throw new Unreadable('unbalanced')
-          if (s[this.i] === '}') break
-          if (s[this.i] !== '{') this.word()
-          arms.push(this.expectBlock())
-        }
-        this.i++
-        return { type: 'case', word: word([lit('', false)], ''), arms, redirects: [] }
       }
       case 'try': {
         // try, catch and finally, read in order (each may run).
@@ -1673,12 +1653,16 @@ class PsReader {
       else if (c === '@' && (s[this.i + 1] === '(' || s[this.i + 1] === '{')) {
         this.i++
         const b = this.i
-        parts.push({ kind: 'subst', list: s[b] === '(' ? this.block() : (this.skip(), null) })
+        // A hashtable is not read: unreadable (review).
+        if (s[b] !== '(') throw new Unreadable('unknown')
+        parts.push({ kind: 'subst', list: this.block() })
       } else if (c === '@' && (s[this.i + 1] === "'" || s[this.i + 1] === '"')) {
         const q = s[this.i + 1]!
         const end = s.indexOf(`\n${q}@`, this.i + 2)
         if (end === -1) throw new Unreadable('unbalanced')
         const text = s.slice(this.i + 2, end).replace(/^\r?\n/, '')
+        // An expanding here-string's `$( )` is not read: unreadable.
+        if (q === '"' && text.includes('$(')) throw new Unreadable('unknown')
         parts.push(q === "'" || !/[$`]/.test(text) ? lit(text, true) : { kind: 'ansic', text })
         this.i = end + 3
       } else if (c === '(' || c === '{') {
@@ -1712,19 +1696,6 @@ class PsReader {
     }
     if (this.i === start) return null
     return word(parts, s.slice(start, this.i))
-  }
-
-  private skip(): void {
-    const s = this.s
-    let depth = 0
-    for (; this.i < s.length; this.i++) {
-      if (s[this.i] === '{') depth++
-      else if (s[this.i] === '}' && --depth === 0) {
-        this.i++
-        return
-      }
-    }
-    throw new Unreadable('unbalanced')
   }
 
   private double(parts: Part[]): void {
