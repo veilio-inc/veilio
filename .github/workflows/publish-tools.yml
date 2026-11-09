@@ -56,7 +56,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The workspace links the local engine, so the build and the tests pass
+  # against exports npm may not have yet. A user's install resolves the range
+  # in packages/{cli,mcp}/package.json instead: fail here if any engine export
+  # the built tools import is missing from that engine (spec 078 review round 1
+  # item 1). The check installs and imports a package from npm, so it runs in
+  # a job of its own with a read-only token and no OIDC identity, and the
+  # release job waits for it (spec 085 R2-1): code a registry serves never runs
+  # where the release credentials are.
+  engine-exports:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Update npm
+        run: npm install -g npm@12.2.1
+
+      - run: npm ci
+
+      - run: npm run build:packages
+
+      - name: Every engine export the tools import is in the engine their range resolves to
+        run: node scripts/check-engine-exports.mjs
+
   release:
+    needs: engine-exports
     runs-on: ubuntu-latest
     # Same manual gate as the engine: an automated version bump still has to be
     # a human decision to ship.
@@ -127,15 +160,6 @@ jobs:
           npm run build:packages
           npm run typecheck --workspaces --if-present
           npm run test --workspaces --if-present
-
-      # The workspace links the local engine, so the build and the tests above
-      # pass against exports npm may not have yet. A user's install resolves
-      # the range in packages/{cli,mcp}/package.json instead: fail here if any
-      # engine export the built tools import is missing from the engine that
-      # range resolves to (spec 078 review round 1 item 1). Raising the range
-      # is a release step of its own; this only refuses a release without it.
-      - name: Every engine export the tools import is in the engine their range resolves to
-        run: node scripts/check-engine-exports.mjs
 
       # Fail, not warn, if either tarball would ship something outside the
       # allowlist — the same check publish-engine.yml runs, for the same reason:
