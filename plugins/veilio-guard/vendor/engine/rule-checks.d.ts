@@ -23,6 +23,7 @@ export type RuleBody = {
     pattern: string;
     enabled: boolean;
 };
-/** Why this rule may not be saved or applied, in a sentence - or null. The
- *  sentences are the ones Veilio Cloud's server gave. */
-export declare function ruleRefusal(rule: RuleBody): string | null;
+export declare const TEAM_WHITELIST_REFUSAL = "A team whitelist must name the identifiers it keeps: `^Name$`, or `^(NameOne|NameTwo)$`. A pattern that matches names in general would send the whole team's names as written.";
+export declare function ruleRefusal(rule: RuleBody, 
+/** Whose rule: a team's whitelist must name what it keeps (spec 085 R2-7). */
+scope?: 'personal' | 'team'): string | null;

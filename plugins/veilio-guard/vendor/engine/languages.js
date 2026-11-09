@@ -1640,6 +1640,10 @@ const COMMENT_SYNTAX = {
         quotes: ['"', "'"],
         lineBounded: [],
         blockAtLineStart: true,
+        // Spec 085 R2-11: a regex literal holding `#` is code, and heredocs and
+        // %-literals are strings.
+        regexLiterals: true,
+        heredoc: 'ruby',
     },
     php: {
         line: ['//', '#'],
@@ -1648,6 +1652,7 @@ const COMMENT_SYNTAX = {
         quotes: ['"', "'"],
         lineBounded: [],
         notLineOpener: ['#['],
+        heredoc: 'php',
     },
     sql: {
         line: ['--'],

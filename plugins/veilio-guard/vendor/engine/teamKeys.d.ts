@@ -102,7 +102,15 @@ export declare function importTeamKey(rawBase64: string): Promise<CryptoKeyLike>
  * members sealing the same pairs is ordinary rather than unlikely.
  */
 export declare function encryptTeamMap(teamKey: CryptoKeyLike, map: Record<string, string>): Promise<TeamMapEnvelope>;
-/** Open a team map with the team key held. */
+/**
+ * Open a team map with the team key held: only placeholders to names
+ * (spec 085 R2-6). The key proves a teammate - or Cloud, through a key it
+ * offered and the member has not confirmed - sealed it, not that it is a map:
+ * a key such as `verify=True` would rewrite ordinary text in every member's
+ * restore, a value with a line break would inject code, and a name mapped to
+ * itself would leave it unmasked. Anything else throws, so the map counts as
+ * unreadable.
+ */
 export declare function decryptTeamMap(teamKey: CryptoKeyLike, env: TeamMapEnvelope): Promise<Record<string, string>>;
 /**
  * Open a team map with whichever held key fits.
@@ -126,4 +134,10 @@ export declare function decryptTeamMapWithAny(keys: readonly {
     version: number;
     key: CryptoKeyLike;
 }[], env: TeamMapEnvelope): Promise<Record<string, string>>;
+/** A team envelope's plaintext under whichever held key fits, unchecked: for a
+ *  sealed rule (rule-envelope.ts), which checks its own shape. */
+export declare function openTeamEnvelopeWithAny(keys: readonly {
+    version: number;
+    key: CryptoKeyLike;
+}[], env: TeamMapEnvelope): Promise<unknown>;
 export {};

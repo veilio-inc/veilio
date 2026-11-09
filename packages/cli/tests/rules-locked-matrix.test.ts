@@ -93,6 +93,7 @@ describe.each(cases)('vault open: $vault, team key open: $team, refused rule: $r
       teamLocked: c.team ? 0 : 1,
       unopenable: 0,
       refused: c.vault && c.refused ? 1 : 0,
+      teamUnconfirmed: 0,
     }
     const sentences = rulesSkippedSentences(expected)
 

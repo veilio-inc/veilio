@@ -22,10 +22,18 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
-import { trackedPaths } from './git-index.js'
+import { homedir } from 'node:os'
+import {
+  STORE_DIR,
+  WRITTEN_RECORD_FILE,
+  isName,
+  parseWrittenRecord,
+  writtenRecordValue,
+  type SymbolMap,
+} from '@veilio-inc/engine'
+import { trackedPaths, type IndexUnreadable } from './git-index.js'
 
 export { STORE_DIR }
 export const STORE_FILE = 'map.json'
@@ -34,19 +42,35 @@ export const STORE_FILE = 'map.json'
  *  the CLI in a subdirectory still finds the project's map. Falls back to
  *  `from` when neither is found. */
 export function findProjectRoot(from: string): string {
-  let dir = resolve(from)
+  const start = resolve(from)
+  let dir = start
   for (;;) {
     // Another user's .veilio is not this project's store (spec 085 L2): on a
     // shared machine anyone can make /tmp/.veilio.
     const store = join(dir, STORE_DIR)
     if (
-      (existsSync(store) && (ownerOf(store) !== 'other' || trustedStore(store))) ||
+      (existsSync(store) &&
+        (ownerOf(store) !== 'other' || trustedStore(store)) &&
+        withinProject(dir, start)) ||
       existsSync(join(dir, '.git'))
     )
       return dir
     const parent = dirname(dir)
     if (parent === dir) return resolve(from)
     dir = parent
+  }
+}
+
+/**
+ * Windows has no uid for the owner check (spec 085 R2-22): there a `.veilio`
+ * is adopted only in the folder the CLI runs in or inside the git checkout
+ * holding it, never one another user made higher up (`C:\\.veilio`).
+ */
+function withinProject(dir: string, start: string): boolean {
+  if (process.platform !== 'win32' || dir === start) return true
+  for (let d = dir; ; d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) return true
+    if (dirname(d) === d) return false
   }
 }
 
@@ -79,20 +103,11 @@ export interface StoredMap {
   }
 }
 
-/** The longest real name kept, as for aliases.json (reservations.ts). */
-const MAX_NAME = 100_000
-
-// C0 and C1 controls (line feed, tab, NEL, escape, ...) and the Unicode line
-// and paragraph separators. A map value is not always an identifier (a manual
-// mark can be words with spaces, spec 082 adds non-ASCII letters), so no exact
-// name pattern exists; a character that breaks a line or drives a terminal is
-// never part of a name.
+// C0 and C1 controls and the Unicode line and paragraph separators: never
+// shown in a message. What a name is, is the engine's `isName` (spec 085 R2-6).
 const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u
 
-/** What a map or aliases.json may restore: 1 to 100000 characters, none of them a control or line separator. */
-export function isName(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v)
-}
+export { isName }
 
 function isSymbolMap(value: unknown): value is SymbolMap {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -122,28 +137,13 @@ export class StoreRefusal extends Error {}
  * one to another project's map), and when git tracks `.veilio`, map.json or
  * aliases.json (a map in the repository is not yours to restore from). Git is
  * asked first, so a tracked map is refused even where the file is absent under
- * this spelling. Outside git, or with an index this reader cannot follow, the
- * tracked check cannot answer and the file is read as before.
+ * this spelling. A checkout whose index this reader cannot follow is refused
+ * too (spec 085 R2-2): git there may track the map. Outside git the tracked
+ * check cannot answer and the file is read as before.
  */
 export function openStoreFile(what: string, path: string): string | null {
   const dir = dirname(path)
-  const found = trackedStoreFile(path)
-  if (found !== null) {
-    const { root, tracked } = found
-    // The path comes from the checkout: shown without control characters. A
-    // command only off Windows (its shells read quotes differently) and only
-    // for a root and path of plain characters; both single-quoted.
-    const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
-    const plain = /^[A-Za-z0-9._/ -]+$/
-    const how =
-      process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
-        ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
-        : ''
-    throw new StoreRefusal(
-      `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
-        `Remove it from git${how}, then scrub again to build your own.`
-    )
-  }
+  refuseTracked(path)
   for (const p of [dir, path])
     if (isLink(p))
       throw new StoreRefusal(
@@ -153,6 +153,56 @@ export function openStoreFile(what: string, path: string): string | null {
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf8')
 }
+
+const REMEDY: Record<IndexUnreadable, string> = {
+  split: 'git update-index --no-split-index',
+  sparse: 'git sparse-checkout disable',
+  format: 'git status',
+}
+
+/** Refuses a store file git tracks, or one in a checkout whose index cannot be read. */
+function refuseTracked(path: string): void {
+  const found = trackedStoreFile(path)
+  if (found === null) return
+  if ('unreadable' in found) {
+    const kind = found.unreadable === 'format' ? 'an unknown format' : `${found.unreadable} index`
+    throw new StoreRefusal(
+      `refusing to use \`${shownPath(path)}\`: this checkout's git index is in a form veilio cannot read (\`${kind}\`), so it cannot tell whether git tracks the map. Run \`${REMEDY[found.unreadable]}\`, then run again.`
+    )
+  }
+  const { root, tracked } = found
+  // reserved.json and the like hold the account, team and rule bases, not a
+  // map (spec 085 R2-16): said as what they are.
+  // The path comes from the checkout: shown without control characters.
+  const shown = shownPath(tracked)
+  const how = rmCommand(root, tracked)
+  if (tracked === relativeName(root, path) && !MAP_FILES.has(basename(path).toLowerCase()))
+    throw new StoreRefusal(
+      `refusing to write \`${shown}\`: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git${how}, then run again.`
+    )
+  throw new StoreRefusal(
+    `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
+      `Remove it from git${how}, then scrub again to build your own.`
+  )
+}
+
+/**
+ * The command that untracks `tracked`, as text to paste: only off Windows (its
+ * shells read quotes differently) and only for a root and path of plain
+ * characters, both single-quoted; otherwise nothing (security review: a
+ * repository chooses the path, and `x;curl …|sh` would be a command).
+ */
+function rmCommand(root: string, tracked: string): string {
+  const plain = /^[A-Za-z0-9._/ -]+$/
+  return process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
+    ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
+    : ''
+}
+
+const MAP_FILES = new Set([STORE_FILE, 'aliases.json'])
+const relativeName = (root: string, p: string): string => relative(root, p).split(sep).join('/')
+// Format characters too (bidi overrides), as the guard's printable() (review).
+const shownPath = (p: string): string => p.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '')
 
 /**
  * Whose `path` is: 'me' for the running user, 'other' for anyone else, 'none'
@@ -230,12 +280,16 @@ export function writeStoreFile(what: string, path: string, text: string): void {
 /** One POSIX shell word, for a string of plain characters (no quote in it). */
 const shellQuote = (s: string): string => `'${s}'`
 
-/** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
-function trackedStoreFile(path: string): { root: string; tracked: string } | null {
+/** The store path git tracks, as git names it, with its work tree root; why the
+ *  index could not be read; or null when nothing is tracked, or there is no checkout. */
+function trackedStoreFile(
+  path: string
+): { root: string; tracked: string } | { unreadable: IndexUnreadable } | null {
   const dir = dirname(path)
   const git = trackedPaths(dir)
   if (!git) return null
-  const rel = (p: string) => relative(git.root, p).split(sep).join('/')
+  if ('unreadable' in git) return { unreadable: git.unreadable }
+  const rel = (p: string) => relativeName(git.root, p)
   const candidates = [path]
   if (basename(dir) === STORE_DIR)
     candidates.unshift(dir, join(dir, STORE_FILE), join(dir, 'aliases.json'))
@@ -314,6 +368,8 @@ export function saveMap(
   options: { force?: boolean; remote?: StoredMap['remote'] } = {}
 ): void {
   refuseNonNames('the map', map)
+  // Judged before anything is written (spec 085 R2-3 review).
+  const ours = storeIsOurs(path)
   if (!options.force && existsSync(path)) {
     const dropped = Object.entries(loadMap(path)).filter(
       ([placeholder, real]) => map[placeholder] !== real
@@ -337,6 +393,119 @@ export function saveMap(
   const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
   // A new 0600 file each time, so a world-readable map already there is replaced too.
   writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
+  recordWritten(path, ours)
+}
+
+/** `~/.veilio/written.json`, or null when it may not be used (a linked
+ *  folder, or a folder or file another user owns). */
+function writtenRecordPath(): string | null {
+  const dir = join(homedir(), STORE_DIR)
+  const file = join(dir, WRITTEN_RECORD_FILE)
+  // A new file renamed over the record never writes through a link at it;
+  // a linked folder would put the record elsewhere.
+  if (isLink(dir) || ownerOf(dir) === 'other' || ownerOf(file) === 'other') return null
+  return file
+}
+
+function readRecord(file: string): Record<string, string> {
+  try {
+    return parseWrittenRecord(readFileSync(file, 'utf8')) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/** The record's value for what the store holds now: the map's and the
+ *  aliases file's hashes (an absent file hashes as the empty text). */
+function storeValue(mapPath: string): string {
+  const hash = (p: string) => {
+    let text = ''
+    try {
+      text = readFileSync(p, 'utf8')
+    } catch {
+      // absent: hashed as the empty text
+    }
+    return createHash('sha256').update(text).digest('hex')
+  }
+  return writtenRecordValue(hash(mapPath), hash(join(dirname(mapPath), 'aliases.json')))
+}
+
+const EMPTY_STORE = writtenRecordValue(
+  createHash('sha256').update('').digest('hex'),
+  createHash('sha256').update('').digest('hex')
+)
+
+/**
+ * Whether the store holds what Veilio last recorded writing, or nothing yet
+ * (spec 085 R2-3, review): only then may a write be recorded. Otherwise the
+ * map came with the files, or was changed since, and a write that merges it
+ * must not launder it into "written by Veilio".
+ */
+export function storeIsOurs(mapPath: string): boolean {
+  const store = dirname(mapPath)
+  if (basename(store) !== STORE_DIR || basename(mapPath) !== STORE_FILE) return false
+  try {
+    const now = storeValue(mapPath)
+    if (now === EMPTY_STORE) return true
+    const file = writtenRecordPath()
+    if (file === null) return false
+    // Unrecorded and not empty: not ours until `veilio maps adopt` (founder,
+    // 2026-11-09). No read, scrub or MCP call adopts it.
+    return readRecord(file)[realpathSync(dirname(store))] === now
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Trusts the map already in this project as one this machine wrote (founder,
+ * 2026-11-09): what `veilio maps adopt` does, after the person saw what it
+ * holds. The read refuses a map git tracks, or a checkout whose index cannot
+ * be read. Throws when the record cannot be written; nothing is adopted then.
+ */
+export function adoptStore(mapPath: string): void {
+  if (basename(mapPath) !== STORE_FILE || basename(dirname(mapPath)) !== STORE_DIR)
+    throw new StoreRefusal(`only a project's ${STORE_DIR}/${STORE_FILE} can be adopted`)
+  loadMap(mapPath)
+  recordWritten(mapPath, true)
+  const file = writtenRecordPath()
+  if (
+    file === null ||
+    readRecord(file)[realpathSync(dirname(dirname(mapPath)))] !== storeValue(mapPath)
+  )
+    throw new StoreRefusal(
+      `could not record the map in ~/${STORE_DIR}/${WRITTEN_RECORD_FILE}, so nothing was adopted.`
+    )
+}
+
+/**
+ * Records, in `~/.veilio/written.json`, the hashes of the map and aliases this
+ * project's store now holds (spec 085 R2-3), when `ours` - the store held what
+ * Veilio last recorded, or nothing, before this write (storeIsOurs). The guard
+ * restores unseen only from a recorded map. Any failure is skipped: the map is
+ * written, and without a record the guard asks for each name to be shown first.
+ */
+export function recordWritten(mapPath: string, ours: boolean): void {
+  if (!ours) return
+  try {
+    const file = writtenRecordPath()
+    if (file === null) return
+    const dir = dirname(file)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    if (writtenRecordPath() === null) return
+    const record = readRecord(file)
+    record[realpathSync(dirname(dirname(mapPath)))] = storeValue(mapPath)
+    const tmp = join(dir, `.${WRITTEN_RECORD_FILE}.${randomBytes(6).toString('hex')}.tmp`)
+    const fd = openSync(tmp, 'wx', 0o600)
+    try {
+      writeSync(fd, `${JSON.stringify(record, null, 2)}\n`)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmp, file)
+  } catch {
+    // not recorded: the guard shows-gates this map, the safe side
+  }
 }
 
 /**
@@ -388,6 +557,8 @@ export function prepareStoreWrite(what: string, path: string): void {
  */
 function checkStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
+  // Every store file, not only the map (spec 085 R2-16): git must not track it.
+  refuseTracked(path)
   refuseLinks(what, dir, path)
   let st
   try {

@@ -8,7 +8,7 @@
 // Opening never throws on bad content. A tool opening a teammate's rule must
 // skip one it cannot open or must not apply, say so, and go on masking.
 import { ruleRefusal } from './rule-checks.js';
-import { decryptTeamMapWithAny, encryptTeamMap } from './teamKeys.js';
+import { encryptTeamMap, openTeamEnvelopeWithAny } from './teamKeys.js';
 import { encryptMapForVault, openVaultEnvelope, } from './vault.js';
 export const RULE_KIND = 'veilio-rule';
 const RULE_V = '1';
@@ -55,7 +55,7 @@ function fromRecord(raw, bind) {
     else {
         return refused('the rule type is neither replace nor whitelist');
     }
-    const why = ruleRefusal(rule);
+    const why = ruleRefusal(rule, bind.teamId ? 'team' : 'personal');
     return why ? refused(why) : { ok: true, rule };
 }
 /** Seal a personal rule under the personal-maps key. Refuses a rule no tool
@@ -78,7 +78,7 @@ export async function openRuleFromVault(key, env, bind) {
 }
 /** Seal a team rule under the team key. */
 export async function sealTeamRule(teamKey, rule, bind) {
-    const why = ruleRefusal(rule);
+    const why = ruleRefusal(rule, 'team');
     if (why)
         throw new Error(why);
     return encryptTeamMap(teamKey, toRecord(rule, bind));
@@ -87,7 +87,7 @@ export async function sealTeamRule(teamKey, rule, bind) {
 export async function openTeamRule(keys, env, bind) {
     let raw;
     try {
-        raw = await decryptTeamMapWithAny(keys, env);
+        raw = await openTeamEnvelopeWithAny(keys, env);
     }
     catch {
         return { ok: false, reason: 'unopenable' };

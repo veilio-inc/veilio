@@ -3,7 +3,7 @@
 // server's `anonymize_file`, so the two give the same placeholders for the same
 // file (spec 030 FR-005, as amended by spec 050 T033-T036).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import {
   externalNames,
   type Language,
@@ -12,7 +12,12 @@ import {
   parseDeclarations,
   parseShellDeclarations,
   type ProjectShape,
+  projectShapeFrom,
 } from '@veilio-inc/engine'
+
+/** Per input, the names to keep; `tooLarge` when the project could not be
+ *  read whole, so none were kept (PROJECT_TOO_LARGE_NOTE). */
+export type ThirdParty = Map<object, Set<string>> & { tooLarge?: boolean }
 
 /** The names each input takes from a public package, to leave as written
  *  (spec 050 FR-006, FR-007). Declarations are read from every input first, so
@@ -29,8 +34,8 @@ export function thirdPartyNames(
    *  placeholder in both would drop a name (security review of ec0cb00). */
   known: Record<string, string>[],
   cwd: string
-): Map<object, Set<string>> {
-  const out = new Map<object, Set<string>>()
+): ThirdParty {
+  const out: ThirdParty = new Map<object, Set<string>>()
   // Each file by its OWN extension: --language overrides how a file is masked,
   // never whether scrub can read what it declares (security review of #149).
   const languageFor = (name: string | null): LanguageOption =>
@@ -60,6 +65,10 @@ export function thirdPartyNames(
     if (i.name && /\.(sh|bash|zsh|ps1)$/i.test(i.name))
       for (const name of parseShellDeclarations(i.text)) declared.add(name)
   const shape = projectShape(cwd, inputs)
+  if (!shape) {
+    out.tooLarge = true
+    return out
+  }
   for (const i of code) {
     const names = externalNames(i.text, languageFor(i.name) as Language, shape)
     // Nor a name the map already holds as code (a variable, function or class):
@@ -75,60 +84,46 @@ export function thirdPartyNames(
   return out
 }
 
-/** What the CLI can see of the project's shape from where it runs: the
- *  top-level directories, the package names in package.json files near the
- *  root, tsconfig path aliases and baseUrl, and the Python module names on the
- *  inputs' paths. */
-export function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape {
-  const dirs = (dir: string) => {
+/** Files the CLI lists at most to read the project's shape. Past it the
+ *  shape is unknown, and nothing is exempted (security review of R2-23). */
+const MAX_SHAPE_FILES = 20_000
+
+/** Said once when the project was too large to read its shape. */
+export const PROJECT_TOO_LARGE_NOTE =
+  'veilio: this project has more files than veilio reads to learn its shape, so it cannot tell its own packages from public ones; every imported name was masked.'
+
+/**
+ * The project's shape as the guard reads it (spec 085 R2-23): the files under
+ * `cwd` (no `node_modules`, no dot folders), breadth-first so the root's own
+ * manifests come first, through the engine's one reader. `inputs` add their
+ * own Python module names, as they always did. Null when the project has more
+ * files than are read: a manifest not reached would make the project's own
+ * package read as public, so the caller exempts nothing.
+ */
+export function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape | null {
+  const files: string[] = []
+  const queue: [string, string][] = [[cwd, '']]
+  for (let q = 0; q < queue.length; q++) {
+    const [dir, rel] = queue[q]!
+    let entries
     try {
-      return readdirSync(dir, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
-        .map((d) => d.name)
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch {
-      return []
+      continue
+    }
+    for (const d of entries) {
+      if (d.name.startsWith('.') || d.name === 'node_modules') continue
+      const path = rel ? `${rel}/${d.name}` : d.name
+      if (d.isDirectory()) queue.push([join(dir, d.name), path])
+      else if (d.isFile() && files.push(path) > MAX_SHAPE_FILES) return null
     }
   }
-  // A JSON file's top-level object, or undefined: what it holds is narrowed
-  // where it is read.
-  const json = (path: string): Record<string, unknown> | undefined => {
+  for (const i of inputs) if (i.name?.endsWith('.py')) files.push(i.name.split(sep).join('/'))
+  return projectShapeFrom(files, (rel) => {
     try {
-      const value: unknown = JSON.parse(
-        readFileSync(path, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '')
-          .replace(/,(\s*[}\]])/g, '$1')
-      )
-      return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+      return readFileSync(join(cwd, rel), 'utf8')
     } catch {
       return undefined
     }
-  }
-  const top = dirs(cwd)
-  const workspaces: string[] = []
-  for (const dir of [
-    '',
-    ...top,
-    ...top.flatMap((t) => dirs(join(cwd, t)).map((d) => `${t}/${d}`)),
-  ]) {
-    const name = json(join(cwd, dir, 'package.json'))?.name
-    if (typeof name === 'string') workspaces.push(name)
-  }
-  const options = json(join(cwd, 'tsconfig.json'))?.compilerOptions
-  const tsconfig =
-    options && typeof options === 'object'
-      ? (options as { baseUrl?: unknown; paths?: unknown })
-      : undefined
-  const baseDirs = new Set(top)
-  if (typeof tsconfig?.baseUrl === 'string')
-    for (const d of dirs(join(cwd, tsconfig.baseUrl))) baseDirs.add(d)
-  const paths = tsconfig?.paths
-  const pathAliases = Object.keys(paths && typeof paths === 'object' ? paths : {})
-    .map((k) => k.replace(/\*.*$/, ''))
-    .filter(Boolean)
-  const pythonModules = new Set(top)
-  for (const i of inputs)
-    if (i.name?.endsWith('.py'))
-      for (const part of i.name.replace(/\.py$/, '').split('/')) pythonModules.add(part)
-  return { baseDirs: [...baseDirs], workspaces, pathAliases, pythonModules: [...pythonModules] }
+  })
 }

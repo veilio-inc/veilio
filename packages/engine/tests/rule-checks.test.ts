@@ -7,6 +7,11 @@ import {
   REDACTION_PREFIX,
   REGULATED_BASES,
   ROLE_BASES,
+  encryptTeamMap,
+  importTeamKey,
+  openTeamRule,
+  sealTeamRule,
+  toBase64,
 } from '../src/index.js'
 
 // Spec 065: the server can no longer read a rule, so the checks it made on
@@ -102,5 +107,87 @@ describe('ruleRefusal', () => {
     expect(ruleRefusal({ ...replace, placeholder: '__FN__' })).toMatch(
       /reserved for the engine's own names/
     )
+  })
+})
+
+// Spec 085 part 3, R2-7 (security audit run-2), Q5 = A (founder, 2026-11-09):
+// a team whitelist is exact names only. One sealed `[A-Za-z_$][A-Za-z0-9_$]*`
+// kept every identifier readable for every member.
+describe('a team whitelist names the identifiers it keeps (R2-7)', () => {
+  const wl = (pattern: string) => ({
+    name: 'keep',
+    type: 'whitelist' as const,
+    pattern,
+    enabled: true,
+  })
+  const REFUSAL =
+    "A team whitelist must name the identifiers it keeps: `^Name$`, or `^(NameOne|NameTwo)$`. A pattern that matches names in general would send the whole team's names as written."
+
+  it.each([
+    '[A-Za-z_$][A-Za-z0-9_$]*',
+    '.*',
+    '^Pay.*$',
+    '^[A-Z]\\w*$',
+    'PaymentGateway',
+    '^PaymentGateway',
+    'PaymentGateway$',
+    '^(PaymentGateway|.*)$',
+    '^Payment|Gateway$',
+    '^Pay(ment)?Gateway$',
+    '^$',
+    '^()$',
+    '^Pay$Gateway$',
+  ])('refuses %s for a team', (pattern) => {
+    expect(ruleRefusal(wl(pattern), 'team')).toBe(REFUSAL)
+  })
+
+  it.each([
+    '^PaymentGateway$',
+    '^(PaymentGateway|ChargeCustomer)$',
+    '^ZahlungsTür$',
+    '^Πληρωμή$',
+    '^Payment\\.Gateway$',
+    '^payment_gateway_2$',
+    '^\\$scope$',
+  ])('accepts %s for a team', (pattern) => {
+    expect(ruleRefusal(wl(pattern), 'team')).toBeNull()
+  })
+
+  it('leaves personal whitelists and every replace rule as before', () => {
+    expect(ruleRefusal(wl('^Pay.*$'))).toBeNull()
+    expect(ruleRefusal(wl('^Pay.*$'), 'personal')).toBeNull()
+    expect(
+      ruleRefusal(
+        {
+          name: 'r',
+          type: 'replace',
+          pattern: '^Pay.*$',
+          placeholder: '__CODENAME__',
+          enabled: true,
+        },
+        'team'
+      )
+    ).toBeNull()
+  })
+
+  it('a sealed WideOpen team rule opens refused, and is never sealed', async () => {
+    const key = await importTeamKey(toBase64(new Uint8Array(32).fill(5)))
+    const bind = { id: 'rule-1', teamId: 'team-1' }
+    const env = await encryptTeamMap(key, {
+      kind: 'veilio-rule',
+      v: '1',
+      id: 'rule-1',
+      team: 'team-1',
+      name: 'WideOpen',
+      type: 'whitelist',
+      pattern: '[A-Za-z_$][A-Za-z0-9_$]*',
+      enabled: 'true',
+    })
+    expect(await openTeamRule([{ version: 1, key }], env, bind)).toEqual({
+      ok: false,
+      reason: 'refused',
+      detail: REFUSAL,
+    })
+    await expect(sealTeamRule(key, wl('.*'), bind)).rejects.toThrow(REFUSAL)
   })
 })

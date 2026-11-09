@@ -37,6 +37,9 @@ export interface CommentSyntax {
     notLineOpener?: readonly string[];
     /** Block delimiters count only at the start of a line: Ruby's `=begin`/`=end`. */
     blockAtLineStart?: true;
+    /** Heredocs (and Ruby's %-literals), read as strings so a `#` or `//` in one
+     *  opens no comment (spec 085 R2-11). */
+    heredoc?: 'ruby' | 'php';
 }
 export declare function commentSyntaxFor(language: Language): CommentSyntax;
 export interface LanguageGuess {

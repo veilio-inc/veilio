@@ -14,7 +14,10 @@
  * it the browser, which is half its audience.
  */
 
-import { isPlaceholder } from './engine.js'
+import { IDENTIFIER, MANUAL_BASE, REGULATED_BASES, isPlaceholder } from './engine.js'
+import { LOCAL_PREFIX, teamBaseOf } from './localFamily.js'
+import { REDACTION_PREFIX } from './product.js'
+import { isRegulatedValue, type SecretType } from './secrets.js'
 import type { SymbolMap } from './types.js'
 
 // ─── Key derivation ──────────────────────────────────────────────────────────
@@ -140,6 +143,62 @@ export class InvalidMapError extends Error {
 const MAX_ENTRIES = 50_000
 const MAX_VALUE_LENGTH = 10_000
 
+/** The longest real name a store keeps (the CLI's map and aliases.json). */
+const MAX_NAME = 100_000
+
+// C0 and C1 controls (line feed, tab, NEL, escape, ...) and the Unicode line
+// and paragraph separators. A map value is not always an identifier (a manual
+// mark can be words with spaces, spec 082 adds non-ASCII letters), so no exact
+// name pattern exists; a character that breaks a line or drives a terminal is
+// never part of a name.
+const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u
+
+/**
+ * What a map may restore: 1 to 100000 characters, none of them a control or
+ * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
+ * a team map opened with the team key, and the guard.
+ */
+export function isName(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v)
+}
+
+// Numbered, or bare (an older client's local base, a rule's own placeholder).
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)\d*$/
+
+/**
+ * Why `value` may not be restored for `placeholder`, or null (spec 085 R2-6,
+ * security review). A value is judged by its placeholder's kind, with the
+ * grammar the engine mints that kind from - an allow-list: a manual mark is
+ * text the author marked; a regulated kind is a value the scanner finds whole,
+ * checksum included; every identifier kind (class, function, variable,
+ * package, string word, a custom rule's base, the legacy `__P<n>__`) is an
+ * identifier as the engine extracts one. A kind with no reversible value (a
+ * redaction) is refused. Without this a teammate, or Cloud through a key it
+ * made, could restore `x); evil(` into a member's code.
+ */
+export function placeholderValueRefusal(placeholder: string, value: string): string | null {
+  if (!isPlaceholder(placeholder)) return `"${placeholder}" is not a Veilio placeholder.`
+  if (!isName(value))
+    return `"${placeholder}" maps to a value with a control character or line break.`
+  let base = NUMBERED.exec(placeholder)![1]!
+  if (base.startsWith(LOCAL_PREFIX)) {
+    const team = teamBaseOf(base)
+    if (team === null) return `"${placeholder}" is not a placeholder of a known kind.`
+    base = team
+  }
+  if (base.startsWith(REDACTION_PREFIX))
+    return `"${placeholder}" is a redaction, which is never restored.`
+  if (base === MANUAL_BASE)
+    return value.trim() !== '' && !isPlaceholder(value.trim()) ? null : notOfKind(placeholder)
+  const regulated = Object.entries(REGULATED_BASES).find(([, b]) => b === base)
+  if (regulated)
+    return isRegulatedValue(regulated[0] as SecretType, value) ? null : notOfKind(placeholder)
+  return IDENTIFIER.test(value) ? null : notOfKind(placeholder)
+}
+
+const notOfKind = (placeholder: string): string =>
+  `"${placeholder}" maps to a value its kind is never made from.`
+
 /**
  * A decrypted file is authenticated, not trusted.
  *
@@ -173,6 +232,8 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
         `"${key}" maps to ${value.length} characters; the limit is ${MAX_VALUE_LENGTH}.`
       )
     }
+    const why = placeholderValueRefusal(key, value)
+    if (why) throw new InvalidMapError(why)
     out[key] = value
   }
   return out

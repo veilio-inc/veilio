@@ -10,7 +10,7 @@ import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
 import { reservePlaceholders, CloudError, type PlaceholderReservation } from '../cloud.js'
 import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from '../hashed-bases.js'
 import type { Credential } from '../credential.js'
-import { loadMap } from '../store.js'
+import { StoreRefusal, loadMap } from '../store.js'
 import {
   CORE_BASES,
   basesNeedingBlocks,
@@ -57,7 +57,9 @@ export async function ensureBlocks(
   let held: ReservedFile | null
   try {
     held = loadReserved(mapPath)
-  } catch {
+  } catch (err) {
+    // A refused store is not malformed: never replaced (spec 085 R2-16).
+    if (err instanceof StoreRefusal) throw err
     held = null // malformed: replaced, never numbered from
   }
   // Blocks taken by another account, team or instance are not this member's,

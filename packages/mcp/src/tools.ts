@@ -77,7 +77,7 @@ function loadingNote(why: 'unlocked' | 'retrying' | 'changed'): string {
 }
 import { getRules, type ResolvedRules } from './rules.js'
 import { describeAge } from '@veilio-inc/cli/rules'
-import { thirdPartyNames } from '@veilio-inc/cli/third-party'
+import { PROJECT_TOO_LARGE_NOTE, thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { projectOverride, refusal, rulesSkippedSentences } from '@veilio-inc/cli/client'
 import {
@@ -379,18 +379,28 @@ function runAnonymize(
   // is the quiet fallback the variable exists to rule out.
   if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
   const { namespace, highest, conflicts } = resolved
-  // A file is masked in its extension's language unless one is asked for, and
-  // keeps the names it takes from a public package as written - the rule
-  // `veilio scrub <file>` follows, from the same module, so the two give the
-  // same placeholders for the same file (spec 030 FR-005, spec 050 T033-T036).
-  // Inline text has no file and no project: nothing is proven third-party.
+  // A file is masked in its extension's language - the model's `language`
+  // only for inline text or an extension Veilio does not know, since a
+  // language whose comments cover the file's code would return that code as
+  // written (spec 085 R2-12) - and keeps the names it takes from a public
+  // package as written - the rule `veilio scrub <file>` follows, from the same
+  // module, so the two give the same placeholders for the same file (spec 030
+  // FR-005, spec 050 T033-T036). Inline text has no file and no project:
+  // nothing is proven third-party.
   const asked = (str(args, 'language') ?? 'auto') as LanguageOption
-  const language: LanguageOption =
-    asked !== 'auto' || !file ? asked : (languageOfPath(file) ?? 'auto')
+  const ofFile = file ? languageOfPath(file) : undefined
+  const language: LanguageOption = ofFile ?? asked
+  const mismatch =
+    ofFile && asked !== 'auto' && asked !== ofFile
+      ? `WARNING: language \`${asked}\` does not match \`${file}\`; it was masked as \`${ofFile}\`, the language of its extension.`
+      : null
+  let tooLarge = false
   const keep = file
     ? (() => {
         const input = { name: file, text: source }
-        return thirdPartyNames([input], [localMap, namespace], ctx.cwd).get(input) ?? new Set()
+        const found = thirdPartyNames([input], [localMap, namespace], ctx.cwd)
+        tooLarge = found.tooLarge === true
+        return found.get(input) ?? new Set()
       })()
     : new Set<string>()
   const rules = getRules()
@@ -433,6 +443,8 @@ function runAnonymize(
   // to decide for itself; dropping them here would leave an agent believing the
   // output is clean when a name is sitting in a comment inside it.
   const caveats: string[] = []
+  if (mismatch) caveats.push(mismatch)
+  if (tooLarge) caveats.push(`WARNING: ${PROJECT_TOO_LARGE_NOTE.replace(/^veilio: /, '')}`)
   if (result.rulesStopped) caveats.push(`WARNING: ${RULES_STOPPED_NOTE}`)
   if (result.languageFallback) {
     caveats.push(
@@ -464,6 +476,7 @@ function runAnonymize(
     // Beside the source, on every result while it holds: rules the account set
     // were not applied, so the masking is less than its owner expects.
     ...rulesSkippedSentences(rules.skipped),
+    ...(rules.notices ?? []).map((n) => `WARNING: ${n.replace(/^veilio: /, '')}`),
     // Spec 066 R8: on every result while this checkout's last reservation is
     // refused, and whenever this call numbered names on this machine only.
     ...(numbering?.refused
@@ -581,7 +594,7 @@ export const TOOLS: ToolDefinition[] = [
       const resolved = getNamespace()
       if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
       const team =
-        resolved.source === 'team' && resolved.conflictDetection
+        resolved.source === 'team'
           ? {
               namespace: resolved.namespace,
               aliases: resolved.aliases,

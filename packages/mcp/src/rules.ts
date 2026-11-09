@@ -9,7 +9,13 @@
 
 import { readCredential } from '@veilio-inc/cli/credential'
 import { CloudError, listRules } from '@veilio-inc/cli/cloud'
-import { mergeRules, readRules, removeRules, writeRules } from '@veilio-inc/cli/rules'
+import {
+  mergeRules,
+  newTeamWhitelists,
+  readRules,
+  removeRules,
+  writeRules,
+} from '@veilio-inc/cli/rules'
 import { openFetchedRules } from '@veilio-inc/cli/rules-open'
 import { NO_RULES_SKIPPED, type RulesSkipped } from '@veilio-inc/cli/client'
 import type { CustomRule } from '@veilio-inc/engine'
@@ -23,6 +29,9 @@ export interface ResolvedRules {
   /** Served but not applied, by cause (spec 065): a locked vault or team key,
    *  or a rule that would not open or must not be applied. */
   skipped: RulesSkipped
+  /** Team whitelists new to this member, told once (spec 085 R2-7): on every
+   *  result of the session that first saw them. */
+  notices?: string[]
 }
 
 const NONE: ResolvedRules = { source: 'none', rules: [], skipped: NO_RULES_SKIPPED }
@@ -40,6 +49,7 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
     // this server has no passphrase to ask for.
     const { personal, team, skipped } = await openFetchedRules(fetched, credential, home)
     const rules = mergeRules(personal, team)
+    const told = newTeamWhitelists(rules, home)
     // Refresh the CLI's cache too, so `veilio scrub` on this machine agrees
     // with the agent. A failed write costs nothing here.
     try {
@@ -50,13 +60,14 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
           pulledAt: new Date().toISOString(),
           rules,
           skipped,
+          shownWhitelists: told.shown,
         },
         home
       )
     } catch {
       // ignore
     }
-    return { source: 'cloud', rules, skipped }
+    return { source: 'cloud', rules, skipped, notices: told.notices }
   } catch (err) {
     // The plan no longer includes rules: stop applying the old ones, here and
     // in the CLI, rather than letting a stale whitelist keep names readable.
@@ -78,7 +89,7 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
 }
 
 function rulesSkippedAny(s: RulesSkipped): boolean {
-  return s.vaultLocked + s.teamLocked + s.unopenable + s.refused > 0
+  return s.vaultLocked + s.teamLocked + s.unopenable + s.refused + s.teamUnconfirmed > 0
 }
 
 /** Resolve once per process; concurrent callers share the one request. */

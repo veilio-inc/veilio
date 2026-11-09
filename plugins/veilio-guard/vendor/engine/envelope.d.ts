@@ -74,6 +74,24 @@ export declare class InvalidMapError extends Error {
     constructor(message: string);
 }
 /**
+ * What a map may restore: 1 to 100000 characters, none of them a control or
+ * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
+ * a team map opened with the team key, and the guard.
+ */
+export declare function isName(v: unknown): v is string;
+/**
+ * Why `value` may not be restored for `placeholder`, or null (spec 085 R2-6,
+ * security review). A value is judged by its placeholder's kind, with the
+ * grammar the engine mints that kind from - an allow-list: a manual mark is
+ * text the author marked; a regulated kind is a value the scanner finds whole,
+ * checksum included; every identifier kind (class, function, variable,
+ * package, string word, a custom rule's base, the legacy `__P<n>__`) is an
+ * identifier as the engine extracts one. A kind with no reversible value (a
+ * redaction) is refused. Without this a teammate, or Cloud through a key it
+ * made, could restore `x); evil(` into a member's code.
+ */
+export declare function placeholderValueRefusal(placeholder: string, value: string): string | null;
+/**
  * A decrypted file is authenticated, not trusted.
  *
  * Authentication proves the author knew the passphrase. Where maps move between

@@ -3,9 +3,11 @@
 // The CLI and the MCP server spawn no process (offline.test.ts, MCP
 // purity.test.ts), and running git in a cloned repository would run that
 // repository's own config (core.fsmonitor and the like). So the store asks
-// the index directly. Anything this reader does not fully understand - no
-// .git, no index, an unknown version, a split index, a short or odd file - is
-// `null`: unknown, which the store treats as "not tracked", as it did before.
+// the index directly. No .git at all is `null`: unknown, which the store
+// treats as "not tracked". A .git whose index this reader does not fully
+// understand - an unknown version, a split or sparse index, a short or odd
+// file - is `unreadable` (spec 085 R2-2), which the store refuses: git there
+// may well track the map.
 
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -16,26 +18,51 @@ export interface Tracked {
   paths: Set<string>
 }
 
+/** Why an index found was not read. */
+export type IndexUnreadable = 'split' | 'sparse' | 'format'
+
+/** A checkout was found, but its index could not be read. */
+export interface Unreadable {
+  root: string
+  unreadable: IndexUnreadable
+}
+
 /** Each index file as last parsed, while its inode, mtime, ctime, size and
  *  trailing checksum are unchanged: one parse per process, not per read. */
-const parsed = new Map<string, { stamp: string; paths: Set<string> | null }>()
+const parsed = new Map<string, { stamp: string; paths: Set<string> | IndexUnreadable }>()
 
-/** The git checkout holding `from`, and what its index lists; null when unknown. */
-export function trackedPaths(from: string): Tracked | null {
+/** The git checkout holding `from`, and what its index lists; null when there is no checkout. */
+export function trackedPaths(from: string): Tracked | Unreadable | null {
+  let found: ReturnType<typeof findGitDir>
   try {
-    const found = findGitDir(resolve(from))
-    if (!found) return null
+    found = findGitDir(resolve(from))
+  } catch {
+    // A .git that could not be read is a checkout this reader cannot follow.
+    return { root: resolve(from), unreadable: 'format' }
+  }
+  if (!found) return null
+  if ('unreadable' in found) return found
+  const { root } = found
+  try {
     const index = join(found.gitDir, 'index')
-    const st = statSync(index)
+    let st
+    try {
+      st = statSync(index)
+    } catch (err) {
+      // A repository with nothing added yet has no index: nothing is tracked.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { root, paths: new Set() }
+      throw err
+    }
     const stamp = `${st.ino}:${st.mtimeMs}:${st.ctimeMs}:${st.size}:${trailer(index, st.size)}`
     let hit = parsed.get(index)
     if (hit?.stamp !== stamp) {
       hit = { stamp, paths: readIndex(readFileSync(index), hashSize(found)) }
       parsed.set(index, hit)
     }
-    return hit.paths && { root: found.root, paths: hit.paths }
+    const paths = hit.paths
+    return typeof paths === 'string' ? { root, unreadable: paths } : { root, paths }
   } catch {
-    return null
+    return { root, unreadable: 'format' }
   }
 }
 
@@ -52,7 +79,9 @@ function trailer(path: string, size: number): string {
   }
 }
 
-function findGitDir(start: string): { root: string; gitDir: string; commonDir: string } | null {
+function findGitDir(
+  start: string
+): { root: string; gitDir: string; commonDir: string } | Unreadable | null {
   for (let dir = start; ; dir = dirname(dir)) {
     const dotGit = join(dir, '.git')
     const st = statOrNull(dotGit)
@@ -60,7 +89,7 @@ function findGitDir(start: string): { root: string; gitDir: string; commonDir: s
     if (st?.isFile()) {
       // A worktree or submodule: `gitdir: <path>`, and the shared config in its commondir.
       const m = /^gitdir: *(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'))
-      if (!m) return null
+      if (!m) return { root: dir, unreadable: 'format' as const }
       const gitDir = isAbsolute(m[1]!) ? m[1]! : resolve(dir, m[1]!)
       let commonDir = gitDir
       try {
@@ -93,8 +122,13 @@ function hashSize(found: { commonDir: string }): number {
   }
 }
 
-/** Index versions 2, 3 and 4 (git's index-format.txt). Null on anything else. */
-function readIndex(buf: Buffer, hash: number): Set<string> | null {
+/** Index versions 2, 3 and 4 (git's index-format.txt). Why not, on anything else. */
+function readIndex(buf: Buffer, hash: number): Set<string> | IndexUnreadable {
+  const paths = readEntries(buf, hash)
+  return paths === null ? 'format' : paths
+}
+
+function readEntries(buf: Buffer, hash: number): Set<string> | 'split' | 'sparse' | null {
   if (buf.length < 12 + hash || buf.toString('latin1', 0, 4) !== 'DIRC') return null
   const version = buf.readUInt32BE(4)
   if (version < 2 || version > 4) return null
@@ -140,13 +174,15 @@ function readIndex(buf: Buffer, hash: number): Set<string> | null {
     previous = name
     paths.add(name.toString('utf8').toLowerCase())
   }
-  // Extensions: a split index ("link") keeps entries in another file, so this
-  // list would be partial. Anything malformed here is unknown too.
+  // Extensions: a split index ("link") keeps entries in another file, and a
+  // sparse index ("sdir") folds whole directories into one entry, so this list
+  // would be partial. Anything malformed here is unreadable too.
   while (at < end) {
     if (at + 8 > end) return null
     const sig = buf.toString('latin1', at, at + 4)
     const size = buf.readUInt32BE(at + 4)
-    if (sig === 'link' || sig === 'sdir') return null
+    if (sig === 'link') return 'split'
+    if (sig === 'sdir') return 'sparse'
     at += 8 + size
   }
   return at === end ? paths : null

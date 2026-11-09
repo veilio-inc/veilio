@@ -66,17 +66,34 @@ export async function openFetchedRules(
   }
 
   const team: CustomRule[] = []
-  const keysByTeam = new Map<string, { version: number; key: CryptoKeyLike }[]>()
+  type Keys = { version: number; key: CryptoKeyLike }[]
+  const keysByTeam = new Map<string, { all: Keys; confirmed: Keys }>()
   for (const row of fetched.teamRules ?? []) {
     const teamId = row.team_id ?? ''
     if (!keysByTeam.has(teamId))
-      keysByTeam.set(teamId, teamId ? await heldTeamKeys(credential, home, teamId) : [])
-    const keys = keysByTeam.get(teamId) ?? []
-    if (keys.length === 0) {
+      keysByTeam.set(
+        teamId,
+        teamId
+          ? {
+              all: await heldTeamKeys(credential, home, teamId),
+              confirmed: await heldTeamKeys(credential, home, teamId, { writableOnly: true }),
+            }
+          : { all: [], confirmed: [] }
+      )
+    const keys = keysByTeam.get(teamId)!
+    if (keys.all.length === 0) {
       skipped.teamLocked++
       continue
     }
-    const rule = toRule(row, await openTeam(keys, row), 'team')
+    // Spec 085 R2-8: a rule changes masking, so only a key whose sender this
+    // member confirmed may author one. One that opens only under another key
+    // is held back and counted; the rest is judged as before.
+    const opened = keys.confirmed.length ? await openTeam(keys.confirmed, row) : UNOPENABLE
+    if (!opened.ok && opened.reason === 'unopenable' && (await openTeam(keys.all, row)).ok) {
+      skipped.teamUnconfirmed++
+      continue
+    }
+    const rule = toRule(row, opened, 'team')
     if (rule) team.push(rule)
   }
   return { personal, team, skipped }

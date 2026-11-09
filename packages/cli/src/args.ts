@@ -83,6 +83,8 @@ export interface ParsedArgs {
    * one word for two opposite directions is how somebody loses the wrong copy.
    */
   allowDrop: boolean
+  /** `maps adopt --yes`: no question (spec 085 R2-3). */
+  yes: boolean
 
   /**
    * `team unlock` / `team lock`.
@@ -210,6 +212,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     instance: null,
     mapsAction: null,
     allowDrop: false,
+    yes: false,
     teamAction: null,
     vaultAction: null,
     keysAction: null,
@@ -386,6 +389,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         break
       case '--allow-drop':
         parsed.allowDrop = true
+        break
+      case '--yes':
+        parsed.yes = true
         break
       case '--instance': {
         const value = requireValue(arg, argv[++i])

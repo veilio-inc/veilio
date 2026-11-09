@@ -155,3 +155,177 @@ describe('code that only looks like a comment opener is masked as code (L7)', ()
     expect(rb).not.toMatch(/class PaymentGateway/)
   })
 })
+
+// Spec 085 part 3, R2-11 (security audit run-2): the L7 regex rule read `)`
+// before `/` as a division, and Ruby and PHP literals the tokenizer did not
+// model (regex, heredoc, %-literal, interpolation) let a `#`, `//` or `/*`
+// inside them open a comment, so the code after it went out unmasked.
+describe('code inside a literal is not read as a comment (R2-11)', () => {
+  const masked = (code: string, language?: 'typescript' | 'ruby' | 'php') =>
+    anonymize(code, language ? { language } : {}).anonymized
+  const after = (text: string, line: number) => text.split('\n').slice(line).join('\n')
+
+  for (const language of ['typescript', undefined] as const)
+    it(`a regex after \`)\` holding \`/*\` is code (${language ?? 'detected'})`, () => {
+      const out = masked(
+        'class PaymentGateway {}\nif (ok(p)) /\\/*$/.test(p)\nconst secretTotal = PaymentGateway.charge()\n',
+        language
+      )
+      expect(out).not.toContain('PaymentGateway')
+      expect(out).not.toContain('secretTotal')
+    })
+
+  it('Ruby: interpolation in a heredoc and in a regex is code', () => {
+    const out = masked(
+      'class PaymentGateway; end\nsql = <<~SQL\n  WHERE id = #{PaymentGateway.account_id}\nSQL\nx =~ /\\A#{PaymentGateway::PREFIX}/\n',
+      'ruby'
+    )
+    expect(after(out, 1)).not.toContain('PaymentGateway')
+  })
+
+  it('Ruby: a `#` inside a heredoc, a %-literal or a regex opens no comment', () => {
+    const out = masked(
+      'class PaymentGateway; end\ntext = <<-EOS\n  # PaymentGateway.charge\nEOS\nlist = %w(a #PaymentGateway)\nre = %r{#PaymentGateway}\nm = x =~ /a#PaymentGateway/\n',
+      'ruby'
+    )
+    expect(after(out, 1)).not.toContain('PaymentGateway')
+  })
+
+  it('PHP: a `#` inside a heredoc or a nowdoc opens no comment', () => {
+    const out = masked(
+      "<?php\nclass PaymentGateway {}\n$q = <<<EOT\n# PaymentGateway::find($id)\nEOT;\n$r = <<<'EOT'\n# PaymentGateway::raw\nEOT;\n",
+      'php'
+    )
+    expect(after(out, 2)).not.toContain('PaymentGateway')
+  })
+
+  it('unchanged: real comments, a division, Ruby and PHP comments', () => {
+    const cases: [string, string | undefined, string][] = [
+      ['const r = a / b // note PaymentNote\n', 'typescript', '// note PaymentNote'],
+      ['const r = f(x) / 2 // note PaymentNote\n', 'typescript', '// note PaymentNote'],
+      ['x = 1 # note PaymentNote\n', 'ruby', '# note PaymentNote'],
+      ['<?php\n$x = 1; # note PaymentNote\n', 'php', '# note PaymentNote'],
+      ['<?php\n$x = 1 << 2; // note PaymentNote\n', 'php', '// note PaymentNote'],
+      ['x = y << 2 # note PaymentNote\n', 'ruby', '# note PaymentNote'],
+    ]
+    for (const [code, language, kept] of cases)
+      expect(masked(code, language as 'typescript'), code).toContain(kept)
+  })
+})
+
+describe('heredoc and %-literal reading stays linear (R2-11)', () => {
+  it('many openers with no terminator or close do not make masking quadratic', () => {
+    const time = (n: number, line: (k: number) => string, language: 'ruby' | 'php') => {
+      const code = Array.from({ length: n }, (_, k) => line(k)).join('\n')
+      const t = performance.now()
+      anonymize(code, { language })
+      return performance.now() - t
+    }
+    for (const [line, language] of [
+      [(k: number) => `x${k} = <<~ID${k % 50}`, 'ruby'],
+      [(k: number) => `x${k} = %w(open${k}`, 'ruby'],
+      [(k: number) => `$x${k} = <<<ID${k % 50}`, 'php'],
+    ] as const) {
+      const small = time(2000, line, language)
+      const large = time(8000, line, language)
+      expect(large / Math.max(small, 25)).toBeLessThan(10)
+    }
+  })
+})
+
+describe('the regex retry after `)` stays linear (R2-11)', () => {
+  it('many `)/[` with no close on the line do not make masking quadratic', () => {
+    const time = (n: number) => {
+      const code = `const x = ${'(a)/['.repeat(n)}\n`
+      const t = performance.now()
+      anonymize(code, { language: 'typescript' })
+      return performance.now() - t
+    }
+    const small = time(4000)
+    const large = time(16000)
+    expect(large / Math.max(small, 25)).toBeLessThan(10)
+  })
+})
+
+// Review of R2-11: the retry after a division read a Ruby comment holding `/`
+// as a regex, and `%=` opened a %-literal that ran to the next `=`.
+describe('Ruby comments and operators read as before (R2-11 review)', () => {
+  it('a comment after a division keeps its words', () => {
+    const out = anonymize('total = a / b # see https://example.invalid and/or PaymentNote\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).toContain('# see https://example.invalid and/or PaymentNote')
+  })
+
+  it('`%=` is an operator, and a later `#` in a string opens no comment', () => {
+    const out = anonymize('i %= n\nputs "a=b #PaymentGateway"\nclass PaymentGateway; end\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).not.toContain('PaymentGateway')
+  })
+
+  it('`% ` with a space is an operator', () => {
+    const out = anonymize('x = y % z\nclass PaymentGateway; end # note\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).not.toContain('PaymentGateway')
+    expect(out).toContain('# note')
+  })
+})
+
+// Security review of R2-11: a bare `%` takes any non-word, non-space
+// delimiter in Ruby (`%|..|`, `%!..!`), not only a bracket.
+describe('Ruby %-literals with any delimiter (R2-11 security review)', () => {
+  for (const [open, close] of [
+    ['|', '|'],
+    ['!', '!'],
+    ['^', '^'],
+  ])
+    it(`\`%${open}..#Name..${close}\` is a string, not a comment`, () => {
+      const out = anonymize(
+        `class PaymentGateway; end\ntext = %${open}see #PaymentGateway here${close}\n`,
+        { language: 'ruby' }
+      ).anonymized
+      expect(out).not.toContain('PaymentGateway')
+    })
+
+  it('`x % y` and `x %= 2` stay operators', () => {
+    const out = anonymize('x = y % z # note one\nx %= 2 # note two\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).toContain('# note one')
+    expect(out).toContain('# note two')
+  })
+})
+
+// Security review rounds 2 and 3 of R2-11: a bare `%` opens a literal where
+// Ruby's lexer does - at an expression start with any symbol delimiter, and
+// after an identifier and a space when the delimiter is not followed by a
+// space (Ruby's ambiguous first argument, leaning toward masking). After an
+// operand with no space, or `% ` and `%= `, it is modulo.
+describe('Ruby % as an operator or a literal, as the lexer reads it (R2-11 review 2, 3)', () => {
+  const ruby = (code: string) => anonymize(code, { language: 'ruby' }).anonymized
+
+  it.each([
+    'x = y % z # note kept\nw = 1 % 2\n',
+    'x %= 2 # note kept\ny = 1 %= 2\n',
+    'r = a%|b # note kept\nq = c | d\n',
+    'r = f(a) %|b # note kept\nq = c | d\n',
+    'r = a %| b # note kept\nq = c | d\n',
+    'x %=2 # note kept\nw = 3\n',
+  ])('operator: %j', (code) => {
+    expect(ruby(code)).toContain('# note kept')
+  })
+
+  it.each([
+    'class PaymentGateway; end\nputs %|see #PaymentGateway|\n',
+    'class PaymentGateway; end\nx = %!see #PaymentGateway!\n',
+    'class PaymentGateway; end\nlist = [%^see #PaymentGateway^]\n',
+    'class PaymentGateway; end\n%/see #PaymentGateway/\n',
+    'class PaymentGateway; end\nx %-see #PaymentGateway-\n',
+    'class PaymentGateway; end\nw = %-see #PaymentGateway-\n',
+    'class PaymentGateway; end\nlog %|b #PaymentGateway|\n',
+  ])('literal: %j', (code) => {
+    expect(ruby(code)).not.toContain('PaymentGateway')
+  })
+})

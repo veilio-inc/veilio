@@ -50,20 +50,32 @@ runs:
         PATHS: ${{ inputs.paths }}
       run: |
         set -euo pipefail
-        if [ -n "$PATHS" ]; then
+        # Blank or only whitespace is no paths: the diff is scanned (review).
+        if [ -n "${PATHS//[[:space:]]/}" ]; then
           echo "mode=paths" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         # Diff-scoped by default. A repo adopting this mid-life almost always
         # has some historical finding somewhere; blocking every PR on that is
         # how a security check gets disabled in week one.
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.event.pull_request.head.sha }}"
-        else
-          base="${{ github.event.before }}"
-          head="${{ github.sha }}"
-        fi
+        # An allow-list of events (spec 085 R2-20): under pull_request_target
+        # github.sha is the base branch's tip, so reading every other event as
+        # a push scanned the wrong commits and passed.
+        event="${{ github.event_name }}"
+        case "$event" in
+          pull_request|pull_request_target)
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+            ;;
+          push)
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+            ;;
+          *)
+            echo "veilio action: the \`$event\` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Use \`mode: paths\` to scan named files on other events." >&2
+            exit 1
+            ;;
+        esac
         # Each changed file is scanned under its own name, as the pre-commit
         # hook does (spec 085): a diff on stdin has no file names, so the .env,
         # YAML and shell rules could not apply, and a `-diff` attribute hid a
@@ -102,11 +114,20 @@ runs:
         # files or globs, and word-splitting plus globbing is the behaviour
         # callers ask for. Bash does not re-run command substitution on the
         # result of an expansion, so this splits and globs without executing.
-        # No `--` separator: the CLI's parser rejects it as an unknown flag, and
-        # it also rejects any bare argument starting with `-`, so there is
-        # nothing for a separator to protect against.
+        # No `--` separator: the CLI's parser rejects it as an unknown flag.
+        # A glob can still yield a word starting with `-` (a committed file
+        # named `-h` turned the scan into help, exit 0): every word that is not
+        # already a path from `/` or `./` is passed as `./<word>` (spec 085
+        # R2-21), so each one is read as a file.
         if [ "$MODE" = "paths" ]; then
-          npx --yes "@veilio-inc/cli@$VERSION" scan $PATHS $args --json > /tmp/veilio.json 2> /tmp/veilio.log
+          files=()
+          for word in $PATHS; do
+            case "$word" in
+              /*|./*) files+=("$word") ;;
+              *) files+=("./$word") ;;
+            esac
+          done
+          npx --yes "@veilio-inc/cli@$VERSION" scan "${files[@]}" $args --json > /tmp/veilio.json 2> /tmp/veilio.log
         else
           npx --yes "@veilio-inc/cli@$VERSION" scan $args --json --blobs /tmp/veilio-listing.txt < /tmp/veilio-blobs.bin > /tmp/veilio.json 2> /tmp/veilio.log
         fi

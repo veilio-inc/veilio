@@ -18,7 +18,10 @@ const HOSTILE = Array.from({ length: 20 }, (_, i): CustomRule => ({
   team_id: 't1',
   sort_order: i,
   name: `h${i}`,
-  type: 'whitelist',
+  // A replace rule: a team whitelist must name exact identifiers (spec 085
+  // R2-7), and the budget holds for whatever pattern a rule may carry.
+  type: 'replace',
+  placeholder: '__HOSTILE__',
   pattern: `(\\w?\\w?){50}#|x${i}`,
   enabled: true,
 }))

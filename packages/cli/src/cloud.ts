@@ -276,15 +276,6 @@ export interface CloudMapSummary {
 export interface CloudMapList {
   personalMaps: CloudMapSummary[]
   teamMaps: CloudMapSummary[]
-  /** Placeholder -> identifier, merged across the team's maps.
-   *
-   *  **No current Cloud release sends this.** It was dropped when the merge
-   *  moved to the clients: producing it server-side meant decrypting every team
-   *  map, which was the only reason the server held a key that could read them.
-   *  Kept in the type because an older self-hosted Cloud may still send it, and
-   *  reading it costs nothing; `undefined` is the expected answer and the
-   *  client-side merge is the path that runs (spec 010). */
-  teamNamespace?: Record<string, string> | null
   /** The active team, when the account has one. Needed to ask for that team's
    *  key wraps. */
   team: {

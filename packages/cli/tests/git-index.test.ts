@@ -11,7 +11,14 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { trackedPaths } from '../src/git-index.js'
+import { trackedPaths, type Tracked } from '../src/git-index.js'
+
+/** A listing, or the test fails: the index was read. */
+const listed = (from: string): Tracked => {
+  const t = trackedPaths(from)
+  if (!t || !('paths' in t)) throw new Error(`no listing for ${from}: ${JSON.stringify(t)}`)
+  return t
+}
 
 // Spec 085 R1: the CLI and the MCP server may not spawn git (offline.test.ts,
 // MCP purity.test.ts), so the store reads the index file itself. The tests may
@@ -55,7 +62,7 @@ describe('the git index, read without git', () => {
     const dir = repo(['src/a.ts', '.veilio/Map.json'])
     git(dir, 'update-index', '--index-version', '2')
     expect(indexVersion(dir)).toBe(2)
-    const t = trackedPaths(dir)!
+    const t = listed(dir)
     expect(t.root).toBe(dir)
     expect([...t.paths].sort()).toEqual(['.veilio/map.json', 'src/a.ts'])
   })
@@ -69,14 +76,14 @@ describe('the git index, read without git', () => {
     writeFileSync(join(dir, '.veilio', 'map.json'), '{}')
     git(dir, 'add', '.veilio/map.json')
     expect(indexVersion(dir)).toBe(3)
-    expect([...trackedPaths(dir)!.paths].sort()).toEqual(['.veilio/map.json', 'b.ts', 'src/a.ts'])
+    expect([...listed(dir).paths].sort()).toEqual(['.veilio/map.json', 'b.ts', 'src/a.ts'])
   })
 
   it('reads a version 4 index, whose paths are prefix-compressed', () => {
     const dir = repo(['.veilio/aliases.json', '.veilio/map.json', 'src/a.ts', 'src/ab.ts'])
     git(dir, 'update-index', '--index-version', '4')
     expect(indexVersion(dir)).toBe(4)
-    expect([...trackedPaths(dir)!.paths].sort()).toEqual([
+    expect([...listed(dir).paths].sort()).toEqual([
       '.veilio/aliases.json',
       '.veilio/map.json',
       'src/a.ts',
@@ -86,7 +93,7 @@ describe('the git index, read without git', () => {
 
   it('finds the index from a subdirectory', () => {
     const dir = repo(['src/deep/a.ts'])
-    const t = trackedPaths(join(dir, 'src', 'deep'))!
+    const t = listed(join(dir, 'src', 'deep'))
     expect(t.root).toBe(dir)
     expect(t.paths.has('src/deep/a.ts')).toBe(true)
   })
@@ -99,26 +106,48 @@ describe('the git index, read without git', () => {
     mkdirSync(join(wt, '.veilio'))
     writeFileSync(join(wt, '.veilio', 'map.json'), '{}')
     git(wt, 'add', '.veilio/map.json')
-    expect(trackedPaths(wt)!.paths.has('.veilio/map.json')).toBe(true)
-    expect(trackedPaths(dir)!.paths.has('.veilio/map.json')).toBe(false)
+    expect(listed(wt).paths.has('.veilio/map.json')).toBe(true)
+    expect(listed(dir).paths.has('.veilio/map.json')).toBe(false)
   })
 
-  it('answers unknown (null) for a split index', () => {
+  // Spec 085 R2-2: a checkout found but not read is not "no checkout".
+  it('answers unreadable for a split index', () => {
     const dir = repo(['src/a.ts', '.veilio/map.json'])
     git(dir, 'update-index', '--split-index')
-    expect(trackedPaths(dir)).toBeNull()
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'split' })
   })
 
-  it('answers unknown (null) for a truncated index', () => {
+  it('answers unreadable for a sparse index', () => {
+    const dir = repo(['src/a.ts', '.veilio/map.json'])
+    git(dir, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'one')
+    git(dir, 'sparse-checkout', 'init', '--cone', '--sparse-index')
+    git(dir, 'sparse-checkout', 'set', '.veilio')
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'sparse' })
+  })
+
+  it('answers no paths for a repository with no index yet', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'veilio-gix-empty-'))
+    git(dir, 'init', '-q')
+    expect(trackedPaths(dir)).toEqual({ root: dir, paths: new Set() })
+  })
+
+  it('answers unreadable for a truncated index', () => {
     const dir = repo(['src/a.ts', '.veilio/map.json'])
     truncateSync(join(dir, '.git', 'index'), 40)
-    expect(trackedPaths(dir)).toBeNull()
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'format' })
   })
 
-  it('answers unknown (null) for a file that is not an index', () => {
+  it('answers unreadable for a file that is not an index', () => {
     const dir = repo(['src/a.ts'])
     writeFileSync(join(dir, '.git', 'index'), 'not an index at all, just text')
-    expect(trackedPaths(dir)).toBeNull()
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'format' })
+  })
+
+  // Review of R2-2: a .git file that names no gitdir is a checkout not read.
+  it('answers unreadable for a .git file with no gitdir line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'veilio-gix-badfile-'))
+    writeFileSync(join(dir, '.git'), 'not a gitdir line\n')
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'format' })
   })
 
   it('answers null outside a git checkout', () => {
@@ -127,7 +156,7 @@ describe('the git index, read without git', () => {
 
   it('an empty repository lists nothing, which is not unknown', () => {
     const dir = repo([])
-    expect(trackedPaths(dir)?.paths.size ?? 0).toBe(0)
+    expect(listed(dir).paths.size).toBe(0)
   })
 
   it('reads 2000 entries, the store last', () => {
@@ -135,7 +164,7 @@ describe('the git index, read without git', () => {
     const dir = repo([...files, 'zz/.veilio/map.json'])
     for (const v of ['2', '4']) {
       git(dir, 'update-index', '--index-version', v)
-      const t = trackedPaths(dir)!
+      const t = listed(dir)
       expect(t.paths.size).toBe(2000)
       expect(t.paths.has('zz/.veilio/map.json')).toBe(true)
     }
@@ -155,11 +184,11 @@ describe('the parsed index is not reused for a different index', () => {
     const target = join(a, '.git', 'index')
     const second = 1_700_000_000 // a whole second, so it can be set again exactly
     utimesSync(target, second, second)
-    expect(trackedPaths(a)!.paths.has('.veilio/map.json')).toBe(true)
+    expect(listed(a).paths.has('.veilio/map.json')).toBe(true)
     writeFileSync(target, indexB) // same inode, same size
     utimesSync(target, second, second) // same mtime
     expect(statSync(target).mtimeMs).toBe(second * 1000)
-    expect(trackedPaths(a)!.paths.has('.veilio/map.json')).toBe(false)
-    expect(trackedPaths(a)!.paths.has('.veilio/map.jsox')).toBe(true)
+    expect(listed(a).paths.has('.veilio/map.json')).toBe(false)
+    expect(listed(a).paths.has('.veilio/map.jsox')).toBe(true)
   })
 })
