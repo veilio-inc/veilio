@@ -272,3 +272,28 @@ describe('Ruby comments and operators read as before (R2-11 review)', () => {
     expect(out).toContain('# note')
   })
 })
+
+// Security review of R2-11: a bare `%` takes any non-word, non-space
+// delimiter in Ruby (`%|..|`, `%!..!`), not only a bracket.
+describe('Ruby %-literals with any delimiter (R2-11 security review)', () => {
+  for (const [open, close] of [
+    ['|', '|'],
+    ['!', '!'],
+    ['^', '^'],
+  ])
+    it(`\`%${open}..#Name..${close}\` is a string, not a comment`, () => {
+      const out = anonymize(
+        `class PaymentGateway; end\ntext = %${open}see #PaymentGateway here${close}\n`,
+        { language: 'ruby' }
+      ).anonymized
+      expect(out).not.toContain('PaymentGateway')
+    })
+
+  it('`x % y` and `x %= 2` stay operators', () => {
+    const out = anonymize('x = y % z # note one\nx %= 2 # note two\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).toContain('# note one')
+    expect(out).toContain('# note two')
+  })
+})

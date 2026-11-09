@@ -333,9 +333,10 @@ function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: Litera
     return end
   }
   if (kind === 'ruby' && code[at] === '%') {
-    // A letter form (`%w(`, `%q[`) with any delimiter, or a bare `%` with a
-    // bracket; never `%=` or `% `, which are operators (review).
-    const m = /%(?:[qQwWiIrsx][^\w\s=]|[([{<])/y
+    // A letter form (`%w(`, `%q[`) or a bare `%` with any non-word, non-space
+    // delimiter (`%|..|`, `%!..!`, `%(..)`); never `%=` or `% `, which are
+    // operators, nor a `%` after an operand (checked below) (security review).
+    const m = /%(?:[qQwWiIrsx][^\w\s]|[^\w\s=])/y
     m.lastIndex = at
     const opened = m.exec(code)?.[0]
     if (opened === undefined || /[\w)\]]/.test(code[at - 1] ?? '')) return -1
