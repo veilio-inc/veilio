@@ -15,6 +15,14 @@ import {
 import { bandText, MODEL_NOTE, statusText, stillStopped } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
+  attachedNotice,
+  LOCAL_COMMANDS,
+  maskedNames,
+  unknownFieldRefusal,
+  unknownTextField,
+  unseenPromptRefusal,
+} from '../lib/prompt-fields.ts'
+import {
   commandRows,
   configDirOf,
   ListingCache,
@@ -55,6 +63,8 @@ const offers = new Map<string, AgentOfferInput>()
 let pinned: PublicMarketplace[] = []
 let ignored: string[] = []
 let saidIgnored = false
+// Spec 083 (strings.md #5): attachments are named once a session.
+let saidAttached = false
 // Spec 078 (bench only): when VEILIO_GUARD_TIMING names a file, the guard's
 // time per afterTool call is written there, one `after\t<ms>` line each. Read
 // once; unset, nothing is kept or written.
@@ -242,6 +252,7 @@ export function register(on: On, options: Options = {}) {
     Array.isArray(options.publicMarketplaces) ? options.publicMarketplaces : []
   ))
   saidIgnored = false
+  saidAttached = false
 
   on('session.start', async ($, e, next) => {
     const g = await ready($)
@@ -306,6 +317,9 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { drop: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+    // Spec 083: a field the guard does not know, holding text, is not sent.
+    const unknown = unknownTextField(e)
+    if (unknown !== undefined) return { drop: unknownFieldRefusal(unknown) }
     // What you type is masked with every name the index knows: give it the
     // budget to reach a few more files first (spec 050).
     const state = g.index?.state
@@ -320,10 +334,25 @@ export function register(on: On, options: Options = {}) {
     const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     await g.learnRuleNames([e.text, ...given], budget)
-    const text = g.applyText(e.text, 'prompt', scan, budget)
+    // Spec 083: a slash command's line is masked at command.run; the host
+    // applies no rewrite of it here.
+    const text = e.command ? e.text : g.applyText(e.text, 'prompt', scan, budget)
     const context =
       raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined
-    if (text !== e.text) $.ui.toast('Veilio masked names in your prompt before sending it.')
+    const changed = text !== e.text || (context ?? []).some((c, i) => c !== given[i])
+    // An unseen prompt that starts a turn takes no rewrite: one that needs
+    // masking is not sent.
+    if (changed && e.isMeta && e.turnId === undefined)
+      return {
+        drop: unseenPromptRefusal(maskedNames([e.text, ...given], [text, ...(context ?? [])])),
+      }
+    if (Array.isArray(e.attachments) && e.attachments.length > 0 && !saidAttached) {
+      saidAttached = true
+      const notice = attachedNotice(e.attachments.length)
+      $.ui.toast(notice)
+      $.ui.log(notice)
+    }
+    if (changed) $.ui.toast('Veilio masked names in your prompt before sending it.')
     return next({ ...e, text, ...(context ? { context } : {}) })
   }).catch(async () => ({ drop: PROMPT_FAILED }))
 
@@ -346,7 +375,8 @@ export function register(on: On, options: Options = {}) {
       : listing
         ? g.applyListing(r.text, await listingEntries($, listing), budget)
         : g.applyText(r.text, 'result', undefined, budget)
-    return { ...r, text }
+    // Spec 083 FR-005: the masked text, and no other field.
+    return { text }
   }).catch(async () => ({ text: null }))
 
   // Recorded, never changed: the provenance of the agent listing's entries.
@@ -428,6 +458,32 @@ export function register(on: On, options: Options = {}) {
     })
     return below ? Box({ flexDirection: 'column', children: [line, below] }) : line
   })
+
+  // Spec 083 (research R2): a command's arguments are masked unless it takes
+  // only a path or a setting.
+  on('command.run', async ($, e, next) => {
+    if (e.command === 'veilio') return next(e)
+    const g = await ready($)
+    // One rule budget per hook invocation, threaded through its calls (security review).
+    const budget = g.invocation()
+    if (g.state === 'off') return next(e)
+    const args = String(e.args ?? '')
+    const asTyped = LOCAL_COMMANDS.has(e.command) || args.trim() === ''
+    // Stopped: a command whose arguments would need masking does not run.
+    if (g.state === 'stopped') {
+      if (asTyped) return next(e)
+      return { text: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+    }
+    let masked = args
+    if (!asTyped) {
+      const [scan] = g.learnTogether([args])
+      await g.learnRuleNames([args], budget)
+      masked = g.applyText(args, 'prompt', scan, budget)
+    }
+    // What the command records for the model is passed as it is: the host
+    // refuses a hook that changes an entry next gave it (COVERAGE.md).
+    return next({ ...e, args: masked })
+  }).catch(async () => ({ text: PROMPT_FAILED }))
 
   on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)

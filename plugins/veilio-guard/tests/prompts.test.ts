@@ -395,3 +395,10 @@ test(
     expect(out.text.startsWith(`# claudeMd\n${masked}`)).toBe(true)
   }
 )
+
+test("only a reminder's masked text reaches the model, no other field", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(MAP) })
+  on('prompt.attachment', (_, e) => ({ text: e.text, extra: CANARY }))
+  const out = await $.prompt.attachment({ type: 'edited_text_file', text: `class ${CANARY}` })
+  expect(out).toEqual({ text: 'class __CLS__1' })
+})

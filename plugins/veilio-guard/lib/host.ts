@@ -78,6 +78,16 @@ export type PromptSubmitInput = {
   readonly text: string
   /** Text blocks sent with the prompt; anything else fails it closed. */
   readonly context?: unknown
+  /** The slash command the prompt runs: its arguments are masked at
+   *  `command.run`, and a rewrite of `text` is then not applied. */
+  readonly command?: { readonly name: string; readonly args: string }
+  /** Set on a prompt the user does not see; one that starts a turn takes no
+   *  rewrite. */
+  readonly isMeta?: true
+  /** Images, audio and documents: their kind, never their bytes. */
+  readonly attachments?: readonly unknown[]
+  /** The running turn's id, when the prompt was delivered into one. */
+  readonly turnId?: string
   readonly [key: string]: unknown
 }
 export type PromptSubmitResult = { readonly drop?: string; readonly [key: string]: unknown }
@@ -128,8 +138,17 @@ export type RenderInput = {
 /** A drawn tree, or nothing: the guard passes others' trees on unread. */
 export type RenderResult = unknown
 
-export type CommandRunInput = { readonly command: string; readonly args?: string }
-export type CommandRunResult = { readonly text: string }
+export type CommandRunInput = {
+  readonly command: string
+  readonly args?: string
+  readonly [key: string]: unknown
+}
+/** `text` is the command's output; `context` what it records for the model. */
+export type CommandRunResult = {
+  readonly text?: string
+  readonly context?: readonly string[]
+  readonly [key: string]: unknown
+}
 
 /** Each event the guard hooks: what the hook is given and what it answers. */
 export interface HookEvents {

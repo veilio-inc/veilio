@@ -262,3 +262,69 @@ test('the off switch in ~/.veilio cannot be written by a shell command', async (
   expect(out.deny).toContain('away from the model')
   expect(ran).toBe(false)
 })
+
+// Spec 083 US1 (research R2): a slash command's arguments and what it records
+// for the model are masked; a command that takes a path or a setting runs as typed.
+function commands(on: Parameters<typeof project>[0], files?: Record<string, string>) {
+  project(on, files ?? { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, {
+    home: '/home/dev',
+  })
+  const ran: { command: string; args?: string }[] = []
+  on('command.run', (_, e) => {
+    ran.push(e)
+    return { text: 'done', context: [`Reviewed ${CANARY}`] }
+  })
+  return ran
+}
+
+test("a slash command's arguments are masked before it runs", async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'review', args: `${CANARY} please` })
+  expect(ran[0].args).toBe('__CLS__1 please')
+})
+
+test("a skill command's arguments are masked too", async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'simplify', args: CANARY })
+  expect(ran[0].args).toBe('__CLS__1')
+})
+
+test('what a command records for the model is passed as the command left it', async ($, on) => {
+  commands(on)
+  const out = await $.command.run({ command: 'review', args: '' })
+  expect(out.context).toEqual([`Reviewed ${CANARY}`])
+  expect(out.text).toBe('done')
+})
+
+test('a command that takes a path or a setting runs with its arguments as typed', async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
+  await $.command.run({ command: 'model', args: CANARY })
+  expect(ran.map((r) => r.args)).toEqual([`src/${CANARY}`, CANARY])
+})
+
+test('/veilio keeps its own hook', async ($, on) => {
+  const ran = commands(on)
+  const out = await $.command.run({ command: 'veilio', args: '' })
+  expect(ran).toHaveLength(0)
+  expect(out.text).toMatch(/Veilio guard on/)
+})
+
+test('a command runs as typed while the guard is off', async ($, on) => {
+  const state = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
+  const ran = commands(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }),
+    '/home/dev/.veilio/guard-state.json': JSON.stringify(state),
+  })
+  await $.command.run({ command: 'review', args: CANARY })
+  expect(ran[0]?.args).toBe(CANARY)
+})
+
+test('a command with arguments is refused while the guard is stopped', async ($, on) => {
+  const ran = commands(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  const out = await $.command.run({ command: 'review', args: CANARY })
+  expect(ran).toHaveLength(0)
+  expect(out.text).toContain('Veilio guard stopped')
+  await $.command.run({ command: 'clear', args: '' })
+  expect(ran.map((r) => r.command)).toEqual(['clear'])
+})
