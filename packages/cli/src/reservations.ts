@@ -13,6 +13,7 @@ import {
   isName,
   openStoreFile,
   prepareStoreWrite,
+  recordWritten,
   refuseNonNames,
   StoreRefusal,
   writeStoreFile,
@@ -381,6 +382,7 @@ export function addAliases(mapPath: string, entries: SymbolMap): void {
         `${p} already stands for another name in ${ALIASES_FILE}; nothing was changed`
       )
   writePrivate(aliasesPath(mapPath), { version: 1, aliases: { ...aliases, ...entries } })
+  recordWritten(mapPath)
 }
 
 /** How the CLI and the MCP name a placeholder left because its number was another member's. */

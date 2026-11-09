@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   linkSync,
@@ -7,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -625,5 +627,74 @@ describe('on Windows the store walk stops at the project root (R2-22)', () => {
 
   it('off Windows, the walk is as before', () => {
     expect(findProjectRoot(join(top, 'work', 'proj'))).toBe(top)
+  })
+})
+
+// Spec 085 part 3, R2-3 (Q6 = A, founder 2026-11-09): every map the CLI writes
+// is recorded in ~/.veilio/written.json (0600), so the guard restores unseen
+// only from a map Veilio wrote on this machine.
+describe('the CLI records the maps it writes (R2-3)', () => {
+  let home: string
+  let proj: string
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex')
+  const record = () =>
+    JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+      string,
+      string
+    >
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-rec-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-rec-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  it('saveMap records the map it wrote, keyed by the real project root, 0600', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(record()[realpathSync(proj)]).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+    expect(statSync(join(home, '.veilio', 'written.json')).mode & 0o777).toBe(0o600)
+  })
+
+  it('writing aliases changes the recorded value', async () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    const before = record()[realpathSync(proj)]
+    const { addAliases } = await import('../src/reservations.js')
+    addAliases(path, { __CLS__2: 'PaymentGateway' })
+    const aliases = readFileSync(join(proj, '.veilio', 'aliases.json'), 'utf8')
+    expect(record()[realpathSync(proj)]).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha(aliases)}`)
+    expect(record()[realpathSync(proj)]).not.toBe(before)
+  })
+
+  it('a record that is a link is not written through, and the map is still saved', () => {
+    const elsewhere = join(home, 'elsewhere.json')
+    writeFileSync(elsewhere, '{}')
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    symlinkSync(elsewhere, join(home, '.veilio', 'written.json'))
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(readFileSync(elsewhere, 'utf8')).toBe('{}')
+    expect(loadMap(path)).toEqual({ __CLS__1: 'PaymentGateway' })
+  })
+
+  it('a ~/.veilio that is a link gets no record', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'veilio-rec-elsewhere-'))
+    symlinkSync(elsewhere, join(home, '.veilio'))
+    saveMap(resolveMapPath(null, proj), { __CLS__1: 'PaymentGateway' })
+    expect(readdirSync(elsewhere)).toEqual([])
+    rmSync(elsewhere, { recursive: true, force: true })
+  })
+
+  it('a map write that fails leaves the record as it was', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    const before = record()
+    expect(() => saveMap(path, { __CLS__1: 'Other' })).toThrow()
+    expect(record()).toEqual(before)
   })
 })

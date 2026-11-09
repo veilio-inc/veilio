@@ -22,9 +22,17 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { STORE_DIR, isName, type SymbolMap } from '@veilio-inc/engine'
+import { homedir } from 'node:os'
+import {
+  STORE_DIR,
+  WRITTEN_RECORD_FILE,
+  isName,
+  parseWrittenRecord,
+  writtenRecordValue,
+  type SymbolMap,
+} from '@veilio-inc/engine'
 import { trackedPaths, type IndexUnreadable } from './git-index.js'
 
 export { STORE_DIR }
@@ -382,6 +390,57 @@ export function saveMap(
   const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
   // A new 0600 file each time, so a world-readable map already there is replaced too.
   writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
+  recordWritten(path)
+}
+
+/**
+ * Records, in `~/.veilio/written.json`, the hashes of the map and aliases this
+ * project's store now holds (spec 085 R2-3): the guard restores unseen only
+ * from a map Veilio wrote on this machine. Only for a store in `.veilio/`.
+ * Never through a link, nor into a file or folder another user owns; any
+ * failure is skipped - the map is written, and without a record the guard
+ * only asks for each name to be shown first.
+ */
+export function recordWritten(mapPath: string): void {
+  const store = dirname(mapPath)
+  if (basename(store) !== STORE_DIR || basename(mapPath) !== STORE_FILE) return
+  try {
+    const dir = join(homedir(), STORE_DIR)
+    const file = join(dir, WRITTEN_RECORD_FILE)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    // A new file renamed over the record never writes through a link at it;
+    // a linked folder would put the record elsewhere.
+    if (isLink(dir) || ownerOf(dir) === 'other' || ownerOf(file) === 'other') return
+    const hash = (p: string) => {
+      let text = ''
+      try {
+        text = readFileSync(p, 'utf8')
+      } catch {
+        // absent: hashed as the empty text
+      }
+      return createHash('sha256').update(text).digest('hex')
+    }
+    let record: Record<string, string> = {}
+    try {
+      record = parseWrittenRecord(readFileSync(file, 'utf8')) ?? {}
+    } catch {
+      // none yet
+    }
+    record[realpathSync(dirname(store))] = writtenRecordValue(
+      hash(mapPath),
+      hash(join(store, 'aliases.json'))
+    )
+    const tmp = join(dir, `.${WRITTEN_RECORD_FILE}.${randomBytes(6).toString('hex')}.tmp`)
+    const fd = openSync(tmp, 'wx', 0o600)
+    try {
+      writeSync(fd, `${JSON.stringify(record, null, 2)}\n`)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmp, file)
+  } catch {
+    // not recorded: the guard shows-gates this map, the safe side
+  }
 }
 
 /**
