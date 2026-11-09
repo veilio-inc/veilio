@@ -193,26 +193,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
-          # Bootstrap only, and empty is the normal state.
-          #
-          # OIDC trusted publishing cannot CREATE a package. The first attempt at
-          # @veilio-inc/cli proved it: everything succeeded — build, tests, and a
-          # provenance statement signed and logged to Sigstore — and then
-          #
-          #   npm error 404 Not Found - PUT .../@veilio-inc%2fcli
-          #   The requested resource could not be found or you do not have
-          #   permission to access it
-          #
-          # which reads like a missing package and means a missing permission.
-          # The OIDC identity is this repository, and it has no right to claim a
-          # name nobody holds.
-          #
-          # So the first publish of each package needs a granular token with
-          # publish rights on @veilio-inc, stored as the NPM_TOKEN secret. When
-          # the secret is absent this expands to empty and npm falls back to
-          # OIDC, which is what every release after the first one should use.
-          #
-          # DELETE THE SECRET once trusted publishers are registered for both
-          # packages. A long-lived credential that outlives its purpose is just a
-          # credential, and this one can publish under our whole scope.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Publishing is OIDC trusted publishing only, with no npm token. A new
+          # package's first publish is done by hand: see .changeset/README.md.
