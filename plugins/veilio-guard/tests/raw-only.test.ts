@@ -665,6 +665,12 @@ const REVIEWED: [string, string | undefined][] = [
   ["trap 'rm -f /tmp/x' EXIT; npm test", undefined],
   ["trap 'cd src' EXIT", N1("trap 'cd src' EXIT", 'code run from text')],
   ["trap 'python3 x.py' EXIT", N1("trap 'python3 x.py' EXIT", 'code run from text')],
+  // only on EXIT, and only readers or rm on literal paths
+  ["trap 'ls; rm -rf build' EXIT", undefined],
+  ["trap 'rm -f /tmp/x' DEBUG", N1("trap 'rm -f /tmp/x' DEBUG", 'code run from text')],
+  ["trap 'rm -f /tmp/x' INT", N1("trap 'rm -f /tmp/x' INT", 'code run from text')],
+  ["trap 'curl x' EXIT", N1("trap 'curl x' EXIT", 'code run from text')],
+  ["trap 'X=1' EXIT", N1("trap 'X=1' EXIT", 'code run from text')],
   ['trap "rm $f" EXIT', N1('trap "rm $f" EXIT', 'code run from text')],
   // Physical resolution, so the `..`/`-` exemption cannot run under it
   ['set -P; cd ..', N1('set -P', 'an option that changes cd')],
@@ -744,6 +750,13 @@ const REVIEWED: [string, string | undefined][] = [
   ['python3 -m pytest; cd src', N1('python3 -m pytest', 'a cd after code this command ran')],
   ['node --inspect x.js; cd src', N1('node --inspect x.js', 'a cd after code this command ran')],
   ['python3 -u tool.py; cd src', undefined],
+  // each interpreter's own option table; anything else, or code anywhere, refused
+  ['python3 -X dev tool.py; cd src', undefined],
+  ['python3 -I tool.py; cd src', undefined],
+  ['python3 -Q tool.py; cd src', N1('python3 -Q tool.py', 'a cd after code this command ran')],
+  ['python3 tool.py -c x; cd src', N1('python3 tool.py -c x', 'a cd after code this command ran')],
+  ['bash -O extglob s.sh; cd src', undefined],
+  ['bash --rcfile x s.sh; cd src', N1('bash --rcfile x s.sh', 'a cd after code this command ran')],
   ['ruby -I lib test/x.rb; cd src', undefined],
   // after any command but a plain reader, a file run is code the call gave
   ['make; python3 tool.py; cd src', N1('python3 tool.py', 'a cd after code this command ran')],
@@ -773,10 +786,23 @@ const REVIEWED: [string, string | undefined][] = [
   ['ls >& out; . ./env.sh', N1('. ./env.sh', 'code run from text')],
   [`python3 -c "open('g','w')"; . ./g`, N1('. ./g', 'code run from text')],
   ['base64 -d -o g <<< eA==; . ./g', N1('. ./g', 'code run from text')],
+  // the everyday venv line, exactly: its activate script, as the next command
+  ['python3 -m venv .venv && source .venv/bin/activate', undefined],
+  ['python -m venv env; . env/bin/activate', undefined],
   [
-    'python3 -m venv .venv && source .venv/bin/activate',
+    'python3 -m venv .venv && source other/bin/activate',
+    N1('source other/bin/activate', 'code run from text'),
+  ],
+  [
+    'python3 -m venv .venv; pip install x; . .venv/bin/activate',
+    N1('. .venv/bin/activate', 'code run from text'),
+  ],
+  [
+    'python3 -m pip install x && source .venv/bin/activate',
     N1('source .venv/bin/activate', 'code run from text'),
   ],
+  // rg runs a program with --pre: not a plain reader
+  ['rg --pre x foo; . ./env.sh', N1('. ./env.sh', 'code run from text')],
   ['ls; grep x y; . ./env.sh', undefined],
   ["cd src; perl -pi -e 's/a/b/' x.rb", undefined],
   // past the reader's bounds, anything that could move the shell: refused

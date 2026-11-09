@@ -30,6 +30,7 @@ import {
   type Redirect,
   type Simple,
   type Word,
+  parseShell,
 } from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
@@ -362,6 +363,8 @@ class Walker {
   private wrote = false
   /** The cd being read resolves physically (`-P`). */
   private physical = false
+  /** The directory the command just before made with `python -m venv`. */
+  private venv: string | null = null
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
    *  was read at. The one model of "moves the shell" for loops (security
@@ -573,6 +576,9 @@ class Walker {
     const shown = n.words.map((w) => w.raw).join(' ')
     this.current = shown
     const wroteBefore = this.wrote
+    // `python3 -m venv DIR` then, as the very next command, `. DIR/bin/activate`.
+    const venv = this.venv
+    this.venv = null
     // T029 reviews: what moves the shell from text, an option, or a name.
     const run = programOf(n.words)
     const name = run?.word.literal ?? null
@@ -591,7 +597,7 @@ class Walker {
         file === null ||
         /^\/dev\/|^\/proc\/(?:self|[^/]+\/fd)\//.test(file) ||
         n.redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op)) ||
-        this.wrote
+        (this.wrote && !(venv !== null && file === normalisePath(`${venv}/bin/activate`)))
       )
         N1(this.current, 'code run from text')
     }
@@ -614,14 +620,14 @@ class Walker {
       while (k < lits.length && /^-./.test(lits[k]!)) if (lits[k++] === '--') break
       const action = lits[k]
       const signalOnly = lits.length - k === 1 && /^(?:SIG)?[A-Z]+$|^\d+$/.test(action ?? '')
-      // A cleanup trap runs: one literal action that cannot move the shell
-      // or run text (no cd, eval, source, trap, `$`, backtick, interpreter).
+      // A cleanup trap runs: on EXIT (or 0) only, its literal action read as
+      // commands, each a plain reader or `rm` on literal paths (review).
+      const signals = lits.slice(k + 1)
       const harmless =
         rest[k]?.literal != null &&
-        !/[$`]|(?:^|[;&|\s])\.(?:\s|$)|(?<![\w-])(?:cd|pushd|popd|chdir|eval|source|trap|emulate|builtin|command|exec)(?![\w-])/.test(
-          action ?? ''
-        ) &&
-        !new RegExp(`(?<![\\w-])(?:${INTERPRETERS})(?![\\w-])`).test(action ?? '')
+        signals.length > 0 &&
+        signals.every((g) => /^(?:EXIT|SIGEXIT|0)$/i.test(g)) &&
+        cleanupOnly(action ?? '')
       if (action !== undefined && action !== '' && action !== '-' && !signalOnly && !harmless)
         N1(this.current, 'code run from text')
     }
@@ -697,7 +703,16 @@ class Walker {
     // running a file after something in the call wrote one: it could have
     // made a link, so every later cd but a logical `..`/`-` is refused. One
     // running a file the call did not write is the script's own (N6/P7).
-    if (INTERPRETER.test(base ?? '') && !runsOwnFile(rest, n.redirects, wroteBefore))
+    if (
+      /^python[\d.]*$/.test(base ?? '') &&
+      lits.length === 3 &&
+      lits[0] === '-m' &&
+      lits[1] === 'venv' &&
+      rest[2]!.literal !== null &&
+      /^[\w./@+-]+$/.test(rest[2]!.literal)
+    )
+      this.venv = normalisePath(rest[2]!.literal)
+    if (INTERPRETER.test(base ?? '') && !runsOwnFile(base!, rest, n.redirects, wroteBefore))
       this.interp ??= this.current
     return out
   }
@@ -949,26 +964,101 @@ export const INTERPRETER = new RegExp(`^(?:${INTERPRETERS})$`)
  *  operand a plain literal path, after options from a short allow-list only,
  *  and nothing in the call wrote a file before. Anything else is code the
  *  call gives it (the coordinator's allow-list). */
+// Each interpreter's options that leave it running its file: true takes the
+// next word as its value, false takes none; any other option fails closed.
+const OWN_FILE_OPTIONS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
+  python: {
+    '-I': false,
+    '-B': false,
+    '-E': false,
+    '-O': false,
+    '-OO': false,
+    '-q': false,
+    '-s': false,
+    '-S': false,
+    '-u': false,
+    '-b': false,
+    '-bb': false,
+    '-W': true,
+    '-X': true,
+  },
+  ruby: {
+    '-I': true,
+    '-w': false,
+    '-W': false,
+    '-W0': false,
+    '-W1': false,
+    '-W2': false,
+    '-v': false,
+  },
+  perl: { '-I': true, '-w': false, '-W': false, '-X': false },
+  node: {},
+  php: {},
+  deno: {},
+  bun: {},
+  sh: { '-e': false, '-u': false, '-x': false, '-o': true, '+o': true, '-O': true, '+O': true },
+  pwsh: { '-NoProfile': false, '-NonInteractive': false, '-File': false },
+}
+const ownFileTable = (base: string) =>
+  OWN_FILE_OPTIONS[
+    /^python/.test(base)
+      ? 'python'
+      : /^(?:bash|sh|zsh|dash|ksh)$/.test(base)
+        ? 'sh'
+        : /^(?:pwsh|powershell)$/.test(base)
+          ? 'pwsh'
+          : base
+  ] ?? {}
+
 function runsOwnFile(
+  base: string,
   rest: readonly Word[],
   redirects: readonly Redirect[],
   wrote: boolean
 ): boolean {
   if (wrote || redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op))) return false
-  for (let k = 0; k < rest.length; k++) {
-    const l = rest[k]!.literal
-    if (l === null) return false
-    if (l === '--')
-      return rest[k + 1]?.literal != null && /^[\w./@+-]+$/.test(rest[k + 1]!.literal!)
-    if (l === '-I') {
-      k++
-      continue
+  const table = ownFileTable(base)
+  const lits = rest.map((w) => w.literal)
+  // Code given anywhere: `-c`, `-e`, `-m`, `-` (also after the operand).
+  if (
+    lits.some((l) => l === null || /^-[ce]$|^-m$|^-$|^--eval|^-Command$|^-EncodedCommand$/i.test(l))
+  )
+    return false
+  for (let k = 0; k < lits.length; k++) {
+    const l = lits[k]!
+    if (l === '--') return /^[\w./@+-]+$/.test(lits[k + 1] ?? '')
+    if (/^[-+]/.test(l)) {
+      // `-Idir`: the value attached.
+      const attached = /^(-[A-Za-z])(.+)$/.exec(l)
+      if (Object.hasOwn(table, l)) {
+        if (table[l]) k++
+        continue
+      }
+      if (attached && table[attached[1]!] === true) continue
+      return false
     }
-    if (/^-(?:I.+|w|W.*|u|B|O|q)$/.test(l)) continue
-    if (l.startsWith('-')) return false
     return /^[\w./@+-]+$/.test(l)
   }
   return false
+}
+
+/** A trap's action that only cleans up: read as commands, each a plain reader
+ *  or `rm` on literal paths, no assignment (the review's narrow exemption). */
+function cleanupOnly(action: string): boolean {
+  if (action.includes('=')) return false
+  const r = parseShell(action, 'sh')
+  if (!r.ok) return false
+  return r.list.items.every(({ node }) =>
+    node.stages.every((n) => {
+      if (n.type !== 'simple' || n.assigns.length > 0 || n.redirects.length > 0) return false
+      const lits = n.words.map((w) => w.literal)
+      if (lits.some((l) => l === null)) return false
+      const [prog, ...args] = lits as string[]
+      if (prog === 'rm') return args.every((a) => /^-[rRf]+$/.test(a) || !a.startsWith('-'))
+      // A reader, never a cd (on the reader list for what it writes, not where it goes).
+      return prog !== 'cd' && readOnly(prog ?? null, args)
+    })
+  )
 }
 
 /** Commands that only read: the allow-list a source or an interpreter's file
@@ -980,7 +1070,6 @@ function readOnly(base: string | null, lits: readonly string[]): boolean {
     case 'head':
     case 'tail':
     case 'grep':
-    case 'rg':
     case 'echo':
     case 'printf':
     case 'pwd':
