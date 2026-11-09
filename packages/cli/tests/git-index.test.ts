@@ -143,6 +143,13 @@ describe('the git index, read without git', () => {
     expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'format' })
   })
 
+  // Review of R2-2: a .git file that names no gitdir is a checkout not read.
+  it('answers unreadable for a .git file with no gitdir line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'veilio-gix-badfile-'))
+    writeFileSync(join(dir, '.git'), 'not a gitdir line\n')
+    expect(trackedPaths(dir)).toEqual({ root: dir, unreadable: 'format' })
+  })
+
   it('answers null outside a git checkout', () => {
     expect(trackedPaths(mkdtempSync(join(tmpdir(), 'veilio-gix-none-')))).toBeNull()
   })

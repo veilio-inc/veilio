@@ -37,9 +37,11 @@ export function trackedPaths(from: string): Tracked | Unreadable | null {
   try {
     found = findGitDir(resolve(from))
   } catch {
-    return null
+    // A .git that could not be read is a checkout this reader cannot follow.
+    return { root: resolve(from), unreadable: 'format' }
   }
   if (!found) return null
+  if ('unreadable' in found) return found
   const { root } = found
   try {
     const index = join(found.gitDir, 'index')
@@ -77,7 +79,9 @@ function trailer(path: string, size: number): string {
   }
 }
 
-function findGitDir(start: string): { root: string; gitDir: string; commonDir: string } | null {
+function findGitDir(
+  start: string
+): { root: string; gitDir: string; commonDir: string } | Unreadable | null {
   for (let dir = start; ; dir = dirname(dir)) {
     const dotGit = join(dir, '.git')
     const st = statOrNull(dotGit)
@@ -85,7 +89,7 @@ function findGitDir(start: string): { root: string; gitDir: string; commonDir: s
     if (st?.isFile()) {
       // A worktree or submodule: `gitdir: <path>`, and the shared config in its commondir.
       const m = /^gitdir: *(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'))
-      if (!m) return null
+      if (!m) return { root: dir, unreadable: 'format' as const }
       const gitDir = isAbsolute(m[1]!) ? m[1]! : resolve(dir, m[1]!)
       let commonDir = gitDir
       try {
