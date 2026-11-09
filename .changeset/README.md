@@ -38,6 +38,24 @@ existed; changing that would rewrite a working release path for no gain. The CLI
 the MCP server version together and by hand, because their releases are product
 decisions rather than a function of what happened to be committed.
 
+## Releasing the guard plugin
+
+The Claude Code guard (`plugins/veilio-guard`) is not an npm package and has no
+changeset: a release is a commit that bumps `.claude-plugin/plugin.json`. The
+marketplace names it by a tag and a commit, so an install gets a release, never
+what `main` holds between releases:
+
+1. Merge the guard's version bump as usual.
+2. `node scripts/pin-guard.mjs --pin <that commit on main>` tags it
+   `veilio-guard@<version>` locally and rewrites the entry in
+   `.claude-plugin/marketplace.json` to a `git-subdir` source with that `ref`
+   and `sha`. `node scripts/pin-guard.mjs --check` confirms it.
+3. Push the tag, with the founder's approval.
+4. Open a pull request with the one-file marketplace change, and merge it on green.
+
+Until step 4 lands, installs keep the previous pin. `tests/guard/marketplace-pin.test.ts`
+holds the pin to its tag and version in CI.
+
 ## The seam, and the three checks on it
 
 The CLI and the MCP server depend on `@veilio-inc/engine` by **range**, and

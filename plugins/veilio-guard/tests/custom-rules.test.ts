@@ -299,6 +299,22 @@ test('a replace rule masks the codename in a typed prompt', async ($, on) => {
   expect(JSON.parse(p.files[MAP]!).map.__CODENAME__1).toBe('phoenix')
 })
 
+test("a replace rule masks the codename in a command's arguments and in what it prints", async ($, on) => {
+  home(on)
+  const p = project(on, signedIn([PHOENIX]))
+  const ran: string[] = []
+  on('command.run', (_, e) => {
+    ran.push(e.args)
+    return { text: e.args ? 'done' : 'phoenix is up' }
+  })
+  // What it prints first: the codename is learned from the output itself.
+  const out = await $.command.run({ command: 'status', args: '' })
+  expect(out.text).toBe('__CODENAME__1 is up')
+  await $.command.run({ command: 'review', args: 'why does phoenix fail' })
+  expect(ran[1]).toBe('why does __CODENAME__1 fail')
+  expect(JSON.parse(p.files[MAP]!).map.__CODENAME__1).toBe('phoenix')
+})
+
 test('a rule-made entry the map holds stays masked in the readable view, though an ordinary word', async ($, on) => {
   home(on)
   // The map holds the engine's own entry from before the rule: 064 shows it.
