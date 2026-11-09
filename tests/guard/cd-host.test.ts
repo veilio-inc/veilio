@@ -34,59 +34,86 @@ describe('no host directory: the fallback carries every outcome', () => {
 })
 
 describe('the host reports the directory', () => {
-  test('after cd sub the host says sub: the next relative read is judged from sub', async () => {
+  test('a report that never moves (always the root) is not trusted: every outcome is carried', async () => {
+    const g = await fixtureGuard()
+    g.atHost(ROOT)
+    await call(g, 'cd sub')
+    g.atHost(ROOT)
+    await call(g, 'cd /tmp')
+    g.atHost(ROOT)
+    // Trusted, the root alone (with /tmp) would be read; sub is still possible.
+    expect(await call(g, 'cat notes')).toBe(NOTES)
+    expect(g.notices).toEqual([])
+  })
+
+  test('proved live (it named sub after the cd the guard saw): the next call is read from it', async () => {
     const g = await fixtureGuard()
     g.atHost(ROOT)
     await call(g, 'cd sub')
     g.atHost(`${ROOT}/sub`)
     expect(await call(g, 'cat notes')).toBe(NOTES)
+    await call(g, 'cd ..')
+    g.atHost(ROOT)
+    // From the host alone: the root, where notes is a plain file.
+    expect(await call(g, 'cat notes')).toBeUndefined()
     expect(g.notices).toEqual([])
   })
 
-  test('the host reset the shell to the root after a cd outside the project: the root is used', async () => {
+  test('proved, then reset to the root after a cd outside the project: both read, logged once', async () => {
     const g = await fixtureGuard()
-    g.atHost(ROOT)
+    await call(g, 'cd sub')
+    g.atHost(`${ROOT}/sub`)
     await call(g, 'cd /tmp')
     g.atHost(ROOT)
-    // Both checked: the host's root and the guard's /tmp; root/notes is plain.
     expect(await call(g, 'cat notes')).toBeUndefined()
     expect(await call(g, 'cat sub/notes')).toBe(
       'Veilio keeps sub/notes away from the model. Ask the user for what you need from it.'
     )
-    expect(g.notices).toHaveLength(1)
-    expect(g.notices[0]).toContain(`Claude Code says the shell is in ${ROOT}`)
+    expect(g.notices).toEqual([
+      `Veilio guard: Claude Code says the shell is in ${ROOT}, where Veilio's reading of the last command left it in /tmp. Both are checked for this call.`,
+    ])
   })
 
-  test('a disagreement: the host is used and both are checked; logged once', async () => {
+  test('proved, and the host and the walk together past the bound: refused, not narrowed', async () => {
     const g = await fixtureGuard()
-    g.atHost(ROOT)
-    await call(g, 'ls')
-    // The guard read no cd, the host says sub: sub is checked.
-    g.atHost(`${ROOT}/sub`)
-    expect(await call(g, 'cat notes')).toBe(NOTES)
-    g.atHost(ROOT)
-    g.atHost(`${ROOT}/sub`)
-    expect(g.notices).toHaveLength(1)
-  })
-
-  test('the carry while the host reports is where the call most likely ended', async () => {
-    const g = await fixtureGuard()
-    g.atHost(ROOT)
     await call(g, 'cd sub')
-    await call(g, 'cd x')
-    g.atHost(`${ROOT}/sub/x`)
-    // Not the fallback's {sub, sub/x}: the host and the inference agree.
-    expect(await call(g, 'cat notes')).toBeUndefined()
-    expect(g.notices).toEqual([])
+    g.atHost(`${ROOT}/sub`)
+    await call(g, 'ls')
+    g.atHost(`${ROOT}/sub`)
+    const fan = Array.from({ length: 16 }, (_, k) => `cd d${k}`).join(' || ')
+    expect(await call(g, fan)).toBeUndefined()
+    g.atHost(`${ROOT}/elsewhere`)
+    expect(await call(g, 'ls')).toBe(
+      'Veilio refused this call: Veilio cannot tell where `ls` takes the shell (too many possible directories), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.'
+    )
   })
 
-  test('past the bound the host alone is used', async () => {
+  const dirs = (g: Guard) => [...(g as unknown as { dirs: { dirs: string[] } }).dirs.dirs].sort()
+
+  test("a report never proved is not discarded: it joins the walk's directories", async () => {
     const g = await fixtureGuard()
-    // {root, sub} x 2 x 2 x 2: 16 inferred directories, sub among them.
-    for (const c of ['cd sub', 'cd d0', 'cd d1', 'cd d2']) expect(await call(g, c)).toBeUndefined()
+    await call(g, 'ls')
+    g.atHost(`${ROOT}/sub`)
+    expect(dirs(g)).toEqual([ROOT, `${ROOT}/sub`])
     expect(await call(g, 'cat notes')).toBe(NOTES)
-    g.atHost(`${ROOT}/x`)
-    // With the host's 17th the union is over the bound: x alone, so sub's notes is not read.
-    expect(await call(g, 'cat notes')).toBeUndefined()
+  })
+
+  test('the proving call keeps both; the host alone from the next call', async () => {
+    const g = await fixtureGuard()
+    await call(g, 'cd sub')
+    g.atHost(`${ROOT}/sub`)
+    expect(dirs(g)).toEqual([ROOT, `${ROOT}/sub`])
+    await call(g, 'ls')
+    g.atHost(`${ROOT}/sub`)
+    expect(dirs(g)).toEqual([`${ROOT}/sub`])
+  })
+
+  test('proved only by the one directory the walk most likely ended in, not any it may have', async () => {
+    const g = await fixtureGuard()
+    await call(g, 'cd sub || cd src')
+    g.atHost(`${ROOT}/sub`)
+    await call(g, 'ls')
+    g.atHost(`${ROOT}/sub`)
+    expect(dirs(g)).toContain(`${ROOT}/src`)
   })
 })

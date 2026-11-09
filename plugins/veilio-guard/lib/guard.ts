@@ -1442,6 +1442,10 @@ export class Guard {
    *  is only checked against it; until it does, every directory a command
    *  may have left the shell in is carried. */
   private hostReports = false
+  /** This call's start, the host's directory and the guard's, is past the bound. */
+  private hostOverflow = false
+  /** Where the last call most likely left the shell: what proves the host. */
+  private likely: readonly string[] = []
   private disagreementLogged = false
   /** The differential replay (tests/guard/fixtures/cd-project.ts) only: the
    *  benchmark corpus has no host directories, so each call is carried where
@@ -1454,18 +1458,37 @@ export class Guard {
   atHost(dir: string): void {
     const host = normalisePath(dir)
     const inferred = this.dirs.dirs
-    this.hostReports = true
-    if (inferred.length === 1 && inferred[0] === host) return
-    if (inferred.length > 0 && !this.disagreementLogged) {
+    this.hostOverflow = false
+    this.shellDir = host
+    // Trusted to narrow once proved live, from the call after the proof: it
+    // named, away from where the session started, the one directory the
+    // guard's walk most likely left the shell in. A report that never
+    // moves - an older host, a host bug - never narrows (security review).
+    const trusted = this.hostReports
+    if (
+      !trusted &&
+      host !== normalisePath(this.cwd) &&
+      this.likely.length === 1 &&
+      this.likely[0] === host
+    )
+      this.hostReports = true
+    if (trusted && (inferred.length === 0 || inferred.includes(host))) {
+      this.dirs = { ...this.dirs, dirs: [host] }
+      return
+    }
+    if (trusted && !this.disagreementLogged) {
       this.disagreementLogged = true
       this.notice(
         `Veilio guard: Claude Code says the shell is in ${host}, where Veilio's reading of the last command left it in ${inferred.join(', ')}. Both are checked for this call.`
       )
     }
+    // Never discarded: the host's directory joins the walk's. Past the
+    // bound the call is refused, never narrowed.
     const both = [...new Set([host, ...inferred])]
-    this.dirs = { ...this.dirs, dirs: both.length > MAX_DIRS ? [host] : both }
-    this.shellDir = host
+    this.hostOverflow = both.length > MAX_DIRS
+    this.dirs = { ...this.dirs, dirs: both }
   }
+
   /** A call starts with an empty stack and the session's variables: the Bash
    *  tool keeps only its directory between calls (research R0, T003); the
    *  host sets OLDPWD to the project root. */
@@ -1535,6 +1558,7 @@ export class Guard {
       const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
       const carry = this.hostReports || this.assumeSuccess ? walk.end : (walk.endAll ?? walk.end)
       this.dirs = this.sessionState(carry.dirs)
+      this.likely = walk.end.dirs
     } else {
       // Only a top-level cd moves the shell the next call runs in; one in a
       // substitution or a nested shell does not (review round 2 of spec 078).
@@ -1545,6 +1569,7 @@ export class Guard {
         return dir
       })
       this.dirs = this.sessionState(ends.filter((d): d is string => d !== null))
+      this.likely = this.dirs.dirs
     }
     this.shellDir = this.dirs.dirs[0] ?? null
   }
@@ -1717,7 +1742,7 @@ export class Guard {
           // in more directories than the bound is refused before it runs.
           const r =
             walk.refusal ??
-            (walk.endAll === null && !this.hostReports && !this.assumeSuccess
+            (this.hostOverflow || (walk.endAll === null && !this.hostReports && !this.assumeSuccess)
               ? { kind: 'N1' as const, target: c, form: 'too many possible directories' }
               : null)
           if (r?.kind === 'N2')

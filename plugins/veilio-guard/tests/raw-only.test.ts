@@ -802,6 +802,10 @@ const REVIEWED: [string, string | undefined][] = [
     N1('source .venv/bin/activate', 'code run from text'),
   ],
   [
+    'python3 -m pip .venv && source .venv/bin/activate',
+    N1('source .venv/bin/activate', 'code run from text'),
+  ],
+  [
     'python3 -m venv .venv && source other/bin/activate',
     N1('source other/bin/activate', 'code run from text'),
   ],
@@ -1043,14 +1047,17 @@ for (const [command, expected] of SCOPE)
 const CALLS: [string[], string | undefined][] = [
   [['cd sub', 'cat notes'], NOTES],
   [['cd sub; ls', 'cat notes'], NOTES],
-  // No host directory (until register.ts reports one): every directory a
-  // call may have left the shell in is carried, the cd that may have failed too.
+  // A test host reports the root at every call: a report that never moves
+  // is not trusted, so every directory a call may have left the shell in is
+  // carried, the cd that may have failed too (tests/guard/cd-host.test.ts).
   [['cd sub', 'cd /tmp', 'cat notes'], NOTES],
   [['cd /tmp', 'cat notes'], undefined],
   [['echo $(cd sub)', 'cat notes'], undefined],
   [['(cd sub)', 'cat notes'], undefined],
   [['export CDPATH=lib', 'cd deep && cat notes'], undefined],
   [['pushd sub', 'popd; cat notes'], NOTES],
+  // The stack is not kept: this popd finds it empty, so cat never runs.
+  [['cd sub && pushd /tmp', 'popd && cat notes'], undefined],
   [['cd sub', 'cd - && cat notes'], undefined],
 ]
 for (const [calls, expected] of CALLS)
@@ -1072,9 +1079,10 @@ test('086 across calls: a failed call moves the shell too', async ($, on) => {
   expect(out.deny).toBe(NOTES)
 })
 
-// Q3 = A: more than 16 possible directories refuses the call. A chain of n
-// `||` cds may leave the shell in n directories, or where it was if all fail.
+// Q3 = A: more than 16 possible directories refuses the call.
 const fan = (n: number) => Array.from({ length: n }, (_, k) => `cd d${k}`).join(' || ')
+// A chain of n `||` cds may leave the shell in n directories, or where it
+// was if all fail: 15 run, 16 and 17 do not.
 for (const [n, expected] of [
   [15, undefined],
   [16, N1(fan(16), 'too many possible directories')],
@@ -1129,3 +1137,66 @@ for (const command of [
     expect(out.deny).toBeUndefined()
     expect(ran).toBe(true)
   })
+
+// FR-011 (T003): where Claude Code says the shell is as each call starts.
+test('086 host: after cd sub the host reports sub, and the next short name is read there', async ($, on) => {
+  let at = ROOT
+  project(on, TREE, { ...TREE_LINKS, cwd: () => at })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })
+  at = `${ROOT}/sub`
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toBe(NOTES)
+})
+
+test('086 host: proved live, then reset to the root after a cd outside the project - both read, logged once', async ($, on) => {
+  let at = ROOT
+  const p = project(on, TREE, { ...TREE_LINKS, cwd: () => at })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })
+  at = `${ROOT}/sub`
+  await $.tool.call({ tool: 'Bash', command: 'cd /other/repo', description: 'x' })
+  at = ROOT
+  // /other/repo/notes is a link to .env: the guard's reading is checked too.
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toBe(NOTES)
+  expect(
+    p.logs.filter((l) => l.startsWith('Veilio guard: Claude Code says the shell is in'))
+  ).toEqual([
+    `Veilio guard: Claude Code says the shell is in ${ROOT}, where Veilio's reading of the last command left it in /other/repo. Both are checked for this call.`,
+  ])
+})
+
+test('086 host: a report never proved is not discarded - sub reported with no cd is read too', async ($, on) => {
+  let at = ROOT
+  project(on, TREE, { ...TREE_LINKS, cwd: () => at })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'x' })
+  at = `${ROOT}/sub`
+  expect((await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })).deny).toBe(
+    NOTES
+  )
+})
+
+test('086 CDPATH the host cannot answer: a bare cd is refused', async ($, on) => {
+  project(on, TREE, { ...TREE_LINKS, ownEnv: true })
+  on('env.get', (_, e) =>
+    e.name === 'CDPATH'
+      ? { deny: 'no environment' }
+      : { value: e.name === 'HOME' ? HOME : undefined }
+  )
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  expect((await $.tool.call({ tool: 'Bash', command: 'cd sub', description: 'x' })).deny).toBe(
+    N1('sub', 'CDPATH set in this command to a value Veilio cannot read')
+  )
+  expect(
+    (await $.tool.call({ tool: 'Bash', command: 'cd ./sub', description: 'x' })).deny
+  ).toBeUndefined()
+})
+
+test('086 CDPATH from the environment: a bare name is looked up under it', async ($, on) => {
+  project(on, TREE, { ...TREE_LINKS, cdpath: `${ROOT}/lib` })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  const out = await $.tool.call({ tool: 'Bash', command: 'cd deep && cat notes', description: 'x' })
+  expect(out.deny).toBe(NOTES)
+})

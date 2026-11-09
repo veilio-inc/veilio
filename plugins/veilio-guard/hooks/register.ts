@@ -207,6 +207,14 @@ async function ready($: Host): Promise<Guard> {
         () => undefined
       )
     loading = $.session.cwd().then(async (cwd) => {
+      // Spec 086: CDPATH as Claude Code's environment has it, for a bare cd;
+      // one the host cannot answer is unknown, and a bare cd is refused.
+      g.cdpath = await Promise.resolve()
+        .then(() => $.env.get('CDPATH'))
+        .then(
+          (v) => (typeof v === 'string' && v ? { value: v } : ('unset' as const)),
+          () => 'unknown' as const
+        )
       await g.load(cwd, await home)
       for (const text of g.notices.splice(0)) $.ui.log(text)
       // The organisation's guard ignores a project's own off switch.
@@ -304,6 +312,8 @@ export function register(on: On, options: Options = {}) {
     if (g.state === 'off') return next(e)
     if (g.state === 'stopped')
       return { deny: `Veilio refused this call: ${g.stoppedReason}. Run /veilio.` }
+    // Spec 086 FR-011: where Claude Code says the shell is as this call starts.
+    if (e.tool === 'Bash' || e.tool === 'PowerShell') g.atHost(await $.session.cwd())
     const before = await g.beforeTool(e, budget)
     for (const text of g.notices.splice(0)) $.ui.log(text)
     if ('deny' in before) {

@@ -339,6 +339,11 @@ for (const [command, expected] of [
   ],
   ['Import-Alias a.csv; q src', N1('Import-Alias a.csv; q src', 'a new name for a command')],
   ['gv ExecutionContext', N1('gv ExecutionContext', 'code run from text')],
+  // a member invoked, nothing else in the command (the regex backstop alone)
+  [
+    "$p.SetLocation('/tmp'); gc config",
+    N1("$p.SetLocation('/tmp'); gc config", 'code run from text'),
+  ],
   [
     'Set-Item function:q { sl src }; q',
     N1('Set-Item function:q { sl src }; q', 'code run from text'),

@@ -50,7 +50,7 @@ function property(entry: (typeof ENTRY)[number]) {
     )
     const map: Record<string, string> = {}
     for (const c of cases) Object.assign(map, c.map)
-    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) })
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) }, { ownEnv: true })
     let next: (e: ToolEvent) => Fields = () => ({})
     on('tool.call', (_, e) => next(e))
     const sent: Fields[] = []
@@ -170,7 +170,7 @@ test(
   async ($, on) => {
     const read = recorded('Read')
     const bash = recorded('Bash')
-    project(on, {})
+    project(on, {}, { ownEnv: true })
     let seed = 78
     const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31
     const alnum = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
@@ -224,7 +224,7 @@ test(
     const cases = Array.from({ length: 60 }, (_, i) => generate(i + 8501))
     const map: Record<string, string> = {}
     for (const c of cases) Object.assign(map, c.map)
-    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) })
+    project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(map) }, { ownEnv: true })
     let next: Fields = {}
     on('tool.call', () => next)
     const failures: string[] = []

@@ -49,8 +49,10 @@ export type Options = {
   noGit?: boolean
   /** Files under .veilio/ that git tracks (committed to the repository). */
   trackedVeilio?: string[]
-  /** The session's working directory ($.session.cwd); ROOT when absent. */
-  cwd?: string
+  /** The session's working directory ($.session.cwd); ROOT when absent. A
+   *  function: asked on every call, as the host reports the shell's
+   *  directory as each call starts (spec 086). */
+  cwd?: string | (() => string)
   /** `git ls-files` (the whole project) answers with its output cut short. */
   listTruncated?: boolean
   /** `git ls-files -- ':(icase).veilio'` answers with its output cut short. */
@@ -70,6 +72,10 @@ export type Options = {
   windows?: boolean
   /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record). */
   home?: string
+  /** $.env CDPATH (spec 086): a bare cd is also looked up under it. */
+  cdpath?: string
+  /** The test registers its own env.get handler. */
+  ownEnv?: boolean
 }
 
 const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
@@ -95,7 +101,9 @@ export function project(
     const a = abs(path)
     return a in p.files || Object.keys(p.files).some((f) => f.startsWith(`${a}/`))
   }
-  on('session.cwd', () => ({ value: opts.cwd ?? ROOT }))
+  on('session.cwd', () => ({
+    value: typeof opts.cwd === 'function' ? opts.cwd() : (opts.cwd ?? ROOT),
+  }))
   let existsCalls = 0
   on('fs.exists', (_, e) => {
     if (
@@ -222,10 +230,18 @@ export function project(
       return { value: undefined }
     })
   }
-  if (opts.windows || opts.home)
+  // Every name answers, as the host does (undefined when not set), unless
+  // the test answers env.get itself.
+  if (!opts.ownEnv)
     on('env.get', (_, e) => ({
       value:
-        e.name === 'OS' && opts.windows ? 'Windows_NT' : e.name === 'HOME' ? opts.home : undefined,
+        e.name === 'OS' && opts.windows
+          ? 'Windows_NT'
+          : e.name === 'HOME'
+            ? opts.home
+            : e.name === 'CDPATH'
+              ? opts.cdpath
+              : undefined,
     }))
   const policy = opts.policy ?? {}
   on('settings.read', () => ({ value: policy }))
