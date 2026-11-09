@@ -257,3 +257,57 @@ test("the views: shellWords and splitChain over the corpus are main's", () => {
   }).map((e) => e.id)
   expect(differ).toEqual([])
 })
+
+// contracts/tokenizer.md 29-34: PowerShell.
+describe('parseShell, PowerShell', () => {
+  const ps = (command: string): string => {
+    const r = parseShell(command, 'ps')
+    return r.ok ? list(r.list) : `fail:${r.why}`
+  }
+  test.each([
+    [
+      '29',
+      'Set-Location "C:\\Program Files (x86)\\App"',
+      'W(Set-Location) W(C:\\Program Files (x86)\\App)',
+    ],
+    ['30', 'c`d ~\\.kube', 'W(cd) X(tilde:~\\.kube)'],
+    [
+      '31',
+      'Set-Location -Path src -ErrorAction Stop; npm test',
+      'W(Set-Location) W(-Path) W(src) W(-ErrorAction) W(Stop) ; W(npm) W(test)',
+    ],
+    [
+      '32',
+      'Microsoft.PowerShell.Management\\Set-Location C:\\x',
+      'W(Microsoft.PowerShell.Management\\Set-Location) W(C:\\x)',
+    ],
+    ['33', 'cd $env:USERPROFILE\\.aws', 'W(cd) X(param:$env:USERPROFILE\\.aws)'],
+    [
+      '34',
+      '$(Set-Location .aws); gc credentials',
+      'W((expression)) X(subst:$(Set-Location .aws)) ; W(gc) W(credentials)',
+    ],
+    ['single quotes doubled', "echo 'it''s'", "W(echo) W(it's)"],
+    ['a backtick-newline joins lines', 'Set-Location `\n  src', 'W(Set-Location) W(src)'],
+    ['a pipeline', 'ls | Set-Location', 'W(ls) | W(Set-Location)'],
+    ['an assignment', '$p = "x"; cd $p', 'A(p=W(x)) ; W(cd) X(param:$p)'],
+    ['a script block', 'ls | % { cd x }', 'W(ls) | W(%) X(subst:{ cd x })'],
+    ['a block comment', 'cd <# c #> src', 'W(cd) W(src)'],
+    ['a redirection', 'Push-Location src > $null', 'W(Push-Location) W(src) R(> X(param:$null))'],
+    [
+      'an if',
+      'if ($a) { cd x } else { cd y }',
+      'if [W((expression)) X(subst:($a))] then [W(cd) W(x)] else [W(cd) W(y)] fi',
+    ],
+    ['a foreach', 'foreach ($d in $ds) { cd $d }', 'for  do [W(cd) X(param:$d)]'],
+    ['a double-quoted backtick', 'cd "a`"b"', 'W(cd) W(a"b)'],
+    [
+      'a parameter with a colon',
+      'Set-Location -LiteralPath:src',
+      'W(Set-Location) W(-LiteralPath:) W(src)',
+    ],
+  ])('%s: %j', (_, command, expected) => expect(ps(command)).toBe(expected))
+  test.each([['echo "x'], ["echo 'x"], ['cd $(x'], ['{ cd x']])('%j does not close', (c) =>
+    expect(ps(c)).toBe('fail:unbalanced')
+  )
+})
