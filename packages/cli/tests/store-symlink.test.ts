@@ -846,7 +846,7 @@ describe('an unrecorded map is adopted only by `veilio maps adopt` (R2-3 adoptio
     const path = existing()
     const r = await adopt(['--yes'])
     expect(r.code, r.err).toBe(EXIT_OK)
-    expect(r.out).toContain(`${path} holds 2 entries.`)
+    expect(r.out).toContain(`${path} holds 2 entries and 0 aliases.`)
     expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
     saveMap(path, { ...loadMap(path), __VAR__1: 'amountDue' })
     expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
@@ -881,6 +881,32 @@ describe('an unrecorded map is adopted only by `veilio maps adopt` (R2-3 adoptio
     const r = await adopt(['--yes'])
     expect(r.code).toBe(EXIT_FINDINGS)
     expect(r.err).toContain('veilio cannot read (`split index`)')
+    expect(recorded()).toBeUndefined()
+  })
+
+  // Security review: the record covers aliases.json too, so the question
+  // shows what it holds, and an aliases file that cannot be read is refused.
+  it('a planted aliases.json is shown before the question', async () => {
+    checkout()
+    const path = existing()
+    writeFileSync(
+      join(proj, '.veilio', 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias', __VAR__9: 'other' } })
+    )
+    const r = await adopt([], 'n')
+    expect(r.out).toContain(`${path} holds 2 entries and 2 aliases.`)
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('an aliases.json that cannot be read is refused, and nothing is adopted', async () => {
+    checkout()
+    existing()
+    writeFileSync(join(proj, '.veilio', 'aliases.json'), 'not json')
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain(
+      'veilio: .veilio/aliases.json is not a readable aliases file, so nothing was adopted.'
+    )
     expect(recorded()).toBeUndefined()
   })
 

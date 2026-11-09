@@ -46,6 +46,7 @@ import {
   localNumbering,
   redactedNote,
   redactionsIn,
+  readAliases,
 } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -691,8 +692,17 @@ export async function runMapsAdopt(
       return EXIT_ERROR
     }
     const count = Object.keys(loadMap(mapPath)).length
+    // The record covers aliases.json too: shown, and refused unread (security review).
+    const aliases = readAliases(mapPath)
+    if (aliases.unreadable) {
+      io.stderr(
+        'veilio: .veilio/aliases.json is not a readable aliases file, so nothing was adopted.\n'
+      )
+      return EXIT_FINDINGS
+    }
+    const named = Object.keys(aliases.aliases).length
     io.stdout(
-      `veilio: ${mapPath} holds ${count} ${count === 1 ? 'entry' : 'entries'}. Adopting it tells the guard this map is yours, so its names are put back without being shown first.\n`
+      `veilio: ${mapPath} holds ${count} ${count === 1 ? 'entry' : 'entries'} and ${named} ${named === 1 ? 'alias' : 'aliases'}. Adopting it tells the guard this map is yours, so its names are put back without being shown first.\n`
     )
     if (!opts.yes) {
       if (!io.prompt) {
