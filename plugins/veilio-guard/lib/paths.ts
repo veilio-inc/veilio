@@ -317,9 +317,19 @@ function merge(a: DirState | null, b: DirState | null): DirState | null {
       a.oldpwd === 'unknown' || b.oldpwd === 'unknown'
         ? 'unknown'
         : uniq([...a.oldpwd, ...b.oldpwd]),
-    stack: JSON.stringify(a.stack) === JSON.stringify(b.stack) ? a.stack : 'unknown',
+    stack: mergeStacks(a.stack, b.stack),
     vars,
   }
+}
+
+/** Two possible stacks as one: each entry the directories either has there,
+ *  and '' where one has none (a pop there may find the stack empty). */
+function mergeStacks(a: DirState['stack'], b: DirState['stack']): DirState['stack'] {
+  if (a === 'unknown' || b === 'unknown') return 'unknown'
+  if (JSON.stringify(a) === JSON.stringify(b)) return a
+  return Array.from({ length: Math.max(a.length, b.length) }, (_, k) =>
+    uniq([...(a[k] ?? ['']), ...(b[k] ?? [''])])
+  )
 }
 
 const both = (s: DirState | null): Outcome => ({ ok: s, fail: s })
@@ -343,18 +353,19 @@ class Walker {
   readonly landings: CdWalk['landings'] = []
   homeUnknown = false
   tilde = false
-  /** Functions the command defines, by name: their bodies, walked where
-   *  they are called (the map as it is then). */
-  readonly functions = new Map<string, Node>()
-  private readonly calling = new Set<string>()
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
-   *  was read at. The one model of "moves the shell" for loops and
-   *  functions (security review): the walk itself, not a second reading. */
+   *  was read at. The one model of "moves the shell" for loops (security
+   *  review): the walk itself, not a second reading. */
   private readonly moves: { shown: string; depth: number }[] = []
   private depth = 0
   private current = ''
-  constructor(private readonly ctx: CdContext) {}
+  constructor(
+    private readonly ctx: CdContext,
+    /** PowerShell: one runspace, so a pipeline stage, `$( )` and a script
+     *  block run in it, not in a child (FR-016). */
+    private readonly ps = false
+  ) {}
 
   /** In a child shell (a subshell, `$( )`, a pipeline stage, `bash -c`):
    *  what it moves is not this shell's. */
@@ -397,7 +408,11 @@ class Walker {
   private async pipeline(p: Pipeline, input: DirState): Promise<Outcome> {
     let r: Outcome
     if (p.stages.length === 1) r = await this.node(p.stages[0]!, input)
-    else {
+    else if (this.ps) {
+      let at = input
+      for (const s of p.stages.slice(0, -1)) at = anyOf(await this.node(s, at)) ?? at
+      r = await this.node(p.stages[p.stages.length - 1]!, at)
+    } else {
       // Every stage but the last runs in a subshell; the last one does in
       // bash, not in zsh (research R5): both readings kept.
       for (const s of p.stages.slice(0, -1)) await this.child(() => this.node(s, input))
@@ -450,9 +465,10 @@ class Walker {
         return both(all)
       }
       case 'function':
-        // Walked where it is called, with the functions as they are then.
-        this.functions.set(n.name, n.body)
-        return both(input)
+        // A function's effect depends on where and how it is called, and
+        // what it calls then: three review rounds did not converge on a
+        // model of that (085's pattern), and the corpus has none. Refused.
+        return N1(n.name, 'a shell function')
     }
   }
 
@@ -465,7 +481,7 @@ class Walker {
 
   /** A simple command's words, read at this point; substitutions in them
    *  run in a subshell from here. */
-  private async words(words: readonly Word[], at: DirState): Promise<void> {
+  private async words(words: readonly Word[], at: DirState, inPlace = false): Promise<void> {
     const home = typeof at.vars.HOME === 'object' ? at.vars.HOME.value : null
     this.points.push({ dirs: at.dirs, words: [...words], home })
     for (const w of words)
@@ -473,7 +489,7 @@ class Walker {
         if (p.kind === 'tilde' && p.user === '') this.tilde = true
         const l = p.kind === 'subst' ? p.list : null
         // One at a time: the depth counter is the walk's own.
-        if (l) await this.child(() => this.list(l, at))
+        if (l && !inPlace) await this.child(() => this.list(l, at))
       }
   }
 
@@ -522,7 +538,12 @@ class Walker {
       for (const w of Array.isArray(a.value) ? a.value : [a.value]) await this.words([w], input)
       here = this.assign(here, a, n.words.length === 0)
     }
-    await this.words(n.words, here)
+    // PowerShell runs `$( )` and a script block in place, before the command.
+    if (this.ps)
+      for (const w of n.words)
+        for (const p of w.parts)
+          if (p.kind === 'subst' && p.list) here = anyOf(await this.list(p.list, here)) ?? here
+    await this.words(n.words, here, this.ps)
     await this.redirects(n.redirects, here)
     // ${NAME:=v} sets NAME in this shell.
     let after = n.words.length === 0 ? here : input
@@ -531,33 +552,6 @@ class Walker {
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
     this.current = n.words.map((w) => w.raw).join(' ')
-    // A function: its body walked here, with the map as it is now; one that
-    // moves the shell is refused (security review). A name it calls that is
-    // being walked already (recursion) adds nothing new.
-    const called = programOf(n.words)
-    const fn = called?.word.literal ?? null
-    if (fn !== null && this.functions.has(fn) && !this.calling.has(fn)) {
-      this.calling.add(fn)
-      try {
-        if ((await this.probe(this.functions.get(fn)!, here)) !== null)
-          N1(fn, 'a function that changes directory')
-      } finally {
-        this.calling.delete(fn)
-      }
-      return both(after)
-    }
-    // An expanded program word may call one of them.
-    if (called && called.word.literal === null)
-      for (const [name, body] of this.functions)
-        if (!this.calling.has(name)) {
-          this.calling.add(name)
-          try {
-            if ((await this.probe(body, here)) !== null)
-              N1(called.word.raw, 'a function that changes directory')
-          } finally {
-            this.calling.delete(name)
-          }
-        }
     const args = n.words.slice(1)
     // Declaration builtins and the commands that set a variable by name.
     for (const w of args) if (w.assign) after = this.assign(after, w.assign)
@@ -590,6 +584,12 @@ class Walker {
    *  both outcomes unchanged when the command is not a cd. */
   private async cd(n: Simple, here: DirState, after: DirState): Promise<Outcome> {
     const words = n.words
+    if (this.ps) {
+      const c = psCd(words)
+      if (c === null) return both(after)
+      if (c === 'error') return { ok: null, fail: after }
+      return this.cdWith(c.name, c.rest, false, here, after)
+    }
     const found = programOf(words)
     if (!found) return both(after)
     const { word: prog, at: k } = found
@@ -619,7 +619,17 @@ class Walker {
       rest = rest.slice(1)
       if (stop) break
     }
-    const name = program
+    return this.cdWith(program, rest, possible, here, after)
+  }
+
+  /** A cd, pushd or popd with its targets (options set aside). */
+  private async cdWith(
+    name: string,
+    rest: Word[],
+    possible: boolean,
+    here: DirState,
+    after: DirState
+  ): Promise<Outcome> {
     const shown = (w: Word | undefined) => w?.raw ?? name
     // A directory-stack entry: `+N`, `-N`.
     if (rest[0] && /^[+-]\d+$/.test(rest[0].literal ?? ''))
@@ -629,7 +639,7 @@ class Walker {
       if (here.stack === 'unknown') N1('popd', 'a directory-stack entry')
       const [top, ...stack] = here.stack as string[][]
       if (!top) return { ok: null, fail: after }
-      const out = await this.moved(here, after, 'popd', top, possible)
+      const out = await this.moved(here, after, 'popd', top.filter(Boolean), top.includes(''))
       return { ok: out.ok && { ...out.ok, stack }, fail: out.fail }
     }
     if (rest.length === 0) {
@@ -637,13 +647,14 @@ class Walker {
         if (here.stack === 'unknown') N1('pushd', 'a directory-stack entry')
         const [top, ...stack] = here.stack as string[][]
         if (!top) return { ok: null, fail: after }
-        const out = await this.moved(here, after, 'pushd', top, possible)
+        const out = await this.moved(here, after, 'pushd', top.filter(Boolean), top.includes(''))
         return { ok: out.ok && { ...out.ok, stack: [here.dirs, ...stack] }, fail: out.fail }
       }
       if (possible) return both(after)
       return this.moved(here, after, name, this.home(here, name), possible)
     }
-    if (rest.length > 2) N1(rest.map((w) => w.raw).join(' '), 'more than one target')
+    if (rest.length > 2 || (this.ps && rest.length > 1))
+      N1(rest.map((w) => w.raw).join(' '), 'more than one target')
     if (rest.length === 2 && name !== 'popd' && !possible) {
       // zsh `cd old new`: old replaced by new in the directory; bash: an error.
       const [o, w] = [rest[0]!.literal, rest[1]!.literal]
@@ -722,6 +733,7 @@ class Walker {
     // zsh extended globs in an unquoted literal: `#`, `^`, a `~` after the start.
     for (const [k, p] of parts.entries())
       if (
+        !this.ps &&
         p.kind === 'lit' &&
         !p.quoted &&
         (/[#^]/.test(p.text) || (p.text.includes('~') && (k > 0 || !p.text.startsWith('~'))))
@@ -781,7 +793,7 @@ class Walker {
     const dirs = here.dirs.map((d) => abs(d, t))
     // A bare name is also looked up under each CDPATH entry.
     if (!/^\.\.?(\/|$)/.test(t)) {
-      const cdpath = here.vars.CDPATH
+      const cdpath: Var = this.ps ? 'unset' : here.vars.CDPATH
       if (cdpath === 'unknown')
         N1(w.raw, 'CDPATH set in this command to a value Veilio cannot read')
       if (typeof cdpath === 'object')
@@ -819,6 +831,117 @@ function programOf(words: readonly Word[]): { word: Word; at: number } | null {
   }
   const word = words[k]
   return word ? { word, at: k } : null
+}
+
+// ── PowerShell's location cmdlets (FR-016) ────────────────────────────────
+
+const PS_CD: Readonly<Record<string, 'cd' | 'pushd' | 'popd'>> = {
+  'set-location': 'cd',
+  sl: 'cd',
+  cd: 'cd',
+  chdir: 'cd',
+  'push-location': 'pushd',
+  pushd: 'pushd',
+  'pop-location': 'popd',
+  popd: 'popd',
+}
+// Their parameters and the common ones, with their aliases: true takes a value.
+const PS_PARAMS: Readonly<Record<string, boolean>> = {
+  path: true,
+  literalpath: true,
+  stackname: true,
+  passthru: false,
+  erroraction: true,
+  warningaction: true,
+  informationaction: true,
+  progressaction: true,
+  errorvariable: true,
+  warningvariable: true,
+  informationvariable: true,
+  outvariable: true,
+  outbuffer: true,
+  pipelinevariable: true,
+  verbose: false,
+  debug: false,
+  whatif: false,
+  confirm: false,
+}
+const PS_ALIASES: Readonly<Record<string, string>> = {
+  pspath: 'literalpath',
+  lp: 'literalpath',
+  ea: 'erroraction',
+  wa: 'warningaction',
+  infa: 'informationaction',
+  proga: 'progressaction',
+  ev: 'errorvariable',
+  wv: 'warningvariable',
+  iv: 'informationvariable',
+  ov: 'outvariable',
+  ob: 'outbuffer',
+  pv: 'pipelinevariable',
+  vb: 'verbose',
+  db: 'debug',
+  wi: 'whatif',
+  cf: 'confirm',
+}
+
+/** A parameter by its name, an alias or an unambiguous prefix (as
+ *  PowerShell binds it); null when it binds none or more than one. */
+function psParam(given: string): string | null {
+  const g = given.toLowerCase()
+  if (Object.hasOwn(PS_ALIASES, g)) return PS_ALIASES[g]!
+  if (Object.hasOwn(PS_PARAMS, g)) return g
+  const all = Object.keys(PS_PARAMS).filter((p) => p.startsWith(g))
+  return all.length === 1 ? all[0]! : null
+}
+
+/** A PowerShell path word as the cd rules read one: `\` a separator, a
+ *  drive path absolute, `$HOME` and `$env:USERPROFILE` HOME. Its raw text is
+ *  kept for the refusal (N3). */
+function psPath(w: Word): Word {
+  const parts = w.parts.map((p, k): Part => {
+    if (p.kind === 'lit') {
+      const t = p.text.replace(/\\/g, '/')
+      return { ...p, text: k === 0 && /^[A-Za-z]:/.test(t) ? `/${t}` : t }
+    }
+    if (p.kind === 'param' && /^(?:HOME|env:USERPROFILE|env:HOME)$/i.test(p.name))
+      return { ...p, name: 'HOME' }
+    if (p.kind === 'param' && /^PWD$/i.test(p.name)) return { ...p, name: 'PWD' }
+    return p
+  })
+  const literal = parts.every((p) => p.kind === 'lit')
+    ? parts.map((p) => (p as { text: string }).text).join('')
+    : null
+  return { parts, literal, raw: w.raw }
+}
+
+/** A PowerShell command as cd, pushd or popd with its targets; null when it
+ *  is not one; 'error' when it cannot bind (it fails, the location stays). */
+function psCd(
+  words: readonly Word[]
+): { name: 'cd' | 'pushd' | 'popd'; rest: Word[] } | 'error' | null {
+  let k = 0
+  if (words[0]?.literal === '&') k++
+  const program = words[k]?.literal?.toLowerCase().replace(/^.*\\/, '')
+  const name = program === undefined ? undefined : PS_CD[program]
+  if (!name) return null
+  const rest: Word[] = []
+  for (let j = k + 1; j < words.length; j++) {
+    const w = words[j]!
+    const m = /^-([A-Za-z]+)(:?)$/.exec(w.literal ?? '')
+    if (!m) {
+      rest.push(psPath(w))
+      continue
+    }
+    const param = psParam(m[1]!)
+    if (param === null) return 'error'
+    if (!PS_PARAMS[param]) continue
+    const value = words[++j]
+    if (!value) return 'error'
+    // A wildcard in -Path is 078's floor's (any `*`, `?` or `[` in a target).
+    if (param === 'path' || param === 'literalpath') rest.push(psPath(value))
+  }
+  return { name, rest }
 }
 
 /** `$(pwd)` and `$(git rev-parse --show-toplevel)`: the two substitutions a
@@ -867,8 +990,13 @@ export function wordPath(w: Word, home: string | null): string | null {
 }
 
 /** The cd walk of a command the reader read. A refusal stops it. */
-export async function walkCd(l: List, start: DirState, ctx: CdContext): Promise<CdWalk> {
-  const w = new Walker(ctx)
+export async function walkCd(
+  l: List,
+  start: DirState,
+  ctx: CdContext,
+  dialect: 'sh' | 'ps' = 'sh'
+): Promise<CdWalk> {
+  const w = new Walker(ctx, dialect === 'ps')
   try {
     const out = await w.list(l, start)
     if (w.homeUnknown && w.tilde) throw new Refused({ kind: 'N2' })

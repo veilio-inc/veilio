@@ -782,28 +782,30 @@ const SCOPE: [string, string | undefined][] = [
   ['while true; do cd sub || break; done', N1('cd sub', 'a cd in a loop')],
   ['until false; do CDPATH=lib; done; cd deep', N1('CDPATH=', 'a cd in a loop')],
   ['for x in 1 2; do ls $x; done; cat notes', undefined],
-  ['f() { cd sub; }; f; cat notes', N1('f', 'a function that changes directory')],
-  ['function f { HOME=/x; }; f; cd', N1('f', 'a function that changes directory')],
-  ['f() { cd sub; }; ls', undefined],
-  ['f() { ls; }; f; cat notes', undefined],
-  // Decided where it is called, with the functions as they are then (review 2);
-  // the refusal names the one that moves the shell.
-  [
-    'g() { ls; }; f() { g; }; g() { cd sub; }; f; cat notes',
-    N1('g', 'a function that changes directory'),
-  ],
-  ['g() { cd sub; }; f() { g; }; g() { ls; }; f; cat notes', undefined],
-  ['f() { f; cd sub; }; f', N1('f', 'a function that changes directory')],
-  ['f() { cd sub; }; $x; cat notes', N1('$x', 'a function that changes directory')],
-  ['f() { ls; }; $x', undefined],
-  // `command` and `builtin` read the same way everywhere
+  // A shell function is refused, whatever it does (security review 3).
+  ['f() { cd sub; }; f; cat notes', N1('f', 'a shell function')],
+  ['function f { HOME=/x; }; f; cd', N1('f', 'a shell function')],
+  ['f() { cd sub; }; ls', N1('f', 'a shell function')],
+  ['f() { ls; }; f; cat notes', N1('f', 'a shell function')],
+  ['g() { ls; }; f() { g; }; g() { cd sub; }; f; cat notes', N1('g', 'a shell function')],
+  ['f() { cd sub; }; builtin f', N1('f', 'a shell function')],
+  ['f() { cd sub; }; command f', N1('f', 'a shell function')],
+  ['f() { f; cd sub; }; f', N1('f', 'a shell function')],
+  ['for x in 1 2; do f() { cd sub; }; f; done', N1('f', 'a shell function')],
+  ["bash -c 'f() { cd ..; }; f'", N1('f', 'a shell function')],
+  ['echo $(f() { :; })', N1('f', 'a shell function')],
+  // `command` and `builtin` before a cd: the cd path
   ['for x in 1; do command -p cd ..; done', N1('command -p cd ..', 'a cd in a loop')],
-  ['f() { command -- cd sub; }; f', N1('f', 'a function that changes directory')],
+  ['for x in 1; do builtin cd ..; done', N1('builtin cd ..', 'a cd in a loop')],
+  ['command -p cd sub && cat notes', NOTES],
+  ['command -- cd sub && cat notes', NOTES],
   ['for x in 1; do command -v cd; done', undefined],
-  // zsh AUTO_CD: a lone word naming a directory, in a loop or a function
+  // zsh AUTO_CD: a lone word naming a directory, in a loop
   ['for x in 1; do sub; done', N1('sub', 'a cd in a loop')],
-  ['f() { sub; }; f', N1('f', 'a function that changes directory')],
   ['for x in 1; do ls; done', undefined],
+  // pushd's failure keeps the stack it had: a popd after `;` may pop either
+  ['pushd sub; ls; popd; cat notes', NOTES],
+  ['pushd sub; popd && cat notes', NOTES],
   // a subshell's cd in a loop moves nothing out here
   ['for x in 1; do (cd sub && ls); done; cat notes', undefined],
   // more than two targets: refused, not read as an error
@@ -820,6 +822,7 @@ const SCOPE: [string, string | undefined][] = [
   ['nohup cd sub && cat notes', undefined],
   // bash's reading of the pipeline: the shell stays where it was
   ['cd /other/repo && ls | cd sub; cat notes', NOTES],
+  ['cd /other/repo && ls | cd sub && cat notes', NOTES],
   // every directory the shell may be in, not only one of them
   ['cd /other/repo; cd /zzz; cat notes', NOTES],
 ]

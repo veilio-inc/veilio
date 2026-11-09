@@ -355,6 +355,9 @@ const ATTACK_PS = [
   'Write-Output $(Set-Location ~\\.kube; gc config)',
   'Microsoft.PowerShell.Management\\Set-Location ~\\.aws; gc credentials',
   'c`d ~\\.kube',
+  // The same forms as 085's round tests spelled them
+  'Set-Location -Path ~\\.kube; gc config',
+  'echo "$(sl ~\\.aws)"',
 ]
 
 const HAND_PS = ['Set-Location έγγραφα', 'Set-Location "Wnioski\\źródła"; ls', 'cd Straße']

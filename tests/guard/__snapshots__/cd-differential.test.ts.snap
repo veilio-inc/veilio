@@ -49,5 +49,13 @@ exports[`the cd differential: no new refusal off the attack list, the floor kept
   "attack:55 "cd \`echo .kube\`" -> Veilio refused this call: Veilio cannot tell where \`\`echo .kube\`\` takes the shell (a command substitution), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.",
   "attack:56 "DIRSTACK[1]=~/.kube; popd; cat config" -> Veilio refused this call: Veilio cannot tell where \`popd\` takes the shell (a directory-stack entry), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.",
   "attack:57 "export CDPATH=~/.config; cd gcloud" -> Veilio keeps \`gcloud\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:0 "Set-Location C:\\\\Users\\\\dev\\\\.aws; Get-Content credentials" -> Veilio keeps \`C:\\Users\\dev\\.aws\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:1 "sl ~\\\\.kube; gc config" -> Veilio keeps \`~\\.kube\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:2 "Push-Location ~\\\\.aws; gc credentials" -> Veilio keeps \`~\\.aws\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:3 "Write-Output $(Set-Location ~\\\\.kube; gc config)" -> Veilio keeps \`~\\.kube\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:4 "Microsoft.PowerShell.Management\\\\Set-Location ~\\\\.aws; gc credentials" -> Veilio keeps \`~\\.aws\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:5 "c\`d ~\\\\.kube" -> Veilio keeps \`~\\.kube\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:6 "Set-Location -Path ~\\\\.kube; gc config" -> Veilio keeps \`~\\.kube\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
+  "attack-ps:7 "echo \\"$(sl ~\\\\.aws)\\"" -> Veilio keeps \`~\\.aws\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.",
 ]
 `;

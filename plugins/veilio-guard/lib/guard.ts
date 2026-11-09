@@ -1528,9 +1528,10 @@ export class Guard {
    *  and variables the session's. A command the reader cannot read moves
    *  each directory as main moves its one. */
   private async shellRan(tool: string, command: string): Promise<void> {
-    const parsed = tool === 'Bash' ? parseShell(command, 'sh') : null
-    if (parsed?.ok) {
-      const walk = await walkCd(parsed.list, this.dirs, this.cdContext)
+    const dialect = tool === 'PowerShell' ? 'ps' : 'sh'
+    const parsed = parseShell(command, dialect)
+    if (parsed.ok) {
+      const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
       const carry = this.hostReports || this.assumeSuccess ? walk.end : (walk.endAll ?? walk.end)
       this.dirs = this.sessionState(carry.dirs)
     } else {
@@ -1686,10 +1687,11 @@ export class Guard {
           )
         // Spec 086: the cd rules, on what the reader reads; a command it
         // cannot read is judged as main judges it (FR-003).
-        const parsed = e.tool === 'Bash' ? parseShell(c, 'sh') : null
+        const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
+        const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
         let moves: string[] = []
         if (parsed?.ok) {
-          const walk = await walkCd(parsed.list, this.dirs, this.cdContext)
+          const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
           // Q3 = A: with no host report, a call that would leave the shell
           // in more directories than the bound is refused before it runs.
           const r =
@@ -1719,8 +1721,10 @@ export class Guard {
           // in there, `~` read with HOME as it is there (FR-010).
           for (const point of walk.points)
             for (const w of point.words) {
-              const text = wordPath(w, point.home)
-              if (text === null) continue
+              const path = wordPath(w, point.home)
+              if (path === null) continue
+              // PowerShell's separator is `\\` too.
+              const text = dialect === 'ps' ? path.replace(/\\/g, '/') : path
               for (const piece of pathsInCommand(text)) {
                 // An absolute path as written is checked below; one `~` became is not.
                 const at = /^[/\\]|^[A-Za-z]:/.test(piece)

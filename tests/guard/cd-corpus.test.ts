@@ -37,6 +37,6 @@ test('no distinctive identifier: inner capitals or underscores only in placehold
 
 test('every attack and ordinary form is an entry of its own, and ids are unique', () => {
   const count = (s: string) => CORPUS.filter((e) => e.source === s).length
-  expect([count('attack'), count('ordinary')]).toEqual([71, 33])
+  expect([count('attack'), count('ordinary')]).toEqual([73, 33])
   expect(new Set(CORPUS.map((e) => e.id)).size).toBe(CORPUS.length)
 })

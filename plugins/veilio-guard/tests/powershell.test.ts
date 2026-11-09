@@ -119,3 +119,74 @@ test('PowerShell: an ordinary command runs, and its output is masked', async ($,
   expect(JSON.stringify(out)).not.toContain(CANARY)
   expect(JSON.stringify(out)).toContain('__CLS__1')
 })
+
+// ── spec 086 US5: PowerShell's location cmdlets, read with its own quoting ──
+const HOME = '/home/dev'
+const A1 = (t: string) =>
+  `Veilio keeps \`${t}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.`
+const A2 = (w: string) =>
+  `Veilio keeps ${w} away from the model. Ask the user for what you need from it.`
+const N1 = (t: string, form: string) =>
+  `Veilio refused this call: Veilio cannot tell where \`${t}\` takes the shell (${form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.`
+const PS_TREE = {
+  [`${HOME}/.aws/credentials`]: 'x\n',
+  [`${HOME}/.kube/config`]: 'x\n',
+  [`${ROOT}/.env`]: `${SECRET}\n`,
+  [`${ROOT}/notes`]: 'plain\n',
+  [`${ROOT}/sub/notes`]: '',
+  [`${ROOT}/src/a.ts`]: '',
+}
+async function ps(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: TestOn,
+  command: string
+): Promise<string | undefined> {
+  project(on, PS_TREE, { home: HOME, links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
+  return (await $.tool.call({ tool: 'PowerShell', command, description: 'x' })).deny
+}
+
+// research.md R4, the PowerShell forms; each refused with its target as written.
+for (const [command, expected] of [
+  ['Set-Location C:\\Users\\dev\\.aws; Get-Content credentials', A1('C:\\Users\\dev\\.aws')],
+  ['sl ~\\.kube; gc config', A1('~\\.kube')],
+  ['Push-Location ~\\.aws; gc credentials', A1('~\\.aws')],
+  ['Write-Output $(Set-Location ~\\.kube; gc config)', A1('~\\.kube')],
+  ['Microsoft.PowerShell.Management\\Set-Location ~\\.aws; gc credentials', A1('~\\.aws')],
+  ['c`d ~\\.kube', A1('~\\.kube')],
+  ['SET-LOCATION ~/.kube', A1('~/.kube')],
+  ['Set-Location -Path ~\\.kube', A1('~\\.kube')],
+  ['Set-Location -LiteralPath:~\\.aws', A1('~\\.aws')],
+  ['cd $env:USERPROFILE\\.aws', A1('$env:USERPROFILE\\.aws')],
+  ['cd $HOME\\.aws', A1('$HOME\\.aws')],
+  // 078's floor refuses a cd target with `*`, `?` or `[` first (FR-009)
+  ['Set-Location ~\\.k*', A1('~.k*')],
+  ['Set-Location -LiteralPath "src[1]"', A1('src[1]')],
+  ['Set-Location -Path "x" ; Set-Location -Path "~/.k?be"', A1('~/.k?be')],
+  ['Set-Location $p', N1('$p', 'a variable')],
+  ['Get-ChildItem | ForEach-Object { Set-Location ~\\.aws }', A1('~\\.aws')],
+  ['Set-Location sub; Get-Content notes', A2('notes')],
+  ['Set-Location sub | Out-Null; Get-Content notes', A2('notes')],
+  ['function f { Set-Location ~\\.aws }; f', N1('f', 'a shell function')],
+  ['filter f { $_ }; ls | f', N1('f', 'a shell function')],
+] as const)
+  test(`086 PowerShell ${JSON.stringify(command)} is refused`, async ($, on) => {
+    expect(await ps($, on, command)).toBe(expected)
+  })
+
+// The ordinary forms (contracts/cd-verdicts.md), and the non-ASCII ones.
+for (const command of [
+  'Set-Location src; npm test',
+  'Set-Location -Path src -ErrorAction Stop',
+  'Set-Location "C:\\Program Files (x86)\\App"',
+  'Push-Location src; npm test; Pop-Location',
+  'Set-Location έγγραφα',
+  'Set-Location "Wnioski\\źródła"; ls',
+  'Push-Location src > $null',
+  'Set-Location src -ErrorVariable err',
+  '$x = 1; Set-Location src',
+  'Set-Location sub && Set-Location .. && Get-Content notes',
+])
+  test(`086 PowerShell ${JSON.stringify(command)} runs`, async ($, on) => {
+    expect(await ps($, on, command)).toBeUndefined()
+  })
