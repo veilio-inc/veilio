@@ -110,6 +110,8 @@ export class FakeCloud {
   /** This account re-keyed after its public key was read: a grant carrying a
    *  fingerprint is refused 409, as Cloud's grant route does. */
   recipientRekeyed = false
+  /** An older Cloud: that 409 carries its words only, no `recipientKeyChanged`. */
+  recipientRekeyedTextOnly = false
   maxBytes = 200_000
   /** Called after a map is read - a teammate's write can land here. */
   afterGet: ((map: FakeMap) => void) | null = null
@@ -465,10 +467,16 @@ export class FakeCloud {
                 .digest('hex')
             : null
         if (b.recipientKeyFingerprint !== onFile)
-          return json(409, {
-            error:
-              "That member's key changed since you read it. Nothing was stored. Reload and try again.",
-          })
+          return json(
+            409,
+            this.recipientRekeyedTextOnly
+              ? {
+                  error:
+                    "That member's key changed since you read it. Nothing was stored. Reload and try again.",
+                }
+              : // Other words on purpose: the flag, not the text, is what is read.
+                { error: 'Recipient public key mismatch.', recipientKeyChanged: true }
+          )
       }
       if (this.wraps.some((w) => w.user === b.userId && w.version === b.version))
         return json(409, { error: 'That member already holds this version of the team key.' })

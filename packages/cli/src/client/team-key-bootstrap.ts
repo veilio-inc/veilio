@@ -162,8 +162,13 @@ export async function bootstrapTeamKey(
       recipientKeyFingerprint: await keyDigest(me.publicKey),
     })
   } catch (err) {
-    // Cloud sends no code for it, only its words (routes/teams.ts).
-    if (err instanceof CloudError && err.status === 409 && /key changed since/i.test(err.message))
+    if (
+      err instanceof CloudError &&
+      err.status === 409 &&
+      (err.body?.recipientKeyChanged === true ||
+        // Fallback for a Cloud that predates the flag and sends only the words.
+        /key changed since/i.test(err.message))
+    )
       return { status: 'recipient_key_changed' }
     // 403: the team has wraps already, or this member may not start one.
     // 409: a wrap for this version exists. Somebody got there first.

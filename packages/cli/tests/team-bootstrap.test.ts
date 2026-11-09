@@ -208,17 +208,24 @@ describe('the recipient key, as Cloud checks it (review round 3)', () => {
     })
   })
 
-  it('a key changed since it was read: the approved words, nothing stored or unlocked', async () => {
-    await cloud.withKeypair()
-    cloud.recipientRekeyed = true
-    const r = await run(['team', 'unlock'])
-    expect(r.code).toBe(EXIT_ERROR)
-    expect(r.err).toBe(
-      "veilio: That member's key changed since you read it. Nothing was stored. Reload and try again.\n"
-    )
-    expect(cloud.wraps).toHaveLength(0)
-    expect(existsSync(teamUnlockPath(home))).toBe(false)
-  })
+  it.each([
+    ['flagged recipientKeyChanged', false],
+    ['said only in words (a Cloud without the flag)', true],
+  ])(
+    'a key changed since it was read, %s: the approved words, nothing stored or unlocked',
+    async (_label, textOnly) => {
+      await cloud.withKeypair()
+      cloud.recipientRekeyed = true
+      cloud.recipientRekeyedTextOnly = textOnly
+      const r = await run(['team', 'unlock'])
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.err).toBe(
+        "veilio: That member's key changed since you read it. Nothing was stored. Reload and try again.\n"
+      )
+      expect(cloud.wraps).toHaveLength(0)
+      expect(existsSync(teamUnlockPath(home))).toBe(false)
+    }
+  )
 })
 
 describe('a team of one', () => {
