@@ -123,6 +123,16 @@ export const COMMAND_SPECS = [
     ],
   },
   {
+    key: 'maps adopt',
+    cloud: false,
+    help: [
+      {
+        usage: 'maps adopt',
+        text: 'Trust the map already in this project as one this machine wrote, after showing what it holds, so the guard puts its names back without asking to see them first. --yes skips the question.',
+      },
+    ],
+  },
+  {
     key: 'maps rm',
     cloud: true,
     help: [{ usage: 'maps rm <id>', text: 'Remove a map from Cloud.' }],
@@ -295,7 +305,16 @@ export const FLAGS: readonly FlagSpec[] = [
     short: '-m',
     value: '<path>',
     help: 'Use a specific map file',
-    commands: ['scrub', 'restore', 'map', 'maps pull', 'maps push', 'maps update', 'team unlock'],
+    commands: [
+      'scrub',
+      'restore',
+      'map',
+      'maps pull',
+      'maps push',
+      'maps update',
+      'maps adopt',
+      'team unlock',
+    ],
     field: 'mapPath',
   },
   {
@@ -361,6 +380,12 @@ export const FLAGS: readonly FlagSpec[] = [
     help: 'Forget a newer team key version refused before. Helps only once Cloud no longer offers that version, and only if the newest key stored is writable',
     commands: ['team unlock'],
     field: 'forgetRefused',
+  },
+  {
+    long: '--yes',
+    help: 'Adopt without asking',
+    commands: ['maps adopt'],
+    field: 'yes',
   },
   {
     long: '--allow-drop',

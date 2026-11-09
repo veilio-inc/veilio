@@ -121,13 +121,6 @@ describe('when the team layer is needed but not there', () => {
 describe('code review fixes', () => {
   const maps = mapsFor({ namespace: { __FN__1: 'settleLedger' }, aliases: {}, conflicts: {} })
 
-  it('an instance without conflict detection is never used to restore', async () => {
-    await primeNamespace((await teamScenario(fetchMock, { maps, legacy: true })).home)
-    const r = callTool('restore_text', { text: 'x.__FN__1()' }, ctxWith({ __VAR__1: 'a' }))
-    expect(restoredPart(r.text)).toBe('x.__FN__1()')
-    expect(r.text).toMatch(/predates conflict detection/)
-  })
-
   it('the report counts this project map and what the team restored, not the whole team layer', async () => {
     const big = mapsFor({
       namespace: Object.fromEntries(
@@ -233,5 +226,70 @@ describe('new numbers stay clear of the project store (spec 028 R5)', () => {
     expect(Object.entries(stored).find(([, n]) => n === 'brandNewThing')?.[0]).toMatch(
       /^__LOCAL_[A-Z0-9]{6}_FN__1$/
     )
+  })
+})
+
+// Spec 085 part 3, R2-4 and R2-5, through restore_text and anonymize_text.
+describe('team content Cloud serves in plain is never used (R2-4, R2-5)', () => {
+  const HOSTILE = { __FN__1: 'PaymentGateway()\nrunEvil()', 'verify=True': 'verify=False' }
+
+  it('restore_text: a map_data object after a 404 is unreadable', async () => {
+    await primeNamespace(
+      (
+        await teamScenario(fetchMock, {
+          maps: [{ createdAt: '2026-09-01T10:00:00Z', map: HOSTILE }],
+          fallback: 'plain',
+        })
+      ).home
+    )
+    const r = callTool(
+      'restore_text',
+      { text: 'x = __FN__1; verify=True' },
+      ctxWith({ __VAR__1: 'a' })
+    )
+    expect(r.text).not.toContain('runEvil()')
+    expect(r.text).not.toContain('verify=False')
+  })
+
+  for (const how of ['legacy', 'plain'] as const)
+    it(`anonymize_text: ${how} team content does not keep a name readable`, async () => {
+      await primeNamespace(
+        (
+          await teamScenario(fetchMock, {
+            maps: [
+              { createdAt: '2026-09-01T10:00:00Z', map: { PaymentGateway: 'PaymentGateway' } },
+            ],
+            ...(how === 'legacy' ? { legacy: true } : { fallback: 'plain' as const }),
+          })
+        ).home
+      )
+      const r = callTool('anonymize_text', { text: 'class PaymentGateway {}\n' }, ctxWith({}))
+      expect(r.text.split('\n')[0]).not.toContain('PaymentGateway')
+      expect(r.text).not.toMatch(/^class PaymentGateway/m)
+    })
+})
+
+// Spec 085 part 3, R2-6, through restore_text.
+describe('a sealed team map that is not placeholders to names is not used (R2-6)', () => {
+  it('restore_text: no injected code, no rewritten text', async () => {
+    await primeNamespace(
+      (
+        await teamScenario(fetchMock, {
+          maps: [
+            {
+              createdAt: '2026-09-01T10:00:00Z',
+              map: { __FN__1: 'PaymentGateway()\nrunEvil()', 'verify=True': 'verify=False' },
+            },
+          ],
+        })
+      ).home
+    )
+    const r = callTool(
+      'restore_text',
+      { text: 'x = __FN__1; verify=True' },
+      ctxWith({ __VAR__1: 'a' })
+    )
+    expect(r.text).not.toContain('runEvil()')
+    expect(r.text).not.toContain('verify=False')
   })
 })

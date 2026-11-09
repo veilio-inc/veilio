@@ -40,6 +40,97 @@ export interface ProjectShape {
 
 const IDENT = /^[A-Za-z_$][\w$]*$/
 
+/** JSONC without its comments: `//` and block comments outside strings. */
+function withoutComments(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!
+    if (c === '"') {
+      const start = i
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++
+      out += text.slice(start, i + 1)
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++
+      out += '\n'
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      i = end === -1 ? text.length : end + 1
+    } else out += c
+  }
+  return out
+}
+
+/**
+ * The project's shape from its file list (paths relative to the root, `/`
+ * separated) and a reader for a few of them (spec 085 R2-23): one reading for
+ * the CLI, the MCP server and the guard, so none of them takes a project's own
+ * package for a public one. Top-level folders; every folder on the way to a
+ * Python file and each module's own name; every `package.json`'s name (no
+ * cap: one left unread would make that workspace read as public); `tsconfig` `baseUrl` folders and `paths` aliases; the root `go.mod`
+ * module. A file the reader cannot give is skipped, which only leaves more
+ * names masked.
+ */
+
+export function projectShapeFrom(
+  files: readonly string[],
+  read: (rel: string) => string | undefined
+): ProjectShape {
+  const json = (rel: string): Record<string, unknown> | undefined => {
+    try {
+      const text = read(rel)
+      if (text === undefined) return undefined
+      // Plain JSON first: a comment strip that does not know strings eats the
+      // text between `"src/*"` and `"**/*"` (review).
+      let value: unknown
+      try {
+        value = JSON.parse(text)
+      } catch {
+        value = JSON.parse(withoutComments(text).replace(/,(\s*[}\]])/g, '$1'))
+      }
+      return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const tops = new Set(files.filter((f) => f.includes('/')).map((f) => f.split('/')[0]!))
+  const pythonModules = new Set(tops)
+  for (const f of files.filter((f) => f.endsWith('.py')))
+    for (const part of f.replace(/\.py$/, '').split('/')) pythonModules.add(part)
+  const baseDirs = new Set(tops)
+  const workspaces: string[] = []
+  for (const manifest of files.filter((f) => /(^|\/)package\.json$/.test(f))) {
+    const name = json(manifest)?.name
+    if (typeof name === 'string') workspaces.push(name)
+  }
+  const pathAliases: string[] = []
+  for (const config of files.filter((f) => /^tsconfig[^/]*\.json$/.test(f))) {
+    const options = json(config)?.compilerOptions as
+      { baseUrl?: unknown; paths?: unknown } | undefined
+    if (typeof options?.baseUrl === 'string') {
+      const base = options.baseUrl.replace(/^\.\/?/, '').replace(/\/$/, '')
+      for (const f of files) {
+        const rest = base ? (f.startsWith(`${base}/`) ? f.slice(base.length + 1) : null) : f
+        if (rest?.includes('/')) baseDirs.add(rest.split('/')[0]!)
+      }
+    }
+    if (options?.paths && typeof options.paths === 'object')
+      for (const key of Object.keys(options.paths)) {
+        const prefix = key.replace(/\*.*$/, '')
+        if (prefix) pathAliases.push(prefix)
+      }
+  }
+  const goModule = files.includes('go.mod')
+    ? /^module\s+(\S+)/m.exec(read('go.mod') ?? '')?.[1]
+    : undefined
+  return {
+    baseDirs: [...baseDirs],
+    pythonModules: [...pythonModules],
+    workspaces,
+    pathAliases,
+    ...(goModule ? { goModule } : {}),
+  }
+}
+
 /** `import express from 'express'`: the binding is named after the package. */
 function namedAfter(local: string, specifier: string): boolean {
   const last = specifier.split(/[/:]/).pop() ?? ''

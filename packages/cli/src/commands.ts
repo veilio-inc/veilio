@@ -7,7 +7,7 @@
 //      corrupting that pipe.
 
 import { BlobsError, parseListing, scanListedBlobs } from './staged-blobs.js'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import {
@@ -35,7 +35,7 @@ import {
 } from '@veilio-inc/engine'
 import type { ParsedArgs } from './args.js'
 import { allCommandsHelp, optionsHelp } from './flags.js'
-import { clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
+import { StoreRefusal, adoptStore, clearMap, loadMap, resolveMapPath, saveMap } from './store.js'
 import {
   contestedNote,
   misattributedNote,
@@ -46,6 +46,7 @@ import {
   localNumbering,
   redactedNote,
   redactionsIn,
+  readAliases,
 } from './reservations.js'
 import { readCredential } from './credential.js'
 import { describeAge, readRules } from './rules.js'
@@ -55,7 +56,7 @@ import {
   reservedAnonymizeFilesOverTeam,
   type Reserve,
 } from './team-anonymize.js'
-import { thirdPartyNames } from './third-party.js'
+import { PROJECT_TOO_LARGE_NOTE, thirdPartyNames } from './third-party.js'
 
 export interface Io {
   cwd: string
@@ -185,6 +186,7 @@ export async function runScrub(
     args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
   // What the team's maps hold counts as known code too (security review of 8adc729).
   const keep = thirdPartyNames(inputs, [existingMap, found.team?.namespace ?? {}], io.cwd)
+  if (keep.tooLarge) io.stderr(`${PROJECT_TOO_LARGE_NOTE}\n`)
 
   const optionsFor = (input: (typeof inputs)[number]): Parameters<typeof anonymizeOverTeam>[3] => {
     const own = keep.get(input) ?? new Set<string>()
@@ -671,3 +673,58 @@ EXAMPLES
 Transformed code goes to stdout; everything else goes to stderr, so the CLI
 composes in a pipe.
 `
+
+/**
+ * `veilio maps adopt` (spec 085 R2-3, founder 2026-11-09): trust the map
+ * already in this project as one this machine wrote, so the guard puts its
+ * names back without asking to see them first. Shows the path and the entry
+ * count and asks, unless --yes. The only way a map Veilio did not record
+ * becomes trusted: no read, scrub or MCP call does it.
+ */
+export async function runMapsAdopt(
+  mapPath: string,
+  io: Io,
+  opts: { yes: boolean }
+): Promise<number> {
+  try {
+    if (!existsSync(mapPath)) {
+      io.stderr(`veilio: there is no map at ${mapPath} to adopt.\n`)
+      return EXIT_ERROR
+    }
+    const count = Object.keys(loadMap(mapPath)).length
+    // The record covers aliases.json too: shown, and refused unread (security review).
+    const aliases = readAliases(mapPath)
+    if (aliases.unreadable) {
+      io.stderr(
+        'veilio: .veilio/aliases.json is not a readable aliases file, so nothing was adopted.\n'
+      )
+      return EXIT_FINDINGS
+    }
+    const named = Object.keys(aliases.aliases).length
+    io.stdout(
+      `veilio: ${mapPath} holds ${count} ${count === 1 ? 'entry' : 'entries'} and ${named} ${named === 1 ? 'alias' : 'aliases'}. Adopting it tells the guard this map is yours, so its names are put back without being shown first.\n`
+    )
+    if (!opts.yes) {
+      if (!io.prompt) {
+        io.stderr(
+          'veilio: maps adopt asks before it adopts; run it in a terminal, or pass --yes.\n'
+        )
+        return EXIT_ERROR
+      }
+      const answer = (await io.prompt('Adopt this map? [y/N] ')).trim().toLowerCase()
+      if (answer !== 'y' && answer !== 'yes') {
+        io.stdout('veilio: nothing was adopted.\n')
+        return EXIT_OK
+      }
+    }
+    adoptStore(mapPath)
+    io.stdout(`veilio: adopted ${mapPath}.\n`)
+    return EXIT_OK
+  } catch (err) {
+    if (err instanceof StoreRefusal) {
+      io.stderr(`veilio: ${err.message}\n`)
+      return EXIT_FINDINGS
+    }
+    throw err
+  }
+}

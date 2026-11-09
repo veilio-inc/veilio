@@ -15,7 +15,7 @@
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { STORE_DIR, fromBase64, type CustomRule } from '@veilio-inc/engine'
+import { STORE_DIR, fromBase64, ruleRefusal, type CustomRule } from '@veilio-inc/engine'
 import type { RulesSkipped } from './client/rules-skipped.js'
 import { readPersonalMapsKey } from './client/personal-maps-key.js'
 import { readTeamUnlock } from './team-unlock.js'
@@ -33,6 +33,9 @@ export interface CachedRules {
   /** Served but not applied here, by cause (spec 065). Absent in a cache
    *  written before it, which reads as all zeros. */
   skipped?: RulesSkipped
+  /** Team whitelists this member has been told about, by rule id (spec 085
+   *  R2-7): each new one is announced once. */
+  shownWhitelists?: string[]
 }
 
 export function rulesPath(home: string = homedir()): string {
@@ -72,6 +75,7 @@ function readSkipped(value: unknown): RulesSkipped {
     teamLocked: n(v.teamLocked),
     unopenable: n(v.unopenable),
     refused: n(v.refused),
+    teamUnconfirmed: n(v.teamUnconfirmed),
   }
 }
 
@@ -94,13 +98,14 @@ function isRule(value: unknown): value is CustomRule {
  * Team T: `team-keys.json` is v1, this instance and account, unexpired, its
  * teamId is T, and at least one key decodes to 32 bytes - what heldTeamKeys
  * keeps after importTeamKey drops a damaged one. Absent, damaged, expired or
- * somebody else's: not held.
+ * somebody else's: not held. `teamConfirmed`: one such key is writable, so its
+ * sender was confirmed (spec 085 R2-8): only then do the team's rules apply.
  */
 function keysHeld(
   owner: { instance: string; account: string },
   home: string,
   now: Date
-): { personal: boolean; team: string | null } {
+): { personal: boolean; team: string | null; teamConfirmed: boolean } {
   const unlock = readTeamUnlock(owner, home, now)
   const usable = (key: string): boolean => {
     try {
@@ -112,6 +117,7 @@ function keysHeld(
   return {
     personal: readPersonalMapsKey(owner, home, now) !== null,
     team: unlock && unlock.keys.some((k) => usable(k.key)) ? unlock.teamId : null,
+    teamConfirmed: !!unlock && unlock.keys.some((k) => k.writable && usable(k.key)),
   }
 }
 
@@ -144,8 +150,22 @@ export function readRules(
   const rules = (c.rules as CustomRule[]).filter((r) => {
     // Anything not marked team is treated as personal: it needs a key either way.
     const ok = r.scope === 'team' ? r.team_id !== null && r.team_id === held.team : held.personal
-    if (!ok) skipped[r.scope === 'team' ? 'teamLocked' : 'vaultLocked']++
-    return ok
+    if (!ok) {
+      skipped[r.scope === 'team' ? 'teamLocked' : 'vaultLocked']++
+      return false
+    }
+    if (r.scope !== 'team') return true
+    // Spec 085 R2-7, R2-8: judged again here, so a cache written before the
+    // checks, or kept after a key lost its confirmation, applies neither.
+    if (!held.teamConfirmed) {
+      skipped.teamUnconfirmed++
+      return false
+    }
+    if (ruleRefusal(r, 'team') !== null) {
+      skipped.refused++
+      return false
+    }
+    return true
   })
   return { ...(parsed as CachedRules), rules, skipped }
 }
@@ -174,6 +194,39 @@ export function purgeRules(scope: 'personal' | 'team', home: string = homedir())
   writeRules({ ...parsed, rules: parsed.rules.filter((r) => !isScope(r)), skipped }, home)
   return removed
 }
+
+/**
+ * The notices for team whitelists this member has not been told about yet
+ * (spec 085 R2-7, founder 2026-11-09: each member is told once), and the ids
+ * to record as told. Read from the cache as it is before this pull.
+ */
+export function newTeamWhitelists(
+  rules: readonly CustomRule[],
+  home: string = homedir()
+): { notices: string[]; shown: string[] } {
+  let before: string[] = []
+  try {
+    const parsed = JSON.parse(readFileSync(rulesPath(home), 'utf8')) as {
+      shownWhitelists?: unknown
+    }
+    if (Array.isArray(parsed.shownWhitelists))
+      before = parsed.shownWhitelists.filter((id): id is string => typeof id === 'string')
+  } catch {
+    // no cache yet: nothing told
+  }
+  const team = rules.filter((r) => r.scope === 'team' && r.type === 'whitelist')
+  const fresh = team.filter((r) => !before.includes(r.id))
+  return {
+    notices: fresh.map(
+      (r) =>
+        `veilio: a new team rule keeps names as written: \`${printable(r.name)}\` (\`${printable(r.pattern)}\`).`
+    ),
+    shown: [...new Set([...before, ...team.map((r) => r.id)])],
+  }
+}
+
+/** A rule's own text, shown without control or format characters. */
+const printable = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '?')
 
 /** 0600: the patterns name what a team considers sensitive. */
 export function writeRules(cached: CachedRules, home: string = homedir()): void {

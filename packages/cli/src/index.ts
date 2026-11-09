@@ -8,6 +8,7 @@ import {
   runMap,
   runRestore,
   runScan,
+  runMapsAdopt,
   runScrub,
   type Io,
 } from './commands.js'
@@ -111,6 +112,8 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
             })
           case 'rm':
             return await runMapsRm(args.files[0] ?? null, io)
+          case 'adopt':
+            return await runMapsAdopt(mapPath(), io, { yes: args.yes })
           default:
             io.stderr(`veilio: ${needsAction('maps')}\n`)
             return EXIT_ERROR

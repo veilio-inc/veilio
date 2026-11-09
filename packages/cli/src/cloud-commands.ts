@@ -50,7 +50,14 @@ import {
   writeTeamRecord,
   type Credential,
 } from './credential.js'
-import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
+import {
+  mergeRules,
+  newTeamWhitelists,
+  purgeRules,
+  removeRules,
+  rulesPath,
+  writeRules,
+} from './rules.js'
 import { openFetchedRules } from './rules-open.js'
 import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
@@ -728,6 +735,7 @@ export async function runRulesPull(io: Io): Promise<number> {
 
   const { personal, team, skipped } = await openFetchedRules(fetched, credential, io.home)
   const rules = mergeRules(personal, team)
+  const told = newTeamWhitelists(rules, io.home)
   writeRules(
     {
       instance: credential.instance,
@@ -735,6 +743,7 @@ export async function runRulesPull(io: Io): Promise<number> {
       pulledAt: new Date().toISOString(),
       rules,
       skipped,
+      shownWhitelists: told.shown,
     },
     io.home
   )
@@ -744,6 +753,7 @@ export async function runRulesPull(io: Io): Promise<number> {
       `(${personal.length} personal, ${team.length} team${disabled > 0 ? `, ${disabled} disabled and skipped` : ''}). ` +
       '`veilio scrub` applies them.\n'
   )
+  for (const notice of told.notices) io.stdout(`${notice}\n`)
   // Not an error: masking works without them, and the fix is one command away.
   for (const sentence of rulesSkippedSentences(skipped)) io.stdout(`${sentence}\n`)
   return EXIT_OK
@@ -1429,7 +1439,7 @@ export async function teamLayerFor(
   const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS, env })
   if (found.status === 'refused')
     return { team: null, note: null, refused: renderRefusal(found.refusal) }
-  if (found.status === 'team' && found.conflictDetection)
+  if (found.status === 'team')
     return {
       team: found.analysis,
       note: null,
@@ -1453,20 +1463,7 @@ export async function teamNamespaceForScrub(
   if (found.status === 'team') {
     const credential = readCredential(home)
     const teamId = found.teamId
-    // No teamId means an older self-hosted instance that merged the namespace
-    // server-side. It predates the reservation endpoint too, so there is
-    // nothing to reserve against and a local floor is the only option - said
-    // out loud rather than passed off as safe.
-    if (!credential || !teamId) {
-      return {
-        team: found.analysis,
-        note:
-          teamId === null
-            ? "this Cloud instance is too old to reserve placeholder numbers, so this was numbered from this project's map only and may clash with the team's placeholders."
-            : null,
-        reserve: null,
-      }
-    }
+    if (!credential) return { team: found.analysis, note: null, reserve: null }
     return {
       team: found.analysis,
       note: null,

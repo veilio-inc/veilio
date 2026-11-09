@@ -372,7 +372,9 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
   - `options.ruleBudget` — a `ruleBudget()` the call draws its rule-matching
     steps from, for a caller that shares one allowance across several calls
     (the guard does, per hook invocation). Without it, each call gets its own
-  - `options.rules` — whitelist / named-replacement rules
+  - `options.rules` — whitelist / named-replacement rules. Team whitelists
+    name the identifiers they keep (`^Name$` or `^(NameOne|NameTwo)$`).
+    Personal whitelists may use any supported pattern.
   - `options.manual` — literal strings to mask by hand (see below)
   - an unknown key throws a TypeError that names it and lists the valid
     options. It used to be ignored, or worse: an object of unknown keys was

@@ -1675,6 +1675,9 @@ export interface CommentSyntax {
   notLineOpener?: readonly string[]
   /** Block delimiters count only at the start of a line: Ruby's `=begin`/`=end`. */
   blockAtLineStart?: true
+  /** Heredocs (and Ruby's %-literals), read as strings so a `#` or `//` in one
+   *  opens no comment (spec 085 R2-11). */
+  heredoc?: 'ruby' | 'php'
 }
 
 const C_STYLE: CommentSyntax = {
@@ -1712,6 +1715,10 @@ const COMMENT_SYNTAX: Record<Language, CommentSyntax> = {
     quotes: ['"', "'"],
     lineBounded: [],
     blockAtLineStart: true,
+    // Spec 085 R2-11: a regex literal holding `#` is code, and heredocs and
+    // %-literals are strings.
+    regexLiterals: true,
+    heredoc: 'ruby',
   },
   php: {
     line: ['//', '#'],
@@ -1720,6 +1727,7 @@ const COMMENT_SYNTAX: Record<Language, CommentSyntax> = {
     quotes: ['"', "'"],
     lineBounded: [],
     notLineOpener: ['#['],
+    heredoc: 'php',
   },
   sql: {
     line: ['--'],

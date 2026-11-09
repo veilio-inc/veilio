@@ -5,6 +5,7 @@ import {
   parseDeclarations,
   parseImports,
   parseShellDeclarations,
+  projectShapeFrom,
 } from '../src/index.js'
 
 // Spec 050 R4: what a file takes from outside the project is public, and the
@@ -387,5 +388,28 @@ describe('parseShellDeclarations (security review of ce30398)', () => {
     expect(parseShellDeclarations('typeset -i total+=1; read -r ledgerRow')).toEqual(
       expect.arrayContaining(['total', 'ledgerRow'])
     )
+  })
+})
+
+// Review of R2-23: a cap on manifests left later workspaces read as public,
+// and the comment strip ate JSON between a `/*` and a `*/` inside strings.
+describe('projectShapeFrom reads every manifest, and JSON with glob strings (R2-23 review)', () => {
+  it('every package.json counts, past 200', () => {
+    const files = Array.from({ length: 250 }, (_, i) => `libs/p${i}/package.json`)
+    const shape = projectShapeFrom(files, (rel) => `{ "name": "${rel.split('/')[1]}" }`)
+    expect(shape.workspaces).toContain('p249')
+  })
+
+  it('a tsconfig with `/*` and `*/` inside strings keeps its paths', () => {
+    const tsconfig =
+      '{ "compilerOptions": { "baseUrl": ".", "paths": { "~/*": ["src/*"] } }, "include": ["src/**/*"] }'
+    const shape = projectShapeFrom(['tsconfig.json', 'src/a.ts'], () => tsconfig)
+    expect(shape.pathAliases).toEqual(['~/'])
+  })
+
+  it('a tsconfig with comments still reads', () => {
+    const tsconfig =
+      '{\n  // aliases\n  "compilerOptions": { "paths": { "@app/*": ["src/*"] }, },\n}'
+    expect(projectShapeFrom(['tsconfig.json'], () => tsconfig).pathAliases).toEqual(['@app/'])
   })
 })

@@ -1,8 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import {
   FrameReader,
   handleFrame,
@@ -426,6 +435,28 @@ describe('path containment', () => {
           expect(res.text).not.toContain('PaymentGateway')
         }
       })
+
+      // Spec 085 R2-2: a split index the reader cannot follow is not "not tracked".
+      it('restore_text and symbol_map_summary refuse a map in a checkout with a split index', () => {
+        execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore', env: GIT_ENV })
+        writeMap({ __CLS__1: 'PaymentGateway' })
+        execFileSync('git', ['add', '-f', '.veilio/map.json'], {
+          cwd,
+          stdio: 'ignore',
+          env: GIT_ENV,
+        })
+        execFileSync('git', ['update-index', '--split-index'], {
+          cwd,
+          stdio: 'ignore',
+          env: GIT_ENV,
+        })
+        for (const tool of ['restore_text', 'symbol_map_summary']) {
+          const res = call(tool, tool === 'restore_text' ? { text: '__CLS__1' } : {})
+          expect(res.isError).toBe(true)
+          expect(res.text).toContain('veilio cannot read (`split index`)')
+          expect(res.text).not.toContain('PaymentGateway')
+        }
+      })
     })
 
     it('allows a root that is itself reached through a link', () => {
@@ -809,5 +840,56 @@ describe('what the masking did not cover reaches the agent (004-b3, 002-b4)', ()
     const body = text.split('--- masked code ---\n')[1]
     expect(body).toContain('// Ping Kowalska')
     expect(body).not.toContain('PaymentGateway')
+  })
+})
+
+// Spec 085 part 3, R2-12 (security audit run-2): the model's `language` beat
+// the file's extension, so `ruby` on a `.c` file read `#define` lines as
+// comments and returned them as written.
+describe('anonymize_file: the extension decides the language (R2-12)', () => {
+  const C =
+    '#define paymentGatewayKeyName 1\nvoid f(int n){ for (int i = n; i > 0; i--) chargeCard(paymentGateway); }\n'
+  for (const language of ['auto', 'ruby', 'sql'])
+    it(`language ${language} on a .c file masks it as C`, () => {
+      write('payment.c', C)
+      const res = call('anonymize_file', { path: 'payment.c', language })
+      expect(res.isError).toBeUndefined()
+      const masked = res.text.split('--- masked code ---\n')[1] ?? res.text
+      for (const name of ['paymentGatewayKeyName', 'chargeCard', 'paymentGateway'])
+        expect(masked, name).not.toContain(name)
+      if (language !== 'auto')
+        expect(res.text).toContain(
+          `WARNING: language \`${language}\` does not match \`payment.c\`; it was masked as \`c\`, the language of its extension.`
+        )
+      else expect(res.text).not.toContain('does not match')
+    })
+
+  it('a language for a file whose extension is unknown is used', () => {
+    write('notes.unknownext', 'void f(){ chargeCard(paymentGateway); }\n')
+    const res = call('anonymize_file', { path: 'notes.unknownext', language: 'c' })
+    expect(res.text).toContain('Language: C')
+    expect(res.text).not.toContain('does not match')
+  })
+})
+
+// Founder 2026-11-09 (spec 085 R2-3): the MCP server never adopts a map.
+describe('the MCP server never records a map it did not write (R2-3 adoption)', () => {
+  it('anonymize_file over an unrecorded map in a checkout records nothing', () => {
+    execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore', env: GIT_ENV })
+    // A map that predates the record: on disk, not written by this machine.
+    mkdirSync(join(cwd, '.veilio'), { recursive: true })
+    writeFileSync(join(cwd, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(
+      join(cwd, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+    )
+    write('a.ts', 'export class PaymentGateway {}\n')
+    call('anonymize_file', { path: 'a.ts' })
+    call('symbol_map_summary')
+    const record = join(homedir(), '.veilio', 'written.json')
+    const entries = existsSync(record)
+      ? (JSON.parse(readFileSync(record, 'utf8')) as Record<string, string>)
+      : {}
+    expect(entries[realpathSync(cwd)]).toBeUndefined()
   })
 })

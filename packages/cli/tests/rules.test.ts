@@ -166,7 +166,9 @@ describe('veilio rules pull', () => {
             placeholder: '__NAME__',
           }),
         ],
-        teamRules: [await sealedTeamRule('tw', 0, { ...pattern('^customer'), type: 'whitelist' })],
+        teamRules: [
+          await sealedTeamRule('tw', 0, { ...pattern('^customerId$'), type: 'whitelist' }),
+        ],
       })
     )
     const res = await run(['rules', 'pull'])

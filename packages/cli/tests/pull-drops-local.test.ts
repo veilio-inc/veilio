@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
-import { EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
+import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { STORE_DIR, STORE_FILE, StoreRefusal, loadMap, saveMap } from '../src/store.js'
 import { resolveTeamNamespace } from '../src/team-namespace.js'
 import {
@@ -94,13 +94,10 @@ describe('a team map holding local-family keys', () => {
     expect(pulled.out).not.toMatch(/left out/i)
   })
 
-  it('an older instance’s server-merged namespace drops them and counts them', async () => {
+  it('an older instance’s server-merged namespace is not read at all (spec 085 R2-4)', async () => {
     cloud.legacyNamespace = { ...HOSTILE }
     const found = await resolveTeamNamespace(home)
-    expect(found.status).toBe('team')
-    if (found.status !== 'team') return
-    expect(found.analysis.namespace).toEqual({ __VAR__1: 'amount' })
-    expect(found.analysis.localDropped).toBe(2)
+    expect(found.status === 'team' ? found.analysis.namespace : {}).toEqual({})
   })
 })
 
@@ -116,8 +113,11 @@ describe('a value that is not a name is never written to the store', () => {
       map_data: await sealTeam({ __VAR__1: 'amount', __CLS__1: BAD }),
     }).id
     const pulled = await run(['maps', 'pull', id])
-    expect(pulled.code).toBe(EXIT_FINDINGS)
-    expect(pulled.err).toContain('__CLS__1')
+    // Spec 085 R2-6: refused when the team map is opened, before the store.
+    expect(pulled.code).toBe(EXIT_ERROR)
+    expect(pulled.err).toContain(
+      '"__CLS__1" maps to a value with a control character or line break'
+    )
     expect(existsSync(mapPath())).toBe(false)
   })
 

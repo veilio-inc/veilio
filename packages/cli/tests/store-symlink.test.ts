@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   linkSync,
@@ -7,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -15,6 +17,8 @@ import {
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
+import { main } from '../src/index.js'
+import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
 
 // The owner a file reads as. CI runs these tests as real root, where every
 // file the test makes is uid 0 (act, 2026-11-08): so the sudo cases give
@@ -577,5 +581,338 @@ describe('a store swapped between the checks and the write is refused', () => {
     const base = mkdtempSync(join(tmpdir(), 'veilio-race-'))
     saveMap(join(base, '.veilio', 'map.json'), { __CLS__1: 'PaymentGateway' })
     expect(statSync(join(base, '.veilio')).mode & 0o777).toBe(0o700)
+  })
+})
+
+// Spec 085 part 3, R2-22 (security audit run-2): Windows has no uid, so the
+// owner check answers "me" and another user's `C:\.veilio` was adopted. On
+// Windows the walk stops at the project root: the git work tree, or the folder
+// the CLI runs in.
+describe('on Windows the store walk stops at the project root (R2-22)', () => {
+  let top: string
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const asWindows = () => Object.defineProperty(process, 'platform', { value: 'win32' })
+  beforeEach(() => {
+    top = mkdtempSync(join(tmpdir(), 'veilio-win-'))
+    mkdirSync(join(top, '.veilio'))
+    writeFileSync(
+      join(top, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+    )
+    mkdirSync(join(top, 'work', 'proj'), { recursive: true })
+  })
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+    rmSync(top, { recursive: true, force: true })
+  })
+
+  it('with no git, a .veilio above the folder is not adopted', () => {
+    asWindows()
+    const proj = join(top, 'work', 'proj')
+    expect(findProjectRoot(proj)).toBe(proj)
+    expect(loadMap(resolveMapPath(null, proj))).toEqual({})
+  })
+
+  it('in a git checkout, the walk stops at its root', () => {
+    asWindows()
+    mkdirSync(join(top, 'work', '.git'))
+    const proj = join(top, 'work', 'proj')
+    expect(findProjectRoot(proj)).toBe(join(top, 'work'))
+  })
+
+  it('a .veilio inside the checkout is still found from a subfolder', () => {
+    asWindows()
+    mkdirSync(join(top, 'work', '.git'))
+    mkdirSync(join(top, 'work', '.veilio'))
+    expect(findProjectRoot(join(top, 'work', 'proj'))).toBe(join(top, 'work'))
+  })
+
+  it('off Windows, the walk is as before', () => {
+    expect(findProjectRoot(join(top, 'work', 'proj'))).toBe(top)
+  })
+})
+
+// Spec 085 part 3, R2-3 (Q6 = A, founder 2026-11-09): every map the CLI writes
+// is recorded in ~/.veilio/written.json (0600), so the guard restores unseen
+// only from a map Veilio wrote on this machine.
+describe('the CLI records the maps it writes (R2-3)', () => {
+  let home: string
+  let proj: string
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex')
+  const record = () =>
+    JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+      string,
+      string
+    >
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-rec-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-rec-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  it('saveMap records the map it wrote, keyed by the real project root, 0600', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(record()[realpathSync(proj)]).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+    expect(statSync(join(home, '.veilio', 'written.json')).mode & 0o777).toBe(0o600)
+  })
+
+  it('writing aliases changes the recorded value', async () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    const before = record()[realpathSync(proj)]
+    const { addAliases } = await import('../src/reservations.js')
+    addAliases(path, { __CLS__2: 'PaymentGateway' })
+    const aliases = readFileSync(join(proj, '.veilio', 'aliases.json'), 'utf8')
+    expect(record()[realpathSync(proj)]).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha(aliases)}`)
+    expect(record()[realpathSync(proj)]).not.toBe(before)
+  })
+
+  it('a record that is a link is not written through, and the map is still saved', () => {
+    const elsewhere = join(home, 'elsewhere.json')
+    writeFileSync(elsewhere, '{}')
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    symlinkSync(elsewhere, join(home, '.veilio', 'written.json'))
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(readFileSync(elsewhere, 'utf8')).toBe('{}')
+    expect(loadMap(path)).toEqual({ __CLS__1: 'PaymentGateway' })
+  })
+
+  it('a ~/.veilio that is a link gets no record', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'veilio-rec-elsewhere-'))
+    symlinkSync(elsewhere, join(home, '.veilio'))
+    saveMap(resolveMapPath(null, proj), { __CLS__1: 'PaymentGateway' })
+    expect(readdirSync(elsewhere)).toEqual([])
+    rmSync(elsewhere, { recursive: true, force: true })
+  })
+
+  it('a map write that fails leaves the record as it was', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    const before = record()
+    expect(() => saveMap(path, { __CLS__1: 'Other' })).toThrow()
+    expect(record()).toEqual(before)
+  })
+})
+
+// Review of R2-3: scrub loads a map that came with the files, merges and saves
+// it - recording it would launder it into "written by Veilio".
+describe('a map Veilio did not write is not recorded by rewriting it (R2-3 review)', () => {
+  let home: string
+  let proj: string
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-launder-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-launder-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+  const recorded = () => {
+    try {
+      return (
+        JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+          string,
+          string
+        >
+      )[realpathSync(proj)]
+    } catch {
+      return undefined
+    }
+  }
+
+  it('a planted map, merged and saved, stays unrecorded', () => {
+    mkdirSync(join(proj, '.veilio'))
+    writeFileSync(
+      join(proj, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __FN__1: 'plantedValue' } })
+    )
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { ...loadMap(path), __CLS__1: 'PaymentGateway' })
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('a map Veilio wrote stays recorded through the next write', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
+    expect(recorded()).toMatch(/^[0-9a-f]{64}:[0-9a-f]{64}$/)
+  })
+
+  it('planted aliases make the next write unrecorded', async () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    writeFileSync(
+      join(proj, '.veilio', 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias' } })
+    )
+    const { addAliases } = await import('../src/reservations.js')
+    addAliases(path, { __CLS__2: 'PaymentGateway' })
+    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
+    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+    expect(recorded()).not.toBe(
+      `${sha(readFileSync(path, 'utf8'))}:${sha(readFileSync(join(proj, '.veilio', 'aliases.json'), 'utf8'))}`
+    )
+  })
+})
+
+// Founder 2026-11-09 (spec 085 R2-3), replacing silent adoption: a map that
+// predates the record is trusted only through `veilio maps adopt`, run by the
+// person in that project. No read, scrub or MCP call records it.
+describe('an unrecorded map is adopted only by `veilio maps adopt` (R2-3 adoption)', () => {
+  let home: string
+  let proj: string
+  const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: proj, env: GIT_ENV, stdio: 'ignore' })
+  const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+  const recorded = (): string | undefined => {
+    try {
+      return (
+        JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+          string,
+          string
+        >
+      )[realpathSync(proj)]
+    } catch {
+      return undefined
+    }
+  }
+  const existing = () => {
+    mkdirSync(join(proj, '.veilio'), { recursive: true })
+    writeFileSync(join(proj, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(
+      join(proj, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' } })
+    )
+    return resolveMapPath(null, proj)
+  }
+  const checkout = () => {
+    git('init', '-q')
+    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
+    git('add', 'a.ts')
+  }
+  const adopt = async (argv: string[], answer = '') => {
+    let out = ''
+    let err = ''
+    const io: Io = {
+      cwd: proj,
+      home,
+      stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
+      stdout: (t) => (out += t),
+      stderr: (t) => (err += t),
+      prompt: async () => answer,
+    }
+    const code = await main(['maps', 'adopt', ...argv], io)
+    return { code, out, err }
+  }
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-adopt-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-adopt-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  it('reading it, in a checkout that does not track it, records nothing', () => {
+    checkout()
+    loadMap(existing())
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('a scrub merging it records nothing', () => {
+    checkout()
+    const path = existing()
+    saveMap(path, { ...loadMap(path), __VAR__1: 'amountDue' })
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('`maps adopt --yes` records it, and later writes keep it recorded', async () => {
+    checkout()
+    const path = existing()
+    const r = await adopt(['--yes'])
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toContain(`${path} holds 2 entries and 0 aliases.`)
+    expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+    saveMap(path, { ...loadMap(path), __VAR__1: 'amountDue' })
+    expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+  })
+
+  it('asks first: "y" adopts, anything else adopts nothing', async () => {
+    checkout()
+    existing()
+    const no = await adopt([], 'n')
+    expect(no.code).toBe(EXIT_OK)
+    expect(no.out).toContain('veilio: nothing was adopted.')
+    expect(recorded()).toBeUndefined()
+    const yes = await adopt([], 'y')
+    expect(yes.code, yes.err).toBe(EXIT_OK)
+    expect(recorded()).toBeDefined()
+  })
+
+  it('refuses a map git tracks, with the tracked-map text', async () => {
+    checkout()
+    existing()
+    git('add', '-f', '.veilio/map.json')
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain('is tracked by git')
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('refuses in a checkout with a split index', async () => {
+    checkout()
+    existing()
+    git('update-index', '--split-index')
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain('veilio cannot read (`split index`)')
+    expect(recorded()).toBeUndefined()
+  })
+
+  // Security review: the record covers aliases.json too, so the question
+  // shows what it holds, and an aliases file that cannot be read is refused.
+  it('a planted aliases.json is shown before the question', async () => {
+    checkout()
+    const path = existing()
+    writeFileSync(
+      join(proj, '.veilio', 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias', __VAR__9: 'other' } })
+    )
+    const r = await adopt([], 'n')
+    expect(r.out).toContain(`${path} holds 2 entries and 2 aliases.`)
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('an aliases.json that cannot be read is refused, and nothing is adopted', async () => {
+    checkout()
+    existing()
+    writeFileSync(join(proj, '.veilio', 'aliases.json'), 'not json')
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain(
+      'veilio: .veilio/aliases.json is not a readable aliases file, so nothing was adopted.'
+    )
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('with no map, adopts nothing', async () => {
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(recorded()).toBeUndefined()
   })
 })

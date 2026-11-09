@@ -9,7 +9,7 @@
 // skip one it cannot open or must not apply, say so, and go on masking.
 
 import { ruleRefusal, type RuleBody } from './rule-checks.js'
-import { decryptTeamMapWithAny, encryptTeamMap, type TeamMapEnvelope } from './teamKeys.js'
+import { encryptTeamMap, openTeamEnvelopeWithAny, type TeamMapEnvelope } from './teamKeys.js'
 import {
   encryptMapForVault,
   openVaultEnvelope,
@@ -76,7 +76,7 @@ function fromRecord(raw: unknown, bind: RuleBinding): RuleOpened {
   } else {
     return refused('the rule type is neither replace nor whitelist')
   }
-  const why = ruleRefusal(rule)
+  const why = ruleRefusal(rule, bind.teamId ? 'team' : 'personal')
   return why ? refused(why) : { ok: true, rule }
 }
 
@@ -112,7 +112,7 @@ export async function sealTeamRule(
   rule: RuleBody,
   bind: RuleBinding
 ): Promise<TeamMapEnvelope> {
-  const why = ruleRefusal(rule)
+  const why = ruleRefusal(rule, 'team')
   if (why) throw new Error(why)
   return encryptTeamMap(teamKey, toRecord(rule, bind))
 }
@@ -125,7 +125,7 @@ export async function openTeamRule(
 ): Promise<RuleOpened> {
   let raw: unknown
   try {
-    raw = await decryptTeamMapWithAny(keys, env)
+    raw = await openTeamEnvelopeWithAny(keys, env)
   } catch {
     return { ok: false, reason: 'unopenable' }
   }

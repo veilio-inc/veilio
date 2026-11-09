@@ -87,6 +87,9 @@ export async function teamScenario(
     hang?: boolean
     /** Signed in, but not in any team. */
     noTeam?: boolean
+    /** Spec 085 R2-5: /team-envelopes answers 404, so each map is fetched
+     *  alone; 'plain' serves its map_data as an object, not an envelope. */
+    fallback?: 'envelope' | 'plain'
   }
 ): Promise<{ home: string; calls: string[] }> {
   const teamKeyRaw = crypto.getRandomValues(new Uint8Array(32))
@@ -136,7 +139,21 @@ export async function teamScenario(
         team: { id: 'team-1' },
         plan: 'team',
       })
-    if (path === '/api/maps/team-envelopes') return jsonResponse({ maps: rows, unreadable: [] })
+    if (path === '/api/maps/team-envelopes' && opts.fallback)
+      return jsonResponse({ error: 'Not found' }, 404)
+    const one = opts.fallback ? rows.findIndex((r) => path === `/api/maps/${r.id}`) : -1
+    if (one !== -1)
+      return jsonResponse({
+        id: rows[one]!.id,
+        name: rows[one]!.id,
+        scope: 'team',
+        created_at: rows[one]!.created_at,
+        updated_at: rows[one]!.created_at,
+        map_data: opts.fallback === 'plain' ? opts.maps[one]!.map : rows[one]!.map_data,
+      })
+    // A legacy listing's maps exist only as its teamNamespace (spec 085 R2-4).
+    if (path === '/api/maps/team-envelopes')
+      return jsonResponse({ maps: opts.legacy ? [] : rows, unreadable: [] })
     return jsonResponse({ error: 'not found' }, 404)
   })
   const home = mkdtempSync(join(tmpdir(), 'veilio-team-home-'))

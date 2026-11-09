@@ -13,7 +13,10 @@ import {
   isName,
   openStoreFile,
   prepareStoreWrite,
+  recordWritten,
+  storeIsOurs,
   refuseNonNames,
+  StoreRefusal,
   writeStoreFile,
 } from './store.js'
 import {
@@ -146,7 +149,9 @@ export function teamNumbering(
   let retired: string[] = []
   try {
     retired = Object.keys(loadAliases(mapPath))
-  } catch {
+  } catch (err) {
+    // A refused store is not unreadable (spec 085 R2-16 review).
+    if (err instanceof StoreRefusal) throw err
     // unreadable: numbering is still floored by the map itself
   }
   const own = sessionTag
@@ -154,7 +159,8 @@ export function teamNumbering(
   let held: ReservedFile | null = null
   try {
     held = loadReserved(mapPath)
-  } catch {
+  } catch (err) {
+    if (err instanceof StoreRefusal) throw err
     // malformed: no blocks, and never its tag
   }
   const tag = () => (sessionTag ??= drawTag())
@@ -191,7 +197,10 @@ export function localNumbering(
   let held: ReservedFile | null = null
   try {
     held = loadReserved(mapPath)
-  } catch {
+  } catch (err) {
+    // A refused store (tracked, a link, another user's) is not malformed: it
+    // is never replaced (spec 085 R2-16).
+    if (err instanceof StoreRefusal) throw err
     // malformed: replaced below when allowed, never numbered from
   }
   if (
@@ -371,12 +380,14 @@ export function addAliases(mapPath: string, entries: SymbolMap): void {
   if (read.unreadable)
     throw new Error(`${ALIASES_FILE} is not a readable aliases file; nothing was changed`)
   const aliases = read.aliases
+  const ours = storeIsOurs(mapPath)
   for (const [p, name] of Object.entries(entries))
     if (p in aliases && aliases[p] !== name)
       throw new Error(
         `${p} already stands for another name in ${ALIASES_FILE}; nothing was changed`
       )
   writePrivate(aliasesPath(mapPath), { version: 1, aliases: { ...aliases, ...entries } })
+  recordWritten(mapPath, ours)
 }
 
 /** How the CLI and the MCP name a placeholder left because its number was another member's. */

@@ -1097,6 +1097,18 @@ const PATTERNS: Pattern[] = [
   },
 ]
 
+/**
+ * Whether `value`, whole, is a regulated identifier of `type` as the scanner
+ * finds one: the same pattern and the same checksum (spec 085 R2-6). What a
+ * map may hold under `__IBAN__` and the like.
+ */
+export function isRegulatedValue(type: SecretType, value: string): boolean {
+  const rule = PATTERNS.find((p) => p.type === type && p.disposition === 'mask')
+  if (!rule) return false
+  const whole = new RegExp(`^(?:${rule.re.source})$`, rule.re.flags.replace('g', ''))
+  return whole.test(value) && (rule.validate?.(value) ?? true)
+}
+
 /** The provider-format rules: a named key shape, destroyed, not one of the
  *  generic slot or catch-all rules. Copies without the global flag, so testing
  *  a string never moves the table's own `lastIndex`. */
