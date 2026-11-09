@@ -107,7 +107,11 @@ the server's variable overrides it.
 - **Personal maps need `veilio vault unlock`** in a terminal first. It keeps a
   personal-maps key on this machine (7 days) that opens personal maps and
   nothing else; the server never sees your passphrase. Team maps need
-  `veilio team unlock`, as before.
+  `veilio team unlock`, as before. Creating or updating a team map also needs
+  the newest team key confirmed on this machine: until the teammate who granted
+  it is confirmed with `veilio team trust` in a terminal, `maps_create` and
+  `maps_update` refuse with `Not saved: the newest key for team "…" is not
+  confirmed on this device.` and send nothing. Reading is unaffected.
 - **No result carries a secret**: never a passphrase, a key, a wrapped key or a
   map's encrypted body, and a clash names placeholders, never the names behind
   them. Results name the map, its count and the outcome.

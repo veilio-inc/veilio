@@ -103,6 +103,8 @@ veilio vault lock             # remove it, and the personal rules, from this mac
 veilio rules pull             # fetch your custom rules (personal and team)
 veilio team unlock            # open your team key with your vault passphrase (kept 7 days)
 veilio team lock              # remove the unlocked team key, and the team rules, from this machine
+veilio team trust <team> <fp> # confirm a teammate's key by its fingerprint, so maps can be saved under it
+veilio keys fingerprint       # your own key fingerprint, for teammates who confirm a key you granted
 veilio logout                 # revoke the session and remove local credentials
 ```
 
@@ -122,6 +124,18 @@ veilio logout                 # revoke the session and remove local credentials
 - **Team maps** open with the team key, which `veilio team unlock` stores for
   7 days (0600, under `~/.veilio/`). Run it again after 7 days, after the team key
   is rotated, or after you join a team.
+- **Writing needs a confirmed key.** `team unlock` reads with every team key it
+  opens, but team maps are saved (by `maps push --team`, `maps update` and the MCP
+  server's map tools) only under the newest key, and only when you made it or
+  confirmed the teammate who granted it. For a teammate not yet confirmed it
+  prints their key's fingerprint: compare it with the one they see on their
+  dashboard under "Your key fingerprint" (or from `veilio keys fingerprint`),
+  then run `veilio team trust <team> <fingerprint>`. Until then a write is
+  refused with `Not saved: the newest key for team "…" is not confirmed on this
+  device.` and nothing is sent. A key that changed for a confirmed teammate, or
+  one labelled as yours that is not, is not stored at all. After upgrading, run
+  `veilio team unlock` once; a teammate's grant then needs one `team trust` per
+  device.
 - **Custom rules** (whitelist and replace, set in the web app) are applied by
   `veilio scrub` from the copy `rules pull` saves - rules are never fetched by
   `scrub` - and it prints how many rules it applied and how old the copy is; pull
