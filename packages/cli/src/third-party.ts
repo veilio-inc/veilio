@@ -15,6 +15,10 @@ import {
   projectShapeFrom,
 } from '@veilio-inc/engine'
 
+/** Per input, the names to keep; `tooLarge` when the project could not be
+ *  read whole, so none were kept (PROJECT_TOO_LARGE_NOTE). */
+export type ThirdParty = Map<object, Set<string>> & { tooLarge?: boolean }
+
 /** The names each input takes from a public package, to leave as written
  *  (spec 050 FR-006, FR-007). Declarations are read from every input first, so
  *  a word one input imports and another declares stays masked; and nothing is
@@ -30,8 +34,8 @@ export function thirdPartyNames(
    *  placeholder in both would drop a name (security review of ec0cb00). */
   known: Record<string, string>[],
   cwd: string
-): Map<object, Set<string>> {
-  const out = new Map<object, Set<string>>()
+): ThirdParty {
+  const out: ThirdParty = new Map<object, Set<string>>()
   // Each file by its OWN extension: --language overrides how a file is masked,
   // never whether scrub can read what it declares (security review of #149).
   const languageFor = (name: string | null): LanguageOption =>
@@ -61,6 +65,10 @@ export function thirdPartyNames(
     if (i.name && /\.(sh|bash|zsh|ps1)$/i.test(i.name))
       for (const name of parseShellDeclarations(i.text)) declared.add(name)
   const shape = projectShape(cwd, inputs)
+  if (!shape) {
+    out.tooLarge = true
+    return out
+  }
   for (const i of code) {
     const names = externalNames(i.text, languageFor(i.name) as Language, shape)
     // Nor a name the map already holds as code (a variable, function or class):
@@ -76,34 +84,40 @@ export function thirdPartyNames(
   return out
 }
 
-/** Files the CLI lists at most to read the project's shape.
- *  shortcut: a larger tree is read in part (fewer names exempt, more masked);
- *  the git index reader could list tracked files instead. */
+/** Files the CLI lists at most to read the project's shape. Past it the
+ *  shape is unknown, and nothing is exempted (security review of R2-23). */
 const MAX_SHAPE_FILES = 20_000
+
+/** Said once when the project was too large to read its shape. */
+export const PROJECT_TOO_LARGE_NOTE =
+  'veilio: this project has more files than veilio reads to learn its shape, so it cannot tell its own packages from public ones; every imported name was masked.'
 
 /**
  * The project's shape as the guard reads it (spec 085 R2-23): the files under
- * `cwd` (no `node_modules`, no dot folders), through the engine's one reader.
- * `inputs` add their own Python module names, as they always did.
+ * `cwd` (no `node_modules`, no dot folders), breadth-first so the root's own
+ * manifests come first, through the engine's one reader. `inputs` add their
+ * own Python module names, as they always did. Null when the project has more
+ * files than are read: a manifest not reached would make the project's own
+ * package read as public, so the caller exempts nothing.
  */
-export function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape {
+export function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape | null {
   const files: string[] = []
-  const walk = (dir: string, rel: string): void => {
+  const queue: [string, string][] = [[cwd, '']]
+  for (let q = 0; q < queue.length; q++) {
+    const [dir, rel] = queue[q]!
     let entries
     try {
       entries = readdirSync(dir, { withFileTypes: true })
     } catch {
-      return
+      continue
     }
     for (const d of entries) {
-      if (files.length >= MAX_SHAPE_FILES) return
       if (d.name.startsWith('.') || d.name === 'node_modules') continue
       const path = rel ? `${rel}/${d.name}` : d.name
-      if (d.isDirectory()) walk(join(dir, d.name), path)
-      else if (d.isFile()) files.push(path)
+      if (d.isDirectory()) queue.push([join(dir, d.name), path])
+      else if (d.isFile() && files.push(path) > MAX_SHAPE_FILES) return null
     }
   }
-  walk(cwd, '')
   for (const i of inputs) if (i.name?.endsWith('.py')) files.push(i.name.split(sep).join('/'))
   return projectShapeFrom(files, (rel) => {
     try {

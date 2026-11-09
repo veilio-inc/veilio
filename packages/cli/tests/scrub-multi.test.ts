@@ -229,3 +229,58 @@ describe("scrub masks the project's own packages wherever they sit (R2-23)", () 
     expect(await scrubbed('app/web.ts')).toContain("from 'express'")
   })
 })
+
+// Security review of R2-23: the shape walk stopped at 20000 files depth-first,
+// so a manifest past the cap went unread and the project's own package read as
+// a public one - exempted, sent as written. Breadth-first, and past the cap
+// nothing is exempted.
+describe('a project too large to read fully exempts nothing (R2-23 review)', () => {
+  const filler = (count: number, at: string) => {
+    for (let d = 0; d < Math.ceil(count / 500); d++) {
+      const dir = join(cwd, at, `d${d}`)
+      mkdirSync(dir, { recursive: true })
+      for (let f = 0; f < 500; f++) writeFileSync(join(dir, `f${f}.txt`), '')
+    }
+  }
+  const run = async (file: string) => {
+    let out = ''
+    let err = ''
+    const io: Io = {
+      cwd,
+      stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
+      stdout: (t) => (out += t),
+      stderr: (t) => (err += t),
+    }
+    await main(['scrub', '--map', 'cap.json', file], io)
+    return { out, err }
+  }
+  const NOTE =
+    'veilio: this project has more files than veilio reads to learn its shape, so it cannot tell its own packages from public ones; every imported name was masked.'
+
+  it('a deep manifest past the cap: the workspace import is masked, and the note says why', async () => {
+    filler(20_500, 'aaa')
+    mkdirSync(join(cwd, 'zzz/group/ledger-core'), { recursive: true })
+    writeFileSync(join(cwd, 'zzz/group/ledger-core/package.json'), '{ "name": "ledger-core" }\n')
+    writeFileSync(
+      join(cwd, 'app.ts'),
+      "import { PostInvoice } from 'ledger-core'\n\nPostInvoice()\n"
+    )
+    const r = await run('app.ts')
+    expect(r.out).not.toContain('PostInvoice')
+    expect(r.err).toContain(NOTE)
+  }, 120_000)
+
+  it('a root manifest with many files: read first, nothing exempted wrongly', async () => {
+    filler(20_500, 'aaa')
+    writeFileSync(join(cwd, 'package.json'), '{ "name": "ledger-core" }\n')
+    writeFileSync(
+      join(cwd, 'app.ts'),
+      "import { PostInvoice } from 'ledger-core'\n\nPostInvoice()\n"
+    )
+    const r = await run('app.ts')
+    expect(r.out).not.toContain('PostInvoice')
+  }, 120_000)
+})

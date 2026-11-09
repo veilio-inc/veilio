@@ -55,7 +55,7 @@ import {
   reservedAnonymizeFilesOverTeam,
   type Reserve,
 } from './team-anonymize.js'
-import { thirdPartyNames } from './third-party.js'
+import { PROJECT_TOO_LARGE_NOTE, thirdPartyNames } from './third-party.js'
 
 export interface Io {
   cwd: string
@@ -185,6 +185,7 @@ export async function runScrub(
     args.language !== 'auto' ? args.language : ((name ? languageOfPath(name) : null) ?? 'auto')
   // What the team's maps hold counts as known code too (security review of 8adc729).
   const keep = thirdPartyNames(inputs, [existingMap, found.team?.namespace ?? {}], io.cwd)
+  if (keep.tooLarge) io.stderr(`${PROJECT_TOO_LARGE_NOTE}\n`)
 
   const optionsFor = (input: (typeof inputs)[number]): Parameters<typeof anonymizeOverTeam>[3] => {
     const own = keep.get(input) ?? new Set<string>()
