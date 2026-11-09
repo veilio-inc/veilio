@@ -43,6 +43,7 @@ import {
   walkCd,
   windowsAlias,
   wordPath,
+  INTERPRETERS,
   MAX_DIRS,
   type CdContext,
   type DirState,
@@ -2527,8 +2528,15 @@ const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
 /** A bash/zsh command past the reader's bounds is refused when it holds any
  *  quote, backslash, `$`, backtick, parenthesis or newline, or names a cd or
  *  anything that can move the shell or run text; otherwise 078's verdict. */
-const SH_UNREADABLE =
-  /['"\\$`()\n]|(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|options|python[\d.]*|node|perl|ruby|php|deno|bun|bash|sh|zsh)(?![\w-])|(?:^|[;&|{\s])\.\s/
+const SH_UNREADABLE = new RegExp(
+  String.raw`['"\\$` +
+    '`' +
+    String.raw`()\n]|(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|mv|options|mapfile|readarray|` +
+    INTERPRETERS +
+    String.raw`)(?![\w-])|(?:^|[;&|{\s])\.\s` +
+    // a lone word as a command: zsh may read it as a cd (AUTO_CD)
+    String.raw`|(?:^|[;&|\n])\s*[^\s;&|]+\s*(?:$|[;&|\n])`
+)
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/

@@ -595,17 +595,16 @@ class Walker {
       )
         N1(this.current, 'code run from text')
     }
-    // Anything this call writes before a source: any output redirection, or
-    // a command that writes files (the rule above; no path tracking).
+    // Anything this call may write before a source or an interpreter's file:
+    // a redirection that writes (only `>&`/`<&` to an fd or `-` does not), or
+    // any command but a plain reader (the allow-list; no path tracking).
     if (
       n.redirects.some(
-        (r) => /^(?:>|>>|>\||&>|&>>|<>|>&)$/.test(r.op) && !/^\d$|^-$/.test(r.target?.literal ?? '')
+        (r) =>
+          /^(?:>|>>|>\||&>|&>>|<>)$/.test(r.op) ||
+          (/^[<>]&$/.test(r.op) && !/^\d+$|^-$/.test(r.target?.literal ?? ''))
       ) ||
-      /^(?:cp|mv|tee|dd|install|ln|touch|mkfifo|rsync|curl|wget|tar|unzip|git|patch)$/.test(
-        base ?? ''
-      ) ||
-      (/^(?:sed|perl|ruby)$/.test(base ?? '') &&
-        lits.some((l) => /^-[A-Za-z]*i/.test(l) || l.startsWith('--in-place')))
+      (n.words.length > 0 && !readOnly(base, lits))
     )
       this.wrote = true
     if (name === 'trap') {
@@ -615,7 +614,15 @@ class Walker {
       while (k < lits.length && /^-./.test(lits[k]!)) if (lits[k++] === '--') break
       const action = lits[k]
       const signalOnly = lits.length - k === 1 && /^(?:SIG)?[A-Z]+$|^\d+$/.test(action ?? '')
-      if (action !== undefined && action !== '' && action !== '-' && !signalOnly)
+      // A cleanup trap runs: one literal action that cannot move the shell
+      // or run text (no cd, eval, source, trap, `$`, backtick, interpreter).
+      const harmless =
+        rest[k]?.literal != null &&
+        !/[$`]|(?:^|[;&|\s])\.(?:\s|$)|(?<![\w-])(?:cd|pushd|popd|chdir|eval|source|trap|emulate|builtin|command|exec)(?![\w-])/.test(
+          action ?? ''
+        ) &&
+        !new RegExp(`(?<![\\w-])(?:${INTERPRETERS})(?![\\w-])`).test(action ?? '')
+      if (action !== undefined && action !== '' && action !== '-' && !signalOnly && !harmless)
         N1(this.current, 'code run from text')
     }
     if (
@@ -624,8 +631,11 @@ class Walker {
         (name !== 'set' && lits.some((l) => /^-[A-Za-z]*m/.test(l) || /[*?[]/.test(l))) ||
         lits.some(
           (l) =>
-            l.toLowerCase().replace(/[_-]/g, '').replace(/^no/, '') === 'cdablevars' ||
-            (name !== 'shopt' && /^[-+][A-Za-z]*T/.test(l))
+            /^(?:cdablevars|chaselinks|chasedots|physical)$/.test(
+              l.toLowerCase().replace(/[_-]/g, '').replace(/^no/, '')
+            ) ||
+            (name !== 'shopt' && /^[-+][A-Za-z]*T/.test(l)) ||
+            (name === 'set' && /^[-+][A-Za-z]*P/.test(l))
         ))
     )
       N1(this.current, 'an option that changes cd')
@@ -687,19 +697,7 @@ class Walker {
     // running a file after something in the call wrote one: it could have
     // made a link, so every later cd but a logical `..`/`-` is refused. One
     // running a file the call did not write is the script's own (N6/P7).
-    const files = rest.filter((w) => !(w.literal ?? '').startsWith('-'))
-    const given =
-      lits.some((l) => /^-[A-Za-z]*[ce]$|^--eval$|^-$|^-Command$/i.test(l)) ||
-      n.redirects.some((r) => /^<(?:<<?|<-)?$/.test(r.op)) ||
-      files.length === 0 ||
-      files[0]!.literal === null ||
-      wroteBefore
-    if (
-      given &&
-      /^(?:python[\d.]*|node|perl|ruby|php|deno|bun|bash|sh|zsh|dash|ksh|pwsh|powershell)$/.test(
-        base ?? ''
-      )
-    )
+    if (INTERPRETER.test(base ?? '') && !runsOwnFile(rest, n.redirects, wroteBefore))
       this.interp ??= this.current
     return out
   }
@@ -707,6 +705,7 @@ class Walker {
   /** A cd's effect (data-model.md CdEffect): the outcome when it moves, or
    *  both outcomes unchanged when the command is not a cd. */
   private async cd(n: Simple, here: DirState, after: DirState): Promise<Outcome> {
+    this.physical = false
     const words = n.words
     if (this.ps) {
       const c = psCd(words)
@@ -834,7 +833,7 @@ class Walker {
     // `cd -` run: they resolve from text the shell holds ($PWD, $OLDPWD) and
     // never enter a link made in the call. `-P` and anything else: refused.
     if (this.interp !== null && (this.physical || !/^(?:-|\.\.(?:\/\.\.)*\/?)$/.test(target)))
-      N1(this.interp, 'a link made in this command')
+      N1(this.interp, 'a cd after code this command ran')
     const to = uniq(dirs)
     if (to.length > MAX_DIRS) N1(target, 'too many possible directories')
     this.landings.push({ target, dirs: to })
@@ -938,6 +937,71 @@ class Walker {
     if (typeof v === 'object') return [normalisePath(v.value)]
     if (v === 'auto') return here.dirs.slice()
     return N1('$PWD', 'a variable')
+  }
+}
+
+/** Interpreters and shells: code they run could move the shell or make a link. */
+export const INTERPRETERS =
+  'python[\\d.]*|node|perl|ruby|php|deno|bun|bash|sh|zsh|dash|ksh|pwsh|powershell'
+export const INTERPRETER = new RegExp(`^(?:${INTERPRETERS})$`)
+
+/** Whether an interpreter runs a file of the project's own (N6/P7): its first
+ *  operand a plain literal path, after options from a short allow-list only,
+ *  and nothing in the call wrote a file before. Anything else is code the
+ *  call gives it (the coordinator's allow-list). */
+function runsOwnFile(
+  rest: readonly Word[],
+  redirects: readonly Redirect[],
+  wrote: boolean
+): boolean {
+  if (wrote || redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op))) return false
+  for (let k = 0; k < rest.length; k++) {
+    const l = rest[k]!.literal
+    if (l === null) return false
+    if (l === '--')
+      return rest[k + 1]?.literal != null && /^[\w./@+-]+$/.test(rest[k + 1]!.literal!)
+    if (l === '-I') {
+      k++
+      continue
+    }
+    if (/^-(?:I.+|w|W.*|u|B|O|q)$/.test(l)) continue
+    if (l.startsWith('-')) return false
+    return /^[\w./@+-]+$/.test(l)
+  }
+  return false
+}
+
+/** Commands that only read: the allow-list a source or an interpreter's file
+ *  run may follow (anything else may have written it). */
+function readOnly(base: string | null, lits: readonly string[]): boolean {
+  switch (base) {
+    case 'ls':
+    case 'cat':
+    case 'head':
+    case 'tail':
+    case 'grep':
+    case 'rg':
+    case 'echo':
+    case 'printf':
+    case 'pwd':
+    case 'test':
+    case '[':
+    case 'true':
+    case 'false':
+    case 'which':
+    case 'cd':
+    case 'wc':
+    case 'uniq':
+    case 'diff':
+      return true
+    case 'find':
+      return !lits.some((l) => /^-(?:exec|execdir|ok|okdir|delete|fprint\w*|fls)$/.test(l))
+    case 'sort':
+      return !lits.some((l) => /^-[A-Za-z]*o|^--output/.test(l))
+    case 'command':
+      return /^-[vV]$/.test(lits[0] ?? '')
+    default:
+      return false
   }
 }
 

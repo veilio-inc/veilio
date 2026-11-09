@@ -661,6 +661,16 @@ const REVIEWED: [string, string | undefined][] = [
   ['eval "$X"', N1('eval "$X"', 'code run from text')],
   // Any trap with an action, as it appears: DEBUG, RETURN and ERR fire within the call.
   ["trap 'cd ..' EXIT", N1("trap 'cd ..' EXIT", 'code run from text')],
+  // A cleanup trap: one literal action that cannot move the shell or run text
+  ["trap 'rm -f /tmp/x' EXIT; npm test", undefined],
+  ["trap 'cd src' EXIT", N1("trap 'cd src' EXIT", 'code run from text')],
+  ["trap 'python3 x.py' EXIT", N1("trap 'python3 x.py' EXIT", 'code run from text')],
+  ['trap "rm $f" EXIT', N1('trap "rm $f" EXIT', 'code run from text')],
+  // Physical resolution, so the `..`/`-` exemption cannot run under it
+  ['set -P; cd ..', N1('set -P', 'an option that changes cd')],
+  ['set -o physical; cd ..', N1('set -o physical', 'an option that changes cd')],
+  ['setopt chase_links; cd ..', N1('setopt chase_links', 'an option that changes cd')],
+  ['setopt CHASEDOTS; cd ..', N1('setopt CHASEDOTS', 'an option that changes cd')],
   [
     'x=.kub; trap -- "cd ~/${x}e" DEBUG; cat config',
     N1('trap -- "cd ~/${x}e" DEBUG', 'code run from text'),
@@ -697,34 +707,49 @@ const REVIEWED: [string, string | undefined][] = [
   ['x=.kub; cp -rs ~/${x}e/ k && cd k', N1('cp -rs ~/${x}e/ k', 'a link made in this command')],
   [
     'python3 -c "import os; os.symlink(1, 2)" && cd k',
-    N1('python3 -c "import os; os.symlink(1, 2)"', 'a link made in this command'),
+    N1('python3 -c "import os; os.symlink(1, 2)"', 'a cd after code this command ran'),
   ],
   ['mkdir build && cd build && cmake ..', undefined],
   // Past the reader's bounds with no quote, backslash, $, backtick, paren or
   // newline: nothing in it builds text, so 078's verdict.
   [`echo ${'{'.repeat(201)} ls`, undefined],
   [
+    `echo ${'{'.repeat(201)}; foo`,
+    N1(`echo ${'{'.repeat(201)}; foo`, 'a command Veilio cannot read'),
+  ],
+  [
     `echo ${'{'.repeat(201)}; cd src`,
     N1(`echo ${'{'.repeat(201)}; cd src`, 'a command Veilio cannot read'),
   ],
   // After an interpreter or a shell ran, every cd but a logical `cd ..` and
   // `cd -` is refused (coordinator's rule (b)): a link it made is not entered.
-  ['perl -e 1; cd k', N1('perl -e 1', 'a link made in this command')],
-  ["python3 - <<'E'\nprint(1)\nE\ncd src", N1('python3 -', 'a link made in this command')],
-  ['bash -c true && cd src', N1('bash -c true', 'a link made in this command')],
+  ['perl -e 1; cd k', N1('perl -e 1', 'a cd after code this command ran')],
+  ["python3 - <<'E'\nprint(1)\nE\ncd src", N1('python3 -', 'a cd after code this command ran')],
+  ['bash -c true && cd src', N1('bash -c true', 'a cd after code this command ran')],
   // (b2): a file the call did not write is the script's own (N6/P7)
   ['python3 tool.py; cd src', undefined],
   ['ruby -I lib test/w27.rb 2>&1 | tail -5; cd w1 2>/dev/null; ruby w1/test/w27.rb', undefined],
-  ["python3 -c 'import os'; cd src", N1("python3 -c 'import os'", 'a link made in this command')],
+  [
+    "python3 -c 'import os'; cd src",
+    N1("python3 -c 'import os'", 'a cd after code this command ran'),
+  ],
   [
     'cat > x.py <<E\nimport os\nE\npython3 x.py; cd src',
-    N1('python3 x.py', 'a link made in this command'),
+    N1('python3 x.py', 'a cd after code this command ran'),
   ],
-  ['cat x.py | python3; cd src', N1('python3', 'a link made in this command')],
-  ['python3 <(cat x.py); cd src', N1('python3 <(cat x.py)', 'a link made in this command')],
+  ['cat x.py | python3; cd src', N1('python3', 'a cd after code this command ran')],
+  ['python3 <(cat x.py); cd src', N1('python3 <(cat x.py)', 'a cd after code this command ran')],
   ['python3 tool.py > out.txt; cd src', undefined],
-  ['ruby -e 1; cd ../x', N1('ruby -e 1', 'a link made in this command')],
-  ['ruby -e 1; cd -P ..', N1('ruby -e 1', 'a link made in this command')],
+  // Only a plain file after allowed options is the script's own
+  ['python3 -m pytest; cd src', N1('python3 -m pytest', 'a cd after code this command ran')],
+  ['node --inspect x.js; cd src', N1('node --inspect x.js', 'a cd after code this command ran')],
+  ['python3 -u tool.py; cd src', undefined],
+  ['ruby -I lib test/x.rb; cd src', undefined],
+  // after any command but a plain reader, a file run is code the call gave
+  ['make; python3 tool.py; cd src', N1('python3 tool.py', 'a cd after code this command ran')],
+  ['ls; python3 tool.py; cd src', undefined],
+  ['ruby -e 1; cd ../x', N1('ruby -e 1', 'a cd after code this command ran')],
+  ['ruby -e 1; cd -P ..', N1('ruby -e 1', 'a cd after code this command ran')],
   ["sed -i 's/a/b/' x && ruby -Ilib test/x.rb 2>&1 | tail -4; cd .. && ruby y.rb", undefined],
   ["python3 - <<'E'\nprint(1)\nE\ncd ../../..", undefined],
   ["python3 - <<'E'\nprint(1)\nE\ncd - >/dev/null", undefined],
@@ -743,6 +768,16 @@ const REVIEWED: [string, string | undefined][] = [
   ['ls x | tee y; . ./env.sh', N1('. ./env.sh', 'code run from text')],
   ['. ./env.sh > log.txt', undefined],
   ['ls 2>&1; . ./env.sh', undefined],
+  // any writing redirection, whatever its target; any command not a plain reader
+  ['echo x > 1; . ./env.sh', N1('. ./env.sh', 'code run from text')],
+  ['ls >& out; . ./env.sh', N1('. ./env.sh', 'code run from text')],
+  [`python3 -c "open('g','w')"; . ./g`, N1('. ./g', 'code run from text')],
+  ['base64 -d -o g <<< eA==; . ./g', N1('. ./g', 'code run from text')],
+  [
+    'python3 -m venv .venv && source .venv/bin/activate',
+    N1('source .venv/bin/activate', 'code run from text'),
+  ],
+  ['ls; grep x y; . ./env.sh', undefined],
   ["cd src; perl -pi -e 's/a/b/' x.rb", undefined],
   // past the reader's bounds, anything that could move the shell: refused
   [
