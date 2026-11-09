@@ -1690,6 +1690,21 @@ export class Guard {
         const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
         const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
         let moves: string[] = []
+        // T029 review: code run from text, and new names for commands, in a
+        // PowerShell command the reader read too.
+        const psCode =
+          parsed?.ok && dialect === 'ps'
+            ? PS_CODE.test(c)
+              ? 'code run from text'
+              : PS_ALIAS.test(c)
+                ? 'a new name for a command'
+                : null
+            : null
+        if (psCode)
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (${psCode}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
         if (parsed?.ok && dialect === 'ps' && PS_DRIVE.test(c) && PS_LOCATION.test(c))
           return this.deny(
             `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a drive this command creates), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
@@ -2485,6 +2500,10 @@ const PS_UNREADABLE = new RegExp(
   ].join('|'),
   'i'
 )
+/** PowerShell running text as code, or the session's location by method. */
+const PS_CODE = /(?<![\w-])iex(?![\w-])|invoke-expression|sessionstate|\$executioncontext/i
+/** PowerShell giving a command a new name. */
+const PS_ALIAS = /set-alias|new-alias|(?<![\w-])(?:sal|nal)(?![\w-])|alias:/i
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/

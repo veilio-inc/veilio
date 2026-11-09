@@ -287,3 +287,42 @@ for (const command of [
   test(`086 PowerShell ${JSON.stringify(command)} runs`, async ($, on) => {
     expect(await ps($, on, command)).toBeUndefined()
   })
+
+// T029, the independent security review: PowerShell forms.
+for (const [command, expected] of [
+  [
+    '$d = "~/.ku" + "be"; $d | Set-Location; Get-Content config',
+    N1('Set-Location', 'a path from the pipeline'),
+  ],
+  [
+    'Resolve-Path ~/.kub* | Push-Location; gc config',
+    N1('Push-Location', 'a path from the pipeline'),
+  ],
+  [
+    '$p = $HOME; $ExecutionContext.SessionState.Path.SetLocation($p); gc config',
+    N1(
+      '$p = $HOME; $ExecutionContext.SessionState.Path.SetLocation($p); gc config',
+      'code run from text'
+    ),
+  ],
+  [
+    'Set-Alias q Set-Location; q ~/.kub?; gc config',
+    N1('Set-Alias q Set-Location; q ~/.kub?; gc config', 'a new name for a command'),
+  ],
+  [
+    'iex ("s"+"l ~/.ku"+"be"); gc config',
+    N1('iex ("s"+"l ~/.ku"+"be"); gc config', 'code run from text'),
+  ],
+  [
+    'New-Item -ItemType SymbolicLink -Path k -Target $t; Set-Location k',
+    N1('New-Item -ItemType SymbolicLink -Path k -Target $t', 'a link made in this command'),
+  ],
+] as const)
+  test(`086 PowerShell reviewed ${JSON.stringify(command)} is refused`, async ($, on) => {
+    expect(await ps($, on, command)).toBe(expected)
+  })
+
+for (const command of ['Push-Location', 'Push-Location; Pop-Location', './setup.ps1; gc x'])
+  test(`086 PowerShell reviewed ${JSON.stringify(command)} runs`, async ($, on) => {
+    expect(await ps($, on, command)).toBeUndefined()
+  })

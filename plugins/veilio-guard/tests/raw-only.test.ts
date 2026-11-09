@@ -646,6 +646,47 @@ for (const [command, expected] of ATTACKS)
     expect((await verdicts($, on, [command]))[0]).toBe(expected)
   })
 
+// T029, the independent security review: forms that move the shell from text
+// the guard cannot read, an option that changes cd, a name that stands for a
+// command, a link made and entered in the same call.
+const REVIEWED: [string, string | undefined][] = [
+  ['x=/home/dev/.kub; eval cd "${x}e"; cat config', N1('eval cd "${x}e"', 'code run from text')],
+  [
+    'eval "$(printf "cd /home/dev/.ku%s" be)"; cat config',
+    N1('eval "$(printf "cd /home/dev/.ku%s" be)"', 'code run from text'),
+  ],
+  // A script's own commands are outside what the guard promises (N6): sourced, it runs.
+  ['. ./go.sh; cat config', undefined],
+  ['builtin source go.sh; cat config', undefined],
+  ['eval "$X"', N1('eval "$X"', 'code run from text')],
+  ["trap 'cd ..' EXIT", undefined],
+  [
+    'x=.kub; trap "cd ~/${x}e" DEBUG; cat config',
+    N1('trap "cd ~/${x}e" DEBUG', 'code run from text'),
+  ],
+  ['source .venv/bin/activate', undefined],
+  ["trap '' INT; ls", undefined],
+  [
+    'shopt -s cdable_vars; k=/home/dev/.kube; cd k; cat config',
+    N1('shopt -s cdable_vars', 'an option that changes cd'),
+  ],
+  ['setopt CDABLE_VARS; cd k', N1('setopt CDABLE_VARS', 'an option that changes cd')],
+  ['set -o cdablevars; cd k', N1('set -o cdablevars', 'an option that changes cd')],
+  ['shopt -s globstar; ls', undefined],
+  [
+    'x=.kub; alias go="cd ~/${x}e"\ngo; cat config',
+    N1('alias go="cd ~/${x}e"', 'a new name for a command'),
+  ],
+  [
+    'x=.kub; ln -s ~/${x}e k && cd k && cat config',
+    N1('ln -s ~/${x}e k', 'a link made in this command'),
+  ],
+  ['ln -s ../src k && ls k', undefined],
+]
+for (const [command, expected] of REVIEWED)
+  test(`086 reviewed: ${JSON.stringify(command)}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
 // contracts/cd-verdicts.md "Evaluable targets": each form is followed into
 // the directory it names, so `cat notes` there (a link to .env) is refused,
 // and at the root (a plain file) runs.

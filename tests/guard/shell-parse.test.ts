@@ -313,3 +313,12 @@ describe('parseShell, PowerShell', () => {
     expect(ps(c)).toBe('fail:unbalanced')
   )
 })
+
+// T029 review: unclosed braces cost a scan each; past a bound the command is
+// unreadable (FR-003: 078's verdict) instead of seconds of work.
+test('20,000 unclosed braces are not read, and fast', () => {
+  const t = Date.now()
+  expect(parseShell(`echo ${'{'.repeat(20_000)}`, 'sh')).toEqual({ ok: false, why: 'depth' })
+  expect(parseShell(`echo ${'a{'.repeat(20_000)}`, 'sh')).toEqual({ ok: false, why: 'depth' })
+  expect(Date.now() - t).toBeLessThan(2_000)
+})

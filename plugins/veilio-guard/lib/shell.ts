@@ -514,6 +514,8 @@ const MAX_DEPTH = 3
 /** Lists open at once: a bound on `$(` and `(` nesting, so a crafted command
  *  cannot exhaust the stack. */
 const MAX_FRAMES = 200
+/** Brace expansions tried in one command (each may scan to its word's end). */
+const MAX_BRACE_SCANS = 200
 const BLANK = /[ \t\r]/
 // Where a run of plain word characters ends.
 const SPECIAL = /[ \t\r\n;&|()<>'"`\\$*?[{]/
@@ -599,7 +601,7 @@ class Reader {
   constructor(
     private readonly s: string,
     private readonly depth: number,
-    private readonly frames: { n: number }
+    private readonly frames: { n: number; braces?: number }
   ) {}
 
   all(): List {
@@ -1146,6 +1148,9 @@ class Reader {
   /** Where a `{a,b}` or `{1..3}` brace expansion ends, or -1 when the `{` is
    *  literal (no top-level comma or `..`, or no closing brace in the word). */
   private braceEnd(): number {
+    // Each unclosed `{` rescans its word: bounded, past it unreadable (T029).
+    this.frames.braces = (this.frames.braces ?? 0) + 1
+    if (this.frames.braces > MAX_BRACE_SCANS) throw new Unreadable('depth')
     const s = this.s
     let depth = 0
     let expands = false
@@ -1318,7 +1323,7 @@ function findIn(n: Node, pick: (n: Simple) => boolean): Simple | undefined {
   }
 }
 
-function parseAt(text: string, depth: number, frames: { n: number }): List {
+function parseAt(text: string, depth: number, frames: { n: number; braces?: number }): List {
   if (depth > MAX_DEPTH) throw new Unreadable('depth')
   return new Reader(text, depth, frames).read()
 }
@@ -1349,7 +1354,7 @@ class PsReader {
   private i = 0
   constructor(
     private readonly s: string,
-    private readonly frames: { n: number }
+    private readonly frames: { n: number; braces?: number }
   ) {}
 
   read(): List {

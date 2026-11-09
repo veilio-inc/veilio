@@ -353,6 +353,10 @@ class Walker {
   readonly landings: CdWalk['landings'] = []
   homeUnknown = false
   tilde = false
+  /** A trap with an action, set in this command. */
+  private trap: string | null = null
+  /** A link this command makes: with a cd in it, refused. */
+  link: string | null = null
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
    *  was read at. The one model of "moves the shell" for loops (security
@@ -409,6 +413,10 @@ class Walker {
     let r: Outcome
     if (p.stages.length === 1) r = await this.node(p.stages[0]!, input)
     else if (this.ps) {
+      // A location cmdlet takes its path from the pipeline: not followed.
+      for (const s of p.stages.slice(1))
+        if (s.type === 'simple' && psCd(s.words) !== null)
+          N1(s.words[0]?.raw ?? '', 'a path from the pipeline')
       let at = input
       for (const s of p.stages.slice(0, -1)) at = anyOf(await this.node(s, at)) ?? at
       r = await this.node(p.stages[p.stages.length - 1]!, at)
@@ -532,6 +540,8 @@ class Walker {
   }
 
   private async simple(n: Simple, input: DirState): Promise<Outcome> {
+    // A trap with an action may run before this command (DEBUG): refused.
+    if (this.trap !== null) N1(this.trap, 'code run from text')
     // Prefix assignments hold for this command only, unless it has none.
     let here = input
     for (const a of n.assigns) {
@@ -552,6 +562,38 @@ class Walker {
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
     this.current = n.words.map((w) => w.raw).join(' ')
+    // T029 review: what moves the shell from text, an option, or a name.
+    const run = programOf(n.words)
+    const name = run?.word.literal ?? null
+    const rest = run ? n.words.slice(run.at + 1) : []
+    if (name === 'eval' && !n.nested && rest.length > 0) N1(this.current, 'code run from text')
+    if (
+      name === 'trap' &&
+      rest.length >= 2 &&
+      !['', '-'].includes(rest[0]!.literal ?? 'x') &&
+      !(rest[0]!.literal ?? '').startsWith('-')
+    )
+      this.trap ??= this.current
+    if (
+      /^(?:shopt|setopt|unsetopt|set)$/.test(name ?? '') &&
+      rest.some(
+        (w) =>
+          (w.literal ?? w.raw).toLowerCase().replace(/[_-]/g, '').replace(/^no/, '') ===
+          'cdablevars'
+      )
+    )
+      N1(this.current, 'an option that changes cd')
+    if (name === 'alias' && rest.some((w) => (w.literal ?? w.raw).includes('=')))
+      N1(this.current, 'a new name for a command')
+    if (
+      (name === 'ln' &&
+        rest.some((w) => /^-[A-Za-z]*s/.test(w.literal ?? '') || w.literal === '--symbolic')) ||
+      /^mklink$/i.test(name ?? '') ||
+      (this.ps &&
+        /^new-item$/i.test(name ?? '') &&
+        rest.some((w) => /^(?:symboliclink|junction)$/i.test(w.literal ?? '')))
+    )
+      this.link ??= this.current
     const args = n.words.slice(1)
     // Declaration builtins and the commands that set a variable by name.
     for (const w of args) if (w.assign) after = this.assign(after, w.assign)
@@ -981,6 +1023,9 @@ function psCd(words: readonly Word[]): PsCd {
   }
   if (rest.length > (name === 'popd' ? 0 : 1))
     return { refuse: 'more than one target', shown: rest.map((w) => w.raw).join(' ') }
+  // Push-Location alone saves where it is and stays there.
+  if (name === 'pushd' && rest.length === 0)
+    rest.push({ parts: [{ kind: 'lit', text: '.', quoted: false }], literal: '.', raw: '.' })
   for (const w of rest) {
     const why = psTargetRefusal(w)
     if (why) return { refuse: why, shown: w.raw }
@@ -1043,6 +1088,8 @@ export async function walkCd(
   const w = new Walker(ctx, dialect === 'ps')
   try {
     const out = await w.list(l, start)
+    if (w.link !== null && w.landings.length > 0)
+      throw new Refused({ kind: 'N1', target: w.link, form: 'a link made in this command' })
     if (w.homeUnknown && w.tilde) throw new Refused({ kind: 'N2' })
     // The next call starts where the command most likely left the shell:
     // where it succeeded, else where it failed.
