@@ -548,6 +548,124 @@ describe('maps push --team', () => {
   })
 })
 
+describe('maps push --team writes only under a confirmed key (spec 080 item 7a)', () => {
+  const ROW_3 =
+    'Not saved: the newest key for team "Zespół" is not confirmed on this device. ' +
+    'Run `veilio team unlock` to see who granted it, then `veilio team trust`.'
+
+  function unlockedWith(keys: { version: number; raw: Uint8Array; writable: boolean }[]): void {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: 'a@b.test',
+        teamId: TEAM_ID,
+        teamName: 'Zespół',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: keys.map((k) => ({
+          version: k.version,
+          key: toBase64(k.raw),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: k.writable,
+        })),
+      },
+      home
+    )
+  }
+
+  it('refuses with nothing sent while the only key is not confirmed', async () => {
+    unlockedWith([{ version: 1, raw: TEAM_RAW, writable: false }])
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({})
+    const before = storeBytes()
+
+    const { code, err } = await run(['maps', 'push', '--team'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain(ROW_3)
+    expect(posted()).toHaveLength(0)
+    expect(storeBytes()).toBe(before)
+  })
+
+  it('a key file from an earlier CLI is not written under until the next unlock', async () => {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: 'a@b.test',
+        teamId: TEAM_ID,
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        // As an earlier CLI wrote it: no granter.
+        keys: [{ version: 1, key: toBase64(TEAM_RAW), writable: true }],
+      },
+      home
+    )
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({})
+
+    const { code, err } = await run(['maps', 'push', '--team'])
+
+    expect(code).toBe(EXIT_ERROR)
+    // No name kept: the team is named by its id.
+    expect(err).toContain('the newest key for team "team-1" is not confirmed')
+    expect(posted()).toHaveLength(0)
+  })
+
+  it('a team name in the key file is printed without control, bidi or zero-width characters', async () => {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: 'a@b.test',
+        teamId: TEAM_ID,
+        teamName: 'Zesp\u001b[2J\u202eół\u200b',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: [{ version: 1, key: toBase64(TEAM_RAW), writable: false }],
+      },
+      home
+    )
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({})
+
+    const { err } = await run(['maps', 'push', '--team'])
+
+    expect(err).toContain('the newest key for team "Zesp?[2J?ół?" is not confirmed')
+  })
+
+  it('never falls back to an older confirmed key when the newest is not confirmed', async () => {
+    unlockedWith([
+      { version: 1, raw: TEAM_RAW_OLD, writable: true },
+      { version: 2, raw: TEAM_RAW, writable: false },
+    ])
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({})
+
+    const { code, err } = await run(['maps', 'push', '--team'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain(ROW_3)
+    expect(posted()).toHaveLength(0)
+  })
+
+  it('writes under the newest key once it is confirmed, whatever an older one is', async () => {
+    unlockedWith([
+      { version: 1, raw: TEAM_RAW_OLD, writable: false },
+      { version: 2, raw: TEAM_RAW, writable: true },
+    ])
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({})
+
+    const { code } = await run(['maps', 'push', '--team'])
+
+    expect(code).toBe(EXIT_OK)
+    const body = JSON.parse(posted()[0]!) as { key_version: number; map_data: string }
+    expect(body.key_version).toBe(2)
+    await expect(
+      decryptTeamMap(await importTeamKey(toBase64(TEAM_RAW)), JSON.parse(body.map_data))
+    ).resolves.toEqual(LOCAL)
+  })
+})
+
 describe('maps rm', () => {
   it('removes a map and confirms it by name, with its id (T032)', async () => {
     // The name comes from the listing (spec 052 review), not from the map.

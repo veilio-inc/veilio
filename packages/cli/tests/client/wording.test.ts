@@ -39,6 +39,7 @@ const SAMPLE = {
   to: '2026-10-02T00:00:00.000Z',
   list: '__CLS__1, __FN__2',
   project: 'payments',
+  team: 'Zespół',
 }
 
 describe('the wording table (FR-019)', () => {

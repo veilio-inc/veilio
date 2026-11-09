@@ -611,7 +611,14 @@ export async function sealedTeamRule(
 /** Sign in under `home`, optionally with the team key and/or the PMK unlocked. */
 export function signIn(
   home: string,
-  opts: { team?: boolean; pmk?: boolean; project?: string; instance?: string } = {}
+  opts: {
+    team?: boolean
+    /** Spec 080 item 7a: false stores the team key read-only (not confirmed). */
+    teamWritable?: boolean
+    pmk?: boolean
+    project?: string
+    instance?: string
+  } = {}
 ): void {
   const instance = opts.instance ?? INSTANCE
   mkdirSync(join(home, '.veilio'), { recursive: true })
@@ -638,7 +645,7 @@ export function signIn(
             version: 1,
             key: toBase64(TEAM_RAW),
             granter: { id: 'u-granter', publicKey: 'GRANTER' },
-            writable: true,
+            writable: opts.teamWritable ?? true,
           },
         ],
       },
