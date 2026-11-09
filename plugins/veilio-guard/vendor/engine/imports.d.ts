@@ -23,6 +23,17 @@ export interface ProjectShape {
     /** The `module` path from `go.mod` (Go). */
     goModule?: string;
 }
+/**
+ * The project's shape from its file list (paths relative to the root, `/`
+ * separated) and a reader for a few of them (spec 085 R2-23): one reading for
+ * the CLI, the MCP server and the guard, so none of them takes a project's own
+ * package for a public one. Top-level folders; every folder on the way to a
+ * Python file and each module's own name; every `package.json`'s name (up to
+ * 200); `tsconfig` `baseUrl` folders and `paths` aliases; the root `go.mod`
+ * module. A file the reader cannot give is skipped, which only leaves more
+ * names masked.
+ */
+export declare function projectShapeFrom(files: readonly string[], read: (rel: string) => string | undefined): ProjectShape;
 /** The import statements of `text`, in order. Languages other than
  *  TypeScript/JavaScript, Python and Go return none. */
 export declare function parseImports(text: string, language: Language): ImportEntry[];
