@@ -273,8 +273,30 @@ describe('rawOnly patterns are read the way paths are (R2-15)', () => {
     expect(rawOnlyDirectories(['secrets\\**'])).toEqual(rawOnlyDirectories(['secrets/**']))
   })
 
-  it('a pattern that can never match is reported, not used', () => {
-    for (const p of ['../x', 'C:/x', '/', './']) expect(normaliseRawOnlyPattern(p), p).toBeNull()
+  it('a pattern that can never match is reported, and still applied as written', () => {
+    for (const p of ['../x', 'C:/x', '.', '/', './', '~/.ssh/**', 'a/../..'])
+      expect(normaliseRawOnlyPattern(p), p).toBeNull()
     expect(normaliseRawOnlyPattern('/config/prod.yml')).toBe('config/prod.yml')
+    // As on main: a reported pattern loses nothing it matched before.
+    expect(isRawOnly('/work/p/~/.ssh/id', ['~/.ssh/**'])).toBe(true)
+    expect(rawOnlyDirectories(['~/.ssh/**'])).toEqual(['~', '~/.ssh'])
+  })
+
+  // Review of the run-2 guard branch: `**` stays match-all, and `..` inside
+  // a pattern is resolved rather than refused.
+  it.each([
+    ['**', '/work/p/src/a.ts', true],
+    ['/**', '/work/p/src/a.ts', true],
+    ['secrets/../config/**', '/work/p/config/prod.yml', true],
+    ['secrets/../config/**', '/work/p/secrets/db.yml', false],
+  ])('%s against %s: %s', (pattern, path, raw) => {
+    expect(isRawOnly(path, [pattern])).toBe(raw)
+  })
+
+  it('normal forms of **, /** and secrets/../config/**', () => {
+    expect(normaliseRawOnlyPattern('**')).toBe('**')
+    expect(normaliseRawOnlyPattern('/**')).toBe('**')
+    expect(normaliseRawOnlyPattern('secrets/../config/**')).toBe('config/**')
+    expect(rawOnlyDirectories(['secrets/../config/**'])).toEqual(['config'])
   })
 })

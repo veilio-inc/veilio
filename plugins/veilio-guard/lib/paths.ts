@@ -90,9 +90,10 @@ export function rawOnlyDirectories(patterns: readonly string[]): string[] {
   const dirs = new Set<string>()
   for (const written of patterns) {
     if (!written || written.startsWith('!')) continue
-    // The engine's reading of a pattern, as isRawOnly's (spec 085 R2-15).
-    const pattern = normaliseRawOnlyPattern(written)
-    if (pattern === null || !pattern.includes('/')) continue
+    // The engine's reading of a pattern, as isRawOnly's (spec 085 R2-15);
+    // one it reports is read as written, as before.
+    const pattern = normaliseRawOnlyPattern(written) ?? written
+    if (!pattern.includes('/')) continue
     // `dir/**` names everything in dir: dir is the directory, not its parent.
     const dir = pattern
       .replace(/\\/g, '/')
@@ -227,19 +228,40 @@ export function cdIntoRawOnly(target: string, dirs: readonly string[]): boolean 
   return false
 }
 
-/** Spec 078 FR-012: Claude Code's project and user settings, which can switch
- *  the guard off (`disableAllHooks`). Matched as a path's tail, as written and
- *  resolved, ignoring case. */
-export function isWriteProtected(path: string): boolean {
-  const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
-  return /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p) || isMcpConfig(path)
+/** A path as Windows opens it, for the tail checks below: `/`, lower case,
+ *  and each part without its stream (`:x`) or trailing dots and spaces, as
+ *  the engine reads a raw-only path (review of the run-2 guard branch). */
+function openedAs(path: string): string {
+  return normalisePath(path.replace(/^['"]+|['"]+$/g, ''))
+    .toLowerCase()
+    .split('/')
+    .map((p) => (p === '..' ? p : p.replace(/:.*$/, '').replace(/[. ]+$/, '')))
+    .join('/')
 }
 
-/** Spec 085 R2-9: the project's MCP server list, which decides which server
- *  `mcpRestore` hands real names to. Matched as a path's tail, ignoring case. */
-export function isMcpConfig(path: string): boolean {
-  const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
-  return /(^|\/)\.mcp\.json$/.test(p)
+/** Spec 078 FR-012: Claude Code's project, user and managed settings, which
+ *  can switch the guard off (`disableAllHooks`), and the files that define
+ *  MCP servers. Matched as a path's tail, as written and resolved, ignoring case. */
+export function isWriteProtected(path: string): boolean {
+  const p = openedAs(path)
+  return (
+    /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p) ||
+    /(^|\/)managed-settings\.json$/.test(p) ||
+    mcpConfigName(path) !== null
+  )
+}
+
+/** Spec 085 R2-9 and its review: the files Claude Code reads MCP servers
+ *  from, which decide the server `mcpRestore` hands real names to - the
+ *  project's `.mcp.json`, `~/.claude.json` (user and local scope) and a
+ *  managed `managed-mcp.json` - named as the refusal names them; null for
+ *  any other path. */
+export function mcpConfigName(path: string): string | null {
+  const p = openedAs(path)
+  if (/(^|\/)\.mcp\.json$/.test(p)) return '.mcp.json'
+  if (/(^|\/)\.claude\.json$/.test(p)) return '~/.claude.json'
+  if (/(^|\/)managed-mcp\.json$/.test(p)) return 'managed-mcp.json'
+  return null
 }
 
 // ── spec 086: where a cd takes the shell (contracts/cd-verdicts.md) ─────────

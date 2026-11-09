@@ -1301,3 +1301,64 @@ test('R2-3: a save over a store with no record records nothing', async ($, on) =
   await $.tool.call({ tool: 'Read', file_path: path })
   expect(p.files[RECORD]).toBeUndefined()
 })
+
+// Review of the run-2 guard branch: a planted map the session holds in memory
+// is not laundered into the record by a save over an emptied map file.
+test('R2-3: a planted map stays unrecorded and shown-gated after a save over an emptied file', async ($, on) => {
+  const path = `${ROOT}/src/invoice.ts`
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__8: 'fakePlantedValue' }),
+      [path]: 'export class InvoiceBuilder {}\n',
+    },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => {
+    seen.push(e)
+    return e.tool === 'Read'
+      ? readOf(path, 'export class LedgerReconciler {}\n')
+      : { result: { type: 'create', filePath: `${ROOT}/a.ts` } }
+  })
+  await $.tool.call({ tool: 'Bash', command: 'true', description: 'x' })
+  p.files[`${ROOT}/.veilio/map.json`] = mapFile({})
+  await $.tool.call({ tool: 'Read', file_path: path })
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain('LedgerReconciler')
+  expect(p.files[RECORD]).toBeUndefined()
+  const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.ts`, content: '__VAR__8' })
+  expect(out.deny).toBeDefined()
+  expect(JSON.stringify(seen)).not.toContain('fakePlantedValue')
+})
+
+// The same review, second clause: names adopted into memory from a planted
+// map are not recorded by a save that lands on a recorded store.
+test('R2-3: a save over a recorded store records only what it wrote after a planted map came and went', async ($, on) => {
+  const map = mapFile({ __CLS__1: 'OrderService' })
+  const path = `${ROOT}/src/invoice.ts`
+  const record = await recordOf(map)
+  const p = project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: map, [RECORD]: record, [path]: 'export class X {}\n' },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  let calls = 0
+  on('tool.call', (_, e) => {
+    calls++
+    if (e.tool !== 'Read') return { result: OK }
+    // Between the guard's reload and its save: the recorded map is back.
+    p.files[`${ROOT}/.veilio/map.json`] = map
+    delete p.files[`${ROOT}/.veilio/aliases.json`]
+    return readOf(path, 'export class LedgerReconciler {}\n')
+  })
+  await $.tool.call({ tool: 'Bash', command: 'true', description: 'x' })
+  arrives(p, { __CLS__1: 'OrderService', __VAR__9: 'fakePlantedValue()' })
+  await $.tool.call({ tool: 'Read', file_path: path })
+  expect(calls).toBe(2)
+  const now = p.files[`${ROOT}/.veilio/map.json`]!
+  expect(now).toContain('LedgerReconciler')
+  // What is recorded is what was written, and the planted name is not in it.
+  expect(now).not.toContain('fakePlantedValue')
+  expect(p.files[RECORD]).not.toBe(record)
+  expect(JSON.parse(p.files[RECORD]!)[ROOT]).toBe(`${await sha(now)}:${await sha('')}`)
+})

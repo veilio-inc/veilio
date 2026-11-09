@@ -34,7 +34,7 @@ import {
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
   isRawOnly,
-  isMcpConfig,
+  mcpConfigName,
   isWriteProtected,
   normaliseRawOnlyPattern,
   normalisePath,
@@ -848,6 +848,8 @@ export class Guard {
   /** Placeholders taken from the disk after load, or from a map git tracked:
    *  restored only once this session has shown them (078's shown set). */
   private adopted = new Set<string>()
+  /** Spec 085 R2-3: the store at load had entries and no matching record. */
+  private unrecordedAtLoad = false
   /** Records the placeholders of `map` and the re-read aliases that now
    *  stand for another name than they did, or for a name this guard never
    *  held; says whether there was any. A new placeholder for a name the guard
@@ -928,6 +930,7 @@ export class Guard {
     if (entries.length === 0) return
     const [key, value] = await this.recordEntry(this.mapText, this.aliasesText)
     if ((await this.readRecord())[key] === value) return
+    this.unrecordedAtLoad = true
     for (const p of entries) this.adopted.add(p)
     this.notice(NOT_RECORDED)
   }
@@ -1705,41 +1708,82 @@ export class Guard {
    *  or where it leads: resolved once for both (review round 2). */
   private async pathHits(
     path: string
-  ): Promise<{ written: boolean; rawOnly: boolean; mcp: boolean }> {
+  ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }> {
     const raw =
       isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
     const written = isWriteProtected(path)
-    if (raw && written) return { written, rawOnly: raw, mcp: isMcpConfig(path) }
+    if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path) }
     const real = await this.io.realPath(this.here(path))
     return {
       written: written || (real !== undefined && isWriteProtected(real)),
       rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
-      mcp: isMcpConfig(path) || (real !== undefined && isMcpConfig(real)),
+      mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
     }
   }
 
   /** The refusal for a write-protected path: settings, or the MCP list (#59). */
-  private denyProtected(hits: readonly { written: boolean; mcp: boolean }[]): { deny: string } {
-    return hits.some((h) => h.written && h.mcp)
-      ? this.deny(MCP_CONFIG_PROTECTED, false)
-      : this.deny(SETTINGS_PROTECTED)
+  private denyProtected(hits: readonly { written: boolean; mcp: string | null }[]): {
+    deny: string
+  } {
+    const mcp = hits.find((h) => h.written && h.mcp !== null)?.mcp
+    return mcp ? this.deny(mcpConfigProtected(mcp), false) : this.deny(SETTINGS_PROTECTED)
   }
 
-  /** Spec 085 R2-9: the server names the project's .mcp.json declares; null
-   *  when there is one that cannot be read (it may declare any name). */
-  private async projectMcpServers(): Promise<Set<string> | null> {
-    const path = join(this.root, '.mcp.json')
-    if (!(await this.io.exists(path).catch(() => true))) return new Set()
+  /** Spec 085 R2-9 and its review: why a listed server's declaration is in
+   *  doubt - `project` when a project's .mcp.json declares it (at the root, or
+   *  where the session started, which is where Claude Code reads it), `twice`
+   *  when ~/.claude.json declares it both for the user and for this project.
+   *  `project` or `unreadable` alone when .mcp.json or ~/.claude.json cannot
+   *  be read (it may declare any name).
+   *  The scopes are Claude Code's documented ones: the host declares none. */
+  private async mcpDoubts(): Promise<Map<string, Doubt> | Doubt> {
+    const doubts = new Map<string, Doubt>()
+    // As the tool prefix spells it, too: characters other than letters,
+    // digits, `_` and `-` read as `_` (fail closed on either spelling).
+    const spellings = (servers: object) =>
+      Object.keys(servers).flatMap((n) => [n, n.replace(/[^A-Za-z0-9_-]/g, '_')])
+    const read = async (path: string): Promise<unknown> => {
+      if (!(await this.io.exists(path).catch(() => true))) return undefined
+      return JSON.parse(await this.io.read(path))
+    }
+    const serversOf = (o: unknown): object | null | undefined => {
+      const servers = (o as { mcpServers?: unknown } | null | undefined)?.mcpServers
+      if (servers === undefined) return undefined
+      return typeof servers === 'object' && servers !== null ? servers : null
+    }
     try {
-      const parsed = JSON.parse(await this.io.read(path)) as { mcpServers?: unknown }
-      const servers = parsed?.mcpServers
-      if (servers === undefined) return new Set()
-      if (typeof servers !== 'object' || servers === null) return null
-      // As the tool prefix spells it, too: characters other than letters,
-      // digits, `_` and `-` read as `_` (fail closed on either spelling).
-      return new Set(Object.keys(servers).flatMap((n) => [n, n.replace(/[^A-Za-z0-9_-]/g, '_')]))
+      for (const dir of new Set([this.root, this.cwd || this.root])) {
+        let parsed: unknown
+        try {
+          parsed = await read(join(dir, '.mcp.json'))
+        } catch {
+          return 'project'
+        }
+        const servers = serversOf(parsed)
+        if (servers === null) return 'project'
+        for (const n of spellings(servers ?? {})) doubts.set(n, 'project')
+      }
+      if (!this.home) return 'unreadable'
+      // shortcut: ~/.claude.json is read whole on each listed server's call;
+      // cache it by mtime if a large one shows in the hook's time.
+      const claude = (await read(join(this.home, '.claude.json'))) as
+        { projects?: Record<string, unknown> } | undefined
+      if (claude === undefined) return doubts
+      const user = serversOf(claude)
+      if (user === null) return 'unreadable'
+      const keys = new Set([this.root, this.cwd || this.root])
+      for (const k of [...keys]) keys.add((await this.io.realPath(k)) ?? k)
+      const local = new Set<string>()
+      for (const k of keys) {
+        const servers = serversOf(claude.projects?.[k])
+        if (servers === null) return 'unreadable'
+        for (const n of spellings(servers ?? {})) local.add(n)
+      }
+      for (const n of spellings(user ?? {}))
+        if (local.has(n) && !doubts.has(n)) doubts.set(n, 'twice')
+      return doubts
     } catch {
-      return null
+      return 'unreadable'
     }
   }
 
@@ -1753,11 +1797,18 @@ export class Guard {
     // Spec 085 R2-9: a listed server the project's .mcp.json declares too may
     // be the repository's, not the developer's: placeholders, said once.
     if (policy.mcp) {
-      const declared = await this.projectMcpServers()
+      const doubts = await this.mcpDoubts()
       const server = servers[0]!
-      if (declared === null || declared.has(server)) {
+      const doubt = typeof doubts === 'string' ? doubts : doubts.get(server)
+      if (doubt !== undefined) {
         policy = argumentPolicy(e.tool, [])
-        this.notice(redeclaredServer(server))
+        this.notice(
+          doubt === 'twice'
+            ? declaredTwice(server)
+            : doubt === 'unreadable'
+              ? claudeJsonUnread(server)
+              : redeclaredServer(server)
+        )
       }
     }
     if (servers.length > 1 && servers.some((s) => this.mcpRestore.includes(s)))
@@ -1837,7 +1888,7 @@ export class Guard {
         `the real name for ${unshaped} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call`
       )
 
-    const named: [string, { written: boolean; rawOnly: boolean; mcp: boolean }][] = []
+    const named: [string, { written: boolean; rawOnly: boolean; mcp: string | null }][] = []
     for (const field of policy.paths)
       for (const p of [e[field], args[field]])
         if (typeof p === 'string') named.push([p, await this.pathHits(p)])
@@ -2628,10 +2679,13 @@ export class Guard {
       await this.reloadSideFiles()
       // Spec 085 R2-3: what the store holds now, before this write, decides
       // whether the write is recorded (no laundering a planted map).
+      // An empty store counts only when this session never held an
+      // unrecorded one (review: emptying the file must not launder it).
       const before = await this.recordEntry(mapText, this.aliasesText)
-      const wasRecorded =
-        (Object.keys(onDisk.map).length === 0 && this.aliasesText === '') ||
-        (await this.readRecord())[before[0]] === before[1]
+      const matched = (await this.readRecord())[before[0]] === before[1]
+      const recordedBefore =
+        matched ||
+        (Object.keys(onDisk.map).length === 0 && this.aliasesText === '' && !this.unrecordedAtLoad)
       // Spec 085 L12: entries another program wrote (a git pull) are checked
       // against git before any of them is merged; so is any change to either
       // file, new names or not (review round 1 #1).
@@ -2654,6 +2708,14 @@ export class Guard {
         return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
+      // Never recorded while what is written holds a name not yet shown-trusted.
+      // A matched record vouches for what the disk held; anything else adopted
+      // (held in memory only) is not laundered into it.
+      const vouched = (p: string) => matched && onDisk.map[p] === next.map[p]
+      const wasRecorded =
+        recordedBefore &&
+        !Object.keys(next.map).some((p) => this.adopted.has(p) && !vouched(p)) &&
+        (matched || !Object.keys(this.aliases).some((p) => this.adopted.has(p)))
       if (existed && this.mapReadable && this.io.chmod) {
         await this.io.chmod(this.mapPath).catch(() => undefined)
         if (!(await this.ownerOnly(this.mapPath))) {
@@ -2721,8 +2783,20 @@ const unmatchableRawOnly = (pattern: string) =>
   `Veilio: rawOnly pattern \`${pattern}\` in .veilio/guard.json can never match a file, so it protects nothing. Write it relative to the project root, such as \`config/prod.yml\` or \`secrets/**\`.`
 
 /** strings.md #59 (spec 085 R2-9, approved 2026-11-08). */
-const MCP_CONFIG_PROTECTED =
-  'Veilio refused this change: .mcp.json decides which MCP servers receive your real names, so the agent may not change it. Ask the user to make this change'
+const mcpConfigProtected = (file: string) =>
+  `Veilio refused this change: ${file} decides which MCP servers receive your real names, so the agent may not change it. Ask the user to make this change`
+
+/** Why a listed server's declaration is in doubt (mcpDoubts). */
+type Doubt = 'project' | 'twice' | 'unreadable'
+
+/** strings.md #57c (review of the run-2 guard branch, pending). */
+const claudeJsonUnread = (server: string) =>
+  `Veilio: ~/.claude.json could not be read, so \`${server}\` gets placeholders, not real names.`
+
+/** strings.md #57b (review of the run-2 guard branch, pending), once a
+ *  session per server. */
+const declaredTwice = (server: string) =>
+  `Veilio: \`${server}\` is declared more than once in ~/.claude.json (for you and for this project), so its tools get placeholders, not real names.`
 
 /** strings.md #57 (spec 085 R2-9), said once a session per server. */
 const redeclaredServer = (server: string) =>
