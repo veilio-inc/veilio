@@ -919,8 +919,9 @@ const PS_UNQUOTED = /^[\p{L}\p{N}._\-/\\~]*$/u
 const PS_QUOTED = /^[\p{L}\p{N}._\-/\\~ ()]*$/u
 
 /** Why a PowerShell location target is not followed, or null: no variable
- *  or subexpression, `@`, backtick, provider (`::`) or UNC path, leading
- *  dash, or character outside the allow-list. */
+ *  or subexpression, `@`, backtick, provider (`::`) or UNC path, or
+ *  character outside the allow-list (a word led by a dash is a parameter,
+ *  refused in psCd before this). */
 function psTargetRefusal(w: Word): string | null {
   const [first] = w.parts
   if (!first) return 'a path that is not plain'
@@ -933,7 +934,6 @@ function psTargetRefusal(w: Word): string | null {
   const text = w.parts.map((p) => (p.kind === 'lit' ? p.text : '~')).join('')
   const drive = /^[A-Za-z]:/.test(text) ? 2 : 0
   const ok =
-    !PS_DASH.test(text) &&
     !/^(?:\\\\|\/\/|[\\/]{2})/.test(text) &&
     w.parts.every((p, k) => {
       if (p.kind !== 'lit') return true
