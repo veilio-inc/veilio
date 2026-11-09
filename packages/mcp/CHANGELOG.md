@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.9.1
+
+### Patch Changes
+
+- [#221](https://github.com/veilio-inc/veilio/pull/221) [`64662a6`](https://github.com/veilio-inc/veilio/commit/64662a618103f8ef21f511f33bf67ded984b2b62) Thanks [@DlgSHi](https://github.com/DlgSHi)! - A team map write that Cloud refuses because it was sealed under a team-key version this account does not hold now says so, instead of reporting a key change owed. The words come from the CLI dependency, so the MCP tools and the CLI say the same thing.
+- Updated dependencies [[`c1cf7ed`](https://github.com/veilio-inc/veilio/commit/c1cf7ed2a9e8bf101e6fe3851fde23dfae910849)]:
+  - @veilio-inc/cli@0.11.1
+
 ## 0.9.0
 
 ### Minor Changes
