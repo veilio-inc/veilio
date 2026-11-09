@@ -628,7 +628,7 @@ const ATTACKS: [string, string | undefined][] = [
   ['if cd project .kube; then cat config; fi', A1('project .kube')],
   ['~/.kube', A1('~/.kube')],
   ['.kube', undefined],
-  ['for HOME in ~/.kube; do cd; cat config; done', N2],
+  ['for HOME in ~/.kube; do cd; cat config; done', N1('cd', 'a cd in a loop')],
   ["cd ~/.kub$'\\x65'", N1("~/.kub$'\\x65'", 'ANSI-C quoting')],
   ['cd .vei{l..l}io', N1('.vei{l..l}io', 'braces')],
   ['cd `echo .kube`', N1('`echo .kube`', 'a command substitution')],
@@ -710,10 +710,7 @@ const ASSIGNED: [string, string | undefined][] = [
     'read -r CDPATH; cd deep',
     N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
   ],
-  [
-    'for CDPATH in lib; do cd deep; done',
-    N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
-  ],
+  ['for CDPATH in lib; do cd deep; done', N1('cd deep', 'a cd in a loop')],
   [
     'declare -n CDPATH=X; cd deep',
     N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
@@ -779,7 +776,22 @@ const SCOPE: [string, string | undefined][] = [
   ['false && cd sub; cat notes', undefined],
   ['cd sub 2>/dev/null || exit 1; cat notes', NOTES],
   ['if cd sub; then ls; fi; cat notes', NOTES],
-  ['for x in 1 2; do cd sub; done; cat notes', NOTES],
+  // A loop or a function that moves the shell is not followed (security review).
+  ['for x in 1 2; do cd sub; done; cat notes', N1('cd sub', 'a cd in a loop')],
+  ['for x in 1 2 3; do cd ..; done; cat notes', N1('cd ..', 'a cd in a loop')],
+  ['while true; do cd sub || break; done', N1('cd sub', 'a cd in a loop')],
+  ['until false; do CDPATH=lib; done; cd deep', N1('CDPATH=', 'a cd in a loop')],
+  ['for x in 1 2; do ls $x; done; cat notes', undefined],
+  ['f() { cd sub; }; f; cat notes', N1('f', 'a function that changes directory')],
+  ['function f { HOME=/x; }; f; cd', N1('f', 'a function that changes directory')],
+  ['f() { cd sub; }; ls', undefined],
+  ['f() { ls; }; f; cat notes', undefined],
+  // more than two targets: refused, not read as an error
+  ['cd a b c', N1('a b c', 'more than one target')],
+  ['pushd a b c', N1('a b c', 'more than one target')],
+  // zsh `pushd old new`, as `cd old new`
+  ['cd /work/a && pushd a project/sub && cat notes', NOTES],
+  ['pushd x .kube', N1('x .kube', 'more than one target')],
   ["bash -c 'cd sub'; cat notes", undefined],
   ["bash -c 'cd sub && cat notes'", NOTES],
   ['eval "cd sub"; cat notes', NOTES],
@@ -802,7 +814,10 @@ for (const [command, expected] of SCOPE)
 const CALLS: [string[], string | undefined][] = [
   [['cd sub', 'cat notes'], NOTES],
   [['cd sub; ls', 'cat notes'], NOTES],
-  [['cd sub', 'cd /tmp', 'cat notes'], undefined],
+  // No host directory (until register.ts reports one): every directory a
+  // call may have left the shell in is carried, the cd that may have failed too.
+  [['cd sub', 'cd /tmp', 'cat notes'], NOTES],
+  [['cd /tmp', 'cat notes'], undefined],
   [['echo $(cd sub)', 'cat notes'], undefined],
   [['(cd sub)', 'cat notes'], undefined],
   [['export CDPATH=lib', 'cd deep && cat notes'], undefined],
@@ -828,13 +843,17 @@ test('086 across calls: a failed call moves the shell too', async ($, on) => {
   expect(out.deny).toBe(NOTES)
 })
 
-// Q3 = A: more than 16 possible directories refuses the call.
+// Q3 = A: more than 16 possible directories refuses the call. A chain of n
+// `||` cds may leave the shell in n directories, or where it was if all fail.
 const fan = (n: number) => Array.from({ length: n }, (_, k) => `cd d${k}`).join(' || ')
-test('086 the bound: 16 possible directories run, 17 are refused', async ($, on) => {
-  const [sixteen, seventeen] = await verdicts($, on, [fan(16), fan(17)])
-  expect(sixteen).toBeUndefined()
-  expect(seventeen).toBe(N1(fan(17), 'too many possible directories'))
-})
+for (const [n, expected] of [
+  [15, undefined],
+  [16, N1(fan(16), 'too many possible directories')],
+  [17, N1(fan(17), 'too many possible directories')],
+] as const)
+  test(`086 the bound: ${n} cds joined by || ${expected ? 'are refused' : 'run'}`, async ($, on) => {
+    expect((await verdicts($, on, [fan(n)]))[0]).toBe(expected)
+  })
 
 test('086 N1 masks its target: a name from the map reaches the model as its placeholder', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, { home: HOME })

@@ -45,10 +45,21 @@ function io(): GuardIO {
   }
 }
 
-async function guard(): Promise<Guard> {
+/** A guard loaded in the fixture project. */
+export async function fixtureGuard(): Promise<Guard> {
   const g = new Guard(io(), { rawOnly: [], mcpRestore: [] })
   await g.load(ROOT, HOME)
   if (g.state !== 'on') throw new Error(`the fixture guard is ${g.state}: ${g.stoppedReason}`)
+  return g
+}
+
+// The benchmark sessions recorded no host directories (FR-011's truth at a
+// call's start), so the replay carries each call where it most likely ended,
+// as the host would have reported it. Without it, a session's fail branches
+// pile up past the bound (spec 086 review #3: bench:399:5 refused).
+async function guard(): Promise<Guard> {
+  const g = await fixtureGuard()
+  g.assumeSuccess = true
   return g
 }
 

@@ -259,8 +259,13 @@ export type CdWalk = {
   /** Each followed cd: its target as written, and where it may land. */
   landings: { target: string; dirs: readonly string[] }[]
   refusal: CdRefusal | null
-  /** The top-level state after the command (the next call starts there). */
+  /** The top-level state after the command where it most likely ended
+   *  (where it succeeded, else where it failed): checked against the host's
+   *  report of the shell's directory. */
   end: DirState
+  /** Every directory it may have left the shell in, success or failure: the
+   *  next call's start when the host reports none. Null: more than MAX_DIRS. */
+  endAll: DirState | null
 }
 export type CdContext = {
   /** Whether a path exists (file or directory). */
@@ -338,6 +343,8 @@ class Walker {
   readonly landings: CdWalk['landings'] = []
   homeUnknown = false
   tilde = false
+  /** Functions the command defines: whether each moves the shell. */
+  readonly functions = new Map<string, boolean>()
   constructor(private readonly ctx: CdContext) {}
 
   async list(l: List, start: DirState): Promise<Outcome> {
@@ -396,8 +403,11 @@ class Walker {
         return both(all)
       }
       case 'loop': {
-        // The body may run any number of times: twice from where it may
-        // start, and not at all.
+        // A loop that moves the shell, or sets what a cd reads, is not
+        // followed: its directory after n turns is not told (security review).
+        const mover = moverIn(n.cond, this.functions) ?? moverIn(n.body, this.functions)
+        if (mover !== null) N1(mover, 'a cd in a loop')
+        // The rest may still run any number of times: twice, and not at all.
         let state = input
         if (n.name !== null && Object.hasOwn(TRACKED, n.name))
           state = this.set(state, n.name, 'unknown')
@@ -417,8 +427,11 @@ class Walker {
         return both(all)
       }
       case 'function':
-        // Defined here, called who knows when: read as if it ran here too.
-        return both(merge(input, anyOf(await this.node(n.body, input))))
+        // Its words are read here; a call to one that moves the shell is
+        // refused where it is called (security review).
+        this.functions.set(n.name, nodeMover(n.body, this.functions) !== null)
+        await this.node(n.body, input)
+        return both(input)
     }
   }
 
@@ -496,6 +509,8 @@ class Walker {
       for (const p of w.parts)
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
+    if (program !== null && this.functions.get(program))
+      N1(program, 'a function that changes directory')
     const args = n.words.slice(1)
     // Declaration builtins and the commands that set a variable by name.
     for (const w of args) if (w.assign) after = this.assign(after, w.assign)
@@ -591,7 +606,8 @@ class Walker {
       if (possible) return both(after)
       return this.moved(here, after, name, this.home(here, name), possible)
     }
-    if (rest.length === 2 && (name === 'cd' || name === 'chdir') && !possible) {
+    if (rest.length > 2) N1(rest.map((w) => w.raw).join(' '), 'more than one target')
+    if (rest.length === 2 && name !== 'popd' && !possible) {
       // zsh `cd old new`: old replaced by new in the directory; bash: an error.
       const [o, w] = [rest[0]!.literal, rest[1]!.literal]
       if (o === null || w === null) N1(`${rest[0]!.raw} ${rest[1]!.raw}`, 'more than one target')
@@ -599,18 +615,21 @@ class Walker {
         .filter((d) => d.includes(o!))
         .map((d) => normalisePath(d.replace(o!, w!)))
       if (swapped.length === 0) N1(`${rest[0]!.raw} ${rest[1]!.raw}`, 'more than one target')
-      return this.moved(here, after, `${rest[0]!.raw} ${rest[1]!.raw}`, swapped, true)
+      const out = this.moved(here, after, `${rest[0]!.raw} ${rest[1]!.raw}`, swapped, true)
+      return name === 'pushd' ? this.pushed(out, here) : out
     }
     if (rest.length > 1 && !possible) return { ok: null, fail: after }
     const target = rest[0]!
     const dirs = await this.target(target, here)
     const out = await this.moved(here, after, shown(target), dirs, possible)
-    if (name === 'pushd' && out.ok)
-      return {
-        ok: { ...out.ok, stack: here.stack === 'unknown' ? 'unknown' : [here.dirs, ...here.stack] },
-        fail: out.fail,
-      }
-    return out
+    return name === 'pushd' ? this.pushed(out, here) : out
+  }
+
+  /** pushd: where the shell was goes on the stack. */
+  private pushed(out: Outcome, here: DirState): Outcome {
+    if (!out.ok) return out
+    const stack = here.stack === 'unknown' ? 'unknown' : [here.dirs, ...here.stack]
+    return { ok: { ...out.ok, stack }, fail: out.fail }
   }
 
   /** Where `~` and a bare cd go. A session with no HOME loses track, as
@@ -742,6 +761,70 @@ class Walker {
   }
 }
 
+const MOVES_VAR = /^(?:HOME|CDPATH|cdpath|OLDPWD|PWD|DIRSTACK|dirstack)$/
+const SETS_BY_NAME = new Set(['read', 'unset', 'printf', 'mapfile'])
+
+/** The first command in a list that moves the shell or sets what a cd
+ *  reads, as written; null when none does. A subshell's cannot move it. */
+function moverIn(l: List | null, fns: ReadonlyMap<string, boolean>): string | null {
+  for (const { node } of l?.items ?? [])
+    for (const n of node.stages) {
+      const m = nodeMover(n, fns)
+      if (m !== null) return m
+    }
+  return null
+}
+
+function nodeMover(n: Node, fns: ReadonlyMap<string, boolean>): string | null {
+  switch (n.type) {
+    case 'simple': {
+      const [first, ...args] = n.words
+      let k = 0
+      while (/^(?:builtin|command)$/.test(n.words[k]?.literal ?? '')) k++
+      const program = n.words[k]?.literal ?? null
+      const shown = n.words.map((w) => w.raw).join(' ')
+      if (program !== null && (CD_PROGRAM.has(program) || fns.get(program))) return shown
+      // An expanded program word that is not a path may be cd.
+      if (first && first.literal === null && !first.raw.includes('/')) return shown
+      if (n.words.length === 0) {
+        const a = n.assigns.find((x) => x.name === null || MOVES_VAR.test(x.name))
+        if (a) return `${a.name ?? ''}=`
+      }
+      if (args.some((w) => w.assign && (w.assign.name === null || MOVES_VAR.test(w.assign.name))))
+        return shown
+      if (SETS_BY_NAME.has(program ?? '') && args.some((w) => MOVES_VAR.test(w.literal ?? '')))
+        return shown
+      if (
+        n.words.some((w) =>
+          w.parts.some((p) => p.kind === 'param' && /^:?=/.test(p.op) && MOVES_VAR.test(p.name))
+        )
+      )
+        return shown
+      if (n.nested && program === 'eval') return moverIn(n.nested, fns)
+      return null
+    }
+    case 'subshell':
+    case 'function':
+      return null
+    case 'group':
+      return moverIn(n.list, fns)
+    case 'if':
+      for (const b of n.branches) {
+        const m = moverIn(b.cond, fns) ?? moverIn(b.body, fns)
+        if (m !== null) return m
+      }
+      return moverIn(n.else, fns)
+    case 'loop':
+      return moverIn(n.cond, fns) ?? moverIn(n.body, fns)
+    case 'case':
+      for (const a of n.arms) {
+        const m = moverIn(a, fns)
+        if (m !== null) return m
+      }
+      return null
+  }
+}
+
 /** `$(pwd)` and `$(git rev-parse --show-toplevel)`: the two substitutions a
  *  cd target may be (Q1 = A). */
 function substOf(l: List): 'pwd' | 'toplevel' | null {
@@ -796,9 +879,22 @@ export async function walkCd(l: List, start: DirState, ctx: CdContext): Promise<
     // The next call starts where the command most likely left the shell:
     // where it succeeded, else where it failed.
     const end = out.ok ?? out.fail ?? start
-    return { points: w.points, landings: w.landings, refusal: null, end }
+    let endAll: DirState | null
+    try {
+      endAll = merge(out.ok, out.fail) ?? start
+    } catch (err) {
+      if (!(err instanceof Refused)) throw err
+      endAll = null
+    }
+    return { points: w.points, landings: w.landings, refusal: null, end, endAll }
   } catch (err) {
     if (!(err instanceof Refused)) throw err
-    return { points: w.points, landings: w.landings, refusal: err.refusal, end: start }
+    return {
+      points: w.points,
+      landings: w.landings,
+      refusal: err.refusal,
+      end: start,
+      endAll: start,
+    }
   }
 }

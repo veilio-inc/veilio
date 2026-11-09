@@ -43,6 +43,7 @@ import {
   walkCd,
   windowsAlias,
   wordPath,
+  MAX_DIRS,
   type CdContext,
   type DirState,
   type Var,
@@ -1435,6 +1436,35 @@ export class Guard {
   }
   /** CDPATH as the session's environment has it (unset when it has none). */
   cdpath: Var = 'unset'
+  /** FR-011: the host reports the shell's directory at the start of a call
+   *  (atHost). While it does, the next call starts there and the inference
+   *  is only checked against it; until it does, every directory a command
+   *  may have left the shell in is carried. */
+  private hostReports = false
+  private disagreementLogged = false
+  /** The differential replay (tests/guard/fixtures/cd-project.ts) only: the
+   *  benchmark corpus has no host directories, so each call is carried where
+   *  it most likely ended, as a host would have reported it. */
+  assumeSuccess = false
+  /** Spec 086 FR-011: where Claude Code says the shell is as a call starts
+   *  ($.session.cwd()). It is the truth; where the guard's reading of the
+   *  last call disagrees, this call is checked in both (the host's alone
+   *  past the bound), and the disagreement is logged once. */
+  atHost(dir: string): void {
+    const host = normalisePath(dir)
+    const inferred = this.dirs.dirs
+    this.hostReports = true
+    if (inferred.length === 1 && inferred[0] === host) return
+    if (inferred.length > 0 && !this.disagreementLogged) {
+      this.disagreementLogged = true
+      this.notice(
+        `Veilio guard: Claude Code says the shell is in ${host}, where Veilio's reading of the last command left it in ${inferred.join(', ')}. Both are checked for this call.`
+      )
+    }
+    const both = [...new Set([host, ...inferred])]
+    this.dirs = { ...this.dirs, dirs: both.length > MAX_DIRS ? [host] : both }
+    this.shellDir = host
+  }
   /** A call starts with an empty stack and the session's variables: the Bash
    *  tool keeps only its directory between calls (research R0, T003); the
    *  host sets OLDPWD to the project root. */
@@ -1501,7 +1531,8 @@ export class Guard {
     const parsed = tool === 'Bash' ? parseShell(command, 'sh') : null
     if (parsed?.ok) {
       const walk = await walkCd(parsed.list, this.dirs, this.cdContext)
-      this.dirs = this.sessionState(walk.end.dirs)
+      const carry = this.hostReports || this.assumeSuccess ? walk.end : (walk.endAll ?? walk.end)
+      this.dirs = this.sessionState(carry.dirs)
     } else {
       // Only a top-level cd moves the shell the next call runs in; one in a
       // substitution or a nested shell does not (review round 2 of spec 078).
@@ -1659,7 +1690,13 @@ export class Guard {
         let moves: string[] = []
         if (parsed?.ok) {
           const walk = await walkCd(parsed.list, this.dirs, this.cdContext)
-          const r = walk.refusal
+          // Q3 = A: with no host report, a call that would leave the shell
+          // in more directories than the bound is refused before it runs.
+          const r =
+            walk.refusal ??
+            (walk.endAll === null && !this.hostReports && !this.assumeSuccess
+              ? { kind: 'N1' as const, target: c, form: 'too many possible directories' }
+              : null)
           if (r?.kind === 'N2')
             return this.deny(
               'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user',
