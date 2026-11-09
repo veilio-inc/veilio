@@ -172,8 +172,10 @@ const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|in|of|new|dele
  *  which ends on the line it began on.
  *  shortcut: `)` and `}` are guessed (`if (x) /re/` reads as division, a `/`
  *  after an object literal as a regex); a real parser would know. */
-function regexLiteralEnd(code, at) {
+function regexLiteralEnd(code, at, ignoreGuess = false) {
     let j = at - 1;
+    if (ignoreGuess)
+        j = -1;
     while (j >= 0 && /\s/.test(code[j]))
         j--;
     if (j >= 0 && (code[j] === '<' || (/[+-]/.test(code[j]) && code[j - 1] === code[j])))
@@ -205,6 +207,63 @@ function regexLiteralEnd(code, at) {
     }
     return [false, code.length];
 }
+/** Heredoc ids a pass searches for at most; past it, a heredoc reads as before.
+ *  shortcut: a file with more distinct ids than this is not seen in real code;
+ *  an index of terminator lines would lift the cap. */
+const MAX_HEREDOC_IDS = 100;
+function literalEnd(code, at, kind, memo) {
+    if (code[at] === '<' && code.startsWith('<<', at)) {
+        const head = kind === 'php'
+            ? /<<<[ \t]*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1\r?\n/y
+            : /<<([~-]?)(["'`]?)([A-Z_][A-Za-z0-9_]*)\2/y;
+        head.lastIndex = at;
+        const m = head.exec(code);
+        if (!m)
+            return -1;
+        const id = kind === 'php' ? m[2] : m[3];
+        const indented = kind === 'php' || m[1] !== '';
+        const key = `${indented ? '~' : ''}${id}`;
+        // The body starts on the next line; the terminator is the first line after
+        // it that is the id (PHP: followed by a non-word; Ruby: alone).
+        const body = code.indexOf('\n', head.lastIndex - 1) + 1;
+        if (body === 0)
+            return -1;
+        const known = memo.terminators.get(key);
+        if (known !== undefined && (known === -1 || known >= body))
+            return known;
+        if (known === undefined && memo.terminators.size >= MAX_HEREDOC_IDS)
+            return -1;
+        const terminator = new RegExp(`^${indented ? '[ \\t]*' : ''}${id}${kind === 'php' ? '\\b' : '[ \\t]*$'}`, 'gm');
+        terminator.lastIndex = body;
+        const found = terminator.exec(code);
+        const end = found ? found.index + found[0].length : -1;
+        memo.terminators.set(key, end);
+        return end;
+    }
+    if (kind === 'ruby' && code[at] === '%') {
+        const m = /%[qQwWiIrsx]?([^\w\s])/y;
+        m.lastIndex = at;
+        const open = m.exec(code)?.[1];
+        if (open === undefined || /[\w)\]]/.test(code[at - 1] ?? ''))
+            return -1;
+        if (memo.unclosed.has(open))
+            return -1;
+        const close = { '(': ')', '[': ']', '{': '}', '<': '>' }[open] ?? open;
+        let depth = 1;
+        for (let k = m.lastIndex; k < code.length; k++) {
+            if (code[k] === '\\')
+                k++;
+            else if (code[k] === close && --depth === 0)
+                return k + 1;
+            else if (code[k] === open && open !== close)
+                depth++;
+        }
+        // One that never closes: a later one of that delimiter reads as before too.
+        memo.unclosed.add(open);
+        return -1;
+    }
+    return -1;
+}
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
 /** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
@@ -234,6 +293,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
     const startsWithAt = (token, at) => code.startsWith(token, at);
     let i = 0;
     let noRegexBefore = -1;
+    const literalMemo = { terminators: new Map(), unclosed: new Set() };
     // A quote character opens nothing before this offset (see `forRestore`).
     const proseBefore = new Map();
     /** The end of the fence line starting at `at`, or -1 when none does. */
@@ -265,6 +325,15 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             }
             flush(false);
             continue;
+        }
+        if (!forRestore && syntax.heredoc) {
+            const end = literalEnd(code, i, syntax.heredoc, literalMemo);
+            if (end !== -1) {
+                flush(false);
+                segments.push({ text: code.slice(i, end), isComment: false, isString: true });
+                i = end;
+                continue;
+            }
         }
         const lineOpener = syntax.line.find((o) => startsWithAt(o, i) && !syntax.notLineOpener?.some((t) => startsWithAt(t, i)));
         if (lineOpener === '//' &&
@@ -301,11 +370,24 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             continue;
         }
         if ((forRestore || syntax.regexLiterals) && c === '/' && i >= noRegexBefore) {
-            const [closed, end] = regexLiteralEnd(code, i);
+            let [closed, end] = regexLiteralEnd(code, i);
+            const holdsOpener = (to) => {
+                const inside = code.slice(i + 1, to);
+                return (syntax.line.some((o) => inside.includes(o)) ||
+                    syntax.block.some(([o]) => inside.includes(o)));
+            };
+            // Spec 085 R2-11: the position guess reads `/` after `)` as a division
+            // (`if (ok(p)) /\/*$/`). A literal that closes on the line and holds a
+            // comment opener is read as code anyway: fail toward code.
+            if (!forRestore && !closed && end === -1) {
+                const [anyway, to] = regexLiteralEnd(code, i, true);
+                if (anyway && holdsOpener(to))
+                    [closed, end] = [true, to];
+            }
             // Masking consumes only a literal that holds a comment opener (spec 085
             // L7: `/^https?:\/\//`, `/\/*$/`), which it would otherwise read as a
             // comment; any other literal reads exactly as it always did.
-            if (closed && (forRestore || /\/[/*]/.test(code.slice(i + 1, end)))) {
+            if (closed && (forRestore || holdsOpener(end))) {
                 buf += code.slice(i, end);
                 i = end;
                 continue;
