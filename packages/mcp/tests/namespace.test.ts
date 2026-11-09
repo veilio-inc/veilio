@@ -7,6 +7,7 @@ import { resolveMapPath, saveMap, loadMap } from '@veilio-inc/cli/store'
 import { callTool, type ToolContext } from '../src/tools.js'
 import { primeNamespace, getNamespace, resetNamespaceCache } from '../src/namespace.js'
 import { mergeNamespace } from '@veilio-inc/cli/team-anonymize'
+import { teamScenario } from '../../cli/tests/helpers/team-scenario.js'
 
 /**
  * The shared namespace two teammates' agents must agree on, and the fallback
@@ -57,20 +58,25 @@ function newCtx(): ToolContext {
 }
 
 const TEAM_NAMESPACE = { __CLS__1: 'PaymentGateway' }
+/** A member of team-1 holding the team key, whose one team map is TEAM_NAMESPACE
+ *  (an envelope the key opens: spec 085 R2-4, no namespace in the listing). */
+const teamHome = async (): Promise<string> =>
+  (
+    await teamScenario(fetchMock, {
+      maps: [{ createdAt: '2026-09-01T10:00:00Z', map: TEAM_NAMESPACE }],
+    })
+  ).home
+
 const SOURCE = 'export class PaymentGateway {\n  chargeCard(amount: number) { return amount }\n}\n'
 
 describe('two members of one paid team', () => {
   it('resolve the same identifier to the same placeholder', async () => {
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ personalMaps: [], teamMaps: [], teamNamespace: TEAM_NAMESPACE, plan: 'team' })
-    )
-
     resetNamespaceCache()
-    await primeNamespace(signInHome())
+    await primeNamespace(await teamHome())
     const first = callTool('anonymize_text', { text: SOURCE }, newCtx())
 
     resetNamespaceCache()
-    await primeNamespace(signInHome())
+    await primeNamespace(await teamHome())
     const second = callTool('anonymize_text', { text: SOURCE }, newCtx())
 
     expect(first.text).toContain('__CLS__1')
@@ -88,10 +94,7 @@ function signInHome(): string {
 
 describe('every anonymize result states its namespace source', () => {
   it('says "team" when the namespace resolved against Cloud', async () => {
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ personalMaps: [], teamMaps: [], teamNamespace: TEAM_NAMESPACE, plan: 'team' })
-    )
-    await primeNamespace(signInHome())
+    await primeNamespace(await teamHome())
     const res = callTool('anonymize_text', { text: SOURCE }, newCtx())
     expect(res.text).toContain('Namespace: team')
   })
@@ -143,15 +146,13 @@ describe('the fallback to local', () => {
 
 describe('the namespace fetch', () => {
   it('happens once per session and is reused', async () => {
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ personalMaps: [], teamMaps: [], teamNamespace: TEAM_NAMESPACE, plan: 'team' })
-    )
-    const home = signInHome()
+    const home = await teamHome()
     await primeNamespace(home)
+    const once = fetchMock.mock.calls.length
     await primeNamespace(home)
     callTool('anonymize_text', { text: SOURCE }, newCtx())
     callTool('anonymize_text', { text: SOURCE }, newCtx())
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls.length).toBe(once)
     expect(getNamespace().source).toBe('team')
   })
 })

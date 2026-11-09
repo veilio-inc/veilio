@@ -228,3 +228,21 @@ describe('veilio scrub, the same placeholder in the project map and the team', (
     expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })
+
+// Spec 085 part 3, R2-4 and R2-5: plain team content from Cloud never decides
+// which names scrub leaves readable.
+describe('scrub never masks over team content Cloud serves in plain (R2-4, R2-5)', () => {
+  const SELF = [{ createdAt: '2026-09-01T10:00:00Z', map: { PaymentGateway: 'PaymentGateway' } }]
+
+  it("a listing's teamNamespace does not keep a name readable", async () => {
+    const { home } = await teamScenario(fetchMock, { maps: SELF, legacy: true })
+    const r = await scrub('class PaymentGateway {}\n', home)
+    expect(r.out).not.toContain('PaymentGateway')
+  })
+
+  it('a map_data object after a 404 does not keep a name readable', async () => {
+    const { home } = await teamScenario(fetchMock, { maps: SELF, fallback: 'plain' })
+    const r = await scrub('class PaymentGateway {}\n', home)
+    expect(r.out).not.toContain('PaymentGateway')
+  })
+})

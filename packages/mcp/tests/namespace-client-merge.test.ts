@@ -400,8 +400,10 @@ describe('what it asks Cloud for', () => {
   })
 })
 
-describe('an older Cloud that still merges server-side', () => {
-  it('is used as-is, without needing anything unlocked', async () => {
+// Spec 085 R2-4 (Q4 = A): a namespace Cloud merged is content no team key
+// opened, so it is not read at all.
+describe('a listing that carries a server-merged namespace', () => {
+  it('is ignored: nothing in it is used, unlocked or not', async () => {
     const home = freshHome()
     fetchMock.mockImplementation(async () =>
       jsonResponse({
@@ -413,13 +415,9 @@ describe('an older Cloud that still merges server-side', () => {
       })
     )
 
-    expect(await primeNamespace(home)).toMatchObject({
-      source: 'team',
-      namespace: { __CLS__1: 'PaymentGateway' },
-      aliases: {},
-      conflicts: {},
-      highest: {},
-    })
+    const resolved = await primeNamespace(home)
+    expect(resolved.namespace).toEqual({})
+    expect(resolved.source).toBe('local')
   })
 })
 

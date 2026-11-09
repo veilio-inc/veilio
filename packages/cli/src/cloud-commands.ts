@@ -1429,7 +1429,7 @@ export async function teamLayerFor(
   const found = await resolveTeamNamespace(home, { deadlineMs: RESTORE_CLOUD_WAIT_MS, env })
   if (found.status === 'refused')
     return { team: null, note: null, refused: renderRefusal(found.refusal) }
-  if (found.status === 'team' && found.conflictDetection)
+  if (found.status === 'team')
     return {
       team: found.analysis,
       note: null,
@@ -1453,20 +1453,7 @@ export async function teamNamespaceForScrub(
   if (found.status === 'team') {
     const credential = readCredential(home)
     const teamId = found.teamId
-    // No teamId means an older self-hosted instance that merged the namespace
-    // server-side. It predates the reservation endpoint too, so there is
-    // nothing to reserve against and a local floor is the only option - said
-    // out loud rather than passed off as safe.
-    if (!credential || !teamId) {
-      return {
-        team: found.analysis,
-        note:
-          teamId === null
-            ? "this Cloud instance is too old to reserve placeholder numbers, so this was numbered from this project's map only and may clash with the team's placeholders."
-            : null,
-        reserve: null,
-      }
-    }
+    if (!credential) return { team: found.analysis, note: null, reserve: null }
     return {
       team: found.analysis,
       note: null,

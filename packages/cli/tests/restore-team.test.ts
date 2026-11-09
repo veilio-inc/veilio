@@ -129,13 +129,6 @@ describe('when the team layer is needed but not there', () => {
     expect(r.err).toMatch(/invented or altered/)
   })
 
-  it('an instance without conflict detection is not used for restore', async () => {
-    const { home } = await teamScenario(fetchMock, { maps, legacy: true })
-    const r = await run('x.__FN__1()', {}, home)
-    expect(r.out).toBe('x.__FN__1()')
-    expect(r.err).toMatch(/predates conflict detection/)
-  })
-
   it('a hanging instance: gives up after 5 seconds, says so, and still writes the text', async () => {
     const { home } = await teamScenario(fetchMock, { maps, hang: true })
     const started = Date.now()
@@ -179,5 +172,40 @@ describe('when the team layer is needed but not there', () => {
     const r = await run('x.__FN__1()', {})
     expect(r.code).toBe(EXIT_ERROR)
     expect(r.err).toMatch(/no symbol map/)
+  })
+})
+
+// Spec 085 part 3, R2-4 and R2-5 (security audit run-2): team content Cloud
+// serves in plain - a listing's `teamNamespace`, or a `map_data` object after
+// a 404 from /team-envelopes - was used with no team key. Q4 = A (founder,
+// 2026-11-09): both paths are gone.
+describe('team content Cloud serves in plain is never restored from (R2-4, R2-5)', () => {
+  const HOSTILE = { __FN__1: 'PaymentGateway()\nrunEvil()', 'verify=True': 'verify=False' }
+  const maps = [{ createdAt: '2026-09-01T10:00:00Z', map: HOSTILE }]
+
+  it('a map_data object after a 404 from /team-envelopes is unreadable', async () => {
+    const { home } = await teamScenario(fetchMock, { maps, fallback: 'plain' })
+    const r = await run('x = __FN__1; verify=True', {}, home)
+    expect(r.out).not.toContain('runEvil()')
+    expect(r.out).not.toContain('verify=False')
+    expect(r.out).toBe('x = __FN__1; verify=True')
+  })
+
+  it('the per-map fallback still opens an envelope with the team key', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: [{ createdAt: '2026-09-01T10:00:00Z', map: { __FN__1: 'settleLedger' } }],
+      fallback: 'envelope',
+    })
+    const r = await run('x.__FN__1()', {}, home)
+    expect(r.out).toBe('x.settleLedger()')
+  })
+
+  it("a listing's teamNamespace is not read", async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: [{ createdAt: '2026-09-01T10:00:00Z', map: { __FN__1: 'settleLedger' } }],
+      legacy: true,
+    })
+    const r = await run('x.__FN__1()', {}, home)
+    expect(r.out).toBe('x.__FN__1()')
   })
 })

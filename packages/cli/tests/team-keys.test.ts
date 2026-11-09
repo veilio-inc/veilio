@@ -145,7 +145,7 @@ describe('the map listing the merge depends on', () => {
 
     const list = await listMaps(CRED)
 
-    expect(list.teamNamespace).toBeUndefined()
+    expect((list as unknown as Record<string, unknown>).teamNamespace).toBeUndefined()
     expect(list.team).toBeNull()
   })
 })

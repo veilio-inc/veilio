@@ -94,13 +94,10 @@ describe('a team map holding local-family keys', () => {
     expect(pulled.out).not.toMatch(/left out/i)
   })
 
-  it('an older instance’s server-merged namespace drops them and counts them', async () => {
+  it('an older instance’s server-merged namespace is not read at all (spec 085 R2-4)', async () => {
     cloud.legacyNamespace = { ...HOSTILE }
     const found = await resolveTeamNamespace(home)
-    expect(found.status).toBe('team')
-    if (found.status !== 'team') return
-    expect(found.analysis.namespace).toEqual({ __VAR__1: 'amount' })
-    expect(found.analysis.localDropped).toBe(2)
+    expect(found.status === 'team' ? found.analysis.namespace : {}).toEqual({})
   })
 })
 

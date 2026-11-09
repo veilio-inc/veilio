@@ -22,7 +22,6 @@ import {
   type CryptoKeyLike,
   type TeamMapEntry,
   type TeamMapEnvelope,
-  LOCAL_PREFIX,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
 import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
@@ -44,25 +43,17 @@ import type { Refusal } from './client/wording.js'
 export type TeamNamespaceResult =
   /**
    * The team's maps, read and analyzed (namespace, aliases, conflicts, highest).
-   * `conflictDetection: false`: an older instance merged them server-side, with
-   * no way to tell a disputed placeholder from a first-written one - fine for
-   * anonymizing, never used to restore (spec 028, review).
+   * Only maps the team key opened: a namespace Cloud merged server-side, or a
+   * map it serves unencrypted, is never used (spec 085 R2-4, R2-5).
    */
   | {
       status: 'team'
       analysis: TeamNamespaceAnalysis
       /** Spec 063: placeholders whose number another member reserved (also in analysis.conflicts). */
       misattributed?: string[]
-      conflictDetection: boolean
-      /**
-       * The team whose namespace this is, for reserving placeholder numbers
-       * against it (spec 011 FR-003).
-       *
-       * `null` only on an older self-hosted instance that merged the namespace
-       * server-side: it predates the reservation endpoint as well, so there is
-       * nothing to reserve against and the caller falls back to a local floor.
-       */
-      teamId: string | null
+      /** The team whose namespace this is, for reserving placeholder numbers
+       *  against it (spec 011 FR-003). */
+      teamId: string
       /**
        * Team maps that did not open with the held keys, by id and name, so a
        * refusal or a note can say WHICH (spec 052 FR-018). An unnamed "a map
@@ -236,27 +227,6 @@ async function attempt(
   opts.onProject?.(credential.project ?? null)
   const list = given ?? (await listMaps(credential, signal))
 
-  // An older self-hosted Cloud may still merge server-side; that answer needs no
-  // key. It carries no aliases or conflicts - it predates both.
-  if (list.teamNamespace) {
-    // Dropped as analyzeTeamNamespace drops them (spec 066, code review).
-    const all = Object.entries(list.teamNamespace)
-    const namespace = Object.fromEntries(all.filter(([p]) => !p.startsWith(LOCAL_PREFIX)))
-    return {
-      status: 'team',
-      analysis: {
-        namespace,
-        aliases: {},
-        conflicts: {},
-        highest: {},
-        localDropped: all.length - Object.keys(namespace).length,
-      },
-      conflictDetection: false,
-      teamId: null,
-      unreadable: [],
-    }
-  }
-
   const teamId = list.team?.id
   // The team last seen, for a run that cannot reach Cloud (spec 066 FR-001).
   if (teamId)
@@ -333,7 +303,6 @@ async function attempt(
     ...(read.reservations ? { reservations: read.reservations } : {}),
     ...(vouched?.unvouched ? { unvouched: vouched.unvouched } : {}),
     ...(vouched?.beyond.length ? { unissued: vouched.beyond } : {}),
-    conflictDetection: true,
     teamId,
     unreadable,
     ...(excludedEntry ? { excluded: { map: excludedEntry.map } } : {}),
@@ -520,8 +489,9 @@ async function openTeamMap(
   const id = summary.id
   try {
     const full = await getMap(credential, summary.id, signal)
-    if (typeof full.map_data !== 'string')
-      return { id, createdAt: summary.created_at, map: full.map_data }
+    // Only an envelope the team key opens is a team map: an object here is
+    // content Cloud wrote, and is unreadable (spec 085 R2-5, as `maps pull`).
+    if (typeof full.map_data !== 'string') return { id, createdAt: summary.created_at, map: null }
     const envelope = JSON.parse(full.map_data) as TeamMapEnvelope
     return { id, createdAt: summary.created_at, map: await decryptTeamMapWithAny(keys, envelope) }
   } catch {
@@ -539,12 +509,6 @@ export function teamLayerNote(
   missing: readonly string[]
 ): string | null {
   if (missing.length === 0) return null
-  if (result.status === 'team' && !result.conflictDetection)
-    return (
-      `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not in this project's map, and this ` +
-      'Cloud instance predates conflict detection, so its team namespace is not used to restore. ' +
-      "Restored from this project's map only."
-    )
   const which = `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not in this project's map`
   if (result.status === 'locked')
     return `${which}, and the team key is locked on this machine. Run \`veilio team unlock\`, then restore again.`

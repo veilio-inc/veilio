@@ -581,7 +581,7 @@ export const TOOLS: ToolDefinition[] = [
       const resolved = getNamespace()
       if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
       const team =
-        resolved.source === 'team' && resolved.conflictDetection
+        resolved.source === 'team'
           ? {
               namespace: resolved.namespace,
               aliases: resolved.aliases,

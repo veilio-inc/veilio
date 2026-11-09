@@ -57,9 +57,6 @@ export interface ResolvedNamespace {
   /** What the CLI's resolver found - including why it is 'local' when the team
    *  exists but its maps were not read (locked, unavailable). Never silent. */
   found: TeamNamespaceResult
-  /** False for an older instance's server-merged namespace: usable to anonymize,
-   *  never to restore - it cannot tell a disputed placeholder (spec 028). */
-  conflictDetection: boolean
   /** Spec 066: whose `reserved.json` this checkout numbers from - the signed-in
    *  account in a team, its maps read or not (FR-001). `teamId` null: in a team
    *  whose id is unknown here. Null where no team numbering applies. */
@@ -77,7 +74,6 @@ function localFrom(
     conflicts: {},
     highest: {},
     found,
-    conflictDetection: true,
     owner,
   }
 }
@@ -114,10 +110,9 @@ async function fetchNamespace(
     )
   }
   if (found.status !== 'team') return localFrom(found)
-  const owner =
-    credential && found.teamId
-      ? { instance: credential.instance, account: credential.account, teamId: found.teamId }
-      : null
+  const owner = credential
+    ? { instance: credential.instance, account: credential.account, teamId: found.teamId }
+    : null
   const { namespace, aliases, conflicts, highest } = found.analysis
   // A team with no maps yet has no namespace to share: 'local', as before. (A
   // team whose maps exist but none opened is 'unavailable', from the resolver.)
@@ -132,7 +127,6 @@ async function fetchNamespace(
     conflicts,
     highest,
     found,
-    conflictDetection: found.conflictDetection,
     owner,
   }
 }
