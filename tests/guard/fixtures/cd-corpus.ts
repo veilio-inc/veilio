@@ -327,6 +327,18 @@ const ATTACK = [
   '.kube',
   '~/.kube',
   'for HOME in ~/.kube; do cd; cat config; done',
+  // The same forms as 085's round tests spelled them
+  'HOME=~/.kube; cd ~; cat config',
+  'HOME=~/.kube; cd ~',
+  'OLDPWD=~/.aws cd -',
+  'X= cd project .kube',
+  'if cd project .kube; then cat config; fi',
+  'dirstack=(~/.kube); cd ~1',
+  "cd ~/.kub$'\\x65'",
+  'cd .vei{l..l}io',
+  'cd `echo .kube`',
+  'DIRSTACK[1]=~/.kube; popd; cat config',
+  'export CDPATH=~/.config; cd gcloud',
   // Not moving the shell (FR-015): 078's floor decides
   'env cd ~/.aws',
   'exec cd ~/.aws',
