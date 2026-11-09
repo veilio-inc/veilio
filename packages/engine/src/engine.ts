@@ -303,6 +303,50 @@ type LiteralMemo = { terminators: Map<string, number>; unclosed: Set<string> }
  *  an index of terminator lines would lift the cap. */
 const MAX_HEREDOC_IDS = 100
 
+/** Words after which Ruby reads `%|`, `%!`, `%^`, `%/`, `%~` as a literal:
+ *  keywords, and the output methods real code calls with one (`puts %|x|`). */
+const RUBY_LITERAL_AFTER = new Set([
+  'return',
+  'puts',
+  'print',
+  'p',
+  'pp',
+  'raise',
+  'yield',
+  'if',
+  'unless',
+  'elsif',
+  'while',
+  'until',
+  'when',
+  'case',
+  'in',
+  'then',
+  'else',
+  'do',
+  'and',
+  'or',
+  'not',
+  'begin',
+])
+
+/**
+ * Whether Ruby's lexer starts an expression at `at` (spec 085 R2-11, security
+ * review round 2): at a line start, after `=`, `(`, `,`, `[`, `{`, `;` or an
+ * operator, or after one of RUBY_LITERAL_AFTER and a space. After any other
+ * operand and a space (`a %|b`, `x %-y`), `%` is modulo.
+ */
+function rubyExpressionStart(code: string, at: number): boolean {
+  let j = at - 1
+  while (j >= 0 && (code[j] === ' ' || code[j] === '\t')) j--
+  if (j < 0 || code[j] === '\n' || code[j] === '\r') return true
+  if (/[=([{,;+\-*/<>&|!?:~^%]/.test(code[j]!)) return true
+  if (j === at - 1 || !/\w/.test(code[j]!)) return false
+  let k = j
+  while (k >= 0 && /\w/.test(code[k]!)) k--
+  return RUBY_LITERAL_AFTER.has(code.slice(k + 1, j + 1))
+}
+
 function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: LiteralMemo): number {
   if (code[at] === '<' && code.startsWith('<<', at)) {
     const head =
@@ -333,14 +377,16 @@ function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: Litera
     return end
   }
   if (kind === 'ruby' && code[at] === '%') {
-    // A letter form (`%w(`, `%q[`) or a bare `%` with any non-word, non-space
-    // delimiter (`%|..|`, `%!..!`, `%(..)`); never `%=` or `% `, which are
-    // operators, nor a `%` after an operand (checked below) (security review).
-    const m = /%(?:[qQwWiIrsx][^\w\s]|[^\w\s=])/y
+    // A letter form (`%w(`, `%q[`) with any non-word, non-space delimiter, or
+    // a bare `%` with a bracket, or with one of `| ! ^ / ~` where Ruby's lexer
+    // starts an expression (rubyExpressionStart); never `%=` or `% `, which
+    // are operators, nor a `%` right after an operand (security review).
+    const m = /%(?:[qQwWiIrsx][^\w\s]|[([{<]|([|!^/~]))/y
     m.lastIndex = at
-    const opened = m.exec(code)?.[0]
-    if (opened === undefined || /[\w)\]]/.test(code[at - 1] ?? '')) return -1
-    const open = opened.slice(-1)
+    const found = m.exec(code)
+    if (found === null || /[\w)\]]/.test(code[at - 1] ?? '')) return -1
+    if (found[1] !== undefined && !rubyExpressionStart(code, at)) return -1
+    const open = found[0].slice(-1)
     if (memo.unclosed.has(open)) return -1
     const close =
       ({ '(': ')', '[': ']', '{': '}', '<': '>' } as Record<string, string>)[open] ?? open
