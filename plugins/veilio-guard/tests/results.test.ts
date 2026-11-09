@@ -783,11 +783,21 @@ test('a context line printed without a line number is dropped too', async ($, on
 test('a very long line of separators is filtered in bounded time', async ($, on) => {
   const grep = recorded('Grep')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(SEEDED) })
-  const content = `${ROOT}/dist/app.min.js:1:${'-'.repeat(200_000)}`
+  let content = ''
   on('tool.call', () => ({ ...grep.r, result: { ...grep.r.result, content, numLines: 1 } }))
-  const started = Date.now()
-  await $.tool.call(eventOf(grep))
-  expect(Date.now() - started).toBeLessThan(5000)
+  // Time against the line's length, not a wall clock: a shared CI runner is
+  // slow some days, but a filter that is quadratic grows ~100x for 10x the line.
+  const timed = async (n: number) => {
+    content = `${ROOT}/dist/app.min.js:1:${'-'.repeat(n)}`
+    const started = performance.now()
+    await $.tool.call(eventOf(grep))
+    return performance.now() - started
+  }
+  await timed(1_000) // warm-up
+  const base = await timed(1_000) // the fixed cost of one call, ~1 s on CI
+  const small = (await timed(20_000)) - base
+  const large = (await timed(200_000)) - base
+  expect(large).toBeLessThan(30 * Math.max(small, 0) + 500)
 })
 
 // Work queue e72: a value the credential-named-key rule redacted was not

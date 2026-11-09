@@ -375,9 +375,19 @@ test('a context with thousands of copies of a masked block is held in one pass',
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   const ctx = await $.prompt.context(recordedPrompt('prompt.context').e)
   const masked = ctx.blocks[0].text
-  const text = `# claudeMd\n${masked}\n\n# notes\n${`see ${masked} then `.repeat(20_000)}`
-  const started = Date.now()
-  const out = await $.prompt.attachment({ type: 'context_sections', text })
-  expect(Date.now() - started).toBeLessThan(2_000)
+  const textOf = (n: number) =>
+    `# claudeMd\n${masked}\n\n# notes\n${`see ${masked} then `.repeat(n)}`
+  // Time against the number of copies, not a wall clock (see results.test.ts).
+  const timed = async (n: number) => {
+    const started = performance.now()
+    await $.prompt.attachment({ type: 'context_sections', text: textOf(n) })
+    return performance.now() - started
+  }
+  await timed(10) // warm-up
+  const base = await timed(10)
+  const small = (await timed(2_000)) - base
+  const large = (await timed(20_000)) - base
+  expect(large).toBeLessThan(30 * Math.max(small, 0) + 500)
+  const out = await $.prompt.attachment({ type: 'context_sections', text: textOf(20_000) })
   expect(out.text.startsWith(`# claudeMd\n${masked}`)).toBe(true)
 })
