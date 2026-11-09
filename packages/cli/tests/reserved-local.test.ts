@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -11,6 +19,7 @@ import {
   basesNeedingBlocks,
   loadReserved,
   localNumbering,
+  teamNumbering,
 } from '../src/reservations.js'
 import { FakeCloud, INSTANCE, ME, TEAM_ID } from './helpers/fake-cloud.js'
 
@@ -302,5 +311,42 @@ describe('the tracked-file refusal never offers a command built from an odd path
     expect(msg).toContain(
       `(\`git -C '${dir}' rm --cached -- 'plain-dir/${STORE_DIR}/${RESERVED_FILE}'\`)`
     )
+  })
+})
+
+// Review of R2-16: teamNumbering still read a refused aliases.json or
+// reserved.json as "unreadable" and went on.
+describe('teamNumbering refuses a store it may not read (R2-16 review)', () => {
+  it('a linked aliases.json is refused, not skipped', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'veilio-alias-outside-'))
+    writeFileSync(
+      join(outside, 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias' } })
+    )
+    symlinkSync(join(outside, 'aliases.json'), join(dir, STORE_DIR, 'aliases.json'))
+    expect(() =>
+      teamNumbering(mapPath(), { instance: INSTANCE, account: ME, teamId: TEAM_ID })
+    ).toThrow(StoreRefusal)
+    rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('a tracked aliases.json is refused, not skipped', () => {
+    execFileSync('git', ['init', '-q'], {
+      cwd: dir,
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      stdio: 'ignore',
+    })
+    writeFileSync(
+      join(dir, STORE_DIR, 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias' } })
+    )
+    execFileSync('git', ['add', '-f', `${STORE_DIR}/aliases.json`], {
+      cwd: dir,
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      stdio: 'ignore',
+    })
+    expect(() =>
+      teamNumbering(mapPath(), { instance: INSTANCE, account: ME, teamId: TEAM_ID })
+    ).toThrow(StoreRefusal)
   })
 })

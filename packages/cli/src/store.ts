@@ -201,7 +201,8 @@ function rmCommand(root: string, tracked: string): string {
 
 const MAP_FILES = new Set([STORE_FILE, 'aliases.json'])
 const relativeName = (root: string, p: string): string => relative(root, p).split(sep).join('/')
-const shownPath = (p: string): string => p.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
+// Format characters too (bidi overrides), as the guard's printable() (review).
+const shownPath = (p: string): string => p.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '')
 
 /**
  * Whose `path` is: 'me' for the running user, 'other' for anyone else, 'none'
@@ -367,6 +368,8 @@ export function saveMap(
   options: { force?: boolean; remote?: StoredMap['remote'] } = {}
 ): void {
   refuseNonNames('the map', map)
+  // Judged before anything is written (spec 085 R2-3 review).
+  const ours = storeIsOurs(path)
   if (!options.force && existsSync(path)) {
     const dropped = Object.entries(loadMap(path)).filter(
       ([placeholder, real]) => map[placeholder] !== real
@@ -390,46 +393,84 @@ export function saveMap(
   const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
   // A new 0600 file each time, so a world-readable map already there is replaced too.
   writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
-  recordWritten(path)
+  recordWritten(path, ours)
+}
+
+/** `~/.veilio/written.json`, or null when it may not be used (a linked
+ *  folder, or a folder or file another user owns). */
+function writtenRecordPath(): string | null {
+  const dir = join(homedir(), STORE_DIR)
+  const file = join(dir, WRITTEN_RECORD_FILE)
+  // A new file renamed over the record never writes through a link at it;
+  // a linked folder would put the record elsewhere.
+  if (isLink(dir) || ownerOf(dir) === 'other' || ownerOf(file) === 'other') return null
+  return file
+}
+
+function readRecord(file: string): Record<string, string> {
+  try {
+    return parseWrittenRecord(readFileSync(file, 'utf8')) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/** The record's value for what the store holds now: the map's and the
+ *  aliases file's hashes (an absent file hashes as the empty text). */
+function storeValue(mapPath: string): string {
+  const hash = (p: string) => {
+    let text = ''
+    try {
+      text = readFileSync(p, 'utf8')
+    } catch {
+      // absent: hashed as the empty text
+    }
+    return createHash('sha256').update(text).digest('hex')
+  }
+  return writtenRecordValue(hash(mapPath), hash(join(dirname(mapPath), 'aliases.json')))
+}
+
+const EMPTY_STORE = writtenRecordValue(
+  createHash('sha256').update('').digest('hex'),
+  createHash('sha256').update('').digest('hex')
+)
+
+/**
+ * Whether the store holds what Veilio last recorded writing, or nothing yet
+ * (spec 085 R2-3, review): only then may a write be recorded. Otherwise the
+ * map came with the files, or was changed since, and a write that merges it
+ * must not launder it into "written by Veilio".
+ */
+export function storeIsOurs(mapPath: string): boolean {
+  const store = dirname(mapPath)
+  if (basename(store) !== STORE_DIR || basename(mapPath) !== STORE_FILE) return false
+  try {
+    const now = storeValue(mapPath)
+    if (now === EMPTY_STORE) return true
+    const file = writtenRecordPath()
+    return file !== null && readRecord(file)[realpathSync(dirname(store))] === now
+  } catch {
+    return false
+  }
 }
 
 /**
  * Records, in `~/.veilio/written.json`, the hashes of the map and aliases this
- * project's store now holds (spec 085 R2-3): the guard restores unseen only
- * from a map Veilio wrote on this machine. Only for a store in `.veilio/`.
- * Never through a link, nor into a file or folder another user owns; any
- * failure is skipped - the map is written, and without a record the guard
- * only asks for each name to be shown first.
+ * project's store now holds (spec 085 R2-3), when `ours` - the store held what
+ * Veilio last recorded, or nothing, before this write (storeIsOurs). The guard
+ * restores unseen only from a recorded map. Any failure is skipped: the map is
+ * written, and without a record the guard asks for each name to be shown first.
  */
-export function recordWritten(mapPath: string): void {
-  const store = dirname(mapPath)
-  if (basename(store) !== STORE_DIR || basename(mapPath) !== STORE_FILE) return
+export function recordWritten(mapPath: string, ours: boolean): void {
+  if (!ours) return
   try {
-    const dir = join(homedir(), STORE_DIR)
-    const file = join(dir, WRITTEN_RECORD_FILE)
+    const file = writtenRecordPath()
+    if (file === null) return
+    const dir = dirname(file)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
-    // A new file renamed over the record never writes through a link at it;
-    // a linked folder would put the record elsewhere.
-    if (isLink(dir) || ownerOf(dir) === 'other' || ownerOf(file) === 'other') return
-    const hash = (p: string) => {
-      let text = ''
-      try {
-        text = readFileSync(p, 'utf8')
-      } catch {
-        // absent: hashed as the empty text
-      }
-      return createHash('sha256').update(text).digest('hex')
-    }
-    let record: Record<string, string> = {}
-    try {
-      record = parseWrittenRecord(readFileSync(file, 'utf8')) ?? {}
-    } catch {
-      // none yet
-    }
-    record[realpathSync(dirname(store))] = writtenRecordValue(
-      hash(mapPath),
-      hash(join(store, 'aliases.json'))
-    )
+    if (writtenRecordPath() === null) return
+    const record = readRecord(file)
+    record[realpathSync(dirname(dirname(mapPath)))] = storeValue(mapPath)
     const tmp = join(dir, `.${WRITTEN_RECORD_FILE}.${randomBytes(6).toString('hex')}.tmp`)
     const fd = openSync(tmp, 'wx', 0o600)
     try {

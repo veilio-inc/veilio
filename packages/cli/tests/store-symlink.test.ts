@@ -698,3 +698,66 @@ describe('the CLI records the maps it writes (R2-3)', () => {
     expect(record()).toEqual(before)
   })
 })
+
+// Review of R2-3: scrub loads a map that came with the files, merges and saves
+// it - recording it would launder it into "written by Veilio".
+describe('a map Veilio did not write is not recorded by rewriting it (R2-3 review)', () => {
+  let home: string
+  let proj: string
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-launder-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-launder-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+  const recorded = () => {
+    try {
+      return (
+        JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+          string,
+          string
+        >
+      )[realpathSync(proj)]
+    } catch {
+      return undefined
+    }
+  }
+
+  it('a planted map, merged and saved, stays unrecorded', () => {
+    mkdirSync(join(proj, '.veilio'))
+    writeFileSync(
+      join(proj, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __FN__1: 'plantedValue' } })
+    )
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { ...loadMap(path), __CLS__1: 'PaymentGateway' })
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('a map Veilio wrote stays recorded through the next write', () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
+    expect(recorded()).toMatch(/^[0-9a-f]{64}:[0-9a-f]{64}$/)
+  })
+
+  it('planted aliases make the next write unrecorded', async () => {
+    const path = resolveMapPath(null, proj)
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    writeFileSync(
+      join(proj, '.veilio', 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__8: 'plantedAlias' } })
+    )
+    const { addAliases } = await import('../src/reservations.js')
+    addAliases(path, { __CLS__2: 'PaymentGateway' })
+    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
+    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+    expect(recorded()).not.toBe(
+      `${sha(readFileSync(path, 'utf8'))}:${sha(readFileSync(join(proj, '.veilio', 'aliases.json'), 'utf8'))}`
+    )
+  })
+})
