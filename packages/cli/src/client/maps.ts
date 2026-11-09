@@ -37,7 +37,13 @@ import {
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
-import { servedAs, teamKeyBytes, teamKeyVersion, wireBase } from '../hashed-bases.js'
+import {
+  servedAs,
+  teamKeyBytes,
+  teamKeyUnconfirmed,
+  teamKeyVersion,
+  wireBase,
+} from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -58,6 +64,7 @@ import {
   drawTag,
   loadAliases,
   loadReserved,
+  printable,
   resetSessionTag,
   saveReserved,
 } from '../reservations.js'
@@ -67,7 +74,7 @@ const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 import { readCredential, type Credential } from '../credential.js'
 import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
-import { readTeamUnlock } from '../team-unlock.js'
+import { readTeamUnlock, writeKeyOf } from '../team-unlock.js'
 import { describeMaps, resolveTeamNamespace, vouchNumbers } from '../team-namespace.js'
 import {
   importPersonalMapsKey,
@@ -265,8 +272,12 @@ async function openPersonal(
 interface TeamKeys {
   /** The team these keys were unlocked for. */
   teamId: string
+  /** Its name when the unlock kept one, else its id: for the refusal only. */
+  teamName: string
   all: { version: number; key: CryptoKeyLike }[]
-  newest: { version: number; key: CryptoKeyLike }
+  /** The write key: the newest stored version, and only while it is
+   *  writable (spec 080 item 7a). Null refuses every write. */
+  newest: { version: number; key: CryptoKeyLike } | null
 }
 
 /** The team keys `veilio team unlock` left. Read, never derived: nobody's
@@ -298,7 +309,19 @@ async function teamKeys(credential: Credential, ctx: ClientContext): Promise<Out
       continue
     }
   }
-  return ok({ teamId: unlock.teamId, all, newest: { version: newestStored.version, key: newest } })
+  return ok({
+    teamId: unlock.teamId,
+    teamName: printable(unlock.teamName ?? unlock.teamId),
+    all,
+    // Never an older writable version instead: a write belongs under the
+    // newest key, and an older one may be one a removed member still holds.
+    newest: writeKeyOf(unlock) ? { version: newestStored.version, key: newest } : null,
+  })
+}
+
+/** The key a team map is sealed under, or the refusal to write at all. */
+function writeKey(keys: TeamKeys): Outcome<{ version: number; key: CryptoKeyLike }> {
+  return keys.newest ? ok(keys.newest) : refuse('team_key_unconfirmed', { team: keys.teamName })
 }
 
 async function openTeam(
@@ -639,6 +662,7 @@ async function renumberUnreserved(
       const r = await reservePlaceholders(credential, found.teamId, asked, undefined, {
         keys,
         keyVersion: teamKeyVersion(credential, home, found.teamId),
+        unconfirmed: teamKeyUnconfirmed(credential, home, found.teamId),
         ...(found.reservations ? { reservations: found.reservations } : {}),
       })
       if (r.refused) return refuseNumbers(r.refused.detail)
@@ -841,6 +865,8 @@ export async function createCloudMap(
   if (opts.scope === 'team') {
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
+    const write = writeKey(keys.value)
+    if (!write.ok) return write
     // Keys unlocked for a team this account has since left - or another
     // team entirely - must never seal a map for this one: the team could not
     // read it, and whoever holds that other key could. Checked HERE, at the
@@ -870,7 +896,7 @@ export async function createCloudMap(
     if (stuck) return stuck
     keepRenumbering(opts.mapPath, numbered.value)
     // Nothing above this line has sent a map (only the reservation, if any).
-    const envelope = await encryptTeamMap(keys.value.newest.key, map)
+    const envelope = await encryptTeamMap(write.value.key, map)
     let created: { id: string }
     try {
       created = await createMap(credential, {
@@ -878,7 +904,7 @@ export async function createCloudMap(
         map_data: JSON.stringify(envelope),
         identifier_count: count,
         scope: 'team',
-        key_version: keys.value.newest.version,
+        key_version: write.value.version,
       })
     } catch (err) {
       return teamWriteRefusal(err, credential, 'create', { id: '', name })
@@ -1026,6 +1052,8 @@ export async function updateCloudMap(
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
     if (list.team?.id !== keys.value.teamId) return refuse('team_key_mismatch')
+    const write = writeKey(keys.value)
+    if (!write.ok) return write
   }
 
   const team = summary.scope === 'team'
@@ -1042,6 +1070,8 @@ export async function updateCloudMap(
   if (team) {
     const keys = await teamKeys(credential, ctx)
     if (!keys.ok) return keys
+    const write = writeKey(keys.value)
+    if (!write.ok) return write
     // The team's maps, read once, with this one among them: its current
     // content comes from the same request as the clash check, not from a
     // second download (spec 052, the staging rate limit).
@@ -1087,8 +1117,8 @@ export async function updateCloudMap(
     keepRenumbering(opts.mapPath, numbered.value)
     notes = [...renumberNote(numbered.value.renumbered), ...check.value.notes]
     sealed = {
-      map_data: JSON.stringify(await encryptTeamMap(keys.value.newest.key, local)),
-      key_version: keys.value.newest.version,
+      map_data: JSON.stringify(await encryptTeamMap(write.value.key, local)),
+      key_version: write.value.version,
     }
   } else {
     const fetched = await fetchEnvelope(credential, id)

@@ -250,11 +250,12 @@ export function localDroppedNote(n: number): string {
 
 /**
  * A server's words, safe for a terminal: control characters and Unicode format
- * characters (bidi overrides, zero-width) become `?` (code review of spec 066).
+ * characters (bidi overrides, zero-width) and the line and paragraph separators
+ * become `?` (code review of spec 066; spec 080 review).
  */
 export function printable(text: string): string {
   // eslint-disable-next-line no-control-regex -- matching them is the point
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '?')
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu, '?')
 }
 
 /** HH:MM on this machine's clock. */

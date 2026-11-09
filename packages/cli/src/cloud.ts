@@ -27,6 +27,7 @@ import { isEngineBase, isSaneBlock } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
 import { wireBase } from './hashed-bases.js'
 import { VERSION } from './version.js'
+import { refusal } from './client/wording.js'
 
 /** The public Cloud. `--instance` overrides it for a self-hosted deployment. */
 export const DEFAULT_INSTANCE = 'https://app.veilio.dev'
@@ -534,10 +535,10 @@ export function grantTeamKey(
   })
 }
 
-/** The account's team and its members - only how many is read here. */
+/** The account's team, its name and its members. */
 export function getMyTeam(
   credential: Credential
-): Promise<{ team: { id: string; members?: unknown[] } | null }> {
+): Promise<{ team: { id: string; name?: unknown; members?: unknown[] } | null }> {
   return request('/api/teams/mine', { credential })
 }
 
@@ -578,6 +579,9 @@ export async function reservePlaceholders(
     /** The newest key's version (`teamKeyVersion`): a rule base is reserved
      *  only while the server's current version is this one. */
     keyVersion?: number
+    /** `teamKeyUnconfirmed`: the newest team key is not confirmed, so a rule
+     *  base is refused, never hashed (spec 080 item 7a). */
+    unconfirmed?: string | null
     /** The team's reservations, when the caller has already read them;
      *  null when it asked and the instance keeps no record (404). */
     reservations?: readonly PlaceholderReservation[] | null
@@ -598,6 +602,11 @@ export async function reservePlaceholders(
     }
     if (!Number.isInteger(count) || count < 1) {
       throw new CloudError('forbidden', `cannot reserve ${count} numbers for ${base}`)
+    }
+    // Never under a key nobody confirmed: the same refusal as a write.
+    if (!isEngineBase(base) && options.unconfirmed) {
+      const r = refusal('team_key_unconfirmed', { team: options.unconfirmed })
+      throw new CloudError('forbidden', `${r.message} ${r.resolve}`)
     }
     // Never in plain text: with no key to hash it, nothing is sent.
     if (!isEngineBase(base) && !key) {

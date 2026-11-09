@@ -611,7 +611,14 @@ export async function sealedTeamRule(
 /** Sign in under `home`, optionally with the team key and/or the PMK unlocked. */
 export function signIn(
   home: string,
-  opts: { team?: boolean; pmk?: boolean; project?: string; instance?: string } = {}
+  opts: {
+    team?: boolean
+    /** Spec 080 item 7a: false stores the team key read-only (not confirmed). */
+    teamWritable?: boolean
+    pmk?: boolean
+    project?: string
+    instance?: string
+  } = {}
 ): void {
   const instance = opts.instance ?? INSTANCE
   mkdirSync(join(home, '.veilio'), { recursive: true })
@@ -633,7 +640,14 @@ export function signIn(
         account: ME,
         teamId: TEAM_ID,
         expiresAt,
-        keys: [{ version: 1, key: toBase64(TEAM_RAW) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(TEAM_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: opts.teamWritable ?? true,
+          },
+        ],
       },
       home
     )
@@ -646,7 +660,21 @@ export function signIn(
 export function holdKeys(home: string, account: string, instance = INSTANCE, teamId = 't1'): void {
   const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
   writeTeamUnlock(
-    { v: 1, instance, account, teamId, expiresAt, keys: [{ version: 1, key: toBase64(TEAM_RAW) }] },
+    {
+      v: 1,
+      instance,
+      account,
+      teamId,
+      expiresAt,
+      keys: [
+        {
+          version: 1,
+          key: toBase64(TEAM_RAW),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+      ],
+    },
     home
   )
   writePersonalMapsKey({ v: 1, instance, account, expiresAt, key: toBase64(PMK_RAW) }, home)

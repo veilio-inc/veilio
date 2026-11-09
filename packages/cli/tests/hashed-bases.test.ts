@@ -8,7 +8,7 @@ import { EXIT_OK, type Io } from '../src/commands.js'
 import { STORE_DIR, STORE_FILE, loadMap, saveMap } from '../src/store.js'
 import { writeRules } from '../src/rules.js'
 import { writeTeamUnlock } from '../src/team-unlock.js'
-import { wireBase } from '../src/hashed-bases.js'
+import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion, wireBase } from '../src/hashed-bases.js'
 import { reservePlaceholders } from '../src/cloud.js'
 import {
   FakeCloud,
@@ -118,6 +118,124 @@ describe('reservePlaceholders without the team key', () => {
   })
 })
 
+describe('rule names are hashed only under a confirmed team key (spec 080 item 7a)', () => {
+  const ROW_3 =
+    'Not saved: the newest key for team "Zespół" is not confirmed on this device. ' +
+    'Run `veilio team unlock` to see who granted it, then `veilio team trust`.'
+  const binding = { instance: INSTANCE, account: ME }
+
+  function held(
+    keys: { version: number; raw: Uint8Array; writable: boolean }[],
+    teamName?: string
+  ) {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: ME,
+        teamId: TEAM_ID,
+        ...(teamName ? { teamName } : {}),
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: keys.map((k) => ({
+          version: k.version,
+          key: toBase64(k.raw),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: k.writable,
+        })),
+      },
+      home
+    )
+  }
+
+  it('the newest key not confirmed: no key to hash with, and the team named for the refusal', () => {
+    held([{ version: 1, raw: TEAM_RAW, writable: false }], 'Zespół')
+    expect(teamKeyBytes(binding, home, TEAM_ID)).toEqual([])
+    expect(teamKeyVersion(binding, home, TEAM_ID)).toBeUndefined()
+    expect(teamKeyUnconfirmed(binding, home, TEAM_ID)).toBe('Zespół')
+  })
+
+  it('an older key not confirmed is never hashed with, even when the newest is', () => {
+    held([
+      { version: 1, raw: OTHER_RAW, writable: false },
+      { version: 2, raw: TEAM_RAW, writable: true },
+    ])
+    expect(teamKeyBytes(binding, home, TEAM_ID)).toEqual([TEAM_RAW])
+    expect(teamKeyVersion(binding, home, TEAM_ID)).toBe(2)
+    expect(teamKeyUnconfirmed(binding, home, TEAM_ID)).toBeNull()
+  })
+
+  it('a newer key not confirmed stops every hash, the older confirmed one too', () => {
+    held([
+      { version: 1, raw: TEAM_RAW, writable: true },
+      { version: 2, raw: OTHER_RAW, writable: false },
+    ])
+    expect(teamKeyBytes(binding, home, TEAM_ID)).toEqual([])
+    expect(teamKeyUnconfirmed(binding, home, TEAM_ID)).toBe(TEAM_ID)
+  })
+
+  it('nothing unlocked is not "unconfirmed": the existing refusal says to unlock', () => {
+    expect(
+      teamKeyUnconfirmed(binding, mkdtempSync(join(tmpdir(), 'veilio-hb-empty-')), TEAM_ID)
+    ).toBeNull()
+  })
+
+  it('reservePlaceholders refuses a rule base with the same words as a refused write, and sends nothing', async () => {
+    const credential = { token: 'tok', account: ME, instance: INSTANCE }
+    await expect(
+      reservePlaceholders(
+        credential,
+        TEAM_ID,
+        [{ base: '__CODENAME__', count: 1, floor: 0 }],
+        undefined,
+        {
+          keys: [TEAM_RAW],
+          keyVersion: 1,
+          unconfirmed: 'Zespół',
+        }
+      )
+    ).rejects.toThrow(ROW_3)
+    expect(cloud.requests).toHaveLength(0)
+    // An engine base is not hashed, so it is still reserved.
+    const r = await reservePlaceholders(
+      credential,
+      TEAM_ID,
+      [{ base: '__FN__', count: 1, floor: 0 }],
+      undefined,
+      {
+        unconfirmed: 'Zespół',
+      }
+    )
+    expect(r.ranges[0]?.base).toBe('__FN__')
+  })
+
+  it('scrub --team under an unconfirmed key refuses the rule base and never sends its hash', async () => {
+    held([{ version: 1, raw: TEAM_RAW, writable: false }], 'Zespół')
+
+    const scrubbed = await run(['scrub', '--team'])
+
+    expect(scrubbed.err).toContain(ROW_3)
+    expect(sent()).not.toContain(wireBase('__CODENAME__', TEAM_RAW))
+    expect(sent()).not.toMatch(/CODENAME/)
+  })
+
+  it('a pull under an unconfirmed key sends no hash of a rule name either', async () => {
+    expect((await run(['scrub', '--team'])).code).toBe(EXIT_OK)
+    const pushed = await run(['maps', 'push', '--team', 'mine'])
+    const id = /as (\S+)/.exec(pushed.out)?.[1] ?? ''
+    held([{ version: 1, raw: TEAM_RAW, writable: false }], 'Zespół')
+    const before = cloud.requests.length
+
+    const pulled = await run(['maps', 'pull', id, '--force'])
+
+    expect(pulled.code, pulled.err).toBe(EXIT_OK)
+    const after = cloud.requests
+      .slice(before)
+      .map((r) => `${r.path}?${r.query} ${r.raw}`)
+      .join('\n')
+    expect(after).not.toContain(wireBase('__CODENAME__', TEAM_RAW))
+  })
+})
+
 describe('a replace rule base and the server', () => {
   it('scrub --team, publish and pull never send __CODENAME__ in plain text', async () => {
     const scrubbed = await run(['scrub', '--team'])
@@ -152,8 +270,18 @@ describe('a replace rule base and the server', () => {
         teamId: TEAM_ID,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         keys: [
-          { version: 1, key: toBase64(TEAM_RAW) },
-          { version: 2, key: toBase64(OTHER_RAW) },
+          {
+            version: 1,
+            key: toBase64(TEAM_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+          {
+            version: 2,
+            key: toBase64(OTHER_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
         ],
       },
       home

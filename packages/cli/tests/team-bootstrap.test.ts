@@ -81,7 +81,10 @@ describe('a team with no key yet', () => {
     )
     // And it is the key that was unlocked here.
     const unlock = readTeamUnlock({ instance: INSTANCE, account: ME }, home)!
-    expect(unlock.keys).toEqual([{ version: 1, key: await exportTeamKey(teamKey) }])
+    // Minted with this account's own key: writable, with nothing to confirm.
+    expect(unlock.keys).toMatchObject([
+      { version: 1, key: await exportTeamKey(teamKey), writable: true },
+    ])
     expect(r.out).toMatch(/set up the team key/i)
     // Nothing about teammates: there are none to speak of.
     expect(r.out + r.err).not.toMatch(/teammate/i)

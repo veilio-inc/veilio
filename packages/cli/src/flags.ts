@@ -143,6 +143,16 @@ export const COMMAND_SPECS = [
     help: [{ usage: 'team lock', text: 'Remove the unlocked team keys from this machine.' }],
   },
   {
+    key: 'team trust',
+    cloud: true,
+    help: [
+      {
+        usage: 'team trust <team> <fingerprint>',
+        text: "Confirm a teammate's key by the fingerprint they read out to you, so team maps can be saved under the team key they granted. Needs no network.",
+      },
+    ],
+  },
+  {
     key: 'vault unlock',
     cloud: true,
     help: [
@@ -156,6 +166,16 @@ export const COMMAND_SPECS = [
     key: 'vault lock',
     cloud: true,
     help: [{ usage: 'vault lock', text: 'Remove the personal-maps key from this machine.' }],
+  },
+  {
+    key: 'keys fingerprint',
+    cloud: true,
+    help: [
+      {
+        usage: 'keys fingerprint',
+        text: "Show this account's key fingerprint, worked out from your private key with the vault passphrase, for teammates who confirm a key you granted.",
+      },
+    ],
   },
   {
     key: 'projects',
@@ -335,6 +355,12 @@ export const FLAGS: readonly FlagSpec[] = [
     help: 'Keep the key for n days (1 to 30; 7 by default)',
     commands: ['team unlock', 'vault unlock'],
     field: 'days',
+  },
+  {
+    long: '--forget-refused',
+    help: 'Forget a newer team key version refused before. Helps only once Cloud no longer offers that version, and only if the newest key stored is writable',
+    commands: ['team unlock'],
+    field: 'forgetRefused',
   },
   {
     long: '--allow-drop',

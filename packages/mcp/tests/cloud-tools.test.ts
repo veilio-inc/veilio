@@ -319,6 +319,36 @@ describe('the same outcome as the CLI (SC-002)', () => {
     ])
   })
 
+  it("maps_create and maps_update of a team map refuse while the team key is not confirmed, with the CLI's words (spec 080 item 7a)", async () => {
+    signIn(home, { team: true, teamWritable: false, project: 'p-tools' })
+    const row = cloud.add({
+      scope: 'team',
+      project: 'p-tools',
+      map_data: await sealTeam({ __CLS__1: 'Ledger' }),
+    })
+    local({ __CLS__1: 'Ledger', __FN__2: 'settle' })
+    const before = cloud.requests.length
+
+    const created = await callToolAsync('maps_create', { name: 'shared', scope: 'team' }, ctx)
+    const updated = await callToolAsync('maps_update', { id: row.id }, ctx)
+
+    for (const r of [created, updated]) {
+      expect(r.isError).toBe(true)
+      expect(r.text).toContain(
+        'Veilio: Not saved: the newest key for team "team-1" is not confirmed on this device. ' +
+          'Run `veilio team unlock` to see who granted it, then `veilio team trust`.'
+      )
+    }
+    expect(cloud.maps).toHaveLength(1)
+    expect(
+      cloud.requests.slice(before).filter((x) => x.method === 'POST' || x.method === 'PATCH')
+    ).toHaveLength(0)
+    // Reading is untouched: the same key still opens the team's map.
+    local({ __CLS__1: 'Ledger' })
+    const pulled = await callToolAsync('maps_pull', { id: row.id }, ctx)
+    expect(pulled.isError ?? false, pulled.text).toBe(false)
+  })
+
   it('maps_update: in place, and an update that drops nothing works without the destructive setting', async () => {
     signIn(home, { pmk: true })
     const row = cloud.add({

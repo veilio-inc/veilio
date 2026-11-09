@@ -58,6 +58,8 @@ veilio projects                 # the projects your team works in; * marks the o
 veilio projects use <name>      # work in that project (kept with the sign-in)
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
 veilio team lock                # remove the unlocked team key, and the team rules, from this machine
+veilio team trust <team> <fp>   # confirm a teammate's key by its fingerprint, so maps can be saved under it
+veilio keys fingerprint         # your own key fingerprint, for teammates who confirm a key you granted
 veilio vault unlock             # keep the personal-maps key here (7 days), for the MCP server
 veilio vault lock               # remove it, and the personal rules, from this machine
 veilio rules pull               # fetch your custom rules; scrub then applies them offline
@@ -73,6 +75,52 @@ zero-knowledge: pulling or pushing one prompts for the vault passphrase and
 derives the key here, on your machine — the passphrase and the key never
 leave it. A team map is sealed under the team key, which the server cannot
 read either; `veilio team unlock` opens it here with your vault passphrase.
+
+**Confirming who granted the team key.** A team key reaches you wrapped by the
+teammate who granted it, and the wrap names their key - but Veilio's server
+hands over both, so `team unlock` cannot tell a teammate's grant from one the
+server made itself. So it reads with every key it opens, and **writes** (`maps
+push --team`, `maps update`, the MCP server's map writes) only under the newest
+version of the team key that Cloud holds for you, and only once it is confirmed:
+
+- a key you made yourself, or one granted by a teammate whose key you confirmed
+  and who is still an active member, is used to save maps;
+- if a newer version was refused or did not open, nothing is written under an
+  older one - even when Cloud later leaves that version out, and after a logout
+  or `team lock` (the version is kept in `~/.veilio/key-pins.json`). It lifts
+  once that version is stored and writable. If your team really removed it,
+  `veilio team unlock --forget-refused` forgets it - but only once Cloud no
+  longer offers that version (one it still offers is refused again), and only
+  if the newest key it then stores is writable;
+- a key from a teammate you have not confirmed is kept read-only, and `team
+  unlock` prints who granted it and their key's fingerprint. Ask them for the
+  fingerprint they see - on their dashboard in the web app under "Your key
+  fingerprint", or from `veilio keys fingerprint` - and if it matches, run
+  `veilio team trust <team> <fingerprint>` (case, spaces and dashes are
+  ignored). It needs no network;
+- a key granted by someone who is no longer an active member of the team (or a
+  deleted account) is kept read-only, confirmed or not, and `team unlock` says so.
+  `team unlock` writes nothing if Cloud does not list the team's members;
+- a confirmed teammate's key that changed, or a key labelled as your own that is
+  not, is not stored at all, and `team unlock` says so. To accept a changed key,
+  compare the new fingerprint with them and run `veilio team trust` with it: it
+  asks Cloud for the team's keys again, and for your vault passphrase, and
+  stores the key it confirmed.
+
+While the newest team key is not confirmed, a write is refused with nothing sent,
+and so is a `scrub --team` that would reserve numbers for a custom rule's
+placeholder - a rule's name goes to the server only as a hash under a confirmed
+key:
+
+```text
+veilio: Not saved: the newest key for team "Payments" is not confirmed on this device. Run `veilio team unlock` to see who granted it, then `veilio team trust`.
+```
+
+**After upgrading:** keys unlocked by an earlier version are read-only until
+the next `veilio team unlock`, which judges them. A team key you made yourself
+is writable again at once; a teammate's grant needs one `veilio team trust` on
+each device. Confirmations are kept in `~/.veilio/key-pins.json` and are never
+sent to Veilio.
 
 **Updating a map in place.** `veilio maps update <id>` replaces a Cloud map's
 entries with the local map's and keeps its id, name and project, so refreshing a
@@ -179,7 +227,9 @@ Four files, all `0600`, all under `~/.veilio/`: `credential.json` (the session
 and the chosen project, removed by `logout`), `rules.json` (the rules copy),
 `team-keys.json` (the keys `team unlock` opened, kept seven days) and
 `personal-maps-key.json` (the key `vault unlock` opened, kept seven days). `logout`
-removes all of them.
+removes all of them. A fifth, `key-pins.json` (also `0600`), holds the teammate
+keys `team trust` confirmed, per instance and account, and is kept: it holds no
+key material, and a confirmation should outlive a sign-in.
 
 ### Scrubbing with the team's numbering
 
@@ -337,6 +387,10 @@ a plan feature the web app couldn't.
                         For: scrub, maps push
     --days <n>          Keep the key for n days (1 to 30; 7 by default)
                         For: team unlock, vault unlock
+    --forget-refused    Forget a newer team key version refused before. Helps
+                        only once Cloud no longer offers that version, and
+                        only if the newest key stored is writable
+                        For: team unlock
     --allow-drop        Allow dropping entries the Cloud map has and the local
                         map does not
                         For: maps update

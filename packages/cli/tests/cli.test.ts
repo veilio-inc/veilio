@@ -83,6 +83,8 @@ describe('argument handling', () => {
     const { out } = await run(['--help'])
     expect(out).toContain('team unlock')
     expect(out).toContain('team lock')
+    expect(out).toContain('team trust <team> <fingerprint>')
+    expect(out).toContain('keys fingerprint')
   })
 
   it('rejects an unknown command', async () => {

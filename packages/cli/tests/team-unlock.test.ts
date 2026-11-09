@@ -41,13 +41,83 @@ function unlock(over: Partial<TeamUnlock> = {}): TeamUnlock {
     account: BINDING.account,
     teamId: 'team-1',
     expiresAt: expiryFrom(new Date()),
-    keys: [{ version: 1, key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }],
+    keys: [
+      {
+        version: 1,
+        key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        granter: { id: 'u2', publicKey: 'GRANTER' },
+        writable: true,
+      },
+    ],
     ...over,
   }
 }
 
 afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
+})
+
+describe('which stored keys may be written under (spec 080 item 7a)', () => {
+  it("keeps each key's granter and whether it may be written under", () => {
+    const home = freshHome()
+    const readOnly = unlock({
+      keys: [
+        {
+          version: 1,
+          key: unlock().keys[0]!.key,
+          granter: { id: 'u2', publicKey: 'G' },
+          writable: false,
+        },
+        {
+          version: 2,
+          key: unlock().keys[0]!.key,
+          granter: { id: null, publicKey: 'G2' },
+          writable: true,
+        },
+      ],
+    })
+    writeTeamUnlock(readOnly, home)
+    expect(readTeamUnlock(BINDING, home)?.keys).toEqual(readOnly.keys)
+  })
+
+  it('a file from an earlier CLI, with no granter, reads every key as not writable', () => {
+    // The migration: the next `team unlock` judges them; until then they read.
+    const home = freshHome()
+    mkdirSync(dirname(teamUnlockPath(home)), { recursive: true })
+    const old = { ...unlock(), keys: [{ version: 1, key: unlock().keys[0]!.key }] }
+    writeFileSync(teamUnlockPath(home), JSON.stringify(old))
+    expect(readTeamUnlock(BINDING, home)?.keys).toEqual([
+      { version: 1, key: unlock().keys[0]!.key, writable: false },
+    ])
+  })
+
+  it('a key marked writable but with no granter is not writable', () => {
+    const home = freshHome()
+    mkdirSync(dirname(teamUnlockPath(home)), { recursive: true })
+    const forged = {
+      ...unlock(),
+      keys: [{ version: 1, key: unlock().keys[0]!.key, writable: true }],
+    }
+    writeFileSync(teamUnlockPath(home), JSON.stringify(forged))
+    expect(readTeamUnlock(BINDING, home)?.keys[0]?.writable).toBe(false)
+  })
+
+  it('a writable flag that is not true is not writable', () => {
+    const home = freshHome()
+    mkdirSync(dirname(teamUnlockPath(home)), { recursive: true })
+    const odd = {
+      ...unlock(),
+      keys: [{ ...unlock().keys[0]!, writable: 'yes' }],
+    }
+    writeFileSync(teamUnlockPath(home), JSON.stringify(odd))
+    expect(readTeamUnlock(BINDING, home)?.keys[0]?.writable).toBe(false)
+  })
+
+  it('keeps the team name for the messages that need it offline', () => {
+    const home = freshHome()
+    writeTeamUnlock(unlock({ teamName: 'Zespół Kraków' }), home)
+    expect(readTeamUnlock(BINDING, home)?.teamName).toBe('Zespół Kraków')
+  })
 })
 
 describe('a round trip', () => {

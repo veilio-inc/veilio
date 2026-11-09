@@ -17,6 +17,7 @@ import {
   reservePlaceholders,
   getUserKeys,
   getTeamKeyWraps,
+  getMe,
   getMyTeam,
   listMaps,
   listRules,
@@ -27,6 +28,7 @@ import { ensureBlocks } from './client/blocks.js'
 import {
   localDroppedNote,
   outOfRangeNote,
+  printable,
   reservationRefusedSentence,
   unvouchedNote,
 } from './reservations.js'
@@ -38,6 +40,7 @@ import {
   teamUnlockPath,
   expiryFrom,
   type StoredTeamKey,
+  type TeamUnlock,
 } from './team-unlock.js'
 import {
   readCredential,
@@ -49,7 +52,7 @@ import {
 } from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
-import { teamKeyBytes, teamKeyVersion } from './hashed-bases.js'
+import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -64,6 +67,17 @@ import { refusal, renderRefusal, rulesSkippedSentences, type Refusal } from './c
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
+import { fingerprint, sameFingerprint } from './client/fingerprint.js'
+import { DELETED_GRANTER, granterIdentity, judgeWrap, wrapFrom } from './client/wrap-judge.js'
+import {
+  KeyPinsDamaged,
+  blockedMark,
+  confirmPin,
+  confirmedKeys,
+  pinOf,
+  readPins,
+  settleBlockedMark,
+} from './key-pins.js'
 import {
   formatProjectsList,
   listTeamProjects,
@@ -745,7 +759,12 @@ export async function runRulesPull(io: Io): Promise<number> {
  * is present to type the passphrase. See `team-unlock.ts` for what is stored
  * and why it is the team key rather than the vault key.
  */
-export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Promise<number> {
+export async function runTeamUnlock(
+  io: Io,
+  days?: number,
+  mapPath?: string,
+  forgetRefused = false
+): Promise<number> {
   const credential = readCredential(io.home)
   if (!credential) {
     io.stderr('veilio: not signed in. Run `veilio login` first.\n')
@@ -816,23 +835,154 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       ;({ wraps } = await getTeamKeyWraps(credential, teamId))
     }
 
+    // Who made each wrap decides whether a map may be sealed under its key
+    // (spec 080 item 7a, `client/wrap-judge.ts`). Our own id is what rule 3
+    // needs; without it a wrap labelled as ours cannot be told from a first
+    // sighting, so nothing is judged at all.
+    const ownId = (await getMe(credential)).user?.id
+    if (typeof ownId !== 'string' || ownId === '') {
+      io.stderr(
+        'veilio: Cloud did not say which account this is, so no team key was judged. Nothing was written.\n'
+      )
+      return EXIT_ERROR
+    }
+    // Who is on the team now decides whether a confirmed key may be WRITTEN
+    // under, as in the web app; it never makes a key trusted. Unknown, it
+    // cannot be decided, so nothing is.
+    const roster = await teamRoster(credential, teamId)
+    if (!roster) {
+      io.stderr(
+        "veilio: Cloud did not list the team's members, so no team key was judged. Nothing was written.\n"
+      )
+      return EXIT_ERROR
+    }
+    const teamName = roster.name ?? printable(teamId)
+    const pins = readPins(credential, io.home)
+    // The highest version refused before (spec 080 review): kept beside the
+    // pins, so a later answer leaving it out, a logout or `team lock` does
+    // not lift it. `--forget-refused` is the way out when the team really
+    // removed it. Unknown, nothing is stored.
+    const pinsDamaged = (err: unknown): number => {
+      if (!(err instanceof KeyPinsDamaged)) throw err
+      io.stderr(
+        `veilio: ${err.path} is damaged, so no team key was stored. Move it aside and run \`veilio team unlock\` again.\n`
+      )
+      return EXIT_ERROR
+    }
+    let storedMark: number | undefined
+    try {
+      storedMark = blockedMark(credential, teamId, io.home)
+    } catch (err) {
+      return pinsDamaged(err)
+    }
+    const mark = forgetRefused ? undefined : storedMark
+
     const keys: StoredTeamKey[] = []
+    let refusedAny = false
+    // The newest version not stored, for `blockedVersion`.
+    let notStored: number | undefined
+    const skip = (version: number) => {
+      notStored = Math.max(notStored ?? version, version)
+    }
     for (const wrap of wraps) {
+      let key: string
       try {
         const teamKey = await unwrapTeamKey(wrap.wrapped_key, privateKey, {
           teamId,
           version: wrap.version,
           myPublicKey,
         })
-        keys.push({ version: wrap.version, key: await exportTeamKey(teamKey) })
+        key = await exportTeamKey(teamKey)
       } catch {
         // A wrap this account cannot open — from a granter whose key has since
         // changed, most likely. Skipped rather than fatal: another version may
         // still open most of the team's maps, and none opening is reported below.
+        skip(wrap.version)
         continue
+      }
+      const from = wrapFrom(wrap.wrapped_key)
+      const judged = judgeWrap({
+        from,
+        wrappedBy: wrap.wrapped_by,
+        ownPublicKey: myPublicKey,
+        ownId,
+        pins,
+      })
+      if (judged.verdict === 'unreadable' || !from) {
+        skip(wrap.version)
+        continue
+      }
+      if (judged.verdict === 'refused-impersonation') {
+        io.stderr(
+          `Team "${teamName}": key version ${wrap.version} claims to come from your own key but does not. ` +
+            'It was not stored. Tell your team administrator and support@veilio.dev.\n'
+        )
+        refusedAny = true
+        skip(wrap.version)
+        continue
+      }
+      const granter = granterLabel(wrap.wrapped_by, roster.emails)
+      if (judged.verdict === 'refused-change') {
+        io.stderr(
+          `Team "${teamName}": ${granter}'s key changed from ${await fingerprint(judged.pinned!)} to ${await fingerprint(from)}. ` +
+            'This happens when they reset their key - or when someone else is posing as them. ' +
+            `Compare the new fingerprint with ${granter} before you run \`veilio team trust\`. ` +
+            'Until then nothing is written under this key.\n'
+        )
+        refusedAny = true
+        skip(wrap.version)
+        continue
+      }
+      const id = granterIdentity(from, wrap.wrapped_by)
+      const granterId = id.startsWith('key:') ? null : id
+      // A key of our own writes whoever the server lists; anyone else's only
+      // while they are an active member (the web app's review 4).
+      const current = from === myPublicKey || (granterId !== null && roster.current.has(granterId))
+      keys.push({
+        version: wrap.version,
+        key,
+        granter: { id: granterId, publicKey: from, label: granter, current },
+        writable: judged.verdict === 'trusted' && current,
+      })
+      if (!current) {
+        io.stdout(`${formerMemberLine(teamName, wrap.version, granter)}\n`)
+      } else if (judged.verdict === 'needs-review') {
+        const fp = await fingerprint(from)
+        io.stdout(
+          `Team "${teamName}": key version ${wrap.version} was granted by ${granter} with key ${fp}. ` +
+            'You have not confirmed this key on this device, so Veilio can read with it but will not write under it. ' +
+            `Ask ${granter} for the key fingerprint Veilio shows them on their dashboard under "Your key fingerprint", ` +
+            `and if it matches, run: veilio team trust ${teamArg(teamName, teamId)} ${fp}\n`
+        )
       }
     }
 
+    // Raised by what was refused now, kept from before, and lifted only by a
+    // version at least as new stored writable.
+    let high = notStored === undefined ? mark : Math.max(mark ?? notStored, notStored)
+    if (high !== undefined && keys.some((k) => k.writable && k.version >= high!)) high = undefined
+    // Settled against the file as it is now: what this run clears is only
+    // the mark it read, so a raise another unlock made meanwhile survives.
+    const clearUpTo = forgetRefused || high === undefined ? storedMark : undefined
+    let settled: number | undefined
+    try {
+      if (clearUpTo !== undefined || high !== undefined)
+        settled = settleBlockedMark(credential, teamId, { clearUpTo, raise: high }, io.home)
+    } catch (err) {
+      return pinsDamaged(err)
+    }
+    const blockedVersion =
+      settled !== undefined && settled > Math.max(...keys.map((k) => k.version))
+        ? settled
+        : undefined
+    if (blockedVersion !== undefined && notStored !== blockedVersion)
+      io.stdout(
+        `Team "${teamName}": key version ${blockedVersion} was offered to this account before and not stored, so nothing is written under an older key. ` +
+          'If your team removed that version, run: veilio team unlock --forget-refused\n'
+      )
+
+    // Refused, not unopenable: the lines above said what to do instead.
+    if (keys.length === 0 && refusedAny) return EXIT_ERROR
     if (keys.length === 0) {
       io.stderr(
         'veilio: none of the team key wraps held for this account could be opened. ' +
@@ -849,6 +999,8 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         instance: credential.instance,
         account: credential.account,
         teamId,
+        ...(roster.name ? { teamName: roster.name } : {}),
+        ...(blockedVersion !== undefined ? { blockedVersion } : {}),
         expiresAt,
         keys,
       },
@@ -888,6 +1040,241 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       if (blocks.status === 'failed')
         io.stdout(`veilio: ${reservationRefusedSentence(blocks, blocks.tag)}\n`)
     }
+    return EXIT_OK
+  } catch (err) {
+    return reportCloudFailure(err, io)
+  }
+}
+
+/**
+ * The team's name, its members' addresses (for the messages) and who is an
+ * active member now (for writing only: never an input to whether a key is
+ * trusted, spec 080 item 7a). Null when it cannot be read, or is another
+ * team's.
+ */
+async function teamRoster(
+  credential: Credential,
+  teamId: string
+): Promise<{ name: string | null; emails: Map<string, string>; current: Set<string> } | null> {
+  const emails = new Map<string, string>()
+  const current = new Set<string>()
+  try {
+    const team = (await getMyTeam(credential)).team
+    if (team?.id !== teamId) return null
+    for (const m of team.members ?? []) {
+      const { user_id, email, status } = (m ?? {}) as {
+        user_id?: unknown
+        email?: unknown
+        status?: unknown
+      }
+      if (typeof user_id !== 'string') continue
+      if (typeof email === 'string') emails.set(user_id, printable(email))
+      if (status === 'active') current.add(user_id)
+    }
+    // The server's words, printed to a terminal and kept for later messages:
+    // no control, bidi or zero-width character survives (`printable`).
+    return {
+      name: typeof team.name === 'string' && team.name !== '' ? printable(team.name) : null,
+      emails,
+      current,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** A key that reads and will not write: its granter is not on the team now. */
+function formerMemberLine(teamName: string, version: number, granter: string): string {
+  return (
+    `Team "${teamName}": key version ${version} was granted by ${granter}, who is no longer in the team, ` +
+    'so Veilio can read with it but will not write under it.'
+  )
+}
+
+/** Who made a wrap, in words: their address, else their id. */
+function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>): string {
+  if (wrappedBy === undefined || wrappedBy === DELETED_GRANTER) return 'a deleted account'
+  return emails.get(wrappedBy) ?? printable(wrappedBy)
+}
+
+/** The team as `team trust` takes it, safe to copy into a shell: its name,
+ *  else its id, when that is letters, digits, `.`, `_` and `-` (not first);
+ *  else the id single-quoted. Both come from the server. */
+export function teamArg(name: string, id: string): string {
+  const plain = (s: string) => /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u.test(s)
+  if (plain(name)) return name
+  const shown = printable(id)
+  return plain(shown) ? shown : `'${shown.replace(/'/g, "'\\''")}'`
+}
+
+/**
+ * `veilio team trust <team> <fingerprint>` (spec 080 item 7a): a person has
+ * compared the fingerprint with the granter outside Veilio. Records the pin,
+ * then marks writable each stored key that granter made with that key. Reads
+ * and writes only this machine's files: nothing is asked of the server, which
+ * is the party this check exists to not believe.
+ */
+export async function runTeamTrust(
+  team: string | null,
+  typed: string | null,
+  io: Io
+): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) {
+    io.stderr('veilio: not signed in. Run `veilio login` first.\n')
+    return EXIT_ERROR
+  }
+  if (!team || !typed) {
+    io.stderr(
+      'veilio: team trust needs the team and the fingerprint: veilio team trust <team> <fingerprint>\n'
+    )
+    return EXIT_ERROR
+  }
+  const unlock = readTeamUnlock(credential, io.home)
+  const forTeam = unlock !== null && (team === unlock.teamId || team === unlock.teamName)
+  let match: NonNullable<StoredTeamKey['granter']> | null = null
+  for (const k of forTeam ? unlock.keys : []) {
+    if (k.granter && sameFingerprint(typed, await fingerprint(k.granter.publicKey))) {
+      match = k.granter
+      break
+    }
+  }
+  if (!match) {
+    // Not on this machine - a changed key (row 4) is never stored. The wraps
+    // are asked for again; what makes one trusted is still the person's
+    // comparison of its fingerprint, recorded here, never the server's word.
+    const offered = await offeredWrap(credential, team, typed)
+    if (!offered) {
+      io.stderr(
+        `No key for team "${printable(team)}" has the fingerprint ${printable(typed)}. ` +
+          'Check it for typos; run `veilio team unlock` to see the fingerprints offered.\n'
+      )
+      return EXIT_ERROR
+    }
+    if (!confirmed(() => confirmPin(credential, offered.identity, offered.publicKey, io.home), io))
+      return EXIT_ERROR
+    // The unlock judges every wrap again with the new pin and stores the key.
+    const code = await runTeamUnlock(io)
+    const after = readTeamUnlock(credential, io.home)
+    if (code === EXIT_OK && after) await printConfirmed(after, offered.publicKey, io, false)
+    return code
+  }
+
+  const identity = granterIdentity(match.publicKey, match.id)
+  if (!confirmed(() => confirmPin(credential, identity, match.publicKey, io.home), io))
+    return EXIT_ERROR
+  const accepted = confirmedKeys(pinOf(readPins(credential, io.home), identity))
+  // Re-judged: what this granter made with a key now confirmed may be written
+  // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
+  const keys = unlock!.keys.map((k) =>
+    k.granter &&
+    k.granter.current === true &&
+    granterIdentity(k.granter.publicKey, k.granter.id) === identity &&
+    accepted.includes(k.granter.publicKey)
+      ? { ...k, writable: true }
+      : k
+  )
+  const updated = { ...unlock!, keys }
+  writeTeamUnlock(updated, io.home)
+  await printConfirmed(updated, match.publicKey, io, true)
+  return EXIT_OK
+}
+
+/** Run a pin write; a damaged key-pins.json is said, never thrown. */
+function confirmed(write: () => void, io: Io): boolean {
+  try {
+    write()
+    return true
+  } catch (err) {
+    if (!(err instanceof KeyPinsDamaged)) throw err
+    io.stderr(
+      `veilio: ${err.path} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.\n`
+    )
+    return false
+  }
+}
+
+/** Row 6 for each stored key made with `publicKey` that may now be written
+ *  under; with `formerToo`, the read-only line for the others. */
+async function printConfirmed(
+  unlock: TeamUnlock,
+  publicKey: string,
+  io: Io,
+  formerToo: boolean
+): Promise<void> {
+  const teamName = printable(unlock.teamName ?? unlock.teamId)
+  const fp = await fingerprint(publicKey)
+  for (const k of unlock.keys) {
+    const g = k.granter
+    if (g?.publicKey !== publicKey) continue
+    const who =
+      typeof g.label === 'string'
+        ? printable(g.label)
+        : g.id === null
+          ? 'a deleted account'
+          : printable(g.id)
+    if (k.writable)
+      io.stdout(
+        `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
+      )
+    else if (formerToo) io.stdout(`${formerMemberLine(teamName, k.version, who)}\n`)
+  }
+}
+
+/**
+ * The wrap Cloud holds for this account whose granter key has the typed
+ * fingerprint, for the team named. Null when there is none, or Cloud cannot be
+ * asked. Never one labelled as this account: that is rule 3's refusal, and
+ * confirming it would pin the server's key under our own name.
+ */
+async function offeredWrap(
+  credential: Credential,
+  team: string,
+  typed: string
+): Promise<{ identity: string; publicKey: string } | null> {
+  try {
+    const teamId = (await listMaps(credential)).team?.id
+    if (!teamId) return null
+    const roster = await teamRoster(credential, teamId)
+    if (team !== teamId && team !== roster?.name) return null
+    const ownId = (await getMe(credential)).user?.id
+    if (typeof ownId !== 'string' || ownId === '') return null
+    for (const wrap of (await getTeamKeyWraps(credential, teamId)).wraps) {
+      const from = wrapFrom(wrap.wrapped_key)
+      if (!from || wrap.wrapped_by === ownId) continue
+      if (sameFingerprint(typed, await fingerprint(from)))
+        return { identity: granterIdentity(from, wrap.wrapped_by), publicKey: from }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `veilio keys fingerprint` (spec 080 item 7a): what a teammate compares when
+ * they confirm a key this account granted. The fingerprint of the public key
+ * DERIVED from the private key the passphrase opens, never the server's copy
+ * - a server that swapped it would otherwise make both sides agree, as the web
+ * app's `OwnFingerprint` says.
+ */
+export async function runKeysFingerprint(io: Io): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) {
+    io.stderr('veilio: not signed in. Run `veilio login` first.\n')
+    return EXIT_ERROR
+  }
+  try {
+    const mine = await getUserKeys(credential)
+    if (!mine.initialized) return refused(refusal('keys_not_set_up'), io)
+    const derived = await vaultKeyFor(credential, clientContext(io).passphrase)
+    if (!derived.ok) return refused(derived.refusal, io)
+    const own = await openOwnKeypair(derived.value, mine.privateKeyEncrypted, mine.publicKey)
+    if (!own.ok) return refused(refusal('own_public_key_mismatch'), io)
+    io.stdout(
+      `Your key fingerprint: ${await fingerprint(own.publicKey)}. ` +
+        'Teammates compare this when they confirm a key you granted.\n'
+    )
     return EXIT_OK
   } catch (err) {
     return reportCloudFailure(err, io)
@@ -1087,6 +1474,7 @@ export async function teamNamespaceForScrub(
         const r = await reservePlaceholders(credential, teamId, requests, undefined, {
           keys: teamKeyBytes(credential, home, teamId),
           keyVersion: teamKeyVersion(credential, home, teamId),
+          unconfirmed: teamKeyUnconfirmed(credential, home, teamId),
           ...(found.reservations ? { reservations: found.reservations } : {}),
         })
         if (r.refused) throw new CloudError('forbidden', r.refused.detail)

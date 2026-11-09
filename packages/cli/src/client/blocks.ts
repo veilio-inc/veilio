@@ -8,7 +8,7 @@
 
 import { highestPerKind, isSaneBlock } from '@veilio-inc/engine'
 import { reservePlaceholders, CloudError, type PlaceholderReservation } from '../cloud.js'
-import { teamKeyBytes, teamKeyVersion } from '../hashed-bases.js'
+import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from '../hashed-bases.js'
 import type { Credential } from '../credential.js'
 import { loadMap } from '../store.js'
 import {
@@ -119,6 +119,7 @@ export async function ensureBlocks(
           block: true,
           keys: teamKeyBytes(credential, home, teamId),
           keyVersion: teamKeyVersion(credential, home, teamId),
+          unconfirmed: teamKeyUnconfirmed(credential, home, teamId),
           ...(reservations !== undefined ? { reservations } : {}),
         }
       ))

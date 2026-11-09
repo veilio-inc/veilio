@@ -23,6 +23,8 @@ import {
   runMapsUpdate,
   runTeamUnlock,
   runTeamLock,
+  runTeamTrust,
+  runKeysFingerprint,
   runVaultUnlock,
   runVaultLock,
   runProjectsList,
@@ -120,10 +122,13 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
             return await runTeamUnlock(
               io,
               args.days ?? undefined,
-              resolveMapPath(args.mapPath, io.cwd)
+              resolveMapPath(args.mapPath, io.cwd),
+              args.forgetRefused
             )
           case 'lock':
             return runTeamLock(io)
+          case 'trust':
+            return await runTeamTrust(args.files[0] ?? null, args.files[1] ?? null, io)
           default:
             io.stderr(`veilio: ${needsAction('team')}\n`)
             return EXIT_ERROR
@@ -140,6 +145,10 @@ export async function run(args: ParsedArgs, io: Io): Promise<number> {
             return EXIT_ERROR
         }
       }
+      case 'keys':
+        if (args.keysAction === 'fingerprint') return await runKeysFingerprint(io)
+        io.stderr(`veilio: ${needsAction('keys')}\n`)
+        return EXIT_ERROR
       case 'projects':
         if (args.projectsAction === 'use') return await runProjectsUse(args.files[0] ?? null, io)
         return await runProjectsList(io)

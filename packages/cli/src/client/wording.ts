@@ -48,6 +48,7 @@ export const REFUSAL_CODES = [
   'team_locked',
   'team_key_unreadable',
   'team_key_mismatch',
+  'team_key_unconfirmed',
   'not_in_team',
   'team_maps_unreadable',
   'team_map_unopenable',
@@ -85,6 +86,8 @@ export type RefusalCode = (typeof REFUSAL_CODES)[number]
  *  uses the ones it needs. */
 export interface WordingParams {
   id?: string
+  /** A team, by name or id (spec 080 item 7a). */
+  team?: string
   name?: string
   count?: number
   detail?: string
@@ -246,6 +249,12 @@ export const WORDING: Record<RefusalCode, Words> = {
     message:
       'the team key on this machine does not match this team. Nothing was written or uploaded.',
     resolve: 'Run `veilio team unlock` again.',
+  }),
+  // Spec 080 strings.md row 3, approved 2026-11-07: split only where the
+  // renderers join message and resolve with a space.
+  team_key_unconfirmed: (p) => ({
+    message: `Not saved: the newest key for team "${p.team}" is not confirmed on this device.`,
+    resolve: 'Run `veilio team unlock` to see who granted it, then `veilio team trust`.',
   }),
   not_in_team: () => ({
     message:

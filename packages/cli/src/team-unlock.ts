@@ -47,6 +47,26 @@ export interface StoredTeamKey {
   version: number
   /** Raw AES-256 key, base64. */
   key: string
+  /**
+   * Who made the wrap it came from (spec 080 item 7a): the server's
+   * `wrapped_by` (null for a deleted or unnamed granter) and the wrap's
+   * granter key. Absent in a file an earlier CLI wrote.
+   */
+  granter?: {
+    id: string | null
+    publicKey: string
+    /** Who that is, for `team trust`'s message only: never judged by. */
+    label?: string
+    /** An active member when `team unlock` read the team (or our own key).
+     *  Only true lets `team trust` make the key writable; absent is false. */
+    current?: boolean
+  }
+  /**
+   * May a map be sealed under it: true only when `team unlock` or
+   * `team trust` judged its wrap `trusted`. Read as false without a granter,
+   * which is how a file from an earlier CLI migrates.
+   */
+  writable: boolean
 }
 
 export interface TeamUnlock {
@@ -57,6 +77,15 @@ export interface TeamUnlock {
   instance: string
   account: string
   teamId: string
+  /** For the messages printed where there is no network to ask. */
+  teamName?: string
+  /**
+   * The newest version Cloud held for this account that was NOT stored -
+   * refused, or did not open - when it is above every stored one (spec 080
+   * review). Nothing is written under an older key while it is set: the
+   * team has moved past it. Recomputed by every `team unlock`.
+   */
+  blockedVersion?: number
   /** ISO-8601. Past this, reads return null and the file is ignored. */
   expiresAt: string
   keys: StoredTeamKey[]
@@ -116,7 +145,32 @@ export function readTeamUnlock(
   const expiresAt = Date.parse(parsed.expiresAt)
   if (Number.isNaN(expiresAt) || expiresAt <= now.getTime()) return null
 
-  return parsed
+  return { ...parsed, keys: parsed.keys.map(withWritable) }
+}
+
+/**
+ * The one rule for using a team key to write (spec 080 item 7a): the newest
+ * stored version, and only while it is writable. A team map is sealed under
+ * it, and a rule's name is hashed for the server only while it exists. Never
+ * an older writable version instead: a write belongs under the newest key.
+ */
+export function writeKeyOf(unlock: TeamUnlock): StoredTeamKey | null {
+  const newest = [...unlock.keys].sort((a, b) => b.version - a.version)[0]
+  if (!newest?.writable) return null
+  const blocked = unlock.blockedVersion
+  if (blocked === undefined) return newest
+  // A damaged value compares false: blocked, which fails closed.
+  return blocked <= newest.version ? newest : null
+}
+
+/** Writable only when judged so, with the granter it was judged by. */
+function withWritable(k: StoredTeamKey): StoredTeamKey {
+  const g = k.granter as unknown
+  const granted =
+    typeof g === 'object' &&
+    g !== null &&
+    typeof (g as { publicKey?: unknown }).publicKey === 'string'
+  return { ...k, writable: granted && k.writable === true }
 }
 
 /** Write the unlocked keys, readable only by this user. */

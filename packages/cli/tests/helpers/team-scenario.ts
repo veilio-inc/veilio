@@ -150,7 +150,14 @@ export async function teamScenario(
         account: ACCOUNT,
         teamId: 'team-1',
         expiresAt: expiryFrom(new Date()),
-        keys: [{ version: 1, key: toBase64(teamKeyRaw) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(teamKeyRaw),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )
@@ -169,7 +176,14 @@ export function unlockLike(home: string): void {
       account: ACCOUNT,
       teamId: 'team-1',
       expiresAt: expiryFrom(new Date()),
-      keys: [{ version: 1, key: toBase64(key) }],
+      keys: [
+        {
+          version: 1,
+          key: toBase64(key),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+      ],
     },
     home
   )

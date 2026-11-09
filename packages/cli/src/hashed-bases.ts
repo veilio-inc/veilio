@@ -6,7 +6,8 @@
 import { createHmac } from 'node:crypto'
 import { fromBase64, isEngineBase } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
-import { readTeamUnlock } from './team-unlock.js'
+import { readTeamUnlock, writeKeyOf } from './team-unlock.js'
+import { printable } from './reservations.js'
 
 /** The base as the server sees it: `__H_<16 hex>__` for a rule's base. */
 export function wireBase(base: string, teamKey: Uint8Array): string {
@@ -15,7 +16,9 @@ export function wireBase(base: string, teamKey: Uint8Array): string {
   return `__H_${mac.slice(0, 16).toUpperCase()}__`
 }
 
-/** The raw team keys this machine holds for `teamId`, newest version first. */
+/** The raw team keys a rule's name may be hashed under, newest first: none
+ *  unless the newest is confirmed (`writeKeyOf`), and never one that is not
+ *  (spec 080 item 7a) - a hash under a key the server made tells it the name. */
 export function teamKeyBytes(
   credential: Pick<Credential, 'instance' | 'account'>,
   home: string | undefined,
@@ -42,9 +45,10 @@ function heldKeys(
     { instance: credential.instance, account: credential.account },
     home
   )
-  if (!unlock || unlock.teamId !== teamId) return []
+  if (!unlock || unlock.teamId !== teamId || !writeKeyOf(unlock)) return []
   const out: { version: number; raw: Uint8Array }[] = []
   for (const k of unlock.keys) {
+    if (!k.writable) continue
     try {
       out.push({ version: k.version, raw: fromBase64(k.key) })
     } catch {
@@ -52,6 +56,21 @@ function heldKeys(
     }
   }
   return out.sort((a, b) => b.version - a.version)
+}
+
+/** The team to name when a rule's name may not be hashed because the newest
+ *  key is not confirmed; null when it may, or when nothing is unlocked. */
+export function teamKeyUnconfirmed(
+  credential: Pick<Credential, 'instance' | 'account'>,
+  home: string | undefined,
+  teamId: string
+): string | null {
+  const unlock = readTeamUnlock(
+    { instance: credential.instance, account: credential.account },
+    home
+  )
+  if (!unlock || unlock.teamId !== teamId || writeKeyOf(unlock)) return null
+  return printable(unlock.teamName ?? unlock.teamId)
 }
 
 /** Whether a base the server served (a reservation's) is `base`: as written,

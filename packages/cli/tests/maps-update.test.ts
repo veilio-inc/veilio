@@ -15,11 +15,15 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { STORE_DIR, STORE_FILE, saveMap } from '../src/store.js'
 import { importPersonalMapsKey } from '../src/client/personal-maps-key.js'
+import { writeTeamUnlock } from '../src/team-unlock.js'
 import {
   FakeCloud,
+  INSTANCE,
+  ME,
   PASSPHRASE,
   PMK_RAW,
   TEAMMATE,
+  TEAM_ID,
   TEAM_RAW,
   sealPersonal,
   sealTeam,
@@ -225,6 +229,67 @@ describe('entries the update would drop (FR-005)', () => {
     expect(r.code, r.err).toBe(EXIT_OK)
     expect(r.out).toMatch(/2 dropped as asked/)
     expect(await openPersonalWithPmk(cloud.maps[0]!.map_data)).toEqual({ __CLS__1: 'A' })
+  })
+})
+
+describe('a team map, under a key not confirmed on this device (spec 080 item 7a)', () => {
+  function readOnlyKey(): void {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: ME,
+        teamId: TEAM_ID,
+        teamName: 'Zespół',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: [
+          {
+            version: 1,
+            key: toBase64(TEAM_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: false,
+          },
+        ],
+      },
+      home
+    )
+  }
+
+  it('an update is refused with nothing sent', async () => {
+    signIn(home)
+    readOnlyKey()
+    const row = cloud.add({
+      scope: 'team',
+      project: 'p-billing',
+      map_data: await sealTeam({ __CLS__1: 'Ledger' }),
+    })
+    local({ __CLS__1: 'Ledger', __FN__2: 'settle' })
+    const before = readFileSync(mapPath(), 'utf8')
+
+    const r = await run(['maps', 'update', row.id])
+
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain(
+      'Not saved: the newest key for team "Zespół" is not confirmed on this device. ' +
+        'Run `veilio team unlock` to see who granted it, then `veilio team trust`.'
+    )
+    expect(patches()).toBe(0)
+    expect(cloud.requests.filter((x) => x.method === 'POST')).toHaveLength(0)
+    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+  })
+
+  it('a pull still opens the map: reading needs no confirmation', async () => {
+    signIn(home)
+    readOnlyKey()
+    const row = cloud.add({
+      scope: 'team',
+      project: 'p-billing',
+      map_data: await sealTeam({ __CLS__1: 'Ledger' }),
+    })
+
+    const r = await run(['maps', 'pull', row.id, '--force'])
+
+    expect(r.code, r.err).toBe(EXIT_OK)
   })
 })
 
