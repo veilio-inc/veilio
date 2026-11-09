@@ -216,7 +216,7 @@ describe('rule names are hashed only under a confirmed team key (spec 080 item 7
     // Spec 085 R2-8: the team's rules are held back under a key not confirmed,
     // so its rule base is never numbered, let alone hashed.
     expect(scrubbed.err).toContain(
-      'custom rule not applied: sealed under a team key whose sender you have not confirmed'
+      'not applied: they are sealed under a team key whose sender you have not confirmed'
     )
     expect(sent()).not.toContain(wireBase('__CODENAME__', TEAM_RAW))
     expect(sent()).not.toMatch(/CODENAME/)

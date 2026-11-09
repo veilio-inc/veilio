@@ -153,7 +153,7 @@ describe('team rules in the MCP server (R2-7, R2-8)', () => {
     serve({ teamRules: [await sealedTeamRule('t-new', 0, EXACT)] })
     await primeRules(home)
     expect(anonymize()).toContain(
-      'WARNING: a new team rule keeps names as written: keep-id (^customerId$).'
+      'WARNING: a new team rule keeps names as written: `keep-id` (`^customerId$`).'
     )
     resetRulesCache()
     await primeRules(home)

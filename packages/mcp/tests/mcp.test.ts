@@ -444,7 +444,7 @@ describe('path containment', () => {
         for (const tool of ['restore_text', 'symbol_map_summary']) {
           const res = call(tool, tool === 'restore_text' ? { text: '__CLS__1' } : {})
           expect(res.isError).toBe(true)
-          expect(res.text).toContain('veilio cannot read (split index)')
+          expect(res.text).toContain('veilio cannot read (`split index`)')
           expect(res.text).not.toContain('PaymentGateway')
         }
       })
@@ -850,7 +850,7 @@ describe('anonymize_file: the extension decides the language (R2-12)', () => {
         expect(masked, name).not.toContain(name)
       if (language !== 'auto')
         expect(res.text).toContain(
-          `WARNING: language ${language} does not match payment.c; it was masked as c, the language of its extension.`
+          `WARNING: language \`${language}\` does not match \`payment.c\`; it was masked as \`c\`, the language of its extension.`
         )
       else expect(res.text).not.toContain('does not match')
     })

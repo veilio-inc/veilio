@@ -219,7 +219,7 @@ export function newTeamWhitelists(
   return {
     notices: fresh.map(
       (r) =>
-        `veilio: a new team rule keeps names as written: ${printable(r.name)} (${printable(r.pattern)}).`
+        `veilio: a new team rule keeps names as written: \`${printable(r.name)}\` (\`${printable(r.pattern)}\`).`
     ),
     shown: [...new Set([...before, ...team.map((r) => r.id)])],
   }

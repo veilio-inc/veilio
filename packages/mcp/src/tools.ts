@@ -392,7 +392,7 @@ function runAnonymize(
   const language: LanguageOption = ofFile ?? asked
   const mismatch =
     ofFile && asked !== 'auto' && asked !== ofFile
-      ? `WARNING: language ${asked} does not match ${file}; it was masked as ${ofFile}, the language of its extension.`
+      ? `WARNING: language \`${asked}\` does not match \`${file}\`; it was masked as \`${ofFile}\`, the language of its extension.`
       : null
   const keep = file
     ? (() => {

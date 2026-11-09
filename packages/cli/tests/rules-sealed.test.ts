@@ -480,7 +480,7 @@ describe('a team whitelist names what it keeps (R2-7)', () => {
     serve({ teamRules: [await sealedTeamRule('t-exact', 0, exact)] })
     const first = await run(['rules', 'pull'])
     expect(first.out).toContain(
-      'veilio: a new team rule keeps names as written: keep-gateway (^PaymentGateway$).'
+      'veilio: a new team rule keeps names as written: `keep-gateway` (`^PaymentGateway$`).'
     )
     const second = await run(['rules', 'pull'])
     expect(second.out).not.toContain('a new team rule')
@@ -508,7 +508,7 @@ describe('team rules open only under confirmed keys (R2-8)', () => {
     expect(cached()?.rules).toEqual([])
     expect(cached()?.skipped?.teamUnconfirmed).toBe(1)
     expect(res.out).toContain(
-      '1 custom rule not applied: sealed under a team key whose sender you have not confirmed - `veilio team unlock` shows that key.'
+      '1 team rule not applied: they are sealed under a team key whose sender you have not confirmed. `veilio team unlock` shows that key.'
     )
     const scrubbed = await run(['scrub'], 'class PaymentGateway {}\n')
     expect(scrubbed.out).not.toContain('PaymentGateway')

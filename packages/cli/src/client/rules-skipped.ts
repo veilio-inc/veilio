@@ -52,7 +52,7 @@ export function rulesSkippedSentences(s: RulesSkipped, { noun = true } = {}): st
     )
   if (s.teamUnconfirmed > 0)
     out.push(
-      `${n(s.teamUnconfirmed)}: sealed under a team key whose sender you have not confirmed - \`veilio team unlock\` shows that key.`
+      `${noun ? `${s.teamUnconfirmed} team rule${s.teamUnconfirmed === 1 ? '' : 's'}` : s.teamUnconfirmed} not applied: they are sealed under a team key whose sender you have not confirmed. \`veilio team unlock\` shows that key.`
     )
   return out
 }
