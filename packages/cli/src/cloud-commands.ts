@@ -40,6 +40,7 @@ import {
   teamUnlockPath,
   expiryFrom,
   type StoredTeamKey,
+  type TeamUnlock,
 } from './team-unlock.js'
 import {
   readCredential,
@@ -1059,10 +1060,7 @@ export async function runTeamTrust(
     return EXIT_ERROR
   }
   const unlock = readTeamUnlock(credential, io.home)
-  if (!unlock) return refused(refusal('team_locked'), io)
-  const teamName = printable(unlock.teamName ?? unlock.teamId)
-
-  const forTeam = team === unlock.teamId || team === unlock.teamName
+  const forTeam = unlock !== null && (team === unlock.teamId || team === unlock.teamName)
   let match: NonNullable<StoredTeamKey['granter']> | null = null
   for (const k of forTeam ? unlock.keys : []) {
     if (k.granter && sameFingerprint(typed, await fingerprint(k.granter.publicKey))) {
@@ -1071,12 +1069,23 @@ export async function runTeamTrust(
     }
   }
   if (!match) {
-    const shown = printable(team)
-    io.stderr(
-      `No key for team "${shown}" has the fingerprint ${printable(typed)}. ` +
-        'Check it for typos; run `veilio team unlock` to see the fingerprints offered.\n'
-    )
-    return EXIT_ERROR
+    // Not on this machine - a changed key (row 4) is never stored. The wraps
+    // are asked for again; what makes one trusted is still the person's
+    // comparison of its fingerprint, recorded here, never the server's word.
+    const offered = await offeredWrap(credential, team, typed)
+    if (!offered) {
+      io.stderr(
+        `No key for team "${printable(team)}" has the fingerprint ${printable(typed)}. ` +
+          'Check it for typos; run `veilio team unlock` to see the fingerprints offered.\n'
+      )
+      return EXIT_ERROR
+    }
+    confirmPin(credential, offered.identity, offered.publicKey, io.home)
+    // The unlock judges every wrap again with the new pin and stores the key.
+    const code = await runTeamUnlock(io)
+    const after = readTeamUnlock(credential, io.home)
+    if (code === EXIT_OK && after) await printConfirmed(after, offered.publicKey, io, false)
+    return code
   }
 
   const identity = granterIdentity(match.publicKey, match.id)
@@ -1084,7 +1093,7 @@ export async function runTeamTrust(
   const accepted = confirmedKeys(readPins(credential, io.home)[identity])
   // Re-judged: what this granter made with a key now confirmed may be written
   // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
-  const keys = unlock.keys.map((k) =>
+  const keys = unlock!.keys.map((k) =>
     k.granter &&
     k.granter.current === true &&
     granterIdentity(k.granter.publicKey, k.granter.id) === identity &&
@@ -1092,24 +1101,67 @@ export async function runTeamTrust(
       ? { ...k, writable: true }
       : k
   )
-  writeTeamUnlock({ ...unlock, keys }, io.home)
-
-  const fp = await fingerprint(match.publicKey)
-  const who =
-    typeof match.label === 'string'
-      ? printable(match.label)
-      : match.id === null
-        ? 'a deleted account'
-        : printable(match.id)
-  for (const k of keys) {
-    if (k.granter?.publicKey !== match.publicKey) continue
-    io.stdout(
-      k.writable
-        ? `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
-        : `${formerMemberLine(teamName, k.version, who)}\n`
-    )
-  }
+  const updated = { ...unlock!, keys }
+  writeTeamUnlock(updated, io.home)
+  await printConfirmed(updated, match.publicKey, io, true)
   return EXIT_OK
+}
+
+/** Row 6 for each stored key made with `publicKey` that may now be written
+ *  under; with `formerToo`, the read-only line for the others. */
+async function printConfirmed(
+  unlock: TeamUnlock,
+  publicKey: string,
+  io: Io,
+  formerToo: boolean
+): Promise<void> {
+  const teamName = printable(unlock.teamName ?? unlock.teamId)
+  const fp = await fingerprint(publicKey)
+  for (const k of unlock.keys) {
+    const g = k.granter
+    if (g?.publicKey !== publicKey) continue
+    const who =
+      typeof g.label === 'string'
+        ? printable(g.label)
+        : g.id === null
+          ? 'a deleted account'
+          : printable(g.id)
+    if (k.writable)
+      io.stdout(
+        `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
+      )
+    else if (formerToo) io.stdout(`${formerMemberLine(teamName, k.version, who)}\n`)
+  }
+}
+
+/**
+ * The wrap Cloud holds for this account whose granter key has the typed
+ * fingerprint, for the team named. Null when there is none, or Cloud cannot be
+ * asked. Never one labelled as this account: that is rule 3's refusal, and
+ * confirming it would pin the server's key under our own name.
+ */
+async function offeredWrap(
+  credential: Credential,
+  team: string,
+  typed: string
+): Promise<{ identity: string; publicKey: string } | null> {
+  try {
+    const teamId = (await listMaps(credential)).team?.id
+    if (!teamId) return null
+    const roster = await teamRoster(credential, teamId)
+    if (team !== teamId && team !== roster?.name) return null
+    const ownId = (await getMe(credential)).user?.id
+    if (typeof ownId !== 'string' || ownId === '') return null
+    for (const wrap of (await getTeamKeyWraps(credential, teamId)).wraps) {
+      const from = wrapFrom(wrap.wrapped_key)
+      if (!from || wrap.wrapped_by === ownId) continue
+      if (sameFingerprint(typed, await fingerprint(from)))
+        return { identity: granterIdentity(from, wrap.wrapped_by), publicKey: from }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 /**

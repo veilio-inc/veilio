@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { saveMap, STORE_DIR, STORE_FILE } from '../src/store.js'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
@@ -632,11 +633,71 @@ describe('team trust (spec 080 item 7a)', () => {
     expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
   })
 
-  it('with nothing unlocked, says to unlock first', async () => {
+  it('nothing stored and Cloud unreachable: row 7, nothing confirmed', async () => {
     signIn()
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'))
     const { code, err } = await run(['team', 'trust', 'Zespół', '046ee-6b73d-7baf9-15c9f'])
     expect(code).toBe(EXIT_ERROR)
-    expect(err).toContain('veilio team unlock')
+    expect(err).toContain(
+      'No key for team "Zespół" has the fingerprint 046ee-6b73d-7baf9-15c9f. Check it for typos; run `veilio team unlock` to see the fingerprints offered.'
+    )
+    expect(readPins(binding, home)).toEqual({})
+  })
+
+  it("after a confirmed teammate's key changed (row 4), trusting the new fingerprint fetches the wrap again, stores it writable, and a write succeeds", async () => {
+    signIn()
+    const { bodies, granterPublic, teamKeyRaw } = await realGrant()
+    serve(bodies)
+    const before = toBase64(crypto.getRandomValues(new Uint8Array(32)))
+    confirmPin(binding, 'u2', before, home)
+    const unlocked = await run(['team', 'unlock'])
+    expect(unlocked.err).toContain("ana@example.test's key changed from")
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+
+    const fp = await fingerprint(granterPublic)
+    const { code, out } = await run(['team', 'trust', 'Zespół', fp])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toContain(
+      `Confirmed ${fp} for ana@example.test on this device. Team "Zespół" key version 1 can now be used to save maps.`
+    )
+    expect(readPins(binding, home).u2).toMatchObject({ current: granterPublic, history: [before] })
+    expect(readTeamUnlock(binding, home)?.keys).toMatchObject([
+      { version: 1, key: toBase64(teamKeyRaw), writable: true },
+    ])
+
+    // And the write the change had stopped now goes through.
+    mkdirSync(join(cwd, '.git'), { recursive: true })
+    saveMap(join(cwd, STORE_DIR, STORE_FILE), { __CLS__1: 'Ledger' }, { force: true })
+    const served = fetchMock.getMockImplementation() as (
+      u: string,
+      i?: RequestInit
+    ) => Promise<Response>
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/maps/team-envelopes')
+        return jsonResponse(200, { maps: [], unreadable: [] })
+      if (path === '/api/maps' && init?.method === 'POST') return jsonResponse(201, { id: 'map-9' })
+      return served(url, init)
+    })
+    const pushed = await run(['maps', 'push', 'shared', '--team'])
+    expect(pushed.code, pushed.err).toBe(EXIT_OK)
+    expect(pushed.out).toContain('map-9')
+  })
+
+  it('a fetched wrap labelled as this account is never confirmed for anyone', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'u-me'
+    serve(bodies)
+    await run(['team', 'unlock'])
+
+    const { code, err } = await run(['team', 'trust', 'Zespół', await fingerprint(granterPublic)])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain('No key for team "Zespół" has the fingerprint')
+    expect(readPins(binding, home)).toEqual({})
   })
 
   it('needs both the team and the fingerprint', async () => {
