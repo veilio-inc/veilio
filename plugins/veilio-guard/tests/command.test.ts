@@ -324,13 +324,12 @@ test('a command runs as typed while the guard is off', async ($, on) => {
   expect(ran[0]?.args).toBe(CANARY)
 })
 
-test('a command with arguments is refused while the guard is stopped', async ($, on) => {
+test('a command is refused while the guard is stopped, with or without arguments', async ($, on) => {
   const ran = commands(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
   const out = await $.command.run({ command: 'review', args: CANARY })
-  expect(ran).toHaveLength(0)
   expect(out.text).toContain('Veilio guard stopped')
   await $.command.run({ command: 'clear', args: '' })
-  expect(ran.map((r) => r.command)).toEqual(['clear'])
+  expect(ran).toHaveLength(0)
 })
 
 const UNKNOWN = (field: string) =>
@@ -393,9 +392,9 @@ test("a command the guard cannot check answers with the guard's failure, not its
 
 // Security review of 43b6227: while stopped nothing can be masked, so what a
 // command prints is withheld from the model, as a prompt is; /veilio still runs.
-test("a command's printed text is withheld while the guard is stopped", async ($, on) => {
+test('nothing a command prints or records reaches the model while the guard is stopped', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
-  on('command.run', () => ({ text: `Cost of ${CANARY}` }))
+  on('command.run', () => ({ text: `Cost of ${CANARY}`, context: [`Notes on ${CANARY}`] }))
   const out = await $.command.run({ command: 'cost', args: '' })
   expect(out.text).toMatch(/^Veilio guard stopped: .*\. Run \/veilio\.$/)
   expect(JSON.stringify(out)).not.toContain(CANARY)
@@ -427,4 +426,35 @@ test("/veilio's line with a name in it is not sent as typed", async ($, on) => {
     command: { name: 'veilio', args: `on ${CANARY}` },
   } as never)
   expect(out.drop).toContain('does not let the guard mask the line of a slash command')
+})
+
+// Final review of 0f1b04c: a command named after a project name (a skill)
+// is not sent as typed, and /veilio's status is masked like any output.
+test('a slash command whose name is a masked name is not sent as typed', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  const base = { wait: false, origin: { kind: 'user' } } as const
+  const out = await $.prompt.submit({
+    ...base,
+    text: `/${CANARY}`,
+    command: { name: CANARY, args: '' },
+  } as never)
+  expect(out.drop).toContain('does not let the guard mask the line of a slash command')
+})
+
+test("/veilio's status reaches the model masked, and reads as written otherwise", async ($, on) => {
+  const root = `/work/${CANARY}`
+  project(on, { [`${root}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, { cwd: root })
+  const out = await $.command.run({ command: 'veilio', args: '' })
+  expect(out.text).not.toContain(CANARY)
+  expect(out.text).toContain('secrets removed.')
+})
+
+test('a command whose arguments were masked says so', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => ({ text: 'done' }))
+  await $.command.run({ command: 'review', args: 'the diff' })
+  expect(p.toasts).toEqual([])
+  await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
+  expect(p.toasts).toEqual(['Veilio masked names in your prompt before sending it.'])
 })

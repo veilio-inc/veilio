@@ -347,11 +347,10 @@ export function register(on: On, options: Options = {}) {
     // Spec 083: a slash command's line is masked at command.run and the host
     // applies no rewrite of it here, so a line that is more than the command
     // as command.run left it goes only when masking would not change it.
-    // The line is the command's only once its arguments hold nothing to mask.
+    // The line is the command's only once its name and arguments hold nothing
+    // to mask (a skill can be named after a project name).
     const line = e.command && `/${e.command.name}${e.command.args ? ` ${e.command.args}` : ''}`
-    const asCommand =
-      e.text === line &&
-      g.applyText(e.command!.args, 'prompt', undefined, budget) === e.command!.args
+    const asCommand = e.text === line && g.applyText(line, 'prompt', undefined, budget) === line
     const text = asCommand ? e.text : g.applyText(e.text, 'prompt', scan, budget)
     if (e.command && text !== e.text) return { drop: COMMAND_LINE_REFUSED }
     const context =
@@ -494,14 +493,10 @@ export function register(on: On, options: Options = {}) {
     // masked like any command's (security review of 43b6227).
     const own = e.command === 'veilio' && VEILIO_SWITCHES.has(args.trim())
     const asTyped = own || args.trim() === ''
-    // Stopped: nothing can be masked. A command whose arguments would need it
-    // does not run; any other runs, and what it prints is withheld.
-    if (g.state === 'stopped') {
-      const stopped = { text: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
-      if (!asTyped) return stopped
-      const r = await next(e)
-      return own || typeof r.text !== 'string' ? r : { ...r, ...stopped }
-    }
+    // Stopped: nothing can be masked, and what a command records for the model
+    // cannot be held back once it ran, so only /veilio's switch runs.
+    const stopped = () => `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.`
+    if (g.state === 'stopped') return own ? next(e) : { text: stopped() }
     let masked = args
     if (!asTyped) {
       const state = g.index?.state
@@ -510,6 +505,7 @@ export function register(on: On, options: Options = {}) {
       const [scan] = g.learnTogether([args])
       await g.learnRuleNames([args], budget)
       masked = g.applyText(args, 'prompt', scan, budget)
+      if (masked !== args) $.ui.toast('Veilio masked names in your prompt before sending it.')
     }
     // What the command records for the model is passed as it is: the host
     // refuses a hook that changes an entry next gave it (COVERAGE.md). Its
@@ -517,9 +513,18 @@ export function register(on: On, options: Options = {}) {
     // with Claude Code (CommandRunResult): masked, and the row is drawn with
     // the real names.
     const r = await next({ ...e, args: masked })
-    // /veilio's own status names no project name: the guard's state and the paths.
-    if (typeof r.text !== 'string' || g.state !== 'on' || own) return r
+    // Read again: the run may have switched the guard (/veilio) or stopped it.
+    const now = g.state as Guard['state']
+    if (typeof r.text !== 'string' || now === 'off') return r
+    // Stopped while it ran (another writer's map): its text is withheld.
+    if (now === 'stopped') return own ? r : { ...r, text: stopped() }
     await g.learnRuleNames([r.text], budget)
+    // /veilio's status is the guard's own prose, which the secret scan misreads
+    // ("secrets removed."): only the project's path in it can hold a name.
+    if (own) {
+      const root = g.root && g.applyText(g.root, 'prompt', undefined, budget)
+      return root ? { ...r, text: r.text.split(g.root).join(root) } : r
+    }
     return { ...r, text: g.applyText(r.text, 'result', undefined, budget) }
   }).catch(async () => ({ text: PROMPT_FAILED }))
 

@@ -113,6 +113,23 @@ describe('pin-guard --check', () => {
     expect(r.stderr).toContain(`points at ${first}`)
   })
 
+  it.each([
+    [
+      'url',
+      { url: 'https://github.com/someone/fork.git' },
+      'url is https://github.com/someone/fork.git',
+    ],
+    ['path', { path: 'plugins/other' }, 'path is plugins/other'],
+    ['sha', { sha: 'abc123' }, 'sha abc123 is not a full commit id'],
+  ])('fails when the pin names another %s', (_, change, says) => {
+    const sha = version('0.8.0')
+    git('tag', 'veilio-guard@0.8.0', sha)
+    entry({ ...pinned('veilio-guard@0.8.0', sha), ...change })
+    const r = run('--check')
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(says)
+  })
+
   it('fails on a relative source', () => {
     version('0.8.0')
     entry('./plugins/veilio-guard')
@@ -123,18 +140,23 @@ describe('pin-guard --check', () => {
 })
 
 describe('pin-guard --pin', () => {
-  it('tags the commit with its version and pins the marketplace entry to it', () => {
-    const sha = version('0.8.0')
-    version('0.9.0')
-    entry('./plugins/veilio-guard')
-    const r = run('--pin', sha)
-    expect(r.stderr).toBe('')
-    expect(git('rev-parse', 'veilio-guard@0.8.0^{commit}')).toBe(sha)
-    const m = JSON.parse(readFileSync(join(repo, '.claude-plugin/marketplace.json'), 'utf8'))
-    expect(guardEntry(m)?.source).toEqual(pinned('veilio-guard@0.8.0', sha))
-    expect(m.plugins[0]).toEqual({ name: 'other', source: './plugins/other' })
-    expect(run('--check').status).toBe(0)
-  })
+  // It runs git and node several times: past vitest's 5 s under load.
+  it(
+    'tags the commit with its version and pins the marketplace entry to it',
+    { timeout: 30_000 },
+    () => {
+      const sha = version('0.8.0')
+      version('0.9.0')
+      entry('./plugins/veilio-guard')
+      const r = run('--pin', sha)
+      expect(r.stderr).toBe('')
+      expect(git('rev-parse', 'veilio-guard@0.8.0^{commit}')).toBe(sha)
+      const m = JSON.parse(readFileSync(join(repo, '.claude-plugin/marketplace.json'), 'utf8'))
+      expect(guardEntry(m)?.source).toEqual(pinned('veilio-guard@0.8.0', sha))
+      expect(m.plugins[0]).toEqual({ name: 'other', source: './plugins/other' })
+      expect(run('--check').status).toBe(0)
+    }
+  )
 
   it('refuses when the tag already names another commit', () => {
     const first = version('0.8.0')
