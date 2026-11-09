@@ -893,36 +893,54 @@ function psParam(given: string): string | null {
 }
 
 /** A PowerShell path as the cd rules read one: `\` a separator, a drive
- *  path absolute. Its raw text is kept for the refusal (N3). */
+ *  path absolute, a leading `~` (quoted or not: the provider expands it)
+ *  HOME. Its raw text is kept for the refusal (N3). */
 function psPath(w: Word): Word {
-  const parts = w.parts.map((p, k): Part => {
-    if (p.kind !== 'lit') return p
-    const t = p.text.replace(/\\/g, '/')
-    return { ...p, text: k === 0 && /^[A-Za-z]:/.test(t) ? `/${t}` : t }
-  })
-  const literal = parts.every((p) => p.kind === 'lit')
-    ? parts.map((p) => (p as { text: string }).text).join('')
-    : null
-  return { parts, literal, raw: w.raw }
+  const text = w.parts
+    .map((p) => (p.kind === 'lit' ? p.text : '~'))
+    .join('')
+    .replace(/\\/g, '/')
+  const path = /^[A-Za-z]:/.test(text) ? `/${text}` : text
+  const parts: Part[] = /^~(?:\/|$)/.test(path)
+    ? [
+        { kind: 'tilde', user: '' },
+        ...(path.length > 1 ? [{ kind: 'lit', text: path.slice(1), quoted: false } as Part] : []),
+      ]
+    : [{ kind: 'lit', text: path, quoted: false }]
+  return { parts, literal: parts[0]!.kind === 'lit' ? path : null, raw: w.raw }
 }
 
-/** Why a PowerShell location target is not followed, or null: only one
- *  plain path - relative, `~`-based or on a drive - is (the allow-list
- *  after review: no variable, provider path, UNC path or splatting). */
+/** PowerShell's dashes: a word starting with one is a parameter. */
+const PS_DASH = /^[-–—―]/
+// The founder's allow-list (2026-11-09): letters and digits of any script,
+// `. _ -` and separators, a drive letter at the start; inside quotes also
+// space and parentheses.
+const PS_UNQUOTED = /^[\p{L}\p{N}._\-/\\~]*$/u
+const PS_QUOTED = /^[\p{L}\p{N}._\-/\\~ ()]*$/u
+
+/** Why a PowerShell location target is not followed, or null: no variable
+ *  or subexpression, `@`, backtick, provider (`::`) or UNC path, leading
+ *  dash, or character outside the allow-list. */
 function psTargetRefusal(w: Word): string | null {
-  const [first, ...rest] = w.parts
-  if (!first) return 'a variable'
-  const plain =
-    (first.kind === 'lit' || (first.kind === 'tilde' && first.user === '')) &&
-    rest.every((p) => p.kind === 'lit')
-  const text = w.parts
-    .map((p) => (p.kind === 'lit' ? p.text : p.kind === 'tilde' ? '~' : ''))
-    .join('')
-  if (text.startsWith('@')) return 'splatting'
-  if (!plain) return formOf(w.parts.find((p) => p.kind !== 'lit' && p.kind !== 'tilde') ?? first)
-  if (text.includes('::') || /^[\\/]/.test(text) || text.includes('@'))
-    return 'a provider or network path'
-  return null
+  const [first] = w.parts
+  if (!first) return 'a path that is not plain'
+  if (first.kind === 'lit' && first.text.startsWith('@')) return 'splatting'
+  const bad = w.parts.find(
+    (p, k) => p.kind !== 'lit' && !(k === 0 && p.kind === 'tilde' && p.user === '')
+  )
+  if (bad) return formOf(bad)
+  if (w.raw.includes('`')) return 'a path that is not plain'
+  const text = w.parts.map((p) => (p.kind === 'lit' ? p.text : '~')).join('')
+  const drive = /^[A-Za-z]:/.test(text) ? 2 : 0
+  const ok =
+    !PS_DASH.test(text) &&
+    !/^(?:\\\\|\/\/|[\\/]{2})/.test(text) &&
+    w.parts.every((p, k) => {
+      if (p.kind !== 'lit') return true
+      const t = k === 0 ? p.text.slice(drive) : p.text
+      return (p.quoted ? PS_QUOTED : PS_UNQUOTED).test(t)
+    })
+  return ok ? null : 'a path that is not plain'
 }
 
 export type PsCd =
@@ -944,9 +962,9 @@ function psCd(words: readonly Word[]): PsCd {
   const rest: Word[] = []
   for (let j = k + 1; j < words.length; j++) {
     const w = words[j]!
-    const m = /^-([A-Za-z]+)(:?)$/.exec(w.literal ?? '')
+    const m = /^[-\u2013\u2014\u2015]([A-Za-z]+)(:?)$/.exec(w.literal ?? '')
     if (!m) {
-      if (w.literal?.startsWith('-'))
+      if (PS_DASH.test(w.literal ?? w.raw))
         return { refuse: 'a parameter Veilio cannot read', shown: w.raw }
       rest.push(w)
       continue
@@ -958,7 +976,7 @@ function psCd(words: readonly Word[]): PsCd {
     const value = words[++j]
     if (!value) return { refuse: 'a parameter Veilio cannot read', shown: w.raw }
     if (param === 'path' || param === 'literalpath') rest.push(value)
-    else if (value.literal === null)
+    else if (value.literal === null || !/^[A-Za-z0-9_.]+$/.test(value.literal))
       return { refuse: 'a parameter Veilio cannot read', shown: value.raw }
   }
   if (rest.length > (name === 'popd' ? 0 : 1))

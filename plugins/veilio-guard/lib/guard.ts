@@ -1690,6 +1690,11 @@ export class Guard {
         const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
         const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
         let moves: string[] = []
+        if (parsed?.ok && dialect === 'ps' && PS_DRIVE.test(c) && PS_LOCATION.test(c))
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a drive this command creates), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
         if (parsed?.ok) {
           const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
           // Q3 = A: with no host report, a call that would leave the shell
@@ -1744,7 +1749,7 @@ export class Guard {
                 }
               }
             }
-        } else if (dialect === 'ps' && parsed && PS_LOCATION.test(c))
+        } else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
           // A PowerShell command the reader does not model, naming a
           // location command anywhere: refused (review of the PowerShell path).
           return this.deny(
@@ -2466,6 +2471,22 @@ const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])
 /** PowerShell's location commands, named anywhere in a command's text. */
 const PS_LOCATION =
   /set-location|push-location|pop-location|(?<![\w-])(?:sl|cd|chdir|pushd|popd)(?![\w-])/i
+/** A PowerShell command the reader cannot read is refused when its text has
+ *  any of these (review of the PowerShell path); otherwise main's verdict:
+ *  a location command, a backtick, `&` or `.` as a command, code run from a
+ *  string, the session state, a new drive, a command run elsewhere. */
+const PS_UNREADABLE = new RegExp(
+  [
+    PS_LOCATION.source,
+    '`',
+    String.raw`(?:^|[;|{(\n])\s*(?:&|\.(?=[\s'"$]))`,
+    String.raw`(?<![\w-])(?:iex|ndr|mount|icm)(?![\w-])`,
+    String.raw`invoke-expression|sessionstate|new-psdrive|invoke-command|start-process|\$executioncontext`,
+  ].join('|'),
+  'i'
+)
+/** A drive the command makes: with a location command beside it, refused. */
+const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers

@@ -174,16 +174,56 @@ for (const [command, expected] of [
   ],
   [
     'Set-Location Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws',
-    N1('Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws', 'a provider or network path'),
+    N1('Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws', 'a path that is not plain'),
   ],
-  ['Set-Location \\\\server\\share', N1('\\\\server\\share', 'a provider or network path')],
-  ['Set-Location //server/share', N1('//server/share', 'a provider or network path')],
+  ['Set-Location \\\\server\\share', N1('\\\\server\\share', 'a path that is not plain')],
+  ['Set-Location //server/share', N1('//server/share', 'a path that is not plain')],
   ['Set-Location -Foo ~\\.aws', N1('-Foo', 'a parameter Veilio cannot read')],
   ['Set-Location -P ~\\.aws', N1('-P', 'a parameter Veilio cannot read')],
   ['Set-Location -Pa src', N1('-Pa', 'a parameter Veilio cannot read')],
   ['Set-Location -StackName s src', N1('-StackName', 'a parameter Veilio cannot read')],
   ['Set-Location src ~\\.aws', N1('src ~\\.aws', 'more than one target')],
   ['Pop-Location src', N1('src', 'more than one target')],
+  // The founder's allow-list (2026-11-09): letters of any script, quoted
+  // paths, a drive letter; no provider, UNC, backtick, `$`, `@` or dash.
+  ['Set-Location HKCU:\\Software', N1('HKCU:\\Software', 'a path that is not plain')],
+  ['Set-Location sr`c', N1('sr`c', 'a path that is not plain')],
+  ['Set-Location "src$x"', N1('"src$x"', 'a variable')],
+  ['Set-Location "src;x"', N1('"src;x"', 'a path that is not plain')],
+  ['Set-Location –Path ~\\.aws', A1('~\\.aws')],
+  ['Set-Location –Foo src', N1('–Foo', 'a parameter Veilio cannot read')],
+  ['Set-Location —src', N1('—src', 'a parameter Veilio cannot read')],
+  ['Set-Location src -ErrorAction $x', N1('$x', 'a parameter Veilio cannot read')],
+  ["Set-Location '~\\.aws'", A1('~\\.aws')],
+  // A drive the command makes, beside a location command (any path)
+  [
+    'New-PSDrive -Name k -PSProvider FileSystem -Root ~\\.kube; Set-Location k:\\x',
+    N1(
+      'New-PSDrive -Name k -PSProvider FileSystem -Root ~\\.kube; Set-Location k:\\x',
+      'a drive this command creates'
+    ),
+  ],
+  [
+    'New-PSDrive -Name k -PSProvider FileSystem -Root ~\\.kube; Set-Location src',
+    N1(
+      'New-PSDrive -Name k -PSProvider FileSystem -Root ~\\.kube; Set-Location src',
+      'a drive this command creates'
+    ),
+  ],
+  // Unreadable, and its text has something the guard cannot let through
+  [
+    'switch ($x) { 1 { iex $s } }',
+    N1('switch ($x) { 1 { iex $s } }', 'a command Veilio cannot read'),
+  ],
+  ['$h = @{ a = 1 }; & $s', N1('$h = @{ a = 1 }; & $s', 'a command Veilio cannot read')],
+  [
+    '$h = @{ a = $ExecutionContext }',
+    N1('$h = @{ a = $ExecutionContext }', 'a command Veilio cannot read'),
+  ],
+  [
+    '$h = @{ a = 1 }; Start-Process x',
+    N1('$h = @{ a = 1 }; Start-Process x', 'a command Veilio cannot read'),
+  ],
   [
     'switch (Set-Location ~\\.aws) { default { 1 } }',
     N1('switch (Set-Location ~\\.aws) { default { 1 } }', 'a command Veilio cannot read'),
@@ -219,10 +259,7 @@ for (const [command, expected] of [
 for (const command of [
   'Set-Location src; npm test',
   'Set-Location -Path src -ErrorAction Stop',
-  'Set-Location "C:\\Program Files (x86)\\App"',
   'Push-Location src; npm test; Pop-Location',
-  'Set-Location έγγραφα',
-  'Set-Location "Wnioski\\źródła"; ls',
   'Push-Location src > $null',
   'Set-Location src -ErrorVariable err',
   '$x = 1; Set-Location src',
@@ -233,6 +270,19 @@ for (const command of [
   // a construct the reader does not model, with no location command: as on main
   'switch ($x) { 1 { "a" } }',
   'foreach ($f in Get-ChildItem) { $f.Name }',
+  '$h = @{ a = 1 }',
+  'Set-Location ~\\src',
+  'Set-Location sub/x-1.2_3',
+  'Set-Location src -ErrorAction "Stop"',
+  'Set-Location "C:\\Program Files (x86)\\App"',
+  'Set-Location έγγραφα',
+  'Set-Location "Wnioski\\źródła"; ls',
+  'cd Straße',
+  'cd C:\\work\\project\\src',
+  "Set-Location '~\\src'",
+  'Set-Location ~',
+  'Set-Location C:\\src',
+  'Set-Location \\src',
 ])
   test(`086 PowerShell ${JSON.stringify(command)} runs`, async ($, on) => {
     expect(await ps($, on, command)).toBeUndefined()
