@@ -98,6 +98,8 @@ export interface ParsedArgs {
    * server above all. `vault`, not `team`: it is the account's own key.
    */
   vaultAction: ActionOf<'vault'> | null
+  /** `keys fingerprint` (spec 080 item 7a). */
+  keysAction: ActionOf<'keys'> | null
   /** `vault unlock --days N`, `team unlock --days N`: how long the unlock
    *  lasts. Null: the default, 7 days. */
   days: number | null
@@ -157,6 +159,7 @@ const ACTION_FIELD = {
   maps: 'mapsAction',
   team: 'teamAction',
   vault: 'vaultAction',
+  keys: 'keysAction',
   projects: 'projectsAction',
   rules: 'rulesAction',
 } as const satisfies Record<string, keyof ParsedArgs>
@@ -207,6 +210,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     allowDrop: false,
     teamAction: null,
     vaultAction: null,
+    keysAction: null,
     projectsAction: null,
     days: null,
     rulesAction: null,

@@ -52,7 +52,12 @@ export interface StoredTeamKey {
    * `wrapped_by` (null for a deleted or unnamed granter) and the wrap's
    * granter key. Absent in a file an earlier CLI wrote.
    */
-  granter?: { id: string | null; publicKey: string }
+  granter?: {
+    id: string | null
+    publicKey: string
+    /** Who that is, for `team trust`'s message only: never judged by. */
+    label?: string
+  }
   /**
    * May a map be sealed under it: true only when `team unlock` or
    * `team trust` judged its wrap `trusted`. Read as false without a granter,

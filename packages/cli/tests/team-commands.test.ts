@@ -6,7 +6,7 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential, credentialPath } from '../src/credential.js'
 import { readTeamUnlock, teamUnlockPath, writeTeamUnlock, expiryFrom } from '../src/team-unlock.js'
-import { confirmPin } from '../src/key-pins.js'
+import { confirmPin, readPins } from '../src/key-pins.js'
 import { fingerprint } from '../src/client/fingerprint.js'
 import {
   toBase64,
@@ -341,7 +341,7 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
       {
         version: 1,
         key: toBase64(teamKeyRaw),
-        granter: { id: 'u2', publicKey: granterPublic },
+        granter: { id: 'u2', publicKey: granterPublic, label: 'ana@example.test' },
         writable: false,
       },
     ])
@@ -416,7 +416,11 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
 
     expect(out).toContain('was granted by a deleted account with key')
     const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
-    expect(stored?.keys[0]?.granter).toEqual({ id: null, publicKey: granterPublic })
+    expect(stored?.keys[0]?.granter).toEqual({
+      id: null,
+      publicKey: granterPublic,
+      label: 'a deleted account',
+    })
   })
 
   it('without the member list, names the team and granter by id, and still judges', async () => {
@@ -478,6 +482,150 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
 
     expect(code).toBe(EXIT_ERROR)
     expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+})
+
+describe('team trust (spec 080 item 7a)', () => {
+  async function unlockedReadOnly(): Promise<{ granterPublic: string; fp: string }> {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    serve(bodies)
+    expect((await run(['team', 'unlock'])).code).toBe(EXIT_OK)
+    fetchMock.mockClear()
+    return { granterPublic, fp: await fingerprint(granterPublic) }
+  }
+  const binding = { instance: INSTANCE, account: ACCOUNT }
+
+  it('confirms the key with that fingerprint, makes its version writable, and needs no network', async () => {
+    const { granterPublic, fp } = await unlockedReadOnly()
+
+    const { code, out } = await run(['team', 'trust', 'Zespół', fp])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toBe(
+      `Confirmed ${fp} for ana@example.test on this device. Team "Zespół" key version 1 can now be used to save maps.\n`
+    )
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(true)
+    expect(readPins(binding, home).u2?.current).toBe(granterPublic)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('takes the fingerprint in any case, with spaces for dashes, and the team by its id', async () => {
+    const { fp } = await unlockedReadOnly()
+
+    const { code } = await run(['team', 'trust', 'team-1', fp.toUpperCase().replace(/-/g, ' ')])
+
+    expect(code).toBe(EXIT_OK)
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(true)
+  })
+
+  it('a fingerprint that matches no stored key changes nothing and says so, exit 1', async () => {
+    const { fp } = await unlockedReadOnly()
+    const wrong = `${fp.slice(0, -1)}${fp.endsWith('0') ? '1' : '0'}`
+
+    const { code, err } = await run(['team', 'trust', 'Zespół', wrong])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain(
+      `No key for team "Zespół" has the fingerprint ${wrong}. Check it for typos; run \`veilio team unlock\` to see the fingerprints offered.`
+    )
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
+    expect(readPins(binding, home)).toEqual({})
+  })
+
+  it('another team than the one unlocked matches nothing', async () => {
+    const { fp } = await unlockedReadOnly()
+
+    const { code, err } = await run(['team', 'trust', 'Ομάδα', fp])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain(`No key for team "Ομάδα" has the fingerprint ${fp}.`)
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
+  })
+
+  it('a deleted granter is confirmed under the key itself', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'deleted-user'
+    serve(bodies)
+    await run(['team', 'unlock'])
+
+    const { code, out } = await run(['team', 'trust', 'Zespół', await fingerprint(granterPublic)])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toContain('for a deleted account on this device')
+    expect(readPins(binding, home)[`key:${granterPublic}`]?.current).toBe(granterPublic)
+  })
+
+  it('with nothing unlocked, says to unlock first', async () => {
+    signIn()
+    const { code, err } = await run(['team', 'trust', 'Zespół', '046ee-6b73d-7baf9-15c9f'])
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain('veilio team unlock')
+  })
+
+  it('needs both the team and the fingerprint', async () => {
+    signIn()
+    const { code, err } = await run(['team', 'trust', 'Zespół'])
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain('veilio team trust <team> <fingerprint>')
+  })
+
+  it('a confirmed key is trusted by the next unlock too, with nothing to confirm', async () => {
+    const { fp } = await unlockedReadOnly()
+    await run(['team', 'trust', 'Zespół', fp])
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).not.toContain('veilio team trust')
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(true)
+  })
+})
+
+describe('keys fingerprint (spec 080 item 7a)', () => {
+  it("prints the fingerprint of the public key derived from this account's private key", async () => {
+    signIn()
+    const { bodies, myPublic } = await realGrant()
+    serve(bodies)
+
+    const { code, out } = await run(['keys', 'fingerprint'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toBe(
+      `Your key fingerprint: ${await fingerprint(myPublic)}. Teammates compare this when they confirm a key you granted.\n`
+    )
+  })
+
+  it("refuses when the server's public key is not this private key's - never shows the server's copy", async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    ;(bodies['/api/auth/keys'] as { publicKey: string }).publicKey = granterPublic
+    serve(bodies)
+
+    const { code, out, err } = await run(['keys', 'fingerprint'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(out).toBe('')
+    expect(err).toContain('does not belong to its private key')
+  })
+
+  it('a wrong passphrase prints no fingerprint', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    serve(bodies)
+
+    const { code, out } = await run(['keys', 'fingerprint'], 'not-the-passphrase')
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(out).toBe('')
+  })
+
+  it('refuses when not signed in, without reaching the network', async () => {
+    const { code } = await run(['keys', 'fingerprint'])
+    expect(code).toBe(EXIT_ERROR)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
 

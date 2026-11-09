@@ -66,9 +66,9 @@ import { refusal, renderRefusal, rulesSkippedSentences, type Refusal } from './c
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
-import { fingerprint } from './client/fingerprint.js'
+import { fingerprint, sameFingerprint } from './client/fingerprint.js'
 import { DELETED_GRANTER, granterIdentity, judgeWrap, wrapFrom } from './client/wrap-judge.js'
-import { readPins } from './key-pins.js'
+import { confirmPin, confirmedKeys, readPins } from './key-pins.js'
 import {
   formatProjectsList,
   listTeamProjects,
@@ -882,7 +882,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       keys.push({
         version: wrap.version,
         key,
-        granter: { id: id.startsWith('key:') ? null : id, publicKey: from },
+        granter: { id: id.startsWith('key:') ? null : id, publicKey: from, label: granter },
         writable: judged.verdict === 'trusted',
       })
       if (judged.verdict === 'needs-review') {
@@ -997,6 +997,110 @@ function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>
  *  letters, digits, `.`, `_` and `-`; else its id. */
 function teamArg(name: string, id: string): string {
   return /^[\p{L}\p{N}._-]+$/u.test(name) ? name : printable(id)
+}
+
+/**
+ * `veilio team trust <team> <fingerprint>` (spec 080 item 7a): a person has
+ * compared the fingerprint with the granter outside Veilio. Records the pin,
+ * then marks writable each stored key that granter made with that key. Reads
+ * and writes only this machine's files: nothing is asked of the server, which
+ * is the party this check exists to not believe.
+ */
+export async function runTeamTrust(
+  team: string | null,
+  typed: string | null,
+  io: Io
+): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) {
+    io.stderr('veilio: not signed in. Run `veilio login` first.\n')
+    return EXIT_ERROR
+  }
+  if (!team || !typed) {
+    io.stderr(
+      'veilio: team trust needs the team and the fingerprint: veilio team trust <team> <fingerprint>\n'
+    )
+    return EXIT_ERROR
+  }
+  const unlock = readTeamUnlock(credential, io.home)
+  if (!unlock) return refused(refusal('team_locked'), io)
+  const teamName = printable(unlock.teamName ?? unlock.teamId)
+
+  const forTeam = team === unlock.teamId || team === unlock.teamName
+  let match: NonNullable<StoredTeamKey['granter']> | null = null
+  for (const k of forTeam ? unlock.keys : []) {
+    if (k.granter && sameFingerprint(typed, await fingerprint(k.granter.publicKey))) {
+      match = k.granter
+      break
+    }
+  }
+  if (!match) {
+    const shown = printable(team)
+    io.stderr(
+      `No key for team "${shown}" has the fingerprint ${printable(typed)}. ` +
+        'Check it for typos; run `veilio team unlock` to see the fingerprints offered.\n'
+    )
+    return EXIT_ERROR
+  }
+
+  const identity = granterIdentity(match.publicKey, match.id)
+  confirmPin(credential, identity, match.publicKey, io.home)
+  const accepted = confirmedKeys(readPins(credential, io.home)[identity])
+  // Re-judged: what this granter made with a key now confirmed may be written
+  // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
+  const keys = unlock.keys.map((k) =>
+    k.granter &&
+    granterIdentity(k.granter.publicKey, k.granter.id) === identity &&
+    accepted.includes(k.granter.publicKey)
+      ? { ...k, writable: true }
+      : k
+  )
+  writeTeamUnlock({ ...unlock, keys }, io.home)
+
+  const fp = await fingerprint(match.publicKey)
+  const who =
+    typeof match.label === 'string'
+      ? printable(match.label)
+      : match.id === null
+        ? 'a deleted account'
+        : printable(match.id)
+  for (const k of keys) {
+    if (k.granter?.publicKey !== match.publicKey || !k.writable) continue
+    io.stdout(
+      `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
+    )
+  }
+  return EXIT_OK
+}
+
+/**
+ * `veilio keys fingerprint` (spec 080 item 7a): what a teammate compares when
+ * they confirm a key this account granted. The fingerprint of the public key
+ * DERIVED from the private key the passphrase opens, never the server's copy
+ * - a server that swapped it would otherwise make both sides agree, as the web
+ * app's `OwnFingerprint` says.
+ */
+export async function runKeysFingerprint(io: Io): Promise<number> {
+  const credential = readCredential(io.home)
+  if (!credential) {
+    io.stderr('veilio: not signed in. Run `veilio login` first.\n')
+    return EXIT_ERROR
+  }
+  try {
+    const mine = await getUserKeys(credential)
+    if (!mine.initialized) return refused(refusal('keys_not_set_up'), io)
+    const derived = await vaultKeyFor(credential, clientContext(io).passphrase)
+    if (!derived.ok) return refused(derived.refusal, io)
+    const own = await openOwnKeypair(derived.value, mine.privateKeyEncrypted, mine.publicKey)
+    if (!own.ok) return refused(refusal('own_public_key_mismatch'), io)
+    io.stdout(
+      `Your key fingerprint: ${await fingerprint(own.publicKey)}. ` +
+        'Teammates compare this when they confirm a key you granted.\n'
+    )
+    return EXIT_OK
+  } catch (err) {
+    return reportCloudFailure(err, io)
+  }
 }
 
 /** Whether this account is its team's only member. Unknown counts as not:
