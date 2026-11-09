@@ -534,10 +534,10 @@ export function grantTeamKey(
   })
 }
 
-/** The account's team and its members - only how many is read here. */
+/** The account's team, its name and its members. */
 export function getMyTeam(
   credential: Credential
-): Promise<{ team: { id: string; members?: unknown[] } | null }> {
+): Promise<{ team: { id: string; name?: unknown; members?: unknown[] } | null }> {
   return request('/api/teams/mine', { credential })
 }
 

@@ -6,6 +6,8 @@ import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { writeCredential, credentialPath } from '../src/credential.js'
 import { readTeamUnlock, teamUnlockPath, writeTeamUnlock, expiryFrom } from '../src/team-unlock.js'
+import { confirmPin } from '../src/key-pins.js'
+import { fingerprint } from '../src/client/fingerprint.js'
 import {
   toBase64,
   deriveVaultKey,
@@ -92,7 +94,12 @@ function signIn(): void {
  * A real vault, keypair and team-key grant, built the way the browser builds
  * them — so `unlock` runs its actual crypto rather than a stand-in.
  */
-async function realGrant(): Promise<{ bodies: Record<string, unknown>; teamKeyRaw: Uint8Array }> {
+async function realGrant(): Promise<{
+  bodies: Record<string, unknown>
+  teamKeyRaw: Uint8Array
+  granterPublic: string
+  myPublic: string
+}> {
   const salt = randomVaultSalt()
   const vaultKey = await deriveVaultKey(PASSPHRASE, salt)
   const verifier = await makeVerifier(vaultKey)
@@ -150,7 +157,20 @@ async function realGrant(): Promise<{ bodies: Record<string, unknown>; teamKeyRa
 
   return {
     teamKeyRaw,
+    granterPublic,
+    myPublic,
     bodies: {
+      '/api/auth/me': { user: { id: 'u-me', email: ACCOUNT } },
+      '/api/teams/mine': {
+        team: {
+          id: 'team-1',
+          name: 'Zespół',
+          members: [
+            { user_id: 'u-me', email: ACCOUNT, status: 'active' },
+            { user_id: 'u2', email: 'ana@example.test', status: 'active' },
+          ],
+        },
+      },
       '/api/maps': { personalMaps: [], teamMaps: [], team: { id: 'team-1' }, plan: 'team' },
       '/api/auth/keys': {
         initialized: true,
@@ -202,7 +222,7 @@ describe('team unlock', () => {
     // real three-step unwrap rather than copied from anywhere.
     const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
     expect(stored?.teamId).toBe('team-1')
-    expect(stored?.keys).toEqual([{ version: 1, key: toBase64(teamKeyRaw), writable: false }])
+    expect(stored?.keys).toMatchObject([{ version: 1, key: toBase64(teamKeyRaw) }])
   })
 
   it('writes nothing when the passphrase is wrong', async () => {
@@ -303,6 +323,123 @@ describe('team unlock', () => {
 
     expect(code).toBe(EXIT_ERROR)
     expect(err).toContain('none of the team key wraps')
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+})
+
+describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
+  it('a key wrapped with a key nobody confirmed - as a server-minted wrap is - is stored read-only, and says how to confirm it', async () => {
+    signIn()
+    const { bodies, teamKeyRaw, granterPublic } = await realGrant()
+    serve(bodies)
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
+    expect(stored?.keys).toEqual([
+      {
+        version: 1,
+        key: toBase64(teamKeyRaw),
+        granter: { id: 'u2', publicKey: granterPublic },
+        writable: false,
+      },
+    ])
+    expect(stored?.teamName).toBe('Zespół')
+    const fp = await fingerprint(granterPublic)
+    expect(out).toContain(
+      `Team "Zespół": key version 1 was granted by ana@example.test with key ${fp}. ` +
+        'You have not confirmed this key on this device, so Veilio can read with it but will not write under it. ' +
+        'Ask ana@example.test for the key fingerprint Veilio shows them on their dashboard under "Your key fingerprint", ' +
+        `and if it matches, run: veilio team trust Zespół ${fp}`
+    )
+  })
+
+  it('a key from a granter whose key this device confirmed is stored writable, with nothing to confirm', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    serve(bodies)
+    confirmPin({ instance: INSTANCE, account: ACCOUNT }, 'u2', granterPublic, home)
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
+    expect(stored?.keys[0]).toMatchObject({ writable: true, granter: { id: 'u2' } })
+    expect(out).not.toContain('veilio team trust')
+  })
+
+  it("a confirmed granter's key that changed is not stored, and says to compare before trusting it", async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    serve(bodies)
+    const before = toBase64(crypto.getRandomValues(new Uint8Array(32)))
+    confirmPin({ instance: INSTANCE, account: ACCOUNT }, 'u2', before, home)
+
+    const { code, err } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+    expect(err).toContain(
+      `Team "Zespół": ana@example.test's key changed from ${await fingerprint(before)} to ${await fingerprint(granterPublic)}. ` +
+        'This happens when they reset their key - or when someone else is posing as them. ' +
+        'Compare the new fingerprint with ana@example.test before you run `veilio team trust`. ' +
+        'Until then nothing is written under this key.'
+    )
+  })
+
+  it('a wrap labelled as this account but made with another key is not stored, and says whom to tell', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'u-me'
+    serve(bodies)
+
+    const { code, err } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+    expect(err).toContain(
+      'Team "Zespół": key version 1 claims to come from your own key but does not. It was not stored. ' +
+        'Tell your team administrator and support@veilio.dev.'
+    )
+  })
+
+  it('a deleted granter is named as such and confirmed under the key itself', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'deleted-user'
+    serve(bodies)
+
+    const { out } = await run(['team', 'unlock'])
+
+    expect(out).toContain('was granted by a deleted account with key')
+    const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
+    expect(stored?.keys[0]?.granter).toEqual({ id: null, publicKey: granterPublic })
+  })
+
+  it('without the member list, names the team and granter by id, and still judges', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    delete bodies['/api/teams/mine']
+    serve(bodies)
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    expect(out).toContain('Team "team-1": key version 1 was granted by u2 with key')
+    expect(out).toContain('veilio team trust team-1 ')
+  })
+
+  it('writes nothing when Cloud does not say which account this is', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    serve({ ...bodies, '/api/auth/me': { user: {} } })
+
+    const { code } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
     expect(existsSync(teamUnlockPath(home))).toBe(false)
   })
 })

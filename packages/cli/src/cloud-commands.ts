@@ -17,6 +17,7 @@ import {
   reservePlaceholders,
   getUserKeys,
   getTeamKeyWraps,
+  getMe,
   getMyTeam,
   listMaps,
   listRules,
@@ -64,6 +65,9 @@ import { refusal, renderRefusal, rulesSkippedSentences, type Refusal } from './c
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
+import { fingerprint } from './client/fingerprint.js'
+import { DELETED_GRANTER, granterIdentity, judgeWrap, wrapFrom } from './client/wrap-judge.js'
+import { readPins } from './key-pins.js'
 import {
   formatProjectsList,
   listTeamProjects,
@@ -816,20 +820,78 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       ;({ wraps } = await getTeamKeyWraps(credential, teamId))
     }
 
+    // Who made each wrap decides whether a map may be sealed under its key
+    // (spec 080 item 7a, `client/wrap-judge.ts`). Our own id is what rule 3
+    // needs; without it a wrap labelled as ours cannot be told from a first
+    // sighting, so nothing is judged at all.
+    const ownId = (await getMe(credential)).user?.id
+    if (typeof ownId !== 'string' || ownId === '') {
+      io.stderr(
+        'veilio: Cloud did not say which account this is, so no team key was judged. Nothing was written.\n'
+      )
+      return EXIT_ERROR
+    }
+    const roster = await teamRoster(credential, teamId)
+    const teamName = roster.name ?? teamId
+    const pins = readPins(credential, io.home)
+
     const keys: StoredTeamKey[] = []
     for (const wrap of wraps) {
+      let key: string
       try {
         const teamKey = await unwrapTeamKey(wrap.wrapped_key, privateKey, {
           teamId,
           version: wrap.version,
           myPublicKey,
         })
-        keys.push({ version: wrap.version, key: await exportTeamKey(teamKey), writable: false })
+        key = await exportTeamKey(teamKey)
       } catch {
         // A wrap this account cannot open — from a granter whose key has since
         // changed, most likely. Skipped rather than fatal: another version may
         // still open most of the team's maps, and none opening is reported below.
         continue
+      }
+      const from = wrapFrom(wrap.wrapped_key)
+      const judged = judgeWrap({
+        from,
+        wrappedBy: wrap.wrapped_by,
+        ownPublicKey: myPublicKey,
+        ownId,
+        pins,
+      })
+      if (judged.verdict === 'unreadable' || !from) continue
+      if (judged.verdict === 'refused-impersonation') {
+        io.stderr(
+          `Team "${teamName}": key version ${wrap.version} claims to come from your own key but does not. ` +
+            'It was not stored. Tell your team administrator and support@veilio.dev.\n'
+        )
+        continue
+      }
+      const granter = granterLabel(wrap.wrapped_by, roster.emails)
+      if (judged.verdict === 'refused-change') {
+        io.stderr(
+          `Team "${teamName}": ${granter}'s key changed from ${await fingerprint(judged.pinned!)} to ${await fingerprint(from)}. ` +
+            'This happens when they reset their key - or when someone else is posing as them. ' +
+            `Compare the new fingerprint with ${granter} before you run \`veilio team trust\`. ` +
+            'Until then nothing is written under this key.\n'
+        )
+        continue
+      }
+      const id = granterIdentity(from, wrap.wrapped_by)
+      keys.push({
+        version: wrap.version,
+        key,
+        granter: { id: id.startsWith('key:') ? null : id, publicKey: from },
+        writable: judged.verdict === 'trusted',
+      })
+      if (judged.verdict === 'needs-review') {
+        const fp = await fingerprint(from)
+        io.stdout(
+          `Team "${teamName}": key version ${wrap.version} was granted by ${granter} with key ${fp}. ` +
+            'You have not confirmed this key on this device, so Veilio can read with it but will not write under it. ' +
+            `Ask ${granter} for the key fingerprint Veilio shows them on their dashboard under "Your key fingerprint", ` +
+            `and if it matches, run: veilio team trust ${teamArg(teamName, teamId)} ${fp}\n`
+        )
       }
     }
 
@@ -849,6 +911,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         instance: credential.instance,
         account: credential.account,
         teamId,
+        ...(roster.name ? { teamName: roster.name } : {}),
         expiresAt,
         keys,
       },
@@ -892,6 +955,40 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
   } catch (err) {
     return reportCloudFailure(err, io)
   }
+}
+
+/**
+ * The team's name and who its members are, for the messages only: never an
+ * input to whether a key is trusted (spec 080 item 7a). Unknown reads as
+ * nothing known, and the messages fall back to ids.
+ */
+async function teamRoster(
+  credential: Credential,
+  teamId: string
+): Promise<{ name: string | null; emails: Map<string, string> }> {
+  const emails = new Map<string, string>()
+  try {
+    const team = (await getMyTeam(credential)).team
+    if (team?.id !== teamId) return { name: null, emails }
+    for (const m of team.members ?? []) {
+      const { user_id, email } = (m ?? {}) as { user_id?: unknown; email?: unknown }
+      if (typeof user_id === 'string' && typeof email === 'string') emails.set(user_id, email)
+    }
+    return { name: typeof team.name === 'string' && team.name !== '' ? team.name : null, emails }
+  } catch {
+    return { name: null, emails }
+  }
+}
+
+/** Who made a wrap, in words: their address, else their id. */
+function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>): string {
+  if (wrappedBy === undefined || wrappedBy === DELETED_GRANTER) return 'a deleted account'
+  return emails.get(wrappedBy) ?? wrappedBy
+}
+
+/** The team as `team trust` takes it: its name when that is one shell word. */
+function teamArg(name: string, id: string): string {
+  return /^[^\s"'`$\\;&|<>()]+$/.test(name) ? name : id
 }
 
 /** Whether this account is its team's only member. Unknown counts as not:
