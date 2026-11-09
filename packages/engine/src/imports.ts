@@ -40,19 +40,37 @@ export interface ProjectShape {
 
 const IDENT = /^[A-Za-z_$][\w$]*$/
 
-/** Package manifests read at most (as the guard's index). */
-const MAX_MANIFESTS = 200
+/** JSONC without its comments: `//` and block comments outside strings. */
+function withoutComments(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!
+    if (c === '"') {
+      const start = i
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++
+      out += text.slice(start, i + 1)
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++
+      out += '\n'
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      i = end === -1 ? text.length : end + 1
+    } else out += c
+  }
+  return out
+}
 
 /**
  * The project's shape from its file list (paths relative to the root, `/`
  * separated) and a reader for a few of them (spec 085 R2-23): one reading for
  * the CLI, the MCP server and the guard, so none of them takes a project's own
  * package for a public one. Top-level folders; every folder on the way to a
- * Python file and each module's own name; every `package.json`'s name (up to
- * 200); `tsconfig` `baseUrl` folders and `paths` aliases; the root `go.mod`
+ * Python file and each module's own name; every `package.json`'s name (no
+ * cap: one left unread would make that workspace read as public); `tsconfig` `baseUrl` folders and `paths` aliases; the root `go.mod`
  * module. A file the reader cannot give is skipped, which only leaves more
  * names masked.
  */
+
 export function projectShapeFrom(
   files: readonly string[],
   read: (rel: string) => string | undefined
@@ -61,12 +79,14 @@ export function projectShapeFrom(
     try {
       const text = read(rel)
       if (text === undefined) return undefined
-      const value: unknown = JSON.parse(
-        text
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '')
-          .replace(/,(\s*[}\]])/g, '$1')
-      )
+      // Plain JSON first: a comment strip that does not know strings eats the
+      // text between `"src/*"` and `"**/*"` (review).
+      let value: unknown
+      try {
+        value = JSON.parse(text)
+      } catch {
+        value = JSON.parse(withoutComments(text).replace(/,(\s*[}\]])/g, '$1'))
+      }
       return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
     } catch {
       return undefined
@@ -78,9 +98,7 @@ export function projectShapeFrom(
     for (const part of f.replace(/\.py$/, '').split('/')) pythonModules.add(part)
   const baseDirs = new Set(tops)
   const workspaces: string[] = []
-  for (const manifest of files
-    .filter((f) => /(^|\/)package\.json$/.test(f))
-    .slice(0, MAX_MANIFESTS)) {
+  for (const manifest of files.filter((f) => /(^|\/)package\.json$/.test(f))) {
     const name = json(manifest)?.name
     if (typeof name === 'string') workspaces.push(name)
   }
