@@ -1382,7 +1382,10 @@ class PsReader {
     const s = this.s
     for (;;) {
       this.blank(true)
-      while (s[this.i] === ';') (this.i++, this.blank(true))
+      while (s[this.i] === ';') {
+        this.i++
+        this.blank(true)
+      }
       if (this.i >= s.length) {
         if (stop) throw new Unreadable('unbalanced')
         break
@@ -1504,7 +1507,10 @@ class PsReader {
         const arms: List[] = []
         for (;;) {
           this.blank(true)
-          while (s[this.i] === ';') (this.i++, this.blank(true))
+          while (s[this.i] === ';') {
+            this.i++
+            this.blank(true)
+          }
           if (this.i >= s.length) throw new Unreadable('unbalanced')
           if (s[this.i] === '}') break
           if (s[this.i] !== '{') this.word()
@@ -1527,7 +1533,10 @@ class PsReader {
             if (end === -1) throw new Unreadable('unbalanced')
             this.i = end + 1
             this.blank()
-            if (s[this.i] === ',') (this.i++, this.blank())
+            if (s[this.i] === ',') {
+              this.i++
+              this.blank()
+            }
           }
           items.push(...this.expectBlock().items)
         }
@@ -1602,7 +1611,7 @@ class PsReader {
     const words: Word[] = []
     const redirects: Redirect[] = []
     // An expression statement: a string, a number, a variable, a parenthesis.
-    if (/^(?:['"$(@\[{]|\d|-\d)/.test(s.slice(this.i)) && !s.startsWith('$null', this.i + 999))
+    if (/^(?:['"$(@[{]|\d|-\d)/.test(s.slice(this.i)))
       words.push(word([lit(PS_EXPRESSION, false)], PS_EXPRESSION))
     for (;;) {
       this.blank()
@@ -1650,8 +1659,10 @@ class PsReader {
         let text = ''
         let j = this.i + 1
         for (; j < s.length; j++) {
-          if (s[j] === "'" && s[j + 1] === "'") ((text += "'"), j++)
-          else if (s[j] === "'") break
+          if (s[j] === "'" && s[j + 1] === "'") {
+            text += "'"
+            j++
+          } else if (s[j] === "'") break
           else text += s[j]
         }
         if (j >= s.length) throw new Unreadable('unbalanced')
@@ -1728,8 +1739,10 @@ class PsReader {
     for (;;) {
       if (this.i >= s.length) throw new Unreadable('unbalanced')
       const c = s[this.i]!
-      if (c === '"' && s[this.i + 1] === '"') ((text += '"'), (this.i += 2))
-      else if (c === '"') break
+      if (c === '"' && s[this.i + 1] === '"') {
+        text += '"'
+        this.i += 2
+      } else if (c === '"') break
       else if (c === '`' && this.i + 1 < s.length) {
         const n = s[this.i + 1]!
         text += PS_ESCAPES[n] ?? n
@@ -1737,7 +1750,10 @@ class PsReader {
       } else if (c === '$' && /[A-Za-z_({?$^]/.test(s[this.i + 1] ?? '')) {
         flush()
         this.dollar(parts)
-      } else ((text += c), this.i++)
+      } else {
+        text += c
+        this.i++
+      }
     }
     flush()
     this.i++
