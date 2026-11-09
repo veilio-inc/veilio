@@ -58,9 +58,9 @@ test("a prompt's metadata passes untouched", async ($, on) => {
 
 test("a slash command's line is left to command.run, and no masked toast is shown", async ($, on) => {
   const { p, sent } = sending(on)
-  const command = { name: 'review', args: CANARY }
-  await $.prompt.submit({ ...base(), text: `/review ${CANARY}`, command })
-  expect(sent[0].text).toBe(`/review ${CANARY}`)
+  const command = { name: 'review', args: '__CLS__1' }
+  await $.prompt.submit({ ...base(), text: '/review __CLS__1', command })
+  expect(sent[0].text).toBe('/review __CLS__1')
   expect(sent[0].command).toEqual(command)
   expect(p.toasts.join()).not.toContain('masked names in your prompt')
 })

@@ -45,6 +45,8 @@ const MASK_RESERVE_MS = 2_000
 // its own, well inside the hook's budget. Past it, or on any failure, the
 // listing goes fully masked; it is never left out.
 const LISTING_MS = 300
+// What /veilio takes (its handler below): anything else is a status request.
+const VEILIO_SWITCHES: ReadonlySet<string> = new Set(['', 'on', 'off'])
 
 function deadline<K extends HookEvent>(next: Next<K>, cap = Infinity): number {
   const left = Number(next?.budget?.remainingMs ?? 8_000) - MASK_RESERVE_MS
@@ -345,8 +347,12 @@ export function register(on: On, options: Options = {}) {
     // Spec 083: a slash command's line is masked at command.run and the host
     // applies no rewrite of it here, so a line that is more than the command
     // as command.run left it goes only when masking would not change it.
+    // The line is the command's only once its arguments hold nothing to mask.
     const line = e.command && `/${e.command.name}${e.command.args ? ` ${e.command.args}` : ''}`
-    const text = e.text === line ? e.text : g.applyText(e.text, 'prompt', scan, budget)
+    const asCommand =
+      e.text === line &&
+      g.applyText(e.command!.args, 'prompt', undefined, budget) === e.command!.args
+    const text = asCommand ? e.text : g.applyText(e.text, 'prompt', scan, budget)
     if (e.command && text !== e.text) return { drop: COMMAND_LINE_REFUSED }
     const context =
       raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined
@@ -484,12 +490,17 @@ export function register(on: On, options: Options = {}) {
     const unknown = unknownTextField(e, KNOWN_COMMAND_FIELDS)
     if (unknown !== undefined) return { text: unknownFieldRefusal(unknown) }
     const args = String(e.args ?? '')
-    // /veilio's arguments are its switch, run as typed, stopped too.
-    const asTyped = e.command === 'veilio' || args.trim() === ''
-    // Stopped: a command whose arguments would need masking does not run.
+    // /veilio's switch runs as typed, stopped too; any other argument of it is
+    // masked like any command's (security review of 43b6227).
+    const own = e.command === 'veilio' && VEILIO_SWITCHES.has(args.trim())
+    const asTyped = own || args.trim() === ''
+    // Stopped: nothing can be masked. A command whose arguments would need it
+    // does not run; any other runs, and what it prints is withheld.
     if (g.state === 'stopped') {
-      if (asTyped) return next(e)
-      return { text: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+      const stopped = { text: `Veilio guard stopped: ${g.stoppedReason}. Run /veilio.` }
+      if (!asTyped) return stopped
+      const r = await next(e)
+      return own || typeof r.text !== 'string' ? r : { ...r, ...stopped }
     }
     let masked = args
     if (!asTyped) {
@@ -506,8 +517,8 @@ export function register(on: On, options: Options = {}) {
     // with Claude Code (CommandRunResult): masked, and the row is drawn with
     // the real names.
     const r = await next({ ...e, args: masked })
-    // /veilio's own text names no project name: the guard's state and the paths.
-    if (typeof r.text !== 'string' || g.state !== 'on' || e.command === 'veilio') return r
+    // /veilio's own status names no project name: the guard's state and the paths.
+    if (typeof r.text !== 'string' || g.state !== 'on' || own) return r
     await g.learnRuleNames([r.text], budget)
     return { ...r, text: g.applyText(r.text, 'result', undefined, budget) }
   }).catch(async () => ({ text: PROMPT_FAILED }))

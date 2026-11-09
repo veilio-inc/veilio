@@ -390,3 +390,41 @@ test("a command the guard cannot check answers with the guard's failure, not its
   expect(out.text).toBe(PROMPT_FAILED)
   expect(JSON.stringify(out)).not.toContain(CANARY)
 })
+
+// Security review of 43b6227: while stopped nothing can be masked, so what a
+// command prints is withheld from the model, as a prompt is; /veilio still runs.
+test("a command's printed text is withheld while the guard is stopped", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  on('command.run', () => ({ text: `Cost of ${CANARY}` }))
+  const out = await $.command.run({ command: 'cost', args: '' })
+  expect(out.text).toMatch(/^Veilio guard stopped: .*\. Run \/veilio\.$/)
+  expect(JSON.stringify(out)).not.toContain(CANARY)
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toContain('stopped')
+})
+
+// Security review of 43b6227: /veilio's arguments run as typed only when they
+// are a switch it takes; anything else is masked like any command's.
+test('/veilio runs as typed only with a switch it takes: anything else is a command like any other', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: '{ not json' })
+  const refused = /^Veilio guard stopped: .*\. Run \/veilio\.$/
+  for (const args of ['', 'on', ' on ']) {
+    const out = await $.command.run({ command: 'veilio', args })
+    expect(out.text).toContain('Project: /work/project')
+    expect(out.text).not.toMatch(refused)
+  }
+  expect((await $.command.run({ command: 'veilio', args: `on ${CANARY}` })).text).toMatch(refused)
+  expect((await $.command.run({ command: 'veilio', args: ' off ' })).text).toContain('OFF')
+})
+
+test("/veilio's line with a name in it is not sent as typed", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  const base = { wait: false, origin: { kind: 'user' } } as const
+  const out = await $.prompt.submit({
+    ...base,
+    text: `/veilio on ${CANARY}`,
+    command: { name: 'veilio', args: `on ${CANARY}` },
+  } as never)
+  expect(out.drop).toContain('does not let the guard mask the line of a slash command')
+})
