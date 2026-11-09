@@ -331,6 +331,32 @@ describe('the export check runs unprivileged, on exact versions (R2-1)', () => {
     expect(runsCheck(all.release!)).toBe(false)
   })
 
+  // Security review of R2-1: a cache the unprivileged job writes after it
+  // imported registry code could be restored into the release job.
+  it('neither job restores or saves a cache', () => {
+    for (const [name, job] of Object.entries(jobs()))
+      for (const step of job.steps ?? [])
+        expect(step.with?.cache, `${name}: ${step.uses}`).toBeUndefined()
+  })
+
+  it("the import runs with the runner's cache tokens unset", () => {
+    const step = Object.values(jobs())
+      .find(runsCheck)!
+      .steps!.find((s) => /check-engine-exports/.test(s.run ?? ''))!
+    expect(step.run!.trim()).toBe(
+      'env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_CACHE_URL -u ACTIONS_RESULTS_URL node scripts/check-engine-exports.mjs'
+    )
+  })
+
+  it('the engine release job restores no cache either', () => {
+    const engine = parse(readFileSync('.github/workflows/publish-engine.yml', 'utf8')) as {
+      jobs: Record<string, Job>
+    }
+    for (const [name, job] of Object.entries(engine.jobs))
+      for (const step of job.steps ?? [])
+        expect(step.with?.cache, `${name}: ${step.uses}`).toBeUndefined()
+  })
+
   it('it builds the packages before it checks them', () => {
     const steps = Object.values(jobs()).find(runsCheck)!.steps!
     const build = steps.findIndex((s) => /npm run build:packages/.test(s.run ?? ''))

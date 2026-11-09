@@ -76,7 +76,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
+          # No npm cache: this job runs registry code, and a cache it saved
+          # could be restored where the release credentials are.
 
       - name: Update npm
         run: npm install -g npm@12.2.1
@@ -85,8 +86,10 @@ jobs:
 
       - run: npm run build:packages
 
+      # The runner's cache tokens unset, so the imported code cannot save a
+      # cache of its own either.
       - name: Every engine export the tools import is in the engine their range resolves to
-        run: node scripts/check-engine-exports.mjs
+        run: env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_CACHE_URL -u ACTIONS_RESULTS_URL node scripts/check-engine-exports.mjs
 
   release:
     needs: engine-exports
@@ -110,7 +113,8 @@ jobs:
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+          # No npm cache (spec 085 R2-1 review): a cache is shared across jobs,
+          # and one written after registry code ran must never reach this job.
 
       # OIDC trusted publishing needs a recent npm CLI. Pinned to a major for
       # the same reason publish-engine.yml pins it: a release pipeline should not
