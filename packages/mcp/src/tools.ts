@@ -464,6 +464,7 @@ function runAnonymize(
     // Beside the source, on every result while it holds: rules the account set
     // were not applied, so the masking is less than its owner expects.
     ...rulesSkippedSentences(rules.skipped),
+    ...(rules.notices ?? []).map((n) => `WARNING: ${n.replace(/^veilio: /, '')}`),
     // Spec 066 R8: on every result while this checkout's last reservation is
     // refused, and whenever this call numbered names on this machine only.
     ...(numbering?.refused

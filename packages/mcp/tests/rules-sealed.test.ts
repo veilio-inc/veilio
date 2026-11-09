@@ -129,12 +129,42 @@ describe('sealed rules in the MCP server', () => {
         account: ME,
         pulledAt: new Date().toISOString(),
         rules: [],
-        skipped: { vaultLocked: 1, teamLocked: 0, unopenable: 0, refused: 0 },
+        skipped: { vaultLocked: 1, teamLocked: 0, unopenable: 0, refused: 0, teamUnconfirmed: 0 },
       },
       home
     )
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
     expect((await primeRules(home)).source).toBe('cached')
     expect(anonymize()).toContain(VAULT_LINE)
+  })
+})
+
+// Spec 085 part 3, R2-7 and R2-8 in the MCP server.
+describe('team rules in the MCP server (R2-7, R2-8)', () => {
+  const EXACT: RuleBody = {
+    name: 'keep-id',
+    type: 'whitelist',
+    pattern: '^customerId$',
+    enabled: true,
+  }
+
+  it('a new team whitelist is told once, in the session that first sees it', async () => {
+    signIn(home, { team: true })
+    serve({ teamRules: [await sealedTeamRule('t-new', 0, EXACT)] })
+    await primeRules(home)
+    expect(anonymize()).toContain(
+      'WARNING: a new team rule keeps names as written: keep-id (^customerId$).'
+    )
+    resetRulesCache()
+    await primeRules(home)
+    expect(anonymize()).not.toContain('a new team rule')
+  })
+
+  it('a team rule under a key not confirmed is held back and said', async () => {
+    signIn(home, { team: true, teamWritable: false })
+    serve({ teamRules: [await sealedTeamRule('t1', 0, EXACT)] })
+    const resolved = await primeRules(home)
+    expect(resolved.rules).toEqual([])
+    expect(anonymize()).toContain('sealed under a team key whose sender you have not confirmed')
   })
 })

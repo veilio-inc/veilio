@@ -91,7 +91,11 @@ function serve(body: { rules?: unknown[]; teamRules?: unknown[] }): void {
   })
 }
 
-function unlockTeam(teamId: string, keys: { version: number; raw: Uint8Array }[]): void {
+function unlockTeam(
+  teamId: string,
+  keys: { version: number; raw: Uint8Array }[],
+  writable = true
+): void {
   writeTeamUnlock(
     {
       v: 1,
@@ -102,7 +106,7 @@ function unlockTeam(teamId: string, keys: { version: number; raw: Uint8Array }[]
         version: k.version,
         key: toBase64(k.raw),
         granter: { id: 'u-granter', publicKey: 'GRANTER' },
-        writable: true,
+        writable,
       })),
     },
     home
@@ -132,7 +136,13 @@ describe('rules pull, personal rules', () => {
         enabled: true,
       },
     ])
-    expect(cached()?.skipped).toEqual({ vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 })
+    expect(cached()?.skipped).toEqual({
+      vaultLocked: 0,
+      teamLocked: 0,
+      unopenable: 0,
+      refused: 0,
+      teamUnconfirmed: 0,
+    })
   })
 
   it('without one, records vaultLocked, says how to fix it, and exits 0', async () => {
@@ -193,12 +203,18 @@ describe('rules pull, personal rules', () => {
     const res = await run(['rules', 'pull'])
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(cached()?.rules.map((r) => r.id)).toEqual(['good'])
-    expect(cached()?.skipped).toEqual({ vaultLocked: 0, teamLocked: 0, unopenable: 3, refused: 3 })
+    expect(cached()?.skipped).toEqual({
+      vaultLocked: 0,
+      teamLocked: 0,
+      unopenable: 3,
+      refused: 3,
+      teamUnconfirmed: 0,
+    })
     expect(res.out).toContain(
       '3 custom rules not applied: could not be opened with the keys on this machine, and skipped.'
     )
     expect(res.out).toContain(
-      '3 custom rules not applied: refused as unsafe to apply (an engine placeholder or a pattern rules do not support), and skipped.'
+      '3 custom rules not applied: refused as unsafe to apply (an engine placeholder, a pattern rules do not support, or a team whitelist that does not name the identifiers it keeps), and skipped.'
     )
   })
 
@@ -227,7 +243,13 @@ describe('the cache', () => {
       rulesPath((signIn(home), home)),
       JSON.stringify({ ...OWNER, pulledAt: new Date().toISOString(), rules: [] })
     )
-    expect(cached()?.skipped).toEqual({ vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 })
+    expect(cached()?.skipped).toEqual({
+      vaultLocked: 0,
+      teamLocked: 0,
+      unopenable: 0,
+      refused: 0,
+      teamUnconfirmed: 0,
+    })
   })
 
   it('a damaged `skipped` reads as zeros too', () => {
@@ -241,7 +263,13 @@ describe('the cache', () => {
         skipped: { vaultLocked: -1, teamLocked: 'x', unopenable: 1.5 },
       })
     )
-    expect(cached()?.skipped).toEqual({ vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 })
+    expect(cached()?.skipped).toEqual({
+      vaultLocked: 0,
+      teamLocked: 0,
+      unopenable: 0,
+      refused: 0,
+      teamUnconfirmed: 0,
+    })
   })
 })
 
@@ -323,7 +351,14 @@ describe('scrub with skipped rules', () => {
         ...OWNER,
         pulledAt: new Date().toISOString(),
         rules: [],
-        skipped: { vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0, ...skipped },
+        skipped: {
+          vaultLocked: 0,
+          teamLocked: 0,
+          unopenable: 0,
+          refused: 0,
+          teamUnconfirmed: 0,
+          ...skipped,
+        },
       },
       home
     )
@@ -341,6 +376,7 @@ describe('scrub with skipped rules', () => {
       teamLocked: 1,
       unopenable: 0,
       refused: 0,
+      teamUnconfirmed: 0,
     }).join(' ')
     expect(res.err).toContain(`veilio: ${line}\n`)
     expect(res.err).toContain('run `veilio vault unlock`, then `veilio rules pull`')
@@ -371,5 +407,128 @@ describe('scrub with skipped rules', () => {
     const res = await run(['scrub'], SOURCE)
     expect(res.out).toMatch(/__(?:LOCAL_[A-Z0-9]{6}_)?LEDGER__1/) // signed in, maps unread: local (spec 066)
     expect(res.out).not.toContain('settleLedger')
+  })
+})
+
+// Spec 085 part 3, R2-7 (security audit run-2), Q5 = A (founder, 2026-11-09):
+// a team whitelist is exact names, checked wherever a rule is opened, and a
+// member is told once when a new one applies.
+describe('a team whitelist names what it keeps (R2-7)', () => {
+  const NAMES = 'class PaymentGateway { chargeCard() {} }\n'
+  const wideRecord = {
+    kind: 'veilio-rule',
+    v: '1',
+    id: 'wide',
+    team: TEAM_ID,
+    name: 'WideOpen',
+    type: 'whitelist',
+    pattern: '[A-Za-z_$][A-Za-z0-9_$]*',
+    enabled: 'true',
+  }
+
+  it('a WideOpen team whitelist is refused at pull, and scrub masks every name', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW }])
+    serve({ teamRules: [await sealedTeamRule('wide', 0, KEEP, { record: wideRecord })] })
+    const res = await run(['rules', 'pull'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(cached()?.rules).toEqual([])
+    expect(cached()?.skipped?.refused).toBe(1)
+    expect(res.out).toContain('a team whitelist that does not name the identifiers it keeps')
+    const scrubbed = await run(['scrub'], NAMES)
+    expect(scrubbed.out).not.toContain('PaymentGateway')
+    expect(scrubbed.out).not.toContain('chargeCard')
+  })
+
+  it('a cache written before the check does not apply a broad team whitelist', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW }])
+    writeRules(
+      {
+        ...OWNER,
+        pulledAt: new Date().toISOString(),
+        rules: [
+          {
+            id: 'wide',
+            scope: 'team',
+            team_id: TEAM_ID,
+            sort_order: 0,
+            name: 'WideOpen',
+            type: 'whitelist',
+            pattern: '[A-Za-z_$][A-Za-z0-9_$]*',
+            enabled: true,
+          },
+        ],
+      },
+      home
+    )
+    expect(cached()?.rules).toEqual([])
+    expect(cached()?.skipped?.refused).toBe(1)
+    const scrubbed = await run(['scrub'], NAMES)
+    expect(scrubbed.out).not.toContain('PaymentGateway')
+  })
+
+  it('a new exact-name team whitelist is announced once, then not again', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW }])
+    const exact: RuleBody = {
+      name: 'keep-gateway',
+      type: 'whitelist',
+      pattern: '^PaymentGateway$',
+      enabled: true,
+    }
+    serve({ teamRules: [await sealedTeamRule('t-exact', 0, exact)] })
+    const first = await run(['rules', 'pull'])
+    expect(first.out).toContain(
+      'veilio: a new team rule keeps names as written: keep-gateway (^PaymentGateway$).'
+    )
+    const second = await run(['rules', 'pull'])
+    expect(second.out).not.toContain('a new team rule')
+    expect(cached()?.rules.map((r) => r.id)).toEqual(['t-exact'])
+  })
+})
+
+// Spec 085 part 3, R2-8: a team rule applies only under a key whose sender
+// the member confirmed (writable, spec 080 item 7a); a planted key authors no
+// masking rule.
+describe('team rules open only under confirmed keys (R2-8)', () => {
+  const planted: RuleBody = {
+    name: 'PlantedRule',
+    type: 'whitelist',
+    pattern: '^PaymentGateway$',
+    enabled: true,
+  }
+
+  it('under a key not confirmed: held back, counted, and said how to see it', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }], false)
+    serve({ teamRules: [await sealedTeamRule('rule-1', 0, planted, { version: 2 })] })
+    const res = await run(['rules', 'pull'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(cached()?.rules).toEqual([])
+    expect(cached()?.skipped?.teamUnconfirmed).toBe(1)
+    expect(res.out).toContain(
+      '1 custom rule not applied: sealed under a team key whose sender you have not confirmed - `veilio team unlock` shows that key.'
+    )
+    const scrubbed = await run(['scrub'], 'class PaymentGateway {}\n')
+    expect(scrubbed.out).not.toContain('PaymentGateway')
+  })
+
+  it('under a confirmed key: applied', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }])
+    serve({ teamRules: [await sealedTeamRule('rule-1', 0, planted, { version: 2 })] })
+    await run(['rules', 'pull'])
+    expect(cached()?.rules.map((r) => r.id)).toEqual(['rule-1'])
+  })
+
+  it('a cached rule of a team whose keys are no longer confirmed is not applied', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }])
+    serve({ teamRules: [await sealedTeamRule('rule-1', 0, planted, { version: 2 })] })
+    await run(['rules', 'pull'])
+    unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }], false)
+    expect(cached()?.rules).toEqual([])
+    expect(cached()?.skipped?.teamUnconfirmed).toBe(1)
   })
 })

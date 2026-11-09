@@ -404,7 +404,10 @@ function teamScopedMaps(list: CloudMapList): CloudMapSummary[] {
 export async function heldTeamKeys(
   credential: Credential,
   home: string | undefined,
-  teamId: string
+  teamId: string,
+  /** Only keys whose sender this member confirmed (spec 080 item 7a): what a
+   *  team rule must open under (spec 085 R2-8). Maps read with every key. */
+  opts: { writableOnly?: boolean } = {}
 ): Promise<{ version: number; key: CryptoKeyLike }[]> {
   const unlock = readTeamUnlock(
     { instance: credential.instance, account: credential.account },
@@ -413,6 +416,7 @@ export async function heldTeamKeys(
   if (!unlock || unlock.teamId !== teamId) return []
   const keys: { version: number; key: CryptoKeyLike }[] = []
   for (const stored of unlock.keys) {
+    if (opts.writableOnly && !stored.writable) continue
     try {
       keys.push({ version: stored.version, key: await importTeamKey(stored.key) })
     } catch {

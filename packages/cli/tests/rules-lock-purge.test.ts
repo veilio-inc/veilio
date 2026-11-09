@@ -291,7 +291,14 @@ describe('readers apply only rules whose key is still held', () => {
       account: ME,
       teamId: TEAM_ID,
       expiresAt: future,
-      keys: [{ version: 1, key: toBase64(TEAM_RAW) }],
+      keys: [
+        {
+          version: 1,
+          key: toBase64(TEAM_RAW),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+      ],
       ...o,
     })
   const table: [string, boolean, string | null][] = [
@@ -331,10 +338,26 @@ describe('readers apply only rules whose key is still held', () => {
       true,
       team({
         keys: [
-          { version: 1, key: '***' },
-          { version: 2, key: toBase64(TEAM_RAW) },
+          {
+            version: 1,
+            key: '***',
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+          {
+            version: 2,
+            key: toBase64(TEAM_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
         ],
       }),
+    ],
+    // Spec 085 R2-8: a key whose sender was not confirmed applies no team rule.
+    [
+      'a key not confirmed',
+      false,
+      team({ keys: [{ version: 1, key: toBase64(TEAM_RAW), writable: false }] }),
     ],
     ['valid', true, team()],
   ]

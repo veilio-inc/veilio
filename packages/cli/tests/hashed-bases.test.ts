@@ -208,12 +208,16 @@ describe('rule names are hashed only under a confirmed team key (spec 080 item 7
     expect(r.ranges[0]?.base).toBe('__FN__')
   })
 
-  it('scrub --team under an unconfirmed key refuses the rule base and never sends its hash', async () => {
+  it('scrub --team under an unconfirmed key applies no team rule and never sends its hash', async () => {
     held([{ version: 1, raw: TEAM_RAW, writable: false }], 'Zespół')
 
     const scrubbed = await run(['scrub', '--team'])
 
-    expect(scrubbed.err).toContain(ROW_3)
+    // Spec 085 R2-8: the team's rules are held back under a key not confirmed,
+    // so its rule base is never numbered, let alone hashed.
+    expect(scrubbed.err).toContain(
+      'custom rule not applied: sealed under a team key whose sender you have not confirmed'
+    )
     expect(sent()).not.toContain(wireBase('__CODENAME__', TEAM_RAW))
     expect(sent()).not.toMatch(/CODENAME/)
   })
