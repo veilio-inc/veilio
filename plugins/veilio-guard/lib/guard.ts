@@ -2524,10 +2524,10 @@ const PS_CODE = new RegExp(
 )
 /** PowerShell giving a command a new name. */
 const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
-/** A bash/zsh command past the reader's bounds is refused when its text names
- *  a cd or anything else that can move the shell or run text. */
-const SH_UNREADABLE =
-  /(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|options)(?![\w-])|(?:^|[;&|({\s])\.\s|\$\(|`|(?<![\w-])(?:python[\d.]*|node|perl|ruby|php|deno|bun)(?![\w-])/
+/** A bash/zsh command past the reader's bounds is refused by its shape: any
+ *  quote, backslash, `$`, backtick, parenthesis or newline (coordinator's
+ *  rule); with none, nothing in it can build text, and 078's verdict holds. */
+const SH_UNREADABLE = /['"\\$`()\n]/
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/

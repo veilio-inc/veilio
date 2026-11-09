@@ -355,6 +355,11 @@ class Walker {
   tilde = false
   /** A link this command makes: with a cd in it, refused. */
   link: string | null = null
+  /** An interpreter that ran: it could have made a link, so a cd after it
+   *  is refused (the coordinator's shape rule). */
+  private interp: string | null = null
+  /** Files this command writes by redirection. */
+  private readonly written = new Set<string>()
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
    *  was read at. The one model of "moves the shell" for loops (security
@@ -419,6 +424,10 @@ class Walker {
       for (const s of p.stages.slice(0, -1)) at = anyOf(await this.node(s, at)) ?? at
       r = await this.node(p.stages[p.stages.length - 1]!, at)
     } else {
+      // `… | source /dev/stdin`, `… | . x`: text from the pipe, as code.
+      for (const st of p.stages.slice(1))
+        if (st.type === 'simple' && /^(?:source|\.)$/.test(programOf(st.words)?.word.literal ?? ''))
+          N1(st.words.map((w) => w.raw).join(' '), 'code run from text')
       // Every stage but the last runs in a subshell; the last one does in
       // bash, not in zsh (research R5): both readings kept.
       for (const s of p.stages.slice(0, -1)) await this.child(() => this.node(s, input))
@@ -559,7 +568,8 @@ class Walker {
       for (const p of w.parts)
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
-    this.current = n.words.map((w) => w.raw).join(' ')
+    const shown = n.words.map((w) => w.raw).join(' ')
+    this.current = shown
     // T029 reviews: what moves the shell from text, an option, or a name.
     const run = programOf(n.words)
     const name = run?.word.literal ?? null
@@ -572,14 +582,20 @@ class Walker {
     // A sourced file is the script's own (N6) only when it is a literal file
     // path: not text the call builds (`/dev/stdin`, `/dev/fd/*`, `<( )`, a
     // here-string or here-document).
-    if (
-      (name === 'source' || name === '.') &&
-      (rest[0] === undefined ||
-        rest[0].literal === null ||
-        /^\/dev\//.test(rest[0].literal) ||
-        n.redirects.some((r) => r.op === '<<<' || r.op === '<<' || r.op === '<<-' || r.op === '<'))
-    )
-      N1(this.current, 'code run from text')
+    if (name === 'source' || name === '.') {
+      const file = rest[0]?.literal == null ? null : normalisePath(rest[0].literal)
+      if (
+        file === null ||
+        /^\/dev\/|^\/proc\/(?:self|[^/]+\/fd)\//.test(file) ||
+        n.redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op)) ||
+        this.written.has(file)
+      )
+        N1(this.current, 'code run from text')
+    }
+    // A file this call writes by a redirection, for the rule above.
+    for (const r of n.redirects)
+      if (/^(?:>|>>|>\||&>|&>>|<>)$/.test(r.op) && r.target?.literal)
+        this.written.add(normalisePath(r.target.literal))
     if (name === 'trap') {
       // Past its options; an action on any signal may run within this call
       // (DEBUG, RETURN, ERR): refused as it appears. `''` and `-` set none.
@@ -620,18 +636,6 @@ class Walker {
     if (
       ((base === 'ln' || base === 'cp') &&
         lits.some((l) => /^-[A-Za-z]*s/.test(l) || /^--sy/.test(l))) ||
-      // An interpreter given code inline that may make a link: code the shell
-      // builds, or code that names one.
-      (/^(?:python[\d.]*|node|perl|ruby|php|deno|bun)$/.test(base ?? '') &&
-        rest.some((w, k) => {
-          if (!/^-[A-Za-z]*[ce]$|^--eval$/.test(lits[k]!)) return false
-          const code = rest[k + 1]
-          return (
-            code === undefined ||
-            code.literal === null ||
-            /symlink|(?<![\w.])link\s*\(|junction|mklink|ln\s+-/i.test(code.literal)
-          )
-        })) ||
       /^mklink$/i.test(name ?? '') ||
       (this.ps &&
         /^new-item$/i.test(name ?? '') &&
@@ -663,7 +667,24 @@ class Walker {
     if (program === 'exit' || program === 'return') return { ok: null, fail: null }
     if (program === 'true' || program === ':') return { ok: after, fail: null }
     if (program === 'false') return { ok: null, fail: after }
-    return this.cd(n, here, after)
+    // A nested walk above read its own commands: this one is shown again.
+    this.current = shown
+    const out = await this.cd(n, here, after)
+    // An interpreter or a shell given code this call supplies (`-c`, `-e`,
+    // `-` or stdin, a here-document): it could make a link, so a cd after it
+    // in this call is refused (coordinator's rule). One running a file is the
+    // script's own (N6).
+    const inline =
+      lits.some((l) => /^-[A-Za-z]*[ce]$|^--eval$|^-$/.test(l)) ||
+      n.redirects.some((r) => /^<<[<-]?$/.test(r.op)) ||
+      !rest.some((w) => !(w.literal ?? '').startsWith('-'))
+    if (
+      inline &&
+      (/^(?:python[\d.]*|node|perl|ruby|php|deno|bun)$/.test(base ?? '') ||
+        /^(?:bash|sh|zsh|dash|ksh)$/.test(base ?? ''))
+    )
+      this.interp ??= this.current
+    return out
   }
 
   /** A cd's effect (data-model.md CdEffect): the outcome when it moves, or
@@ -791,6 +812,10 @@ class Walker {
     dirs: string[],
     possible: boolean
   ): Outcome {
+    // `cd ..`, `cd ../..`, `cd -`: back the way the shell came, past no link
+    // the interpreter could have made; any other target after one is refused.
+    if (this.interp !== null && !/^(?:-|\.\.?(?:\/\.\.?)*\/?)$/.test(target))
+      N1(this.interp, 'a link made in this command')
     const to = uniq(dirs)
     if (to.length > MAX_DIRS) N1(target, 'too many possible directories')
     this.landings.push({ target, dirs: to })

@@ -700,6 +700,27 @@ const REVIEWED: [string, string | undefined][] = [
     N1('python3 -c "import os; os.symlink(1, 2)"', 'a link made in this command'),
   ],
   ['mkdir build && cd build && cmake ..', undefined],
+  // Past the reader's bounds with no quote, backslash, $, backtick, paren or
+  // newline: nothing in it builds text, so 078's verdict.
+  [`echo ${'{'.repeat(201)} ls`, undefined],
+  // An interpreter given code by the call, then a cd: refused; running a file
+  // (the script's own, N6) or climbing back with `..` or `-`: runs.
+  ['perl -e 1; cd k', N1('perl -e 1', 'a link made in this command')],
+  ["python3 - <<'E'\nprint(1)\nE\ncd src", N1('python3 -', 'a link made in this command')],
+  ['bash -c true && cd src', N1('bash -c true', 'a link made in this command')],
+  ['python3 x.py; cd src', undefined],
+  ['ruby -Ilib test/x.rb; cd src 2>/dev/null', undefined],
+  ["python3 - <<'E'\nprint(1)\nE\ncd ../..", undefined],
+  ['node -e 1 && cd -', undefined],
+  ['cd src && python3 -c 1', undefined],
+  // A sourced file the call builds: by a pipe, a redirection, or one it writes
+  ['echo cd x | source /dev/stdin', N1('source /dev/stdin', 'code run from text')],
+  ['echo cd x | . ./s.sh', N1('. ./s.sh', 'code run from text')],
+  ['echo "cd x" > s.sh; . ./s.sh', N1('. ./s.sh', 'code run from text')],
+  ['. /proc/self/fd/0', N1('. /proc/self/fd/0', 'code run from text')],
+  ['source /tmp/../dev/stdin', N1('source /tmp/../dev/stdin', 'code run from text')],
+  ['source x.sh <> y', N1('source x.sh', 'code run from text')],
+  ['echo x > out.txt; . ./env.sh', undefined],
   ["cd src; perl -pi -e 's/a/b/' x.rb", undefined],
   // past the reader's bounds, anything that could move the shell: refused
   [
