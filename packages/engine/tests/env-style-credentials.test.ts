@@ -290,21 +290,29 @@ describe('engine 1.12.2: linear time on adversarial lines', () => {
     anonymize(text, path === undefined ? {} : { path })
     return performance.now() - t0
   }
-  it('runs of separators and spaces, digits after a name', () => {
-    const cases: [string, string | undefined][] = [
-      [`API_TOKEN: ${'1'.repeat(40)}x\n`, 'a.yml'],
-      [`API_TOKEN: Abc${'1'.repeat(40)}x\n`, undefined],
-      [`export A_TOKEN=${';'.repeat(4000)}a\n`.repeat(50), 'a.sh'],
-      [`A_TOKEN: a${' '.repeat(4000)}b\n`.repeat(50), 'a.yml'],
-      [`A_TOKEN=a${' '.repeat(4000)}b\n`.repeat(50), '.env'],
-      [`A_TOKEN=a${' '.repeat(4000)}#\n`.repeat(50), '.env'],
-      [`export A_TOKEN=${'${'.repeat(2000)}\n`.repeat(10), 'a.sh'],
-      ['A_TOKEN="x\n'.repeat(2000), '.env'],
-      ['export A_TOKEN="x\n'.repeat(3000), '.env'],
-      ["export A_TOKEN='x\n".repeat(3000), '.env'],
-      ["A_TOKEN: 'x\n".repeat(2000), 'a.yml'],
+  // Each case is built at size n and 4n. Linear work grows ~4x; the quadratic
+  // backtracking these lines once caused grows ~16x. A fixed millisecond
+  // limit failed on a busy CI runner (617 ms against 500) with the code fine.
+  it('runs of separators and spaces, digits after a name', { timeout: 60_000 }, () => {
+    const cases: [(n: number) => string, string | undefined][] = [
+      [(n) => `API_TOKEN: ${'1'.repeat(40 * n)}x\n`, 'a.yml'],
+      [(n) => `API_TOKEN: Abc${'1'.repeat(40 * n)}x\n`, undefined],
+      [(n) => `export A_TOKEN=${';'.repeat(1000 * n)}a\n`.repeat(50), 'a.sh'],
+      [(n) => `A_TOKEN: a${' '.repeat(1000 * n)}b\n`.repeat(50), 'a.yml'],
+      [(n) => `A_TOKEN=a${' '.repeat(1000 * n)}b\n`.repeat(50), '.env'],
+      [(n) => `A_TOKEN=a${' '.repeat(1000 * n)}#\n`.repeat(50), '.env'],
+      [(n) => `export A_TOKEN=${'${'.repeat(500 * n)}\n`.repeat(10), 'a.sh'],
+      [(n) => 'A_TOKEN="x\n'.repeat(500 * n), '.env'],
+      [(n) => 'export A_TOKEN="x\n'.repeat(750 * n), '.env'],
+      [(n) => "export A_TOKEN='x\n".repeat(750 * n), '.env'],
+      [(n) => "A_TOKEN: 'x\n".repeat(500 * n), 'a.yml'],
     ]
-    for (const [text, path] of cases) expect(timed(text, path), text.slice(0, 30)).toBeLessThan(500)
+    for (const [make, path] of cases) {
+      timed(make(1), path) // warm-up
+      const small = timed(make(1), path)
+      const large = timed(make(4), path)
+      expect(large, make(1).slice(0, 30)).toBeLessThan(8 * small + 100)
+    }
   })
 })
 
