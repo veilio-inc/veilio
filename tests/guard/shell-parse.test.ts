@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { CORPUS } from './fixtures/cd-corpus.ts'
+import type { Verdict } from './fixtures/cd-project.ts'
 import {
   parseShell,
+  shellWords,
+  splitChain,
   type List,
   type Node,
   type Word,
@@ -233,4 +239,20 @@ describe('parseShell, the word property', () => {
       expect(got, JSON.stringify(command)).toEqual(ws)
     }
   })
+})
+
+// T009 (FR-004): the views 078's restore check reads give, over the whole
+// corpus, what they gave on main. (cd-differential.test.ts checks them too,
+// beside the guard's verdicts; this one runs without a guard.) Their bodies
+// are main's: a view over the tree would have to rebuild the text it drops.
+test("the views: shellWords and splitChain over the corpus are main's", () => {
+  const base: Verdict[] = JSON.parse(
+    readFileSync(join(import.meta.dirname, 'fixtures/cd-differential.base.json'), 'utf8')
+  )
+  const differ = CORPUS.filter((e, i) => {
+    const chain = splitChain(e.command)
+    const words = chain ? chain.map(shellWords) : [shellWords(e.command)]
+    return JSON.stringify([chain, words]) !== JSON.stringify([base[i]!.chain, base[i]!.words])
+  }).map((e) => e.id)
+  expect(differ).toEqual([])
 })
