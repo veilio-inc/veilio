@@ -175,6 +175,8 @@ Custom rules (whitelist and replace, set in the web app) are applied by
 offline - and says on every run how many rules it applied and how old the copy
 is. Pull again after the rules change; `logout` removes the copy.
 
+Team whitelists name the identifiers they keep (`^Name$` or `^(NameOne|NameTwo)$`). Personal whitelists may use any supported pattern.
+
 Cloud holds the rules sealed under your keys, so it cannot read them: personal
 rules under your personal-maps key, team rules under your team key. `rules pull`
 opens them on this machine, so it needs `veilio vault unlock` for personal rules
@@ -502,7 +504,9 @@ The map is yours only if you made it, so the CLI refuses (exit 1) to read or wri
 - that belongs to another user on this machine (macOS and Linux): a `.veilio` someone else made, say in `/tmp`, is skipped when the CLI looks for the project, and refused when named with `--map`. Under `sudo`, a store of the user who ran it (`SUDO_UID`) can be read but not written, and no store is made in a project that user owns: a file root writes there would be root's, so run `veilio` without `sudo`. To use a store someone else owns on purpose (a shared CI workspace, say), list its full path in `VEILIO_TRUST_STORE_OWNER`, as git's `safe.directory`: absolute paths separated by `:` (`;` on Windows), for example `VEILIO_TRUST_STORE_OWNER=/srv/build/.veilio`. Only a listed store is accepted, by its real path.
 - whose `.veilio/.gitignore` does not keep it out of git: an existing one must be a plain file whose only pattern is `*`. The CLI writes one when there is none and never rewrites one that is there.
 
-Outside a git checkout, the CLI cannot tell a map you made from one that came with the files. Check `.veilio/` in an unpacked archive before you restore.
+Outside a git checkout, or in a folder that ships its own `.git` (an unpacked archive), the CLI cannot tell a map you made from one that came with the files. Check `.veilio/` before you restore. If git uses a split or sparse index, the CLI refuses the map until you switch that off.
+
+On Windows the CLI cannot check who owns a folder, so it uses a `.veilio` folder only inside your project: the git work tree, or the folder you run it in.
 
 ## Every file is judged strictly
 
@@ -511,6 +515,8 @@ Outside a git checkout, the CLI cannot tell a map you made from one that came wi
 ## In CI
 
 ### GitHub Action
+
+The Action scans pull requests on the pull_request and pull_request_target events, and pushes on push. On any other event it fails rather than scan the wrong commits; use `mode: paths` there.
 
 ```yaml
 - uses: veilio-inc/veilio/packages/cli@v0.1.0
