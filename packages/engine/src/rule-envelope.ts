@@ -76,7 +76,7 @@ function fromRecord(raw: unknown, bind: RuleBinding): RuleOpened {
   } else {
     return refused('the rule type is neither replace nor whitelist')
   }
-  const why = ruleRefusal(rule)
+  const why = ruleRefusal(rule, bind.teamId ? 'team' : 'personal')
   return why ? refused(why) : { ok: true, rule }
 }
 
@@ -112,7 +112,7 @@ export async function sealTeamRule(
   rule: RuleBody,
   bind: RuleBinding
 ): Promise<TeamMapEnvelope> {
-  const why = ruleRefusal(rule)
+  const why = ruleRefusal(rule, 'team')
   if (why) throw new Error(why)
   return encryptTeamMap(teamKey, toRecord(rule, bind))
 }

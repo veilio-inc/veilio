@@ -55,7 +55,7 @@ function fromRecord(raw, bind) {
     else {
         return refused('the rule type is neither replace nor whitelist');
     }
-    const why = ruleRefusal(rule);
+    const why = ruleRefusal(rule, bind.teamId ? 'team' : 'personal');
     return why ? refused(why) : { ok: true, rule };
 }
 /** Seal a personal rule under the personal-maps key. Refuses a rule no tool
@@ -78,7 +78,7 @@ export async function openRuleFromVault(key, env, bind) {
 }
 /** Seal a team rule under the team key. */
 export async function sealTeamRule(teamKey, rule, bind) {
-    const why = ruleRefusal(rule);
+    const why = ruleRefusal(rule, 'team');
     if (why)
         throw new Error(why);
     return encryptTeamMap(teamKey, toRecord(rule, bind));

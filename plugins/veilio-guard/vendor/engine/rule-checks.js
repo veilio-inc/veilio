@@ -39,13 +39,27 @@ const PLACEHOLDER_RE = /^__[A-Z][A-Z0-9_]*__$/;
 const RESERVED_RE = /^__P\d+__$/;
 /** Why this rule may not be saved or applied, in a sentence - or null. The
  *  sentences are the ones Veilio Cloud's server gave. */
-export function ruleRefusal(rule) {
+/**
+ * A team whitelist is exact names (spec 085 R2-7, founder 2026-11-09): one
+ * anchored name, or an anchored list of them. An allow-list of shapes, not a
+ * judgement of breadth: one sealed `[A-Za-z_$][A-Za-z0-9_$]*` kept every
+ * identifier readable for every member. A name is letters in any script,
+ * digits, `_`, or an escaped character that is not a letter, digit or space.
+ */
+const EXACT_NAME = String.raw `(?:[\p{L}\p{N}_]|\\[^\p{L}\p{N}\s])+`;
+const EXACT_NAMES = new RegExp(String.raw `^\^(?:${EXACT_NAME}|\(${EXACT_NAME}(?:\|${EXACT_NAME})*\))\$$`, 'u');
+export const TEAM_WHITELIST_REFUSAL = "A team whitelist must name the identifiers it keeps: `^Name$`, or `^(NameOne|NameTwo)$`. A pattern that matches names in general would send the whole team's names as written.";
+export function ruleRefusal(rule, 
+/** Whose rule: a team's whitelist must name what it keeps (spec 085 R2-7). */
+scope = 'personal') {
     if (typeof rule.name !== 'string' || rule.name.length < 1 || rule.name.length > 80)
         return 'A rule needs a name of 1 to 80 characters';
     if (typeof rule.pattern !== 'string' || rule.pattern.length < 1 || rule.pattern.length > 500)
         return 'A pattern is 1 to 500 characters';
     if (!isSafeRegex(rule.pattern))
         return 'This pattern uses something rules do not support (a backreference, lookaround, \\b, or a bound over 50)';
+    if (scope === 'team' && rule.type === 'whitelist' && !EXACT_NAMES.test(rule.pattern))
+        return TEAM_WHITELIST_REFUSAL;
     if (rule.type === 'replace') {
         const p = rule.placeholder;
         if (typeof p !== 'string' || p.length < 3 || p.length > 80 || !PLACEHOLDER_RE.test(p))
