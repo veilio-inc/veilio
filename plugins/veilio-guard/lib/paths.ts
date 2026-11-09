@@ -358,8 +358,10 @@ class Walker {
   /** An interpreter that ran: it could have made a link, so a cd after it
    *  is refused (the coordinator's shape rule). */
   private interp: string | null = null
-  /** Files this command writes by redirection. */
-  private readonly written = new Set<string>()
+  /** Something in this command wrote a file before. */
+  private wrote = false
+  /** The cd being read resolves physically (`-P`). */
+  private physical = false
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
    *  was read at. The one model of "moves the shell" for loops (security
@@ -570,6 +572,7 @@ class Walker {
     const program = n.words[0]?.literal ?? null
     const shown = n.words.map((w) => w.raw).join(' ')
     this.current = shown
+    const wroteBefore = this.wrote
     // T029 reviews: what moves the shell from text, an option, or a name.
     const run = programOf(n.words)
     const name = run?.word.literal ?? null
@@ -588,14 +591,23 @@ class Walker {
         file === null ||
         /^\/dev\/|^\/proc\/(?:self|[^/]+\/fd)\//.test(file) ||
         n.redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op)) ||
-        this.written.has(file)
+        this.wrote
       )
         N1(this.current, 'code run from text')
     }
-    // A file this call writes by a redirection, for the rule above.
-    for (const r of n.redirects)
-      if (/^(?:>|>>|>\||&>|&>>|<>)$/.test(r.op) && r.target?.literal)
-        this.written.add(normalisePath(r.target.literal))
+    // Anything this call writes before a source: any output redirection, or
+    // a command that writes files (the rule above; no path tracking).
+    if (
+      n.redirects.some(
+        (r) => /^(?:>|>>|>\||&>|&>>|<>|>&)$/.test(r.op) && !/^\d$|^-$/.test(r.target?.literal ?? '')
+      ) ||
+      /^(?:cp|mv|tee|dd|install|ln|touch|mkfifo|rsync|curl|wget|tar|unzip|git|patch)$/.test(
+        base ?? ''
+      ) ||
+      (/^(?:sed|perl|ruby)$/.test(base ?? '') &&
+        lits.some((l) => /^-[A-Za-z]*i/.test(l) || l.startsWith('--in-place')))
+    )
+      this.wrote = true
     if (name === 'trap') {
       // Past its options; an action on any signal may run within this call
       // (DEBUG, RETURN, ERR): refused as it appears. `''` and `-` set none.
@@ -670,18 +682,23 @@ class Walker {
     // A nested walk above read its own commands: this one is shown again.
     this.current = shown
     const out = await this.cd(n, here, after)
-    // An interpreter or a shell given code this call supplies (`-c`, `-e`,
-    // `-` or stdin, a here-document): it could make a link, so a cd after it
-    // in this call is refused (coordinator's rule). One running a file is the
-    // script's own (N6).
-    const inline =
-      lits.some((l) => /^-[A-Za-z]*[ce]$|^--eval$|^-$/.test(l)) ||
-      n.redirects.some((r) => /^<<[<-]?$/.test(r.op)) ||
-      !rest.some((w) => !(w.literal ?? '').startsWith('-'))
+    // An interpreter or a shell given code by this call (`-c`, `-e`, `-`, a
+    // here-document or here-string, stdin, a file the shell builds), or
+    // running a file after something in the call wrote one: it could have
+    // made a link, so every later cd but a logical `..`/`-` is refused. One
+    // running a file the call did not write is the script's own (N6/P7).
+    const files = rest.filter((w) => !(w.literal ?? '').startsWith('-'))
+    const given =
+      lits.some((l) => /^-[A-Za-z]*[ce]$|^--eval$|^-$|^-Command$/i.test(l)) ||
+      n.redirects.some((r) => /^<(?:<<?|<-)?$/.test(r.op)) ||
+      files.length === 0 ||
+      files[0]!.literal === null ||
+      wroteBefore
     if (
-      inline &&
-      (/^(?:python[\d.]*|node|perl|ruby|php|deno|bun)$/.test(base ?? '') ||
-        /^(?:bash|sh|zsh|dash|ksh)$/.test(base ?? ''))
+      given &&
+      /^(?:python[\d.]*|node|perl|ruby|php|deno|bun|bash|sh|zsh|dash|ksh|pwsh|powershell)$/.test(
+        base ?? ''
+      )
     )
       this.interp ??= this.current
     return out
@@ -721,6 +738,7 @@ class Walker {
       possible = true
     } else if (!CD_PROGRAM.has(program)) return both(after)
     let rest = words.slice(k + 1)
+    this.physical = rest.some((w) => /^-[A-Za-z@]*P/.test(w.literal ?? ''))
     while (rest.length > 0 && /^-[LPe@qs]+$|^--$/.test(rest[0]!.literal ?? '')) {
       const stop = rest[0]!.literal === '--'
       rest = rest.slice(1)
@@ -812,9 +830,10 @@ class Walker {
     dirs: string[],
     possible: boolean
   ): Outcome {
-    // `cd ..`, `cd ../..`, `cd -`: back the way the shell came, past no link
-    // the interpreter could have made; any other target after one is refused.
-    if (this.interp !== null && !/^(?:-|\.\.?(?:\/\.\.?)*\/?)$/.test(target))
+    // After an interpreter only a logical `cd ..` (`..` segments only) and
+    // `cd -` run: they resolve from text the shell holds ($PWD, $OLDPWD) and
+    // never enter a link made in the call. `-P` and anything else: refused.
+    if (this.interp !== null && (this.physical || !/^(?:-|\.\.(?:\/\.\.)*\/?)$/.test(target)))
       N1(this.interp, 'a link made in this command')
     const to = uniq(dirs)
     if (to.length > MAX_DIRS) N1(target, 'too many possible directories')

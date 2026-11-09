@@ -703,15 +703,31 @@ const REVIEWED: [string, string | undefined][] = [
   // Past the reader's bounds with no quote, backslash, $, backtick, paren or
   // newline: nothing in it builds text, so 078's verdict.
   [`echo ${'{'.repeat(201)} ls`, undefined],
-  // An interpreter given code by the call, then a cd: refused; running a file
-  // (the script's own, N6) or climbing back with `..` or `-`: runs.
+  [
+    `echo ${'{'.repeat(201)}; cd src`,
+    N1(`echo ${'{'.repeat(201)}; cd src`, 'a command Veilio cannot read'),
+  ],
+  // After an interpreter or a shell ran, every cd but a logical `cd ..` and
+  // `cd -` is refused (coordinator's rule (b)): a link it made is not entered.
   ['perl -e 1; cd k', N1('perl -e 1', 'a link made in this command')],
   ["python3 - <<'E'\nprint(1)\nE\ncd src", N1('python3 -', 'a link made in this command')],
   ['bash -c true && cd src', N1('bash -c true', 'a link made in this command')],
-  ['python3 x.py; cd src', undefined],
-  ['ruby -Ilib test/x.rb; cd src 2>/dev/null', undefined],
-  ["python3 - <<'E'\nprint(1)\nE\ncd ../..", undefined],
-  ['node -e 1 && cd -', undefined],
+  // (b2): a file the call did not write is the script's own (N6/P7)
+  ['python3 tool.py; cd src', undefined],
+  ['ruby -I lib test/w27.rb 2>&1 | tail -5; cd w1 2>/dev/null; ruby w1/test/w27.rb', undefined],
+  ["python3 -c 'import os'; cd src", N1("python3 -c 'import os'", 'a link made in this command')],
+  [
+    'cat > x.py <<E\nimport os\nE\npython3 x.py; cd src',
+    N1('python3 x.py', 'a link made in this command'),
+  ],
+  ['cat x.py | python3; cd src', N1('python3', 'a link made in this command')],
+  ['python3 <(cat x.py); cd src', N1('python3 <(cat x.py)', 'a link made in this command')],
+  ['python3 tool.py > out.txt; cd src', undefined],
+  ['ruby -e 1; cd ../x', N1('ruby -e 1', 'a link made in this command')],
+  ['ruby -e 1; cd -P ..', N1('ruby -e 1', 'a link made in this command')],
+  ["sed -i 's/a/b/' x && ruby -Ilib test/x.rb 2>&1 | tail -4; cd .. && ruby y.rb", undefined],
+  ["python3 - <<'E'\nprint(1)\nE\ncd ../../..", undefined],
+  ["python3 - <<'E'\nprint(1)\nE\ncd - >/dev/null", undefined],
   ['cd src && python3 -c 1', undefined],
   // A sourced file the call builds: by a pipe, a redirection, or one it writes
   ['echo cd x | source /dev/stdin', N1('source /dev/stdin', 'code run from text')],
@@ -720,7 +736,13 @@ const REVIEWED: [string, string | undefined][] = [
   ['. /proc/self/fd/0', N1('. /proc/self/fd/0', 'code run from text')],
   ['source /tmp/../dev/stdin', N1('source /tmp/../dev/stdin', 'code run from text')],
   ['source x.sh <> y', N1('source x.sh', 'code run from text')],
-  ['echo x > out.txt; . ./env.sh', undefined],
+  // Anything written before a source in the call (no path tracking)
+  ['echo x > out.txt; . ./env.sh', N1('. ./env.sh', 'code run from text')],
+  ['cp a b && source ./env.sh', N1('source ./env.sh', 'code run from text')],
+  ["sed -i 's/a/b/' x; . ./env.sh", N1('. ./env.sh', 'code run from text')],
+  ['ls x | tee y; . ./env.sh', N1('. ./env.sh', 'code run from text')],
+  ['. ./env.sh > log.txt', undefined],
+  ['ls 2>&1; . ./env.sh', undefined],
   ["cd src; perl -pi -e 's/a/b/' x.rb", undefined],
   // past the reader's bounds, anything that could move the shell: refused
   [

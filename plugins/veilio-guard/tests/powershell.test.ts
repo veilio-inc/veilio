@@ -131,6 +131,7 @@ const N1 = (t: string, form: string) =>
 const PS_TREE = {
   [`${HOME}/.aws/credentials`]: 'x\n',
   [`${HOME}/.kube/config`]: 'x\n',
+  [`${HOME}/docs/notes`]: '',
   [`${ROOT}/.env`]: `${SECRET}\n`,
   [`${ROOT}/notes`]: 'plain\n',
   [`${ROOT}/sub/notes`]: '',
@@ -141,7 +142,10 @@ async function ps(
   on: TestOn,
   command: string
 ): Promise<string | undefined> {
-  project(on, PS_TREE, { home: HOME, links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env` } })
+  project(on, PS_TREE, {
+    home: HOME,
+    links: { [`${ROOT}/sub/notes`]: `${ROOT}/.env`, [`${HOME}/docs/notes`]: `${ROOT}/.env` },
+  })
   on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
   return (await $.tool.call({ tool: 'PowerShell', command, description: 'x' })).deny
 }
@@ -194,6 +198,9 @@ for (const [command, expected] of [
   ['Set-Location –Foo src', N1('–Foo', 'a parameter Veilio cannot read')],
   ['Set-Location —src', N1('—src', 'a parameter Veilio cannot read')],
   ['Set-Location src -ErrorAction $x', N1('$x', 'a parameter Veilio cannot read')],
+  // `~` quoted or not is the provider's home: followed there.
+  ["Set-Location '~\\docs'; Get-Content notes", A2('notes')],
+  ['Set-Location ~\\docs; Get-Content notes', A2('notes')],
   ["Set-Location '~\\.aws'", A1('~\\.aws')],
   // A drive the command makes, beside a location command (any path)
   [
