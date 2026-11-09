@@ -126,8 +126,10 @@ veilio logout                 # revoke the session and remove local credentials
   is rotated, or after you join a team.
 - **Writing needs a confirmed key.** `team unlock` reads with every team key it
   opens, but team maps are saved (by `maps push --team`, `maps update` and the MCP
-  server's map tools) only under the newest key, and only when you made it or
-  confirmed the teammate who granted it. For a teammate not yet confirmed it
+  server's map tools) only under the newest version of the team key that Cloud
+  holds for you - if a newer version was refused or did not open, nothing is
+  written under an older one - and only when you made it, or confirmed the
+  teammate who granted it and they are still an active member. For a teammate not yet confirmed it
   prints their key's fingerprint: compare it with the one they see on their
   dashboard under "Your key fingerprint" (or from `veilio keys fingerprint`),
   then run `veilio team trust <team> <fingerprint>`. Until then a write is

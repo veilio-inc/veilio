@@ -80,11 +80,13 @@ read either; `veilio team unlock` opens it here with your vault passphrase.
 teammate who granted it, and the wrap names their key - but Veilio's server
 hands over both, so `team unlock` cannot tell a teammate's grant from one the
 server made itself. So it reads with every key it opens, and **writes** (`maps
-push --team`, `maps update`, the MCP server's map writes) only under a key it
-has seen confirmed:
+push --team`, `maps update`, the MCP server's map writes) only under the newest
+version of the team key that Cloud holds for you, and only once it is confirmed:
 
-- a key you made yourself, or one granted by a teammate whose key you confirmed,
-  is used to save maps;
+- a key you made yourself, or one granted by a teammate whose key you confirmed
+  and who is still an active member, is used to save maps;
+- if a newer version was refused or did not open, nothing is written under an
+  older one;
 - a key from a teammate you have not confirmed is kept read-only, and `team
   unlock` prints who granted it and their key's fingerprint. Ask them for the
   fingerprint they see - on their dashboard in the web app under "Your key
