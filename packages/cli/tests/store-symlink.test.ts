@@ -16,7 +16,7 @@ import {
 } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
+import { StoreRefusal, findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
 
 // The owner a file reads as. CI runs these tests as real root, where every
 // file the test makes is uid 0 (act, 2026-11-08): so the sudo cases give
@@ -759,5 +759,86 @@ describe('a map Veilio did not write is not recorded by rewriting it (R2-3 revie
     expect(recorded()).not.toBe(
       `${sha(readFileSync(path, 'utf8'))}:${sha(readFileSync(join(proj, '.veilio', 'aliases.json'), 'utf8'))}`
     )
+  })
+})
+
+// Founder 2026-11-09 (spec 085 R2-3, one-time adoption): a map that predates
+// the record is recorded once, the first time veilio meets it, only in a git
+// checkout whose index is readable and does not track it. Anything else
+// stays unrecorded, so the guard shows-gates it.
+describe('a map that predates the record is adopted once, only from a checkout (R2-3 adoption)', () => {
+  let home: string
+  let proj: string
+  const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: proj, env: GIT_ENV, stdio: 'ignore' })
+  const recordFile = () => join(home, '.veilio', 'written.json')
+  const recorded = (): string | undefined => {
+    try {
+      return (JSON.parse(readFileSync(recordFile(), 'utf8')) as Record<string, string>)[
+        realpathSync(proj)
+      ]
+    } catch {
+      return undefined
+    }
+  }
+  const existing = () => {
+    mkdirSync(join(proj, '.veilio'), { recursive: true })
+    writeFileSync(join(proj, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(
+      join(proj, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+    )
+    return resolveMapPath(null, proj)
+  }
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'veilio-adopt-home-'))
+    proj = mkdtempSync(join(tmpdir(), 'veilio-adopt-proj-'))
+    vi.stubEnv('HOME', home)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  it('in a checkout that does not track it: recorded when first read', () => {
+    git('init', '-q')
+    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
+    git('add', 'a.ts')
+    loadMap(existing())
+    expect(recorded()).toMatch(/^[0-9a-f]{64}:[0-9a-f]{64}$/)
+  })
+
+  it('in a checkout: a scrub merging it keeps it recorded', () => {
+    git('init', '-q')
+    const path = existing()
+    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
+    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+    expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+  })
+
+  it('outside git: not recorded', () => {
+    loadMap(existing())
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('with a split index: refused, not recorded', () => {
+    git('init', '-q')
+    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
+    git('add', 'a.ts')
+    git('update-index', '--split-index')
+    expect(() => loadMap(existing())).toThrow(StoreRefusal)
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('once only: a project with a record that no longer matches is not adopted again', () => {
+    git('init', '-q')
+    const path = existing()
+    loadMap(path)
+    const first = recorded()
+    writeFileSync(path, JSON.stringify({ version: 1, map: { __CLS__1: 'Changed' } }))
+    loadMap(path)
+    expect(recorded()).toBe(first)
   })
 })

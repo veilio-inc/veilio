@@ -342,6 +342,7 @@ export function loadMap(path: string): SymbolMap {
   if (!isSymbolMap(map)) {
     throw new Error(`map file at ${path} is malformed`)
   }
+  adoptOnRead(path)
   return map
 }
 
@@ -448,9 +449,38 @@ export function storeIsOurs(mapPath: string): boolean {
     const now = storeValue(mapPath)
     if (now === EMPTY_STORE) return true
     const file = writtenRecordPath()
-    return file !== null && readRecord(file)[realpathSync(dirname(store))] === now
+    if (file === null) return false
+    const recorded = readRecord(file)[realpathSync(dirname(store))]
+    return recorded === undefined ? adoptable(mapPath) : recorded === now
   } catch {
     return false
+  }
+}
+
+/**
+ * A map that predates the record (founder, 2026-11-09): adopted once, the
+ * first time veilio meets it, only inside a git checkout whose index is
+ * readable and does not track the store (the read refuses a tracked one).
+ * Outside git, or with an index this reader cannot follow, it is not.
+ * shortcut: an unpacked archive that ships its own `.git` passes these
+ * checks too; nothing on disk tells it from a clone.
+ */
+function adoptable(mapPath: string): boolean {
+  const git = trackedPaths(dirname(mapPath))
+  return git !== null && 'paths' in git && trackedStoreFile(mapPath) === null
+}
+
+/** Adopts a map met for the first time (adoptable), once: no-op when the
+ *  project is recorded already, or the map may not be adopted. */
+function adoptOnRead(mapPath: string): void {
+  if (basename(mapPath) !== STORE_FILE || basename(dirname(mapPath)) !== STORE_DIR) return
+  try {
+    const file = writtenRecordPath()
+    if (file === null) return
+    if (readRecord(file)[realpathSync(dirname(dirname(mapPath)))] !== undefined) return
+    recordWritten(mapPath, adoptable(mapPath))
+  } catch {
+    // not adopted: shown-gated, the safe side
   }
 }
 
