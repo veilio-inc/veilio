@@ -54,6 +54,7 @@ veilio maps push [name]         # upload the local map under a new Cloud name
 veilio maps push --team [name]  # publish it as the team's shared map instead
 veilio maps update <id>         # replace a Cloud map's entries with the local map's, in place
 veilio maps rm <id>             # remove a map from Cloud
+veilio maps adopt               # trust this project's existing map as one this machine wrote (asks first; --yes)
 veilio projects                 # the projects your team works in; * marks the one in use
 veilio projects use <name>      # work in that project (kept with the sign-in)
 veilio team unlock              # open the team key with your vault passphrase (kept 7 days)
@@ -362,7 +363,7 @@ a plan feature the web app couldn't.
                         For: scrub
 -m, --map <path>        Use a specific map file
                         For: scrub, restore, map, maps pull, maps push, maps
-                        update, team unlock
+                        update, maps adopt, team unlock
     --json              Machine-readable output
                         For: scan, map
     --blobs <listing>   scan the files a `git diff --raw --no-abbrev` listing
@@ -393,6 +394,8 @@ a plan feature the web app couldn't.
                         only once Cloud no longer offers that version, and
                         only if the newest key stored is writable
                         For: team unlock
+    --yes               Adopt without asking
+                        For: maps adopt
     --allow-drop        Allow dropping entries the Cloud map has and the local
                         map does not
                         For: maps update
@@ -504,7 +507,7 @@ The map is yours only if you made it, so the CLI refuses (exit 1) to read or wri
 - that belongs to another user on this machine (macOS and Linux): a `.veilio` someone else made, say in `/tmp`, is skipped when the CLI looks for the project, and refused when named with `--map`. Under `sudo`, a store of the user who ran it (`SUDO_UID`) can be read but not written, and no store is made in a project that user owns: a file root writes there would be root's, so run `veilio` without `sudo`. To use a store someone else owns on purpose (a shared CI workspace, say), list its full path in `VEILIO_TRUST_STORE_OWNER`, as git's `safe.directory`: absolute paths separated by `:` (`;` on Windows), for example `VEILIO_TRUST_STORE_OWNER=/srv/build/.veilio`. Only a listed store is accepted, by its real path.
 - whose `.veilio/.gitignore` does not keep it out of git: an existing one must be a plain file whose only pattern is `*`. The CLI writes one when there is none and never rewrites one that is there.
 
-Outside a git checkout, or in a folder that ships its own `.git` (an unpacked archive), the CLI cannot tell a map you made from one that came with the files. Check `.veilio/` before you restore. If git uses a split or sparse index, the CLI refuses the map until you switch that off.
+Outside a git checkout, or in a folder that ships its own `.git` (an unpacked archive), the CLI cannot tell a map you made from one that came with the files. The guard puts back only names it has shown from a map this machine did not write; for a map you made before this version, run `veilio maps adopt` in the project once. Check `.veilio/` before you restore. If git uses a split or sparse index, the CLI refuses the map until you switch that off.
 
 On Windows the CLI cannot check who owns a folder, so it uses a `.veilio` folder only inside your project: the git work tree, or the folder you run it in.
 

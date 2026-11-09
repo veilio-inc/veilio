@@ -342,7 +342,6 @@ export function loadMap(path: string): SymbolMap {
   if (!isSymbolMap(map)) {
     throw new Error(`map file at ${path} is malformed`)
   }
-  adoptOnRead(path)
   return map
 }
 
@@ -450,38 +449,33 @@ export function storeIsOurs(mapPath: string): boolean {
     if (now === EMPTY_STORE) return true
     const file = writtenRecordPath()
     if (file === null) return false
-    const recorded = readRecord(file)[realpathSync(dirname(store))]
-    return recorded === undefined ? adoptable(mapPath) : recorded === now
+    // Unrecorded and not empty: not ours until `veilio maps adopt` (founder,
+    // 2026-11-09). No read, scrub or MCP call adopts it.
+    return readRecord(file)[realpathSync(dirname(store))] === now
   } catch {
     return false
   }
 }
 
 /**
- * A map that predates the record (founder, 2026-11-09): adopted once, the
- * first time veilio meets it, only inside a git checkout whose index is
- * readable and does not track the store (the read refuses a tracked one).
- * Outside git, or with an index this reader cannot follow, it is not.
- * shortcut: an unpacked archive that ships its own `.git` passes these
- * checks too; nothing on disk tells it from a clone.
+ * Trusts the map already in this project as one this machine wrote (founder,
+ * 2026-11-09): what `veilio maps adopt` does, after the person saw what it
+ * holds. The read refuses a map git tracks, or a checkout whose index cannot
+ * be read. Throws when the record cannot be written; nothing is adopted then.
  */
-function adoptable(mapPath: string): boolean {
-  const git = trackedPaths(dirname(mapPath))
-  return git !== null && 'paths' in git && trackedStoreFile(mapPath) === null
-}
-
-/** Adopts a map met for the first time (adoptable), once: no-op when the
- *  project is recorded already, or the map may not be adopted. */
-function adoptOnRead(mapPath: string): void {
-  if (basename(mapPath) !== STORE_FILE || basename(dirname(mapPath)) !== STORE_DIR) return
-  try {
-    const file = writtenRecordPath()
-    if (file === null) return
-    if (readRecord(file)[realpathSync(dirname(dirname(mapPath)))] !== undefined) return
-    recordWritten(mapPath, adoptable(mapPath))
-  } catch {
-    // not adopted: shown-gated, the safe side
-  }
+export function adoptStore(mapPath: string): void {
+  if (basename(mapPath) !== STORE_FILE || basename(dirname(mapPath)) !== STORE_DIR)
+    throw new StoreRefusal(`only a project's ${STORE_DIR}/${STORE_FILE} can be adopted`)
+  loadMap(mapPath)
+  recordWritten(mapPath, true)
+  const file = writtenRecordPath()
+  if (
+    file === null ||
+    readRecord(file)[realpathSync(dirname(dirname(mapPath)))] !== storeValue(mapPath)
+  )
+    throw new StoreRefusal(
+      `could not record the map in ~/${STORE_DIR}/${WRITTEN_RECORD_FILE}, so nothing was adopted.`
+    )
 }
 
 /**

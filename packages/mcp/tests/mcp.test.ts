@@ -1,8 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import {
   FrameReader,
   handleFrame,
@@ -860,5 +869,27 @@ describe('anonymize_file: the extension decides the language (R2-12)', () => {
     const res = call('anonymize_file', { path: 'notes.unknownext', language: 'c' })
     expect(res.text).toContain('Language: C')
     expect(res.text).not.toContain('does not match')
+  })
+})
+
+// Founder 2026-11-09 (spec 085 R2-3): the MCP server never adopts a map.
+describe('the MCP server never records a map it did not write (R2-3 adoption)', () => {
+  it('anonymize_file over an unrecorded map in a checkout records nothing', () => {
+    execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore', env: GIT_ENV })
+    // A map that predates the record: on disk, not written by this machine.
+    mkdirSync(join(cwd, '.veilio'), { recursive: true })
+    writeFileSync(join(cwd, '.veilio', '.gitignore'), '*\n')
+    writeFileSync(
+      join(cwd, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+    )
+    write('a.ts', 'export class PaymentGateway {}\n')
+    call('anonymize_file', { path: 'a.ts' })
+    call('symbol_map_summary')
+    const record = join(homedir(), '.veilio', 'written.json')
+    const entries = existsSync(record)
+      ? (JSON.parse(readFileSync(record, 'utf8')) as Record<string, string>)
+      : {}
+    expect(entries[realpathSync(cwd)]).toBeUndefined()
   })
 })

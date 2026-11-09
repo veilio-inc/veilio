@@ -16,7 +16,9 @@ import {
 } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { StoreRefusal, findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
+import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '../src/store.js'
+import { main } from '../src/index.js'
+import { EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, type Io } from '../src/commands.js'
 
 // The owner a file reads as. CI runs these tests as real root, where every
 // file the test makes is uid 0 (act, 2026-11-08): so the sudo cases give
@@ -762,22 +764,24 @@ describe('a map Veilio did not write is not recorded by rewriting it (R2-3 revie
   })
 })
 
-// Founder 2026-11-09 (spec 085 R2-3, one-time adoption): a map that predates
-// the record is recorded once, the first time veilio meets it, only in a git
-// checkout whose index is readable and does not track it. Anything else
-// stays unrecorded, so the guard shows-gates it.
-describe('a map that predates the record is adopted once, only from a checkout (R2-3 adoption)', () => {
+// Founder 2026-11-09 (spec 085 R2-3), replacing silent adoption: a map that
+// predates the record is trusted only through `veilio maps adopt`, run by the
+// person in that project. No read, scrub or MCP call records it.
+describe('an unrecorded map is adopted only by `veilio maps adopt` (R2-3 adoption)', () => {
   let home: string
   let proj: string
   const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: proj, env: GIT_ENV, stdio: 'ignore' })
-  const recordFile = () => join(home, '.veilio', 'written.json')
+  const sha = (t: string) => createHash('sha256').update(t).digest('hex')
   const recorded = (): string | undefined => {
     try {
-      return (JSON.parse(readFileSync(recordFile(), 'utf8')) as Record<string, string>)[
-        realpathSync(proj)
-      ]
+      return (
+        JSON.parse(readFileSync(join(home, '.veilio', 'written.json'), 'utf8')) as Record<
+          string,
+          string
+        >
+      )[realpathSync(proj)]
     } catch {
       return undefined
     }
@@ -787,9 +791,31 @@ describe('a map that predates the record is adopted once, only from a checkout (
     writeFileSync(join(proj, '.veilio', '.gitignore'), '*\n')
     writeFileSync(
       join(proj, '.veilio', 'map.json'),
-      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' } })
     )
     return resolveMapPath(null, proj)
+  }
+  const checkout = () => {
+    git('init', '-q')
+    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
+    git('add', 'a.ts')
+  }
+  const adopt = async (argv: string[], answer = '') => {
+    let out = ''
+    let err = ''
+    const io: Io = {
+      cwd: proj,
+      home,
+      stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
+      stdout: (t) => (out += t),
+      stderr: (t) => (err += t),
+      prompt: async () => answer,
+    }
+    const code = await main(['maps', 'adopt', ...argv], io)
+    return { code, out, err }
   }
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'veilio-adopt-home-'))
@@ -802,43 +828,65 @@ describe('a map that predates the record is adopted once, only from a checkout (
     rmSync(proj, { recursive: true, force: true })
   })
 
-  it('in a checkout that does not track it: recorded when first read', () => {
-    git('init', '-q')
-    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
-    git('add', 'a.ts')
+  it('reading it, in a checkout that does not track it, records nothing', () => {
+    checkout()
     loadMap(existing())
-    expect(recorded()).toMatch(/^[0-9a-f]{64}:[0-9a-f]{64}$/)
+    expect(recorded()).toBeUndefined()
   })
 
-  it('in a checkout: a scrub merging it keeps it recorded', () => {
-    git('init', '-q')
+  it('a scrub merging it records nothing', () => {
+    checkout()
     const path = existing()
-    saveMap(path, { ...loadMap(path), __FN__1: 'chargeCard' })
-    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+    saveMap(path, { ...loadMap(path), __VAR__1: 'amountDue' })
+    expect(recorded()).toBeUndefined()
+  })
+
+  it('`maps adopt --yes` records it, and later writes keep it recorded', async () => {
+    checkout()
+    const path = existing()
+    const r = await adopt(['--yes'])
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toContain(`${path} holds 2 entries.`)
+    expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
+    saveMap(path, { ...loadMap(path), __VAR__1: 'amountDue' })
     expect(recorded()).toBe(`${sha(readFileSync(path, 'utf8'))}:${sha('')}`)
   })
 
-  it('outside git: not recorded', () => {
-    loadMap(existing())
+  it('asks first: "y" adopts, anything else adopts nothing', async () => {
+    checkout()
+    existing()
+    const no = await adopt([], 'n')
+    expect(no.code).toBe(EXIT_OK)
+    expect(no.out).toContain('veilio: nothing was adopted.')
+    expect(recorded()).toBeUndefined()
+    const yes = await adopt([], 'y')
+    expect(yes.code, yes.err).toBe(EXIT_OK)
+    expect(recorded()).toBeDefined()
+  })
+
+  it('refuses a map git tracks, with the tracked-map text', async () => {
+    checkout()
+    existing()
+    git('add', '-f', '.veilio/map.json')
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain('is tracked by git')
     expect(recorded()).toBeUndefined()
   })
 
-  it('with a split index: refused, not recorded', () => {
-    git('init', '-q')
-    writeFileSync(join(proj, 'a.ts'), 'export const a = 1\n')
-    git('add', 'a.ts')
+  it('refuses in a checkout with a split index', async () => {
+    checkout()
+    existing()
     git('update-index', '--split-index')
-    expect(() => loadMap(existing())).toThrow(StoreRefusal)
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_FINDINGS)
+    expect(r.err).toContain('veilio cannot read (`split index`)')
     expect(recorded()).toBeUndefined()
   })
 
-  it('once only: a project with a record that no longer matches is not adopted again', () => {
-    git('init', '-q')
-    const path = existing()
-    loadMap(path)
-    const first = recorded()
-    writeFileSync(path, JSON.stringify({ version: 1, map: { __CLS__1: 'Changed' } }))
-    loadMap(path)
-    expect(recorded()).toBe(first)
+  it('with no map, adopts nothing', async () => {
+    const r = await adopt(['--yes'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(recorded()).toBeUndefined()
   })
 })
