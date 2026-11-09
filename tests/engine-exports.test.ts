@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { parse } from 'yaml'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -287,15 +296,131 @@ describe('the engine exports the published tools import', () => {
       expect(r.status).not.toBe(0)
       expect(r.stdout).not.toContain(`@veilio-inc/cli@${local}`)
     })
+})
 
-  it('runs in the publish workflow after the build and before anything is published', () => {
-    const lines = readFileSync(WORKFLOW, 'utf8').split('\n')
-    const at = (re: RegExp) => lines.findIndex((l) => re.test(l))
-    const build = at(/name: Build, typecheck and test the packages/)
-    const check = at(/run: node scripts\/check-engine-exports\.mjs\s*$/)
-    const publish = at(/uses: changesets\/action@/)
+// Spec 085 part 3, R2-1 (security audit run-2): the check installed the
+// engine by a range from npm and imported it inside the release job, which
+// holds `id-token: write` and write tokens - whoever could publish an
+// in-range engine ran code there. It now runs in a job of its own with a
+// read-only token, and installs one exact version.
+describe('the export check runs unprivileged, on exact versions (R2-1)', () => {
+  type Job = {
+    permissions?: Record<string, string>
+    needs?: string | string[]
+    steps?: { uses?: string; run?: string; with?: Record<string, unknown> }[]
+  }
+  const jobs = () => (parse(readFileSync(WORKFLOW, 'utf8')) as { jobs: Record<string, Job> }).jobs
+  const runsCheck = (j: Job) =>
+    (j.steps ?? []).some((s) => /node scripts\/check-engine-exports\.mjs/.test(s.run ?? ''))
+
+  it('no job that can mint an id-token or write runs it', () => {
+    for (const [name, job] of Object.entries(jobs()))
+      if (runsCheck(job)) {
+        expect(job.permissions, name).toEqual({ contents: 'read' })
+        const checkout = (job.steps ?? []).find((s) => s.uses?.startsWith('actions/checkout@'))
+        expect(checkout?.with?.['persist-credentials'], name).toBe(false)
+      }
+  })
+
+  it('it runs, and the release job waits for it', () => {
+    const all = jobs()
+    const checker = Object.entries(all).find(([, j]) => runsCheck(j))
+    expect(checker).toBeDefined()
+    const needs = [all.release?.needs ?? []].flat()
+    expect(needs).toContain(checker![0])
+    expect(runsCheck(all.release!)).toBe(false)
+  })
+
+  // Security review of R2-1: a cache the unprivileged job writes after it
+  // imported registry code could be restored into the release job.
+  it('neither job restores or saves a cache', () => {
+    for (const [name, job] of Object.entries(jobs()))
+      for (const step of job.steps ?? [])
+        expect(step.with?.cache, `${name}: ${step.uses}`).toBeUndefined()
+  })
+
+  it("the import runs with the runner's cache tokens unset", () => {
+    const step = Object.values(jobs())
+      .find(runsCheck)!
+      .steps!.find((s) => /check-engine-exports/.test(s.run ?? ''))!
+    expect(step.run!.trim()).toBe(
+      'env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_CACHE_URL -u ACTIONS_RESULTS_URL node scripts/check-engine-exports.mjs'
+    )
+  })
+
+  it('the engine release job restores no cache either', () => {
+    const engine = parse(readFileSync('.github/workflows/publish-engine.yml', 'utf8')) as {
+      jobs: Record<string, Job>
+    }
+    for (const [name, job] of Object.entries(engine.jobs))
+      for (const step of job.steps ?? [])
+        expect(step.with?.cache, `${name}: ${step.uses}`).toBeUndefined()
+  })
+
+  it('it builds the packages before it checks them', () => {
+    const steps = Object.values(jobs()).find(runsCheck)!.steps!
+    const build = steps.findIndex((s) => /npm run build:packages/.test(s.run ?? ''))
+    const check = steps.findIndex((s) => /check-engine-exports/.test(s.run ?? ''))
     expect(build).toBeGreaterThan(-1)
     expect(check).toBeGreaterThan(build)
-    expect(publish).toBeGreaterThan(check)
+  })
+
+  it('installs the engine at the exact version the repository records, never a range', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'veilio-npm-shim-'))
+    const log = join(bin, 'argv.log')
+    // npm install --prefix P ... <spec>: record <spec>, lay out the package.
+    writeFileSync(
+      join(bin, 'npm'),
+      [
+        '#!/bin/sh',
+        `echo "$@" >> "${log}"`,
+        'prefix=""; last=""',
+        'while [ $# -gt 0 ]; do case "$1" in --prefix) prefix="$2"; shift 2;; *) last="$1"; shift;; esac; done',
+        'name="${last%@*}"',
+        'mkdir -p "$prefix/node_modules/$name/dist"',
+        `printf '{"name":"%s","version":"%s","type":"module","exports":{".":{"import":"./dist/index.js"}}}' "$name" "\${last##*@}" > "$prefix/node_modules/$name/package.json"`,
+        `printf 'export const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\\n' > "$prefix/node_modules/$name/dist/index.js"`,
+        '',
+      ].join('\n')
+    )
+    chmodSync(join(bin, 'npm'), 0o755)
+    put(
+      'tools/packages/engine/package.json',
+      JSON.stringify({ name: '@veilio-inc/engine', version: '1.4.2' })
+    )
+    const r = spawnSync(process.execPath, [SCRIPT, '--root', join(base, 'tools')], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    })
+    const installs = readFileSync(log, 'utf8')
+    rmSync(bin, { recursive: true, force: true })
+    expect(r.status, r.stderr).toBe(0)
+    expect(installs).toContain('@veilio-inc/engine@1.4.2')
+    expect(installs).not.toContain('@veilio-inc/engine@^')
+  })
+
+  it('refuses an engine version outside the range the tools declare', () => {
+    put(
+      'tools/packages/engine/package.json',
+      JSON.stringify({ name: '@veilio-inc/engine', version: '2.0.0' })
+    )
+    const r = spawnSync(process.execPath, [SCRIPT, '--root', join(base, 'tools')], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: '/nonexistent' },
+    })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(
+      '@veilio-inc/engine 2.0.0 (packages/engine/package.json) is outside ^1.0.0, the range @veilio-inc/cli declares.'
+    )
+  })
+
+  it('imports what it checks, so it must not hold credentials (recorded)', () => {
+    const marker = join(base, 'ran.txt')
+    put(
+      'engine/dist/index.js',
+      `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'x')\nexport const restore = 1, isRawOnly = 1, scanSecrets = 1, shortNameAlias = 1, windowsAlias = 1\n`
+    )
+    expect(run().status).toBe(0)
+    expect(existsSync(marker)).toBe(true)
   })
 })

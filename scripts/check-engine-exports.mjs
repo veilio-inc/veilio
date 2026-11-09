@@ -119,8 +119,46 @@ function sibling(dep, range) {
   return caret(range, version) ? dir : undefined
 }
 
-/** `dep` as npm installs it for `range`, unpacked under a temporary prefix. */
-function installed(dep, range, temps) {
+/**
+ * The one version of `dep` to check (spec 085 R2-1): an allow-list of exact
+ * versions, never a range npm resolves at run time. The engine: the version
+ * packages/engine/package.json records, which the release job has confirmed is
+ * npm's latest. Another package: the highest version npm lists for `range`.
+ * Null, with the reason said, when there is none.
+ */
+function exactVersion(dep, range, tool) {
+  if (dep === '@veilio-inc/engine') {
+    const version = JSON.parse(
+      readFileSync(join(root, 'packages', 'engine', 'package.json'), 'utf8')
+    ).version
+    if (caret(range, version)) return version
+    say(
+      `${dep} ${version} (packages/engine/package.json) is outside ${range}, the range ${tool} declares.`
+    )
+    return null
+  }
+  const listed = JSON.parse(
+    execFileSync('npm', ['view', `${dep}@${range}`, 'version', '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    }) || 'null'
+  )
+  const versions = [listed].flat().filter((v) => typeof v === 'string' && caret(range, v))
+  if (versions.length === 0) {
+    say(`npm lists no ${dep} version in ${range}, the range ${tool} declares.`)
+    return null
+  }
+  const parts = (v) => v.split('.').map(Number)
+  return versions
+    .sort((x, y) => {
+      const [a, b] = [parts(x), parts(y)]
+      return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+    })
+    .at(-1)
+}
+
+/** `dep` at exactly `version`, unpacked under a temporary prefix. */
+function installed(dep, version, temps) {
   const prefix = mkdtempSync(join(tmpdir(), 'engine-exports-'))
   temps.push(prefix)
   execFileSync(
@@ -134,11 +172,14 @@ function installed(dep, range, temps) {
       '--ignore-scripts',
       '--no-audit',
       '--no-fund',
-      `${dep}@${range}`,
+      `${dep}@${version}`,
     ],
     { stdio: ['ignore', 'ignore', 'inherit'] }
   )
-  return join(prefix, 'node_modules', dep)
+  const at = join(prefix, 'node_modules', dep)
+  const got = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')).version
+  if (got !== version) throw new Error(`npm installed ${dep}@${got}, not ${version}`)
+  return at
 }
 
 const temps = []
@@ -163,7 +204,12 @@ try {
       const wanted = new Map()
       for (const text of files) importsOf(text, dep, wanted)
       if (wanted.size === 0) continue
-      const at = fixed[dep] ?? sibling(dep, range) ?? installed(dep, range, temps)
+      let at = fixed[dep] ?? sibling(dep, range)
+      if (at === undefined) {
+        const exact = exactVersion(dep, range, manifest.name)
+        if (exact === null) continue
+        at = installed(dep, exact, temps)
+      }
       const target = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8'))
       const version = target.version ?? '(fixture)'
       let count = 0
