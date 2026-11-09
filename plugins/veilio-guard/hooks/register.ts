@@ -345,13 +345,9 @@ export function register(on: On, options: Options = {}) {
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     await g.learnRuleNames([e.text, ...given], budget)
     // Spec 083: a slash command's line is masked at command.run and the host
-    // applies no rewrite of it here, so a line that is more than the command
-    // as command.run left it goes only when masking would not change it.
-    // The line is the command's only once its name and arguments hold nothing
-    // to mask (a skill can be named after a project name).
-    const line = e.command && `/${e.command.name}${e.command.args ? ` ${e.command.args}` : ''}`
-    const asCommand = e.text === line && g.applyText(line, 'prompt', undefined, budget) === line
-    const text = asCommand ? e.text : g.applyText(e.text, 'prompt', scan, budget)
+    // applies no rewrite of it here, so it goes only when masking would not
+    // change it (its name too: a skill can be named after a project name).
+    const text = g.applyText(e.text, 'prompt', scan, budget)
     if (e.command && text !== e.text) return { drop: COMMAND_LINE_REFUSED }
     const context =
       raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined

@@ -458,3 +458,15 @@ test('a command whose arguments were masked says so', async ($, on) => {
   await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
   expect(p.toasts).toEqual(['Veilio masked names in your prompt before sending it.'])
 })
+
+test('a command run from the composer, with where it shows, runs: origin and presentation are metadata', async ($, on) => {
+  const ran = commands(on)
+  const presentation = { isFullscreen: true, columns: 120 }
+  await $.command.run({
+    command: 'review',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation,
+  } as never)
+  expect(ran).toHaveLength(1)
+})
