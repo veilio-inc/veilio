@@ -579,3 +579,51 @@ describe('a store swapped between the checks and the write is refused', () => {
     expect(statSync(join(base, '.veilio')).mode & 0o777).toBe(0o700)
   })
 })
+
+// Spec 085 part 3, R2-22 (security audit run-2): Windows has no uid, so the
+// owner check answers "me" and another user's `C:\.veilio` was adopted. On
+// Windows the walk stops at the project root: the git work tree, or the folder
+// the CLI runs in.
+describe('on Windows the store walk stops at the project root (R2-22)', () => {
+  let top: string
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const asWindows = () => Object.defineProperty(process, 'platform', { value: 'win32' })
+  beforeEach(() => {
+    top = mkdtempSync(join(tmpdir(), 'veilio-win-'))
+    mkdirSync(join(top, '.veilio'))
+    writeFileSync(
+      join(top, '.veilio', 'map.json'),
+      JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+    )
+    mkdirSync(join(top, 'work', 'proj'), { recursive: true })
+  })
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+    rmSync(top, { recursive: true, force: true })
+  })
+
+  it('with no git, a .veilio above the folder is not adopted', () => {
+    asWindows()
+    const proj = join(top, 'work', 'proj')
+    expect(findProjectRoot(proj)).toBe(proj)
+    expect(loadMap(resolveMapPath(null, proj))).toEqual({})
+  })
+
+  it('in a git checkout, the walk stops at its root', () => {
+    asWindows()
+    mkdirSync(join(top, 'work', '.git'))
+    const proj = join(top, 'work', 'proj')
+    expect(findProjectRoot(proj)).toBe(join(top, 'work'))
+  })
+
+  it('a .veilio inside the checkout is still found from a subfolder', () => {
+    asWindows()
+    mkdirSync(join(top, 'work', '.git'))
+    mkdirSync(join(top, 'work', '.veilio'))
+    expect(findProjectRoot(join(top, 'work', 'proj'))).toBe(join(top, 'work'))
+  })
+
+  it('off Windows, the walk is as before', () => {
+    expect(findProjectRoot(join(top, 'work', 'proj'))).toBe(top)
+  })
+})

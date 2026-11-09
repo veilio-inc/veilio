@@ -34,19 +34,35 @@ export const STORE_FILE = 'map.json'
  *  the CLI in a subdirectory still finds the project's map. Falls back to
  *  `from` when neither is found. */
 export function findProjectRoot(from: string): string {
-  let dir = resolve(from)
+  const start = resolve(from)
+  let dir = start
   for (;;) {
     // Another user's .veilio is not this project's store (spec 085 L2): on a
     // shared machine anyone can make /tmp/.veilio.
     const store = join(dir, STORE_DIR)
     if (
-      (existsSync(store) && (ownerOf(store) !== 'other' || trustedStore(store))) ||
+      (existsSync(store) &&
+        (ownerOf(store) !== 'other' || trustedStore(store)) &&
+        withinProject(dir, start)) ||
       existsSync(join(dir, '.git'))
     )
       return dir
     const parent = dirname(dir)
     if (parent === dir) return resolve(from)
     dir = parent
+  }
+}
+
+/**
+ * Windows has no uid for the owner check (spec 085 R2-22): there a `.veilio`
+ * is adopted only in the folder the CLI runs in or inside the git checkout
+ * holding it, never one another user made higher up (`C:\\.veilio`).
+ */
+function withinProject(dir: string, start: string): boolean {
+  if (process.platform !== 'win32' || dir === start) return true
+  for (let d = dir; ; d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) return true
+    if (dirname(d) === d) return false
   }
 }
 
@@ -143,7 +159,7 @@ function refuseTracked(path: string): void {
   if ('unreadable' in found) {
     const kind = found.unreadable === 'format' ? 'an unknown format' : `${found.unreadable} index`
     throw new StoreRefusal(
-      `refusing to use ${shownPath(path)}: this checkout's git index is in a form veilio cannot read (${kind}), so it cannot tell whether git tracks the map. Run \`${REMEDY[found.unreadable]}\`, then run again.`
+      `refusing to use \`${shownPath(path)}\`: this checkout's git index is in a form veilio cannot read (\`${kind}\`), so it cannot tell whether git tracks the map. Run \`${REMEDY[found.unreadable]}\`, then run again.`
     )
   }
   const { root, tracked } = found
@@ -154,7 +170,7 @@ function refuseTracked(path: string): void {
   const how = rmCommand(root, tracked)
   if (tracked === relativeName(root, path) && !MAP_FILES.has(basename(path).toLowerCase()))
     throw new StoreRefusal(
-      `refusing to write ${shown}: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git${how}, then run again.`
+      `refusing to write \`${shown}\`: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git${how}, then run again.`
     )
   throw new StoreRefusal(
     `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +

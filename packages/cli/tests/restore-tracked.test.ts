@@ -341,7 +341,7 @@ describe('a checkout whose index cannot be read refuses the map (R2-2)', () => {
       make()
       expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(StoreRefusal)
       expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(
-        `veilio cannot read (${kind} index), so it cannot tell whether git tracks the map. Run \`${remedy}\`, then run again.`
+        `veilio cannot read (\`${kind} index\`), so it cannot tell whether git tracks the map. Run \`${remedy}\`, then run again.`
       )
     })
 
