@@ -158,25 +158,30 @@ function refuseTracked(path: string): void {
   const { root, tracked } = found
   // reserved.json and the like hold the account, team and rule bases, not a
   // map (spec 085 R2-16): said as what they are.
-  if (tracked === relativeName(root, path) && !MAP_FILES.has(basename(path).toLowerCase())) {
-    const shownFile = shownPath(tracked)
+  // The path comes from the checkout: shown without control characters.
+  const shown = shownPath(tracked)
+  const how = rmCommand(root, tracked)
+  if (tracked === relativeName(root, path) && !MAP_FILES.has(basename(path).toLowerCase()))
     throw new StoreRefusal(
-      `refusing to write ${shownFile}: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git (\`git rm --cached ${shownFile}\`), then run again.`
+      `refusing to write ${shown}: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git${how}, then run again.`
     )
-  }
-  // The path comes from the checkout: shown without control characters. A
-  // command only off Windows (its shells read quotes differently) and only
-  // for a root and path of plain characters; both single-quoted.
-  const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
-  const plain = /^[A-Za-z0-9._/ -]+$/
-  const how =
-    process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
-      ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
-      : ''
   throw new StoreRefusal(
     `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
       `Remove it from git${how}, then scrub again to build your own.`
   )
+}
+
+/**
+ * The command that untracks `tracked`, as text to paste: only off Windows (its
+ * shells read quotes differently) and only for a root and path of plain
+ * characters, both single-quoted; otherwise nothing (security review: a
+ * repository chooses the path, and `x;curl …|sh` would be a command).
+ */
+function rmCommand(root: string, tracked: string): string {
+  const plain = /^[A-Za-z0-9._/ -]+$/
+  return process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
+    ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
+    : ''
 }
 
 const MAP_FILES = new Set([STORE_FILE, 'aliases.json'])

