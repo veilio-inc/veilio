@@ -134,9 +134,9 @@ says why:
   name - publishing it would leave it unrestorable for every member;
 - a **teammate's map** - only its publisher updates or removes it.
 
-The server refuses the rest: a team that owes a key change, and a map that
-changed in Cloud since it was read (two writers never silently overwrite each
-other). A team map is sealed with the team's current key; a personal map with
+The server refuses the rest: a team that owes a key change, a map sealed under
+a team-key version this account does not hold, and a map that changed in Cloud
+since it was read (two writers never silently overwrite each other). A team map is sealed with the team's current key; a personal map with
 the personal-maps key.
 
 **Projects.** A team map belongs to one project. `veilio projects use <name>`

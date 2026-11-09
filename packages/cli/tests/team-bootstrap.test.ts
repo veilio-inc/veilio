@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -192,6 +193,39 @@ describe('the race: the team got a key first', () => {
     expect(r.err).toMatch(/Only the team owner or an admin can set up the team key/)
     expect(cloud.wraps).toHaveLength(0)
   })
+})
+
+describe('the recipient key, as Cloud checks it (review round 3)', () => {
+  it('the grant names the key it was wrapped to by its full SHA-256 hex, as the web app does', async () => {
+    await cloud.withKeypair()
+    const r = await run(['team', 'unlock'])
+    expect(r.code, r.err).toBe(EXIT_OK)
+    const post = cloud.requests.find((x) => x.path.endsWith('/key/grant'))!
+    expect(post.body).toMatchObject({
+      recipientKeyFingerprint: createHash('sha256')
+        .update(Buffer.from(cloud.keypair!.publicKey, 'base64'))
+        .digest('hex'),
+    })
+  })
+
+  it.each([
+    ['flagged recipientKeyChanged', false],
+    ['said only in words (a Cloud without the flag)', true],
+  ])(
+    'a key changed since it was read, %s: the approved words, nothing stored or unlocked',
+    async (_label, textOnly) => {
+      await cloud.withKeypair()
+      cloud.recipientRekeyed = true
+      cloud.recipientRekeyedTextOnly = textOnly
+      const r = await run(['team', 'unlock'])
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.err).toBe(
+        "veilio: That member's key changed since you read it. Nothing was stored. Reload and try again.\n"
+      )
+      expect(cloud.wraps).toHaveLength(0)
+      expect(existsSync(teamUnlockPath(home))).toBe(false)
+    }
+  )
 })
 
 describe('a team of one', () => {

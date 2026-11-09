@@ -386,6 +386,15 @@ describe('the same outcome as the CLI (SC-002)', () => {
       },
     ],
     [
+      'a key version not held',
+      async () => {
+        signIn(home, { team: true })
+        local({ __CLS__1: 'X', __FN__2: 'y' })
+        cloud.keyVersionNotHeld = true
+        return cloud.add({ scope: 'team', map_data: await sealTeam({ __CLS__1: 'X' }) }).id
+      },
+    ],
+    [
       'a clash',
       async () => {
         signIn(home, { team: true })
@@ -433,7 +442,19 @@ describe('the same outcome as the CLI (SC-002)', () => {
     // Refused before sending - except the rotation, which only the server
     // knows of, and refuses (423) without writing.
     const sent = cloud.requests.filter((x) => x.method === 'PATCH').length
-    expect(sent).toBe(cloud.rotationOwed ? 2 : 0)
+    expect(sent).toBe(cloud.rotationOwed || cloud.keyVersionNotHeld ? 2 : 0)
+  })
+
+  it('maps_update under a key version not held: the approved words, the MCP prefix', async () => {
+    signIn(home, { team: true })
+    local({ __CLS__1: 'X', __FN__2: 'y' })
+    cloud.keyVersionNotHeld = true
+    const id = cloud.add({ scope: 'team', map_data: await sealTeam({ __CLS__1: 'X' }) }).id
+    const r = await callToolAsync('maps_update', { id }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toBe(
+      'Veilio: This was encrypted under a team key version your account does not hold. Load the current team key (unlock your vault, or run `veilio team unlock`), then try again.'
+    )
   })
 
   it('maps_update of a map outside the chosen project: the same sentence as the CLI', async () => {

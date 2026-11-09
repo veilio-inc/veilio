@@ -32,6 +32,7 @@ import {
 } from '@veilio-inc/engine'
 import { CloudError, getMe, getTeamKeyPending, getTeamKeyWraps, grantTeamKey } from '../cloud.js'
 import type { Credential } from '../credential.js'
+import { keyDigest } from './fingerprint.js'
 
 /** Wrap a team key for one recipient - the browser's `wrapTeamKeyFor`.
  *  `iv` is for the test vector only. */
@@ -124,6 +125,8 @@ export type Bootstrap =
   /** Granted, but what the server hands back is not the key minted here:
    *  nothing may be sealed under it. */
   | { status: 'readback_mismatch' }
+  /** This account's key on file is not the one the wrap was made to. */
+  | { status: 'recipient_key_changed' }
 
 /**
  * Try to mint the team's first key. Throws only for a failure that is not an
@@ -152,8 +155,21 @@ export async function bootstrapTeamKey(
     version,
   })
   try {
-    await grantTeamKey(credential, teamId, { userId, version, wrappedKey: wrapped })
+    await grantTeamKey(credential, teamId, {
+      userId,
+      version,
+      wrappedKey: wrapped,
+      recipientKeyFingerprint: await keyDigest(me.publicKey),
+    })
   } catch (err) {
+    if (
+      err instanceof CloudError &&
+      err.status === 409 &&
+      (err.body?.recipientKeyChanged === true ||
+        // Fallback for a Cloud that predates the flag and sends only the words.
+        /key changed since/i.test(err.message))
+    )
+      return { status: 'recipient_key_changed' }
     // 403: the team has wraps already, or this member may not start one.
     // 409: a wrap for this version exists. Somebody got there first.
     if (err instanceof CloudError && (err.status === 403 || err.status === 409)) {
