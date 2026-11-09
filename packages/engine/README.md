@@ -603,6 +603,10 @@ your maps, so a server storing it cannot read it.
 A lost `.veilio` passphrase is not recoverable, by construction. Nothing here
 holds an escrow copy and nothing in the format allows one.
 
+## Known limitations
+
+Names that contain letters outside A–Z are not yet masked whole. A name written only in Greek or Cyrillic letters (for example `παραγγελία`) is not masked at all. A name that mixes A–Z with other letters (for example `wyślijPaczkę` or `größeBerechnen`) is masked only in its A–Z parts, so the other letters reach the model. Names written only in A–Z are not affected. Until this is fixed, rename such names, or leave files that use them out of what you send. Full support is planned for the next release (#224).
+
 ## License
 
 Veilio Community License 1.1 — **free to use for any purpose, including inside

@@ -52,6 +52,14 @@ It does **not** make an imported map safe. A well-formed map from someone else
 can still map `__FN__1` to text you did not write. Import maps only from people
 you would accept a patch from, and read restored output before running it.
 
+### Saved maps are sealed, not bound to their id
+A map saved to Veilio Cloud is encrypted with a key that only you, or your team, hold, so the server can neither read one nor alter one undetected. The encryption does not bind a map to its id, though: a server that misbehaved could hand you one of your own maps in place of another one of yours. You would see the wrong names restored, never another account's.
+
+Saved maps are not tied to a version: anyone who can write your map files can put back an older copy, and Veilio restores from it as written. Binding maps to a version is planned for the next release.
+
+### Known limitation — names with letters outside A–Z
+Names that contain letters outside A–Z are not yet masked whole. A name written only in Greek or Cyrillic letters (for example `παραγγελία`) is not masked at all. A name that mixes A–Z with other letters (for example `wyślijPaczkę` or `größeBerechnen`) is masked only in its A–Z parts, so the other letters reach the model. Names written only in A–Z are not affected. Until this is fixed, rename such names, or leave files that use them out of what you send. Full support is planned for the next release (#224).
+
 ### Export passphrases have a floor, not a strength guarantee
 A `.veilio` file is the one artifact designed to leave the machine, so once it
 has, its passphrase is attacked offline at whatever rate the attacker's hardware

@@ -9,7 +9,7 @@ name: Publish @veilio-inc/engine
 # copies in this repository stay where the last merge left them. That is what
 # lets `main` require a reviewed pull request with no bypass for this workflow.
 #
-# Publishing still uses npm OIDC "trusted publishing" — no long-lived NPM_TOKEN
+# Publishing still uses npm OIDC "trusted publishing" — no long-lived npm token
 # is stored. The `release` environment gates the job behind manual approval, so
 # an automated version bump is still a human decision to ship.
 #

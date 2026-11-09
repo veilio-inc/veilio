@@ -566,3 +566,7 @@ not scanned and stops the commit as "could not check", naming it. A finding bloc
 message; anything that stops the check blocks it with "could not check" and
 the reason. The hook needs veilio 0.10.0 or later; an older one stops the
 commit with a line saying to upgrade. `--no-verify` overrides, as usual.
+
+## Known limitations
+
+Names that contain letters outside A–Z are not yet masked whole. A name written only in Greek or Cyrillic letters (for example `παραγγελία`) is not masked at all. A name that mixes A–Z with other letters (for example `wyślijPaczkę` or `größeBerechnen`) is masked only in its A–Z parts, so the other letters reach the model. Names written only in A–Z are not affected. Until this is fixed, rename such names, or leave files that use them out of what you send. Full support is planned for the next release (#224).

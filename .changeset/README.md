@@ -89,3 +89,21 @@ both are packages it owns. It is only the engine edge that is manual.
 The upshot: after an engine release, set its version in the manifest and widen the
 range in both tools, in one commit. If you forget the manifest, check 3 fails. If
 you sync the manifest and forget the ranges, check 2 fails.
+
+## The first publish of a new package
+
+`publish-tools.yml` publishes by OIDC trusted publishing only and wires no npm
+token. OIDC cannot create a package, so the first version of a new one (such as
+`@veilio-inc/guard`) is published once by hand, with the founder's approval:
+
+1. A maintainer creates a short-lived granular npm token with publish rights on
+   the new package's scope, and publishes the first version from a local machine
+   (`npm publish --access public --provenance=false`; the steps, with the tarball
+   checks, are in [`docs/PUBLISHING.md`](../docs/PUBLISHING.md), "Bootstrap the
+   name by hand, once").
+2. They register the trusted publisher for the package on npmjs.com: repository
+   `veilio-inc/veilio`, workflow `publish-tools.yml`, environment `release`.
+3. They revoke the token the same day. No token is stored as a repository or
+   environment secret.
+
+Every later version is published by `publish-tools.yml`.
