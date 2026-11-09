@@ -79,6 +79,9 @@ export declare function isPlaceholder(token: string): boolean;
  * callers keep prior behavior.
  */
 export declare function extractIdentifiers(code: string, language?: Language): string[];
+/** A whole identifier as the engine extracts one (spec 085 R2-6: what a map
+ *  may hold under an identifier kind). ASCII until spec 082 widens it. */
+export declare const IDENTIFIER: RegExp;
 /** Where `code` holds values, as `anonymize` reads them (security review,
  *  round 3): an ordinary word there is masked, and a value under a
  *  credential key is redacted. */

@@ -61,6 +61,12 @@ export declare function ibanValid(value: string): boolean;
  */
 export declare function peselValid(value: string): boolean;
 /**
+ * Whether `value`, whole, is a regulated identifier of `type` as the scanner
+ * finds one: the same pattern and the same checksum (spec 085 R2-6). What a
+ * map may hold under `__IBAN__` and the like.
+ */
+export declare function isRegulatedValue(type: SecretType, value: string): boolean;
+/**
  * The grade each rule carries, derived from the table above rather than
  * restated. A second hand-written copy is one that drifts.
  *

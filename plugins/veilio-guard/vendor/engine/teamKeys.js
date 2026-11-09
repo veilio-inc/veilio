@@ -17,7 +17,7 @@
 // browser does: merge the team namespace itself, over maps only it can open,
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
-import { fromBase64, isName, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle, } from './envelope.js';
+import { fromBase64, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle } from './envelope.js';
 const WRAP_ALG = 'AES-GCM';
 /** The asymmetric algorithm a user's keypair uses. */
 export const USER_KEY_ALG = 'X25519';
@@ -217,9 +217,6 @@ function decryptedMap(raw) {
     catch (err) {
         throw new TeamKeyError(`This team map is not placeholders to names: ${err.message}`);
     }
-    for (const [placeholder, name] of Object.entries(map))
-        if (!isName(name))
-            throw new TeamKeyError(`This team map is not placeholders to names: "${placeholder}" maps to a value with a control character or line break.`);
     return map;
 }
 /** The plaintext of a team envelope, parsed but unchecked: for a body that is

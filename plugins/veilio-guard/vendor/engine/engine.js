@@ -1114,7 +1114,9 @@ function highestRedaction(text, base) {
 function overlapsAny(spans, start, end) {
     return spans.some(([a, b]) => start < b && a < end);
 }
-const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+/** A whole identifier as the engine extracts one (spec 085 R2-6: what a map
+ *  may hold under an identifier kind). ASCII until spec 082 widens it. */
+export const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 const WORDS = /[A-Za-z_$][\w$]*/g;
 /** The grammar values are read by: the file's kind; a file in a language
  *  the engine reads, a language the caller names, or text that reads as

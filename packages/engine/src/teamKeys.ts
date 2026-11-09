@@ -18,14 +18,7 @@
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
 
-import {
-  fromBase64,
-  isName,
-  parseSymbolMap,
-  randomBytes,
-  toBase64,
-  webCryptoSubtle,
-} from './envelope.js'
+import { fromBase64, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle } from './envelope.js'
 import type { CryptoKeyLike } from './vault.js'
 
 const WRAP_ALG = 'AES-GCM'
@@ -335,11 +328,6 @@ function decryptedMap(raw: unknown): Record<string, string> {
   } catch (err) {
     throw new TeamKeyError(`This team map is not placeholders to names: ${(err as Error).message}`)
   }
-  for (const [placeholder, name] of Object.entries(map))
-    if (!isName(name))
-      throw new TeamKeyError(
-        `This team map is not placeholders to names: "${placeholder}" maps to a value with a control character or line break.`
-      )
   return map
 }
 

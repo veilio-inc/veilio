@@ -13,7 +13,10 @@
  * `node:crypto`: importing it would give the engine a Node-only module and cost
  * it the browser, which is half its audience.
  */
-import { isPlaceholder } from './engine.js';
+import { IDENTIFIER, MANUAL_BASE, REGULATED_BASES, isPlaceholder } from './engine.js';
+import { LOCAL_PREFIX, teamBaseOf } from './localFamily.js';
+import { REDACTION_PREFIX } from './product.js';
+import { isRegulatedValue } from './secrets.js';
 /** What new files are created with. Safe to raise — every existing file carries
  *  its own parameters, or falls back to the frozen legacy value below. */
 export const CURRENT_FILE_KDF = { name: 'PBKDF2-SHA256', iterations: 600_000 };
@@ -122,6 +125,41 @@ const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u;
 export function isName(v) {
     return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v);
 }
+// Numbered, or bare (an older client's local base, a rule's own placeholder).
+const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)\d*$/;
+/**
+ * Why `value` may not be restored for `placeholder`, or null (spec 085 R2-6,
+ * security review). A value is judged by its placeholder's kind, with the
+ * grammar the engine mints that kind from - an allow-list: a manual mark is
+ * text the author marked; a regulated kind is a value the scanner finds whole,
+ * checksum included; every identifier kind (class, function, variable,
+ * package, string word, a custom rule's base, the legacy `__P<n>__`) is an
+ * identifier as the engine extracts one. A kind with no reversible value (a
+ * redaction) is refused. Without this a teammate, or Cloud through a key it
+ * made, could restore `x); evil(` into a member's code.
+ */
+export function placeholderValueRefusal(placeholder, value) {
+    if (!isPlaceholder(placeholder))
+        return `"${placeholder}" is not a Veilio placeholder.`;
+    if (!isName(value))
+        return `"${placeholder}" maps to a value with a control character or line break.`;
+    let base = NUMBERED.exec(placeholder)[1];
+    if (base.startsWith(LOCAL_PREFIX)) {
+        const team = teamBaseOf(base);
+        if (team === null)
+            return `"${placeholder}" is not a placeholder of a known kind.`;
+        base = team;
+    }
+    if (base.startsWith(REDACTION_PREFIX))
+        return `"${placeholder}" is a redaction, which is never restored.`;
+    if (base === MANUAL_BASE)
+        return value.trim() !== '' && !isPlaceholder(value.trim()) ? null : notOfKind(placeholder);
+    const regulated = Object.entries(REGULATED_BASES).find(([, b]) => b === base);
+    if (regulated)
+        return isRegulatedValue(regulated[0], value) ? null : notOfKind(placeholder);
+    return IDENTIFIER.test(value) ? null : notOfKind(placeholder);
+}
+const notOfKind = (placeholder) => `"${placeholder}" maps to a value its kind is never made from.`;
 /**
  * A decrypted file is authenticated, not trusted.
  *
@@ -153,6 +191,9 @@ export function parseSymbolMap(raw) {
         if (value.length > MAX_VALUE_LENGTH) {
             throw new InvalidMapError(`"${key}" maps to ${value.length} characters; the limit is ${MAX_VALUE_LENGTH}.`);
         }
+        const why = placeholderValueRefusal(key, value);
+        if (why)
+            throw new InvalidMapError(why);
         out[key] = value;
     }
     return out;

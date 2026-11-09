@@ -552,7 +552,10 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { __CLS__1: 'lone\ud800surrogate' }
 
-    await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
+    const env = await encryptTeamMap(key, map)
+    await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
+    // Not an identifier, so not a value a class name is made from (spec 085 R2-6).
+    await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
 
   it('round-trips an identifier far longer than any real one', async () => {
@@ -694,8 +697,12 @@ describe('decryptTeamMap opens only placeholders to names (R2-6)', () => {
     )
   })
 
-  it('opens names in any script', async () => {
-    const map = { __CLS__1: 'ZahlungsTür', __CLS__2: 'Πληρωμή', __FN__1: 'chargeCard' }
+  it('opens a manual mark in any script, and identifiers as the engine extracts them', async () => {
+    const map = { __MANUAL__1: 'ZahlungsTür', __MANUAL__2: 'Πληρωμή', __FN__1: 'chargeCard' }
     expect(await decryptTeamMap(await key(), await seal(map))).toEqual(map)
+    // An identifier kind is ASCII until spec 082 widens what the engine extracts.
+    await expect(
+      decryptTeamMap(await key(), await seal({ __CLS__1: 'ZahlungsTür' }))
+    ).rejects.toThrow(TeamKeyError)
   })
 })
