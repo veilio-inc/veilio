@@ -358,7 +358,7 @@ export const FLAGS: readonly FlagSpec[] = [
   },
   {
     long: '--forget-refused',
-    help: 'Forget a newer team key version refused before, once your team has removed it, so the newest one stored can be written under again',
+    help: 'Forget a newer team key version refused before. Helps only once Cloud no longer offers that version, and only if the newest key stored is writable',
     commands: ['team unlock'],
     field: 'forgetRefused',
   },

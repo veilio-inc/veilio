@@ -21,7 +21,7 @@ import {
   writeTeamUnlock,
   expiryFrom,
 } from '../src/team-unlock.js'
-import { confirmPin, readPins } from '../src/key-pins.js'
+import { blockedMark, confirmPin, readPins, settleBlockedMark } from '../src/key-pins.js'
 import { fingerprint } from '../src/client/fingerprint.js'
 import {
   toBase64,
@@ -832,6 +832,51 @@ describe('a newer version that was not stored blocks writing under an older one 
     expect(err).toContain('is damaged, so no team key was stored.')
     expect(existsSync(teamUnlockPath(home))).toBe(false)
     expect(readFileSync(join(home, '.veilio', 'key-pins.json'), 'utf8')).toBe(damaged)
+  })
+
+  it('a block raised by another unlock while this one runs is not lost when this one clears its own', async () => {
+    const g = await withV2(async (g) => {
+      const w = await g.wrapByNewKey(2)
+      ;(g as unknown as { v2Public: string }).v2Public = w.granterPublic
+      return { ...w, wrapped_by: 'u2' }
+    })
+    expect(blockedMark(binding, 'team-1', home)).toBe(2)
+    // v2 is now confirmed, so this unlock stores it writable and clears the
+    // mark of 2 it read. A v3 nobody confirmed prints row 2 on the way, and
+    // that is where a second unlock raises the mark to 5.
+    confirmPin(binding, 'u2', (g as unknown as { v2Public: string }).v2Public, home)
+    const key = g.bodies['/api/teams/team-1/key'] as { wraps: Record<string, unknown>[] }
+    key.wraps.push({
+      version: 3,
+      created_at: '2026-03-01',
+      ...(await g.wrapByNewKey(3)),
+      wrapped_by: 'u4',
+    })
+    const mine = g.bodies['/api/teams/mine'] as { team: { members: Record<string, string>[] } }
+    mine.team.members.push({ user_id: 'u4', email: 'ewa@example.test', status: 'active' })
+    let raised = false
+    const io: Io = {
+      cwd,
+      home,
+      stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
+      stdout: () => {
+        if (raised) return
+        raised = true
+        settleBlockedMark(binding, 'team-1', { raise: 5 }, home)
+      },
+      stderr: () => undefined,
+      prompt: async () => ACCOUNT,
+      password: async () => PASSPHRASE,
+    }
+
+    expect(await main(['team', 'unlock'], io)).toBe(EXIT_OK)
+
+    expect(raised).toBe(true)
+    expect(blockedMark(binding, 'team-1', home)).toBe(5)
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(5)
   })
 
   it('the way out, when the team really removed that version: team unlock --forget-refused', async () => {

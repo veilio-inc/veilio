@@ -76,7 +76,7 @@ import {
   confirmedKeys,
   pinOf,
   readPins,
-  setBlockedMark,
+  settleBlockedMark,
 } from './key-pins.js'
 import {
   formatProjectsList,
@@ -869,12 +869,13 @@ export async function runTeamUnlock(
       )
       return EXIT_ERROR
     }
-    let mark: number | undefined
+    let storedMark: number | undefined
     try {
-      mark = forgetRefused ? undefined : blockedMark(credential, teamId, io.home)
+      storedMark = blockedMark(credential, teamId, io.home)
     } catch (err) {
       return pinsDamaged(err)
     }
+    const mark = forgetRefused ? undefined : storedMark
 
     const keys: StoredTeamKey[] = []
     let refusedAny = false
@@ -960,13 +961,20 @@ export async function runTeamUnlock(
     // version at least as new stored writable.
     let high = notStored === undefined ? mark : Math.max(mark ?? notStored, notStored)
     if (high !== undefined && keys.some((k) => k.writable && k.version >= high!)) high = undefined
+    // Settled against the file as it is now: what this run clears is only
+    // the mark it read, so a raise another unlock made meanwhile survives.
+    const clearUpTo = forgetRefused || high === undefined ? storedMark : undefined
+    let settled: number | undefined
     try {
-      if (high !== mark || forgetRefused) setBlockedMark(credential, teamId, high ?? null, io.home)
+      if (clearUpTo !== undefined || high !== undefined)
+        settled = settleBlockedMark(credential, teamId, { clearUpTo, raise: high }, io.home)
     } catch (err) {
       return pinsDamaged(err)
     }
     const blockedVersion =
-      high !== undefined && high > Math.max(...keys.map((k) => k.version)) ? high : undefined
+      settled !== undefined && settled > Math.max(...keys.map((k) => k.version))
+        ? settled
+        : undefined
     if (blockedVersion !== undefined && notStored !== blockedVersion)
       io.stdout(
         `Team "${teamName}": key version ${blockedVersion} was offered to this account before and not stored, so nothing is written under an older key. ` +

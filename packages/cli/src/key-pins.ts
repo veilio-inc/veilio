@@ -81,8 +81,12 @@ function readFile(home: string): PinsFile | null {
   let text: string
   try {
     text = readFileSync(keyPinsPath(home), 'utf8')
-  } catch {
-    return { v: 1, scopes: [] } // none yet
+  } catch (err) {
+    // Only a file that is not there is "none yet". One that cannot be read
+    // (a directory, another owner, an I/O error) still holds what a person
+    // confirmed: damaged, so nothing replaces it.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { v: 1, scopes: [] }
+    return null
   }
   try {
     const parsed = JSON.parse(text) as PinsFile
@@ -151,17 +155,30 @@ export function blockedMark(
   return mark
 }
 
-/** Set (or, with null, clear) the blocked version for `teamId`. */
-export function setBlockedMark(
+/**
+ * Settle the blocked version for `teamId` against what is stored NOW, in one
+ * read-change-write: first `clearUpTo` drops the mark only if it is still at
+ * most that (the value this run read - a raise another unlock made since is
+ * kept), then `raise` keeps the higher of the two. The mark it leaves.
+ */
+export function settleBlockedMark(
   binding: Binding,
   teamId: string,
-  mark: number | null,
+  change: { clearUpTo?: number; raise?: number },
   home: string = homedir()
-): void {
+): number | undefined {
+  let left: number | undefined
   update(binding, home, (scope) => {
-    if (mark === null) delete scope.blocked![teamId]
-    else scope.blocked![teamId] = mark
+    const blocked = scope.blocked!
+    let mark = Object.hasOwn(blocked, teamId) ? blocked[teamId] : undefined
+    if (change.clearUpTo !== undefined && mark !== undefined && mark <= change.clearUpTo)
+      mark = undefined
+    if (change.raise !== undefined) mark = Math.max(mark ?? change.raise, change.raise)
+    if (mark === undefined) delete blocked[teamId]
+    else blocked[teamId] = mark
+    left = mark
   })
+  return left
 }
 
 function findScope(file: PinsFile, binding: Binding): Scope | undefined {
