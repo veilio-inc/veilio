@@ -1,4 +1,5 @@
 import type { ValueSpan } from './ordinaryWords.js';
+import { type RuleBudget } from './rule-pattern.js';
 import type { AnonymizeOptions, AnonymizeResult, CommentExposure, IdentifierRole, RestoreOptions, RestoreResult, StrippedItemType, SymbolMap } from './types.js';
 import { type Language, type LanguageOption } from './languages.js';
 import type { ScanOptions, SecretFinding, SecretType } from './secrets.js';
@@ -79,6 +80,13 @@ export declare function isPlaceholder(token: string): boolean;
  * callers keep prior behavior.
  */
 export declare function extractIdentifiers(code: string, language?: Language): string[];
+/**
+ * Whether a custom rule's `pattern` matches `name`, on the engine's linear
+ * matcher, compile work and matching charged to `budget`, at most MAX_RULES
+ * patterns per budget. Exported so the guard matches exactly as anonymize does
+ * (spec 085 R2-17).
+ */
+export declare function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean;
 /** A whole identifier as the engine extracts one (spec 085 R2-6: what a map
  *  may hold under an identifier kind). ASCII until spec 082 widens it. */
 export declare const IDENTIFIER: RegExp;

@@ -90,8 +90,33 @@ export function shortNameAlias(path, windows = onWindows()) {
 }
 export function isRawOnly(path, extra) {
     const normal = path.replace(/\\/g, '/');
-    const patterns = [...DEFAULT_RAW_ONLY, ...extra.filter((p) => p && !p.startsWith('!'))];
+    const patterns = [
+        ...DEFAULT_RAW_ONLY,
+        ...extra
+            .filter((p) => p && !p.startsWith('!'))
+            .map(normaliseRawOnlyPattern)
+            .filter((p) => p !== null),
+    ];
     return patterns.some((p) => matches(normal, p));
+}
+/**
+ * A project's rawOnly pattern read the way a path is (spec 085 R2-15):
+ * backslashes as `/`, a leading `/` or `./` dropped (patterns are relative to
+ * the project root), a trailing `/` as `/**` (the folder's files). Null for a
+ * pattern that can never match a file in the project - one that climbs out
+ * (`..`), names a drive (`C:`), or is empty - which the caller reports.
+ */
+export function normaliseRawOnlyPattern(pattern) {
+    let p = pattern.replace(/\\/g, '/');
+    if (/^[A-Za-z]:/.test(p))
+        return null;
+    while (p.startsWith('./') || p.startsWith('/'))
+        p = p.replace(/^\.?\//, '');
+    if (p.endsWith('/'))
+        p = `${p}**`;
+    if (p === '' || p === '**' || p.split('/').some((part) => part === '..'))
+        return null;
+    return p;
 }
 /** The project's own raw-only patterns in `.veilio/guard.json` (`rawOnly`):
  *  its strings, as written. One reader for the Claude Code guard and the MCP
