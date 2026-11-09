@@ -197,6 +197,7 @@ describe('parseShell, the forms the cd rules read', () => {
     ['an arithmetic expansion', 'cd $((1+1))', 'W(cd) X(arith:$((1+1)))'],
     ['a subshell inside a substitution', 'echo $( (cd x) )', 'W(echo) X(subst:$( (cd x) ))'],
     ['a tilde user', 'cd ~k', 'W(cd) X(tilde:~k)'],
+    ['a backslash in single quotes is literal', "cd 'a\\' x", 'W(cd) W(a\\) W(x)'],
     ['a stack tilde', 'cd ~+/x ~-', 'W(cd) X(tilde:~+/x) X(tilde:~-)'],
   ])('%s: %j', (_, command, expected) => {
     expect(read(command)).toBe(expected)
