@@ -42,6 +42,10 @@ const NOT_TOOLS = new Set([
   // README.md (`customer_invoices`) and packages/cli/README.md (`berth_quorum`).
   'customer_invoices',
   'berth_quorum',
+  // Shell options in plugins/veilio-guard/COVERAGE.md (spec 086): bash/zsh
+  // settings the cd rules refuse, not tools.
+  'cdable_vars',
+  'chase_links',
 ])
 
 describe('MCP tools named in the public docs', () => {

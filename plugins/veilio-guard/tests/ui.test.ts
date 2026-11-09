@@ -28,7 +28,7 @@ async function loaded(
   files: Record<string, string>,
   opts: Parameters<typeof project>[2] = {}
 ) {
-  const p = project(on, files, opts)
+  const p = project(on, files, { ...opts, ownEnv: opts.home === undefined })
   on('session.start', () => ({ cwd: ROOT }))
   return p
 }

@@ -197,7 +197,7 @@ for (const [name, held, file] of TEAM_TABLE) {
 test('after vault lock a cached personal rule is not applied, and counts as vaultLocked', async ($, on) => {
   home(on)
   // `veilio vault lock` removed the key; the cache still names the rule.
-  project(on, withKey(PMK, null, [PHOENIX]))
+  project(on, withKey(PMK, null, [PHOENIX]), { ownEnv: true })
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
   on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'deploying phoenix' } }))
@@ -210,7 +210,7 @@ test('after vault lock a cached personal rule is not applied, and counts as vaul
 
 test('an expired personal-maps key leaves a cached personal rule unapplied, with no lock command', async ($, on) => {
   home(on)
-  project(on, withKey(PMK, pmk({ expiresAt: PAST }), [PHOENIX]))
+  project(on, withKey(PMK, pmk({ expiresAt: PAST }), [PHOENIX]), { ownEnv: true })
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
   on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'deploying phoenix' } }))
@@ -219,7 +219,11 @@ test('an expired personal-maps key leaves a cached personal rule unapplied, with
 
 test('after team lock a cached team rule is not applied, and counts as teamLocked', async ($, on) => {
   home(on)
-  project(on, { ...withKey(TEAM_KEYS, null, [KEEP_CANARY]), [MAP]: mapFile({ __CLS__1: CANARY }) })
+  project(
+    on,
+    { ...withKey(TEAM_KEYS, null, [KEEP_CANARY]), [MAP]: mapFile({ __CLS__1: CANARY }) },
+    { ownEnv: true }
+  )
   const read = recorded('Read')
   on('tool.call', () => read.r)
   const fromRead: string = res(await $.tool.call(eventOf(read))).file.content
@@ -232,7 +236,7 @@ test('after team lock a cached team rule is not applied, and counts as teamLocke
 
 test('a replace rule masks an ordinary-word codename in a Read', async ($, on) => {
   home(on)
-  const p = project(on, signedIn([PHOENIX]))
+  const p = project(on, signedIn([PHOENIX]), { ownEnv: true })
   on('tool.call', () => ({
     ref: 1,
     result: {
@@ -260,7 +264,7 @@ test('a replace rule masks an ordinary-word codename in a Read', async ($, on) =
 
 test('a replace rule masks the codename in command output, and the placeholder restores in an edit', async ($, on) => {
   home(on)
-  const p = project(on, signedIn([PHOENIX]))
+  const p = project(on, signedIn([PHOENIX]), { ownEnv: true })
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
   const edit = recorded('Edit')
@@ -288,7 +292,7 @@ test('a replace rule masks the codename in command output, and the placeholder r
 
 test('a replace rule masks the codename in a typed prompt', async ($, on) => {
   home(on)
-  const p = project(on, signedIn([PHOENIX]))
+  const p = project(on, signedIn([PHOENIX]), { ownEnv: true })
   const sent: Fields[] = []
   on('prompt.submit', (_, e) => {
     sent.push(e)
@@ -301,7 +305,7 @@ test('a replace rule masks the codename in a typed prompt', async ($, on) => {
 
 test("a replace rule masks the codename in a command's arguments and in what it prints", async ($, on) => {
   home(on)
-  const p = project(on, signedIn([PHOENIX]))
+  const p = project(on, signedIn([PHOENIX]), { ownEnv: true })
   const ran: string[] = []
   on('command.run', (_, e) => {
     ran.push(e.args)
@@ -318,7 +322,7 @@ test("a replace rule masks the codename in a command's arguments and in what it 
 test('a rule-made entry the map holds stays masked in the readable view, though an ordinary word', async ($, on) => {
   home(on)
   // The map holds the engine's own entry from before the rule: 064 shows it.
-  project(on, { ...signedIn([PHOENIX]), [MAP]: mapFile({ __STR__3: 'phoenix' }) })
+  project(on, { ...signedIn([PHOENIX]), [MAP]: mapFile({ __STR__3: 'phoenix' }) }, { ownEnv: true })
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
   on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'phoenix is up' } }))
@@ -329,7 +333,11 @@ test('a rule-made entry the map holds stays masked in the readable view, though 
 
 test('a whitelist rule keeps a distinctive name readable in a Read, in output and in a prompt', async ($, on) => {
   home(on)
-  project(on, { ...signedIn([KEEP_CANARY]), [MAP]: mapFile({ __CLS__1: CANARY }) })
+  project(
+    on,
+    { ...signedIn([KEEP_CANARY]), [MAP]: mapFile({ __CLS__1: CANARY }) },
+    { ownEnv: true }
+  )
   const read = recorded('Read')
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
@@ -351,7 +359,7 @@ test('a whitelist rule keeps a distinctive name readable in a Read, in output an
 
 test('rules from another account are not applied', async ($, on) => {
   home(on)
-  project(on, signedIn([PHOENIX], { ...ME, account: 'someone@else.com' }))
+  project(on, signedIn([PHOENIX], { ...ME, account: 'someone@else.com' }), { ownEnv: true })
   const bash = recordedRaw('Bash')
   const r = bash.r as { result: Record<string, unknown> }
   on('tool.call', () => ({ ...r, result: { ...r.result, stdout: 'deploying phoenix' } }))
@@ -364,7 +372,7 @@ test("the guard's own keep rule still applies, ahead of the account's rules", as
   home(on)
   // A replace rule that would take the package's name: the keep rule wins.
   const vitest = { ...PHOENIX, id: 'r3', pattern: '^(?:vitest|luhnValid)$' }
-  project(on, { ...COLD_FILES, ...signedIn([vitest]) })
+  project(on, { ...COLD_FILES, ...signedIn([vitest]) }, { ownEnv: true })
   on('session.start', () => ({ cwd: ROOT }))
   const content = COLD_FILES[`${ROOT}/tests/secrets.test.ts`]!
   on('tool.call', () => ({

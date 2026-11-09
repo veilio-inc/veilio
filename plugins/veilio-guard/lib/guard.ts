@@ -40,9 +40,16 @@ import {
   rawOnlyDirectories,
   rawOnlyOf,
   shortNameAlias,
+  walkCd,
   windowsAlias,
+  wordPath,
+  INTERPRETERS,
+  MAX_DIRS,
+  type CdContext,
+  type DirState,
+  type Var,
 } from './paths.ts'
-import { restoreRefusal } from './shell.ts'
+import { parseShell, restoreRefusal } from './shell.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -470,6 +477,7 @@ export class Guard {
     this.stopIfTracked(committed)
     this.loaded = true
     this.shellDir = cwd
+    this.dirs = this.sessionState([cwd])
     this.rules = await readGuardRules((path) => this.io.read(path), home)
     this.index = new ProjectIndex(
       {
@@ -1416,8 +1424,103 @@ export class Guard {
   // ── tool calls ────────────────────────────────────────────────────────────
 
   /** Spec 085 H17: where the shell is now, as far as the cds that ran tell;
-   *  null once a cd went somewhere that cannot be told (`~` with no home). */
+   *  null once a cd went somewhere that cannot be told (`~` with no home).
+   *  Spec 086: kept for the commands parseShell cannot read (FR-003). */
   private shellDir: string | null = null
+  /** Spec 086 DirState: where the shell may be, read from every command
+   *  parseShell reads. Empty: not known (main's null shellDir). */
+  private dirs: DirState = {
+    dirs: [],
+    oldpwd: 'unknown',
+    stack: [],
+    vars: { HOME: 'unknown', CDPATH: 'unset', PWD: 'auto', OLDPWD: 'auto' },
+  }
+  /** CDPATH as the session's environment has it (unset when it has none). */
+  cdpath: Var = 'unset'
+  /** FR-011: the host reports the shell's directory at the start of a call
+   *  (atHost). While it does, the next call starts there and the inference
+   *  is only checked against it; until it does, every directory a command
+   *  may have left the shell in is carried. */
+  private hostReports = false
+  /** This call's start, the host's directory and the guard's, is past the bound. */
+  private hostOverflow = false
+  /** Where the last call most likely left the shell: what proves the host. */
+  private likely: readonly string[] = []
+  private disagreementLogged = false
+  /** The differential replay (tests/guard/fixtures/cd-project.ts) only: the
+   *  benchmark corpus has no host directories, so each call is carried where
+   *  it most likely ended, as a host would have reported it. */
+  assumeSuccess = false
+  /** Spec 086 FR-011: where Claude Code says the shell is as a call starts
+   *  ($.session.cwd()). It is the truth; where the guard's reading of the
+   *  last call disagrees, this call is checked in both (the host's alone
+   *  past the bound), and the disagreement is logged once. */
+  atHost(dir: string): void {
+    const host = normalisePath(dir)
+    const inferred = this.dirs.dirs
+    this.hostOverflow = false
+    this.shellDir = host
+    // Trusted to narrow once proved live, from the call after the proof: it
+    // named, away from where the session started, the one directory the
+    // guard's walk most likely left the shell in. A report that never
+    // moves - an older host, a host bug - never narrows (security review).
+    const trusted = this.hostReports
+    if (
+      !trusted &&
+      host !== normalisePath(this.cwd) &&
+      this.likely.length === 1 &&
+      this.likely[0] === host
+    )
+      this.hostReports = true
+    if (trusted && (inferred.length === 0 || inferred.includes(host))) {
+      this.dirs = { ...this.dirs, dirs: [host] }
+      return
+    }
+    if (trusted && !this.disagreementLogged) {
+      this.disagreementLogged = true
+      this.notice(
+        `Veilio guard: Claude Code says the shell is in ${host}, where Veilio's reading of the last command left it in ${inferred.join(', ')}. Both are checked for this call.`
+      )
+    }
+    // Never discarded: the host's directory joins the walk's. Past the
+    // bound the call is refused, never narrowed.
+    const both = [...new Set([host, ...inferred])]
+    this.hostOverflow = both.length > MAX_DIRS
+    this.dirs = { ...this.dirs, dirs: both }
+  }
+
+  /** A call starts with an empty stack and the session's variables: the Bash
+   *  tool keeps only its directory between calls (research R0, T003); the
+   *  host sets OLDPWD to the project root. */
+  private sessionState(dirs: readonly string[]): DirState {
+    return {
+      dirs,
+      oldpwd: [normalisePath(this.root)],
+      stack: [],
+      vars: {
+        HOME: this.home ? { value: this.home } : 'unknown',
+        CDPATH: this.cdpath,
+        PWD: 'auto',
+        OLDPWD: 'auto',
+      },
+    }
+  }
+  private readonly cdContext: CdContext = {
+    exists: (p) => this.io.exists(p),
+    isDirectory: async (p) =>
+      (await this.io.exists(p)) && !(this.io.isFile && (await this.io.isFile(p))),
+  }
+  /** Whether a directory a cd may land in is, or is inside, a raw-only one:
+   *  read inside the project from its root (so a root under `~/.config`
+   *  does not refuse every cd), and where it really leads. */
+  private async landsRawOnly(dir: string, rawDirs: readonly string[]): Promise<boolean> {
+    const root = normalisePath(this.root)
+    const rel = (d: string) =>
+      d === root ? '.' : d.startsWith(`${root}/`) ? d.slice(root.length + 1) : d
+    if (cdIntoRawOnly(rel(dir), rawDirs)) return true
+    const real = await this.io.realPath(dir)
+    return real !== undefined && cdIntoRawOnly(rel(normalisePath(real)), rawDirs)
+  }
   /** Windows, as the host says; undefined: the engine reads the platform. */
   private windows: boolean | undefined
   private moved(dir: string | null, target: string): string | null {
@@ -1430,13 +1533,45 @@ export class Guard {
    *  shell is, and where each of its own cds takes it. */
   private shellDirsOf(command: string): string[] {
     const dirs: string[] = []
-    let dir = this.shellDir
-    if (dir !== null && dir !== this.cwd) dirs.push(dir)
-    for (const t of allCdTargets(command)) {
-      dir = this.moved(dir, t)
-      if (dir !== null) dirs.push(dir)
+    // Spec 086: from each directory the shell may be in (one, as on main,
+    // until a command parseShell reads leaves more).
+    const starts: (string | null)[] = this.dirs.dirs.length ? [...this.dirs.dirs] : [null]
+    for (const start of starts) {
+      let dir = start
+      if (dir !== null && dir !== this.cwd) dirs.push(dir)
+      for (const t of allCdTargets(command)) {
+        dir = this.moved(dir, t)
+        if (dir !== null) dirs.push(dir)
+      }
     }
-    return dirs
+    return [...new Set(dirs)]
+  }
+
+  /** Spec 086 FR-011: where the shell is after a call, success or failure:
+   *  the top-level state of the command as run (restored), stack emptied
+   *  and variables the session's. A command the reader cannot read moves
+   *  each directory as main moves its one. */
+  private async shellRan(tool: string, command: string): Promise<void> {
+    const dialect = tool === 'PowerShell' ? 'ps' : 'sh'
+    const parsed = parseShell(command, dialect)
+    if (parsed.ok) {
+      const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
+      const carry = this.hostReports || this.assumeSuccess ? walk.end : (walk.endAll ?? walk.end)
+      this.dirs = this.sessionState(carry.dirs)
+      this.likely = walk.end.dirs
+    } else {
+      // Only a top-level cd moves the shell the next call runs in; one in a
+      // substitution or a nested shell does not (review round 2 of spec 078).
+      const starts: (string | null)[] = this.dirs.dirs.length ? [...this.dirs.dirs] : [null]
+      const ends = starts.map((start) => {
+        let dir = start
+        for (const t of cdTargets(command)) dir = this.moved(dir, t)
+        return dir
+      })
+      this.dirs = this.sessionState(ends.filter((d): d is string => d !== null))
+      this.likely = this.dirs.dirs
+    }
+    this.shellDir = this.dirs.dirs[0] ?? null
   }
 
   /** A relative path from the session's directory: the host resolves one
@@ -1576,9 +1711,102 @@ export class Guard {
             `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
             false
           )
+        // Spec 086: the cd rules, on what the reader reads; a command it
+        // cannot read is judged as main judges it (FR-003).
+        const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
+        const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
+        let moves: string[] = []
+        // T029 review: code run from text, and new names for commands, in a
+        // PowerShell command the reader read too.
+        const psCode =
+          parsed?.ok && dialect === 'ps'
+            ? PS_CODE.test(c)
+              ? 'code run from text'
+              : PS_ALIAS.test(c)
+                ? 'a new name for a command'
+                : null
+            : null
+        if (psCode)
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (${psCode}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        if (parsed?.ok && dialect === 'ps' && PS_DRIVE.test(c) && PS_LOCATION.test(c))
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a drive this command creates), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        if (parsed?.ok) {
+          const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
+          // Q3 = A: with no host report, a call that would leave the shell
+          // in more directories than the bound is refused before it runs.
+          const r =
+            walk.refusal ??
+            (this.hostOverflow || (walk.endAll === null && !this.hostReports && !this.assumeSuccess)
+              ? { kind: 'N1' as const, target: c, form: 'too many possible directories' }
+              : null)
+          if (r?.kind === 'N2')
+            return this.deny(
+              'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user',
+              false
+            )
+          if (r)
+            return this.deny(
+              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(r.target || c, 'result', undefined, budget)}\` takes the shell (${r.form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+              false
+            )
+          for (const l of walk.landings)
+            for (const d of l.dirs)
+              if (await this.landsRawOnly(d, dirs))
+                return this.deny(
+                  // A target with no path in it (`cd`, `cd -`, `popd`) is shown as where it goes.
+                  `Veilio keeps \`${this.applyText(/^(?:cd|chdir|pushd|popd|-)$/.test(l.target) ? d : l.target, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+                  false
+                )
+          // Each word of each command, in every directory the shell may be
+          // in there, `~` read with HOME as it is there (FR-010).
+          for (const point of walk.points)
+            for (const w of point.words) {
+              const path = wordPath(w, point.home)
+              if (path === null) continue
+              // PowerShell's separator is `\\` too.
+              const text = dialect === 'ps' ? path.replace(/\\/g, '/') : path
+              for (const piece of pathsInCommand(text)) {
+                // An absolute path as written is checked below; one `~` became is not.
+                const at = /^[/\\]|^[A-Za-z]:/.test(piece)
+                  ? w.literal === null
+                    ? [normalisePath(piece)]
+                    : []
+                  : // The session's directory: checked below, as written.
+                    point.dirs.filter((d) => d !== this.cwd).map((d) => join(d, piece))
+                for (const p of at) {
+                  const h = await this.pathHits(p)
+                  if (h.written) return this.deny(SETTINGS_PROTECTED)
+                  if (h.rawOnly)
+                    return this.deny(
+                      `Veilio keeps ${this.applyText(w.literal === null ? w.raw : piece, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                      false
+                    )
+                }
+              }
+            }
+        } else if (dialect === 'sh' && parsed && SH_UNREADABLE.test(c))
+          // A bash/zsh command the reader cannot read (past its bounds), that
+          // names anything the walk refuses or follows: refused (re-review).
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
+          // A PowerShell command the reader does not model, naming a
+          // location command anywhere: refused (review of the PowerShell path).
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        else moves = this.shellDirsOf(c)
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.
-        const moves = this.shellDirsOf(c)
         for (const word of pathsInCommand(c)) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
@@ -1738,9 +1966,7 @@ export class Guard {
     if (tool === 'Bash' && typeof args.command === 'string' && MOVES.test(args.command))
       this.shellMoved = true
     if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string')
-      // Only a top-level cd moves the shell the next call runs in; one in a
-      // substitution or a nested shell does not (review round 2 of spec 078).
-      for (const t of cdTargets(args.command)) this.shellDir = this.moved(this.shellDir, t)
+      await this.shellRan(tool, args.command)
     // A denial reaches the model as text, like an error's: masked the same way.
     if (outcome.deny !== undefined) return this.maskMessage(outcome.deny, args, deadline, budget)
     // Round 3 #5: the map as read before this result's saves, for seeMinted.
@@ -2290,6 +2516,54 @@ const SHELL_OUTPUT = new Set(['Bash', 'PowerShell', 'BashOutput', 'TaskOutput'])
 
 /** A command that changes the shell's directory: `cd`, `pushd` or `popd`
  *  at its start or after `&&`, `||`, `;`, `|`, a lone `&`, a newline or `(`. */
+/** PowerShell's location commands, named anywhere in a command's text. */
+const PS_LOCATION =
+  /set-location|push-location|pop-location|(?<![\w-])(?:sl|cd|chdir|pushd|popd)(?![\w-])/i
+/** A PowerShell command the reader cannot read is refused when its text has
+ *  any of these (review of the PowerShell path); otherwise main's verdict:
+ *  a location command, a backtick, `&` or `.` as a command, code run from a
+ *  string, the session state, a new drive, a command run elsewhere. */
+const PS_UNREADABLE = new RegExp(
+  [
+    PS_LOCATION.source,
+    '`',
+    String.raw`(?:^|[;|{(\n])\s*(?:&|\.(?=[\s'"$]))`,
+    String.raw`(?<![\w-])(?:iex|ndr|mount|icm)(?![\w-])`,
+    String.raw`invoke-expression|sessionstate|new-psdrive|invoke-command|start-process|\$executioncontext`,
+  ].join('|'),
+  'i'
+)
+/** PowerShell running text as code, or the session's location by method. */
+// A backstop to the walk's checks, by shape: a member invoked (`.M(`, `::M(`)
+// or built (`.$x`, `."x"`), a script block cast or invoked, any Invoke-*,
+// a function:/variable: path, the session state (the second T029 review).
+const PS_CODE = new RegExp(
+  [
+    String.raw`(?<![\w-])(?:iex|icm)(?![\w-])|invoke-\w|sessionstate|\$executioncontext`,
+    String.raw`[\w\])}'"]\s*(?:\.|::)\s*\w+\s*\(`,
+    String.raw`[\w\])}]\.\s*[$("']`,
+    String.raw`\[\s*scriptblock\s*\]`,
+    String.raw`(?:^|[;|({\s])[&.]\s*\{`,
+    String.raw`(?<![\w-])(?:function|variable):`,
+  ].join('|'),
+  'i'
+)
+/** PowerShell giving a command a new name. */
+const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
+/** A bash/zsh command past the reader's bounds is refused when it holds any
+ *  quote, backslash, `$`, backtick, parenthesis or newline, or names a cd or
+ *  anything that can move the shell or run text; otherwise 078's verdict. */
+const SH_UNREADABLE = new RegExp(
+  String.raw`['"\\$` +
+    '`' +
+    String.raw`()\n]|(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|mv|options|mapfile|readarray|` +
+    INTERPRETERS +
+    String.raw`)(?![\w-])|(?:^|[;&|{\s])\.\s` +
+    // a lone word as a command: zsh may read it as a cd (AUTO_CD)
+    String.raw`|(?:^|[;&|\n])\s*[^\s;&|]+\s*(?:$|[;&|\n])`
+)
+/** A drive the command makes: with a location command beside it, refused. */
+const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
 
 /** How the Grep tool printed its content (research R1, T001): line numbers

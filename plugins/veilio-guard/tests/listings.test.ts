@@ -96,7 +96,7 @@ function setUp(
   } = {}
 ) {
   const files = { [`${ROOT}/.veilio/map.json`]: mapFile(MAP), ...CACHED, ...opts.files }
-  const p = project(on, files, opts)
+  const p = project(on, files, { ...opts, ownEnv: true })
   on('prompt.attachment', (_, e) => ({ text: e.text }))
   on('agent.offer', (_, e) => ({ isOffered: !opts.withdrawn?.includes(e.agent) }))
   on('command.list', () => (skills === 'deny' ? { deny: 'no commands' } : { value: skills }))
