@@ -17,7 +17,20 @@ export {
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
-import { outsideQuotes, shellExpands, shellWords, splitChain } from './shell.ts'
+import {
+  outsideQuotes,
+  shellExpands,
+  shellWords,
+  splitChain,
+  type Assign,
+  type List,
+  type Node,
+  type Part,
+  type Pipeline,
+  type Redirect,
+  type Simple,
+  type Word,
+} from './shell.ts'
 
 /** The words of a shell command that could name a file: unquoted, split on
  *  whitespace, shell operators, braces and commas, and each piece around `=`
@@ -213,4 +226,579 @@ export function cdIntoRawOnly(target: string, dirs: readonly string[]): boolean 
 export function isWriteProtected(path: string): boolean {
   const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
   return /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p)
+}
+
+// ── spec 086: where a cd takes the shell (contracts/cd-verdicts.md) ─────────
+//
+// The walk over parseShell's tree: the directories the shell may be in at
+// each simple command, every cd that lands somewhere (each landing directory
+// is judged by the guard, FR-008), and the cds it cannot follow (N1, N2).
+
+/** A shell variable the cd rules read: known, unset, or set to something the
+ *  guard cannot read. PWD and OLDPWD default to where the shell is/was. */
+export type Var = { value: string } | 'unset' | 'unknown'
+export type Vars = { HOME: Var; CDPATH: Var; PWD: Var | 'auto'; OLDPWD: Var | 'auto' }
+
+/** Where the shell may be (data-model.md DirState): normalised absolute
+ *  directories, at most MAX_DIRS. */
+export type DirState = {
+  dirs: readonly string[]
+  oldpwd: readonly string[] | 'unknown'
+  /** pushd/popd's stack, within one call. */
+  stack: readonly (readonly string[])[] | 'unknown'
+  vars: Vars
+}
+
+/** research.md R6 / Q3 = A: more possible directories than this refuses the call. */
+export const MAX_DIRS = 16
+
+export type CdRefusal = { kind: 'N1'; target: string; form: string } | { kind: 'N2' }
+export type CdWalk = {
+  /** Each simple command's words, with where they are read from. */
+  points: { dirs: readonly string[]; words: Word[]; home: string | null }[]
+  /** Each followed cd: its target as written, and where it may land. */
+  landings: { target: string; dirs: readonly string[] }[]
+  refusal: CdRefusal | null
+  /** The top-level state after the command (the next call starts there). */
+  end: DirState
+}
+export type CdContext = {
+  /** Whether a path exists (file or directory). */
+  exists(path: string): Promise<boolean>
+  /** Whether a path is a directory. */
+  isDirectory(path: string): Promise<boolean>
+}
+
+class Refused extends Error {
+  constructor(readonly refusal: CdRefusal) {
+    super(refusal.kind)
+  }
+}
+
+const CD_PROGRAM = new Set(['cd', 'chdir', 'pushd', 'popd'])
+const TRACKED: Readonly<Record<string, keyof Vars>> = {
+  HOME: 'HOME',
+  CDPATH: 'CDPATH',
+  cdpath: 'CDPATH',
+  PWD: 'PWD',
+  OLDPWD: 'OLDPWD',
+}
+const STACK_NAMES = new Set(['DIRSTACK', 'dirstack'])
+const N1: (target: string, form: string) => never = (target, form) => {
+  throw new Refused({ kind: 'N1', target, form })
+}
+
+const abs = (dir: string, path: string) =>
+  normalisePath(path.startsWith('/') ? path : `${dir.replace(/\/+$/, '')}/${path}`)
+const uniq = (dirs: Iterable<string>) => [...new Set(dirs)].sort()
+
+type Outcome = { ok: DirState | null; fail: DirState | null }
+
+function sameVar(a: Var | 'auto', b: Var | 'auto'): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function merge(a: DirState | null, b: DirState | null): DirState | null {
+  if (!a) return b
+  if (!b || a === b) return a
+  const dirs = uniq([...a.dirs, ...b.dirs])
+  if (dirs.length > MAX_DIRS) N1('', 'too many possible directories')
+  const vars = { ...a.vars }
+  for (const k of Object.keys(vars) as (keyof Vars)[])
+    if (!sameVar(a.vars[k], b.vars[k])) (vars as Record<string, Var | 'auto'>)[k] = 'unknown'
+  return {
+    dirs,
+    oldpwd:
+      a.oldpwd === 'unknown' || b.oldpwd === 'unknown'
+        ? 'unknown'
+        : uniq([...a.oldpwd, ...b.oldpwd]),
+    stack: JSON.stringify(a.stack) === JSON.stringify(b.stack) ? a.stack : 'unknown',
+    vars,
+  }
+}
+
+const both = (s: DirState | null): Outcome => ({ ok: s, fail: s })
+const anyOf = (o: Outcome) => merge(o.ok, o.fail)
+
+/** The value of an assignment, `~` expanded with HOME as it is: null when the
+ *  shell builds it. */
+function valueOf(w: Word, vars: Vars): string | null {
+  let out = ''
+  for (const p of w.parts) {
+    if (p.kind === 'lit') out += p.text
+    else if (p.kind === 'tilde' && p.user === '' && typeof vars.HOME === 'object')
+      out += vars.HOME.value
+    else return null
+  }
+  return out
+}
+
+class Walker {
+  readonly points: CdWalk['points'] = []
+  readonly landings: CdWalk['landings'] = []
+  homeUnknown = false
+  tilde = false
+  constructor(private readonly ctx: CdContext) {}
+
+  async list(l: List, start: DirState): Promise<Outcome> {
+    let out: Outcome = { ok: start, fail: null }
+    for (const { node, joinedBy } of l.items) {
+      let input: DirState | null
+      if (joinedBy === '&&') input = out.ok
+      else if (joinedBy === '||') input = out.fail
+      else input = anyOf(out)
+      if (!input) continue
+      const r = node.background
+        ? (await this.pipeline(node, input), both(input))
+        : await this.pipeline(node, input)
+      if (joinedBy === '&&') out = { ok: r.ok, fail: merge(out.fail, r.fail) }
+      else if (joinedBy === '||') out = { ok: merge(out.ok, r.ok), fail: r.fail }
+      else out = r
+    }
+    return out
+  }
+
+  private async pipeline(p: Pipeline, input: DirState): Promise<Outcome> {
+    let r: Outcome
+    if (p.stages.length === 1) r = await this.node(p.stages[0]!, input)
+    else {
+      // Every stage but the last runs in a subshell; the last one does in
+      // bash, not in zsh (research R5): both readings kept.
+      for (const s of p.stages.slice(0, -1)) await this.node(s, input)
+      const last = await this.node(p.stages[p.stages.length - 1]!, input)
+      r = { ok: merge(input, last.ok), fail: merge(input, last.fail) }
+    }
+    return p.negated ? { ok: r.fail, fail: r.ok } : r
+  }
+
+  private async node(n: Node, input: DirState): Promise<Outcome> {
+    switch (n.type) {
+      case 'simple':
+        return this.simple(n, input)
+      case 'subshell':
+        await this.list(n.list, input)
+        await this.redirects(n.redirects, input)
+        return both(input)
+      case 'group': {
+        await this.redirects(n.redirects, input)
+        return this.list(n.list, input)
+      }
+      case 'if': {
+        let all: DirState | null = null
+        let next: DirState | null = input
+        for (const b of n.branches) {
+          if (!next) break
+          const c = await this.list(b.cond, next)
+          if (c.ok) all = merge(all, anyOf(await this.list(b.body, c.ok)))
+          next = c.fail
+        }
+        if (next) all = merge(all, n.else ? anyOf(await this.list(n.else, next)) : next)
+        return both(all)
+      }
+      case 'loop': {
+        // The body may run any number of times: twice from where it may
+        // start, and not at all.
+        let state = input
+        if (n.name !== null && Object.hasOwn(TRACKED, n.name))
+          state = this.set(state, n.name, 'unknown')
+        await this.words(n.words ?? [], state)
+        let all = state
+        for (let k = 0; k < 2; k++) {
+          const c = n.cond ? anyOf(await this.list(n.cond, all)) : all
+          if (!c) break
+          all = merge(all, anyOf(await this.list(n.body, c)))!
+        }
+        return both(all)
+      }
+      case 'case': {
+        await this.words([n.word], input)
+        let all: DirState = input
+        for (const arm of n.arms) all = merge(all, anyOf(await this.list(arm, input)))!
+        return both(all)
+      }
+      case 'function':
+        // Defined here, called who knows when: read as if it ran here too.
+        return both(merge(input, anyOf(await this.node(n.body, input))))
+    }
+  }
+
+  private redirects(rs: readonly Redirect[], at: DirState): Promise<unknown> {
+    return this.words(
+      rs.flatMap((r) => (r.target && !/^<<-?$/.test(r.op) ? [r.target] : [])),
+      at
+    )
+  }
+
+  /** A simple command's words, read at this point; substitutions in them
+   *  run in a subshell from here. */
+  private words(
+    words: readonly Word[],
+    at: DirState,
+    also: Promise<unknown>[] = []
+  ): Promise<unknown> {
+    const home = typeof at.vars.HOME === 'object' ? at.vars.HOME.value : null
+    this.points.push({ dirs: at.dirs, words: [...words], home })
+    for (const w of words)
+      for (const p of w.parts) {
+        if (p.kind === 'tilde' && p.user === '') this.tilde = true
+        if (p.kind === 'subst' && p.list) also.push(this.list(p.list, at))
+      }
+    return Promise.all(also)
+  }
+
+  private set(state: DirState, name: string, v: Var): DirState {
+    if (STACK_NAMES.has(name)) return { ...state, stack: 'unknown' }
+    const key = TRACKED[name]
+    if (!key) return state
+    if (key === 'HOME' && v === 'unknown') this.homeUnknown = true
+    if (key === 'OLDPWD')
+      return {
+        ...state,
+        oldpwd: typeof v === 'object' ? [normalisePath(v.value)] : 'unknown',
+        vars: { ...state.vars, OLDPWD: v },
+      }
+    return { ...state, vars: { ...state.vars, [key]: v } }
+  }
+
+  private assign(state: DirState, a: Assign): DirState {
+    if (a.name === null) {
+      let s = state
+      for (const n of ['HOME', 'CDPATH', 'PWD', 'OLDPWD']) s = this.set(s, n, 'unknown')
+      return { ...s, stack: 'unknown' }
+    }
+    if (!Object.hasOwn(TRACKED, a.name) && !STACK_NAMES.has(a.name)) return state
+    const values = (Array.isArray(a.value) ? a.value : [a.value]).map((w) => valueOf(w, state.vars))
+    let v: Var = values.some((x) => x === null) ? 'unknown' : { value: values.join(':') }
+    if (a.op === '+=' && typeof v === 'object') {
+      const now = state.vars[TRACKED[a.name] ?? 'HOME']
+      v =
+        typeof now === 'object'
+          ? { value: now.value + (Array.isArray(a.value) ? ':' : '') + v.value }
+          : now === 'unset'
+            ? v
+            : 'unknown'
+    }
+    return this.set(state, a.name, v)
+  }
+
+  private async simple(n: Simple, input: DirState): Promise<Outcome> {
+    // Prefix assignments hold for this command only, unless it has none.
+    let here = input
+    for (const a of n.assigns) {
+      for (const w of Array.isArray(a.value) ? a.value : [a.value]) await this.words([w], input)
+      here = this.assign(here, a)
+    }
+    await this.words(n.words, here)
+    await this.redirects(n.redirects, here)
+    // ${NAME:=v} sets NAME in this shell.
+    let after = n.words.length === 0 ? here : input
+    for (const w of n.words)
+      for (const p of w.parts)
+        if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
+    const program = n.words[0]?.literal ?? null
+    const args = n.words.slice(1)
+    // Declaration builtins and the commands that set a variable by name.
+    for (const w of args) if (w.assign) after = this.assign(after, w.assign)
+    if (program === 'declare' || program === 'typeset')
+      if (args.some((w) => /^-[a-zA-Z]*n/.test(w.literal ?? '')))
+        for (const w of args) if (w.assign?.name) after = this.set(after, w.assign.name, 'unknown')
+    if (
+      program === 'read' ||
+      program === 'unset' ||
+      program === 'printf' ||
+      program === 'mapfile'
+    ) {
+      const names = args.map((w) => w.literal ?? '')
+      const set = program === 'printf' ? names.filter((_, k) => names[k - 1] === '-v') : names
+      for (const name of set)
+        after = this.set(after, name, program === 'unset' ? 'unset' : 'unknown')
+    }
+    if (n.nested) {
+      // eval runs in this shell; a nested shell in a child.
+      if (program === 'eval') return this.list(n.nested, after)
+      await this.list(n.nested, here)
+    }
+    if (program === 'exit' || program === 'return') return { ok: null, fail: null }
+    if (program === 'true' || program === ':') return { ok: after, fail: null }
+    if (program === 'false') return { ok: null, fail: after }
+    return this.cd(n, here, after)
+  }
+
+  /** A cd's effect (data-model.md CdEffect): the outcome when it moves, or
+   *  both outcomes unchanged when the command is not a cd. */
+  private async cd(n: Simple, here: DirState, after: DirState): Promise<Outcome> {
+    const words = n.words
+    let k = 0
+    while (
+      k < words.length - 1 &&
+      (words[k]!.literal === 'builtin' || words[k]!.literal === 'command')
+    ) {
+      // `command -v cd` prints, `command -p cd` runs it.
+      if (words[k]!.literal === 'command' && /^-[vV]$/.test(words[k + 1]!.literal ?? ''))
+        return both(after)
+      k++
+      while (/^-p$/.test(words[k]?.literal ?? '')) k++
+    }
+    const prog = words[k]
+    if (!prog) return both(after)
+    let program = prog.literal
+    let possible = false
+    // zsh AUTO_CD: a lone word naming a directory is a cd to it.
+    if (words.length === 1 && n.assigns.length === 0 && !CD_PROGRAM.has(program ?? '')) {
+      let candidates: string[]
+      try {
+        candidates = await this.target(prog, here)
+      } catch (err) {
+        if (err instanceof Refused) return both(after)
+        throw err
+      }
+      const dirs = await this.existing(candidates)
+      return dirs.length ? this.moved(here, after, prog.raw, dirs, true) : both(after)
+    }
+    if (program === null) {
+      // An expanded program word that is not a path may be `cd` (085 round 6).
+      if (prog.raw.includes('/')) return both(after)
+      program = 'cd'
+      possible = true
+    } else if (!CD_PROGRAM.has(program)) return both(after)
+    let rest = words.slice(k + 1)
+    while (rest.length > 0 && /^-[LPe@qs]+$|^--$/.test(rest[0]!.literal ?? '')) {
+      const stop = rest[0]!.literal === '--'
+      rest = rest.slice(1)
+      if (stop) break
+    }
+    const name = program
+    const shown = (w: Word | undefined) => w?.raw ?? name
+    // A directory-stack entry: `+N`, `-N`.
+    if (rest[0] && /^[+-]\d+$/.test(rest[0].literal ?? ''))
+      N1(rest[0].raw, 'a directory-stack entry')
+    if (name === 'popd') {
+      if (rest.length > 0) return both(after)
+      if (here.stack === 'unknown') N1('popd', 'a directory-stack entry')
+      const [top, ...stack] = here.stack as string[][]
+      if (!top) return { ok: null, fail: after }
+      const out = await this.moved(here, after, 'popd', top, possible)
+      return { ok: out.ok && { ...out.ok, stack }, fail: out.fail }
+    }
+    if (rest.length === 0) {
+      if (name === 'pushd') {
+        if (here.stack === 'unknown') N1('pushd', 'a directory-stack entry')
+        const [top, ...stack] = here.stack as string[][]
+        if (!top) return { ok: null, fail: after }
+        const out = await this.moved(here, after, 'pushd', top, possible)
+        return { ok: out.ok && { ...out.ok, stack: [here.dirs, ...stack] }, fail: out.fail }
+      }
+      if (possible) return both(after)
+      return this.moved(here, after, name, this.home(here, name), possible)
+    }
+    if (rest.length === 2 && (name === 'cd' || name === 'chdir') && !possible) {
+      // zsh `cd old new`: old replaced by new in the directory; bash: an error.
+      const [o, w] = [rest[0]!.literal, rest[1]!.literal]
+      if (o === null || w === null) N1(`${rest[0]!.raw} ${rest[1]!.raw}`, 'more than one target')
+      const swapped = here.dirs
+        .filter((d) => d.includes(o!))
+        .map((d) => normalisePath(d.replace(o!, w!)))
+      if (swapped.length === 0) N1(`${rest[0]!.raw} ${rest[1]!.raw}`, 'more than one target')
+      return this.moved(here, after, `${rest[0]!.raw} ${rest[1]!.raw}`, swapped, true)
+    }
+    if (rest.length > 1 && !possible) return { ok: null, fail: after }
+    const target = rest[0]!
+    const dirs = await this.target(target, here)
+    const out = await this.moved(here, after, shown(target), dirs, possible)
+    if (name === 'pushd' && out.ok)
+      return {
+        ok: { ...out.ok, stack: here.stack === 'unknown' ? 'unknown' : [here.dirs, ...here.stack] },
+        fail: out.fail,
+      }
+    return out
+  }
+
+  /** Where `~` and a bare cd go. A session with no HOME loses track, as
+   *  main does (no directory known); one the command made unknown is N2. */
+  private home(here: DirState, shown: string): string[] {
+    const h = here.vars.HOME
+    if (typeof h === 'object') return [normalisePath(h.value)]
+    if (this.homeUnknown) throw new Refused({ kind: 'N2' })
+    if (h === 'unknown') return []
+    return N1(shown, 'HOME set in this command to a value Veilio cannot read')
+  }
+
+  private async existing(paths: string[]): Promise<string[]> {
+    const out: string[] = []
+    for (const p of paths) if (await this.ctx.isDirectory(p)) out.push(p)
+    return out
+  }
+
+  /** The cd landed: each directory judged by the guard, the shell there.
+   *  `possible`: it may also not have moved (both kept). */
+  private moved(
+    here: DirState,
+    after: DirState,
+    target: string,
+    dirs: string[],
+    possible: boolean
+  ): Outcome {
+    const to = uniq(dirs)
+    if (to.length > MAX_DIRS) N1(target, 'too many possible directories')
+    this.landings.push({ target, dirs: to })
+    const moved: DirState = { ...after, dirs: to, oldpwd: here.dirs }
+    return possible ? { ok: merge(after, moved), fail: after } : { ok: moved, fail: after }
+  }
+
+  /** Where a cd target may take the shell (contracts/cd-verdicts.md
+   *  "Evaluable targets"), or N1 naming its form. */
+  private async target(w: Word, here: DirState): Promise<string[]> {
+    const parts = w.parts
+    const first = parts[0]
+    const rest = parts.slice(1)
+    const restText = (): string => {
+      let t = ''
+      for (const p of rest) {
+        if (p.kind !== 'lit') return N1(w.raw, formOf(p))
+        t += p.text
+      }
+      return t
+    }
+    const under = (bases: readonly string[], text: string) =>
+      bases.map((b) => normalisePath(text ? `${b.replace(/\/+$/, '')}/${text}` : b))
+    if (!first) return here.dirs.slice()
+    // zsh extended globs in an unquoted literal: `#`, `^`, a `~` after the start.
+    for (const [k, p] of parts.entries())
+      if (
+        p.kind === 'lit' &&
+        !p.quoted &&
+        (/[#^]/.test(p.text) || (p.text.includes('~') && (k > 0 || !p.text.startsWith('~'))))
+      )
+        N1(w.raw, 'a glob')
+    if (first.kind === 'tilde') {
+      this.tilde ||= first.user === ''
+      const text = restText()
+      if (first.user === '') return under(this.home(here, w.raw), text)
+      if (first.user === '+') return under(here.dirs, text)
+      if (first.user === '-') {
+        if (here.oldpwd === 'unknown') N1(w.raw, 'the previous directory is not known')
+        return under(here.oldpwd as string[], text)
+      }
+      if (/^[+-]?\d+$/.test(first.user)) return N1(w.raw, 'a directory-stack entry')
+      return N1(w.raw, "another user's home (`~name`)")
+    }
+    if (first.kind === 'param' && first.op === '') {
+      const text = restText()
+      if (first.name === 'PWD') return under(this.pwd(here), text)
+      if (first.name === 'HOME') return under(this.home(here, w.raw), text)
+      if (first.name === 'OLDPWD') {
+        const v = here.vars.OLDPWD
+        if (typeof v === 'object') return under([v.value], text)
+        if (v === 'auto' && here.oldpwd !== 'unknown') return under(here.oldpwd, text)
+        return N1(w.raw, 'the previous directory is not known')
+      }
+      return N1(w.raw, 'a variable')
+    }
+    if (first.kind === 'subst') {
+      const text = restText()
+      const what = first.list ? substOf(first.list) : null
+      if (what === 'pwd') return under(here.dirs, text)
+      if (what === 'toplevel') {
+        const tops: string[] = []
+        for (const d of here.dirs) {
+          let at: string | null = d
+          while (at !== null && !(await this.ctx.exists(`${at === '/' ? '' : at}/.git`)))
+            at = at === '/' ? null : normalisePath(`${at}/..`)
+          if (at === null) N1(w.raw, 'no repository above this directory')
+          tops.push(at!)
+        }
+        return under(tops, text)
+      }
+      return N1(w.raw, 'a command substitution')
+    }
+    if (w.literal === null) {
+      const p = parts.find((x) => x.kind !== 'lit')!
+      return N1(w.raw, formOf(p))
+    }
+    const t = w.literal
+    if (t === '-') {
+      if (here.oldpwd === 'unknown') N1(w.raw, 'the previous directory is not known')
+      return here.oldpwd.slice()
+    }
+    if (t.startsWith('/')) return [normalisePath(t)]
+    const dirs = here.dirs.map((d) => abs(d, t))
+    // A bare name is also looked up under each CDPATH entry.
+    if (!/^\.\.?(\/|$)/.test(t)) {
+      const cdpath = here.vars.CDPATH
+      if (cdpath === 'unknown')
+        N1(w.raw, 'CDPATH set in this command to a value Veilio cannot read')
+      if (typeof cdpath === 'object')
+        for (const entry of cdpath.value.split(':'))
+          for (const d of here.dirs) dirs.push(abs(abs(d, entry || '.'), t))
+    }
+    return dirs
+  }
+
+  private pwd(here: DirState): string[] {
+    const v = here.vars.PWD
+    if (typeof v === 'object') return [normalisePath(v.value)]
+    if (v === 'auto') return here.dirs.slice()
+    return N1('$PWD', 'a variable')
+  }
+}
+
+/** `$(pwd)` and `$(git rev-parse --show-toplevel)`: the two substitutions a
+ *  cd target may be (Q1 = A). */
+function substOf(l: List): 'pwd' | 'toplevel' | null {
+  if (l.items.length !== 1) return null
+  const p = l.items[0]!.node
+  if (p.stages.length !== 1 || p.negated) return null
+  const n = p.stages[0]!
+  if (n.type !== 'simple' || n.assigns.length > 0 || n.redirects.length > 0) return null
+  const w = n.words.map((x) => x.literal)
+  if (w[0] === 'pwd' && w.length <= 2 && (w.length === 1 || w[1] === '-L' || w[1] === '-P'))
+    return 'pwd'
+  if (w.join(' ') === 'git rev-parse --show-toplevel') return 'toplevel'
+  return null
+}
+
+function formOf(p: Part): string {
+  switch (p.kind) {
+    case 'param':
+    case 'arith':
+      return 'a variable'
+    case 'subst':
+      return 'a command substitution'
+    case 'glob':
+      return 'a glob'
+    case 'brace':
+      return 'braces'
+    case 'ansic':
+      return 'ANSI-C quoting'
+    case 'tilde':
+      return "another user's home (`~name`)"
+    default:
+      return 'a variable'
+  }
+}
+
+/** A word's text as a path, `~` at its start read with HOME (`home`), or
+ *  null when the shell builds it otherwise. */
+export function wordPath(w: Word, home: string | null): string | null {
+  if (w.literal !== null) return w.literal
+  const [first, ...rest] = w.parts
+  if (first?.kind !== 'tilde' || first.user !== '' || home === null) return null
+  if (!rest.every((p) => p.kind === 'lit')) return null
+  return home + rest.map((p) => (p as { text: string }).text).join('')
+}
+
+/** The cd walk of a command the reader read. A refusal stops it. */
+export async function walkCd(l: List, start: DirState, ctx: CdContext): Promise<CdWalk> {
+  const w = new Walker(ctx)
+  try {
+    const out = await w.list(l, start)
+    if (w.homeUnknown && w.tilde) throw new Refused({ kind: 'N2' })
+    // The next call starts where the command most likely left the shell:
+    // where it succeeded, else where it failed.
+    const end = out.ok ?? out.fail ?? start
+    return { points: w.points, landings: w.landings, refusal: null, end }
+  } catch (err) {
+    if (!(err instanceof Refused)) throw err
+    return { points: w.points, landings: w.landings, refusal: err.refusal, end: start }
+  }
 }

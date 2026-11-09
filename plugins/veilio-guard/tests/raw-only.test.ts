@@ -1,7 +1,7 @@
 // Spec 033 FR-004: files that must never reach the model are refused before
 // the tool runs, whatever spelling reaches them.
 import { expect, test } from 'claude-code/testing'
-import { mapFile, project, ROOT, STRIPE, res } from './helpers.ts'
+import { CANARY, mapFile, project, ROOT, STRIPE, res } from './helpers.ts'
 import type { Fields } from './fixtures/recorded.ts'
 
 const ENV = { [`${ROOT}/.env`]: `STRIPE_SECRET_KEY=${STRIPE}\n` }
@@ -494,4 +494,351 @@ test('L19: a Read of .npmrc::$DATA, .npmrc. or .veilio::$INDEX_ALLOCATION/map.js
     expect(`${path} -> ${out.deny}`).toContain('away from the model')
   }
   expect(ran).toBe(false)
+})
+
+// ── spec 086: the cd read as the shell reads it ─────────────────────────────
+// Each refusal pins its text (strings.md A1, A2, N1, N2). HOME is /home/dev,
+// holding the cloud credentials the default raw-only list names.
+const HOME = '/home/dev'
+const A1 = (t: string) =>
+  `Veilio keeps \`${t}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user.`
+const A2 = (w: string) =>
+  `Veilio keeps ${w} away from the model. Ask the user for what you need from it.`
+const N1 = (t: string, form: string) =>
+  `Veilio refused this call: Veilio cannot tell where \`${t}\` takes the shell (${form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.`
+const N2 =
+  'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user.'
+const HOME_FILES = {
+  [`${HOME}/.kube/config`]: 'x\n',
+  [`${HOME}/.aws/credentials`]: 'x\n',
+  [`${HOME}/.config/gcloud/credentials.db`]: 'x\n',
+  [`${HOME}/notes`]: '',
+}
+// `notes` is a link to .env in sub/, lib/deep/, HOME and /other/repo/sub/;
+// a plain file at the root.
+const TREE = {
+  ...HOME_FILES,
+  [`${ROOT}/.env`]: 'DB_HOST=db.example.invalid\n',
+  [`${ROOT}/notes`]: 'plain\n',
+  [`${ROOT}/sub/notes`]: '',
+  [`${ROOT}/lib/deep/notes`]: '',
+  ['/other/repo/.git']: 'gitdir: /elsewhere\n',
+  ['/other/repo/notes']: '',
+  ['/other/repo/sub/x']: '',
+  ['/outside/x']: '',
+}
+const TREE_LINKS = {
+  links: {
+    [`${ROOT}/sub/notes`]: `${ROOT}/.env`,
+    [`${ROOT}/lib/deep/notes`]: `${ROOT}/.env`,
+    [`${HOME}/notes`]: `${ROOT}/.env`,
+    ['/other/repo/notes']: `${ROOT}/.env`,
+  },
+  home: HOME,
+}
+
+/** Each command's refusal text, or undefined when it ran. */
+async function verdicts(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  commands: readonly string[]
+): Promise<(string | undefined)[]> {
+  project(on, TREE, TREE_LINKS)
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  const out: (string | undefined)[] = []
+  for (const command of commands)
+    out.push((await $.tool.call({ tool: 'Bash', command, description: 'x' })).deny)
+  return out
+}
+
+// research.md R4: every form 085's review rounds reproduced (Bash; the
+// PowerShell ones are in powershell.test.ts). `undefined`: runs, as on main
+// (a wrapper that cannot move the shell, or a harmless one).
+const ATTACKS: [string, string | undefined][] = [
+  // Round 1 (S8)
+  ['cd ~/.kub{e..e}', N1('~/.kub{e..e}', 'braces')],
+  ['D=~/.kube; cd $D', N1('$D', 'a variable')],
+  ['cd `printf .kube`', N1('`printf .kube`', 'a command substitution')],
+  ['cd \\.kube', A1('.kube')],
+  // Round 3 (#4): zsh's globs
+  ['cd ~/.ku(b|x)e', N1('~/.ku(b|x)e', 'a glob')],
+  ['cd ~/.kube(/)', N1('~/.kube(/)', 'a glob')],
+  ['cd ~/.kub<->', N1('~/.kub<->', 'a glob')],
+  ['cd ~/.k#ube', N1('~/.k#ube', 'a glob')],
+  ['cd ~/.k@(u)be', N1('~/.k@(u)be', 'a glob')],
+  ['cd ~/.kube~x', N1('~/.kube~x', 'a glob')],
+  ['cd ~/.ku^xbe', N1('~/.ku^xbe', 'a glob')],
+  // Round 4 (#4-#5)
+  ['CDPATH=~/.config cd gcloud', A1('gcloud')],
+  ['cd x .kube', N1('x .kube', 'more than one target')],
+  ['OLDPWD=~/.kube; cd -', A1(`${HOME}/.kube`)],
+  ['cd ~k', N1('~k', "another user's home (`~name`)")],
+  ['pushd +1', N1('+1', 'a directory-stack entry')],
+  // Round 5
+  ['HOME=~/.kube cd; cat config', A1(`${HOME}/.kube`)],
+  ['OLDPWD=~/.kube cd -', A1(`${HOME}/.kube`)],
+  ['env HOME=~/.kube cd', undefined],
+  ['exec cd src', undefined],
+  ['LC_ALL=C cd src', undefined],
+  ["bash -c 'HOME=~/.kube cd; cat config'", A1(`${HOME}/.kube`)],
+  ["bash -c 'cd - && cat config'", undefined],
+  [
+    'read CDPATH <<< ~/.config; cd gcloud',
+    N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  ['CDPATH+=:~/.config; cd gcloud', A1('gcloud')],
+  [
+    ': ${CDPATH:=~/.config}; cd gcloud',
+    N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  [
+    'printf -v CDPATH ~/.config; cd gcloud',
+    N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  ['cdpath+=(~/.config); cd gcloud', A1('gcloud')],
+  ['DIRSTACK[1]=~/.kube; pushd +1', N1('+1', 'a directory-stack entry')],
+  ['DIRSTACK[1]=~/.kube; popd; cat config', N1('popd', 'a directory-stack entry')],
+  ['dirstack=(~/.kube); cd ~1', N1('~1', 'a directory-stack entry')],
+  // Round 5b: a name split by quotes or a backslash
+  ['export C""DPATH=~/.config; cd gcloud', A1('gcloud')],
+  ['export H""OME=~/.kube; cd ~', A1('~')],
+  ['export CD\\PATH=~/.config; cd gcloud', A1('gcloud')],
+  ['c""d ~/.kube; cat config', A1('~/.kube')],
+  ['\\cd ~/.kube; cat config', A1('~/.kube')],
+  ["c''d src", undefined],
+  // Round 6
+  ['cd x .kube\nls', N1('x .kube', 'more than one target')],
+  ['cd -\nls', undefined],
+  ['cd src\ncd -', undefined],
+  ["$'\\x63d' ~/.kube", A1('~/.kube')],
+  ['`echo cd` ~/.kube; cat config', A1('~/.kube')],
+  [
+    "export $'CD'PATH=~/.config; cd gcloud",
+    N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  [
+    'declare "${x}"=~/.config; cd gcloud',
+    N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  ['HOME=~/.kube; cat ~/credentials', A2('~/credentials')],
+  ['HOME=~/.kube; cd ~; cat config', A1('~')],
+  // COVERAGE #47's parked forms: zsh `cd old new` (the root is /work/project), AUTO_CD, a loop
+  ['cd project .kube', A1('project .kube')],
+  ['X= cd project .kube', A1('project .kube')],
+  ['if cd project .kube; then cat config; fi', A1('project .kube')],
+  ['~/.kube', A1('~/.kube')],
+  ['.kube', undefined],
+  ['for HOME in ~/.kube; do cd; cat config; done', N2],
+  ["cd ~/.kub$'\\x65'", N1("~/.kub$'\\x65'", 'ANSI-C quoting')],
+  ['cd .vei{l..l}io', N1('.vei{l..l}io', 'braces')],
+  ['cd `echo .kube`', N1('`echo .kube`', 'a command substitution')],
+  // FR-015: no move; 078's floor reads the cd in the text
+  ['env cd ~/.aws', A1('~/.aws')],
+  ['exec cd ~/.aws', A1('~/.aws')],
+  ['sudo cd ~/.aws', A1('~/.aws')],
+  ['nohup cd ~/.aws', A1('~/.aws')],
+  ['timeout 1 cd ~/.aws', A1('~/.aws')],
+  ['echo ~/.aws | xargs cd', undefined],
+  ['/usr/bin/cd ~/.aws', undefined],
+]
+for (const [command, expected] of ATTACKS)
+  test(`086 attack ${JSON.stringify(command)}: ${expected === undefined ? 'runs, as on main' : 'refused'}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
+
+// contracts/cd-verdicts.md "Evaluable targets": each form is followed into
+// the directory it names, so `cat notes` there (a link to .env) is refused,
+// and at the root (a plain file) runs.
+const NOTES = A2('notes')
+const FOLLOWED: [string, string | undefined][] = [
+  ['cd ./sub && cat notes', NOTES],
+  ['cd ../project/sub && cat notes', NOTES],
+  [`cd ${ROOT}/sub && cat notes`, NOTES],
+  ['cd ~ && cat notes', NOTES],
+  ['cd && cat notes', NOTES],
+  ['cd -- && cat notes', NOTES],
+  ['cd ~+/sub && cat notes', NOTES],
+  ['cd sub && cd - && cat notes', undefined],
+  ['cd sub && cd .. && cd - && cat notes', NOTES],
+  ['cd sub && cd ~- && cd ~- && cat notes', NOTES],
+  ['pushd sub && cat notes', NOTES],
+  ['pushd sub && popd && cat notes', undefined],
+  ['pushd sub && pushd .. && pushd && cat notes', NOTES],
+  ['CDPATH=lib cd deep && cat notes', NOTES],
+  ['cd -P sub && cat notes', NOTES],
+  ['cd -- sub && cat notes', NOTES],
+  ['cd sub 2>/dev/null && cat notes', NOTES],
+  ['cd sub # into sub\ncat notes', NOTES],
+  ['sub && cat notes', NOTES],
+  ['cd /work/a && cd a project/sub && cat notes', NOTES],
+  ['cd /work/a && cd b c && cat notes', N1('b c', 'more than one target')],
+  ['builtin cd sub && cat notes', NOTES],
+  ['command cd sub && cat notes', NOTES],
+  ['command -v cd sub && cat notes', undefined],
+  // A cd in a substitution in a redirection lands too, in its subshell.
+  ['echo x > "$(cd ~/.kube && pwd)/y"', A1('~/.kube')],
+]
+for (const [command, expected] of FOLLOWED)
+  test(`086 followed: ${JSON.stringify(command)}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
+
+// T013, contracts/cd-verdicts.md "Assignments": what a command sets is used
+// for what follows it in that command; naming a variable sets nothing.
+const ASSIGNED: [string, string | undefined][] = [
+  // prefix: that command only
+  ['CDPATH=lib cd deep && cat notes', NOTES],
+  ['CDPATH=lib true; cd deep && cat notes', undefined],
+  // for the rest of the call
+  ['CDPATH=lib; cd deep && cat notes', NOTES],
+  ['export CDPATH=lib; cd deep && cat notes', NOTES],
+  ['declare CDPATH=lib; cd deep && cat notes', NOTES],
+  ['typeset CDPATH=lib; cd deep && cat notes', NOTES],
+  ['readonly CDPATH=lib; cd deep && cat notes', NOTES],
+  ['CDPATH+=lib; cd deep && cat notes', NOTES],
+  ['cdpath=(lib); cd deep && cat notes', NOTES],
+  ['HOME=/work/project/sub; cd && cat notes', NOTES],
+  ['HOME=/work/project/sub cd && cat notes', NOTES],
+  ['unset CDPATH; cd deep && cat notes', undefined],
+  // a value or a name the shell builds
+  ['CDPATH=$X cd deep', N1('deep', 'CDPATH set in this command to a value Veilio cannot read')],
+  [
+    'export CDPATH="$(pwd)/lib"; cd deep',
+    N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  [
+    'read -r CDPATH; cd deep',
+    N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  [
+    'for CDPATH in lib; do cd deep; done',
+    N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  [
+    'declare -n CDPATH=X; cd deep',
+    N1('deep', 'CDPATH set in this command to a value Veilio cannot read'),
+  ],
+  // HOME unknown and `~` anywhere: N2; no `~`, nothing to tell
+  ['HOME=$X; cd ~', N2],
+  ['HOME=$X; cat ~/notes', N2],
+  ['read HOME; ls ~', N2],
+  ['HOME=$X; ls', undefined],
+  // naming without setting changes nothing
+  ['echo $HOME && cd ~ && cat notes', NOTES],
+  ['ls ${HOME:-/tmp} && cd ~ && cat notes', NOTES],
+  ['grep -r CDPATH scripts/; cd deep && cat notes', undefined],
+  ['echo $CDPATH; cd sub && cat notes', NOTES],
+]
+for (const [command, expected] of ASSIGNED)
+  test(`086 assignment: ${JSON.stringify(command)}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
+
+// T015 (Q1 = A): the variable forms a cd target may hold.
+const VARIABLE: [string, string | undefined][] = [
+  ['cd "$PWD/sub" && cat notes', NOTES],
+  ['cd sub && cd "$PWD" && cat notes', NOTES],
+  ['cd ${HOME} && cat notes', NOTES],
+  ['cd "$HOME" && cat notes', NOTES],
+  ['cd sub && cd "$OLDPWD" && cat notes', undefined],
+  ['cd sub && cd .. && cd "$OLDPWD" && cat notes', NOTES],
+  ['cd $(pwd)/sub && cat notes', NOTES],
+  ['cd sub && cd "$(git rev-parse --show-toplevel)" && cat notes', undefined],
+  ['cd "$(git rev-parse --show-toplevel)/sub" && cat notes', NOTES],
+  // .git a file, in a directory above the one the shell is in
+  ['cd /other/repo/sub && cd "$(git rev-parse --show-toplevel)" && cat notes', NOTES],
+  [
+    'cd /outside && cd "$(git rev-parse --show-toplevel)"',
+    N1('"$(git rev-parse --show-toplevel)"', 'no repository above this directory'),
+  ],
+  [
+    'cd "$(git rev-parse --show-prefix)"',
+    N1('"$(git rev-parse --show-prefix)"', 'a command substitution'),
+  ],
+  ['cd "$D"', N1('"$D"', 'a variable')],
+]
+for (const [command, expected] of VARIABLE)
+  test(`086 variable: ${JSON.stringify(command)}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
+
+// T018, contracts/cd-verdicts.md "Scope": where each word is read from, the
+// shell's own scoping of `&&`, `||`, `;`, subshells, `$( )` and pipelines.
+const SCOPE: [string, string | undefined][] = [
+  ['cd sub; cat notes', NOTES],
+  ['cd sub || true; cat notes', NOTES],
+  ['(cd sub && ls); cat notes', undefined],
+  ['echo $(cd sub); cat notes', undefined],
+  ['echo `cd sub`; cat notes', undefined],
+  // bash runs a pipeline's last stage in a subshell, zsh does not: both kept
+  ['ls | cd sub; cat notes', NOTES],
+  ['cd sub | ls; cat notes', undefined],
+  ['cd sub & cat notes', undefined],
+  ['cd /tmp && cat notes', undefined],
+  ['cd sub && cd .. && cat notes', undefined],
+  ['false && cd sub; cat notes', undefined],
+  ['cd sub 2>/dev/null || exit 1; cat notes', NOTES],
+  ['if cd sub; then ls; fi; cat notes', NOTES],
+  ['for x in 1 2; do cd sub; done; cat notes', NOTES],
+  ["bash -c 'cd sub'; cat notes", undefined],
+  ["bash -c 'cd sub && cat notes'", NOTES],
+  ['eval "cd sub"; cat notes', NOTES],
+  // FR-015: a program run by a wrapper is /usr/bin/cd, in a child
+  ['env cd sub && cat notes', undefined],
+  ['nohup cd sub && cat notes', undefined],
+  // bash's reading of the pipeline: the shell stays where it was
+  ['cd /other/repo && ls | cd sub; cat notes', NOTES],
+  // every directory the shell may be in, not only one of them
+  ['cd /other/repo; cd /zzz; cat notes', NOTES],
+]
+for (const [command, expected] of SCOPE)
+  test(`086 scope: ${JSON.stringify(command)}`, async ($, on) => {
+    expect((await verdicts($, on, [command]))[0]).toBe(expected)
+  })
+
+// Across calls: where the shell is after one call is where the next starts
+// (the top-level commands only, success or failure); the stack and the
+// environment are not kept (research R0, T003).
+const CALLS: [string[], string | undefined][] = [
+  [['cd sub', 'cat notes'], NOTES],
+  [['cd sub; ls', 'cat notes'], NOTES],
+  [['cd sub', 'cd /tmp', 'cat notes'], undefined],
+  [['echo $(cd sub)', 'cat notes'], undefined],
+  [['(cd sub)', 'cat notes'], undefined],
+  [['export CDPATH=lib', 'cd deep && cat notes'], undefined],
+  [['pushd sub', 'popd; cat notes'], NOTES],
+  [['cd sub', 'cd - && cat notes'], undefined],
+]
+for (const [calls, expected] of CALLS)
+  test(`086 across calls: ${JSON.stringify(calls)}`, async ($, on) => {
+    const out = await verdicts($, on, calls)
+    expect(out.slice(0, -1)).toEqual(calls.slice(0, -1).map(() => undefined))
+    expect(out[out.length - 1]).toBe(expected)
+  })
+
+test('086 across calls: a failed call moves the shell too', async ($, on) => {
+  project(on, TREE, TREE_LINKS)
+  on('tool.call', (_, e) =>
+    e.command === 'cd sub && false'
+      ? { result: { stdout: '', stderr: 'exit 1', interrupted: false }, isError: true }
+      : { result: { stdout: '', stderr: '', interrupted: false } }
+  )
+  await $.tool.call({ tool: 'Bash', command: 'cd sub && false', description: 'x' })
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat notes', description: 'x' })
+  expect(out.deny).toBe(NOTES)
+})
+
+// Q3 = A: more than 16 possible directories refuses the call.
+const fan = (n: number) => Array.from({ length: n }, (_, k) => `cd d${k}`).join(' || ')
+test('086 the bound: 16 possible directories run, 17 are refused', async ($, on) => {
+  const [sixteen, seventeen] = await verdicts($, on, [fan(16), fan(17)])
+  expect(sixteen).toBeUndefined()
+  expect(seventeen).toBe(N1(fan(17), 'too many possible directories'))
+})
+
+test('086 N1 masks its target: a name from the map reaches the model as its placeholder', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) }, { home: HOME })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  const out = await $.tool.call({ tool: 'Bash', command: `cd "$D/${CANARY}"`, description: 'x' })
+  expect(out.deny).toBe(N1('"$D/__CLS__1"', 'a variable'))
 })

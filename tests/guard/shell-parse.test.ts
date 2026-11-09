@@ -55,7 +55,7 @@ function list(l: List): string {
   return l.items
     .map(({ node: p, joinedBy }) => {
       const stages = p.stages.map(node).join(' | ')
-      const s = `${p.timed ? 'time ' : ''}${p.negated ? '! ' : ''}${stages}`
+      const s = `${p.timed ? 'time ' : ''}${p.negated ? '! ' : ''}${stages}${p.background ? ' &' : ''}`
       return joinedBy === null ? s : `${joinedBy === '\n' ? '⏎' : joinedBy} ${s}`
     })
     .join(' ')
@@ -160,7 +160,8 @@ describe('parseShell, the forms the cd rules read', () => {
     ['a built name', 'declare "${x}"=~/.config', 'W(declare) A(?=…)'],
     ['a here-string', 'read CDPATH <<< ~/.config', 'W(read) W(CDPATH) R(<<< X(tilde:~/.config))'],
     ['a process substitution', 'cat <(cd .aws && ls)', 'W(cat) X(subst:<(cd .aws && ls))'],
-    ['a background job', 'ls & cd .aws', 'W(ls) & W(cd) W(.aws)'],
+    ['a background job', 'ls & cd .aws', 'W(ls) & & W(cd) W(.aws)'],
+    ['a trailing background job', 'cd x &', 'W(cd) W(x) &'],
     ['a pipe of stderr', 'ls |& cd x', 'W(ls) | W(cd) W(x)'],
     [
       'a case',

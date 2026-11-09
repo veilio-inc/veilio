@@ -495,7 +495,8 @@ export type Node =
     }
   | { type: 'case'; word: Word; arms: List[]; redirects: Redirect[] }
   | { type: 'function'; name: string; body: Node }
-export type Pipeline = { stages: Node[]; negated: boolean; timed: boolean }
+/** `background`: followed by `&`, so it runs in a subshell of its own. */
+export type Pipeline = { stages: Node[]; negated: boolean; timed: boolean; background?: true }
 export type Joint = '&&' | '||' | ';' | '&' | '\n'
 /** `joinedBy`: the operator between an item and the one before it. */
 export type List = { items: { node: Pipeline; joinedBy: Joint | null }[] }
@@ -705,6 +706,7 @@ class Reader {
       }
       if (s[this.i] === '&') {
         joint = '&'
+        items[items.length - 1]!.node.background = true
         this.i++
         this.space()
         continue
