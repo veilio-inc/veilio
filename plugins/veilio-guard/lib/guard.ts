@@ -928,8 +928,11 @@ export class Guard {
   private async checkRecord(): Promise<void> {
     const entries = [...Object.keys(this.stored.map), ...Object.keys(this.aliases)]
     if (entries.length === 0) return
-    const [key, value] = await this.recordEntry(this.mapText, this.aliasesText)
-    if ((await this.readRecord())[key] === value) return
+    // No home, no record: unrecorded, without hashing anything.
+    if (this.recordPath() !== undefined) {
+      const [key, value] = await this.recordEntry(this.mapText, this.aliasesText)
+      if ((await this.readRecord())[key] === value) return
+    }
     this.unrecordedAtLoad = true
     for (const p of entries) this.adopted.add(p)
     this.notice(NOT_RECORDED)
@@ -2677,15 +2680,6 @@ export class Guard {
       const aliases = this.aliases
       const aliasesText = this.aliasesText
       await this.reloadSideFiles()
-      // Spec 085 R2-3: what the store holds now, before this write, decides
-      // whether the write is recorded (no laundering a planted map).
-      // An empty store counts only when this session never held an
-      // unrecorded one (review: emptying the file must not launder it).
-      const before = await this.recordEntry(mapText, this.aliasesText)
-      const matched = (await this.readRecord())[before[0]] === before[1]
-      const recordedBefore =
-        matched ||
-        (Object.keys(onDisk.map).length === 0 && this.aliasesText === '' && !this.unrecordedAtLoad)
       // Spec 085 L12: entries another program wrote (a git pull) are checked
       // against git before any of them is merged; so is any change to either
       // file, new names or not (review round 1 #1).
@@ -2708,6 +2702,17 @@ export class Guard {
         return { status: 'conflict' as const, quarantined }
       }
       const next: StoredMap = { ...onDisk, map: merged }
+      // Spec 085 R2-3: what the store held before this write decides whether
+      // the write is recorded (no laundering a planted map). An empty store
+      // counts only when this session never held an unrecorded one (review:
+      // emptying the file must not launder it). Hashed after the git check,
+      // and only with a record to keep: nothing between a save and git's answer.
+      const recordable = this.recordPath() !== undefined
+      const before = recordable ? await this.recordEntry(mapText, this.aliasesText) : null
+      const matched = before !== null && (await this.readRecord())[before[0]] === before[1]
+      const recordedBefore =
+        matched ||
+        (Object.keys(onDisk.map).length === 0 && this.aliasesText === '' && !this.unrecordedAtLoad)
       // Never recorded while what is written holds a name not yet shown-trusted.
       // A matched record vouches for what the disk held; anything else adopted
       // (held in memory only) is not laundered into it.
