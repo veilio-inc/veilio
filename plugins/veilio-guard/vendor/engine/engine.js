@@ -211,8 +211,9 @@ function regexLiteralEnd(code, at, ignoreGuess = false) {
  *  shortcut: a file with more distinct ids than this is not seen in real code;
  *  an index of terminator lines would lift the cap. */
 const MAX_HEREDOC_IDS = 100;
-/** Words after which Ruby reads `%|`, `%!`, `%^`, `%/`, `%~` as a literal:
- *  keywords, and the output methods real code calls with one (`puts %|x|`). */
+/** Words after which a bare `%` starts an expression in Ruby: keywords and the
+ *  output methods real code calls with a literal (`puts %|x|`). A supplement:
+ *  any identifier and a space count too (rubyBarePercentOpens). */
 const RUBY_LITERAL_AFTER = new Set([
     'return',
     'puts',
@@ -238,25 +239,34 @@ const RUBY_LITERAL_AFTER = new Set([
     'begin',
 ]);
 /**
- * Whether Ruby's lexer starts an expression at `at` (spec 085 R2-11, security
- * review round 2): at a line start, after `=`, `(`, `,`, `[`, `{`, `;` or an
- * operator, or after one of RUBY_LITERAL_AFTER and a space. After any other
- * operand and a space (`a %|b`, `x %-y`), `%` is modulo.
+ * Whether a bare `%` at `at`, with the delimiter after it, opens a literal as
+ * Ruby's lexer reads it (spec 085 R2-11, security review rounds 2 and 3):
+ * - at an expression start - a line start, after `=`, `(`, `,`, `[`, `{`, `;`,
+ *   an operator, or a keyword of RUBY_LITERAL_AFTER - with any delimiter;
+ * - after any other identifier and a space (the ambiguous first argument),
+ *   when the delimiter is not `=` and the character after it is not a space;
+ * - never right after an operand (`a%b`, `f(x) %|y|`): that is modulo.
+ * When unsure it opens: a literal is masked as a string, never read as a comment.
  */
-function rubyExpressionStart(code, at) {
+function rubyBarePercentOpens(code, at) {
     let j = at - 1;
     while (j >= 0 && (code[j] === ' ' || code[j] === '\t'))
         j--;
     if (j < 0 || code[j] === '\n' || code[j] === '\r')
         return true;
-    if (/[=([{,;+\-*/<>&|!?:~^%]/.test(code[j]))
+    const before = code[j];
+    if (/[=([{,;+\-*/<>&|!?:~^%]/.test(before))
         return true;
-    if (j === at - 1 || !/\w/.test(code[j]))
+    if (j === at - 1 || !/\w/.test(before))
         return false;
     let k = j;
     while (k >= 0 && /\w/.test(code[k]))
         k--;
-    return RUBY_LITERAL_AFTER.has(code.slice(k + 1, j + 1));
+    if (RUBY_LITERAL_AFTER.has(code.slice(k + 1, j + 1)))
+        return true;
+    const delimiter = code[at + 1];
+    const next = code[at + 2];
+    return delimiter !== '=' && next !== undefined && !/\s/.test(next);
 }
 function literalEnd(code, at, kind, memo) {
     if (code[at] === '<' && code.startsWith('<<', at)) {
@@ -288,16 +298,15 @@ function literalEnd(code, at, kind, memo) {
         return end;
     }
     if (kind === 'ruby' && code[at] === '%') {
-        // A letter form (`%w(`, `%q[`) with any non-word, non-space delimiter, or
-        // a bare `%` with a bracket, or with one of `| ! ^ / ~` where Ruby's lexer
-        // starts an expression (rubyExpressionStart); never `%=` or `% `, which
-        // are operators, nor a `%` right after an operand (security review).
-        const m = /%(?:[qQwWiIrsx][^\w\s]|[([{<]|([|!^/~]))/y;
+        // A letter form (`%w(`, `%q[`) with any non-word, non-space delimiter, or a
+        // bare `%` where Ruby's lexer opens one (rubyBarePercentOpens); never `% `,
+        // nor a `%` right after an operand (security review rounds 1-3).
+        const m = /%(?:[qQwWiIrsx][^\w\s]|([^\w\s]))/y;
         m.lastIndex = at;
         const found = m.exec(code);
         if (found === null || /[\w)\]]/.test(code[at - 1] ?? ''))
             return -1;
-        if (found[1] !== undefined && !rubyExpressionStart(code, at))
+        if (found[1] !== undefined && !rubyBarePercentOpens(code, at))
             return -1;
         const open = found[0].slice(-1);
         if (memo.unclosed.has(open))

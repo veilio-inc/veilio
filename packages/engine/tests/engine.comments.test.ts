@@ -298,18 +298,21 @@ describe('Ruby %-literals with any delimiter (R2-11 security review)', () => {
   })
 })
 
-// Security review round 2 of R2-11: after an operand and a space, `%` is
-// modulo; a bare `%` with a symbol delimiter opens a literal only where
-// Ruby's lexer starts an expression, or after a method-call keyword.
-describe('Ruby % as an operator or a literal, as the lexer reads it (R2-11 review 2)', () => {
+// Security review rounds 2 and 3 of R2-11: a bare `%` opens a literal where
+// Ruby's lexer does - at an expression start with any symbol delimiter, and
+// after an identifier and a space when the delimiter is not followed by a
+// space (Ruby's ambiguous first argument, leaning toward masking). After an
+// operand with no space, or `% ` and `%= `, it is modulo.
+describe('Ruby % as an operator or a literal, as the lexer reads it (R2-11 review 2, 3)', () => {
   const ruby = (code: string) => anonymize(code, { language: 'ruby' }).anonymized
 
   it.each([
     'x = y % z # note kept\nw = 1 % 2\n',
-    'x = y %-z # note kept\nw = 1 - 2\n',
-    'r = a %|b # note kept\nq = c | d\n',
-    // Symbol delimiters are only | ! ^ / ~ (security review round 2).
-    'w = %-y # note kept\nz = 1 - 2\n',
+    'x %= 2 # note kept\ny = 1 %= 2\n',
+    'r = a%|b # note kept\nq = c | d\n',
+    'r = f(a) %|b # note kept\nq = c | d\n',
+    'r = a %| b # note kept\nq = c | d\n',
+    'x %=2 # note kept\nw = 3\n',
   ])('operator: %j', (code) => {
     expect(ruby(code)).toContain('# note kept')
   })
@@ -319,6 +322,9 @@ describe('Ruby % as an operator or a literal, as the lexer reads it (R2-11 revie
     'class PaymentGateway; end\nx = %!see #PaymentGateway!\n',
     'class PaymentGateway; end\nlist = [%^see #PaymentGateway^]\n',
     'class PaymentGateway; end\n%/see #PaymentGateway/\n',
+    'class PaymentGateway; end\nx %-see #PaymentGateway-\n',
+    'class PaymentGateway; end\nw = %-see #PaymentGateway-\n',
+    'class PaymentGateway; end\nlog %|b #PaymentGateway|\n',
   ])('literal: %j', (code) => {
     expect(ruby(code)).not.toContain('PaymentGateway')
   })
