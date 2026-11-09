@@ -57,6 +57,9 @@ export interface StoredTeamKey {
     publicKey: string
     /** Who that is, for `team trust`'s message only: never judged by. */
     label?: string
+    /** An active member when `team unlock` read the team (or our own key).
+     *  Only true lets `team trust` make the key writable; absent is false. */
+    current?: boolean
   }
   /**
    * May a map be sealed under it: true only when `team unlock` or

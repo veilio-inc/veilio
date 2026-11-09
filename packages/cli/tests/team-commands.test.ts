@@ -168,6 +168,7 @@ async function realGrant(): Promise<{
           members: [
             { user_id: 'u-me', email: ACCOUNT, status: 'active' },
             { user_id: 'u2', email: 'ana@example.test', status: 'active' },
+            { user_id: 'u3', email: 'bob@example.test', status: 'removed' },
           ],
         },
       },
@@ -341,7 +342,7 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
       {
         version: 1,
         key: toBase64(teamKeyRaw),
-        granter: { id: 'u2', publicKey: granterPublic, label: 'ana@example.test' },
+        granter: { id: 'u2', publicKey: granterPublic, label: 'ana@example.test', current: true },
         writable: false,
       },
     ])
@@ -353,6 +354,43 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
         'Ask ana@example.test for the key fingerprint Veilio shows them on their dashboard under "Your key fingerprint", ' +
         `and if it matches, run: veilio team trust Zespół ${fp}`
     )
+  })
+
+  it('a confirmed key of a granter no longer in the team is stored read-only, and says so', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'u3'
+    serve(bodies)
+    confirmPin({ instance: INSTANCE, account: ACCOUNT }, 'u3', granterPublic, home)
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
+    expect(stored?.keys[0]).toMatchObject({
+      writable: false,
+      granter: { id: 'u3', current: false },
+    })
+    expect(out).toContain(
+      'Team "Zespół": key version 1 was granted by bob@example.test, who is no longer in the team, ' +
+        'so Veilio can read with it but will not write under it.'
+    )
+  })
+
+  it('an unconfirmed key of a granter no longer in the team is read-only, and not offered for confirming', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = 'u3'
+    serve(bodies)
+
+    const { out } = await run(['team', 'unlock'])
+
+    expect(out).toContain('was granted by bob@example.test, who is no longer in the team')
+    expect(out).not.toContain('veilio team trust')
+    const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
+    expect(stored?.keys[0]?.writable).toBe(false)
   })
 
   it('a key from a granter whose key this device confirmed is stored writable, with nothing to confirm', async () => {
@@ -408,7 +446,7 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
     expect(err).not.toContain('none of the team key wraps')
   })
 
-  it('a deleted granter is named as such and confirmed under the key itself', async () => {
+  it('a deleted granter is named as such, read-only, and not offered for confirming', async () => {
     signIn()
     const { bodies, granterPublic } = await realGrant()
     const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
@@ -417,26 +455,46 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
 
     const { out } = await run(['team', 'unlock'])
 
-    expect(out).toContain('was granted by a deleted account with key')
+    expect(out).toContain(
+      'Team "Zespół": key version 1 was granted by a deleted account, who is no longer in the team, ' +
+        'so Veilio can read with it but will not write under it.'
+    )
+    expect(out).not.toContain('veilio team trust')
     const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
     expect(stored?.keys[0]?.granter).toEqual({
       id: null,
       publicKey: granterPublic,
       label: 'a deleted account',
+      current: false,
     })
   })
 
-  it('without the member list, names the team and granter by id, and still judges', async () => {
+  it('writes nothing when the member list cannot be read', async () => {
+    // Who is on the team decides whether a confirmed key may be written under.
     signIn()
     const { bodies } = await realGrant()
     delete bodies['/api/teams/mine']
     serve(bodies)
 
-    const { code, out } = await run(['team', 'unlock'])
+    const { code, err } = await run(['team', 'unlock'])
 
-    expect(code).toBe(EXIT_OK)
-    expect(out).toContain('Team "team-1": key version 1 was granted by u2 with key')
-    expect(out).toContain('veilio team trust team-1 ')
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain(
+      "Cloud did not list the team's members, so no team key was judged. Nothing was written."
+    )
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+  })
+
+  it("writes nothing when the member list is another team's", async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    ;(bodies['/api/teams/mine'] as { team: { id: string } }).team.id = 'team-other'
+    serve(bodies)
+
+    const { code } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
   })
 
   it("never prints the server's control, bidi or zero-width characters, and never puts them in the command to copy", async () => {
@@ -557,7 +615,7 @@ describe('team trust (spec 080 item 7a)', () => {
     expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
   })
 
-  it('a deleted granter is confirmed under the key itself', async () => {
+  it('a deleted granter is confirmed under the key itself, and still only reads', async () => {
     signIn()
     const { bodies, granterPublic } = await realGrant()
     const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
@@ -568,8 +626,10 @@ describe('team trust (spec 080 item 7a)', () => {
     const { code, out } = await run(['team', 'trust', 'Zespół', await fingerprint(granterPublic)])
 
     expect(code).toBe(EXIT_OK)
-    expect(out).toContain('for a deleted account on this device')
     expect(readPins(binding, home)[`key:${granterPublic}`]?.current).toBe(granterPublic)
+    // Confirmed, but a deleted account is on no team: it still only reads.
+    expect(out).toContain('was granted by a deleted account, who is no longer in the team')
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
   })
 
   it('with nothing unlocked, says to unlock first', async () => {

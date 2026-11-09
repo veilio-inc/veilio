@@ -832,7 +832,16 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       )
       return EXIT_ERROR
     }
+    // Who is on the team now decides whether a confirmed key may be WRITTEN
+    // under, as in the web app; it never makes a key trusted. Unknown, it
+    // cannot be decided, so nothing is.
     const roster = await teamRoster(credential, teamId)
+    if (!roster) {
+      io.stderr(
+        "veilio: Cloud did not list the team's members, so no team key was judged. Nothing was written.\n"
+      )
+      return EXIT_ERROR
+    }
     const teamName = roster.name ?? printable(teamId)
     const pins = readPins(credential, io.home)
 
@@ -882,13 +891,19 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         continue
       }
       const id = granterIdentity(from, wrap.wrapped_by)
+      const granterId = id.startsWith('key:') ? null : id
+      // A key of our own writes whoever the server lists; anyone else's only
+      // while they are an active member (the web app's review 4).
+      const current = from === myPublicKey || (granterId !== null && roster.current.has(granterId))
       keys.push({
         version: wrap.version,
         key,
-        granter: { id: id.startsWith('key:') ? null : id, publicKey: from, label: granter },
-        writable: judged.verdict === 'trusted',
+        granter: { id: granterId, publicKey: from, label: granter, current },
+        writable: judged.verdict === 'trusted' && current,
       })
-      if (judged.verdict === 'needs-review') {
+      if (!current) {
+        io.stdout(`${formerMemberLine(teamName, wrap.version, granter)}\n`)
+      } else if (judged.verdict === 'needs-review') {
         const fp = await fingerprint(from)
         io.stdout(
           `Team "${teamName}": key version ${wrap.version} was granted by ${granter} with key ${fp}. ` +
@@ -964,32 +979,48 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
 }
 
 /**
- * The team's name and who its members are, for the messages only: never an
- * input to whether a key is trusted (spec 080 item 7a). Unknown reads as
- * nothing known, and the messages fall back to ids.
+ * The team's name, its members' addresses (for the messages) and who is an
+ * active member now (for writing only: never an input to whether a key is
+ * trusted, spec 080 item 7a). Null when it cannot be read, or is another
+ * team's.
  */
 async function teamRoster(
   credential: Credential,
   teamId: string
-): Promise<{ name: string | null; emails: Map<string, string> }> {
+): Promise<{ name: string | null; emails: Map<string, string>; current: Set<string> } | null> {
   const emails = new Map<string, string>()
+  const current = new Set<string>()
   try {
     const team = (await getMyTeam(credential)).team
-    if (team?.id !== teamId) return { name: null, emails }
+    if (team?.id !== teamId) return null
     for (const m of team.members ?? []) {
-      const { user_id, email } = (m ?? {}) as { user_id?: unknown; email?: unknown }
-      if (typeof user_id === 'string' && typeof email === 'string')
-        emails.set(user_id, printable(email))
+      const { user_id, email, status } = (m ?? {}) as {
+        user_id?: unknown
+        email?: unknown
+        status?: unknown
+      }
+      if (typeof user_id !== 'string') continue
+      if (typeof email === 'string') emails.set(user_id, printable(email))
+      if (status === 'active') current.add(user_id)
     }
     // The server's words, printed to a terminal and kept for later messages:
     // no control, bidi or zero-width character survives (`printable`).
     return {
       name: typeof team.name === 'string' && team.name !== '' ? printable(team.name) : null,
       emails,
+      current,
     }
   } catch {
-    return { name: null, emails }
+    return null
   }
+}
+
+/** A key that reads and will not write: its granter is not on the team now. */
+function formerMemberLine(teamName: string, version: number, granter: string): string {
+  return (
+    `Team "${teamName}": key version ${version} was granted by ${granter}, who is no longer in the team, ` +
+    'so Veilio can read with it but will not write under it.'
+  )
 }
 
 /** Who made a wrap, in words: their address, else their id. */
@@ -1055,6 +1086,7 @@ export async function runTeamTrust(
   // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
   const keys = unlock.keys.map((k) =>
     k.granter &&
+    k.granter.current === true &&
     granterIdentity(k.granter.publicKey, k.granter.id) === identity &&
     accepted.includes(k.granter.publicKey)
       ? { ...k, writable: true }
@@ -1070,9 +1102,11 @@ export async function runTeamTrust(
         ? 'a deleted account'
         : printable(match.id)
   for (const k of keys) {
-    if (k.granter?.publicKey !== match.publicKey || !k.writable) continue
+    if (k.granter?.publicKey !== match.publicKey) continue
     io.stdout(
-      `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
+      k.writable
+        ? `Confirmed ${fp} for ${who} on this device. Team "${teamName}" key version ${k.version} can now be used to save maps.\n`
+        : `${formerMemberLine(teamName, k.version, who)}\n`
     )
   }
   return EXIT_OK
