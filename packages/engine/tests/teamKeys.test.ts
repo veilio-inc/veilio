@@ -8,6 +8,7 @@ import {
   importTeamKey,
   decryptTeamMap,
   decryptTeamMapWithAny,
+  openTeamEnvelopeWithAny,
   TeamKeyError,
   USER_KEY_ALG,
   type TeamMapEnvelope,
@@ -329,7 +330,11 @@ describe('encryptTeamMap', () => {
       __FN__2: 'émoji🔐Handler',
     }
 
-    await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
+    // The envelope round-trips anything; a map opened for use holds names only
+    // (spec 085 R2-6), so the line break refuses it there.
+    const env = await encryptTeamMap(key, map)
+    await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
+    await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
 
   it('round-trips a thousand entries', async () => {
@@ -512,7 +517,13 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { ['__proto__']: 'Polluted', constructor: 'Ctor', toString: 'Str' }
 
-    const back = await decryptTeamMap(key, await encryptTeamMap(key, map))
+    const env = await encryptTeamMap(key, map)
+    const back = (await openTeamEnvelopeWithAny([{ version: 1, key }], env)) as Record<
+      string,
+      string
+    >
+    // Spec 085 R2-6: none of these is a placeholder, so no map is opened from them.
+    await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
 
     expect(Object.getPrototypeOf(back)).toBe(Object.prototype)
     expect(Object.hasOwn(back, '__proto__')).toBe(true)
@@ -528,7 +539,10 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { __CLS__1: '\u0000CLS', __FN__1: 'mid\u0000dle' }
 
-    await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
+    const env = await encryptTeamMap(key, map)
+    await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
+    // A NUL is a control character: not a name, so not a map to use (spec 085 R2-6).
+    await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
 
   it('round-trips a lone surrogate', async () => {
@@ -548,15 +562,15 @@ describe('encryptTeamMap', () => {
     await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
   })
 
-  it('does not police placeholder shape — that belongs to the caller', async () => {
-    // Deliberate. The engine seals what it is handed; `__[A-Z][A-Z0-9_]*__` is
-    // enforced where placeholders are MINTED and where the reservation request
-    // is built. Validating here too would reject a map mid-rotation that was
-    // legitimately written by an older client.
+  it('seals what it is handed, and opens for use only placeholders (spec 085 R2-6)', async () => {
+    // Sealing stays unpoliced; opening a map for restore and masking is where a
+    // key that is not a placeholder would rewrite text, so it is refused there.
     const key = await keyFor(randomTeamKey())
     const map = { 'not-a-placeholder': 'Invoice', '': 'empty' }
 
-    await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
+    const env = await encryptTeamMap(key, map)
+    await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
+    await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
 
   // ── edge: the server's envelope ceiling ───────────────────────────────────
@@ -653,5 +667,35 @@ describe('encryptTeamMap', () => {
 
     await expect(decryptTeamMapWithAny(held, sealedUnderV1)).resolves.toEqual({ __CLS__1: 'Old' })
     await expect(decryptTeamMapWithAny(held, sealedUnderV2)).resolves.toEqual({ __CLS__2: 'New' })
+  })
+})
+
+// Spec 085 part 3, R2-6 (security audit run-2): a decrypted team map was used
+// with no check, so a teammate (or Cloud, through a key it made) could seal
+// keys that are not placeholders or values that are not names, and every
+// member's restore and masking used them. Opened only as placeholder -> name.
+describe('decryptTeamMap opens only placeholders to names (R2-6)', () => {
+  const key = () => importTeamKey(toBase64(new Uint8Array(32).fill(7)))
+  const seal = async (map: Record<string, unknown>) =>
+    encryptTeamMap(await key(), map as Record<string, string>)
+
+  it.each([
+    ['a key that is not a placeholder', { 'verify=True': 'verify=False' }],
+    ['a value with a line break', { __FN__1: 'PaymentGateway()\nrunEvil()' }],
+    ['a value with a control character', { __CLS__1: 'ok\u001b[8m' }],
+    ['a value that is not a string', { __CLS__1: 7 }],
+    ['an empty value', { __CLS__1: '' }],
+    ['a name mapped to itself', { PaymentGateway: 'PaymentGateway' }],
+  ])('refuses %s', async (_, map) => {
+    const env = await seal(map)
+    await expect(decryptTeamMap(await key(), env)).rejects.toThrow(TeamKeyError)
+    await expect(decryptTeamMapWithAny([{ version: 1, key: await key() }], env)).rejects.toThrow(
+      TeamKeyError
+    )
+  })
+
+  it('opens names in any script', async () => {
+    const map = { __CLS__1: 'ZahlungsTür', __CLS__2: 'Πληρωμή', __FN__1: 'chargeCard' }
+    expect(await decryptTeamMap(await key(), await seal(map))).toEqual(map)
   })
 })

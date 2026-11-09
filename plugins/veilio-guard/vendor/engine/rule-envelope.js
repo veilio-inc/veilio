@@ -8,7 +8,7 @@
 // Opening never throws on bad content. A tool opening a teammate's rule must
 // skip one it cannot open or must not apply, say so, and go on masking.
 import { ruleRefusal } from './rule-checks.js';
-import { decryptTeamMapWithAny, encryptTeamMap } from './teamKeys.js';
+import { encryptTeamMap, openTeamEnvelopeWithAny } from './teamKeys.js';
 import { encryptMapForVault, openVaultEnvelope, } from './vault.js';
 export const RULE_KIND = 'veilio-rule';
 const RULE_V = '1';
@@ -87,7 +87,7 @@ export async function sealTeamRule(teamKey, rule, bind) {
 export async function openTeamRule(keys, env, bind) {
     let raw;
     try {
-        raw = await decryptTeamMapWithAny(keys, env);
+        raw = await openTeamEnvelopeWithAny(keys, env);
     }
     catch {
         return { ok: false, reason: 'unopenable' };

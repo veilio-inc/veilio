@@ -17,7 +17,7 @@
 // browser does: merge the team namespace itself, over maps only it can open,
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
-import { fromBase64, randomBytes, toBase64, webCryptoSubtle } from './envelope.js';
+import { fromBase64, isName, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle, } from './envelope.js';
 const WRAP_ALG = 'AES-GCM';
 /** The asymmetric algorithm a user's keypair uses. */
 export const USER_KEY_ALG = 'X25519';
@@ -197,8 +197,34 @@ export async function encryptTeamMap(teamKey, map) {
     const data = await webCryptoSubtle().encrypt({ name: WRAP_ALG, iv }, teamKey, new TextEncoder().encode(JSON.stringify(map)));
     return { v: 1, alg: TEAM_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(data) };
 }
-/** Open a team map with the team key held. */
+/**
+ * Open a team map with the team key held: only placeholders to names
+ * (spec 085 R2-6). The key proves a teammate - or Cloud, through a key it
+ * offered and the member has not confirmed - sealed it, not that it is a map:
+ * a key such as `verify=True` would rewrite ordinary text in every member's
+ * restore, a value with a line break would inject code, and a name mapped to
+ * itself would leave it unmasked. Anything else throws, so the map counts as
+ * unreadable.
+ */
 export async function decryptTeamMap(teamKey, env) {
+    return decryptedMap(await openTeamEnvelope(teamKey, env));
+}
+function decryptedMap(raw) {
+    let map;
+    try {
+        map = parseSymbolMap(raw);
+    }
+    catch (err) {
+        throw new TeamKeyError(`This team map is not placeholders to names: ${err.message}`);
+    }
+    for (const [placeholder, name] of Object.entries(map))
+        if (!isName(name))
+            throw new TeamKeyError(`This team map is not placeholders to names: "${placeholder}" maps to a value with a control character or line break.`);
+    return map;
+}
+/** The plaintext of a team envelope, parsed but unchecked: for a body that is
+ *  not a map (a sealed rule, rule-envelope.ts), which checks its own shape. */
+async function openTeamEnvelope(teamKey, env) {
     if (env.v !== 1 || env.alg !== TEAM_ENVELOPE_ALG) {
         throw new TeamKeyError(`Unsupported team map envelope (v=${String(env.v)}, alg=${String(env.alg)}).`);
     }
@@ -232,13 +258,20 @@ export async function decryptTeamMap(teamKey, env) {
  * because a map that opens under two versions cannot exist — the keys differ.
  */
 export async function decryptTeamMapWithAny(keys, env) {
+    // The right key with content that is not a map is refused as such, not
+    // reported as "no key fits".
+    return decryptedMap(await openTeamEnvelopeWithAny(keys, env));
+}
+/** A team envelope's plaintext under whichever held key fits, unchecked: for a
+ *  sealed rule (rule-envelope.ts), which checks its own shape. */
+export async function openTeamEnvelopeWithAny(keys, env) {
     if (keys.length === 0) {
         throw new TeamKeyError('No team key is held, so this map cannot be opened.');
     }
     const ordered = [...keys].sort((a, b) => b.version - a.version);
     for (const { key } of ordered) {
         try {
-            return await decryptTeamMap(key, env);
+            return await openTeamEnvelope(key, env);
         }
         catch {
             // Try the next version. A genuinely corrupt or foreign envelope falls out

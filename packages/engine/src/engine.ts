@@ -1067,6 +1067,13 @@ const RESTORE_OPTIONS = optionKeys<RestoreOptions>({ strip: true })
 /** `map` without the entries whose real value is a credential: one that is a
  *  credential on its own, or one the rules found in the text being masked, in
  *  any mode and context (round 3 of the review of #166, finding 1). */
+function placeholderKeyed(map: SymbolMap): SymbolMap {
+  const keys = Object.keys(map)
+  return keys.every(isPlaceholder)
+    ? map
+    : Object.fromEntries(keys.filter(isPlaceholder).map((k) => [k, map[k]!]))
+}
+
 function withoutCredentials(map: SymbolMap, found: ReadonlySet<string>): SymbolMap {
   let out: SymbolMap | null = null
   for (const [placeholder, real] of Object.entries(map)) {
@@ -1460,7 +1467,9 @@ export function anonymize(
   const found = credentialSpans(code, where)
   // A credential never goes into the map, in any `secrets` mode (founder
   // decision 2026-10-26): an entry an older map holds for one is dropped.
-  const givenMap = opts.existingMap ?? {}
+  // Only placeholder-keyed entries (spec 085 R2-6): a key that is a name, or any
+  // other text, from a team map or a caller, would leave that name unmasked.
+  const givenMap = placeholderKeyed(opts.existingMap ?? {})
   const existingMap = withoutCredentials(
     givenMap,
     // An ambiguous word an older map already holds keeps its entry: it was

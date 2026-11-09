@@ -74,6 +74,12 @@ export declare class InvalidMapError extends Error {
     constructor(message: string);
 }
 /**
+ * What a map may restore: 1 to 100000 characters, none of them a control or
+ * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
+ * a team map opened with the team key, and the guard.
+ */
+export declare function isName(v: unknown): v is string;
+/**
  * A decrypted file is authenticated, not trusted.
  *
  * Authentication proves the author knew the passphrase. Where maps move between

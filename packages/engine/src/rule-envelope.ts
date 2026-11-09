@@ -9,7 +9,7 @@
 // skip one it cannot open or must not apply, say so, and go on masking.
 
 import { ruleRefusal, type RuleBody } from './rule-checks.js'
-import { decryptTeamMapWithAny, encryptTeamMap, type TeamMapEnvelope } from './teamKeys.js'
+import { encryptTeamMap, openTeamEnvelopeWithAny, type TeamMapEnvelope } from './teamKeys.js'
 import {
   encryptMapForVault,
   openVaultEnvelope,
@@ -125,7 +125,7 @@ export async function openTeamRule(
 ): Promise<RuleOpened> {
   let raw: unknown
   try {
-    raw = await decryptTeamMapWithAny(keys, env)
+    raw = await openTeamEnvelopeWithAny(keys, env)
   } catch {
     return { ok: false, reason: 'unopenable' }
   }
