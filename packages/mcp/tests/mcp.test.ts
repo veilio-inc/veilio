@@ -833,3 +833,32 @@ describe('what the masking did not cover reaches the agent (004-b3, 002-b4)', ()
     expect(body).not.toContain('PaymentGateway')
   })
 })
+
+// Spec 085 part 3, R2-12 (security audit run-2): the model's `language` beat
+// the file's extension, so `ruby` on a `.c` file read `#define` lines as
+// comments and returned them as written.
+describe('anonymize_file: the extension decides the language (R2-12)', () => {
+  const C =
+    '#define paymentGatewayKeyName 1\nvoid f(int n){ for (int i = n; i > 0; i--) chargeCard(paymentGateway); }\n'
+  for (const language of ['auto', 'ruby', 'sql'])
+    it(`language ${language} on a .c file masks it as C`, () => {
+      write('payment.c', C)
+      const res = call('anonymize_file', { path: 'payment.c', language })
+      expect(res.isError).toBeUndefined()
+      const masked = res.text.split('--- masked code ---\n')[1] ?? res.text
+      for (const name of ['paymentGatewayKeyName', 'chargeCard', 'paymentGateway'])
+        expect(masked, name).not.toContain(name)
+      if (language !== 'auto')
+        expect(res.text).toContain(
+          `WARNING: language ${language} does not match payment.c; it was masked as c, the language of its extension.`
+        )
+      else expect(res.text).not.toContain('does not match')
+    })
+
+  it('a language for a file whose extension is unknown is used', () => {
+    write('notes.unknownext', 'void f(){ chargeCard(paymentGateway); }\n')
+    const res = call('anonymize_file', { path: 'notes.unknownext', language: 'c' })
+    expect(res.text).toContain('Language: C')
+    expect(res.text).not.toContain('does not match')
+  })
+})

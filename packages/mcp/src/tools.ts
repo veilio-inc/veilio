@@ -379,14 +379,21 @@ function runAnonymize(
   // is the quiet fallback the variable exists to rule out.
   if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
   const { namespace, highest, conflicts } = resolved
-  // A file is masked in its extension's language unless one is asked for, and
-  // keeps the names it takes from a public package as written - the rule
-  // `veilio scrub <file>` follows, from the same module, so the two give the
-  // same placeholders for the same file (spec 030 FR-005, spec 050 T033-T036).
-  // Inline text has no file and no project: nothing is proven third-party.
+  // A file is masked in its extension's language - the model's `language`
+  // only for inline text or an extension Veilio does not know, since a
+  // language whose comments cover the file's code would return that code as
+  // written (spec 085 R2-12) - and keeps the names it takes from a public
+  // package as written - the rule `veilio scrub <file>` follows, from the same
+  // module, so the two give the same placeholders for the same file (spec 030
+  // FR-005, spec 050 T033-T036). Inline text has no file and no project:
+  // nothing is proven third-party.
   const asked = (str(args, 'language') ?? 'auto') as LanguageOption
-  const language: LanguageOption =
-    asked !== 'auto' || !file ? asked : (languageOfPath(file) ?? 'auto')
+  const ofFile = file ? languageOfPath(file) : undefined
+  const language: LanguageOption = ofFile ?? asked
+  const mismatch =
+    ofFile && asked !== 'auto' && asked !== ofFile
+      ? `WARNING: language ${asked} does not match ${file}; it was masked as ${ofFile}, the language of its extension.`
+      : null
   const keep = file
     ? (() => {
         const input = { name: file, text: source }
@@ -433,6 +440,7 @@ function runAnonymize(
   // to decide for itself; dropping them here would leave an agent believing the
   // output is clean when a name is sitting in a comment inside it.
   const caveats: string[] = []
+  if (mismatch) caveats.push(mismatch)
   if (result.rulesStopped) caveats.push(`WARNING: ${RULES_STOPPED_NOTE}`)
   if (result.languageFallback) {
     caveats.push(
