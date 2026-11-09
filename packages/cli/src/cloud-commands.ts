@@ -28,6 +28,7 @@ import { ensureBlocks } from './client/blocks.js'
 import {
   localDroppedNote,
   outOfRangeNote,
+  printable,
   reservationRefusedSentence,
   unvouchedNote,
 } from './reservations.js'
@@ -832,7 +833,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       return EXIT_ERROR
     }
     const roster = await teamRoster(credential, teamId)
-    const teamName = roster.name ?? teamId
+    const teamName = roster.name ?? printable(teamId)
     const pins = readPins(credential, io.home)
 
     const keys: StoredTeamKey[] = []
@@ -972,9 +973,15 @@ async function teamRoster(
     if (team?.id !== teamId) return { name: null, emails }
     for (const m of team.members ?? []) {
       const { user_id, email } = (m ?? {}) as { user_id?: unknown; email?: unknown }
-      if (typeof user_id === 'string' && typeof email === 'string') emails.set(user_id, email)
+      if (typeof user_id === 'string' && typeof email === 'string')
+        emails.set(user_id, printable(email))
     }
-    return { name: typeof team.name === 'string' && team.name !== '' ? team.name : null, emails }
+    // The server's words, printed to a terminal and kept for later messages:
+    // no control, bidi or zero-width character survives (`printable`).
+    return {
+      name: typeof team.name === 'string' && team.name !== '' ? printable(team.name) : null,
+      emails,
+    }
   } catch {
     return { name: null, emails }
   }
@@ -983,12 +990,13 @@ async function teamRoster(
 /** Who made a wrap, in words: their address, else their id. */
 function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>): string {
   if (wrappedBy === undefined || wrappedBy === DELETED_GRANTER) return 'a deleted account'
-  return emails.get(wrappedBy) ?? wrappedBy
+  return emails.get(wrappedBy) ?? printable(wrappedBy)
 }
 
-/** The team as `team trust` takes it: its name when that is one shell word. */
+/** The team as `team trust` takes it, safe to copy: its name only when it is
+ *  letters, digits, `.`, `_` and `-`; else its id. */
 function teamArg(name: string, id: string): string {
-  return /^[^\s"'`$\\;&|<>()]+$/.test(name) ? name : id
+  return /^[\p{L}\p{N}._-]+$/u.test(name) ? name : printable(id)
 }
 
 /** Whether this account is its team's only member. Unknown counts as not:

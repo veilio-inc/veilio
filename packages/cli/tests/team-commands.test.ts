@@ -432,6 +432,43 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
     expect(out).toContain('veilio team trust team-1 ')
   })
 
+  it("never prints the server's control, bidi or zero-width characters, and never puts them in the command to copy", async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    const hostile = 'Zesp\u001b[2J\u202eół\u200b'
+    const mine = bodies['/api/teams/mine'] as {
+      team: { name: string; members: { user_id: string; email: string }[] }
+    }
+    mine.team.name = hostile
+    mine.team.members[1]!.email = 'ana\u001b]0;x\u0007@ex\u2066ample.test\u200f'
+    serve(bodies)
+
+    const { code, out } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_OK)
+    // eslint-disable-next-line no-control-regex -- matching them is the point
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Cf}]/u)
+    expect(out).toContain('Team "Zesp?[2J?ół?"')
+    expect(out).toContain('was granted by ana?]0;x?@ex?ample.test? with key')
+    // Not one shell word of letters and digits: the command names the team by id.
+    expect(out).toMatch(/run: veilio team trust team-1 [0-9a-f-]{23}\n/)
+    // The stored name is the cleaned one, so a later refusal prints it safely too.
+    expect(readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)?.teamName).toBe(
+      'Zesp?[2J?ół?'
+    )
+  })
+
+  it('names the team by its name in the command when that name is letters, digits, dot, dash or underscore', async () => {
+    signIn()
+    const { bodies } = await realGrant()
+    ;(bodies['/api/teams/mine'] as { team: { name: string } }).team.name = 'Ομάδα_Kraków-2.0'
+    serve(bodies)
+
+    const { out } = await run(['team', 'unlock'])
+
+    expect(out).toMatch(/run: veilio team trust Ομάδα_Kraków-2\.0 [0-9a-f-]{23}\n/)
+  })
+
   it('writes nothing when Cloud does not say which account this is', async () => {
     signIn()
     const { bodies } = await realGrant()
