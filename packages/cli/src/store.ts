@@ -156,6 +156,14 @@ function refuseTracked(path: string): void {
     )
   }
   const { root, tracked } = found
+  // reserved.json and the like hold the account, team and rule bases, not a
+  // map (spec 085 R2-16): said as what they are.
+  if (tracked === relativeName(root, path) && !MAP_FILES.has(basename(path).toLowerCase())) {
+    const shownFile = shownPath(tracked)
+    throw new StoreRefusal(
+      `refusing to write ${shownFile}: it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed. Remove it from git (\`git rm --cached ${shownFile}\`), then run again.`
+    )
+  }
   // The path comes from the checkout: shown without control characters. A
   // command only off Windows (its shells read quotes differently) and only
   // for a root and path of plain characters; both single-quoted.
@@ -171,6 +179,8 @@ function refuseTracked(path: string): void {
   )
 }
 
+const MAP_FILES = new Set([STORE_FILE, 'aliases.json'])
+const relativeName = (root: string, p: string): string => relative(root, p).split(sep).join('/')
 const shownPath = (p: string): string => p.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
 
 /**
@@ -258,7 +268,7 @@ function trackedStoreFile(
   const git = trackedPaths(dir)
   if (!git) return null
   if ('unreadable' in git) return { unreadable: git.unreadable }
-  const rel = (p: string) => relative(git.root, p).split(sep).join('/')
+  const rel = (p: string) => relativeName(git.root, p)
   const candidates = [path]
   if (basename(dir) === STORE_DIR)
     candidates.unshift(dir, join(dir, STORE_FILE), join(dir, 'aliases.json'))
@@ -411,6 +421,8 @@ export function prepareStoreWrite(what: string, path: string): void {
  */
 function checkStoreWrite(what: string, path: string): void {
   const dir = dirname(path)
+  // Every store file, not only the map (spec 085 R2-16): git must not track it.
+  refuseTracked(path)
   refuseLinks(what, dir, path)
   let st
   try {

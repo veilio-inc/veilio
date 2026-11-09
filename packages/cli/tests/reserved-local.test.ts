@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { ensureBlocks } from '../src/client/blocks.js'
-import { STORE_DIR, STORE_FILE, saveMap } from '../src/store.js'
+import { STORE_DIR, STORE_FILE, StoreRefusal, saveMap, writeStoreFile } from '../src/store.js'
 import {
   RESERVED_FILE,
   ReservedFileError,
   basesNeedingBlocks,
   loadReserved,
+  localNumbering,
 } from '../src/reservations.js'
 import { FakeCloud, INSTANCE, ME, TEAM_ID } from './helpers/fake-cloud.js'
 
@@ -198,5 +200,63 @@ describe('a local base is never asked for', () => {
     expect(asked.filter((x) => x.base === '__IBAN__')).toEqual([
       expect.objectContaining({ floor: 0 }),
     ])
+  })
+})
+
+// Spec 085 part 3, R2-16 (security audit run-2): a reserved.json the
+// repository commits was read as "malformed" (the tracked refusal swallowed)
+// and then rewritten with the account, team and rule bases, ready for
+// `git commit -a`. A tracked store file is now refused on write too.
+describe('a reserved.json git tracks is never rewritten (R2-16)', () => {
+  const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: dir, env: GIT_ENV, stdio: 'ignore' })
+  const TRACKED =
+    'it is tracked by git, and what veilio keeps there (account, team and rule data) must not be committed.'
+  function commitReserved(): string {
+    git('init', '-q')
+    write({})
+    git('add', '-f', `${STORE_DIR}/${RESERVED_FILE}`)
+    return readFileSync(filePath(), 'utf8')
+  }
+
+  it('ensureBlocks refuses, and the tracked file is unchanged', async () => {
+    const before = commitReserved()
+    cloud.blocksRefused = true
+    await expect(ensureBlocks(credential, TEAM_ID, mapPath())).rejects.toThrow(TRACKED)
+    expect(readFileSync(filePath(), 'utf8')).toBe(before)
+  })
+
+  it('ensureBlocks refuses when Cloud grants the blocks, and no account is written', async () => {
+    const before = commitReserved()
+    await expect(ensureBlocks(credential, TEAM_ID, mapPath())).rejects.toThrow(StoreRefusal)
+    expect(readFileSync(filePath(), 'utf8')).toBe(before)
+    expect(readFileSync(filePath(), 'utf8')).not.toContain(ME)
+    // Refused when read, so nothing is asked of Cloud for a file never written.
+    expect(cloud.requests).toHaveLength(0)
+  })
+
+  it('localNumbering refuses to write a tracked file', () => {
+    const before = commitReserved()
+    expect(() =>
+      localNumbering(mapPath(), { instance: INSTANCE, account: ME }, TEAM_ID, { write: true })
+    ).toThrow(TRACKED)
+    // Not even read as someone else's file to number from without a write.
+    expect(() =>
+      localNumbering(mapPath(), { instance: INSTANCE, account: ME }, TEAM_ID, { write: false })
+    ).toThrow(StoreRefusal)
+    expect(readFileSync(filePath(), 'utf8')).toBe(before)
+  })
+
+  it('an untracked malformed file is still replaced', async () => {
+    write('not json at all')
+    cloud.blocksRefused = true
+    await ensureBlocks(credential, TEAM_ID, mapPath())
+    expect(raw()).toMatchObject({ instance: INSTANCE, account: ME, teamId: TEAM_ID })
+  })
+
+  it('writeStoreFile refuses any tracked store file', () => {
+    commitReserved()
+    expect(() => writeStoreFile('reservations', filePath(), '{}')).toThrow(TRACKED)
   })
 })

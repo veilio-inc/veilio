@@ -14,6 +14,7 @@ import {
   openStoreFile,
   prepareStoreWrite,
   refuseNonNames,
+  StoreRefusal,
   writeStoreFile,
 } from './store.js'
 import {
@@ -191,7 +192,10 @@ export function localNumbering(
   let held: ReservedFile | null = null
   try {
     held = loadReserved(mapPath)
-  } catch {
+  } catch (err) {
+    // A refused store (tracked, a link, another user's) is not malformed: it
+    // is never replaced (spec 085 R2-16).
+    if (err instanceof StoreRefusal) throw err
     // malformed: replaced below when allowed, never numbered from
   }
   if (
