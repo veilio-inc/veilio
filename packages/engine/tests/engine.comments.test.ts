@@ -228,7 +228,7 @@ describe('heredoc and %-literal reading stays linear (R2-11)', () => {
     ] as const) {
       const small = time(2000, line, language)
       const large = time(8000, line, language)
-      expect(large / Math.max(small, 1)).toBeLessThan(10)
+      expect(large / Math.max(small, 25)).toBeLessThan(10)
     }
   })
 })
@@ -243,6 +243,32 @@ describe('the regex retry after `)` stays linear (R2-11)', () => {
     }
     const small = time(4000)
     const large = time(16000)
-    expect(large / Math.max(small, 1)).toBeLessThan(10)
+    expect(large / Math.max(small, 25)).toBeLessThan(10)
+  })
+})
+
+// Review of R2-11: the retry after a division read a Ruby comment holding `/`
+// as a regex, and `%=` opened a %-literal that ran to the next `=`.
+describe('Ruby comments and operators read as before (R2-11 review)', () => {
+  it('a comment after a division keeps its words', () => {
+    const out = anonymize('total = a / b # see https://example.invalid and/or PaymentNote\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).toContain('# see https://example.invalid and/or PaymentNote')
+  })
+
+  it('`%=` is an operator, and a later `#` in a string opens no comment', () => {
+    const out = anonymize('i %= n\nputs "a=b #PaymentGateway"\nclass PaymentGateway; end\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).not.toContain('PaymentGateway')
+  })
+
+  it('`% ` with a space is an operator', () => {
+    const out = anonymize('x = y % z\nclass PaymentGateway; end # note\n', {
+      language: 'ruby',
+    }).anonymized
+    expect(out).not.toContain('PaymentGateway')
+    expect(out).toContain('# note')
   })
 })

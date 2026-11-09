@@ -241,11 +241,14 @@ function literalEnd(code, at, kind, memo) {
         return end;
     }
     if (kind === 'ruby' && code[at] === '%') {
-        const m = /%[qQwWiIrsx]?([^\w\s])/y;
+        // A letter form (`%w(`, `%q[`) with any delimiter, or a bare `%` with a
+        // bracket; never `%=` or `% `, which are operators (review).
+        const m = /%(?:[qQwWiIrsx][^\w\s=]|[([{<])/y;
         m.lastIndex = at;
-        const open = m.exec(code)?.[1];
-        if (open === undefined || /[\w)\]]/.test(code[at - 1] ?? ''))
+        const opened = m.exec(code)?.[0];
+        if (opened === undefined || /[\w)\]]/.test(code[at - 1] ?? ''))
             return -1;
+        const open = opened.slice(-1);
         if (memo.unclosed.has(open))
             return -1;
         const close = { '(': ')', '[': ']', '{': '}', '<': '>' }[open] ?? open;
@@ -379,7 +382,9 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             // Spec 085 R2-11: the position guess reads `/` after `)` as a division
             // (`if (ok(p)) /\/*$/`). A literal that closes on the line and holds a
             // comment opener is read as code anyway: fail toward code.
-            if (!forRestore && !closed && end === -1) {
+            // Only where the openers are `//` and `/*` (JavaScript, TypeScript): a
+            // Ruby `#` comment after a division often holds a `/` (review).
+            if (!forRestore && !closed && end === -1 && syntax.line.includes('//')) {
                 const [anyway, to] = regexLiteralEnd(code, i, true);
                 if (anyway && holdsOpener(to))
                     [closed, end] = [true, to];
