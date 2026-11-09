@@ -61,27 +61,34 @@ function commit(files: Record<string, string>): string {
   git('commit', '-qm', 'c')
   return git('rev-parse', 'HEAD')
 }
-/** The two steps, as a push of before..head runs them. */
-function action(before: string, head: string) {
+/** The two steps, as a push of before..head runs them (or another event,
+ *  with the pull request's base and head, or `paths`). */
+function action(
+  before: string,
+  head: string,
+  ev: { name?: string; prBase?: string; prHead?: string; paths?: string } = {}
+) {
   const out = join(work, 'out')
   writeFileSync(out, '')
   const targets = script('Resolve scan targets')
-    .replaceAll('${{ github.event_name }}', 'push')
+    .replaceAll('${{ github.event_name }}', ev.name ?? 'push')
     .replaceAll('${{ github.event.before }}', before)
     .replaceAll('${{ github.sha }}', head)
+    .replaceAll('${{ github.event.pull_request.base.sha }}', ev.prBase ?? '')
+    .replaceAll('${{ github.event.pull_request.head.sha }}', ev.prHead ?? '')
   const t = spawnSync('bash', ['-c', targets], {
     cwd: repo,
-    env: { ...env(), PATHS: '', GITHUB_OUTPUT: out },
+    env: { ...env(), PATHS: ev.paths ?? '', GITHUB_OUTPUT: out },
     encoding: 'utf8',
   })
-  expect(t.status, t.stderr).toBe(0)
+  if (t.status !== 0) return { status: t.status, json: '[]', log: t.stderr + t.stdout }
   const mode = /mode=(\w+)/.exec(readFileSync(out, 'utf8'))![1]!
   const summary = join(work, 'summary')
   const scan = spawnSync('bash', ['-c', script('Scan')], {
     cwd: repo,
     env: {
       ...env(),
-      PATHS: '',
+      PATHS: ev.paths ?? '',
       STRICT: 'false',
       VERSION: 'latest',
       MODE: mode,
@@ -139,5 +146,60 @@ describe('the GitHub Action scans each changed file under its own name', () => {
     const base = commit({ 'README.md': '# PaymentGateway\n' })
     const head = commit({ 'src/gateway.ts': TS })
     expect(action(base, head).status).toBe(0)
+  })
+})
+
+// Spec 085 part 3, R2-20 (security audit run-2): every event but pull_request
+// was read as a push, so under pull_request_target (github.sha the base tip,
+// no before) the step scanned the base branch's last commit and passed.
+describe('the Action scans the pull request, and only on events it knows (R2-20)', () => {
+  function pr() {
+    const base = commit({ 'README.md': '# PaymentGateway\n' })
+    git('checkout', '-qb', 'feature')
+    const head = commit({ '.env': ENV })
+    git('checkout', '-q', '-')
+    return { base, head }
+  }
+
+  it('pull_request_target scans the pull request', () => {
+    const { base, head } = pr()
+    const r = action('', base, { name: 'pull_request_target', prBase: base, prHead: head })
+    expect(r.status).toBe(1)
+    expect((JSON.parse(r.json) as { file: string }[]).map((f) => f.file)).toContain('.env')
+  })
+
+  it('pull_request scans it, as before', () => {
+    const { base, head } = pr()
+    expect(action('', base, { name: 'pull_request', prBase: base, prHead: head }).status).toBe(1)
+  })
+
+  it('an event it does not support fails the step and scans nothing', () => {
+    const { base } = pr()
+    const r = action('', base, { name: 'workflow_dispatch' })
+    expect(r.status).toBe(1)
+    expect(r.log).toContain(
+      'veilio action: the `workflow_dispatch` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Use `mode: paths` to scan named files on other events.'
+    )
+  })
+})
+
+// Spec 085 part 3, R2-21: with `paths: '*'`, a committed file named `-h`
+// turned the scan into help, which exits 0.
+describe('globbed paths are passed as paths (R2-21)', () => {
+  it('a file named -h does not turn the scan into help', () => {
+    writeFileSync(join(repo, '-h'), '')
+    writeFileSync(join(repo, 'README.md'), '# notes\n')
+    writeFileSync(join(repo, '.env'), ENV)
+    const r = action('', '', { paths: '* .env' })
+    expect(r.status).toBe(1)
+    expect((JSON.parse(r.json) as { file: string }[]).some((f) => f.file.endsWith('.env'))).toBe(
+      true
+    )
+  })
+
+  it('without it, the same scan fails on the .env', () => {
+    writeFileSync(join(repo, 'README.md'), '# notes\n')
+    writeFileSync(join(repo, '.env'), ENV)
+    expect(action('', '', { paths: '* .env' }).status).toBe(1)
   })
 })
