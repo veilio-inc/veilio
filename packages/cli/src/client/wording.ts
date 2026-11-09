@@ -60,6 +60,8 @@ export const REFUSAL_CODES = [
   'diverged',
   'stale',
   'rotation_owed',
+  'key_version_not_held',
+  'recipient_key_changed',
   'too_large',
   'abuse_limit',
   'which_project',
@@ -313,6 +315,18 @@ export const WORDING: Record<RefusalCode, Words> = {
       'a teammate left while holding the team key, so no new team content may be written until the key is changed. Nothing was uploaded.',
     resolve:
       'A member who holds the current key has to change it in the web app — it cannot be done from here. Ask one of them.',
+  }),
+  // Founder-approved text (Cloud KEY_VERSION_NOT_HELD), split where the
+  // renderers join message and resolve with a space.
+  key_version_not_held: () => ({
+    message: 'This was encrypted under a team key version your account does not hold.',
+    resolve:
+      'Load the current team key (unlock your vault, or run `veilio team unlock`), then try again.',
+  }),
+  // Founder-approved text (Cloud RECIPIENT_KEY_CHANGED), split as above.
+  recipient_key_changed: () => ({
+    message: "That member's key changed since you read it. Nothing was stored.",
+    resolve: 'Reload and try again.',
   }),
   too_large: () => ({
     message: 'this map is too large for Cloud to accept, so nothing was stored.',

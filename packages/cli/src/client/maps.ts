@@ -805,6 +805,8 @@ function teamWriteRefusal(
   label: { id: string; name: string }
 ): { ok: false; refusal: Refusal } {
   if (err instanceof CloudError) {
+    // Before the statuses: Cloud answers it with the rotation's 409 / 423.
+    if (err.body?.keyVersionNotHeld === true) return refuse('key_version_not_held')
     // POST answers an owed rotation with 409; PATCH uses 409 for a stale
     // version and 423 for the rotation (contracts/api.md).
     if (verb === 'create' && err.status === 409) return refuse('rotation_owed')

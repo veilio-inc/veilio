@@ -14,6 +14,7 @@
  * Shared by the CLI's tests and the MCP server's (spec 052 SC-002: the same
  * fake server, the same outcome).
  */
+import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -37,6 +38,13 @@ import {
 } from '../../src/client/personal-maps-key.js'
 
 export const INSTANCE = 'https://veilio.test'
+
+/** Cloud's `refusedByKeyLock` body for a version the writer holds no wrap of. */
+const KEY_VERSION_NOT_HELD_BODY = {
+  error:
+    'This was encrypted under a team key version your account does not hold. Load the current team key (unlock your vault, or run `veilio team unlock`), then try again.',
+  keyVersionNotHeld: true,
+}
 export const ME = 'me@example.test'
 export const TEAMMATE = 'ada@example.test'
 export const PASSPHRASE = 'correct horse battery staple'
@@ -96,6 +104,12 @@ export class FakeCloud {
   ]
   /** A member left holding the key: team writes answer 423 (PATCH) / 409 (POST). */
   rotationOwed = false
+  /** The declared key version is not one this account holds a wrap of: team
+   *  writes answer as Cloud's `refusedByKeyLock` does, 409 (POST) / 423 (PATCH). */
+  keyVersionNotHeld = false
+  /** This account re-keyed after its public key was read: a grant carrying a
+   *  fingerprint is refused 409, as Cloud's grant route does. */
+  recipientRekeyed = false
   maxBytes = 200_000
   /** Called after a map is read - a teammate's write can land here. */
   afterGet: ((map: FakeMap) => void) | null = null
@@ -337,6 +351,7 @@ export class FakeCloud {
       const b = body ?? {}
       const scope = b.scope === 'team' ? 'team' : 'personal'
       if (scope === 'team' && this.rotationOwed) return json(409, { error: 'rotationRequired' })
+      if (scope === 'team' && this.keyVersionNotHeld) return json(409, KEY_VERSION_NOT_HELD_BODY)
       if (String(b.map_data ?? '').length > this.maxBytes) return json(413, { error: 'too large' })
       let project: string | null = null
       if (scope === 'team') {
@@ -371,6 +386,8 @@ export class FakeCloud {
           return json(403, { error: 'Only the member who published this map can update it' })
         if (map.scope === 'team' && this.rotationOwed)
           return json(423, { error: 'rotationRequired' })
+        if (map.scope === 'team' && this.keyVersionNotHeld)
+          return json(423, KEY_VERSION_NOT_HELD_BODY)
         if (String(b.map_data ?? '').length > this.maxBytes)
           return json(413, { error: 'too large' })
         if (b.if_updated_at !== map.updated_at)
@@ -439,6 +456,20 @@ export class FakeCloud {
       const b = body ?? {}
       const next = this.usedVersions + 1
       const toSelf = b.userId === 'u-me'
+      // Cloud's check (routes/teams.ts): SHA-256 hex of the key on file.
+      if (b.recipientKeyFingerprint !== undefined) {
+        const onFile =
+          toSelf && this.keypair && !this.recipientRekeyed
+            ? createHash('sha256')
+                .update(Buffer.from(this.keypair.publicKey, 'base64'))
+                .digest('hex')
+            : null
+        if (b.recipientKeyFingerprint !== onFile)
+          return json(409, {
+            error:
+              "That member's key changed since you read it. Nothing was stored. Reload and try again.",
+          })
+      }
       if (this.wraps.some((w) => w.user === b.userId && w.version === b.version))
         return json(409, { error: 'That member already holds this version of the team key.' })
       if (this.wraps.length === 0 && b.version === next && toSelf) {

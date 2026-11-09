@@ -522,11 +522,12 @@ export function getMe(credential: Credential): Promise<{ user?: { id?: string; e
 }
 
 /** Post a team-key wrap. Used here only to grant the team's first key to
- *  oneself; whether it is allowed is the server's decision. */
+ *  oneself; whether it is allowed is the server's decision. The server refuses
+ *  (409) a wrap whose `recipientKeyFingerprint` is not the key now on file. */
 export function grantTeamKey(
   credential: Credential,
   teamId: string,
-  body: { userId: string; version: number; wrappedKey: string }
+  body: { userId: string; version: number; wrappedKey: string; recipientKeyFingerprint: string }
 ): Promise<unknown> {
   return request(`/api/teams/${encodeURIComponent(teamId)}/key/grant`, {
     credential,

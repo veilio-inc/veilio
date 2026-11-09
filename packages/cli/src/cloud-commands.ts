@@ -815,6 +815,8 @@ export async function runTeamUnlock(
       })
       if (tried.status === 'readback_mismatch')
         return refused(refusal('team_key_readback_mismatch'), io)
+      if (tried.status === 'recipient_key_changed')
+        return refused(refusal('recipient_key_changed'), io)
       if (tried.status === 'refused') {
         if (tried.reason && /owner or an admin/i.test(tried.reason))
           return refused(refusal('team_key_not_startable', { detail: tried.reason }), io)

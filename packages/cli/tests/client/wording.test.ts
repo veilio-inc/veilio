@@ -27,7 +27,7 @@ import { writeCredential } from '../../src/credential.js'
 /** What "names what resolves it" means, mechanically: a command to run, or an
  *  instruction that starts with something a person can do. */
 const ACTIONABLE =
-  /`[^`]+`|\b(Run|Re-run|Ask|Pass|Open|Create|Choose|Check|Split|Remove|Start|Sign|Contact|Change|Push|Pull|Export|Share|Call|Join|Wait|Use)\b/
+  /`[^`]+`|\b(Run|Re-run|Ask|Pass|Open|Create|Choose|Check|Split|Remove|Start|Sign|Contact|Change|Push|Pull|Export|Share|Call|Join|Wait|Use|Reload)\b/
 
 const SAMPLE = {
   id: 'map-1',

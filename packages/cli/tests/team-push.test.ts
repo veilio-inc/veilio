@@ -518,6 +518,26 @@ describe('maps push --team', () => {
     expect(storeBytes()).toBe(before)
   })
 
+  it('a version this account holds no wrap of is said as that, not as a rotation', async () => {
+    unlocked()
+    saveMap(mapPath(), LOCAL, { force: true })
+    serve({
+      create: json(409, {
+        error: 'This was encrypted under a team key version your account does not hold.',
+        keyVersionNotHeld: true,
+      }),
+    })
+    const before = storeBytes()
+
+    const { code, err } = await run(['maps', 'push', '--team'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toBe(
+      `veilio: This was encrypted under a team key version your account does not hold. Load the current team key (unlock your vault, or run \`veilio team unlock\`), then try again.\n`
+    )
+    expect(storeBytes()).toBe(before)
+  })
+
   it('explains a 413 as too large, with nothing stored', async () => {
     unlocked()
     saveMap(mapPath(), LOCAL, { force: true })

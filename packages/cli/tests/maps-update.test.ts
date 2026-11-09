@@ -394,6 +394,20 @@ describe('a team map, updated in place', () => {
     expect(cloud.find(row.id)!.map_data).toBe(before)
   })
 
+  it('a version this account holds no wrap of: the approved words, nothing written', async () => {
+    signIn(home, { team: true })
+    const row = cloud.add({ scope: 'team', map_data: await sealTeam({ __CLS__1: 'X' }) })
+    cloud.keyVersionNotHeld = true
+    local({ __CLS__1: 'X', __FN__2: 'y' })
+    const before = cloud.find(row.id)!.map_data
+    const r = await run(['maps', 'update', row.id])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toBe(
+      `veilio: This was encrypted under a team key version your account does not hold. Load the current team key (unlock your vault, or run \`veilio team unlock\`), then try again.\n`
+    )
+    expect(cloud.find(row.id)!.map_data).toBe(before)
+  })
+
   it('the team key not unlocked here: refused, naming `veilio team unlock`', async () => {
     signIn(home)
     const row = cloud.add({ scope: 'team', map_data: await sealTeam({ __CLS__1: 'X' }) })
