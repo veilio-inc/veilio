@@ -353,8 +353,6 @@ class Walker {
   readonly landings: CdWalk['landings'] = []
   homeUnknown = false
   tilde = false
-  /** A trap with an action, set in this command. */
-  private trap: string | null = null
   /** A link this command makes: with a cd in it, refused. */
   link: string | null = null
   /** Every move of the shell the walk read: a cd that landed, or a variable
@@ -519,6 +517,8 @@ class Walker {
   }
 
   private assign(state: DirState, a: Assign, record = true): DirState {
+    // zsh's options array: CDABLE_VARS and AUTO_CD among them.
+    if (a.name === 'options') N1(`${a.name}=`, 'an option that changes cd')
     if (a.name === null) {
       let s = state
       for (const n of ['HOME', 'CDPATH', 'PWD', 'OLDPWD']) s = this.set(s, n, 'unknown', record)
@@ -540,8 +540,6 @@ class Walker {
   }
 
   private async simple(n: Simple, input: DirState): Promise<Outcome> {
-    // A trap with an action may run before this command (DEBUG): refused.
-    if (this.trap !== null) N1(this.trap, 'code run from text')
     // Prefix assignments hold for this command only, unless it has none.
     let here = input
     for (const a of n.assigns) {
@@ -562,32 +560,78 @@ class Walker {
         if (p.kind === 'param' && /^:?=/.test(p.op)) after = this.set(after, p.name, 'unknown')
     const program = n.words[0]?.literal ?? null
     this.current = n.words.map((w) => w.raw).join(' ')
-    // T029 review: what moves the shell from text, an option, or a name.
+    // T029 reviews: what moves the shell from text, an option, or a name.
     const run = programOf(n.words)
     const name = run?.word.literal ?? null
     const rest = run ? n.words.slice(run.at + 1) : []
+    const lits = rest.map((w) => w.literal ?? w.raw)
+    const base = name?.replace(/^.*\//, '') ?? null
     if (name === 'eval' && !n.nested && rest.length > 0) N1(this.current, 'code run from text')
+    // zsh `emulate … -c text` runs it like eval.
+    if (name === 'emulate' && lits.includes('-c')) N1(this.current, 'code run from text')
+    // A sourced file is the script's own (N6) only when it is a literal file
+    // path: not text the call builds (`/dev/stdin`, `/dev/fd/*`, `<( )`, a
+    // here-string or here-document).
     if (
-      name === 'trap' &&
-      rest.length >= 2 &&
-      !['', '-'].includes(rest[0]!.literal ?? 'x') &&
-      !(rest[0]!.literal ?? '').startsWith('-')
+      (name === 'source' || name === '.') &&
+      (rest[0] === undefined ||
+        rest[0].literal === null ||
+        /^\/dev\//.test(rest[0].literal) ||
+        n.redirects.some((r) => r.op === '<<<' || r.op === '<<' || r.op === '<<-' || r.op === '<'))
     )
-      this.trap ??= this.current
+      N1(this.current, 'code run from text')
+    if (name === 'trap') {
+      // Past its options; an action on any signal may run within this call
+      // (DEBUG, RETURN, ERR): refused as it appears. `''` and `-` set none.
+      let k = 0
+      while (k < lits.length && /^-./.test(lits[k]!)) if (lits[k++] === '--') break
+      const action = lits[k]
+      const signalOnly = lits.length - k === 1 && /^(?:SIG)?[A-Z]+$|^\d+$/.test(action ?? '')
+      if (action !== undefined && action !== '' && action !== '-' && !signalOnly)
+        N1(this.current, 'code run from text')
+    }
     if (
       /^(?:shopt|setopt|unsetopt|set)$/.test(name ?? '') &&
-      rest.some(
-        (w) =>
-          (w.literal ?? w.raw).toLowerCase().replace(/[_-]/g, '').replace(/^no/, '') ===
-          'cdablevars'
-      )
+      (rest.some((w) => w.literal === null) ||
+        (name !== 'set' && lits.some((l) => /^-[A-Za-z]*m/.test(l) || /[*?[]/.test(l))) ||
+        lits.some(
+          (l) =>
+            l.toLowerCase().replace(/[_-]/g, '').replace(/^no/, '') === 'cdablevars' ||
+            (name !== 'shopt' && /^[-+][A-Za-z]*T/.test(l))
+        ))
     )
       N1(this.current, 'an option that changes cd')
-    if (name === 'alias' && rest.some((w) => (w.literal ?? w.raw).includes('=')))
+    if (name === 'alias' && lits.some((l) => l.includes('=')))
       N1(this.current, 'a new name for a command')
+    if (this.ps && name !== null) {
+      // PowerShell, by the command's shape (the second review): code from
+      // text, a new name, an item set where a name or a value could be.
+      const cmd = name.toLowerCase().replace(/^.*\\/, '')
+      if (/^invoke-|^(?:icm|iex)$/.test(cmd)) N1(this.current, 'code run from text')
+      if (/-alias$|^(?:sal|nal|ipal|epal)$/.test(cmd)) N1(this.current, 'a new name for a command')
+      if (
+        /^(?:set-item|new-item|ni|si)$/.test(cmd) &&
+        rest.some((w) => w.literal === null || /::|^[A-Za-z]{2,}:/.test(w.literal))
+      )
+        N1(this.current, 'code run from text')
+      if (/^(?:get-variable|gv)$/.test(cmd) && lits.some((l) => /executioncontext/i.test(l)))
+        N1(this.current, 'code run from text')
+    }
     if (
-      (name === 'ln' &&
-        rest.some((w) => /^-[A-Za-z]*s/.test(w.literal ?? '') || w.literal === '--symbolic')) ||
+      ((base === 'ln' || base === 'cp') &&
+        lits.some((l) => /^-[A-Za-z]*s/.test(l) || /^--sy/.test(l))) ||
+      // An interpreter given code inline that may make a link: code the shell
+      // builds, or code that names one.
+      (/^(?:python[\d.]*|node|perl|ruby|php|deno|bun)$/.test(base ?? '') &&
+        rest.some((w, k) => {
+          if (!/^-[A-Za-z]*[ce]$|^--eval$/.test(lits[k]!)) return false
+          const code = rest[k + 1]
+          return (
+            code === undefined ||
+            code.literal === null ||
+            /symlink|(?<![\w.])link\s*\(|junction|mklink|ln\s+-/i.test(code.literal)
+          )
+        })) ||
       /^mklink$/i.test(name ?? '') ||
       (this.ps &&
         /^new-item$/i.test(name ?? '') &&

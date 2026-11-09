@@ -659,7 +659,56 @@ const REVIEWED: [string, string | undefined][] = [
   ['. ./go.sh; cat config', undefined],
   ['builtin source go.sh; cat config', undefined],
   ['eval "$X"', N1('eval "$X"', 'code run from text')],
-  ["trap 'cd ..' EXIT", undefined],
+  // Any trap with an action, as it appears: DEBUG, RETURN and ERR fire within the call.
+  ["trap 'cd ..' EXIT", N1("trap 'cd ..' EXIT", 'code run from text')],
+  [
+    'x=.kub; trap -- "cd ~/${x}e" DEBUG; cat config',
+    N1('trap -- "cd ~/${x}e" DEBUG', 'code run from text'),
+  ],
+  [
+    'x=.kub; trap "cd ~/${x}e; cat config" DEBUG',
+    N1('trap "cd ~/${x}e; cat config" DEBUG', 'code run from text'),
+  ],
+  ['trap - INT; ls', undefined],
+  ['trap -p', undefined],
+  // Text the call builds is not a script's own: refused, sourced or not.
+  [
+    'x=.kub; source /dev/stdin <<< "cd ~/${x}e"; cat config',
+    N1('source /dev/stdin', 'code run from text'),
+  ],
+  ['x=.kub; . <(echo cd ~/${x}e); cat config', N1('. <(echo cd ~/${x}e)', 'code run from text')],
+  [
+    'x=.kub; emulate zsh -c "cd ~/${x}e"; cat config',
+    N1('emulate zsh -c "cd ~/${x}e"', 'code run from text'),
+  ],
+  // cdable_vars by any spelling, pattern or value the shell builds
+  ['o=cdable_vars; shopt -s $o; cd k', N1('shopt -s $o', 'an option that changes cd')],
+  ["setopt -m 'cdable*'; cd k", N1("setopt -m 'cdable*'", 'an option that changes cd')],
+  ['options[cdablevars]=on; cd k', N1('options=', 'an option that changes cd')],
+  ['setopt -T; cd k', N1('setopt -T', 'an option that changes cd')],
+  ['set -eT; cd k', N1('set -eT', 'an option that changes cd')],
+  ['set -e; cd src', undefined],
+  // links, by any program that can make one
+  [
+    'x=.kub; /bin/ln -s ~/${x}e k && cd k',
+    N1('/bin/ln -s ~/${x}e k', 'a link made in this command'),
+  ],
+  ['x=.kub; ln --sym ~/${x}e k && cd k', N1('ln --sym ~/${x}e k', 'a link made in this command')],
+  ['x=.kub; cp -rs ~/${x}e/ k && cd k', N1('cp -rs ~/${x}e/ k', 'a link made in this command')],
+  [
+    'python3 -c "import os; os.symlink(1, 2)" && cd k',
+    N1('python3 -c "import os; os.symlink(1, 2)"', 'a link made in this command'),
+  ],
+  ['mkdir build && cd build && cmake ..', undefined],
+  ["cd src; perl -pi -e 's/a/b/' x.rb", undefined],
+  // past the reader's bounds, anything that could move the shell: refused
+  [
+    `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
+    N1(
+      `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
+      'a command Veilio cannot read'
+    ),
+  ],
   [
     'x=.kub; trap "cd ~/${x}e" DEBUG; cat config',
     N1('trap "cd ~/${x}e" DEBUG', 'code run from text'),

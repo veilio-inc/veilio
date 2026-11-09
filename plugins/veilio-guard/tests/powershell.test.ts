@@ -313,16 +313,51 @@ for (const [command, expected] of [
     'iex ("s"+"l ~/.ku"+"be"); gc config',
     N1('iex ("s"+"l ~/.ku"+"be"); gc config', 'code run from text'),
   ],
+  // By shape, not by name (the second review)
+  [
+    '[scriptblock]::Create("s"+"l ~/.ku"+"be").Invoke(); gc config',
+    N1('[scriptblock]::Create("s"+"l ~/.ku"+"be").Invoke(); gc config', 'code run from text'),
+  ],
+  [
+    'Invoke-Command -NoNewScope -ScriptBlock { sl src }',
+    N1('Invoke-Command -NoNewScope -ScriptBlock { sl src }', 'code run from text'),
+  ],
+  [
+    '$h = $host.Runspace.("SessionSt"+"ateProxy"); gc config',
+    N1('$h = $host.Runspace.("SessionSt"+"ateProxy"); gc config', 'code run from text'),
+  ],
+  [
+    'ni ("ali"+"as:q") -Value Set-Location; q ~/.kub?; gc config',
+    N1('ni ("ali"+"as:q") -Value Set-Location', 'code run from text'),
+  ],
+  ['Import-Alias a.csv; q src', N1('Import-Alias a.csv; q src', 'a new name for a command')],
+  ['gv ExecutionContext', N1('gv ExecutionContext', 'code run from text')],
+  [
+    'Set-Item function:q { sl src }; q',
+    N1('Set-Item function:q { sl src }; q', 'code run from text'),
+  ],
+  ['& { Set-Location src }', N1('& { Set-Location src }', 'code run from text')],
   [
     'New-Item -ItemType SymbolicLink -Path k -Target $t; Set-Location k',
-    N1('New-Item -ItemType SymbolicLink -Path k -Target $t', 'a link made in this command'),
+    N1('New-Item -ItemType SymbolicLink -Path k -Target $t', 'code run from text'),
+  ],
+  [
+    'New-Item -ItemType SymbolicLink -Path k -Target C:/x; Set-Location k',
+    N1('New-Item -ItemType SymbolicLink -Path k -Target C:/x', 'a link made in this command'),
   ],
 ] as const)
   test(`086 PowerShell reviewed ${JSON.stringify(command)} is refused`, async ($, on) => {
     expect(await ps($, on, command)).toBe(expected)
   })
 
-for (const command of ['Push-Location', 'Push-Location; Pop-Location', './setup.ps1; gc x'])
+for (const command of [
+  'Push-Location',
+  'Push-Location; Pop-Location',
+  './setup.ps1; gc x',
+  'New-Item -ItemType Directory -Path build; Set-Location build',
+  '$f.Name',
+  'Get-ChildItem | ForEach-Object { $_.Name }',
+])
   test(`086 PowerShell reviewed ${JSON.stringify(command)} runs`, async ($, on) => {
     expect(await ps($, on, command)).toBeUndefined()
   })

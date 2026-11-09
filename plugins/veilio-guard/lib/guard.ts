@@ -1764,7 +1764,14 @@ export class Guard {
                 }
               }
             }
-        } else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
+        } else if (dialect === 'sh' && parsed && SH_UNREADABLE.test(c))
+          // A bash/zsh command the reader cannot read (past its bounds), that
+          // names anything the walk refuses or follows: refused (re-review).
+          return this.deny(
+            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+            false
+          )
+        else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
           // A PowerShell command the reader does not model, naming a
           // location command anywhere: refused (review of the PowerShell path).
           return this.deny(
@@ -2501,9 +2508,26 @@ const PS_UNREADABLE = new RegExp(
   'i'
 )
 /** PowerShell running text as code, or the session's location by method. */
-const PS_CODE = /(?<![\w-])iex(?![\w-])|invoke-expression|sessionstate|\$executioncontext/i
+// A backstop to the walk's checks, by shape: a member invoked (`.M(`, `::M(`)
+// or built (`.$x`, `."x"`), a script block cast or invoked, any Invoke-*,
+// a function:/variable: path, the session state (the second T029 review).
+const PS_CODE = new RegExp(
+  [
+    String.raw`(?<![\w-])(?:iex|icm)(?![\w-])|invoke-\w|sessionstate|\$executioncontext`,
+    String.raw`[\w\])}'"]\s*(?:\.|::)\s*\w+\s*\(`,
+    String.raw`[\w\])}]\.\s*[$("']`,
+    String.raw`\[\s*scriptblock\s*\]`,
+    String.raw`(?:^|[;|({\s])[&.]\s*\{`,
+    String.raw`(?<![\w-])(?:function|variable):`,
+  ].join('|'),
+  'i'
+)
 /** PowerShell giving a command a new name. */
-const PS_ALIAS = /set-alias|new-alias|(?<![\w-])(?:sal|nal)(?![\w-])|alias:/i
+const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
+/** A bash/zsh command past the reader's bounds is refused when its text names
+ *  a cd or anything else that can move the shell or run text. */
+const SH_UNREADABLE =
+  /(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|options)(?![\w-])|(?:^|[;&|({\s])\.\s|\$\(|`|(?<![\w-])(?:python[\d.]*|node|perl|ruby|php|deno|bun)(?![\w-])/
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/
