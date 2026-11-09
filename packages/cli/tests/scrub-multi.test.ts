@@ -164,3 +164,68 @@ describe('what scrub may leave as written, when it cannot see everything', () =>
     expect(out).not.toMatch(/import \{ tarnwickSuite\b/)
   })
 })
+
+// Spec 085 part 3, R2-23 (security audit run-2): scrub read the project's
+// shape more narrowly than the guard, so some of the project's own packages
+// read as third-party and were left as written.
+describe("scrub masks the project's own packages wherever they sit (R2-23)", () => {
+  const project = (files: Record<string, string>) => {
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(join(cwd, name, '..'), { recursive: true })
+      writeFileSync(join(cwd, name), text)
+    }
+  }
+  const scrubbed = async (file: string) => {
+    let out = ''
+    const io: Io = {
+      cwd,
+      stdin: async () => '',
+      stdinBytes: async function* () {
+        yield Buffer.from('')
+      },
+      stdout: (t) => (out += t),
+      stderr: () => {},
+    }
+    await main(['scrub', '--map', 'shape.json', file], io)
+    return out
+  }
+
+  it('Go: a dotless module path', async () => {
+    project({
+      'go.mod': 'module billing\n\ngo 1.22\n',
+      'ledger/ledger.go': 'package ledger\n\nfunc PostInvoice() {}\n',
+      'main.go':
+        'package main\n\nimport "billing/ledger"\n\nfunc main() { ledger.PostInvoice() }\n',
+    })
+    const out = await scrubbed('main.go')
+    // The import path itself is a string the engine leaves as written, as the
+    // guard does; the names it brings in are the project's, so masked.
+    expect(out).not.toContain('PostInvoice')
+  })
+
+  it('Python: a src-layout package', async () => {
+    project({
+      'src/billing_core/__init__.py': '',
+      'src/billing_core/ledger.py': 'def PostInvoice():\n    pass\n',
+      'src/app/main.py': 'from billing_core.ledger import PostInvoice\n\nPostInvoice()\n',
+    })
+    const out = await scrubbed('src/app/main.py')
+    expect(out).not.toContain('PostInvoice')
+    expect(out).not.toContain('billing_core')
+  })
+
+  it('TypeScript: a workspace three levels down', async () => {
+    project({
+      'libs/group/ledger-core/package.json': '{ "name": "ledger-core" }\n',
+      'libs/group/ledger-core/index.ts': 'export function PostInvoice() {}\n',
+      'app/main.ts': "import { PostInvoice } from 'ledger-core'\n\nPostInvoice()\n",
+    })
+    const out = await scrubbed('app/main.ts')
+    expect(out).not.toContain('PostInvoice')
+  })
+
+  it('a public package stays as written', async () => {
+    project({ 'app/web.ts': "import express from 'express'\n\nexpress()\n" })
+    expect(await scrubbed('app/web.ts')).toContain("from 'express'")
+  })
+})

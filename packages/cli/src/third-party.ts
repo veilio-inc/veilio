@@ -3,7 +3,7 @@
 // server's `anonymize_file`, so the two give the same placeholders for the same
 // file (spec 030 FR-005, as amended by spec 050 T033-T036).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import {
   externalNames,
   type Language,
@@ -12,6 +12,7 @@ import {
   parseDeclarations,
   parseShellDeclarations,
   type ProjectShape,
+  projectShapeFrom,
 } from '@veilio-inc/engine'
 
 /** The names each input takes from a public package, to leave as written
@@ -75,60 +76,40 @@ export function thirdPartyNames(
   return out
 }
 
-/** What the CLI can see of the project's shape from where it runs: the
- *  top-level directories, the package names in package.json files near the
- *  root, tsconfig path aliases and baseUrl, and the Python module names on the
- *  inputs' paths. */
+/** Files the CLI lists at most to read the project's shape.
+ *  shortcut: a larger tree is read in part (fewer names exempt, more masked);
+ *  the git index reader could list tracked files instead. */
+const MAX_SHAPE_FILES = 20_000
+
+/**
+ * The project's shape as the guard reads it (spec 085 R2-23): the files under
+ * `cwd` (no `node_modules`, no dot folders), through the engine's one reader.
+ * `inputs` add their own Python module names, as they always did.
+ */
 export function projectShape(cwd: string, inputs: { name: string | null }[]): ProjectShape {
-  const dirs = (dir: string) => {
+  const files: string[] = []
+  const walk = (dir: string, rel: string): void => {
+    let entries
     try {
-      return readdirSync(dir, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
-        .map((d) => d.name)
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch {
-      return []
+      return
+    }
+    for (const d of entries) {
+      if (files.length >= MAX_SHAPE_FILES) return
+      if (d.name.startsWith('.') || d.name === 'node_modules') continue
+      const path = rel ? `${rel}/${d.name}` : d.name
+      if (d.isDirectory()) walk(join(dir, d.name), path)
+      else if (d.isFile()) files.push(path)
     }
   }
-  // A JSON file's top-level object, or undefined: what it holds is narrowed
-  // where it is read.
-  const json = (path: string): Record<string, unknown> | undefined => {
+  walk(cwd, '')
+  for (const i of inputs) if (i.name?.endsWith('.py')) files.push(i.name.split(sep).join('/'))
+  return projectShapeFrom(files, (rel) => {
     try {
-      const value: unknown = JSON.parse(
-        readFileSync(path, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '')
-          .replace(/,(\s*[}\]])/g, '$1')
-      )
-      return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+      return readFileSync(join(cwd, rel), 'utf8')
     } catch {
       return undefined
     }
-  }
-  const top = dirs(cwd)
-  const workspaces: string[] = []
-  for (const dir of [
-    '',
-    ...top,
-    ...top.flatMap((t) => dirs(join(cwd, t)).map((d) => `${t}/${d}`)),
-  ]) {
-    const name = json(join(cwd, dir, 'package.json'))?.name
-    if (typeof name === 'string') workspaces.push(name)
-  }
-  const options = json(join(cwd, 'tsconfig.json'))?.compilerOptions
-  const tsconfig =
-    options && typeof options === 'object'
-      ? (options as { baseUrl?: unknown; paths?: unknown })
-      : undefined
-  const baseDirs = new Set(top)
-  if (typeof tsconfig?.baseUrl === 'string')
-    for (const d of dirs(join(cwd, tsconfig.baseUrl))) baseDirs.add(d)
-  const paths = tsconfig?.paths
-  const pathAliases = Object.keys(paths && typeof paths === 'object' ? paths : {})
-    .map((k) => k.replace(/\*.*$/, ''))
-    .filter(Boolean)
-  const pythonModules = new Set(top)
-  for (const i of inputs)
-    if (i.name?.endsWith('.py'))
-      for (const part of i.name.replace(/\.py$/, '').split('/')) pythonModules.add(part)
-  return { baseDirs: [...baseDirs], workspaces, pathAliases, pythonModules: [...pythonModules] }
+  })
 }
