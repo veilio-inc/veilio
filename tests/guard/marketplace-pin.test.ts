@@ -30,9 +30,24 @@ function version(v: string) {
 function entry(source: unknown) {
   writeFileSync(
     join(repo, '.claude-plugin/marketplace.json'),
-    JSON.stringify({ name: 'veilio', plugins: [{ name: 'veilio-guard', source }] })
+    JSON.stringify({
+      name: 'veilio',
+      plugins: [
+        { name: 'other', source: './plugins/other' },
+        { name: 'veilio-guard', source },
+      ],
+    })
   )
 }
+const tryTag = (ref: string) => {
+  try {
+    return git('rev-parse', '-q', '--verify', `refs/tags/${ref}`)
+  } catch {
+    return undefined
+  }
+}
+const guardEntry = (m: { plugins: { name: string; source: unknown }[] }) =>
+  m.plugins.find((p) => p.name === 'veilio-guard')
 const pinned = (ref: string, sha: string) => ({
   source: 'git-subdir',
   url: URL,
@@ -116,8 +131,8 @@ describe('pin-guard --pin', () => {
     expect(r.stderr).toBe('')
     expect(git('rev-parse', 'veilio-guard@0.8.0^{commit}')).toBe(sha)
     const m = JSON.parse(readFileSync(join(repo, '.claude-plugin/marketplace.json'), 'utf8'))
-    expect(m.plugins[0].source).toEqual(pinned('veilio-guard@0.8.0', sha))
-    expect(m.plugins[0].name).toBe('veilio-guard')
+    expect(guardEntry(m)?.source).toEqual(pinned('veilio-guard@0.8.0', sha))
+    expect(m.plugins[0]).toEqual({ name: 'other', source: './plugins/other' })
     expect(run('--check').status).toBe(0)
   })
 
@@ -126,13 +141,25 @@ describe('pin-guard --pin', () => {
     const sha = version('0.8.0-b')
     git('tag', 'veilio-guard@0.8.0-b', first)
     entry('./plugins/veilio-guard')
-    expect(run('--pin', sha).status).toBe(1)
+    const r = run('--pin', sha)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(`the tag veilio-guard@0.8.0-b already points at ${first}`)
+  })
+
+  it('refuses a commit whose plugin.json version is not a version', () => {
+    const sha = version('0.8.0 beta')
+    entry('./plugins/veilio-guard')
+    const r = run('--pin', sha)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('version "0.8.0 beta" is not a version')
+    expect(tryTag('veilio-guard@0.8.0 beta')).toBeUndefined()
   })
 })
 
 describe('the real marketplace', () => {
-  const source = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/marketplace.json'), 'utf8'))
-    .plugins[0].source
+  const source = guardEntry(
+    JSON.parse(readFileSync(join(ROOT, '.claude-plugin/marketplace.json'), 'utf8'))
+  )?.source
   it.skipIf(typeof source === 'string')(
     'is pinned to a release tag whose plugin.json version matches (not pinned yet while the source is relative)',
     () => {

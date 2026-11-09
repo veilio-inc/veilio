@@ -26,8 +26,14 @@ const tryGit = (...args) => {
     return undefined
   }
 }
-const versionAt = (commit) =>
-  JSON.parse(git('show', `${commit}:${PATH}/.claude-plugin/plugin.json`)).version
+// A version names the tag: semver only, so no odd character reaches a ref.
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+function versionAt(commit) {
+  const { version } = JSON.parse(git('show', `${commit}:${PATH}/.claude-plugin/plugin.json`))
+  if (typeof version !== 'string' || !SEMVER.test(version))
+    throw new Error(`plugin.json's version ${JSON.stringify(version)} is not a version`)
+  return version
+}
 
 function readMarketplace() {
   const m = JSON.parse(readFileSync(MARKETPLACE, 'utf8'))
