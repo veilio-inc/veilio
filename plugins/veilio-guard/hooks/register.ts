@@ -16,7 +16,8 @@ import { bandText, MODEL_NOTE, statusText, stillStopped } from '../lib/ui.ts'
 import { deepRewrite } from '../lib/fields.ts'
 import {
   attachedNotice,
-  LOCAL_COMMANDS,
+  COMMAND_LINE_REFUSED,
+  KNOWN_COMMAND_FIELDS,
   maskedNames,
   unknownFieldRefusal,
   unknownTextField,
@@ -287,6 +288,13 @@ export function register(on: On, options: Options = {}) {
     return next(e)
   })
 
+  // Spec 083 (strings.md #5): a /clear ends the session with no session.start
+  // after it, so attachments are named again from here.
+  on('session.end', async ($, e, next) => {
+    saidAttached = false
+    return next(e)
+  })
+
   on('tool.call', async ($, e: ToolEvent, next) => {
     const g = await ready($)
     // One rule budget per hook invocation, threaded through its calls (security review).
@@ -334,9 +342,12 @@ export function register(on: On, options: Options = {}) {
     const given = raw ?? []
     const [scan, ...scans] = g.learnTogether([e.text, ...given])
     await g.learnRuleNames([e.text, ...given], budget)
-    // Spec 083: a slash command's line is masked at command.run; the host
-    // applies no rewrite of it here.
-    const text = e.command ? e.text : g.applyText(e.text, 'prompt', scan, budget)
+    // Spec 083: a slash command's line is masked at command.run and the host
+    // applies no rewrite of it here, so a line that is more than the command
+    // as command.run left it goes only when masking would not change it.
+    const line = e.command && `/${e.command.name}${e.command.args ? ` ${e.command.args}` : ''}`
+    const text = e.text === line ? e.text : g.applyText(e.text, 'prompt', scan, budget)
+    if (e.command && text !== e.text) return { drop: COMMAND_LINE_REFUSED }
     const context =
       raw !== undefined ? given.map((c, i) => g.applyContext(c, scans[i], budget)) : undefined
     const changed = text !== e.text || (context ?? []).some((c, i) => c !== given[i])
@@ -423,12 +434,16 @@ export function register(on: On, options: Options = {}) {
 
   // What the developer sees: the real names, drawn on this machine only. The
   // stored transcript keeps the placeholders.
-  on('ui.render', { component: ['AssistantMessage', 'UserMessage'] }, async ($, e, next) => {
-    const g = guard
-    const text = e.props?.text
-    if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
-    return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
-  })
+  on(
+    'ui.render',
+    { component: ['AssistantMessage', 'UserMessage', 'CommandOutput'] },
+    async ($, e, next) => {
+      const g = guard
+      const text = e.props?.text
+      if (!g || g.state !== 'on' || typeof text !== 'string') return next(e)
+      return next({ ...e, props: { ...e.props, text: g.displayText(text) } })
+    }
+  )
 
   // A row's input, and its result: an edit's diff, a command's output. Only
   // placeholders change, so the result still fits the tool's schema.
@@ -459,16 +474,18 @@ export function register(on: On, options: Options = {}) {
     return below ? Box({ flexDirection: 'column', children: [line, below] }) : line
   })
 
-  // Spec 083 (research R2): a command's arguments are masked unless it takes
-  // only a path or a setting.
+  // Spec 083: a command's arguments are masked, a built-in's too: nothing says
+  // its line stays out of the model's requests (second review).
   on('command.run', async ($, e, next) => {
-    if (e.command === 'veilio') return next(e)
     const g = await ready($)
     // One rule budget per hook invocation, threaded through its calls (security review).
     const budget = g.invocation()
     if (g.state === 'off') return next(e)
+    const unknown = unknownTextField(e, KNOWN_COMMAND_FIELDS)
+    if (unknown !== undefined) return { text: unknownFieldRefusal(unknown) }
     const args = String(e.args ?? '')
-    const asTyped = LOCAL_COMMANDS.has(e.command) || args.trim() === ''
+    // /veilio's arguments are its switch, run as typed, stopped too.
+    const asTyped = e.command === 'veilio' || args.trim() === ''
     // Stopped: a command whose arguments would need masking does not run.
     if (g.state === 'stopped') {
       if (asTyped) return next(e)
@@ -476,13 +493,23 @@ export function register(on: On, options: Options = {}) {
     }
     let masked = args
     if (!asTyped) {
+      const state = g.index?.state
+      if (state === 'new' || state === 'indexing')
+        await g.indexProject(deadline(next), budget).catch(() => undefined)
       const [scan] = g.learnTogether([args])
       await g.learnRuleNames([args], budget)
       masked = g.applyText(args, 'prompt', scan, budget)
     }
     // What the command records for the model is passed as it is: the host
-    // refuses a hook that changes an entry next gave it (COVERAGE.md).
-    return next({ ...e, args: masked })
+    // refuses a hook that changes an entry next gave it (COVERAGE.md). Its
+    // printed text goes in the model's requests too, from a plugin not bundled
+    // with Claude Code (CommandRunResult): masked, and the row is drawn with
+    // the real names.
+    const r = await next({ ...e, args: masked })
+    // /veilio's own text names no project name: the guard's state and the paths.
+    if (typeof r.text !== 'string' || g.state !== 'on' || e.command === 'veilio') return r
+    await g.learnRuleNames([r.text], budget)
+    return { ...r, text: g.applyText(r.text, 'result', undefined, budget) }
   }).catch(async () => ({ text: PROMPT_FAILED }))
 
   on('command.run', { command: 'veilio' }, async ($, e) => {

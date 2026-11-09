@@ -1,5 +1,5 @@
-// Spec 083 (research R1, R2): which fields of a prompt the guard knows, and
-// which slash commands take only a path or a setting. Read from Claude Code
+// Spec 083 (research R1): which fields of a prompt and of a slash command the
+// guard knows. Read from Claude Code
 // 2.1.319's mod API (specs/083-review-leftovers/contracts/prompt-fields.md).
 
 /** `prompt.submit`'s fields: `text` and `context` are masked, `command` is
@@ -16,20 +16,12 @@ export const KNOWN_PROMPT_FIELDS: ReadonlySet<string> = new Set([
   'origin',
 ])
 
-/** Built-in commands whose arguments are a path, a name or a setting, run as
- *  typed. Any other command's arguments are masked: a wrong entry here only
- *  mis-masks a path, a missing one never leaks. */
-export const LOCAL_COMMANDS: ReadonlySet<string> = new Set([
-  'add-dir',
-  'export',
-  'rename',
-  'resume',
-  'model',
-  'effort',
-  'config',
-  'permissions',
-  'plugin',
-  'mcp',
+/** `command.run`'s fields: `args` is masked, the rest is metadata. */
+export const KNOWN_COMMAND_FIELDS: ReadonlySet<string> = new Set([
+  'command',
+  'args',
+  'origin',
+  'presentation',
 ])
 
 const MAX_DEPTH = 8
@@ -43,19 +35,30 @@ export function holdsText(value: unknown, depth = 0): boolean {
   return Object.values(value).some((v) => holdsText(v, depth + 1))
 }
 
-/** The first field of a prompt the guard does not know that holds text. */
-export function unknownTextField(e: Readonly<Record<string, unknown>>): string | undefined {
-  return Object.keys(e).find((k) => !KNOWN_PROMPT_FIELDS.has(k) && holdsText(e[k]))
+/** The first field of a prompt (or of a command) the guard does not know
+ *  that holds text. */
+export function unknownTextField(
+  e: Readonly<Record<string, unknown>>,
+  known: ReadonlySet<string> = KNOWN_PROMPT_FIELDS
+): string | undefined {
+  return Object.keys(e).find((k) => !known.has(k) && holdsText(e[k]))
 }
 
 const PLACEHOLDER = /__[A-Z][A-Z0-9_]*?__\d*/g
 
-/** How many placeholders the masked texts hold that the given ones did not:
- *  the names masking put in. */
+const counted = (texts: readonly string[]) => {
+  const n = new Map<string, number>()
+  for (const p of texts.flatMap((t) => t.match(PLACEHOLDER) ?? [])) n.set(p, (n.get(p) ?? 0) + 1)
+  return n
+}
+
+/** How many placeholders masking put in: those the masked texts hold more
+ *  often than the given ones. Asked only when masking changed a text, so at
+ *  least 1 (a secret removed, or a name masked to a placeholder already there). */
 export function maskedNames(given: readonly string[], masked: readonly string[]): number {
-  const before = new Set(given.flatMap((t) => t.match(PLACEHOLDER) ?? []))
-  const after = new Set(masked.flatMap((t) => t.match(PLACEHOLDER) ?? []))
-  return [...after].filter((p) => !before.has(p)).length
+  const before = counted(given)
+  const added = [...counted(masked)].filter(([p, n]) => n > (before.get(p) ?? 0)).length
+  return Math.max(1, added)
 }
 
 /** strings.md #4. */
@@ -67,6 +70,11 @@ export function unknownFieldRefusal(field: string): string {
 export function unseenPromptRefusal(n: number): string {
   return `Veilio did not send this message: Claude Code does not let the guard mask a message it sends on its own at the start of a turn, and this one names ${n} masked names.`
 }
+
+/** Pending approval (second review of spec 083): a slash command's line the
+ *  host would send unmasked. */
+export const COMMAND_LINE_REFUSED =
+  'Veilio did not send this prompt: Claude Code does not let the guard mask the line of a slash command, and this one holds names the guard masks.'
 
 /** strings.md #5. */
 export function attachedNotice(n: number): string {

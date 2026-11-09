@@ -65,6 +65,9 @@ export type RenderTable = {
 
 export type SessionStartInput = { readonly cwd: string }
 export type SessionStartResult = { readonly cwd: string }
+/** Spec 083: read for nothing but that a session ended (a /clear included). */
+export type SessionEndInput = { readonly reason: string; readonly sessionId: string }
+export type SessionEndResult = { readonly sessionId: string }
 
 /** What a tool call resolved to, as the guard's afterTool takes it. */
 export type ToolCallResult = {
@@ -153,6 +156,7 @@ export type CommandRunResult = {
 /** Each event the guard hooks: what the hook is given and what it answers. */
 export interface HookEvents {
   'session.start': { input: SessionStartInput; result: SessionStartResult }
+  'session.end': { input: SessionEndInput; result: SessionEndResult }
   'tool.call': { input: ToolEvent; result: ToolCallResult }
   'prompt.submit': { input: PromptSubmitInput; result: PromptSubmitResult }
   'prompt.attachment': { input: PromptAttachmentInput; result: PromptAttachmentResult }

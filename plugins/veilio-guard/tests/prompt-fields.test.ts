@@ -115,3 +115,72 @@ test('a prompt with no attachment says nothing about attachments', async ($, on)
   expect(p.toasts.join()).not.toContain('cannot mask images')
   expect(p.logs.join()).not.toContain('cannot mask images')
 })
+
+test('a new session names attachments again', async ($, on) => {
+  const { p } = sending(on)
+  on('session.end', () => ({ sessionId: 's1' }))
+  const attachments = [{ type: 'image', mediaType: 'image/png', id: 'a1' }]
+  await $.prompt.submit({ ...base(), text: 'Look', attachments })
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as never)
+  await $.prompt.submit({ ...base(), text: 'Look again', attachments })
+  expect(p.toasts.filter((t) => t === ATTACHED)).toHaveLength(2)
+})
+
+// Second review of spec 083: the host applies no rewrite of a command's line,
+// so a line that is not the command as command.run left it goes only when
+// masking would not change it.
+const LINE_REFUSED =
+  'Veilio did not send this prompt: Claude Code does not let the guard mask the line of a slash command, and this one holds names the guard masks.'
+
+test("a slash command's line that is more than the command is not sent when it names a masked name", async ($, on) => {
+  const { sent } = sending(on)
+  for (const text of [`/review ${CANARY}`, `hello ${CANARY}`, `/review __CLS__1 ${CANARY}`]) {
+    const out = await $.prompt.submit({
+      ...base(),
+      text,
+      command: { name: 'review', args: '__CLS__1' },
+    })
+    expect(out.drop).toBe(LINE_REFUSED)
+  }
+  expect(sent).toHaveLength(0)
+})
+
+test("a slash command's line that is more than the command goes when nothing in it is masked", async ($, on) => {
+  const { sent } = sending(on)
+  await $.prompt.submit({
+    ...base(),
+    text: '/review the diff',
+    command: { name: 'review', args: 'hello' },
+  })
+  expect(sent[0].text).toBe('/review the diff')
+})
+
+test("a slash command's line as command.run left it goes as it is", async ($, on) => {
+  const { sent } = sending(on)
+  await $.prompt.submit({
+    ...base(),
+    text: '/review hello',
+    command: { name: 'review', args: 'hello' },
+  })
+  await $.prompt.submit({ ...base(), text: '/clear', command: { name: 'clear', args: '' } })
+  expect(sent.map((s) => s.text)).toEqual(['/review hello', '/clear'])
+})
+
+test('an unseen prompt that starts a turn is not sent when only its context names a masked name', async ($, on) => {
+  const { sent } = sending(on)
+  const out = await $.prompt.submit({
+    ...base(),
+    isMeta: true,
+    text: 'Continue.',
+    context: [CANARY],
+  })
+  expect(sent).toHaveLength(0)
+  expect(out.drop).toContain('names 1 masked names')
+})
+
+test('an unseen prompt that already holds the placeholder of a name it names is not sent', async ($, on) => {
+  const { sent } = sending(on)
+  const out = await $.prompt.submit({ ...base(), isMeta: true, text: `Fix __CLS__1 and ${CANARY}` })
+  expect(sent).toHaveLength(0)
+  expect(out.drop).toContain('names 1 masked names')
+})

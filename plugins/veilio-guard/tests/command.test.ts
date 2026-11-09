@@ -1,6 +1,8 @@
 // Spec 033 contracts/mod.md: /veilio reports the state, and switches the guard
 // off for this project only by name, with a warning that stays.
 import { expect, test } from 'claude-code/testing'
+import { PROMPT_FAILED } from '../lib/guard.ts'
+import { COLD_FILES } from './fixtures/cold.ts'
 import { CANARY, eventOf, mapFile, project, recorded, ROOT } from './helpers.ts'
 
 test('/veilio reports state, the map and coverage', async ($, on) => {
@@ -296,11 +298,13 @@ test('what a command records for the model is passed as the command left it', as
   expect(out.text).toBe('done')
 })
 
-test('a command that takes a path or a setting runs with its arguments as typed', async ($, on) => {
+// Second review of spec 083: nothing says a built-in's line stays out of the
+// model's requests, so a path or a setting is masked too.
+test("a built-in command's arguments are masked too, a path or a setting included", async ($, on) => {
   const ran = commands(on)
   await $.command.run({ command: 'add-dir', args: `src/${CANARY}` })
   await $.command.run({ command: 'model', args: CANARY })
-  expect(ran.map((r) => r.args)).toEqual([`src/${CANARY}`, CANARY])
+  expect(ran.map((r) => r.args)).toEqual(['src/__CLS__1', '__CLS__1'])
 })
 
 test('/veilio keeps its own hook', async ($, on) => {
@@ -327,4 +331,62 @@ test('a command with arguments is refused while the guard is stopped', async ($,
   expect(out.text).toContain('Veilio guard stopped')
   await $.command.run({ command: 'clear', args: '' })
   expect(ran.map((r) => r.command)).toEqual(['clear'])
+})
+
+const UNKNOWN = (field: string) =>
+  `Veilio did not send this prompt: it carries \`${field}\`, which this version of the guard cannot check. Update the guard (\`claude plugin marketplace update veilio\`, then \`claude plugin update veilio-guard@veilio\`), then send it again.`
+
+test('a command with an unknown field that holds text does not run, and the field is named', async ($, on) => {
+  const ran = commands(on)
+  for (const [field, value] of [
+    ['note', CANARY],
+    ['extra', { body: 'x' }],
+  ] as const) {
+    const out = await $.command.run({ command: 'review', args: '', [field]: value } as never)
+    expect(out.text).toBe(UNKNOWN(field))
+  }
+  expect(ran).toHaveLength(0)
+})
+
+test('a command with an unknown field that holds no text runs', async ($, on) => {
+  const ran = commands(on)
+  await $.command.run({ command: 'review', args: '', flag: true } as never)
+  expect(ran).toHaveLength(1)
+})
+
+// Second review of spec 083: a command's output stays in the model's requests
+// unless the plugin is bundled with Claude Code (CommandRunResult), so it is
+// masked; the developer's row is drawn with the real names (ui.test.ts).
+test("a command's output text reaches the model masked, its context as the command left it", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => ({ text: `Reviewed ${CANARY}`, context: [`Notes on ${CANARY}`] }))
+  const out = await $.command.run({ command: 'review', args: '' })
+  expect(out.text).toBe('Reviewed __CLS__1')
+  expect(out.context).toEqual([`Notes on ${CANARY}`])
+})
+
+test("a name in a project file the index has not reached yet is masked in a command's arguments", async ($, on) => {
+  const ran = commands(on, COLD_FILES)
+  await $.command.run({ command: 'review', args: 'why does tarnplot fail' })
+  expect(ran[0].args).not.toContain('tarnplot')
+})
+
+test("a credential in a command's arguments under a key that is a project name is removed", async ($, on) => {
+  const ran = commands(on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY, __VAR__4: 'db_password' }),
+  })
+  await $.command.run({ command: 'review', args: 'db_password = "Xk9!mQ2vLp7"' })
+  expect(ran[0].args).not.toContain('Xk9!mQ2vLp7')
+  expect(ran[0].args).toContain('__VAR__4')
+})
+
+test("a command the guard cannot check answers with the guard's failure, not its own text", async ($, on) => {
+  // The run beneath fails: the hook throws past next, and its .catch answers.
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
+  on('command.run', () => {
+    throw new Error(`failed on ${CANARY}`)
+  })
+  const out = await $.command.run({ command: 'review', args: `fix ${CANARY}` })
+  expect(out.text).toBe(PROMPT_FAILED)
+  expect(JSON.stringify(out)).not.toContain(CANARY)
 })
