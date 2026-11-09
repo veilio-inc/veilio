@@ -75,6 +75,22 @@ describe('ProjectIndex', () => {
     expect(ts.has('numpy')).toBe(false)
   })
 
+  // Spec 085 part 3, R2-23: the guard reads the shape with the engine's one
+  // reader (projectShapeFrom), as the CLI and MCP server do - which also reads
+  // a tsconfig whose strings hold `/*` and `*/` (src/*, **/*).
+  it('R2-23: a tsconfig with glob strings keeps its path aliases', async () => {
+    const files = {
+      ...FILES,
+      'tsconfig.json':
+        '{ "compilerOptions": { "paths": { "shared/*": ["src/shared/*"] } }, "include": ["src/**/*"] }',
+      'src/pay.ts': "import { settleInvoice } from 'shared/billing'\nexport const x = 1",
+    }
+    const index = new ProjectIndex(io(files).value, record)
+    await index.start()
+    await index.run(Infinity)
+    expect(index.externalFor('typescript').has('settleInvoice')).toBe(false)
+  })
+
   it('a name one file imports and another declares is not external', async () => {
     const index = new ProjectIndex(io().value, record)
     await index.start()

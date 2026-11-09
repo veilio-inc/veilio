@@ -1118,8 +1118,10 @@ const ORDINARY: [string, string, Record<string, string>?][] = [
   // No case-folding for names: the lower-case npm package name is not PaymentGateway.
   ['npm view paymentgateway --json', `${b64('{"name":"paymentgateway"}')}\n`],
 ]
+// Each runs in about 0.2 s; one took 9.6 s on a loaded CI runner after #231,
+// past the 5 s default, so they get the slow tests' allowance.
 for (const [command, stdout, map] of ORDINARY)
-  test(`ordinary output is not withheld: ${command}`, async ($, on) => {
+  test(`ordinary output is not withheld: ${command}`, { timeoutMs: 30_000 }, async ($, on) => {
     const out = await shellPrints($, on, command, stdout, map)
     expect(out.deny).toBeUndefined()
   })
@@ -1697,4 +1699,41 @@ test('R3#8: a planted aliases entry under a shown quarantine placeholder is refu
   const w = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/a.ts`, content: `${q}()` })
   expect(w.deny).toBeDefined()
   expect(seen).toHaveLength(writes)
+})
+
+// Spec 085 part 3, R2-10 (security audit run-2): the keep list for a content
+// block's `type` applied at the CallToolResult root too, so a root `type`
+// skipped the map pass, the credential sweep and shape masking. Only a block's
+// `type` is kept, by its path.
+test('R2-10: a root `type` holding a project name is masked', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({ type: 'PaymentGateway' }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('PaymentGateway')
+})
+
+test('R2-10: a root `type` holding a new name is masked and saved', async ($, on) => {
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) })
+  on('tool.call', () => mcpResult({ type: 'InvoiceBuilderService' }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain('InvoiceBuilderService')
+  expect(p.files[`${ROOT}/.veilio/map.json`]).toContain('InvoiceBuilderService')
+})
+
+test('R2-10: a root `type` repeating a credential of the text is not sent', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) })
+  const fake = ['Zq8vNw3r', 'Ty6uPl1x'].join('')
+  on('tool.call', () => ({
+    result: { content: [{ type: 'text', text: `DB_PASSWORD=${fake}` }], type: fake },
+  }))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  expect(JSON.stringify(out)).not.toContain(fake)
+})
+
+test("R2-10: a content block's own `type` is kept", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile(GATEWAY) })
+  on('tool.call', () => mcpResult({}))
+  const out = await $.tool.call({ tool: 'mcp__notes__find', q: 'x' })
+  const content = (outcome(out).result as Fields).content as Fields[]
+  expect(content[0]?.type).toBe('text')
 })

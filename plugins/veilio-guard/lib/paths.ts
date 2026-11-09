@@ -13,10 +13,12 @@
 export {
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  normaliseRawOnlyPattern,
   rawOnlyOf,
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
+import { normaliseRawOnlyPattern } from '../vendor/engine/index.js'
 import {
   outsideQuotes,
   shellExpands,
@@ -86,8 +88,11 @@ export function normalisePath(path: string): string {
  *  gives `secrets`. */
 export function rawOnlyDirectories(patterns: readonly string[]): string[] {
   const dirs = new Set<string>()
-  for (const pattern of patterns) {
-    if (!pattern || pattern.startsWith('!') || !pattern.includes('/')) continue
+  for (const written of patterns) {
+    if (!written || written.startsWith('!')) continue
+    // The engine's reading of a pattern, as isRawOnly's (spec 085 R2-15).
+    const pattern = normaliseRawOnlyPattern(written)
+    if (pattern === null || !pattern.includes('/')) continue
     // `dir/**` names everything in dir: dir is the directory, not its parent.
     const dir = pattern
       .replace(/\\/g, '/')
@@ -227,7 +232,14 @@ export function cdIntoRawOnly(target: string, dirs: readonly string[]): boolean 
  *  resolved, ignoring case. */
 export function isWriteProtected(path: string): boolean {
   const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
-  return /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p)
+  return /(^|\/)\.claude\/settings(\.local)?\.json$/.test(p) || isMcpConfig(path)
+}
+
+/** Spec 085 R2-9: the project's MCP server list, which decides which server
+ *  `mcpRestore` hands real names to. Matched as a path's tail, ignoring case. */
+export function isMcpConfig(path: string): boolean {
+  const p = normalisePath(path.replace(/^['"]+|['"]+$/g, '')).toLowerCase()
+  return /(^|\/)\.mcp\.json$/.test(p)
 }
 
 // ── spec 086: where a cd takes the shell (contracts/cd-verdicts.md) ─────────

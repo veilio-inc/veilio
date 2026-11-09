@@ -1204,3 +1204,100 @@ test('R4#6: a guard.json read that fails during /veilio on stops the guard with 
     'Veilio guard stopped: the settings or the map could not be read when the guard was switched back on. Fix that, then /veilio on. Every tool call is refused.'
   )
 })
+
+// Spec 085 part 3, R2-3 (T078a, T079; founder 2026-11-09): the guard reads the
+// record of the maps Veilio wrote (~/.veilio/written.json, the CLI's format)
+// and adopts nothing itself. A map that does not match it - one an archive
+// shipped with its own .git, or one edited since - restores only names this
+// session has shown, and #51r says so once.
+const HOME_DIR = '/home/dev'
+const RECORD = `${HOME_DIR}/.veilio/written.json`
+const sha = async (text: string) =>
+  [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+const recordOf = async (map: string, aliases = '') =>
+  JSON.stringify({ [ROOT]: `${await sha(map)}:${await sha(aliases)}` })
+const NOT_RECORDED =
+  'Veilio: `.veilio/map.json` here was not written by Veilio on this machine, or was changed since, so its names are put back only after this session has shown them. If it is yours, run `veilio maps adopt` in this project.'
+const writeOf = async ($: TestHost, on: TestOn, content: string) => {
+  const seen: Fields[] = []
+  on(
+    'tool.call',
+    (_, e) => (seen.push(e), { result: { type: 'create', filePath: `${ROOT}/a.ts` } })
+  )
+  const out = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a.ts`, content })
+  return { out, seen }
+}
+
+test('R2-3: a map with no record, in a checkout, restores only once shown, and says why', async ($, on) => {
+  const map = mapFile({ __VAR__8: 'fakePlantedValue' })
+  const p = project(on, { [`${ROOT}/.veilio/map.json`]: map }, { home: HOME_DIR, unrecorded: true })
+  const { out, seen } = await writeOf($, on, '__VAR__8')
+  expect(out.deny).toBeDefined()
+  expect(JSON.stringify(seen)).not.toContain('fakePlantedValue')
+  expect(p.logs.filter((l) => l === NOT_RECORDED)).toHaveLength(1)
+})
+
+test('R2-3: a map whose record matches restores unseen', async ($, on) => {
+  const map = mapFile({ __CLS__1: 'OrderService' })
+  project(
+    on,
+    { [`${ROOT}/.veilio/map.json`]: map, [RECORD]: await recordOf(map) },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  const { out, seen } = await writeOf($, on, 'new __CLS__1()')
+  expect(out.deny).toBeUndefined()
+  expect(seen[0]?.content).toBe('new OrderService()')
+})
+
+test('R2-3: a map changed since its record restores only once shown', async ($, on) => {
+  const map = mapFile({ __CLS__1: 'OrderService' })
+  project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({
+        __CLS__1: 'OrderService',
+        __VAR__8: 'fakePlantedValue',
+      }),
+      [RECORD]: await recordOf(map),
+    },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  const { out } = await writeOf($, on, '__VAR__8')
+  expect(out.deny).toBeDefined()
+})
+
+test('R2-3: a save over a recorded store records what it wrote', async ($, on) => {
+  const map = mapFile({ __CLS__1: 'OrderService' })
+  const path = `${ROOT}/src/invoice.ts`
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: map,
+      [RECORD]: await recordOf(map),
+      [path]: 'export class InvoiceBuilder {}\n',
+    },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  on('tool.call', () => readOf(path, 'export class InvoiceBuilder {}\n'))
+  await $.tool.call({ tool: 'Read', file_path: path })
+  const now = p.files[`${ROOT}/.veilio/map.json`]!
+  expect(now).toContain('InvoiceBuilder')
+  expect(JSON.parse(p.files[RECORD]!)[ROOT]).toBe(`${await sha(now)}:${await sha('')}`)
+})
+
+test('R2-3: a save over a store with no record records nothing', async ($, on) => {
+  const path = `${ROOT}/src/invoice.ts`
+  const p = project(
+    on,
+    {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__8: 'fakePlantedValue' }),
+      [path]: 'export class InvoiceBuilder {}\n',
+    },
+    { home: HOME_DIR, unrecorded: true }
+  )
+  on('tool.call', () => readOf(path, 'export class InvoiceBuilder {}\n'))
+  await $.tool.call({ tool: 'Read', file_path: path })
+  expect(p.files[RECORD]).toBeUndefined()
+})

@@ -1200,3 +1200,107 @@ test('086 CDPATH from the environment: a bare name is looked up under it', async
   const out = await $.tool.call({ tool: 'Bash', command: 'cd deep && cat notes', description: 'x' })
   expect(out.deny).toBe(NOTES)
 })
+
+// Spec 085 part 3, R2-13 (security audit run-2): for an MCP or unknown tool
+// the raw-only check skipped an argument with a space, one of 4096 characters
+// or more, an object key, and Windows short names. Every string and key is
+// checked now; prose that only mentions a raw-only name still passes.
+test('R2-13: an MCP tool asked for a raw-only file by an odd path is refused', async ($, on) => {
+  project(on, { [`${ROOT}/.env`]: 'DB_HOST=db.example.invalid\n' })
+  const seen: Fields[] = []
+  on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+  for (const args of [
+    { path: '/tmp/My Project/.env' },
+    { path: 'x y/../.env' },
+    { path: './'.repeat(2100) + '.env' },
+    { files: { '.env': true } },
+  ]) {
+    const out = await $.tool.call({ tool: 'mcp__files__read_file', ...args })
+    expect(out.deny, JSON.stringify(args).slice(0, 60)).toContain('away from the model')
+  }
+  const prose = await $.tool.call({
+    tool: 'mcp__files__read_file',
+    query: 'how do I load a .env file',
+  })
+  expect(prose.deny).toBeUndefined()
+  expect(seen).toHaveLength(1)
+})
+
+// Spec 085 part 3, R2-15: a pattern written from the root, with `/`, protects
+// the file, for a Read and for a cd; one that climbs out is reported once.
+test('R2-15: a rawOnly pattern written with a leading / protects the file', async ($, on) => {
+  project(on, {
+    [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['/config/prod.yml'] }),
+    [`${ROOT}/config/prod.yml`]: 'DB_HOST=db.example.invalid\n',
+  })
+  on('tool.call', () => ({ result: { type: 'text', file: { content: 'x' } } }))
+  const read = await $.tool.call({ tool: 'Read', file_path: `${ROOT}/config/prod.yml` })
+  expect(read.deny).toContain('away from the model')
+  const cd = await $.tool.call({ tool: 'Bash', command: 'cd config && ls', description: 'x' })
+  expect(cd.deny).toBeDefined()
+})
+
+test('R2-15: a rawOnly pattern that climbs out is reported once', async ($, on) => {
+  const p = project(on, {
+    [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['../x'] }),
+  })
+  on('tool.call', () => ({ result: [{ type: 'text', text: 'ok' }] }))
+  await $.tool.call({ tool: 'mcp__a__b', q: 'x' })
+  await $.tool.call({ tool: 'mcp__a__b', q: 'y' })
+  expect(
+    p.logs.filter(
+      (l) =>
+        l ===
+        'Veilio: rawOnly pattern `../x` in .veilio/guard.json can never match a file, so it protects nothing. Write it relative to the project root, such as `config/prod.yml` or `secrets/**`.'
+    )
+  ).toHaveLength(1)
+})
+
+// Spec 085 part 3, R2-14 (security audit run-2): a search through a link to a
+// raw-only folder printed its files under the link's name, and the result
+// filter matched them as printed. Result paths are now read through the link.
+const LINK_FILES = {
+  [`${ROOT}/.veilio/guard.json`]: JSON.stringify({ rawOnly: ['secrets/**'] }),
+  [`${ROOT}/secrets/db.yml`]: 'DB_HOST=db.example.invalid\n',
+  [`${ROOT}/docs/readme.md`]: '# docs\n',
+}
+const LINK_OPTS = { links: { [`${ROOT}/docs/s`]: `${ROOT}/secrets` } }
+
+test('R2-14: a Grep through a link to a raw-only folder returns none of its lines', async ($, on) => {
+  project(on, LINK_FILES, LINK_OPTS)
+  on('tool.call', () => ({
+    result: {
+      mode: 'content',
+      content: 'docs/s/db.yml:1:DB_HOST=db.example.invalid',
+      numFiles: 1,
+      filenames: [],
+      numLines: 1,
+    },
+  }))
+  const out = await $.tool.call({ tool: 'Grep', path: 'docs/s', pattern: 'DB_HOST' })
+  expect(JSON.stringify(out)).not.toContain('db.example.invalid')
+})
+
+test('R2-14: a Glob through the link lists none of its files', async ($, on) => {
+  project(on, LINK_FILES, LINK_OPTS)
+  on('tool.call', () => ({
+    result: { filenames: [`${ROOT}/docs/s/db.yml`], numFiles: 1, truncated: false, durationMs: 1 },
+  }))
+  const out = await $.tool.call({ tool: 'Glob', path: `${ROOT}/docs/s`, pattern: '*.yml' })
+  expect(JSON.stringify(out)).not.toContain('db.yml')
+})
+
+test('R2-14: a Grep of a plain folder keeps its lines', async ($, on) => {
+  project(on, LINK_FILES, LINK_OPTS)
+  on('tool.call', () => ({
+    result: {
+      mode: 'content',
+      content: 'docs/readme.md:1:# docs',
+      numFiles: 1,
+      filenames: [],
+      numLines: 1,
+    },
+  }))
+  const out = await $.tool.call({ tool: 'Grep', path: 'docs', pattern: 'docs' })
+  expect(JSON.stringify(out)).toContain('readme.md')
+})

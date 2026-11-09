@@ -4,7 +4,7 @@
 // `~/.veilio/credential.json` is signed in as. It does not import the CLI, so
 // both files are read here with the CLI's tolerance: absent or damaged reads
 // as no rules, never as a failed load.
-import { isEngineBase, isSafeRegex, STORE_DIR } from '../vendor/engine/index.js'
+import { isEngineBase, isSafeRegex, ruleRefusal, STORE_DIR } from '../vendor/engine/index.js'
 import type { CustomRule } from '../vendor/engine/index.js'
 
 export type RulesSkipped = {
@@ -12,6 +12,8 @@ export type RulesSkipped = {
   teamLocked: number
   unopenable: number
   refused: number
+  /** Team rules whose team key's sender this member has not confirmed (spec 085 R2-8). */
+  teamUnconfirmed: number
 }
 
 export type GuardRules = {
@@ -21,7 +23,13 @@ export type GuardRules = {
   state: 'applied' | 'none-pulled' | 'other-account'
 }
 
-const zero = (): RulesSkipped => ({ vaultLocked: 0, teamLocked: 0, unopenable: 0, refused: 0 })
+const zero = (): RulesSkipped => ({
+  vaultLocked: 0,
+  teamLocked: 0,
+  unopenable: 0,
+  refused: 0,
+  teamUnconfirmed: 0,
+})
 export const NO_RULES: GuardRules = { rules: [], skipped: zero(), state: 'none-pulled' }
 
 type Json = Record<string, unknown>
@@ -61,7 +69,7 @@ async function keysHeld(
   dir: string,
   credential: Json,
   now: number
-): Promise<{ personal: boolean; team: string | null }> {
+): Promise<{ personal: boolean; team: string | null; teamConfirmed: boolean }> {
   const usable = (key: unknown): boolean => {
     try {
       return typeof key === 'string' && key !== '' && atob(key).length === 32
@@ -99,6 +107,15 @@ async function keysHeld(
       (keys as Json[]).some((k) => usable(k.key))
         ? (team.teamId as string)
         : null,
+    // The CLI's rule (withWritable): writable, and judged with a granter.
+    teamConfirmed:
+      Array.isArray(keys) &&
+      (keys as Json[]).some(
+        (k) =>
+          usable(k.key) &&
+          k.writable === true &&
+          typeof (k.granter as Json | undefined)?.publicKey === 'string'
+      ),
   }
 }
 
@@ -132,6 +149,7 @@ export async function readGuardRules(
     teamLocked: count(s.teamLocked),
     unopenable: count(s.unopenable),
     refused: count(s.refused),
+    teamUnconfirmed: count(s.teamUnconfirmed),
   }
   // What the engine would skip silently (a pattern its matcher refuses, a
   // replace rule under its own base) is counted, so the band says so.
@@ -144,7 +162,18 @@ export async function readGuardRules(
       skipped[r.scope === 'team' ? 'teamLocked' : 'vaultLocked']++
       continue
     }
-    if (!isSafeRegex(r.pattern) || (r.type === 'replace' && isEngineBase(r.placeholder)))
+    // Spec 085 R2-8: a team rule only under a key whose sender was confirmed.
+    if (r.scope === 'team' && !held.teamConfirmed) {
+      skipped.teamUnconfirmed++
+      continue
+    }
+    // Spec 085 R2-7: judged again as the engine judges an opened rule - a
+    // team whitelist must name exact identifiers.
+    if (
+      !isSafeRegex(r.pattern) ||
+      (r.type === 'replace' && isEngineBase(r.placeholder)) ||
+      ruleRefusal(r, r.scope === 'team' ? 'team' : 'personal') !== null
+    )
       skipped.refused++
     else rules.push(r)
   }

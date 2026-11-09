@@ -285,10 +285,12 @@ export function resultPolicy(tool: string, result: unknown, filePath: string): R
         reason: `MCP results other than text are not scrubbed yet (${tool})`,
       }
     }
+    // Spec 085 R2-10: no key kept by name - a content block's `type` is kept
+    // by its path (MCP_BLOCK_TYPE), and a root `type` is masked like any field.
     return {
       kind: 'fields',
       fields: [apply(Array.isArray(result) ? '[].text' : 'content[].text')],
-      keep: ['type'],
+      keep: [],
     }
   }
   return { kind: 'deep' }

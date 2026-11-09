@@ -181,3 +181,57 @@ describe('one rule budget per hook invocation', () => {
     expect(out).not.toContain('keep_me_name')
   })
 })
+
+// Spec 085 part 3, R2-17 (security audit run-2): the guard matched rules
+// with a cache and loop of its own that missed the L8 fix - compile work not
+// charged, no 1000-rule cap, the cache cleared whole past 1000. It now matches
+// through the engine's matcher and cap, as anonymize does.
+describe('the guard matches rules as the engine does (R2-17)', () => {
+  const rule = (i: number, pattern: string): CustomRule => ({
+    id: `w${i}`,
+    scope: 'personal',
+    team_id: null,
+    sort_order: i,
+    name: `w${i}`,
+    type: 'whitelist',
+    pattern,
+    enabled: true,
+  })
+  const MANY = [
+    ...Array.from({ length: 1001 }, (_, i) => rule(i, `^PaymentGateway${i}$`)),
+    rule(1001, '^PaymentGateway$'),
+  ]
+
+  it('past 1000 rules no whitelist keeps a name readable, and the budget says so', () => {
+    const budget = ruleBudget()
+    const out = applyMap(
+      'new PaymentGateway()',
+      { __CLS__1: 'PaymentGateway' },
+      {
+        ...NO_CONTEXT,
+        rules: MANY,
+        budget,
+      }
+    )
+    expect(out).not.toContain('PaymentGateway')
+    expect(budget.spent).toBe(true)
+  })
+
+  it('compiling a pattern draws on the budget', () => {
+    const rules = Array.from({ length: 50 }, (_, i) => rule(i, `^(a|b|c|d|e|f|g)+Name${i}$`))
+    const used = () => {
+      const budget = ruleBudget()
+      const before = budget.left
+      applyMap(
+        'new PaymentGateway()',
+        { __CLS__1: 'PaymentGateway' },
+        { ...NO_CONTEXT, rules, budget }
+      )
+      return before - budget.left
+    }
+    used() // every pattern compiled once in this process
+    // A new budget pays each pattern's compile again, as the engine charges
+    // it (not only the few steps matching PaymentGateway takes).
+    expect(used()).toBeGreaterThan(50 * 10)
+  })
+})

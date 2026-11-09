@@ -34,7 +34,9 @@ import {
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
   isRawOnly,
+  isMcpConfig,
   isWriteProtected,
+  normaliseRawOnlyPattern,
   normalisePath,
   pathsInCommand,
   rawOnlyDirectories,
@@ -84,9 +86,19 @@ import {
   versionOf,
 } from './scrub.ts'
 import type { MaskContext, Numbering, Prepared, ScanResult } from './scrub.ts'
-import { fileKindOf, restore, ruleBudget, scanSecrets, valueSpans } from '../vendor/engine/index.js'
+import {
+  fileKindOf,
+  isName,
+  parseWrittenRecord,
+  restore,
+  ruleBudget,
+  scanSecrets,
+  valueSpans,
+  WRITTEN_RECORD_FILE,
+  writtenRecordValue,
+} from '../vendor/engine/index.js'
 import type { RuleBudget } from '../vendor/engine/index.js'
-import { MODEL_NOTE } from './ui.ts'
+import { MODEL_NOTE, printable } from './ui.ts'
 import { NO_RULES, readGuardRules, type GuardRules } from './rules.ts'
 import { wholeEntries } from './listings.ts'
 import { parseSearchOutput, searchCommand, searchPath, type SearchFormat } from './search.ts'
@@ -228,6 +240,21 @@ export const PROMPT_FAILED =
 
 export function withheld(reason: string): { deny: string } {
   return { deny: `Veilio withheld this result: ${reason}.` }
+}
+
+/** A string whose last path part has no whitespace: it may name a file. */
+function endsInAName(s: string): boolean {
+  return !/\s/.test(s.slice(Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\')) + 1))
+}
+
+/** Every object key under `value`, at any depth, into `into`. */
+function keysOf(value: unknown, into: string[]): void {
+  if (Array.isArray(value)) for (const v of value) keysOf(v, into)
+  else if (value && typeof value === 'object')
+    for (const [k, v] of Object.entries(value)) {
+      into.push(k)
+      keysOf(v, into)
+    }
 }
 
 function isPathLike(s: string): boolean {
@@ -475,6 +502,7 @@ export class Guard {
     await this.readOffRecord()
     await this.reloadMap()
     this.stopIfTracked(committed)
+    await this.checkRecord()
     this.loaded = true
     this.shellDir = cwd
     this.dirs = this.sessionState([cwd])
@@ -695,6 +723,10 @@ export class Guard {
       return
     }
     this.extraRawOnly.push(...rawOnlyOf(settings))
+    // Spec 085 R2-15 (#61): a pattern that can never match protects nothing.
+    for (const p of this.extraRawOnly)
+      if (p && !p.startsWith('!') && normaliseRawOnlyPattern(p) === null)
+        this.notice(unmatchableRawOnly(p))
     if (settings.enabled === false) this.notice(BACK_ON)
     if (settings.mcpRestore !== undefined) this.notice(MCP_IGNORED)
   }
@@ -854,6 +886,69 @@ export class Guard {
   /** The map at load was readable by others and held no names (round 2). */
   private mapReadable = false
 
+  // ── the record of maps Veilio wrote (spec 085 R2-3) ───────────────────────
+
+  /** SHA-256 of `text`, lowercase hex (the record's format). */
+  private static async sha256(text: string): Promise<string> {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  private recordPath(): string | undefined {
+    return this.home ? join(this.home, '.veilio', WRITTEN_RECORD_FILE) : undefined
+  }
+
+  /** The record, or {} when there is none or it cannot be read. */
+  private async readRecord(): Promise<Record<string, string>> {
+    const path = this.recordPath()
+    if (!path) return {}
+    try {
+      return parseWrittenRecord(await this.io.read(path)) ?? {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** What the record holds, or would hold, for the store's `mapText` and
+   *  `aliasesText`, and the key it is held under. */
+  private async recordEntry(mapText: string, aliasesText: string): Promise<[string, string]> {
+    const key = (await this.io.realPath(this.root)) ?? this.root
+    return [key, writtenRecordValue(await Guard.sha256(mapText), await Guard.sha256(aliasesText))]
+  }
+
+  /**
+   * At load (spec 085 R2-3, T078a): a store that holds names but does not
+   * match the record - a map that came with the files, with or without its
+   * own .git, or one changed since Veilio wrote it - restores only names this
+   * session has shown, and #51r says so once. The guard adopts nothing
+   * itself: `veilio maps adopt` is the only way a map becomes recorded.
+   */
+  private async checkRecord(): Promise<void> {
+    const entries = [...Object.keys(this.stored.map), ...Object.keys(this.aliases)]
+    if (entries.length === 0) return
+    const [key, value] = await this.recordEntry(this.mapText, this.aliasesText)
+    if ((await this.readRecord())[key] === value) return
+    for (const p of entries) this.adopted.add(p)
+    this.notice(NOT_RECORDED)
+  }
+
+  /** After a save over a recorded store: records what it wrote. Never fatal:
+   *  without a record the next session asks for each name to be shown. */
+  private async recordWrite(mapText: string): Promise<void> {
+    const path = this.recordPath()
+    if (!path) return
+    try {
+      const record = await this.readRecord()
+      const [key, value] = await this.recordEntry(mapText, this.aliasesText)
+      record[key] = value
+      const text = `${JSON.stringify(record, null, 2)}\n`
+      if (await this.io.exists(path)) await this.io.write(path, text)
+      else await this.createOwnerOnly(path, text, false)
+    } catch {
+      // not recorded: shown-gated next time, the safe side
+    }
+  }
+
   /** Never fatal: a missing or unreadable file restores nothing extra. */
   private async readAliases(): Promise<SymbolMap> {
     const path = join(this.root, '.veilio', 'aliases.json')
@@ -866,7 +961,8 @@ export class Guard {
       const a = parsed?.aliases
       if (!a || typeof a !== 'object' || Array.isArray(a)) return {}
       return Object.fromEntries(
-        Object.entries(a).filter((e): e is [string, string] => typeof e[1] === 'string')
+        // Names only, as the CLI reads them (spec 085 R2-18).
+        Object.entries(a).filter((e): e is [string, string] => isName(e[1]))
       )
     } catch {
       return {}
@@ -1418,7 +1514,31 @@ export class Guard {
   /** The real names, for drawing on this machine only. Never sent anywhere. */
   displayText(text: string): string {
     if (!text.includes('__')) return text
-    return restore(text, this.map, { strip: 'none' }).restored
+    return restore(text, this.displayMap(), { strip: 'none' }).restored
+  }
+
+  /** Spec 085 R2-18: what the screen may show - only what a tool call would
+   *  have restored (not a name still waiting to be shown), and each value
+   *  through printable(), so a format character cannot drive the terminal. */
+  private displayMap(): SymbolMap {
+    const from = this.restorableMap(this.map)
+    if (this.displayCache?.from !== from) {
+      const map: SymbolMap = {}
+      for (const [p, name] of Object.entries(from)) map[p] = printable(name)
+      this.displayCache = { from, map }
+    }
+    return this.displayCache.map
+  }
+  private displayCache: { from: SymbolMap; map: SymbolMap } | null = null
+
+  /** The map a placeholder may be restored from: outside git, or with
+   *  entries this guard did not write, only what this session has shown. */
+  private restorableMap(from: SymbolMap): SymbolMap {
+    return this.noListing
+      ? this.shownMap(from)
+      : this.adopted.size
+        ? this.shownMap(from, this.adopted)
+        : from
   }
 
   // ── tool calls ────────────────────────────────────────────────────────────
@@ -1583,15 +1703,43 @@ export class Guard {
   /** Whether a path is write-protected (spec 078 FR-012) and whether it is
    *  raw-only (as written, with `.`/`..` resolved, FR-007), each as written
    *  or where it leads: resolved once for both (review round 2). */
-  private async pathHits(path: string): Promise<{ written: boolean; rawOnly: boolean }> {
+  private async pathHits(
+    path: string
+  ): Promise<{ written: boolean; rawOnly: boolean; mcp: boolean }> {
     const raw =
       isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
     const written = isWriteProtected(path)
-    if (raw && written) return { written, rawOnly: raw }
+    if (raw && written) return { written, rawOnly: raw, mcp: isMcpConfig(path) }
     const real = await this.io.realPath(this.here(path))
     return {
       written: written || (real !== undefined && isWriteProtected(real)),
       rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
+      mcp: isMcpConfig(path) || (real !== undefined && isMcpConfig(real)),
+    }
+  }
+
+  /** The refusal for a write-protected path: settings, or the MCP list (#59). */
+  private denyProtected(hits: readonly { written: boolean; mcp: boolean }[]): { deny: string } {
+    return hits.some((h) => h.written && h.mcp)
+      ? this.deny(MCP_CONFIG_PROTECTED, false)
+      : this.deny(SETTINGS_PROTECTED)
+  }
+
+  /** Spec 085 R2-9: the server names the project's .mcp.json declares; null
+   *  when there is one that cannot be read (it may declare any name). */
+  private async projectMcpServers(): Promise<Set<string> | null> {
+    const path = join(this.root, '.mcp.json')
+    if (!(await this.io.exists(path).catch(() => true))) return new Set()
+    try {
+      const parsed = JSON.parse(await this.io.read(path)) as { mcpServers?: unknown }
+      const servers = parsed?.mcpServers
+      if (servers === undefined) return new Set()
+      if (typeof servers !== 'object' || servers === null) return null
+      // As the tool prefix spells it, too: characters other than letters,
+      // digits, `_` and `-` read as `_` (fail closed on either spelling).
+      return new Set(Object.keys(servers).flatMap((n) => [n, n.replace(/[^A-Za-z0-9_-]/g, '_')]))
+    } catch {
+      return null
     }
   }
 
@@ -1600,19 +1748,25 @@ export class Guard {
     e: ToolEvent,
     budget: RuleBudget = ruleBudget()
   ): Promise<{ deny: string } | { args: ToolEvent }> {
-    const policy = argumentPolicy(e.tool, this.mcpRestore)
+    let policy = argumentPolicy(e.tool, this.mcpRestore)
     const servers = mcpServersOf(e.tool)
+    // Spec 085 R2-9: a listed server the project's .mcp.json declares too may
+    // be the repository's, not the developer's: placeholders, said once.
+    if (policy.mcp) {
+      const declared = await this.projectMcpServers()
+      const server = servers[0]!
+      if (declared === null || declared.has(server)) {
+        policy = argumentPolicy(e.tool, [])
+        this.notice(redeclaredServer(server))
+      }
+    }
     if (servers.length > 1 && servers.some((s) => this.mcpRestore.includes(s)))
       this.notice(ambiguousServer(e.tool))
     const unresolved = new Set<string>()
     const altered = new Set<string>()
     const resolved = new Set<string>()
     const from = this.restoreMap
-    const restorable = this.noListing
-      ? this.shownMap(from)
-      : this.adopted.size
-        ? this.shownMap(from, this.adopted)
-        : from
+    const restorable = this.restorableMap(from)
     const unshown = new Set<string>()
     const restoreOne = (s: string) => {
       // Only saved entries are restored: a quarantined name never is.
@@ -1683,13 +1837,13 @@ export class Guard {
         `the real name for ${unshaped} is not shaped like a name or a path, so it is not put into an MCP tool's arguments. Ask the user to run this call`
       )
 
-    const named: [string, { written: boolean; rawOnly: boolean }][] = []
+    const named: [string, { written: boolean; rawOnly: boolean; mcp: boolean }][] = []
     for (const field of policy.paths)
       for (const p of [e[field], args[field]])
         if (typeof p === 'string') named.push([p, await this.pathHits(p)])
     // Spec 078 FR-012: Claude Code's settings, in every permission mode.
     if (WRITE_TOOLS.has(e.tool) && named.some(([, h]) => h.written))
-      return this.deny(SETTINGS_PROTECTED)
+      return this.denyProtected(named.map(([, h]) => h))
 
     // A Windows stream or short name may stand for a raw-only file.
     for (const [p, h] of named)
@@ -1781,7 +1935,7 @@ export class Guard {
                     point.dirs.filter((d) => d !== this.cwd).map((d) => join(d, piece))
                 for (const p of at) {
                   const h = await this.pathHits(p)
-                  if (h.written) return this.deny(SETTINGS_PROTECTED)
+                  if (h.written) return this.denyProtected([h])
                   if (h.rawOnly)
                     return this.deny(
                       `Veilio keeps ${this.applyText(w.literal === null ? w.raw : piece, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
@@ -1812,7 +1966,7 @@ export class Guard {
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
           const hits = []
           for (const at of [word, ...under]) hits.push(await this.pathHits(at))
-          if (hits.some((h) => h.written)) return this.deny(SETTINGS_PROTECTED)
+          if (hits.some((h) => h.written)) return this.denyProtected(hits)
           const hit =
             hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
           if (hit) {
@@ -1831,11 +1985,24 @@ export class Guard {
       for (const source of [e, args]) {
         const strings: string[] = []
         for (const [k, v] of Object.entries(source)) {
-          if (!RESERVED.has(k)) deepRewrite(v, (s) => (strings.push(s), s))
+          if (!RESERVED.has(k)) {
+            deepRewrite(v, (s) => (strings.push(s), s))
+            keysOf(v, strings)
+          }
         }
         for (const s of strings) {
-          // A path, not prose that mentions one: no whitespace.
-          if (isPathLike(s) && (await this.pathHits(s)).rawOnly) {
+          // Spec 085 R2-13: every string and key, whatever its length, and
+          // spaces in its folders (`/tmp/My Project/.env`), and Windows short
+          // names. Prose that names one in passing ("the config/.env file is
+          // stale") ends in words, not a file, and passes. Where it leads is
+          // asked only for what can be a path the host opens.
+          const hit =
+            endsInAName(s) &&
+            (isRawOnly(s, this.extraRawOnly) ||
+              isRawOnly(normalisePath(s), this.extraRawOnly) ||
+              shortNameAlias(s, this.windows) ||
+              (isPathLike(s) && (await this.pathHits(s)).rawOnly))
+          if (hit) {
             return this.deny(
               `Veilio keeps ${this.applyText(s, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
               false
@@ -2017,7 +2184,10 @@ export class Guard {
     // The file's kind, never its path (engine spec 013 R19): the
     // environment-style credential rules apply, the test-file relaxation does not.
     const fileKind = filePath ? fileKindOf(filePath) : undefined
-    outcome = { ...outcome, result: this.dropRawOnly(tool, outcome.result) }
+    outcome = {
+      ...outcome,
+      result: this.dropRawOnly(tool, outcome.result, await this.searchedThrough(tool, args)),
+    }
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
     const sent: string[] = []
@@ -2353,10 +2523,26 @@ export class Guard {
 
   /** A search over a directory or a glob can reach raw-only files the call
    *  never named: their lines and names are dropped from the result. */
-  private dropRawOnly(tool: string, result: unknown): unknown {
+  private dropRawOnly(
+    tool: string,
+    result: unknown,
+    link: { as: string[]; real: string } | null = null
+  ): unknown {
     if ((tool !== 'Grep' && tool !== 'Glob') || !result || typeof result !== 'object') return result
     const record = result as Record<string, unknown>
-    const raw = (p: string) => isRawOnly(p, this.extraRawOnly)
+    // Spec 085 R2-14: under a searched link, a path is also read as where the
+    // link leads (`docs/s/db.yml` is `secrets/db.yml`).
+    const through = (p: string) => {
+      const n = p.replace(/\\/g, '/')
+      for (const prefix of link?.as ?? [])
+        if (n === prefix || n.startsWith(`${prefix}/`)) return link!.real + n.slice(prefix.length)
+      return null
+    }
+    const raw = (p: string) => {
+      if (isRawOnly(p, this.extraRawOnly)) return true
+      const real = through(p)
+      return real !== null && isRawOnly(real, this.extraRawOnly)
+    }
     const out: Record<string, unknown> = { ...record }
     if (Array.isArray(record.filenames)) {
       out.filenames = record.filenames.filter((f) => typeof f !== 'string' || !raw(f))
@@ -2380,6 +2566,22 @@ export class Guard {
         .join('\n')
     }
     return out
+  }
+
+  /** Spec 085 R2-14: the path a Grep or Glob searched, when it is (or runs
+   *  through) a link: its spellings as a result prints them, and where it
+   *  leads. Null when there is no such path, or it leads where it says. */
+  private async searchedThrough(
+    tool: string,
+    args: Record<string, unknown>
+  ): Promise<{ as: string[]; real: string } | null> {
+    if ((tool !== 'Grep' && tool !== 'Glob') || typeof args.path !== 'string') return null
+    const written = normalisePath(args.path.replace(/\\/g, '/')).replace(/\/+$/, '')
+    const absolute = normalisePath(this.here(written))
+    const real = await this.io.realPath(absolute)
+    if (real === undefined || this.samePath(real, absolute)) return null
+    const rel = absolute.startsWith(`${this.root}/`) ? absolute.slice(this.root.length + 1) : null
+    return { as: [...new Set([written, absolute, ...(rel ? [rel] : [])])], real }
   }
 
   /** Adds entries to the map file: read what is there now, merge, write.
@@ -2424,6 +2626,12 @@ export class Guard {
       const aliases = this.aliases
       const aliasesText = this.aliasesText
       await this.reloadSideFiles()
+      // Spec 085 R2-3: what the store holds now, before this write, decides
+      // whether the write is recorded (no laundering a planted map).
+      const before = await this.recordEntry(mapText, this.aliasesText)
+      const wasRecorded =
+        (Object.keys(onDisk.map).length === 0 && this.aliasesText === '') ||
+        (await this.readRecord())[before[0]] === before[1]
       // Spec 085 L12: entries another program wrote (a git pull) are checked
       // against git before any of them is merged; so is any change to either
       // file, new names or not (review round 1 #1).
@@ -2462,6 +2670,7 @@ export class Guard {
       this.onDisk = next.map
       this.mapText = written
       this.stored = next
+      if (wasRecorded) await this.recordWrite(written)
       return { status: 'saved' as const, quarantined }
     })
     // A failed write must not wedge every later one.
@@ -2506,6 +2715,22 @@ function onlyStar(text: string): boolean {
   const patterns = text.split(/\r?\n/).filter((l) => l !== '' && !l.startsWith('#'))
   return patterns.length > 0 && patterns.every((l) => l === '*')
 }
+
+/** strings.md #61 (spec 085 R2-15, approved 2026-11-08), once per pattern. */
+const unmatchableRawOnly = (pattern: string) =>
+  `Veilio: rawOnly pattern \`${pattern}\` in .veilio/guard.json can never match a file, so it protects nothing. Write it relative to the project root, such as \`config/prod.yml\` or \`secrets/**\`.`
+
+/** strings.md #59 (spec 085 R2-9, approved 2026-11-08). */
+const MCP_CONFIG_PROTECTED =
+  'Veilio refused this change: .mcp.json decides which MCP servers receive your real names, so the agent may not change it. Ask the user to make this change'
+
+/** strings.md #57 (spec 085 R2-9), said once a session per server. */
+const redeclaredServer = (server: string) =>
+  `Veilio: \`${server}\` is also declared in this project's .mcp.json, so its tools get placeholders, not real names.`
+
+/** strings.md #51r (spec 085 R2-3, approved 2026-11-09). */
+const NOT_RECORDED =
+  'Veilio: `.veilio/map.json` here was not written by Veilio on this machine, or was changed since, so its names are put back only after this session has shown them. If it is yours, run `veilio maps adopt` in this project.'
 
 /** Review round 2 #7: said once, when a map with no names cannot be made 0600. */
 const EMPTY_MAP_READABLE =

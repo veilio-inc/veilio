@@ -45,6 +45,8 @@ export type Options = {
   inject?: { path: string; beforeExistsCall: number; text: string }
   /** The organisation's managed settings, as $.settings.read({ source: 'policy' }) answers. */
   policy?: Record<string, unknown>
+  /** $.settings.read({ source: 'policy' }) rejects: the policy cannot be read. */
+  failPolicy?: boolean
   /** `git ls-files` is refused, as in a project that is not a git checkout. */
   noGit?: boolean
   /** Files under .veilio/ that git tracks (committed to the repository). */
@@ -70,8 +72,13 @@ export type Options = {
   chmodIgnored?: boolean
   /** The machine is Windows ($.env OS=Windows_NT): no chmod, no stat. */
   windows?: boolean
-  /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record). */
+  /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record).
+   *  `/home/test` when not given. */
   home?: string
+  /** Spec 085 R2-3: by default ~/.veilio/written.json records the map and
+   *  aliases the project starts with, as Veilio wrote them. True: no record
+   *  (a map that came with the files). */
+  unrecorded?: boolean
   /** $.env CDPATH (spec 086): a bare cd is also looked up under it. */
   cdpath?: string
   /** The test registers its own env.get handler. */
@@ -97,8 +104,18 @@ export function project(
     ops: [],
     git: [],
   }
+  // Spec 085 R2-3: the maps a project starts with were written by Veilio on
+  // this machine, unless the test says otherwise.
+  const home = opts.home ?? '/home/test'
+  const record = `${home}/.veilio/written.json`
+  const initial = {
+    map: p.files[`${ROOT}/.veilio/map.json`] ?? '',
+    aliases: p.files[`${ROOT}/.veilio/aliases.json`] ?? '',
+  }
+  let virtualRecord = !opts.unrecorded && !(record in p.files)
   const exists = (path: string) => {
     const a = abs(path)
+    if (a === record && virtualRecord) return true
     return a in p.files || Object.keys(p.files).some((f) => f.startsWith(`${a}/`))
   }
   on('session.cwd', () => ({
@@ -118,6 +135,12 @@ export function project(
   on('fs.read', async (_, e) => {
     const a = abs(e.path)
     p.reads.push(a)
+    if (a === record && virtualRecord && !(a in p.files)) {
+      virtualRecord = false
+      p.files[a] = JSON.stringify({
+        [ROOT]: `${await sha256(initial.map)}:${await sha256(initial.aliases)}`,
+      })
+    }
     await opts.slowRead?.(a)
     if (opts.failRead?.(a)) return { deny: 'EIO: the disk said no' }
     const to = opts.links?.[a]
@@ -238,14 +261,21 @@ export function project(
         e.name === 'OS' && opts.windows
           ? 'Windows_NT'
           : e.name === 'HOME'
-            ? opts.home
+            ? home
             : e.name === 'CDPATH'
               ? opts.cdpath
               : undefined,
     }))
   const policy = opts.policy ?? {}
-  on('settings.read', () => ({ value: policy }))
+  on('settings.read', () =>
+    opts.failPolicy ? { deny: 'EACCES: managed settings unreadable' } : { value: policy }
+  )
   return p
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 export function mapFile(map: Record<string, string>, extra: Record<string, unknown> = {}): string {
