@@ -28,7 +28,7 @@ In what Read, Edit and Write return for a dotenv file, a YAML file or a shell sc
 
 ## Install
 
-You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and Linux, and in one Windows 11 session (terminal CLI), where Claude Code's PowerShell tool gets the same checks as Bash.
+You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and in Linux CI, and in one Windows 11 session on 2026-10-07 (the terminal CLI), described under Covered. That session predates the PowerShell rule of guard `0.6.0`, which has not been run on Windows.
 
 ```text
 /plugin marketplace add veilio-inc/veilio
@@ -37,7 +37,7 @@ You need Claude Code 2.1.287 or later (`claude --version`). Tested on macOS and 
 
 Or from your shell: `claude plugin marketplace add veilio-inc/veilio`, then `claude plugin install veilio-guard@veilio`.
 
-The install may print `2 userConfig options not yet set`. Both options are optional and the guard runs without them; see [Configure](#configure).
+The install may say that some userConfig options are not yet set. All of them are optional, and the guard runs without them; see [Configure](#configure).
 
 Install the CLI and the MCP server too (`npm install -g @veilio-inc/cli @veilio-inc/mcp`) and run `veilio scrub` once over your source files (`veilio scrub src/**/*.ts > /dev/null`): the guard then starts with a full map instead of growing one as Claude reads.
 
