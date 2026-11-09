@@ -69,7 +69,7 @@ import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
 import { fingerprint, sameFingerprint } from './client/fingerprint.js'
 import { DELETED_GRANTER, granterIdentity, judgeWrap, wrapFrom } from './client/wrap-judge.js'
-import { confirmPin, confirmedKeys, readPins } from './key-pins.js'
+import { confirmPin, confirmedKeys, pinOf, readPins } from './key-pins.js'
 import {
   formatProjectsList,
   listTeamProjects,
@@ -1108,7 +1108,7 @@ export async function runTeamTrust(
 
   const identity = granterIdentity(match.publicKey, match.id)
   confirmPin(credential, identity, match.publicKey, io.home)
-  const accepted = confirmedKeys(readPins(credential, io.home)[identity])
+  const accepted = confirmedKeys(pinOf(readPins(credential, io.home), identity))
   // Re-judged: what this granter made with a key now confirmed may be written
   // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
   const keys = unlock!.keys.map((k) =>

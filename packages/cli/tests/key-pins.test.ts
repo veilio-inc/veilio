@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { confirmPin, confirmedKeys, keyPinsPath, readPins } from '../src/key-pins.js'
+import { confirmPin, confirmedKeys, keyPinsPath, pinOf, readPins } from '../src/key-pins.js'
 
 // Spec 080 item 7a: the teammate keys this member confirmed by fingerprint, on
 // this device only (the web app's R-011: pins are never sent to Veilio).
@@ -109,6 +109,22 @@ describe('key pins', () => {
     writeFileSync(keyPinsPath(home), JSON.stringify(file))
     expect(Object.keys(readPins(A, home))).toEqual(['u2'])
   })
+
+  it.each(['__proto__', 'constructor', 'toString'])(
+    'a granter id %j is kept like any other, on disk and read back',
+    (id) => {
+      expect(confirmedKeys(pinOf(readPins(A, home), id))).toEqual([])
+      confirmPin(A, id, 'K1', home, NOW)
+      confirmPin(A, id, 'K2', home, NOW)
+      const pins = readPins(A, home)
+      expect(Object.hasOwn(pins, id)).toBe(true)
+      expect(confirmedKeys(pinOf(pins, id))).toEqual(['K2', 'K1'])
+      expect(JSON.parse(readFileSync(keyPinsPath(home), 'utf8')).scopes[0].pins).toHaveProperty(
+        [id],
+        expect.objectContaining({ current: 'K2' })
+      )
+    }
+  )
 
   it('a missing pin has no confirmed keys', () => {
     expect(confirmedKeys(undefined)).toEqual([])

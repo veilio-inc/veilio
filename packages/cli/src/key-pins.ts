@@ -72,9 +72,16 @@ export function readPins(binding: Binding, home: string = homedir()): KeyPins {
   const scope = readFile(home).scopes.find(
     (s) => s?.instance === binding.instance && s?.account === binding.account
   )
-  const pins: KeyPins = {}
+  // No prototype: a granter id is the server's word, and `__proto__` or
+  // `constructor` must be a key like any other, never Object's own.
+  const pins: KeyPins = Object.create(null)
   for (const [id, pin] of Object.entries(scope?.pins ?? {})) if (isPin(pin)) pins[id] = pin
   return pins
+}
+
+/** The pin for `identity`, only if one was recorded under exactly that. */
+export function pinOf(pins: KeyPins, identity: string): KeyPin | undefined {
+  return Object.hasOwn(pins, identity) ? pins[identity] : undefined
 }
 
 /** The keys a pin accepts: the current one, then the earlier ones. */
@@ -98,7 +105,9 @@ export function confirmPin(
     scope = { instance: binding.instance, account: binding.account, pins: {} }
     file.scopes.push(scope)
   }
-  const before = isPin(scope.pins[identity]) ? scope.pins[identity] : undefined
+  scope.pins = Object.assign(Object.create(null) as KeyPins, scope.pins)
+  const held = pinOf(scope.pins, identity)
+  const before = isPin(held) ? held : undefined
   const history = confirmedKeys(before).filter((k) => k !== publicKey)
   scope.pins[identity] = { current: publicKey, history, confirmedAt: now.toISOString() }
 

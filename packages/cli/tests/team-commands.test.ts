@@ -506,6 +506,27 @@ describe('team unlock judges who granted each key (spec 080 item 7a)', () => {
     })
   })
 
+  it('a granter id of __proto__ is judged like any other, and its confirmation is kept', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    const key = bodies['/api/teams/team-1/key'] as { wraps: { wrapped_by: string }[] }
+    key.wraps[0]!.wrapped_by = '__proto__'
+    const mine = bodies['/api/teams/mine'] as { team: { members: Record<string, string>[] } }
+    mine.team.members.push({ user_id: '__proto__', email: 'proto@example.test', status: 'active' })
+    serve(bodies)
+
+    expect((await run(['team', 'unlock'])).code).toBe(EXIT_OK)
+    const trusted = await run(['team', 'trust', 'Zespół', await fingerprint(granterPublic)])
+
+    expect(trusted.code, trusted.err).toBe(EXIT_OK)
+    expect(
+      Object.hasOwn(readPins({ instance: INSTANCE, account: ACCOUNT }, home), '__proto__')
+    ).toBe(true)
+    expect(readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)?.keys[0]?.writable).toBe(
+      true
+    )
+  })
+
   it('writes nothing when the member list cannot be read', async () => {
     // Who is on the team decides whether a confirmed key may be written under.
     signIn()

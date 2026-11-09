@@ -24,7 +24,7 @@
 // member list, so neither applies here.
 
 import type { KeyPins } from '../key-pins.js'
-import { confirmedKeys } from '../key-pins.js'
+import { confirmedKeys, pinOf } from '../key-pins.js'
 
 export type WrapVerdict =
   'trusted' | 'needs-review' | 'refused-change' | 'refused-impersonation' | 'unreadable'
@@ -76,7 +76,7 @@ export function judgeWrap({ from, wrappedBy, ownPublicKey, ownId, pins }: JudgeI
   if (from === ownPublicKey) return { verdict: 'trusted' }
   if (wrappedBy === ownId) return { verdict: 'refused-impersonation' }
   const identity = granterIdentity(from, wrappedBy)
-  const confirmed = confirmedKeys(pins[identity])
+  const confirmed = confirmedKeys(pinOf(pins, identity))
   if (confirmed.includes(from)) return { verdict: 'trusted', identity, offered: from }
   if (confirmed.length > 0)
     return { verdict: 'refused-change', identity, pinned: confirmed[0], offered: from }

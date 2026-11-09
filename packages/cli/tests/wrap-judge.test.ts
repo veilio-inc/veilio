@@ -112,3 +112,18 @@ describe('legitimate history never breaks (spec 055 US3)', () => {
     expect(r.verdict).toBe('refused-change')
   })
 })
+
+describe('a granter id that names an Object property (spec 080 review)', () => {
+  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])(
+    '%s with no pin is a first sighting, never a crash or a match',
+    (id) => {
+      expect(judge('K1', id)).toEqual({ verdict: 'needs-review', identity: id, offered: 'K1' })
+    }
+  )
+
+  it.each(['__proto__', 'constructor', 'toString'])('%s, confirmed, is trusted', (id) => {
+    const pins = Object.create(null) as KeyPins
+    Object.defineProperty(pins, id, { value: pin('K1'), enumerable: true })
+    expect(judge('K1', id, pins).verdict).toBe('trusted')
+  })
+})
