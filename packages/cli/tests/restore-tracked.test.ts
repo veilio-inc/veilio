@@ -310,3 +310,80 @@ describe('the suggested git command', () => {
     expect(messageFor('plain')).toContain(`rm --cached -- 'plain/.veilio/map.json'`)
   })
 })
+
+// Spec 085 part 3, R2-2 (security audit run-2): a checkout whose index the
+// reader cannot follow (a split or sparse index) answered "not tracked", so a
+// committed map was restored from and rewritten. A found .git with an
+// unreadable index now refuses.
+describe('a checkout whose index cannot be read refuses the map (R2-2)', () => {
+  const MAP = JSON.stringify({ version: 1, map: { __CLS__1: 'PaymentGateway' } })
+  function committed(): void {
+    git(cwd, 'init', '-q')
+    mkdirSync(join(cwd, '.veilio'))
+    writeFileSync(join(cwd, '.veilio', 'map.json'), MAP)
+    mkdirSync(join(cwd, 'src'))
+    writeFileSync(join(cwd, 'src', 'a.ts'), 'export const a = 1\n')
+    git(cwd, 'add', '-f', '.veilio/map.json', 'src/a.ts')
+    git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'one')
+  }
+  const split = () => git(cwd, 'update-index', '--split-index')
+  const sparse = () => {
+    git(cwd, 'sparse-checkout', 'init', '--cone', '--sparse-index')
+    git(cwd, 'sparse-checkout', 'set', '.veilio')
+  }
+
+  for (const [kind, make, remedy] of [
+    ['split', split, 'git update-index --no-split-index'],
+    ['sparse', sparse, 'git sparse-checkout disable'],
+  ] as const) {
+    it(`loadMap refuses with a ${kind} index`, () => {
+      committed()
+      make()
+      expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(StoreRefusal)
+      expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(
+        `veilio cannot read (${kind} index), so it cannot tell whether git tracks the map. Run \`${remedy}\`, then run again.`
+      )
+    })
+
+    it(`restore prints nothing restored with a ${kind} index`, async () => {
+      committed()
+      make()
+      const r = await run(['restore'], 'new __CLS__1()')
+      expect(r.code).toBe(EXIT_FINDINGS)
+      expect(r.out).not.toContain('PaymentGateway')
+    })
+
+    it(`scrub leaves the tracked map unchanged with a ${kind} index`, async () => {
+      committed()
+      make()
+      writeFileSync(join(cwd, 'b.ts'), 'class ChargeCustomerService {}\n')
+      const r = await run(['scrub', 'b.ts'])
+      expect(r.code).toBe(EXIT_FINDINGS)
+      expect(() =>
+        execFileSync('git', ['diff', '--quiet', '--', '.veilio/map.json'], {
+          cwd,
+          env: { ...GIT_ENV, HOME: home },
+        })
+      ).not.toThrow()
+    })
+  }
+
+  it('a plain index still restores an untracked map (the reader answers)', async () => {
+    git(cwd, 'init', '-q')
+    mkdirSync(join(cwd, 'src'))
+    writeFileSync(join(cwd, 'src', 'a.ts'), 'export const a = 1\n')
+    git(cwd, 'add', 'src/a.ts')
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'PaymentGateway' })
+    const r = await run(['restore'], 'new __CLS__1()')
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.out).toContain('new PaymentGateway()')
+  })
+
+  it('a repository with no index yet (git init only) is not unreadable', async () => {
+    git(cwd, 'init', '-q')
+    saveMap(resolveMapPath(null, cwd), { __CLS__1: 'PaymentGateway' })
+    const r = await run(['restore'], 'new __CLS__1()')
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.out).toContain('new PaymentGateway()')
+  })
+})

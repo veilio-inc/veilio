@@ -25,7 +25,7 @@ import {
 import { randomBytes } from 'node:crypto'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
-import { trackedPaths } from './git-index.js'
+import { trackedPaths, type IndexUnreadable } from './git-index.js'
 
 export { STORE_DIR }
 export const STORE_FILE = 'map.json'
@@ -122,28 +122,13 @@ export class StoreRefusal extends Error {}
  * one to another project's map), and when git tracks `.veilio`, map.json or
  * aliases.json (a map in the repository is not yours to restore from). Git is
  * asked first, so a tracked map is refused even where the file is absent under
- * this spelling. Outside git, or with an index this reader cannot follow, the
- * tracked check cannot answer and the file is read as before.
+ * this spelling. A checkout whose index this reader cannot follow is refused
+ * too (spec 085 R2-2): git there may track the map. Outside git the tracked
+ * check cannot answer and the file is read as before.
  */
 export function openStoreFile(what: string, path: string): string | null {
   const dir = dirname(path)
-  const found = trackedStoreFile(path)
-  if (found !== null) {
-    const { root, tracked } = found
-    // The path comes from the checkout: shown without control characters. A
-    // command only off Windows (its shells read quotes differently) and only
-    // for a root and path of plain characters; both single-quoted.
-    const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
-    const plain = /^[A-Za-z0-9._/ -]+$/
-    const how =
-      process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
-        ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
-        : ''
-    throw new StoreRefusal(
-      `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
-        `Remove it from git${how}, then scrub again to build your own.`
-    )
-  }
+  refuseTracked(path)
   for (const p of [dir, path])
     if (isLink(p))
       throw new StoreRefusal(
@@ -153,6 +138,40 @@ export function openStoreFile(what: string, path: string): string | null {
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf8')
 }
+
+const REMEDY: Record<IndexUnreadable, string> = {
+  split: 'git update-index --no-split-index',
+  sparse: 'git sparse-checkout disable',
+  format: 'git status',
+}
+
+/** Refuses a store file git tracks, or one in a checkout whose index cannot be read. */
+function refuseTracked(path: string): void {
+  const found = trackedStoreFile(path)
+  if (found === null) return
+  if ('unreadable' in found) {
+    const kind = found.unreadable === 'format' ? 'an unknown format' : `${found.unreadable} index`
+    throw new StoreRefusal(
+      `refusing to use ${shownPath(path)}: this checkout's git index is in a form veilio cannot read (${kind}), so it cannot tell whether git tracks the map. Run \`${REMEDY[found.unreadable]}\`, then run again.`
+    )
+  }
+  const { root, tracked } = found
+  // The path comes from the checkout: shown without control characters. A
+  // command only off Windows (its shells read quotes differently) and only
+  // for a root and path of plain characters; both single-quoted.
+  const shown = tracked.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
+  const plain = /^[A-Za-z0-9._/ -]+$/
+  const how =
+    process.platform !== 'win32' && plain.test(root) && plain.test(tracked)
+      ? ` (\`git -C ${shellQuote(root)} rm --cached -- ${shellQuote(tracked)}\`)`
+      : ''
+  throw new StoreRefusal(
+    `\`${shown}\` is tracked by git: a map in the repository is not yours to restore from. ` +
+      `Remove it from git${how}, then scrub again to build your own.`
+  )
+}
+
+const shownPath = (p: string): string => p.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '')
 
 /**
  * Whose `path` is: 'me' for the running user, 'other' for anyone else, 'none'
@@ -230,11 +249,15 @@ export function writeStoreFile(what: string, path: string, text: string): void {
 /** One POSIX shell word, for a string of plain characters (no quote in it). */
 const shellQuote = (s: string): string => `'${s}'`
 
-/** The store path git tracks, as git names it, with its work tree root; null when none, or no way to tell. */
-function trackedStoreFile(path: string): { root: string; tracked: string } | null {
+/** The store path git tracks, as git names it, with its work tree root; why the
+ *  index could not be read; or null when nothing is tracked, or there is no checkout. */
+function trackedStoreFile(
+  path: string
+): { root: string; tracked: string } | { unreadable: IndexUnreadable } | null {
   const dir = dirname(path)
   const git = trackedPaths(dir)
   if (!git) return null
+  if ('unreadable' in git) return { unreadable: git.unreadable }
   const rel = (p: string) => relative(git.root, p).split(sep).join('/')
   const candidates = [path]
   if (basename(dir) === STORE_DIR)

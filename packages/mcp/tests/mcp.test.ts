@@ -426,6 +426,28 @@ describe('path containment', () => {
           expect(res.text).not.toContain('PaymentGateway')
         }
       })
+
+      // Spec 085 R2-2: a split index the reader cannot follow is not "not tracked".
+      it('restore_text and symbol_map_summary refuse a map in a checkout with a split index', () => {
+        execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore', env: GIT_ENV })
+        writeMap({ __CLS__1: 'PaymentGateway' })
+        execFileSync('git', ['add', '-f', '.veilio/map.json'], {
+          cwd,
+          stdio: 'ignore',
+          env: GIT_ENV,
+        })
+        execFileSync('git', ['update-index', '--split-index'], {
+          cwd,
+          stdio: 'ignore',
+          env: GIT_ENV,
+        })
+        for (const tool of ['restore_text', 'symbol_map_summary']) {
+          const res = call(tool, tool === 'restore_text' ? { text: '__CLS__1' } : {})
+          expect(res.isError).toBe(true)
+          expect(res.text).toContain('veilio cannot read (split index)')
+          expect(res.text).not.toContain('PaymentGateway')
+        }
+      })
     })
 
     it('allows a root that is itself reached through a link', () => {
