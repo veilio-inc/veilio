@@ -86,7 +86,10 @@ version of the team key that Cloud holds for you, and only once it is confirmed:
 - a key you made yourself, or one granted by a teammate whose key you confirmed
   and who is still an active member, is used to save maps;
 - if a newer version was refused or did not open, nothing is written under an
-  older one;
+  older one - even when Cloud later leaves that version out, and after a logout
+  or `team lock` (the version is kept in `~/.veilio/key-pins.json`). If your team
+  really removed it, `veilio team unlock --forget-refused` lets the newest
+  stored key write again;
 - a key from a teammate you have not confirmed is kept read-only, and `team
   unlock` prints who granted it and their key's fingerprint. Ask them for the
   fingerprint they see - on their dashboard in the web app under "Your key
@@ -382,6 +385,10 @@ a plan feature the web app couldn't.
                         For: scrub, maps push
     --days <n>          Keep the key for n days (1 to 30; 7 by default)
                         For: team unlock, vault unlock
+    --forget-refused    Forget a newer team key version refused before, once
+                        your team has removed it, so the newest one stored can
+                        be written under again
+                        For: team unlock
     --allow-drop        Allow dropping entries the Cloud map has and the local
                         map does not
                         For: maps update

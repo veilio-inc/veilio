@@ -357,6 +357,12 @@ export const FLAGS: readonly FlagSpec[] = [
     field: 'days',
   },
   {
+    long: '--forget-refused',
+    help: 'Forget a newer team key version refused before, once your team has removed it, so the newest one stored can be written under again',
+    commands: ['team unlock'],
+    field: 'forgetRefused',
+  },
+  {
     long: '--allow-drop',
     help: 'Allow dropping entries the Cloud map has and the local map does not',
     commands: ['maps update'],

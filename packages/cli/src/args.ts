@@ -103,6 +103,8 @@ export interface ParsedArgs {
   /** `vault unlock --days N`, `team unlock --days N`: how long the unlock
    *  lasts. Null: the default, 7 days. */
   days: number | null
+  /** `team unlock --forget-refused` (spec 080 review). */
+  forgetRefused: boolean
   /** `projects` (or `projects list`) and `projects use <name|id>`. */
   projectsAction: ActionOf<'projects'> | null
   /** `rules pull`. */
@@ -213,6 +215,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     keysAction: null,
     projectsAction: null,
     days: null,
+    forgetRefused: false,
     rulesAction: null,
     helpTopic: null,
   }
@@ -378,6 +381,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         parsed.days = Number(value)
         break
       }
+      case '--forget-refused':
+        parsed.forgetRefused = true
+        break
       case '--allow-drop':
         parsed.allowDrop = true
         break

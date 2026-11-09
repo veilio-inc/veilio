@@ -709,6 +709,166 @@ describe('a newer version that was not stored blocks writing under an older one 
     expect(pushed.code, pushed.err).toBe(EXIT_OK)
   })
 
+  const changedV2 = async (g: Awaited<ReturnType<typeof realGrant>>) => ({
+    ...(await g.wrapByNewKey(2)),
+    wrapped_by: 'u2',
+  })
+  const omitV2 = (g: Awaited<ReturnType<typeof realGrant>>) => {
+    const key = g.bodies['/api/teams/team-1/key'] as { wraps: { version: number }[] }
+    key.wraps.splice(
+      key.wraps.findIndex((w) => w.version === 2),
+      1
+    )
+  }
+  const BLOCKED_LINE =
+    'Team "Zespół": key version 2 was offered to this account before and not stored, so nothing is written under an older key. ' +
+    'If your team removed that version, run: veilio team unlock --forget-refused'
+
+  it('the block holds when the server later leaves the refused version out', async () => {
+    const g = await withV2(changedV2)
+    omitV2(g)
+
+    const again = await run(['team', 'unlock'])
+
+    expect(again.code).toBe(EXIT_OK)
+    expect(again.out).toContain(BLOCKED_LINE)
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+    expect((await pushTeam()).err).toContain(ROW_3)
+  })
+
+  it('the block survives logout and a new sign-in', async () => {
+    const g = await withV2(changedV2)
+    fetchMock.mockImplementation(async () => jsonResponse(200, {}))
+    expect((await run(['logout'])).code).toBe(EXIT_OK)
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+    signIn()
+    omitV2(g)
+    serve(g.bodies)
+
+    await run(['team', 'unlock'])
+
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+    expect((await pushTeam()).err).toContain(ROW_3)
+  })
+
+  it('the block survives team lock too', async () => {
+    const g = await withV2(changedV2)
+    await run(['team', 'lock'])
+    omitV2(g)
+
+    await run(['team', 'unlock'])
+
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+  })
+
+  it('confirming the changed key stores v2 writable, and that lifts the block', async () => {
+    const g = await withV2(async (g) => {
+      const w = await g.wrapByNewKey(2)
+      ;(g as unknown as { v2Public: string }).v2Public = w.granterPublic
+      return { ...w, wrapped_by: 'u2' }
+    })
+    const v2Public = (g as unknown as { v2Public: string }).v2Public
+
+    const trusted = await run(['team', 'trust', 'Zespół', await fingerprint(v2Public)])
+
+    expect(trusted.code, trusted.err).toBe(EXIT_OK)
+    const stored = readTeamUnlock(binding, home)!
+    expect(stored.blockedVersion).toBeUndefined()
+    expect(writeKeyOf(stored)?.version).toBe(2)
+    // Gone for good: the server leaving v2 out later blocks nothing.
+    omitV2(g)
+    await run(['team', 'unlock'])
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBeUndefined()
+  })
+
+  it('a newer version that does not lift it: v1 written again is not enough', async () => {
+    const g = await withV2(changedV2)
+    omitV2(g)
+    await run(['team', 'unlock'])
+    await run(['team', 'unlock'])
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+  })
+
+  it('a newer version stored read-only does not lift the block', async () => {
+    const g = await withV2(changedV2)
+    // v2 again, now from a member nobody confirmed: stored, not writable.
+    const key = g.bodies['/api/teams/team-1/key'] as { wraps: Record<string, unknown>[] }
+    key.wraps[1] = {
+      version: 2,
+      created_at: '2026-02-02',
+      ...(await g.wrapByNewKey(2)),
+      wrapped_by: 'u4',
+    }
+    const mine = g.bodies['/api/teams/mine'] as { team: { members: Record<string, string>[] } }
+    mine.team.members.push({ user_id: 'u4', email: 'ewa@example.test', status: 'active' })
+    await run(['team', 'unlock'])
+    expect(readTeamUnlock(binding, home)?.keys.find((k) => k.version === 2)?.writable).toBe(false)
+    omitV2(g)
+
+    await run(['team', 'unlock'])
+
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+  })
+
+  it('when the mark cannot be written, no team key is stored', async () => {
+    signIn()
+    const g = await realGrant()
+    const key = g.bodies['/api/teams/team-1/key'] as { wraps: Record<string, unknown>[] }
+    key.wraps.push({
+      version: 2,
+      created_at: '2026-02-01',
+      ...(await g.wrapByNewKey(2)),
+      wrapped_by: 'u-me',
+    })
+    serve(g.bodies)
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    // Readable for the mark (none), but this account's pins are damaged.
+    const damaged = JSON.stringify({ v: 1, scopes: [{ ...binding, pins: [] }] })
+    writeFileSync(join(home, '.veilio', 'key-pins.json'), damaged)
+
+    const { code, err } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain('is damaged, so no team key was stored.')
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+    expect(readFileSync(join(home, '.veilio', 'key-pins.json'), 'utf8')).toBe(damaged)
+  })
+
+  it('the way out, when the team really removed that version: team unlock --forget-refused', async () => {
+    const g = await withV2(changedV2)
+    omitV2(g)
+
+    const out = await run(['team', 'unlock', '--forget-refused'])
+
+    expect(out.code).toBe(EXIT_OK)
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBeUndefined()
+    const pushed = await pushTeam()
+    expect(pushed.code, pushed.err).toBe(EXIT_OK)
+  })
+
+  it('--forget-refused forgets only the past: a version refused now still blocks', async () => {
+    await withV2(changedV2)
+    await run(['team', 'unlock', '--forget-refused'])
+    expect(readTeamUnlock(binding, home)?.blockedVersion).toBe(2)
+  })
+
+  it('a damaged pins file stores no team key, and says so', async () => {
+    signIn()
+    const g = await realGrant()
+    serve(g.bodies)
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    writeFileSync(join(home, '.veilio', 'key-pins.json'), 'not json')
+
+    const { code, err } = await run(['team', 'unlock'])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toBe(
+      `veilio: ${join(home, '.veilio', 'key-pins.json')} is damaged, so no team key was stored. Move it aside and run \`veilio team unlock\` again.\n`
+    )
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
+    expect(readFileSync(join(home, '.veilio', 'key-pins.json'), 'utf8')).toBe('not json')
+  })
+
   it('a version below the newest that was not stored blocks nothing', () => {
     writeTeamUnlock(
       {
@@ -770,9 +930,27 @@ describe('team trust (spec 080 item 7a)', () => {
     const { code, err } = await run(['team', 'trust', 'Zespół', fp])
 
     expect(code).toBe(EXIT_ERROR)
-    expect(err).toContain('key-pins.json is damaged, so the key was not confirmed.')
+    expect(err).toBe(
+      `veilio: ${join(home, '.veilio', 'key-pins.json')} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.\n`
+    )
     expect(readFileSync(join(home, '.veilio', 'key-pins.json'), 'utf8')).toBe('not json')
     expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
+  })
+
+  it('a damaged pins file stops the refetch path the same way', async () => {
+    signIn()
+    const { bodies, granterPublic } = await realGrant()
+    serve(bodies)
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    writeFileSync(join(home, '.veilio', 'key-pins.json'), 'not json')
+
+    const { code, err } = await run(['team', 'trust', 'Zespół', await fingerprint(granterPublic)])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toBe(
+      `veilio: ${join(home, '.veilio', 'key-pins.json')} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.\n`
+    )
+    expect(existsSync(teamUnlockPath(home))).toBe(false)
   })
 
   it('takes the fingerprint in any case, with spaces for dashes, and the team by its id', async () => {

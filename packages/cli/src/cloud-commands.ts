@@ -69,7 +69,15 @@ import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
 import { fingerprint, sameFingerprint } from './client/fingerprint.js'
 import { DELETED_GRANTER, granterIdentity, judgeWrap, wrapFrom } from './client/wrap-judge.js'
-import { confirmPin, confirmedKeys, pinOf, readPins } from './key-pins.js'
+import {
+  KeyPinsDamaged,
+  blockedMark,
+  confirmPin,
+  confirmedKeys,
+  pinOf,
+  readPins,
+  setBlockedMark,
+} from './key-pins.js'
 import {
   formatProjectsList,
   listTeamProjects,
@@ -751,7 +759,12 @@ export async function runRulesPull(io: Io): Promise<number> {
  * is present to type the passphrase. See `team-unlock.ts` for what is stored
  * and why it is the team key rather than the vault key.
  */
-export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Promise<number> {
+export async function runTeamUnlock(
+  io: Io,
+  days?: number,
+  mapPath?: string,
+  forgetRefused = false
+): Promise<number> {
   const credential = readCredential(io.home)
   if (!credential) {
     io.stderr('veilio: not signed in. Run `veilio login` first.\n')
@@ -845,6 +858,23 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
     }
     const teamName = roster.name ?? printable(teamId)
     const pins = readPins(credential, io.home)
+    // The highest version refused before (spec 080 review): kept beside the
+    // pins, so a later answer leaving it out, a logout or `team lock` does
+    // not lift it. `--forget-refused` is the way out when the team really
+    // removed it. Unknown, nothing is stored.
+    const pinsDamaged = (err: unknown): number => {
+      if (!(err instanceof KeyPinsDamaged)) throw err
+      io.stderr(
+        `veilio: ${err.path} is damaged, so no team key was stored. Move it aside and run \`veilio team unlock\` again.\n`
+      )
+      return EXIT_ERROR
+    }
+    let mark: number | undefined
+    try {
+      mark = forgetRefused ? undefined : blockedMark(credential, teamId, io.home)
+    } catch (err) {
+      return pinsDamaged(err)
+    }
 
     const keys: StoredTeamKey[] = []
     let refusedAny = false
@@ -926,6 +956,23 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
       }
     }
 
+    // Raised by what was refused now, kept from before, and lifted only by a
+    // version at least as new stored writable.
+    let high = notStored === undefined ? mark : Math.max(mark ?? notStored, notStored)
+    if (high !== undefined && keys.some((k) => k.writable && k.version >= high!)) high = undefined
+    try {
+      if (high !== mark || forgetRefused) setBlockedMark(credential, teamId, high ?? null, io.home)
+    } catch (err) {
+      return pinsDamaged(err)
+    }
+    const blockedVersion =
+      high !== undefined && high > Math.max(...keys.map((k) => k.version)) ? high : undefined
+    if (blockedVersion !== undefined && notStored !== blockedVersion)
+      io.stdout(
+        `Team "${teamName}": key version ${blockedVersion} was offered to this account before and not stored, so nothing is written under an older key. ` +
+          'If your team removed that version, run: veilio team unlock --forget-refused\n'
+      )
+
     // Refused, not unopenable: the lines above said what to do instead.
     if (keys.length === 0 && refusedAny) return EXIT_ERROR
     if (keys.length === 0) {
@@ -945,9 +992,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
         account: credential.account,
         teamId,
         ...(roster.name ? { teamName: roster.name } : {}),
-        ...(notStored !== undefined && notStored > Math.max(...keys.map((k) => k.version))
-          ? { blockedVersion: notStored }
-          : {}),
+        ...(blockedVersion !== undefined ? { blockedVersion } : {}),
         expiresAt,
         keys,
       },
@@ -1098,7 +1143,8 @@ export async function runTeamTrust(
       )
       return EXIT_ERROR
     }
-    confirmPin(credential, offered.identity, offered.publicKey, io.home)
+    if (!confirmed(() => confirmPin(credential, offered.identity, offered.publicKey, io.home), io))
+      return EXIT_ERROR
     // The unlock judges every wrap again with the new pin and stores the key.
     const code = await runTeamUnlock(io)
     const after = readTeamUnlock(credential, io.home)
@@ -1107,7 +1153,8 @@ export async function runTeamTrust(
   }
 
   const identity = granterIdentity(match.publicKey, match.id)
-  confirmPin(credential, identity, match.publicKey, io.home)
+  if (!confirmed(() => confirmPin(credential, identity, match.publicKey, io.home), io))
+    return EXIT_ERROR
   const accepted = confirmedKeys(pinOf(readPins(credential, io.home), identity))
   // Re-judged: what this granter made with a key now confirmed may be written
   // under. Nothing becomes unwritable - a confirmation keeps the earlier keys.
@@ -1123,6 +1170,20 @@ export async function runTeamTrust(
   writeTeamUnlock(updated, io.home)
   await printConfirmed(updated, match.publicKey, io, true)
   return EXIT_OK
+}
+
+/** Run a pin write; a damaged key-pins.json is said, never thrown. */
+function confirmed(write: () => void, io: Io): boolean {
+  try {
+    write()
+    return true
+  } catch (err) {
+    if (!(err instanceof KeyPinsDamaged)) throw err
+    io.stderr(
+      `veilio: ${err.path} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.\n`
+    )
+    return false
+  }
 }
 
 /** Row 6 for each stored key made with `publicKey` that may now be written

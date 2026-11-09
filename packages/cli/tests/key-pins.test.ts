@@ -11,7 +11,16 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { confirmPin, confirmedKeys, keyPinsPath, pinOf, readPins } from '../src/key-pins.js'
+import {
+  KeyPinsDamaged,
+  blockedMark,
+  confirmPin,
+  confirmedKeys,
+  keyPinsPath,
+  pinOf,
+  readPins,
+  setBlockedMark,
+} from '../src/key-pins.js'
 
 // Spec 080 item 7a: the teammate keys this member confirmed by fingerprint, on
 // this device only (the web app's R-011: pins are never sent to Veilio).
@@ -107,9 +116,7 @@ describe('key pins', () => {
     mkdirSync(dirname(keyPinsPath(home)), { recursive: true })
     writeFileSync(keyPinsPath(home), text)
     expect(readPins(A, home)).toEqual({})
-    expect(() => confirmPin(A, 'u2', 'K1', home, NOW)).toThrow(
-      `${keyPinsPath(home)} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.`
-    )
+    expect(() => confirmPin(A, 'u2', 'K1', home, NOW)).toThrow(KeyPinsDamaged)
     expect(readFileSync(keyPinsPath(home), 'utf8')).toBe(text)
   })
 
@@ -142,6 +149,46 @@ describe('key pins', () => {
         [id],
         expect.objectContaining({ current: 'K2' })
       )
+    }
+  )
+
+  it('keeps a blocked team version per instance, account and team, and clears it', () => {
+    expect(blockedMark(A, 'team-1', home)).toBeUndefined()
+    setBlockedMark(A, 'team-1', 3, home)
+    setBlockedMark(A, '__proto__', 5, home)
+    expect(blockedMark(A, 'team-1', home)).toBe(3)
+    expect(blockedMark(A, '__proto__', home)).toBe(5)
+    expect(blockedMark(A, 'team-2', home)).toBeUndefined()
+    expect(blockedMark(B, 'team-1', home)).toBeUndefined()
+    expect(blockedMark(OTHER_INSTANCE, 'team-1', home)).toBeUndefined()
+    // Pins and marks live side by side.
+    confirmPin(A, 'u2', 'K1', home, NOW)
+    expect(blockedMark(A, 'team-1', home)).toBe(3)
+    setBlockedMark(A, 'team-1', null, home)
+    expect(blockedMark(A, 'team-1', home)).toBeUndefined()
+    expect(readPins(A, home).u2?.current).toBe('K1')
+    expect(statSync(keyPinsPath(home)).mode & 0o777).toBe(0o600)
+    expect(readdirSync(dirname(keyPinsPath(home)))).toEqual(['key-pins.json'])
+  })
+
+  it.each([
+    ['not JSON', 'not json'],
+    [
+      'a mark that is not a number',
+      JSON.stringify({ v: 1, scopes: [{ ...A, pins: {}, blocked: { 'team-1': 'x' } }] }),
+    ],
+    [
+      'marks that are not a record',
+      JSON.stringify({ v: 1, scopes: [{ ...A, pins: {}, blocked: [] }] }),
+    ],
+  ])(
+    'a damaged file (%s): the mark cannot be known or written, and the file is kept',
+    (_, text) => {
+      mkdirSync(dirname(keyPinsPath(home)), { recursive: true })
+      writeFileSync(keyPinsPath(home), text)
+      expect(() => blockedMark(A, 'team-1', home)).toThrow(KeyPinsDamaged)
+      expect(() => setBlockedMark(A, 'team-1', 2, home)).toThrow(KeyPinsDamaged)
+      expect(readFileSync(keyPinsPath(home), 'utf8')).toBe(text)
     }
   )
 

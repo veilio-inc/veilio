@@ -36,9 +36,28 @@ interface Binding {
   account: string
 }
 
+interface Scope extends Binding {
+  pins: KeyPins
+  /**
+   * Per team id: the highest team-key version Cloud offered this account that
+   * `team unlock` did not store (spec 080 review). A high-water mark: kept
+   * here, beside the pins, so it outlives logout and `team lock`, and a later
+   * answer that leaves the version out cannot lower it.
+   */
+  blocked?: Record<string, number>
+}
+
 interface PinsFile {
   v: 1
-  scopes: (Binding & { pins: KeyPins })[]
+  scopes: Scope[]
+}
+
+/** key-pins.json exists and is not one this CLI can read: never overwritten,
+ *  since confirmations a person made are in there. */
+export class KeyPinsDamaged extends Error {
+  constructor(readonly path: string) {
+    super(`${path} is damaged`)
+  }
 }
 
 export function keyPinsPath(home: string = homedir()): string {
@@ -79,9 +98,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 /** This instance and account's pins. A damaged entry is left out. */
 export function readPins(binding: Binding, home: string = homedir()): KeyPins {
-  const scope = (readFile(home)?.scopes ?? []).find(
-    (s) => s?.instance === binding.instance && s?.account === binding.account
-  )
+  const file = readFile(home)
+  const scope = file ? findScope(file, binding) : undefined
   // No prototype: a granter id is the server's word, and `__proto__` or
   // `constructor` must be a key like any other, never Object's own.
   const pins: KeyPins = Object.create(null)
@@ -107,25 +125,71 @@ export function confirmPin(
   home: string = homedir(),
   now: Date = new Date()
 ): void {
+  update(binding, home, (scope) => {
+    const held = pinOf(scope.pins, identity)
+    const before = isPin(held) ? held : undefined
+    const history = confirmedKeys(before).filter((k) => k !== publicKey)
+    scope.pins[identity] = { current: publicKey, history, confirmedAt: now.toISOString() }
+  })
+}
+
+/** This account's blocked version for `teamId`, or undefined. Throws
+ *  `KeyPinsDamaged` when it cannot be known: the caller then writes nothing. */
+export function blockedMark(
+  binding: Binding,
+  teamId: string,
+  home: string = homedir()
+): number | undefined {
   const file = readFile(home)
-  let scope = file?.scopes.find(
-    (s) => s?.instance === binding.instance && s?.account === binding.account
+  if (!file) throw new KeyPinsDamaged(keyPinsPath(home))
+  const scope = findScope(file, binding)
+  if (!scope || scope.blocked === undefined) return undefined
+  if (!isRecord(scope.blocked)) throw new KeyPinsDamaged(keyPinsPath(home))
+  if (!Object.hasOwn(scope.blocked, teamId)) return undefined
+  const mark = scope.blocked[teamId]
+  if (typeof mark !== 'number') throw new KeyPinsDamaged(keyPinsPath(home))
+  return mark
+}
+
+/** Set (or, with null, clear) the blocked version for `teamId`. */
+export function setBlockedMark(
+  binding: Binding,
+  teamId: string,
+  mark: number | null,
+  home: string = homedir()
+): void {
+  update(binding, home, (scope) => {
+    if (mark === null) delete scope.blocked![teamId]
+    else scope.blocked![teamId] = mark
+  })
+}
+
+function findScope(file: PinsFile, binding: Binding): Scope | undefined {
+  return file.scopes.find((s) => s?.instance === binding.instance && s?.account === binding.account)
+}
+
+/** Read, change this account's scope, write back atomically at 0600. A damaged
+ *  file, or a damaged scope of this account, is refused and left as it is. */
+function update(binding: Binding, home: string, change: (scope: Scope) => void): void {
+  const file = readFile(home)
+  let scope = file ? findScope(file, binding) : undefined
+  if (
+    !file ||
+    (scope && !isRecord(scope.pins)) ||
+    (scope?.blocked !== undefined &&
+      !(
+        isRecord(scope.blocked) && Object.values(scope.blocked).every((m) => typeof m === 'number')
+      ))
   )
-  // Never overwritten: confirmations a person made are in there, and a file
-  // this CLI cannot read is for that person to look at, not to replace.
-  if (!file || (scope && !isRecord(scope.pins)))
-    throw new Error(
-      `${keyPinsPath(home)} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.`
-    )
+    throw new KeyPinsDamaged(keyPinsPath(home))
   if (!scope) {
     scope = { instance: binding.instance, account: binding.account, pins: {} }
     file.scopes.push(scope)
   }
+  // No prototype: ids are the server's words (`__proto__` is a key here).
   scope.pins = Object.assign(Object.create(null) as KeyPins, scope.pins)
-  const held = pinOf(scope.pins, identity)
-  const before = isPin(held) ? held : undefined
-  const history = confirmedKeys(before).filter((k) => k !== publicKey)
-  scope.pins[identity] = { current: publicKey, history, confirmedAt: now.toISOString() }
+  scope.blocked = Object.assign(Object.create(null) as Record<string, number>, scope.blocked)
+  change(scope)
 
   const path = keyPinsPath(home)
   mkdirSync(dirname(path), { recursive: true })

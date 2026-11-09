@@ -128,7 +128,8 @@ veilio logout                 # revoke the session and remove local credentials
   opens, but team maps are saved (by `maps push --team`, `maps update` and the MCP
   server's map tools) only under the newest version of the team key that Cloud
   holds for you - if a newer version was refused or did not open, nothing is
-  written under an older one - and only when you made it, or confirmed the
+  written under an older one, until that version is stored or, if your team
+  removed it, `veilio team unlock --forget-refused` - and only when you made it, or confirmed the
   teammate who granted it and they are still an active member. For a teammate not yet confirmed it
   prints their key's fingerprint: compare it with the one they see on their
   dashboard under "Your key fingerprint" (or from `veilio keys fingerprint`),
