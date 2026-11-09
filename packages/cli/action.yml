@@ -50,7 +50,8 @@ runs:
         PATHS: ${{ inputs.paths }}
       run: |
         set -euo pipefail
-        if [ -n "$PATHS" ]; then
+        # Blank or only whitespace is no paths: the diff is scanned (review).
+        if [ -n "${PATHS//[[:space:]]/}" ]; then
           echo "mode=paths" >> "$GITHUB_OUTPUT"
           exit 0
         fi

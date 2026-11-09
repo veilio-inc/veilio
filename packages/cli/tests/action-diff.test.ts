@@ -203,3 +203,11 @@ describe('globbed paths are passed as paths (R2-21)', () => {
     expect(action('', '', { paths: '* .env' }).status).toBe(1)
   })
 })
+
+describe('a blank paths input scans the diff (R2-21 review)', () => {
+  it('whitespace only is no paths', () => {
+    const base = commit({ 'README.md': '# notes\n' })
+    const head = commit({ '.env': ENV })
+    expect(action(base, head, { paths: '   ' }).status).toBe(1)
+  })
+})
