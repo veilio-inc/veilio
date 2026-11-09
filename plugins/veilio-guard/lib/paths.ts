@@ -26,6 +26,7 @@ import {
   type List,
   type Node,
   type Part,
+  type Joint,
   type Pipeline,
   type Redirect,
   type Simple,
@@ -365,6 +366,8 @@ class Walker {
   private physical = false
   /** The directory the command just before made with `python -m venv`. */
   private venv: string | null = null
+  /** The operator before the item being walked, for its first command. */
+  private joint: Joint | null = null
   /** Every move of the shell the walk read: a cd that landed, or a variable
    *  a cd reads set for the rest of the call; with the subshell depth it
    *  was read at. The one model of "moves the shell" for loops (security
@@ -402,6 +405,8 @@ class Walker {
   async list(l: List, start: DirState): Promise<Outcome> {
     let out: Outcome = { ok: start, fail: null }
     for (const { node, joinedBy } of l.items) {
+      // The operator before this item, for the first command in it (venv).
+      this.joint = joinedBy
       let input: DirState | null
       if (joinedBy === '&&') input = out.ok
       else if (joinedBy === '||') input = out.fail
@@ -579,6 +584,8 @@ class Walker {
     // `python3 -m venv DIR` then, as the very next command, `. DIR/bin/activate`.
     const venv = this.venv
     this.venv = null
+    const joint = this.joint
+    this.joint = null
     // T029 reviews: what moves the shell from text, an option, or a name.
     const run = programOf(n.words)
     const name = run?.word.literal ?? null
@@ -597,7 +604,8 @@ class Walker {
         file === null ||
         /^\/dev\/|^\/proc\/(?:self|[^/]+\/fd)\//.test(file) ||
         n.redirects.some((r) => /^<(?:<<?|<-|>|&)?$/.test(r.op)) ||
-        (this.wrote && !(venv !== null && file === normalisePath(`${venv}/bin/activate`)))
+        (this.wrote &&
+          !(venv !== null && joint === '&&' && file === normalisePath(`${venv}/bin/activate`)))
       )
         N1(this.current, 'code run from text')
     }
@@ -705,6 +713,8 @@ class Walker {
     // running a file the call did not write is the script's own (N6/P7).
     if (
       /^python[\d.]*$/.test(base ?? '') &&
+      !wroteBefore &&
+      n.redirects.length === 0 &&
       lits.length === 3 &&
       lits[0] === '-m' &&
       lits[1] === 'venv' &&
@@ -999,16 +1009,21 @@ const OWN_FILE_OPTIONS: Readonly<Record<string, Readonly<Record<string, boolean>
   sh: { '-e': false, '-u': false, '-x': false, '-o': true, '+o': true, '-O': true, '+O': true },
   pwsh: { '-NoProfile': false, '-NonInteractive': false, '-File': false },
 }
-const ownFileTable = (base: string) =>
-  OWN_FILE_OPTIONS[
-    /^python/.test(base)
-      ? 'python'
-      : /^(?:bash|sh|zsh|dash|ksh)$/.test(base)
-        ? 'sh'
-        : /^(?:pwsh|powershell)$/.test(base)
-          ? 'pwsh'
-          : base
-  ] ?? {}
+const ownFileKey = (base: string) =>
+  /^python/.test(base)
+    ? 'python'
+    : /^(?:bash|sh|zsh|dash|ksh)$/.test(base)
+      ? 'sh'
+      : /^(?:pwsh|powershell)$/.test(base)
+        ? 'pwsh'
+        : base
+const ownFileTable = (base: string) => OWN_FILE_OPTIONS[ownFileKey(base)] ?? {}
+/** Options whose value may be attached, where each parser reads it so. */
+const ATTACHED: Readonly<Record<string, readonly string[]>> = {
+  python: ['-W', '-X'],
+  ruby: ['-I'],
+  perl: ['-I'],
+}
 
 function runsOwnFile(
   base: string,
@@ -1024,17 +1039,24 @@ function runsOwnFile(
     lits.some((l) => l === null || /^-[ce]$|^-m$|^-$|^--eval|^-Command$|^-EncodedCommand$/i.test(l))
   )
     return false
+  const shell = /^(?:bash|sh|zsh|dash|ksh)$/.test(base)
   for (let k = 0; k < lits.length; k++) {
     const l = lits[k]!
     if (l === '--') return /^[\w./@+-]+$/.test(lits[k + 1] ?? '')
     if (/^[-+]/.test(l)) {
-      // `-Idir`: the value attached.
-      const attached = /^(-[A-Za-z])(.+)$/.exec(l)
       if (Object.hasOwn(table, l)) {
         if (table[l]) k++
         continue
       }
-      if (attached && table[attached[1]!] === true) continue
+      // A value attached where the parser reads one: python -W…/-X…, ruby
+      // and perl -I…; a shell's cluster letter by letter, each a no-value
+      // option of the table (`-ec`, `-lc`: refused).
+      const attached = /^(-[A-Za-z])(.+)$/.exec(l)
+      if (attached && (ATTACHED[ownFileKey(base)] ?? []).includes(attached[1]!)) continue
+      if (shell && /^[-+][A-Za-z]{2,}$/.test(l)) {
+        if ([...l.slice(1)].every((c) => table[`${l[0]}${c}`] === false)) continue
+        return false
+      }
       return false
     }
     return /^[\w./@+-]+$/.test(l)

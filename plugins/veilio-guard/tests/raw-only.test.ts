@@ -756,6 +756,13 @@ const REVIEWED: [string, string | undefined][] = [
   ['python3 -Q tool.py; cd src', N1('python3 -Q tool.py', 'a cd after code this command ran')],
   ['python3 tool.py -c x; cd src', N1('python3 tool.py -c x', 'a cd after code this command ran')],
   ['bash -O extglob s.sh; cd src', undefined],
+  // a value attached only where the parser reads one; a shell cluster per letter
+  ["bash -xc 'true'; cd src", N1("bash -xc 'true'", 'a cd after code this command ran')],
+  ['sh -ec true; cd src', N1('sh -ec true', 'a cd after code this command ran')],
+  ['bash -lc true; cd src', N1('bash -lc true', 'a cd after code this command ran')],
+  ['bash -eu s.sh; cd src', undefined],
+  ['python3 -Wignore tool.py; cd src', undefined],
+  ['python3 -Ix tool.py; cd src', N1('python3 -Ix tool.py', 'a cd after code this command ran')],
   ['bash --rcfile x s.sh; cd src', N1('bash --rcfile x s.sh', 'a cd after code this command ran')],
   ['ruby -I lib test/x.rb; cd src', undefined],
   // after any command but a plain reader, a file run is code the call gave
@@ -788,7 +795,12 @@ const REVIEWED: [string, string | undefined][] = [
   ['base64 -d -o g <<< eA==; . ./g', N1('. ./g', 'code run from text')],
   // the everyday venv line, exactly: its activate script, as the next command
   ['python3 -m venv .venv && source .venv/bin/activate', undefined],
-  ['python -m venv env; . env/bin/activate', undefined],
+  // joined by && only, with nothing written before it
+  ['python -m venv env; . env/bin/activate', N1('. env/bin/activate', 'code run from text')],
+  [
+    'echo x > a; python3 -m venv .venv && source .venv/bin/activate',
+    N1('source .venv/bin/activate', 'code run from text'),
+  ],
   [
     'python3 -m venv .venv && source other/bin/activate',
     N1('source other/bin/activate', 'code run from text'),
