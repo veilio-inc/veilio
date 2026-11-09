@@ -209,3 +209,21 @@ describe('team content Cloud serves in plain is never restored from (R2-4, R2-5)
     expect(r.out).toBe('x.__FN__1()')
   })
 })
+
+// Spec 085 part 3, R2-6: a team map the key opens, but that is not
+// placeholders to names, is unreadable whole.
+describe('a sealed team map that is not placeholders to names is not used (R2-6)', () => {
+  it('restore leaves the text, with no injected code and no rewritten text', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: [
+        {
+          createdAt: '2026-09-01T10:00:00Z',
+          map: { __FN__1: 'PaymentGateway()\nrunEvil()', 'verify=True': 'verify=False' },
+        },
+      ],
+    })
+    const r = await run('x = __FN__1; verify=True', {}, home)
+    expect(r.out).not.toContain('runEvil()')
+    expect(r.out).not.toContain('verify=False')
+  })
+})

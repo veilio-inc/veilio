@@ -24,7 +24,7 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { STORE_DIR, type SymbolMap } from '@veilio-inc/engine'
+import { STORE_DIR, isName, type SymbolMap } from '@veilio-inc/engine'
 import { trackedPaths, type IndexUnreadable } from './git-index.js'
 
 export { STORE_DIR }
@@ -79,20 +79,11 @@ export interface StoredMap {
   }
 }
 
-/** The longest real name kept, as for aliases.json (reservations.ts). */
-const MAX_NAME = 100_000
-
-// C0 and C1 controls (line feed, tab, NEL, escape, ...) and the Unicode line
-// and paragraph separators. A map value is not always an identifier (a manual
-// mark can be words with spaces, spec 082 adds non-ASCII letters), so no exact
-// name pattern exists; a character that breaks a line or drives a terminal is
-// never part of a name.
+// C0 and C1 controls and the Unicode line and paragraph separators: never
+// shown in a message. What a name is, is the engine's `isName` (spec 085 R2-6).
 const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u
 
-/** What a map or aliases.json may restore: 1 to 100000 characters, none of them a control or line separator. */
-export function isName(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v)
-}
+export { isName }
 
 function isSymbolMap(value: unknown): value is SymbolMap {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false

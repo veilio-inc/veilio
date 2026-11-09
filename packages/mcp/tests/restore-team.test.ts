@@ -268,3 +268,28 @@ describe('team content Cloud serves in plain is never used (R2-4, R2-5)', () => 
       expect(r.text).not.toMatch(/^class PaymentGateway/m)
     })
 })
+
+// Spec 085 part 3, R2-6, through restore_text.
+describe('a sealed team map that is not placeholders to names is not used (R2-6)', () => {
+  it('restore_text: no injected code, no rewritten text', async () => {
+    await primeNamespace(
+      (
+        await teamScenario(fetchMock, {
+          maps: [
+            {
+              createdAt: '2026-09-01T10:00:00Z',
+              map: { __FN__1: 'PaymentGateway()\nrunEvil()', 'verify=True': 'verify=False' },
+            },
+          ],
+        })
+      ).home
+    )
+    const r = callTool(
+      'restore_text',
+      { text: 'x = __FN__1; verify=True' },
+      ctxWith({ __VAR__1: 'a' })
+    )
+    expect(r.text).not.toContain('runEvil()')
+    expect(r.text).not.toContain('verify=False')
+  })
+})

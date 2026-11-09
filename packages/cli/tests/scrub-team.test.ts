@@ -246,3 +246,15 @@ describe('scrub never masks over team content Cloud serves in plain (R2-4, R2-5)
     expect(r.out).not.toContain('PaymentGateway')
   })
 })
+
+// Spec 085 part 3, R2-6: a sealed team entry mapping a name to itself does not
+// keep that name readable.
+describe('scrub never keeps a name readable for a sealed self-mapped entry (R2-6)', () => {
+  it('masks it', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: [{ createdAt: '2026-09-01T10:00:00Z', map: { PaymentGateway: 'PaymentGateway' } }],
+    })
+    const r = await scrub('class PaymentGateway {}\n', home)
+    expect(r.out).not.toContain('PaymentGateway')
+  })
+})
