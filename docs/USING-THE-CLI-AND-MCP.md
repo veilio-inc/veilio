@@ -132,8 +132,12 @@ veilio logout                 # revoke the session and remove local credentials
   dashboard under "Your key fingerprint" (or from `veilio keys fingerprint`),
   then run `veilio team trust <team> <fingerprint>`. Until then a write is
   refused with `Not saved: the newest key for team "…" is not confirmed on this
-  device.` and nothing is sent. A key that changed for a confirmed teammate, or
-  one labelled as yours that is not, is not stored at all. After upgrading, run
+  device.` and nothing is sent; so is a `scrub --team` that would reserve numbers
+  for a custom rule's placeholder. A key granted by someone no longer an active
+  member reads and never writes. A key that changed for a confirmed teammate, or
+  one labelled as yours that is not, is not stored at all; to accept a changed
+  key, compare its fingerprint and run `veilio team trust` with it, which asks
+  Cloud for the team's keys again and for your vault passphrase. After upgrading, run
   `veilio team unlock` once; a teammate's grant then needs one `team trust` per
   device.
 - **Custom rules** (whitelist and replace, set in the web app) are applied by

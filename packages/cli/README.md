@@ -91,10 +91,19 @@ has seen confirmed:
   fingerprint", or from `veilio keys fingerprint` - and if it matches, run
   `veilio team trust <team> <fingerprint>` (case, spaces and dashes are
   ignored). It needs no network;
+- a key granted by someone who is no longer an active member of the team (or a
+  deleted account) is kept read-only, confirmed or not, and `team unlock` says so.
+  `team unlock` writes nothing if Cloud does not list the team's members;
 - a confirmed teammate's key that changed, or a key labelled as your own that is
-  not, is not stored at all, and `team unlock` says so.
+  not, is not stored at all, and `team unlock` says so. To accept a changed key,
+  compare the new fingerprint with them and run `veilio team trust` with it: it
+  asks Cloud for the team's keys again, and for your vault passphrase, and
+  stores the key it confirmed.
 
-While the newest team key is not confirmed, a write is refused with nothing sent:
+While the newest team key is not confirmed, a write is refused with nothing sent,
+and so is a `scrub --team` that would reserve numbers for a custom rule's
+placeholder - a rule's name goes to the server only as a hash under a confirmed
+key:
 
 ```text
 veilio: Not saved: the newest key for team "Payments" is not confirmed on this device. Run `veilio team unlock` to see who granted it, then `veilio team trust`.
