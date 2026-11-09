@@ -12,9 +12,11 @@ export declare function isRawOnly(path: string, extra: readonly string[]): boole
 /**
  * A project's rawOnly pattern read the way a path is (spec 085 R2-15):
  * backslashes as `/`, a leading `/` or `./` dropped (patterns are relative to
- * the project root), a trailing `/` as `/**` (the folder's files). Null for a
- * pattern that can never match a file in the project - one that climbs out
- * (`..`), names a drive (`C:`), or is empty - which the caller reports.
+ * the project root), a trailing `/` as `/**` (the folder's files), `.` and
+ * empty parts dropped, `..` resolved. `**` and `/**` stay match-all. Null for a pattern
+ * that can never match a file in the project - one that climbs above the
+ * root, names a drive (`C:`) or a home (`~`), or names nothing (`/`, `./`) - which the
+ * caller reports (#61) and still applies as written, as before.
  */
 export declare function normaliseRawOnlyPattern(pattern: string): string | null;
 /** The project's own raw-only patterns in `.veilio/guard.json` (`rawOnly`):
