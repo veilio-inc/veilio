@@ -160,6 +160,8 @@ async function scenario(
           {
             version: 1,
             key: toBase64(wrongKey ? crypto.getRandomValues(new Uint8Array(32)) : teamKeyRaw),
+            // Read-only: reading the namespace never needs a key confirmed for writing.
+            writable: false,
           },
         ],
       },

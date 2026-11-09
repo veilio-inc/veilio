@@ -81,7 +81,9 @@ describe('a team with no key yet', () => {
     )
     // And it is the key that was unlocked here.
     const unlock = readTeamUnlock({ instance: INSTANCE, account: ME }, home)!
-    expect(unlock.keys).toEqual([{ version: 1, key: await exportTeamKey(teamKey) }])
+    expect(unlock.keys).toEqual([
+      { version: 1, key: await exportTeamKey(teamKey), writable: false },
+    ])
     expect(r.out).toMatch(/set up the team key/i)
     // Nothing about teammates: there are none to speak of.
     expect(r.out + r.err).not.toMatch(/teammate/i)

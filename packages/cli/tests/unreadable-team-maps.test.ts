@@ -156,7 +156,14 @@ describe('team keys unlocked for another team (security)', () => {
         account: 'me@example.test',
         teamId: 'team-previous',
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-        keys: [{ version: 1, key: toBase64(new Uint8Array(32).fill(8)) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(new Uint8Array(32).fill(8)),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )
@@ -183,7 +190,14 @@ describe('team keys unlocked for another team (security)', () => {
         teamId: 'team-previous',
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         // The same bytes as this team's key: only the team id tells them apart.
-        keys: [{ version: 1, key: toBase64(new Uint8Array(32).fill(7)) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(new Uint8Array(32).fill(7)),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )

@@ -202,7 +202,7 @@ describe('team unlock', () => {
     // real three-step unwrap rather than copied from anywhere.
     const stored = readTeamUnlock({ instance: INSTANCE, account: ACCOUNT }, home)
     expect(stored?.teamId).toBe('team-1')
-    expect(stored?.keys).toEqual([{ version: 1, key: toBase64(teamKeyRaw) }])
+    expect(stored?.keys).toEqual([{ version: 1, key: toBase64(teamKeyRaw), writable: false }])
   })
 
   it('writes nothing when the passphrase is wrong', async () => {
@@ -317,7 +317,14 @@ describe('team lock', () => {
         account: ACCOUNT,
         teamId: 'team-1',
         expiresAt: expiryFrom(new Date()),
-        keys: [{ version: 1, key: toBase64(new Uint8Array(32)) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(new Uint8Array(32)),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )
@@ -352,7 +359,14 @@ describe('logout takes the team keys with it', () => {
         account: ACCOUNT,
         teamId: 'team-1',
         expiresAt: expiryFrom(new Date()),
-        keys: [{ version: 1, key: toBase64(new Uint8Array(32)) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(new Uint8Array(32)),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )

@@ -47,6 +47,18 @@ export interface StoredTeamKey {
   version: number
   /** Raw AES-256 key, base64. */
   key: string
+  /**
+   * Who made the wrap it came from (spec 080 item 7a): the server's
+   * `wrapped_by` (null for a deleted or unnamed granter) and the wrap's
+   * granter key. Absent in a file an earlier CLI wrote.
+   */
+  granter?: { id: string | null; publicKey: string }
+  /**
+   * May a map be sealed under it: true only when `team unlock` or
+   * `team trust` judged its wrap `trusted`. Read as false without a granter,
+   * which is how a file from an earlier CLI migrates.
+   */
+  writable: boolean
 }
 
 export interface TeamUnlock {
@@ -57,6 +69,8 @@ export interface TeamUnlock {
   instance: string
   account: string
   teamId: string
+  /** For the messages printed where there is no network to ask. */
+  teamName?: string
   /** ISO-8601. Past this, reads return null and the file is ignored. */
   expiresAt: string
   keys: StoredTeamKey[]
@@ -116,7 +130,17 @@ export function readTeamUnlock(
   const expiresAt = Date.parse(parsed.expiresAt)
   if (Number.isNaN(expiresAt) || expiresAt <= now.getTime()) return null
 
-  return parsed
+  return { ...parsed, keys: parsed.keys.map(withWritable) }
+}
+
+/** Writable only when judged so, with the granter it was judged by. */
+function withWritable(k: StoredTeamKey): StoredTeamKey {
+  const g = k.granter as unknown
+  const granted =
+    typeof g === 'object' &&
+    g !== null &&
+    typeof (g as { publicKey?: unknown }).publicKey === 'string'
+  return { ...k, writable: granted && k.writable === true }
 }
 
 /** Write the unlocked keys, readable only by this user. */

@@ -468,7 +468,14 @@ describe('maps pull - a team map', () => {
         account: 'a@b.test',
         teamId: 'team-1',
         expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
-        keys: [{ version: 1, key: toBase64(raw) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(raw),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )

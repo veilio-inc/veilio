@@ -98,7 +98,12 @@ function unlockTeam(teamId: string, keys: { version: number; raw: Uint8Array }[]
       ...OWNER,
       teamId,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      keys: keys.map((k) => ({ version: k.version, key: toBase64(k.raw) })),
+      keys: keys.map((k) => ({
+        version: k.version,
+        key: toBase64(k.raw),
+        granter: { id: 'u-granter', publicKey: 'GRANTER' },
+        writable: true,
+      })),
     },
     home
   )

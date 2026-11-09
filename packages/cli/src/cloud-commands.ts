@@ -824,7 +824,7 @@ export async function runTeamUnlock(io: Io, days?: number, mapPath?: string): Pr
           version: wrap.version,
           myPublicKey,
         })
-        keys.push({ version: wrap.version, key: await exportTeamKey(teamKey) })
+        keys.push({ version: wrap.version, key: await exportTeamKey(teamKey), writable: false })
       } catch {
         // A wrap this account cannot open — from a granter whose key has since
         // changed, most likely. Skipped rather than fatal: another version may

@@ -66,7 +66,14 @@ function unlocked(version = 1): void {
       account: 'a@b.test',
       teamId: TEAM_ID,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      keys: [{ version, key: toBase64(TEAM_RAW) }],
+      keys: [
+        {
+          version,
+          key: toBase64(TEAM_RAW),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+      ],
     },
     home
   )
@@ -82,8 +89,18 @@ function unlockedBoth(): void {
       teamId: TEAM_ID,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       keys: [
-        { version: 1, key: toBase64(TEAM_RAW_OLD) },
-        { version: 2, key: toBase64(TEAM_RAW) },
+        {
+          version: 1,
+          key: toBase64(TEAM_RAW_OLD),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+        {
+          version: 2,
+          key: toBase64(TEAM_RAW),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
       ],
     },
     home

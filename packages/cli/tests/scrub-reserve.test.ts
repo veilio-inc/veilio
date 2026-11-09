@@ -46,7 +46,14 @@ beforeEach(() => {
       account: 'a@b.test',
       teamId: TEAM_ID,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      keys: [{ version: 1, key: toBase64(TEAM_RAW) }],
+      keys: [
+        {
+          version: 1,
+          key: toBase64(TEAM_RAW),
+          granter: { id: 'u-granter', publicKey: 'GRANTER' },
+          writable: true,
+        },
+      ],
     },
     home
   )

@@ -166,7 +166,14 @@ describe('the built MCP server, end to end', () => {
         account: ACCOUNT,
         teamId: 'team-1',
         expiresAt: expiryFrom(new Date()),
-        keys: [{ version: 1, key: toBase64(teamKeyRaw) }],
+        keys: [
+          {
+            version: 1,
+            key: toBase64(teamKeyRaw),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+        ],
       },
       home
     )

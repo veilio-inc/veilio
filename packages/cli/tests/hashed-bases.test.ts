@@ -152,8 +152,18 @@ describe('a replace rule base and the server', () => {
         teamId: TEAM_ID,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         keys: [
-          { version: 1, key: toBase64(TEAM_RAW) },
-          { version: 2, key: toBase64(OTHER_RAW) },
+          {
+            version: 1,
+            key: toBase64(TEAM_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
+          {
+            version: 2,
+            key: toBase64(OTHER_RAW),
+            granter: { id: 'u-granter', publicKey: 'GRANTER' },
+            writable: true,
+          },
         ],
       },
       home
