@@ -52,7 +52,7 @@ import {
 } from './credential.js'
 import { mergeRules, purgeRules, removeRules, rulesPath, writeRules } from './rules.js'
 import { openFetchedRules } from './rules-open.js'
-import { teamKeyBytes, teamKeyVersion } from './hashed-bases.js'
+import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
 import {
@@ -1387,6 +1387,7 @@ export async function teamNamespaceForScrub(
         const r = await reservePlaceholders(credential, teamId, requests, undefined, {
           keys: teamKeyBytes(credential, home, teamId),
           keyVersion: teamKeyVersion(credential, home, teamId),
+          unconfirmed: teamKeyUnconfirmed(credential, home, teamId),
           ...(found.reservations ? { reservations: found.reservations } : {}),
         })
         if (r.refused) throw new CloudError('forbidden', r.refused.detail)

@@ -37,7 +37,13 @@ import {
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
-import { servedAs, teamKeyBytes, teamKeyVersion, wireBase } from '../hashed-bases.js'
+import {
+  servedAs,
+  teamKeyBytes,
+  teamKeyUnconfirmed,
+  teamKeyVersion,
+  wireBase,
+} from '../hashed-bases.js'
 import {
   CloudError,
   createMap,
@@ -68,7 +74,7 @@ const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)(\d+)$/
 import { readCredential, type Credential } from '../credential.js'
 import { ensureBlocks, type BlocksOutcome } from './blocks.js'
 import { loadMap, loadRemote, saveMap } from '../store.js'
-import { readTeamUnlock } from '../team-unlock.js'
+import { readTeamUnlock, writeKeyOf } from '../team-unlock.js'
 import { describeMaps, resolveTeamNamespace, vouchNumbers } from '../team-namespace.js'
 import {
   importPersonalMapsKey,
@@ -309,7 +315,7 @@ async function teamKeys(credential: Credential, ctx: ClientContext): Promise<Out
     all,
     // Never an older writable version instead: a write belongs under the
     // newest key, and an older one may be one a removed member still holds.
-    newest: newestStored.writable ? { version: newestStored.version, key: newest } : null,
+    newest: writeKeyOf(unlock) ? { version: newestStored.version, key: newest } : null,
   })
 }
 
@@ -656,6 +662,7 @@ async function renumberUnreserved(
       const r = await reservePlaceholders(credential, found.teamId, asked, undefined, {
         keys,
         keyVersion: teamKeyVersion(credential, home, found.teamId),
+        unconfirmed: teamKeyUnconfirmed(credential, home, found.teamId),
         ...(found.reservations ? { reservations: found.reservations } : {}),
       })
       if (r.refused) return refuseNumbers(r.refused.detail)

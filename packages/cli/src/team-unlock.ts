@@ -141,6 +141,17 @@ export function readTeamUnlock(
   return { ...parsed, keys: parsed.keys.map(withWritable) }
 }
 
+/**
+ * The one rule for using a team key to write (spec 080 item 7a): the newest
+ * stored version, and only while it is writable. A team map is sealed under
+ * it, and a rule's name is hashed for the server only while it exists. Never
+ * an older writable version instead: a write belongs under the newest key.
+ */
+export function writeKeyOf(unlock: TeamUnlock): StoredTeamKey | null {
+  const newest = [...unlock.keys].sort((a, b) => b.version - a.version)[0]
+  return newest?.writable ? newest : null
+}
+
 /** Writable only when judged so, with the granter it was judged by. */
 function withWritable(k: StoredTeamKey): StoredTeamKey {
   const g = k.granter as unknown
