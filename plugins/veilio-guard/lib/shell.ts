@@ -440,3 +440,895 @@ export function outsideQuotes(command: string): string {
   }
   return out
 }
+
+// ── spec 086: one reader of a shell command (research R1, R3) ───────────────
+//
+// parseShell reads a command as bash and zsh do, into the tree of the spec's
+// data-model.md, for the cd rules (lib/paths.ts cdEffect, lib/guard.ts
+// DirState). The views above (shellWords, splitChain) keep their own bodies:
+// they return text the tree drops (comments, here-document bodies, a
+// redirection's spelling), so a view equal to them on every input would be
+// them again (research R1's fallback).
+
+/** A piece of a word. `lit` is text the program receives as written;
+ *  everything else the shell may expand. */
+export type Part =
+  | { kind: 'lit'; text: string; quoted: boolean }
+  | { kind: 'param'; name: string; op: string }
+  | { kind: 'subst'; list: List | null }
+  | { kind: 'arith'; text: string }
+  | { kind: 'glob'; text: string }
+  | { kind: 'brace'; text: string }
+  | { kind: 'tilde'; user: string }
+  | { kind: 'ansic'; text: string }
+/** `literal`: the text after quote removal when no part expands, else null.
+ *  `assign`: the word read as an assignment by a declaration builtin. */
+export type Word = { parts: Part[]; literal: string | null; raw: string; assign?: Assign }
+/** `name` null: a name the shell builds (`declare "${x}"=v`). */
+export type Assign = { name: string | null; op: '=' | '+='; value: Word | Word[] }
+export type Redirect = { fd: number | null; op: string; target: Word | null; body?: string }
+export type Simple = {
+  type: 'simple'
+  assigns: Assign[]
+  words: Word[]
+  redirects: Redirect[]
+  nested?: List
+}
+export type Node =
+  | Simple
+  | { type: 'subshell'; list: List; redirects: Redirect[] }
+  | { type: 'group'; list: List; redirects: Redirect[] }
+  | {
+      type: 'if'
+      branches: { cond: List; body: List }[]
+      else: List | null
+      redirects: Redirect[]
+    }
+  | {
+      type: 'loop'
+      kind: 'for' | 'select' | 'while' | 'until'
+      name: string | null
+      words: Word[] | null
+      cond: List | null
+      body: List
+      redirects: Redirect[]
+    }
+  | { type: 'case'; word: Word; arms: List[]; redirects: Redirect[] }
+  | { type: 'function'; name: string; body: Node }
+export type Pipeline = { stages: Node[]; negated: boolean; timed: boolean }
+export type Joint = '&&' | '||' | ';' | '&' | '\n'
+/** `joinedBy`: the operator between an item and the one before it. */
+export type List = { items: { node: Pipeline; joinedBy: Joint | null }[] }
+export type ParseResult =
+  { ok: true; list: List } | { ok: false; why: 'unbalanced' | 'depth' | 'unknown' }
+
+class Unreadable extends Error {
+  constructor(readonly why: 'unbalanced' | 'depth' | 'unknown') {
+    super(why)
+  }
+}
+
+/** Nested shells read (`bash -c`, `eval`, a here-document to a shell). */
+const MAX_DEPTH = 3
+/** Lists open at once: a bound on `$(` and `(` nesting, so a crafted command
+ *  cannot exhaust the stack. */
+const MAX_FRAMES = 200
+const BLANK = /[ \t\r]/
+// Where a run of plain word characters ends.
+const SPECIAL = /[ \t\r\n;&|()<>'"`\\$*?[{]/
+const KEYWORD =
+  /^(?:if|then|elif|else|fi|for|while|until|do|done|case|esac|function|select|time|!|\{|\}|\[\[)(?=[ \t\r\n;&|()<>]|$)/
+const SHELL_PROGRAM = /^(?:.*\/)?(?:bash|sh|zsh|dash|ksh)$/
+const SHELL_WRAPPERS = new Set([
+  'env',
+  'command',
+  'exec',
+  'builtin',
+  'nohup',
+  'nice',
+  'sudo',
+  'xargs',
+  'time',
+])
+const DECLARES = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'integer'])
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?$/
+const REDIRECT = /^(\d+)?(<<<|<<-|<<|<>|<&|>&|>>|>\||&>>|&>|<|>)/
+
+function makeWord(parts: Part[], raw: string): Word {
+  const literal = parts.every((p) => p.kind === 'lit')
+    ? parts.map((p) => (p as { text: string }).text).join('')
+    : null
+  return { parts, literal, raw }
+}
+
+/** An assignment's value: `~` at its start and after each unquoted `:` is a
+ *  tilde (bash and zsh expand both). */
+function tildes(w: Word): Word {
+  const parts: Part[] = []
+  w.parts.forEach((p, k) => {
+    if (p.kind !== 'lit' || p.quoted) return parts.push(p)
+    const pieces = p.text.split(/(?<=:)/)
+    pieces.forEach((piece, j) => {
+      const start = j > 0 || k === 0
+      const m = start ? /^~([A-Za-z0-9_.+-]*)/.exec(piece) : null
+      if (!m) return parts.push({ kind: 'lit', text: piece, quoted: false })
+      parts.push({ kind: 'tilde', user: m[1]! })
+      if (piece.length > m[0].length)
+        parts.push({ kind: 'lit', text: piece.slice(m[0].length), quoted: false })
+    })
+  })
+  return makeWord(parts, w.raw)
+}
+
+/** A declaration builtin's argument read as an assignment, by its text after
+ *  quote removal (`export H""OME=x` sets HOME), or a built name. */
+function declared(w: Word): Assign | undefined {
+  let name = ''
+  for (let k = 0; k < w.parts.length; k++) {
+    const p = w.parts[k]!
+    if (p.kind !== 'lit') {
+      // A name the shell builds before its `=`.
+      const rest = w.parts.slice(k + 1)
+      return rest.some((q) => q.kind === 'lit' && q.text.includes('='))
+        ? { name: null, op: '=', value: makeWord([], '') }
+        : undefined
+    }
+    const eq = p.text.indexOf('=')
+    if (eq === -1) {
+      name += p.text
+      continue
+    }
+    const plus = p.text[eq - 1] === '+'
+    name += p.text.slice(0, plus ? eq - 1 : eq)
+    if (!NAME.test(name)) return undefined
+    const after = p.text.slice(eq + 1)
+    const value = [...(after ? [{ ...p, text: after }] : []), ...w.parts.slice(k + 1)] as Part[]
+    return {
+      name: name.replace(/\[.*$/, ''),
+      op: plus ? '+=' : '=',
+      value: tildes(makeWord(value, w.raw)),
+    }
+  }
+  return undefined
+}
+
+class Reader {
+  private i = 0
+  private pending: { r: Redirect; delim: string; strip: boolean; quoted: boolean }[] = []
+  constructor(
+    private readonly s: string,
+    private readonly depth: number,
+    private readonly frames: { n: number }
+  ) {}
+
+  all(): List {
+    const l = this.list(new Set())
+    if (this.i < this.s.length)
+      throw new Unreadable(this.s[this.i] === ')' ? 'unbalanced' : 'unknown')
+    return l
+  }
+
+  // ── blanks, newlines, keywords ──
+
+  private blank(): void {
+    const s = this.s
+    for (;;) {
+      if (BLANK.test(s[this.i] ?? '')) this.i++
+      else if (s[this.i] === '\\' && s[this.i + 1] === '\n') this.i += 2
+      else if (s[this.i] === '#') while (this.i < s.length && s[this.i] !== '\n') this.i++
+      else return
+    }
+  }
+
+  /** Blanks and newlines, reading any here-document bodies due. */
+  private space(): void {
+    for (;;) {
+      this.blank()
+      if (this.s[this.i] !== '\n') return
+      this.newline()
+    }
+  }
+
+  private newline(): void {
+    this.i++
+    const s = this.s
+    for (const h of this.pending.splice(0)) {
+      let body = ''
+      for (;;) {
+        if (this.i >= s.length) break
+        const end = s.indexOf('\n', this.i)
+        const line = s.slice(this.i, end === -1 ? s.length : end)
+        this.i = end === -1 ? s.length : end + 1
+        if ((h.strip ? line.replace(/^\t+/, '') : line) === h.delim) break
+        body += (h.strip ? line.replace(/^\t+/, '') : line) + '\n'
+      }
+      h.r.body = body
+    }
+  }
+
+  private keyword(): string | null {
+    const m = KEYWORD.exec(this.s.slice(this.i, this.i + 9))
+    if (!m) return null
+    // `{` opens a group only before a blank; `!` negates only before one.
+    if ((m[0] === '{' || m[0] === '!') && !/[ \t\r\n]/.test(this.s[this.i + 1] ?? '')) return null
+    return m[0]
+  }
+
+  private expect(k: string): void {
+    this.space()
+    if (this.keyword() !== k && !(k === ')' && this.s[this.i] === ')'))
+      throw new Unreadable(this.i >= this.s.length ? 'unbalanced' : 'unknown')
+    this.i += k.length
+  }
+
+  // ── lists and pipelines ──
+
+  private atEnd(stops: Set<string>): boolean {
+    const s = this.s
+    if (this.i >= s.length) {
+      if (stops.size > 0) throw new Unreadable('unbalanced')
+      return true
+    }
+    if (s[this.i] === ')') return true
+    if (stops.has(';;') && /^;(?:;&?|&)/.test(s.slice(this.i, this.i + 3))) return true
+    const k = this.keyword()
+    return k !== null && stops.has(k)
+  }
+
+  private list(stops: Set<string>): List {
+    if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+    const items: List['items'] = []
+    let joint: Joint | null = null
+    this.space()
+    while (!this.atEnd(stops)) {
+      items.push({ node: this.pipeline(), joinedBy: joint })
+      this.blank()
+      const s = this.s
+      const two = s.slice(this.i, this.i + 2)
+      if (two === '&&' || two === '||') {
+        joint = two
+        this.i += 2
+        this.space()
+        if (this.i >= s.length) throw new Unreadable('unbalanced')
+        continue
+      }
+      if (s[this.i] === '\n') {
+        joint = '\n'
+        this.space()
+        continue
+      }
+      if (s[this.i] === ';' && !/^;[;&]/.test(two)) {
+        joint = ';'
+        this.i++
+        this.space()
+        continue
+      }
+      if (s[this.i] === '&') {
+        joint = '&'
+        this.i++
+        this.space()
+        continue
+      }
+      if (!this.atEnd(stops)) throw new Unreadable('unknown')
+    }
+    this.frames.n--
+    return { items }
+  }
+
+  private pipeline(): Pipeline {
+    let negated = false
+    let timed = false
+    for (;;) {
+      this.blank()
+      const k = this.keyword()
+      if (k === '!') negated = !negated
+      else if (k === 'time') {
+        timed = true
+        this.i += 4
+        this.blank()
+        if (/^-p(?=[ \t])/.test(this.s.slice(this.i))) this.i += 2
+        continue
+      } else break
+      this.i += k.length
+    }
+    const stages = [this.command()]
+    for (;;) {
+      this.blank()
+      const s = this.s
+      if (s[this.i] !== '|' || s[this.i + 1] === '|') break
+      this.i += s[this.i + 1] === '&' ? 2 : 1
+      this.space()
+      stages.push(this.command())
+    }
+    return { stages, negated, timed }
+  }
+
+  // ── commands ──
+
+  private command(): Node {
+    this.blank()
+    const s = this.s
+    if (s.startsWith('((', this.i)) {
+      const end = this.arithEnd(this.i + 2)
+      if (end !== -1) {
+        const raw = s.slice(this.i, end)
+        this.i = end
+        return this.simpleOf([makeWord([{ kind: 'arith', text: raw }], raw)])
+      }
+    }
+    if (s[this.i] === '(') {
+      this.i++
+      const list = this.list(new Set([')']))
+      this.expect(')')
+      return { type: 'subshell', list, redirects: this.redirects() }
+    }
+    switch (this.keyword()) {
+      case '{': {
+        this.i++
+        const list = this.list(new Set(['}']))
+        this.expect('}')
+        return { type: 'group', list, redirects: this.redirects() }
+      }
+      case 'if':
+        return this.ifNode()
+      case 'for':
+      case 'select':
+        return this.forNode()
+      case 'while':
+      case 'until': {
+        const kind = this.keyword() as 'while' | 'until'
+        this.i += kind.length
+        const cond = this.list(new Set(['do']))
+        this.expect('do')
+        const body = this.list(new Set(['done']))
+        this.expect('done')
+        return {
+          type: 'loop',
+          kind,
+          name: null,
+          words: null,
+          cond,
+          body,
+          redirects: this.redirects(),
+        }
+      }
+      case 'case':
+        return this.caseNode()
+      case 'function': {
+        this.i += 8
+        this.blank()
+        const name = this.word()?.literal
+        if (!name) throw new Unreadable('unknown')
+        this.blank()
+        if (s.startsWith('()', this.i)) this.i += 2
+        this.space()
+        return { type: 'function', name, body: this.command() }
+      }
+      case '[[':
+        return this.test()
+      case 'then':
+      case 'elif':
+      case 'else':
+      case 'fi':
+      case 'do':
+      case 'done':
+      case 'esac':
+      case '}':
+        throw new Unreadable('unknown')
+    }
+    return this.simple()
+  }
+
+  private simpleOf(words: Word[]): Simple {
+    return { type: 'simple', assigns: [], words, redirects: this.redirects() }
+  }
+
+  private redirects(): Redirect[] {
+    const out: Redirect[] = []
+    for (;;) {
+      this.blank()
+      const r = this.redirect()
+      if (!r) return out
+      out.push(r)
+    }
+  }
+
+  private redirect(): Redirect | null {
+    const s = this.s
+    const rest = s.slice(this.i, this.i + 12)
+    if (/^[<>]\(/.test(rest) || /^<\d*-\d*>/.test(rest)) return null
+    const m = REDIRECT.exec(rest)
+    if (!m || (m[1] && m[2]!.startsWith('&'))) return null
+    this.i += m[0].length
+    const r: Redirect = { fd: m[1] ? Number(m[1]) : null, op: m[2]!, target: null }
+    this.blank()
+    const target = this.word()
+    if (!target) throw new Unreadable(this.i >= s.length ? 'unbalanced' : 'unknown')
+    r.target = target
+    if (r.op === '<<' || r.op === '<<-') {
+      const delim = target.parts.map((p) => ('text' in p ? p.text : '')).join('')
+      this.pending.push({ r, delim, strip: r.op === '<<-', quoted: /['"\\]/.test(target.raw) })
+    }
+    return r
+  }
+
+  private simple(): Node {
+    const s = this.s
+    const assigns: Assign[] = []
+    const words: Word[] = []
+    const redirects: Redirect[] = []
+    for (;;) {
+      this.blank()
+      const c = s[this.i]
+      if (c === undefined || c === '\n' || c === ';' || c === ')') break
+      if ((c === '&' || c === '|') && !/^&>/.test(s.slice(this.i, this.i + 2))) break
+      const r = this.redirect()
+      if (r) {
+        redirects.push(r)
+        continue
+      }
+      if (words.length === 0) {
+        const a = /^([A-Za-z_][A-Za-z0-9_]*)(\[[^\]\s]*\])?(\+?=)/.exec(s.slice(this.i))
+        if (a) {
+          this.i += a[0].length
+          let value: Word | Word[]
+          if (s[this.i] === '(') {
+            this.i++
+            value = []
+            for (;;) {
+              this.space()
+              if (s[this.i] === ')') break
+              const w = this.word()
+              if (!w) throw new Unreadable(this.i >= s.length ? 'unbalanced' : 'unknown')
+              value.push(tildes(w))
+            }
+            this.i++
+          } else value = tildes(this.word() ?? makeWord([], ''))
+          assigns.push({ name: a[1]!, op: a[3] as '=' | '+=', value })
+          continue
+        }
+      }
+      // `name() body`: a function definition.
+      if (words.length === 1 && assigns.length === 0 && /^\(\s*\)/.test(s.slice(this.i))) {
+        this.i = s.indexOf(')', this.i) + 1
+        this.space()
+        const name = words[0]!.literal
+        if (name === null) throw new Unreadable('unknown')
+        return { type: 'function', name, body: this.command() }
+      }
+      const w = this.word(words.length > 0)
+      if (!w) throw new Unreadable('unknown')
+      words.push(w)
+    }
+    const simple: Simple = { type: 'simple', assigns, words, redirects }
+    const program = words[0]?.literal ?? ''
+    if (DECLARES.has(program))
+      for (const w of words.slice(1)) {
+        const a = declared(w)
+        if (a) w.assign = a
+      }
+    const nested = this.nestedOf(words, redirects)
+    if (nested) simple.nested = nested
+    return simple
+  }
+
+  /** The command a nested shell runs, when its text is literal. */
+  private nestedOf(words: Word[], redirects: Redirect[]): List | undefined {
+    let k = 0
+    while (k < words.length - 1 && SHELL_WRAPPERS.has(words[k]!.literal ?? '')) k++
+    const program = words[k]?.literal ?? ''
+    let text: string | null = null
+    if (program === 'eval' && k === 0) {
+      const args = words.slice(1).map((w) => w.literal)
+      if (args.length > 0 && args.every((a) => a !== null)) text = args.join(' ')
+    } else if (SHELL_PROGRAM.test(program)) {
+      for (let j = k + 1; j < words.length; j++) {
+        const w = words[j]!.literal
+        if (w === null || !w.startsWith('-')) break
+        if (/^-[A-Za-z]*c/.test(w)) {
+          text = words[j + 1]?.literal ?? null
+          break
+        }
+      }
+      const doc = redirects.find((r) => r.op === '<<' || r.op === '<<-')
+      if (text === null && doc && words.length === k + 1)
+        this.pendingNested.push({ doc, depth: this.depth + 1 })
+    }
+    if (text === null) return undefined
+    return parseAt(text, this.depth + 1, this.frames)
+  }
+
+  /** A here-document fed to a shell: read once its body is. */
+  readonly pendingNested: { doc: Redirect; depth: number }[] = []
+
+  private ifNode(): Node {
+    this.i += 2
+    const branches: { cond: List; body: List }[] = []
+    let otherwise: List | null = null
+    for (;;) {
+      const cond = this.list(new Set(['then']))
+      this.expect('then')
+      const body = this.list(new Set(['elif', 'else', 'fi']))
+      branches.push({ cond, body })
+      this.space()
+      const k = this.keyword()
+      if (k === 'elif') {
+        this.i += 4
+        continue
+      }
+      if (k === 'else') {
+        this.i += 4
+        otherwise = this.list(new Set(['fi']))
+      }
+      this.expect('fi')
+      return { type: 'if', branches, else: otherwise, redirects: this.redirects() }
+    }
+  }
+
+  private forNode(): Node {
+    const kind = this.keyword() as 'for' | 'select'
+    this.i += kind.length
+    this.blank()
+    const s = this.s
+    let name: string | null = null
+    let words: Word[] | null = null
+    if (s.startsWith('((', this.i)) {
+      const end = this.arithEnd(this.i + 2)
+      if (end === -1) throw new Unreadable('unbalanced')
+      this.i = end
+    } else {
+      name = this.word()?.literal ?? null
+      if (name === null || !NAME.test(name)) throw new Unreadable('unknown')
+      this.space()
+      if (/^in(?=[ \t\r\n;]|$)/.test(s.slice(this.i))) {
+        this.i += 2
+        words = []
+        for (;;) {
+          this.blank()
+          const c = s[this.i]
+          if (c === undefined || c === ';' || c === '\n') break
+          const w = this.word()
+          if (!w) throw new Unreadable('unknown')
+          words.push(w)
+        }
+      }
+    }
+    this.blank()
+    if (s[this.i] === ';') this.i++
+    this.expect('do')
+    const body = this.list(new Set(['done']))
+    this.expect('done')
+    return { type: 'loop', kind, name, words, cond: null, body, redirects: this.redirects() }
+  }
+
+  private caseNode(): Node {
+    this.i += 4
+    this.blank()
+    const word = this.word()
+    if (!word) throw new Unreadable('unknown')
+    this.space()
+    if (!/^in(?=[ \t\r\n]|$)/.test(this.s.slice(this.i))) throw new Unreadable('unknown')
+    this.i += 2
+    const arms: List[] = []
+    const s = this.s
+    for (;;) {
+      this.space()
+      if (this.i >= s.length) throw new Unreadable('unbalanced')
+      if (this.keyword() === 'esac') break
+      if (s[this.i] === '(') this.i++
+      for (;;) {
+        this.blank()
+        if (!this.word(true)) throw new Unreadable('unknown')
+        this.blank()
+        if (s[this.i] !== '|') break
+        this.i++
+      }
+      if (s[this.i] !== ')') throw new Unreadable('unknown')
+      this.i++
+      arms.push(this.list(new Set([';;', 'esac'])))
+      const end = /^;(?:;&?|&)/.exec(s.slice(this.i, this.i + 3))
+      if (end) this.i += end[0].length
+    }
+    this.i += 4
+    return { type: 'case', word, arms, redirects: this.redirects() }
+  }
+
+  /** `[[ … ]]`: its operators are words of the test, not of the shell. */
+  private test(): Node {
+    const s = this.s
+    this.i += 2
+    const words: Word[] = [makeWord([{ kind: 'lit', text: '[[', quoted: false }], '[[')]
+    for (;;) {
+      this.space()
+      if (this.i >= s.length) throw new Unreadable('unbalanced')
+      if (/^\]\](?=[ \t\r\n;&|)]|$)/.test(s.slice(this.i))) {
+        this.i += 2
+        words.push(makeWord([{ kind: 'lit', text: ']]', quoted: false }], ']]'))
+        break
+      }
+      const op = /^(?:&&|\|\||[<>()!])/.exec(s.slice(this.i))
+      if (op) {
+        this.i += op[0].length
+        words.push(makeWord([{ kind: 'lit', text: op[0], quoted: false }], op[0]))
+        continue
+      }
+      const w = this.word(true)
+      if (!w) throw new Unreadable('unknown')
+      words.push(w)
+    }
+    return this.simpleOf(words)
+  }
+
+  // ── words ──
+
+  /** Where `$((` or `((` ends (after its `))`), or -1 when it is not arithmetic. */
+  private arithEnd(from: number): number {
+    const s = this.s
+    let depth = 0
+    for (let j = from; j < s.length; j++) {
+      if (s[j] === '(') depth++
+      else if (s[j] === ')') {
+        if (depth === 0) return s[j + 1] === ')' ? j + 2 : -1
+        depth--
+      }
+    }
+    return -1
+  }
+
+  /** A word, or null at an operator. `args`: an argument, where zsh reads a
+   *  `(` as a glob (bash: a syntax error). */
+  private word(args = false): Word | null {
+    const s = this.s
+    const start = this.i
+    const parts: Part[] = []
+    const lit = (text: string, quoted: boolean) => parts.push({ kind: 'lit', text, quoted })
+    /** A part, and the reader moved past its `n` characters. */
+    const take = (p: Part, n: number) => {
+      parts.push(p)
+      this.i += n
+    }
+    while (this.i < s.length) {
+      const c = s[this.i]!
+      const atStart = this.i === start
+      if (c === '\\') {
+        if (s[this.i + 1] === '\n') this.i += 2
+        else if (this.i + 1 >= s.length) take({ kind: 'lit', text: '\\', quoted: true }, 1)
+        else take({ kind: 'lit', text: s[this.i + 1]!, quoted: true }, 2)
+      } else if (c === "'") {
+        const end = s.indexOf("'", this.i + 1)
+        if (end === -1) throw new Unreadable('unbalanced')
+        lit(s.slice(this.i + 1, end), true)
+        this.i = end + 1
+      } else if (c === '"') this.double(parts)
+      else if (c === '$') this.dollar(parts, false)
+      else if (c === '`') this.backtick(parts)
+      else if (c === '*' || c === '?') take({ kind: 'glob', text: c }, 1)
+      else if (c === '[') {
+        const m = /^\[[^\s;&|()<>\]]*\]/.exec(s.slice(this.i))
+        if (m && m[0].length > 2) take({ kind: 'glob', text: m[0] }, m[0].length)
+        else take({ kind: 'lit', text: '[', quoted: false }, 1)
+      } else if (c === '{') {
+        const end = this.braceEnd()
+        if (end === -1) take({ kind: 'lit', text: '{', quoted: false }, 1)
+        else take({ kind: 'brace', text: s.slice(this.i, end) }, end - this.i)
+      } else if (c === '~' && atStart) {
+        const m = /^~([A-Za-z0-9_.+-]*)/.exec(s.slice(this.i))!
+        parts.push({ kind: 'tilde', user: m[1]! })
+        this.i += m[0].length
+      } else if (c === '(' && args) {
+        const end = this.parenEnd(this.i)
+        if (end === -1) throw new Unreadable('unbalanced')
+        parts.push({ kind: 'glob', text: s.slice(this.i, end) })
+        this.i = end
+      } else if ((c === '<' || c === '>') && s[this.i + 1] === '(') {
+        this.i += 2
+        const list = this.list(new Set([')']))
+        this.expect(')')
+        parts.push({ kind: 'subst', list })
+      } else if (c === '<' && /^<\d*-\d*>/.test(s.slice(this.i))) {
+        const m = /^<\d*-\d*>/.exec(s.slice(this.i))!
+        parts.push({ kind: 'glob', text: m[0] })
+        this.i += m[0].length
+      } else if (/[ \t\r\n;&|()<>]/.test(c)) break
+      else {
+        let j = this.i + 1
+        while (j < s.length && !SPECIAL.test(s[j]!)) j++
+        lit(s.slice(this.i, j), false)
+        this.i = j
+      }
+    }
+    if (this.i === start) return null
+    return makeWord(parts, s.slice(start, this.i))
+  }
+
+  /** Where a `{a,b}` or `{1..3}` brace expansion ends, or -1 when the `{` is
+   *  literal (no top-level comma or `..`, or no closing brace in the word). */
+  private braceEnd(): number {
+    const s = this.s
+    let depth = 0
+    let expands = false
+    for (let j = this.i; j < s.length; j++) {
+      const c = s[j]!
+      if (c === '\\') j++
+      else if (c === "'" || c === '"') {
+        const end = s.indexOf(c, j + 1)
+        if (end === -1) return -1
+        j = end
+      } else if (/[ \t\r\n;&|()<>]/.test(c)) return -1
+      else if (c === '{') depth++
+      else if (c === '}') {
+        if (--depth === 0) return expands ? j + 1 : -1
+      } else if (depth === 1 && (c === ',' || (c === '.' && s[j + 1] === '.'))) expands = true
+    }
+    return -1
+  }
+
+  private parenEnd(from: number): number {
+    const s = this.s
+    let depth = 0
+    for (let j = from; j < s.length; j++) {
+      if (s[j] === '\\') j++
+      else if (s[j] === '(') depth++
+      else if (s[j] === ')' && --depth === 0) return j + 1
+      else if (s[j] === '\n') return -1
+    }
+    return -1
+  }
+
+  private double(parts: Part[]): void {
+    const s = this.s
+    this.i++
+    let text = ''
+    const flush = () => {
+      if (text) parts.push({ kind: 'lit', text, quoted: true })
+      text = ''
+    }
+    // `""` is a word, empty.
+    if (s[this.i] === '"') parts.push({ kind: 'lit', text: '', quoted: true })
+    while (this.i < s.length && s[this.i] !== '"') {
+      const c = s[this.i]!
+      if (c === '\\' && /[$`"\\\n]/.test(s[this.i + 1] ?? '')) {
+        if (s[this.i + 1] !== '\n') text += s[this.i + 1]
+        this.i += 2
+      } else if (c === '$' || c === '`') {
+        flush()
+        if (c === '$') this.dollar(parts, true)
+        else this.backtick(parts)
+      } else {
+        text += c
+        this.i++
+      }
+    }
+    if (this.i >= s.length) throw new Unreadable('unbalanced')
+    flush()
+    this.i++
+  }
+
+  private dollar(parts: Part[], quoted: boolean): void {
+    const s = this.s
+    const next = s[this.i + 1] ?? ''
+    if (s.startsWith('$((', this.i)) {
+      const end = this.arithEnd(this.i + 3)
+      if (end !== -1) {
+        parts.push({ kind: 'arith', text: s.slice(this.i, end) })
+        this.i = end
+        return
+      }
+    }
+    if (next === '(') {
+      this.i += 2
+      const list = this.list(new Set([')']))
+      this.expect(')')
+      parts.push({ kind: 'subst', list })
+    } else if (next === '{') {
+      let depth = 0
+      let j = this.i + 1
+      for (; j < s.length; j++) {
+        if (s[j] === '\\') j++
+        else if (s[j] === '{') depth++
+        else if (s[j] === '}' && --depth === 0) break
+      }
+      if (j >= s.length) throw new Unreadable('unbalanced')
+      const inner = s.slice(this.i + 2, j)
+      const m = /^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])/.exec(inner)
+      const name = m ? m[0].replace(/^[#!](?=.)/, '') : ''
+      parts.push({ kind: 'param', name, op: inner.slice(m ? m[0].length : 0) })
+      this.i = j + 1
+    } else if ((next === "'" || next === '"') && !quoted) {
+      let j = this.i + 2
+      for (; j < s.length && s[j] !== next; j++) if (s[j] === '\\') j++
+      if (j >= s.length) throw new Unreadable('unbalanced')
+      parts.push({ kind: 'ansic', text: s.slice(this.i, j + 1) })
+      this.i = j + 1
+    } else {
+      const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])/.exec(s.slice(this.i + 1))
+      if (m) {
+        parts.push({ kind: 'param', name: m[0], op: '' })
+        this.i += 1 + m[0].length
+      } else {
+        parts.push({ kind: 'lit', text: '$', quoted })
+        this.i++
+      }
+    }
+  }
+
+  private backtick(parts: Part[]): void {
+    const s = this.s
+    let j = this.i + 1
+    let inner = ''
+    for (; j < s.length && s[j] !== '`'; j++) {
+      if (s[j] === '\\' && /[`\\$]/.test(s[j + 1] ?? '')) inner += s[++j]
+      else inner += s[j]
+    }
+    if (j >= s.length) throw new Unreadable('unbalanced')
+    this.i = j + 1
+    const r = new Reader(inner, this.depth, this.frames)
+    parts.push({ kind: 'subst', list: r.read() })
+  }
+
+  /** The whole text, here-documents fed to a shell read once their bodies are. */
+  read(): List {
+    const l = this.all()
+    for (const { doc, depth } of this.pendingNested) {
+      const quoted = /['"\\]/.test(doc.target?.raw ?? '')
+      if (doc.body === undefined || (!quoted && /[$`\\]/.test(doc.body))) continue
+      const nested = parseAt(doc.body, depth, this.frames)
+      // The Simple the document belongs to: found by its redirection.
+      const owner = findSimple(l, (n) => n.redirects.includes(doc))
+      if (owner) owner.nested = nested
+    }
+    return l
+  }
+}
+
+function findSimple(l: List, pick: (n: Simple) => boolean): Simple | undefined {
+  for (const { node } of l.items)
+    for (const n of node.stages) {
+      const found = findIn(n, pick)
+      if (found) return found
+    }
+  return undefined
+}
+
+function findIn(n: Node, pick: (n: Simple) => boolean): Simple | undefined {
+  switch (n.type) {
+    case 'simple':
+      return pick(n) ? n : undefined
+    case 'subshell':
+    case 'group':
+      return findSimple(n.list, pick)
+    case 'if':
+      for (const b of n.branches) {
+        const f = findSimple(b.cond, pick) ?? findSimple(b.body, pick)
+        if (f) return f
+      }
+      return n.else ? findSimple(n.else, pick) : undefined
+    case 'loop':
+      return (n.cond && findSimple(n.cond, pick)) || findSimple(n.body, pick)
+    case 'case':
+      for (const a of n.arms) {
+        const f = findSimple(a, pick)
+        if (f) return f
+      }
+      return undefined
+    case 'function':
+      return findIn(n.body, pick)
+  }
+}
+
+function parseAt(text: string, depth: number, frames: { n: number }): List {
+  if (depth > MAX_DEPTH) throw new Unreadable('depth')
+  return new Reader(text, depth, frames).read()
+}
+
+/** A command read as the shell reads it (spec 086 data-model.md). `'sh'` is
+ *  bash and zsh, both readings kept where they differ; `'ps'` PowerShell. */
+export function parseShell(command: string, dialect: 'sh' | 'ps'): ParseResult {
+  if (dialect === 'ps') return { ok: false, why: 'unknown' }
+  try {
+    return { ok: true, list: parseAt(command, 0, { n: 0 }) }
+  } catch (err) {
+    if (err instanceof Unreadable) return { ok: false, why: err.why }
+    throw err
+  }
+}
