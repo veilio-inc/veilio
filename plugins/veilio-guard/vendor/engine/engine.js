@@ -383,6 +383,9 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
                 const [anyway, to] = regexLiteralEnd(code, i, true);
                 if (anyway && holdsOpener(to))
                     [closed, end] = [true, to];
+                // None closes on this line: no later `/` on it is retried (linear).
+                else if (!anyway)
+                    end = to;
             }
             // Masking consumes only a literal that holds a comment opener (spec 085
             // L7: `/^https?:\/\//`, `/\/*$/`), which it would otherwise read as a

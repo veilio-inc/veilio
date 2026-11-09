@@ -232,3 +232,17 @@ describe('heredoc and %-literal reading stays linear (R2-11)', () => {
     }
   })
 })
+
+describe('the regex retry after `)` stays linear (R2-11)', () => {
+  it('many `)/[` with no close on the line do not make masking quadratic', () => {
+    const time = (n: number) => {
+      const code = `const x = ${'(a)/['.repeat(n)}\n`
+      const t = performance.now()
+      anonymize(code, { language: 'typescript' })
+      return performance.now() - t
+    }
+    const small = time(4000)
+    const large = time(16000)
+    expect(large / Math.max(small, 1)).toBeLessThan(10)
+  })
+})
