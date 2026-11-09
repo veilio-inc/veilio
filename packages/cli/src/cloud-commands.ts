@@ -1044,10 +1044,14 @@ function granterLabel(wrappedBy: string | undefined, emails: Map<string, string>
   return emails.get(wrappedBy) ?? printable(wrappedBy)
 }
 
-/** The team as `team trust` takes it, safe to copy: its name only when it is
- *  letters, digits, `.`, `_` and `-`; else its id. */
-function teamArg(name: string, id: string): string {
-  return /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u.test(name) ? name : printable(id)
+/** The team as `team trust` takes it, safe to copy into a shell: its name,
+ *  else its id, when that is letters, digits, `.`, `_` and `-` (not first);
+ *  else the id single-quoted. Both come from the server. */
+export function teamArg(name: string, id: string): string {
+  const plain = (s: string) => /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u.test(s)
+  if (plain(name)) return name
+  const shown = printable(id)
+  return plain(shown) ? shown : `'${shown.replace(/'/g, "'\\''")}'`
 }
 
 /**
