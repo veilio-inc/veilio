@@ -215,7 +215,7 @@ function decryptedMap(raw) {
         map = parseSymbolMap(raw);
     }
     catch (err) {
-        throw new TeamKeyError(`This team map is not placeholders to names: ${err.message}`);
+        throw new TeamKeyError(`a team map holds an entry that is not a placeholder and a name: ${err.message}`);
     }
     return map;
 }

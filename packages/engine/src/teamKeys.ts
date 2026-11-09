@@ -326,7 +326,9 @@ function decryptedMap(raw: unknown): Record<string, string> {
   try {
     map = parseSymbolMap(raw)
   } catch (err) {
-    throw new TeamKeyError(`This team map is not placeholders to names: ${(err as Error).message}`)
+    throw new TeamKeyError(
+      `a team map holds an entry that is not a placeholder and a name: ${(err as Error).message}`
+    )
   }
   return map
 }
