@@ -52,7 +52,7 @@ describe('key pins', () => {
 
   it('tightens a file that was left readable by others', () => {
     mkdirSync(dirname(keyPinsPath(home)), { recursive: true })
-    writeFileSync(keyPinsPath(home), '{}', { mode: 0o644 })
+    writeFileSync(keyPinsPath(home), JSON.stringify({ v: 1, scopes: [] }), { mode: 0o644 })
     chmodSync(keyPinsPath(home), 0o644)
     confirmPin(A, 'u2', 'K1', home, NOW)
     expect(statSync(keyPinsPath(home)).mode & 0o777).toBe(0o600)
@@ -94,12 +94,31 @@ describe('key pins', () => {
     expect(readPins(OTHER_INSTANCE, home)).toEqual({})
   })
 
-  it('a damaged file reads as no pins, and the next confirmation replaces it', () => {
+  it.each([
+    ['not JSON', 'not json'],
+    ['another format', JSON.stringify({ v: 2, scopes: [] })],
+    ['no list of scopes', JSON.stringify({ v: 1, scopes: {} })],
+    ['this account with no pins', JSON.stringify({ v: 1, scopes: [{ ...A }] })],
+    [
+      'this account with pins that are not a record',
+      JSON.stringify({ v: 1, scopes: [{ ...A, pins: [] }] }),
+    ],
+  ])('a damaged file (%s) reads as no pins, and is never overwritten', (_, text) => {
     mkdirSync(dirname(keyPinsPath(home)), { recursive: true })
-    writeFileSync(keyPinsPath(home), 'not json')
+    writeFileSync(keyPinsPath(home), text)
     expect(readPins(A, home)).toEqual({})
+    expect(() => confirmPin(A, 'u2', 'K1', home, NOW)).toThrow(
+      `${keyPinsPath(home)} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.`
+    )
+    expect(readFileSync(keyPinsPath(home), 'utf8')).toBe(text)
+  })
+
+  it("another account's damaged scope does not stop this one, and is kept as it was", () => {
+    mkdirSync(dirname(keyPinsPath(home)), { recursive: true })
+    writeFileSync(keyPinsPath(home), JSON.stringify({ v: 1, scopes: [{ ...B, pins: 7 }] }))
     confirmPin(A, 'u2', 'K1', home, NOW)
-    expect(readPins(A, home).u2.current).toBe('K1')
+    expect(readPins(A, home).u2?.current).toBe('K1')
+    expect(JSON.parse(readFileSync(keyPinsPath(home), 'utf8')).scopes[0]).toEqual({ ...B, pins: 7 })
   })
 
   it('a damaged pin is skipped, the others kept', () => {

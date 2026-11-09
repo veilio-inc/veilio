@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { saveMap, STORE_DIR, STORE_FILE } from '../src/store.js'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -752,6 +760,19 @@ describe('team trust (spec 080 item 7a)', () => {
     expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(true)
     expect(readPins(binding, home).u2?.current).toBe(granterPublic)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a damaged pins file is reported and left alone, and nothing becomes writable', async () => {
+    const { fp } = await unlockedReadOnly()
+    mkdirSync(join(home, '.veilio'), { recursive: true })
+    writeFileSync(join(home, '.veilio', 'key-pins.json'), 'not json')
+
+    const { code, err } = await run(['team', 'trust', 'Zespół', fp])
+
+    expect(code).toBe(EXIT_ERROR)
+    expect(err).toContain('key-pins.json is damaged, so the key was not confirmed.')
+    expect(readFileSync(join(home, '.veilio', 'key-pins.json'), 'utf8')).toBe('not json')
+    expect(readTeamUnlock(binding, home)?.keys[0]?.writable).toBe(false)
   })
 
   it('takes the fingerprint in any case, with spaces for dashes, and the team by its id', async () => {

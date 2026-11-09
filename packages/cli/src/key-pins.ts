@@ -57,19 +57,29 @@ function isPin(p: unknown): p is KeyPin {
   )
 }
 
-function readFile(home: string): PinsFile {
+/** The file, or null when it exists and is not one this CLI wrote. */
+function readFile(home: string): PinsFile | null {
+  let text: string
   try {
-    const parsed = JSON.parse(readFileSync(keyPinsPath(home), 'utf8')) as PinsFile
+    text = readFileSync(keyPinsPath(home), 'utf8')
+  } catch {
+    return { v: 1, scopes: [] } // none yet
+  }
+  try {
+    const parsed = JSON.parse(text) as PinsFile
     if (parsed?.v === 1 && Array.isArray(parsed.scopes)) return parsed
   } catch {
-    // missing or damaged: no pins
+    // not JSON
   }
-  return { v: 1, scopes: [] }
+  return null
 }
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** This instance and account's pins. A damaged entry is left out. */
 export function readPins(binding: Binding, home: string = homedir()): KeyPins {
-  const scope = readFile(home).scopes.find(
+  const scope = (readFile(home)?.scopes ?? []).find(
     (s) => s?.instance === binding.instance && s?.account === binding.account
   )
   // No prototype: a granter id is the server's word, and `__proto__` or
@@ -98,9 +108,15 @@ export function confirmPin(
   now: Date = new Date()
 ): void {
   const file = readFile(home)
-  let scope = file.scopes.find(
+  let scope = file?.scopes.find(
     (s) => s?.instance === binding.instance && s?.account === binding.account
   )
+  // Never overwritten: confirmations a person made are in there, and a file
+  // this CLI cannot read is for that person to look at, not to replace.
+  if (!file || (scope && !isRecord(scope.pins)))
+    throw new Error(
+      `${keyPinsPath(home)} is damaged, so the key was not confirmed. Move it aside and run \`veilio team trust\` again.`
+    )
   if (!scope) {
     scope = { instance: binding.instance, account: binding.account, pins: {} }
     file.scopes.push(scope)
