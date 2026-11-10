@@ -1,5 +1,11 @@
 # @veilio-inc/cli
 
+## 0.12.1
+
+### Patch Changes
+
+- [#236](https://github.com/veilio-inc/veilio/pull/236) [`2c8aa28`](https://github.com/veilio-inc/veilio/commit/2c8aa2862928b25d90530bae41f67ef4a3bec1a7) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio scrub` (with or without `--team`) refuses when Cloud rate-limits the read of the team's maps (429) and the machine knows the account's team, saying to run the command again in a minute, instead of numbering new names on this machine. `veilio --help` shows a scan example that runs (`veilio scan src/*.ts`; the CLI expands no globs, so a quoted one named a file that does not exist), and `veilio team trust --help` says it needs a sign-in.
+
 ## 0.12.0
 
 ### Minor Changes
