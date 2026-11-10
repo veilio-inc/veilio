@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.18.0](https://github.com/veilio-inc/veilio/compare/engine-v1.17.0...engine-v1.18.0) (2026-11-10)
+
+### Features
+
+* **engine:** a team whitelist is exact names - one anchored name or an anchored list of them - wherever a team rule is opened or sealed (spec 085 R2-7) ([c616824](https://github.com/veilio-inc/veilio/commit/c616824df88938d69b6790251f95da02cf8acda9))
+* **engine:** projectShapeFrom reads a project's shape from its file list, as the guard does: every package.json, every folder on the way to a Python file, the go.mod module (spec 085 R2-23) ([5e50410](https://github.com/veilio-inc/veilio/commit/5e50410ed807905c93886f22aa611052061f96e9))
+* **engine:** the written-maps record format, one for the CLI and the guard (spec 085 R2-3) ([5f548a6](https://github.com/veilio-inc/veilio/commit/5f548a61c3b054d1b4f175ea920ae3abde221302))
+
+### Fixes
+
+* **engine:** a bare Ruby % opens a literal with any non-word, non-space delimiter but =, so %|..| and %!..! are strings (spec 085 R2-11 security review) ([f050133](https://github.com/veilio-inc/veilio/commit/f0501336bc266e96bf6c33902a5fe3ce7a383955))
+* **engine:** a bare Ruby % opens a literal with any symbol delimiter at an expression start, and after an identifier and a space when no space follows the delimiter; after an operand it is modulo (spec 085 R2-11 security review 3) ([5fd679c](https://github.com/veilio-inc/veilio/commit/5fd679c0a62eacf007fc7a2327e9d463da72a215))
+* **engine:** a bare Ruby % with | ! ^ / ~ opens a literal only where the lexer starts an expression or after a call keyword; after an operand it is modulo (spec 085 R2-11 security review 2) ([65135c9](https://github.com/veilio-inc/veilio/commit/65135c9b2890d2722a451db6ef0381604fc8de4c))
+* **engine:** a map value is judged by its placeholder's kind - an identifier as the engine extracts one, a manual mark, or a regulated value with its checksum - and a redaction kind is refused (spec 085 R2-6 review) ([c50f9f3](https://github.com/veilio-inc/veilio/commit/c50f9f3f828173410ee591f0cb0d6f9581295493))
+* **engine:** a team map opens for use only as placeholders to names, and anonymize uses only placeholder-keyed existing entries (spec 085 R2-6) ([9e66037](https://github.com/veilio-inc/veilio/commit/9e66037019e4a3535a25ca5a6b57d3f18b266a10))
+* **engine:** an unreadable team map says it holds an entry that is not a placeholder and a name, in the approved words (spec 085 R2-6) ([94bd676](https://github.com/veilio-inc/veilio/commit/94bd676bb324232250e47e7f14fff8ac3592562e))
+* **engine:** code inside a literal is not read as a comment - a regex after `)` holding a comment opener, Ruby regexes, heredocs and %-literals, PHP heredocs and nowdocs (spec 085 R2-11) ([e870f1c](https://github.com/veilio-inc/veilio/commit/e870f1c4a8333bb5fd74001ef93f8fa85e3d13af))
+* **engine:** one rule matcher and one rawOnly reading for every reader ([7b7deda](https://github.com/veilio-inc/veilio/commit/7b7dedab1bf8b409538a99b8907fdffc6efe00e3))
+* **engine:** projectShapeFrom reads every package.json, and JSON with comment-like globs in strings (spec 085 R2-23 review) ([9b2f048](https://github.com/veilio-inc/veilio/commit/9b2f0481e7303970b75e2cbac22419e7c1f98e1c))
+* **engine:** rawOnly normaliser keeps ** and resolves .. ([5984508](https://github.com/veilio-inc/veilio/commit/5984508b70114c32a95d0c77367c630b9c74acd9))
+* **engine:** the regex retry after `)` gives up for the rest of a line where none closes, so it stays linear (spec 085 R2-11) ([15e9701](https://github.com/veilio-inc/veilio/commit/15e97011ea1e5583dee623a32d90ea931233b50d))
+* **engine:** the regex retry after a division is for // and /* openers only, and %= or % is an operator, not a Ruby %-literal (spec 085 R2-11 review) ([f2db0a4](https://github.com/veilio-inc/veilio/commit/f2db0a4b1ad065a3b6c196c566683e5de85bb4d1))
+
 ## [1.17.0](https://github.com/veilio-inc/veilio/compare/engine-v1.16.3...engine-v1.17.0) (2026-11-08)
 
 ### Features
