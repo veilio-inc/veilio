@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.10.1
+
+### Patch Changes
+
+- [#236](https://github.com/veilio-inc/veilio/pull/236) [`2c8aa28`](https://github.com/veilio-inc/veilio/commit/2c8aa2862928b25d90530bae41f67ef4a3bec1a7) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `anonymize_text` and `anonymize_file` refuse when Cloud rate-limits the read of the team's maps (429) and the machine knows the account's team, saying to run the command again in a minute, instead of masking from the local namespace. The other fallbacks (team key locked, Cloud unreachable or failing) are unchanged.
+- Updated dependencies [[`2c8aa28`](https://github.com/veilio-inc/veilio/commit/2c8aa2862928b25d90530bae41f67ef4a3bec1a7)]:
+  - @veilio-inc/cli@0.12.1
+
 ## 0.10.0
 
 ### Minor Changes
