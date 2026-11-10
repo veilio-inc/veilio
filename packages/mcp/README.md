@@ -206,7 +206,10 @@ merges server-side is honoured as it is, with no key needed here.
 
 The `local` line says which of those it was — `local (the team key is locked on
 this machine - run \`veilio team unlock\`)`or`local (could not read the team's
-maps: …)` — so a fallback is never read as agreement.
+maps: …)` — so a fallback is never read as agreement. A rate limit is not a
+fallback: when Cloud answers 429 to that read, `anonymize_text` and
+`anonymize_file` refuse, saying to run the command again in a minute, and a
+call after the 30-second recheck reads the team's maps again.
 
 The account's custom rules are fetched at startup the same way and applied to
 every anonymize call. Each result states their source: `from Cloud`, `cached`

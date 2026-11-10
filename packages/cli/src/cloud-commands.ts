@@ -1488,6 +1488,8 @@ export async function teamNamespaceForScrub(
       note: 'the team key is locked on this machine, so names the team already knows may have been given new placeholders; new names were numbered on this machine only (__LOCAL_…). Run `veilio team unlock`, then scrub again.',
     }
   if (found.status === 'unavailable') {
+    // e85: a rate limit refuses; numbering locally would not wait a minute.
+    if (found.refusal) return { team: null, note: null, refused: renderRefusal(found.refusal) }
     const credential = readCredential(home)
     return {
       team: null,

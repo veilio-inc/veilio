@@ -401,6 +401,9 @@ function runAnonymize(
   // before anything is masked or stored. Masking from the local map instead
   // is the quiet fallback the variable exists to rule out.
   if (resolved.found.status === 'refused') return refusalResult(resolved.found.refusal)
+  // e85: Cloud rate-limited the team read - refused, never the local namespace.
+  if (resolved.found.status === 'unavailable' && resolved.found.refusal)
+    return refusalResult(resolved.found.refusal)
   const { namespace, highest, conflicts } = resolved
   // A file is masked in its extension's language - the model's `language`
   // only for inline text or an extension Veilio does not know, since a
