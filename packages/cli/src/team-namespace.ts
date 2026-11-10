@@ -24,7 +24,13 @@ import {
   type TeamMapEnvelope,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
-import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
+import {
+  readCredential,
+  readTeamRecord,
+  removeTeamRecord,
+  writeTeamRecord,
+  type Credential,
+} from './credential.js'
 import { printable } from './reservations.js'
 import {
   CloudError,
@@ -187,7 +193,7 @@ export async function resolveTeamNamespace(
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
-      if (!transient(err)) return unavailable(err)
+      if (!transient(err)) return unavailable(err, credential, home)
     }
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
@@ -196,16 +202,25 @@ export async function resolveTeamNamespace(
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
-      return unavailable(again)
+      return unavailable(again, credential, home)
     }
   } finally {
     if (timer) clearTimeout(timer)
   }
 }
 
-/** A read that failed; a rate limit carries its refusal (see 'unavailable'). */
-function unavailable(err: unknown): TeamNamespaceResult & { status: 'unavailable' } {
-  const limited = err instanceof CloudError && err.status === 429
+/** A read that failed; a rate limit carries its refusal (see 'unavailable')
+ *  when this machine knows a team - the unlock's, or the one last listed. A
+ *  member with no team masks locally on a 429, as before (e85 review). */
+function unavailable(
+  err: unknown,
+  credential: Credential,
+  home: string | undefined
+): TeamNamespaceResult & { status: 'unavailable' } {
+  const limited =
+    err instanceof CloudError &&
+    err.status === 429 &&
+    (readTeamUnlock(credential, home) !== null || readTeamRecord(credential, home) !== null)
   return {
     status: 'unavailable',
     reason: describe(err),
