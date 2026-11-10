@@ -158,7 +158,7 @@ export const COMMAND_SPECS = [
     help: [
       {
         usage: 'team trust <team> <fingerprint>',
-        text: "Confirm a teammate's key by the fingerprint they read out to you, so team maps can be saved under the team key they granted. Needs no network.",
+        text: "Confirm a teammate's key by the fingerprint they read out to you, so team maps can be saved under the team key they granted. Needs no network, but you must be signed in.",
       },
     ],
   },

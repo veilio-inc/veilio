@@ -668,7 +668,7 @@ EXAMPLES
   ${BIN_NAME} scrub src/billing.ts | pbcopy
   pbpaste | ${BIN_NAME} restore
   git show :.env | ${BIN_NAME} scan --name .env   # one staged file, as the hook does
-  ${BIN_NAME} scan 'src/**/*.ts' --json > findings.json
+  ${BIN_NAME} scan src/*.ts --json > findings.json
 
 Transformed code goes to stdout; everything else goes to stderr, so the CLI
 composes in a pipe.
