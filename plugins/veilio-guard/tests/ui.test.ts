@@ -28,7 +28,9 @@ async function loaded(
   files: Record<string, string>,
   opts: Parameters<typeof project>[2] = {}
 ) {
-  const p = project(on, files, { ...opts, ownEnv: opts.home === undefined })
+  // The band registers HOME itself (ownEnv); every other test gets the
+  // helper's, where its map is recorded (spec 085 R2-3).
+  const p = project(on, files, opts)
   on('session.start', () => ({ cwd: ROOT }))
   return p
 }
@@ -238,18 +240,22 @@ const RULE = {
 }
 
 async function band($: TestHost, on: TestOn, files: Record<string, string>): Promise<string> {
-  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
-  await loaded($, on, {
-    [`${HOME}/.veilio/credential.json`]: JSON.stringify({ token: 't', ...ME }),
-    // The personal-maps key still held: without it the cached rules are not applied.
-    [`${HOME}/.veilio/personal-maps-key.json`]: JSON.stringify({
-      v: 1,
-      ...ME,
-      expiresAt: '2999-01-01T00:00:00.000Z',
-      key: btoa(String.fromCharCode(...new Uint8Array(32).fill(5))),
-    }),
-    ...files,
-  })
+  await loaded(
+    $,
+    on,
+    {
+      [`${HOME}/.veilio/credential.json`]: JSON.stringify({ token: 't', ...ME }),
+      // The personal-maps key still held: without it the cached rules are not applied.
+      [`${HOME}/.veilio/personal-maps-key.json`]: JSON.stringify({
+        v: 1,
+        ...ME,
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        key: btoa(String.fromCharCode(...new Uint8Array(32).fill(5))),
+      }),
+      ...files,
+    },
+    { home: HOME }
+  )
   const seen: Fields[] = []
   drawn(on, seen)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
@@ -389,4 +395,47 @@ test('Unicode format characters in a refusal’s detail never reach the band (co
   )
   expect(text).toContain('team numbers refused (server: boom?evil?x?y?)')
   expect(text).not.toMatch(/\p{Cf}/u)
+})
+
+// Spec 085 part 3, R2-18 (security audit run-2): the screen was drawn from the
+// whole map - names beforeTool would not restore, and values with terminal
+// control or format characters. Drawn now only from what would be restored,
+// through printable(); a map value that is not a name refuses the map.
+test('R2-18: a name not yet shown is drawn as its placeholder', async ($, on) => {
+  await loaded(
+    $,
+    on,
+    { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__901: 'QuasarLedger' }) },
+    { noGit: true }
+  )
+  const seen: Fields[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(SITE('AssistantMessage', { text: 'see __CLS__901', isFirstOfReply: true }))
+  expect(seen[0]?.props.text).toBe('see __CLS__901')
+})
+
+test('R2-18: a format character in a drawn value is shown as ?', async ($, on) => {
+  await loaded($, on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'Payment‮Gateway' }),
+  })
+  const seen: Fields[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(SITE('AssistantMessage', { text: 'see __CLS__1', isFirstOfReply: true }))
+  expect(seen[0]?.props.text).toBe('see Payment?Gateway')
+})
+
+test('R2-18: a map value with a control character refuses the map', async ($, on) => {
+  const p = await loaded($, on, {
+    [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__900: 'ok\u001b[8m' }),
+  })
+  const seen: Fields[] = []
+  drawn(on, seen)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+  await $.ui.mount(SITE('AssistantMessage', { text: 'see __CLS__900', isFirstOfReply: true }))
+  expect(JSON.stringify(seen)).not.toContain('\u001b')
+  const status = await $.command.run({ command: 'veilio', args: '' })
+  expect(status.text).toContain('a map entry is not a name')
+  void p
 })

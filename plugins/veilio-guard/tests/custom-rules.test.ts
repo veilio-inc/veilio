@@ -68,7 +68,9 @@ const teamKeys = (o: Record<string, unknown> = {}): string =>
     ...ME,
     teamId: 't1',
     expiresAt: FUTURE,
-    keys: [{ version: 1, key: KEY32 }],
+    // Confirmed (writable), as after a `team unlock` that judged the wrap
+    // trusted: only then are team rules applied (spec 085 R2-8).
+    keys: [{ version: 1, key: KEY32, granter: { id: 'u1', publicKey: 'GRANTER' }, writable: true }],
     ...o,
   })
 
@@ -139,7 +141,13 @@ test('an unsupported pattern or an engine placeholder in a hand-edited cache is 
   })
   const r = await readGuardRules(read, HOME)
   expect(r.rules.map((x) => x.id)).toEqual(['r1'])
-  expect(r.skipped).toEqual({ vaultLocked: 2, teamLocked: 0, unopenable: 0, refused: 3 })
+  expect(r.skipped).toEqual({
+    vaultLocked: 2,
+    teamLocked: 0,
+    unopenable: 0,
+    refused: 3,
+    teamUnconfirmed: 0,
+  })
 })
 
 // ── only while the key is held (spec 065 FR-006) ───────────────────────────
@@ -180,7 +188,7 @@ const TEAM_TABLE: [string, boolean, string | null][] = [
     teamKeys({
       keys: [
         { version: 1, key: '***' },
-        { version: 2, key: KEY32 },
+        { version: 2, key: KEY32, granter: { id: 'u1', publicKey: 'GRANTER' }, writable: true },
       ],
     }),
   ],
@@ -399,4 +407,27 @@ test("the guard's own keep rule still applies, ahead of the account's rules", as
   expect(seen).toContain("import { describe, expect, it } from 'vitest'")
   expect(seen).not.toContain('luhnValid')
   expect(seen).toContain('__CODENAME__')
+})
+
+// Spec 085 part 3, R2-7 and R2-8 in the guard: cached team rules are judged
+// again - a team whitelist must be exact names, and a team rule applies only
+// while the team key it came under is confirmed (writable).
+const WIDE = { ...KEEP_CANARY, id: 'wide', name: 'WideOpen', pattern: '[A-Za-z_$][A-Za-z0-9_$]*' }
+
+test('R2-7: a broad team whitelist in the cache is refused, and the name masked', async () => {
+  const r = await readGuardRules(files(signedIn([WIDE])), HOME)
+  expect(r.rules).toEqual([])
+  expect(r.skipped.refused).toBe(1)
+})
+
+test('R2-8: a team rule under a key not confirmed is not applied', async () => {
+  const unconfirmed = teamKeys({ keys: [{ version: 1, key: KEY32 }] })
+  const r = await readGuardRules(files(withKey(TEAM_KEYS, unconfirmed, [KEEP_CANARY])), HOME)
+  expect(r.rules).toEqual([])
+  expect(r.skipped.teamUnconfirmed).toBe(1)
+})
+
+test('R2-7, R2-8: an exact-name team whitelist under a confirmed key applies', async () => {
+  const r = await readGuardRules(files(signedIn([KEEP_CANARY])), HOME)
+  expect(r.rules.map((x) => x.id)).toEqual(['r2'])
 })

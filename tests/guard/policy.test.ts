@@ -138,7 +138,8 @@ describe('resultPolicy (table B), on recorded results', () => {
     expect(resultPolicy('mcp__veilio__anonymize_text', mcp, '')).toEqual({
       kind: 'fields',
       fields: [{ path: '[].text', mode: 'apply' }],
-      keep: ['type'],
+      // Spec 085 R2-10: a block's type is kept by its path, not by name.
+      keep: [],
     })
     expect(
       resultPolicy('mcp__x__y', [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }], '').kind

@@ -9,6 +9,16 @@ export declare function windowsAlias(path: string): boolean;
  *  `main~3` are git's. `windows`: the platform, when the caller knows it. */
 export declare function shortNameAlias(path: string, windows?: boolean): boolean;
 export declare function isRawOnly(path: string, extra: readonly string[]): boolean;
+/**
+ * A project's rawOnly pattern read the way a path is (spec 085 R2-15):
+ * backslashes as `/`, a leading `/` or `./` dropped (patterns are relative to
+ * the project root), a trailing `/` as `/**` (the folder's files), `.` and
+ * empty parts dropped, `..` resolved. `**` and `/**` stay match-all. Null for a pattern
+ * that can never match a file in the project - one that climbs above the
+ * root, names a drive (`C:`) or a home (`~`), or names nothing (`/`, `./`) - which the
+ * caller reports (#61) and still applies as written, as before.
+ */
+export declare function normaliseRawOnlyPattern(pattern: string): string | null;
 /** The project's own raw-only patterns in `.veilio/guard.json` (`rawOnly`):
  *  its strings, as written. One reader for the Claude Code guard and the MCP
  *  server (spec 078 review round 2), so both refuse the same files. Throws a

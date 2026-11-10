@@ -218,7 +218,7 @@ async function ready($: Host): Promise<Guard> {
       await g.load(cwd, await home)
       for (const text of g.notices.splice(0)) $.ui.log(text)
       // The organisation's guard ignores a project's own off switch.
-      if (g.state === 'off' && (await isManaged($))) g.state = 'on'
+      if (g.state === 'off' && (await isManaged($)) !== false) g.state = 'on'
       guard = g
       return g
     })
@@ -234,8 +234,15 @@ async function ready($: Host): Promise<Guard> {
 // Run by the organisation: managed settings list this plugin in
 // prependPlugins, so it runs before every mod a user installs, and a user's
 // own settings cannot switch it off (spec 033 US3).
-async function isManaged($: Host): Promise<boolean> {
-  const policy: unknown = await $.settings.read({ source: 'policy' }).catch(() => ({}))
+async function isManaged($: Host): Promise<boolean | 'unknown'> {
+  // Spec 085 R2-19: a policy that cannot be read is not "not managed": an
+  // off record or /veilio off must not switch off the organisation's guard.
+  let policy: unknown
+  try {
+    policy = await $.settings.read({ source: 'policy' })
+  } catch {
+    return 'unknown'
+  }
   const prepend =
     policy && typeof policy === 'object'
       ? (policy as { prependPlugins?: unknown }).prependPlugins
@@ -245,6 +252,10 @@ async function isManaged($: Host): Promise<boolean> {
     prepend.some((id) => typeof id === 'string' && id.startsWith('veilio-guard@'))
   )
 }
+
+/** strings.md #65 (spec 085 R2-19, approved 2026-11-08). */
+const POLICY_UNREAD =
+  "Veilio couldn't read your organisation's managed settings, so it stays on. It can't be switched off here until they can be read."
 
 function isTexts(v: unknown): v is readonly string[] {
   return Array.isArray(v) && v.every((c) => typeof c === 'string')
@@ -536,8 +547,10 @@ export function register(on: On, options: Options = {}) {
 
   on('command.run', { command: 'veilio' }, async ($, e) => {
     const g = await ready($)
-    const managed = await isManaged($)
+    const known = await isManaged($)
+    const managed = known === true
     const arg = String(e.args ?? '').trim()
+    if (arg === 'off' && known === 'unknown') return { text: POLICY_UNREAD }
     if (arg === 'off' && managed) {
       return {
         text: "Veilio guard is set up by your organisation's managed settings, so it can't be switched off here.",

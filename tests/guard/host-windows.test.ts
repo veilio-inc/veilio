@@ -27,3 +27,18 @@ for (const answer of [true, Promise.resolve(true)])
     const out = await guard.beforeTool({ tool: 'Bash', command: 'cat ENV~1' })
     expect('deny' in out && out.deny).toContain('away from the model')
   })
+
+// Spec 085 part 3, R2-13: a Windows short name reaches an MCP tool's path too.
+it('R2-13: an MCP tool asked for ENV~1 on Windows is refused', async () => {
+  const io = {
+    read: async (p: string) => readFileSync(p, 'utf8'),
+    write: async () => undefined,
+    exists: async (p: string) => existsSync(p),
+    realPath: async (p: string) => (existsSync(p) ? realpathSync(p) : undefined),
+    windows: () => true,
+  } as unknown as GuardIO
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(root, join(root, 'home'))
+  const out = await guard.beforeTool({ tool: 'mcp__files__read_file', path: 'ENV~1' })
+  expect('deny' in out && out.deny).toContain('away from the model')
+})

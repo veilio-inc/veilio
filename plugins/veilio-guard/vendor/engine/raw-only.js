@@ -90,8 +90,41 @@ export function shortNameAlias(path, windows = onWindows()) {
 }
 export function isRawOnly(path, extra) {
     const normal = path.replace(/\\/g, '/');
-    const patterns = [...DEFAULT_RAW_ONLY, ...extra.filter((p) => p && !p.startsWith('!'))];
+    const patterns = [
+        ...DEFAULT_RAW_ONLY,
+        ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
+    ];
     return patterns.some((p) => matches(normal, p));
+}
+/**
+ * A project's rawOnly pattern read the way a path is (spec 085 R2-15):
+ * backslashes as `/`, a leading `/` or `./` dropped (patterns are relative to
+ * the project root), a trailing `/` as `/**` (the folder's files), `.` and
+ * empty parts dropped, `..` resolved. `**` and `/**` stay match-all. Null for a pattern
+ * that can never match a file in the project - one that climbs above the
+ * root, names a drive (`C:`) or a home (`~`), or names nothing (`/`, `./`) - which the
+ * caller reports (#61) and still applies as written, as before.
+ */
+export function normaliseRawOnlyPattern(pattern) {
+    const p = pattern.replace(/\\/g, '/');
+    if (/^[A-Za-z]:/.test(p) || p.startsWith('~'))
+        return null;
+    // A bare `/`, `./` or `.` names no folder: reported, not read as `**`.
+    const bare = p.replace(/^(\.?\/)+/, '').replace(/\/+$/, '');
+    if (bare === '' || bare === '.')
+        return null;
+    const parts = [];
+    for (const part of (p.endsWith('/') ? `${bare}/**` : bare).split('/')) {
+        if (part === '' || part === '.')
+            continue;
+        if (part !== '..')
+            parts.push(part);
+        else if (parts.length === 0)
+            return null;
+        else
+            parts.pop();
+    }
+    return parts.length > 0 ? parts.join('/') : null;
 }
 /** The project's own raw-only patterns in `.veilio/guard.json` (`rawOnly`):
  *  its strings, as written. One reader for the Claude Code guard and the MCP

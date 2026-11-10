@@ -4,7 +4,7 @@
 // own new entries, and treats a placeholder that would mean two names as a
 // conflict to resolve by masking again - never by overwriting.
 
-import { isLocalTag, isRolePlaceholder, isSaneBlock } from '../vendor/engine/index.js'
+import { isLocalTag, isName, isRolePlaceholder, isSaneBlock } from '../vendor/engine/index.js'
 
 export type SymbolMap = Record<string, string>
 export type StoredMap = {
@@ -33,6 +33,11 @@ export function parseMapFile(text: string): Parsed {
   }
   if (!Object.values(map).every((v) => typeof v === 'string')) {
     return { ok: false, reason: 'a map entry is not text' }
+  }
+  // Spec 085 R2-18: the CLI's rule - no control character or line break, which
+  // would drive the terminal it is drawn in or break a line restored into.
+  if (!Object.values(map).every(isName)) {
+    return { ok: false, reason: 'a map entry is not a name (a control character or line break)' }
   }
   const stored: StoredMap = { version: 1, map: map as SymbolMap }
   if (remote && typeof remote === 'object') stored.remote = remote as StoredMap['remote']

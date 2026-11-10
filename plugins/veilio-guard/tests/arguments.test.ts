@@ -146,10 +146,21 @@ test(
   LOCAL_DB,
   unshapedRefused('users; DELETE FROM accounts')
 )
+// Spec 085 R2-18: a map value with a line break is not a name, so the map is
+// refused whole (the guard stops), as the CLI refuses it; nothing is restored.
 test(
   'L18: a map value holding a line break is not restored into an MCP tool',
   LOCAL_DB,
-  unshapedRefused('users\nDROP TABLE accounts')
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: 'users\nDROP TABLE accounts' }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), { result: [{ type: 'text', text: 'ok' }] }))
+    const out = await $.tool.call({ tool: 'mcp__local_db__query', sql: 'select * from __CLS__1' })
+    expect(out.deny).toMatch(/a map entry is not a name/)
+    expect(seen).toHaveLength(0)
+  }
 )
 test(
   'L18: a map value holding a space is not restored into an MCP tool',
@@ -240,13 +251,18 @@ test(
   }
 )
 
-test('L18: an Edit still restores a value with a line break, as written', async ($, on) => {
+test('L18, R2-18: a map value with a line break stops the guard, so no Edit gets it', async ($, on) => {
   const edit = recorded('Edit')
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __VAR__1: 'first\nsecond' }) })
   const seen: Fields[] = []
   on('tool.call', (_, e) => (seen.push(e), edit.r))
-  await $.tool.call({ ...eventOf(edit), old_string: 'x', new_string: 'const a = __VAR__1' })
-  expect(seen[0]?.new_string).toBe('const a = first\nsecond')
+  const out = await $.tool.call({
+    ...eventOf(edit),
+    old_string: 'x',
+    new_string: 'const a = __VAR__1',
+  })
+  expect(out.deny).toMatch(/a map entry is not a name/)
+  expect(seen).toHaveLength(0)
 })
 
 // Spec 085 L20 (strings.md #11): the server is the tool name's exact prefix,
@@ -631,3 +647,206 @@ test('R5b#6: outside git, an unshown hand-marked placeholder is refused as never
   expect(out.deny).toContain('which is never written back')
   expect(seen).toHaveLength(0)
 })
+
+// Spec 085 part 3, R2-9 (security audit run-2): a server named in mcpRestore
+// was trusted by name, so a repository's .mcp.json declaring a server of that
+// name, pointing elsewhere, received real names; and the agent could edit
+// .mcp.json. Now a listed server the project redeclares gets placeholders
+// (#57, once), and .mcp.json is write-protected (#59).
+const REDECLARED =
+  "Veilio: `jira` is also declared in this project's .mcp.json, so its tools get placeholders, not real names."
+const MCP_CONFIG_PROTECTED =
+  'Veilio refused this change: .mcp.json decides which MCP servers receive your real names, so the agent may not change it. Ask the user to make this change.'
+
+test(
+  'R2-9: a listed server the project .mcp.json redeclares gets placeholders',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [`${ROOT}/.mcp.json`]: JSON.stringify({
+        mcpServers: { jira: { type: 'http', url: 'http://127.0.0.1:9/' } },
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__search', query: 'again __CLS__1' })
+    expect(seen.map((e) => e.query)).toEqual(['__CLS__1', 'again __CLS__1'])
+    expect(p.logs.filter((l) => l === REDECLARED)).toHaveLength(1)
+  }
+)
+
+test(
+  'R2-9: an .mcp.json that cannot be read gives placeholders too',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [`${ROOT}/.mcp.json`]: '{ not json',
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('__CLS__1')
+  }
+)
+
+test(
+  'R2-9: with no .mcp.json, or one that does not name it, the listed server gets real names',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [`${ROOT}/.mcp.json`]: JSON.stringify({ mcpServers: { github: { command: 'gh' } } }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('PaymentGateway')
+  }
+)
+
+test('R2-9: Write and Edit of .mcp.json are refused', async ($, on) => {
+  project(on, { [`${ROOT}/.mcp.json`]: '{}' })
+  on('tool.call', () => ({ result: { type: 'update', filePath: `${ROOT}/.mcp.json` } }))
+  const w = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/.mcp.json`, content: '{}' })
+  expect(w.deny).toBe(MCP_CONFIG_PROTECTED)
+  const e = await $.tool.call({
+    tool: 'Edit',
+    file_path: `${ROOT}/.mcp.json`,
+    old_string: '{}',
+    new_string: '{ "mcpServers": {} }',
+  })
+  expect(e.deny).toBe(MCP_CONFIG_PROTECTED)
+})
+
+// Review of the run-2 guard branch: Claude Code also defines MCP servers in
+// ~/.claude.json (user scope, and local scope per project) and in a managed
+// managed-mcp.json, and reads .mcp.json from where the session started. A
+// listed server declared by the project, or in more than one scope, gets
+// placeholders; the agent may change none of these files.
+const USER_HOME = '/home/test'
+const CLAUDE_JSON = `${USER_HOME}/.claude.json`
+const SUB = `${ROOT}/packages/app`
+const TWICE =
+  'Veilio: `jira` is declared more than once in ~/.claude.json (for you and for this project), so its tools get placeholders, not real names.'
+const protectedFile = (file: string) =>
+  `Veilio refused this change: ${file} decides which MCP servers receive your real names, so the agent may not change it. Ask the user to make this change.`
+const jiraAt = { jira: { type: 'http', url: 'https://jira.example.com/mcp' } }
+
+test(
+  'review: a server declared once, in the user scope of ~/.claude.json, gets real names',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [CLAUDE_JSON]: JSON.stringify({ mcpServers: jiraAt, projects: { [ROOT]: {} } }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('PaymentGateway')
+  }
+)
+
+test(
+  'review: a server declared for you and for this project in ~/.claude.json gets placeholders',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [CLAUDE_JSON]: JSON.stringify({
+        mcpServers: jiraAt,
+        projects: { [ROOT]: { mcpServers: { jira: { command: 'node', args: ['x.js'] } } } },
+      }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen.map((e) => e.query)).toEqual(['__CLS__1', '__CLS__1'])
+    expect(p.logs.filter((l) => l === TWICE)).toHaveLength(1)
+  }
+)
+
+test(
+  'review: a ~/.claude.json that cannot be read gives placeholders',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [CLAUDE_JSON]: '{ not json',
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('__CLS__1')
+    expect(p.logs).toContain(
+      'Veilio: ~/.claude.json could not be read, so `jira` gets placeholders, not real names.'
+    )
+  }
+)
+
+test(
+  'review: an .mcp.json where the session started, below the root, redeclares too',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    const p = project(
+      on,
+      {
+        [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+        [`${SUB}/.mcp.json`]: JSON.stringify({ mcpServers: jiraAt }),
+        [`${SUB}/index.ts`]: 'export {}\n',
+      },
+      { cwd: SUB }
+    )
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('__CLS__1')
+    expect(p.logs).toContain(REDECLARED)
+  }
+)
+
+test('review: Write of ~/.claude.json, managed-mcp.json or .mcp.json. is refused', async ($, on) => {
+  project(on, {})
+  on('tool.call', () => ({ result: { type: 'create', filePath: CLAUDE_JSON } }))
+  const cases: [string, string][] = [
+    [CLAUDE_JSON, '~/.claude.json'],
+    ['/etc/claude-code/managed-mcp.json', 'managed-mcp.json'],
+    [`${ROOT}/.mcp.json.`, '.mcp.json'],
+    [`${ROOT}/.MCP.JSON `, '.mcp.json'],
+  ]
+  for (const [path, file] of cases) {
+    const w = await $.tool.call({ tool: 'Write', file_path: path, content: '{}' })
+    expect(w.deny, path).toBe(protectedFile(file))
+  }
+  const sh = await $.tool.call({
+    tool: 'Bash',
+    command: "echo '{}' > ~/.claude.json",
+    description: 'x',
+  })
+  expect(sh.deny).toBe(protectedFile('~/.claude.json'))
+  const settings = await $.tool.call({
+    tool: 'Write',
+    file_path: '/etc/claude-code/managed-settings.json',
+    content: '{}',
+  })
+  expect(settings.deny).toContain("Claude Code's settings can switch the guard off")
+})
+
+test(
+  'review: a ~/.claude.json whose mcpServers is not an object gives placeholders',
+  { options: { mcpRestore: ['jira'] } },
+  async ($, on) => {
+    project(on, {
+      [`${ROOT}/.veilio/map.json`]: mapFile(PAYMENT),
+      [CLAUDE_JSON]: JSON.stringify({ mcpServers: 'jira' }),
+    })
+    const seen: Fields[] = []
+    on('tool.call', (_, e) => (seen.push(e), MCP_OK))
+    await $.tool.call({ tool: 'mcp__jira__search', query: '__CLS__1' })
+    expect(seen[0]?.query).toBe('__CLS__1')
+  }
+)

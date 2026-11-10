@@ -265,3 +265,22 @@ it('with the deadline 2 ms away, a git that answers after the 500 ms minimum is 
     vi.useRealTimers()
   }
 })
+
+// Spec 085 R2-3 on Linux (act): the written-maps record is hashed with
+// crypto.subtle, which no timer drives. With a home, so a record is kept, the
+// save still asks git before it hashes anything, and git's answer stops it.
+it('with a home, a git that answers at 50 ms still stops the guard at that save', async () => {
+  vi.useFakeTimers()
+  try {
+    const { io, files } = timedHost((n) =>
+      n === 1 ? Promise.resolve([]) : after(50, ['.veilio/map.json'])
+    )
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await settled(guard.load(ROOT, '/home/dev'))
+    files[MAP] = mapText({ __CLS__1: 'QuasarLedger', __VAR__9: 'fakePlantedValue()' })
+    await settled(readNamed(guard, 'PaymentGatewayFake', Date.now() + 2))
+    expect(guard.state).toBe('stopped')
+  } finally {
+    vi.useRealTimers()
+  }
+})

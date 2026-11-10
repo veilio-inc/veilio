@@ -69,7 +69,8 @@ function property(entry: (typeof ENTRY)[number]) {
         { name: 'own', description: 'random', source: 'user' },
       ],
     }))
-    on('env.get', () => ({ value: undefined }))
+    // HOME as the helper's: its map is recorded there (spec 085 R2-3).
+    on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/test' : undefined }))
     let block = ''
     on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: block }] }))
     for (const [k, c] of cases.entries()) {

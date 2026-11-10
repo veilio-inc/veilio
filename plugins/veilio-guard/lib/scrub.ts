@@ -14,7 +14,6 @@ import {
   REDACTION_TOKENS,
   REGULATED_BASES,
   anonymize,
-  compileRulePattern,
   credentialsAmong,
   detectSecrets,
   isKeyword,
@@ -24,6 +23,8 @@ import {
   isRolePlaceholder,
   keepRule,
   restore,
+  ruleBudget,
+  safeMatch,
   scanSecrets,
   SECRET_DISPOSITIONS,
   shannonEntropy,
@@ -35,7 +36,6 @@ import type {
   Language,
   LanguageOption,
   RuleBudget,
-  RuleMatcher,
 } from '../vendor/engine/index.js'
 import type { Block } from './mapfile.ts'
 
@@ -1480,25 +1480,17 @@ function keywordIn(name: string, ctx: MaskContext): boolean {
   return languages.some((language) => isKeyword(name, language))
 }
 
-// Custom-rule patterns run on the engine's linear-time matcher, compiled once
-// per pattern (a teammate's pattern cannot freeze the guard; spec 065), and
-// draw on the invocation's budget. Once it is spent no rule keeps a name
-// readable and every name a replace rule might match is masked: the engine's
-// direction (security review).
-const ruleMatchers = new Map<string, RuleMatcher | null>()
+// Custom-rule patterns run on the engine's own matcher (safeMatch), with its
+// compile charge and its cap of MAX_RULES per budget (spec 085 R2-17: the
+// guard had a cache and loop of its own that missed both). Once the budget is
+// spent no rule keeps a name readable and every name a replace rule might
+// match is masked: the engine's direction (security review).
 function ruleMatches(name: string, ctx: MaskContext, type: CustomRule['type']): boolean {
   if (!ctx.rules?.length) return false
-  const stopped = () => ctx.budget?.spent === true && ctx.rules!.some((r) => r.type === type)
+  const budget = ctx.budget ?? ruleBudget()
+  const stopped = () => budget.spent && ctx.rules!.some((r) => r.type === type)
   if (stopped()) return type === 'replace'
-  const hit = ctx.rules.some((r) => {
-    if (r.type !== type) return false
-    let m = ruleMatchers.get(r.pattern)
-    if (m === undefined) {
-      if (ruleMatchers.size > 1000) ruleMatchers.clear()
-      ruleMatchers.set(r.pattern, (m = compileRulePattern(r.pattern)))
-    }
-    return m?.test(name, ctx.budget) ?? false
-  })
+  const hit = ctx.rules.some((r) => r.type === type && safeMatch(r.pattern, name, budget))
   return stopped() ? type === 'replace' : hit
 }
 

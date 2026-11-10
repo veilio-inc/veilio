@@ -8,7 +8,12 @@
 // into the map through `onFile`. The guard hands every call a deadline: a file
 // it cannot read, or cannot reach in time, comes back so the result that named
 // it can be withheld rather than sent.
-import { externalNames, parseDeclarations, parseShellDeclarations } from '../vendor/engine/index.js'
+import {
+  externalNames,
+  parseDeclarations,
+  parseShellDeclarations,
+  projectShapeFrom,
+} from '../vendor/engine/index.js'
 import type { Language, ProjectShape } from '../vendor/engine/index.js'
 import { isSourcePath, languageOf } from './policy.ts'
 
@@ -49,12 +54,6 @@ const PARSED = new Set<string>(['typescript', 'python', 'go'])
 // parseShellDeclarations and counts as the project's. Every other unread
 // language does (a Java class, a Vue component).
 const SHELL = /\.(sh|bash|zsh|ps1)$/i
-
-// A parsed JSON file, read field by field with optional chaining.
-type Json = { [key: string]: Json } | undefined
-
-// Read at most this many package.json files for workspace names.
-const MAX_MANIFESTS = 200
 
 export class ProjectIndex {
   state: IndexState = 'new'
@@ -132,66 +131,19 @@ export class ProjectIndex {
     this.state = this.pending.length ? 'indexing' : 'complete'
   }
 
+  /** The project's shape, read by the engine's one reader (spec 085 R2-23):
+   *  the CLI and the MCP server read it the same way. The manifests it reads
+   *  are fetched first, since the host's reads are asynchronous. */
   private async readShape(files: string[]): Promise<ProjectShape> {
-    const tops = new Set(files.filter((f) => f.includes('/')).map((f) => f.split('/')[0]!))
-    // Every directory on the way to a Python file, and every module's own name:
-    // `backend/app/models.py` makes `app` and `models` the project's.
-    const pythonModules = new Set(tops)
-    for (const f of files.filter((f) => f.endsWith('.py'))) {
-      for (const part of f.replace(/\.py$/, '').split('/')) pythonModules.add(part)
+    const wanted = files.filter(
+      (f) => /(^|\/)package\.json$/.test(f) || /^tsconfig[^/]*\.json$/.test(f) || f === 'go.mod'
+    )
+    const texts = new Map<string, string>()
+    for (const rel of wanted) {
+      const text = await this.io.read(rel).catch(() => undefined)
+      if (text !== undefined) texts.set(rel, text)
     }
-    const baseDirs = new Set(tops)
-    const workspaces: string[] = []
-    for (const manifest of files
-      .filter((f) => /(^|\/)package\.json$/.test(f))
-      .slice(0, MAX_MANIFESTS)) {
-      const name = await this.readJson(manifest, (j) => j?.name)
-      if (typeof name === 'string') workspaces.push(name)
-    }
-    const pathAliases: string[] = []
-    for (const config of files.filter((f) => /^tsconfig[^/]*\.json$/.test(f))) {
-      // `baseUrl`: `import 'models/invoice'` is the project's when models/ is there.
-      const baseUrl = await this.readJson(config, (j) => j?.compilerOptions?.baseUrl)
-      if (typeof baseUrl === 'string') {
-        const base = baseUrl.replace(/^\.\/?/, '').replace(/\/$/, '')
-        for (const f of files) {
-          const rest = base ? (f.startsWith(`${base}/`) ? f.slice(base.length + 1) : null) : f
-          if (rest?.includes('/')) baseDirs.add(rest.split('/')[0]!)
-        }
-      }
-      const paths = await this.readJson(config, (j) => j?.compilerOptions?.paths)
-      if (paths && typeof paths === 'object')
-        for (const key of Object.keys(paths)) {
-          const prefix = key.replace(/\*.*$/, '')
-          if (prefix) pathAliases.push(prefix)
-        }
-    }
-    let goModule: string | undefined
-    if (files.includes('go.mod')) {
-      const text = await this.io.read('go.mod').catch(() => '')
-      goModule = /^module\s+(\S+)/m.exec(text)?.[1]
-    }
-    return {
-      baseDirs: [...baseDirs],
-      pythonModules: [...pythonModules],
-      workspaces,
-      pathAliases,
-      goModule,
-    }
-  }
-
-  // tsconfig allows comments and trailing commas; this reads the common case
-  // and gives up quietly on the rest, which only leaves more names masked.
-  private async readJson(rel: string, pick: (j: Json) => unknown): Promise<unknown> {
-    try {
-      const text = (await this.io.read(rel))
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/^\s*\/\/.*$/gm, '')
-        .replace(/,(\s*[}\]])/g, '$1')
-      return pick(JSON.parse(text))
-    } catch {
-      return undefined
-    }
+    return projectShapeFrom(files, (rel) => texts.get(rel))
   }
 
   /** Indexes `paths` (relative to the root) that are not indexed yet, until

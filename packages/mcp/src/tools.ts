@@ -46,6 +46,7 @@ import {
   isLocalPlaceholder,
   GuardJsonCache,
   isRawOnly,
+  normaliseRawOnlyPattern,
   windowsAlias,
 } from '@veilio-inc/engine'
 import { findProjectRoot, loadMap, resolveMapPath, saveMap } from '@veilio-inc/cli/store'
@@ -249,6 +250,28 @@ function refuseRawOnly(path: string, ctx: ToolContext): string {
   return real
 }
 
+/** Spec 085 R2-15 (#61): a rawOnly pattern that can never match, once per
+ *  server process, as the guard says it once per session. */
+const saidUnmatchable = new Set<string>()
+function unmatchableRawOnly(ctx: ToolContext): string[] {
+  let patterns: string[]
+  try {
+    patterns = projectRawOnly(findProjectRoot(ctx.cwd))
+  } catch {
+    return [] // an unreadable guard.json refuses the file tools already
+  }
+  const out: string[] = []
+  for (const p of patterns) {
+    if (!p || p.startsWith('!') || normaliseRawOnlyPattern(p) !== null || saidUnmatchable.has(p))
+      continue
+    saidUnmatchable.add(p)
+    out.push(
+      `WARNING: rawOnly pattern \`${p}\` in .veilio/guard.json can never match a file, so it protects nothing. Write it relative to the project root, such as \`config/prod.yml\` or \`secrets/**\`.`
+    )
+  }
+  return out
+}
+
 /** The project's own raw-only patterns, from `.veilio/guard.json` at the
  *  project root, through the engine's loader the guard reads them with
  *  (review round 1 item 10, round 2), cached by the file's mtime. A file that
@@ -446,6 +469,7 @@ function runAnonymize(
   if (mismatch) caveats.push(mismatch)
   if (tooLarge) caveats.push(`WARNING: ${PROJECT_TOO_LARGE_NOTE.replace(/^veilio: /, '')}`)
   if (result.rulesStopped) caveats.push(`WARNING: ${RULES_STOPPED_NOTE}`)
+  caveats.push(...unmatchableRawOnly(ctx))
   if (result.languageFallback) {
     caveats.push(
       `WARNING: no language marker matched. Masked as ${LANGUAGE_LABELS[result.language]}, ` +

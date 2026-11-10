@@ -4,6 +4,7 @@ import {
   DEFAULT_RAW_ONLY,
   isRawOnly,
   normalisePath,
+  normaliseRawOnlyPattern,
   pathsInCommand,
   rawOnlyDirectories,
   shortNameAlias,
@@ -247,5 +248,55 @@ describe('Windows names of a raw-only path (spec 085 L19)', () => {
   })
   it.each(['src/a.ts', 'C:/repo/src/time:12.ts'])('isRawOnly(%j) is false', (path) => {
     expect(isRawOnly(path, [])).toBe(false)
+  })
+})
+
+// Spec 085 part 3, R2-15 (security audit run-2): a rawOnly pattern written
+// with a leading `/` or `./`, a trailing `/`, or backslashes protected
+// nothing, and the cd check read it differently. One normaliser, in the
+// engine, for every reader; a pattern that can never match is reported.
+describe('rawOnly patterns are read the way paths are (R2-15)', () => {
+  it.each([
+    ['/work/p/secrets/db.yml', 'secrets/'],
+    ['/work/p/config/prod.yml', '/config/prod.yml'],
+    ['/work/p/secrets/x', './secrets/x'],
+    ['C:\\p\\secrets\\a.yml', 'secrets\\**'],
+  ])('%s is raw-only under %s', (path, pattern) => {
+    expect(isRawOnly(path, [pattern])).toBe(true)
+  })
+
+  it('the cd check reads them the same way', () => {
+    expect(rawOnlyDirectories(['/config/prod.yml'])).toEqual(
+      rawOnlyDirectories(['config/prod.yml'])
+    )
+    expect(rawOnlyDirectories(['secrets/'])).toEqual(rawOnlyDirectories(['secrets/**']))
+    expect(rawOnlyDirectories(['secrets\\**'])).toEqual(rawOnlyDirectories(['secrets/**']))
+  })
+
+  it('a pattern that can never match is reported, and still applied as written', () => {
+    for (const p of ['../x', 'C:/x', '.', '/', './', '~/.ssh/**', 'a/../..'])
+      expect(normaliseRawOnlyPattern(p), p).toBeNull()
+    expect(normaliseRawOnlyPattern('/config/prod.yml')).toBe('config/prod.yml')
+    // As on main: a reported pattern loses nothing it matched before.
+    expect(isRawOnly('/work/p/~/.ssh/id', ['~/.ssh/**'])).toBe(true)
+    expect(rawOnlyDirectories(['~/.ssh/**'])).toEqual(['~', '~/.ssh'])
+  })
+
+  // Review of the run-2 guard branch: `**` stays match-all, and `..` inside
+  // a pattern is resolved rather than refused.
+  it.each([
+    ['**', '/work/p/src/a.ts', true],
+    ['/**', '/work/p/src/a.ts', true],
+    ['secrets/../config/**', '/work/p/config/prod.yml', true],
+    ['secrets/../config/**', '/work/p/secrets/db.yml', false],
+  ])('%s against %s: %s', (pattern, path, raw) => {
+    expect(isRawOnly(path, [pattern])).toBe(raw)
+  })
+
+  it('normal forms of **, /** and secrets/../config/**', () => {
+    expect(normaliseRawOnlyPattern('**')).toBe('**')
+    expect(normaliseRawOnlyPattern('/**')).toBe('**')
+    expect(normaliseRawOnlyPattern('secrets/../config/**')).toBe('config/**')
+    expect(rawOnlyDirectories(['secrets/../config/**'])).toEqual(['config'])
   })
 })

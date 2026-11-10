@@ -1110,7 +1110,13 @@ const ruleMatchers = new WeakMap<RuleBudget, Map<string, RuleMatcher | null>>()
 /** Rules one call applies, at most; past it the call's rules stop (rulesStopped). */
 const MAX_RULES = 1000
 
-function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean {
+/**
+ * Whether a custom rule's `pattern` matches `name`, on the engine's linear
+ * matcher, compile work and matching charged to `budget`, at most MAX_RULES
+ * patterns per budget. Exported so the guard matches exactly as anonymize does
+ * (spec 085 R2-17).
+ */
+export function safeMatch(pattern: string, name: string, budget: RuleBudget): boolean {
   // Stopped rules compile nothing more (security review of L8).
   if (budget.spent) return false
   let cache = ruleMatchers.get(budget)
