@@ -255,6 +255,10 @@ reserves, except with `--team`.
   it and removed by `veilio logout`); with no `reserved.json` yet, scrub writes
   one holding a fresh tag. With no team ever seen, new names still go into a
   local family, under a tag for that run only.
+- **Rate limited, it refuses.** When Cloud answers 429 to the read of the
+  team's maps and this machine knows the account's team (the team unlock, or
+  `~/.veilio/team.json`), `scrub` (with or without `--team`) masks nothing,
+  writes nothing, and says to run the command again in a minute.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 

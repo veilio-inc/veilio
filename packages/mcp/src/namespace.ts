@@ -186,6 +186,11 @@ let primeGeneration = 0
 const STARTUP_DEADLINE_MS = 10_000
 /** How often an 'unavailable' team is asked again, from a tool call. */
 const UNAVAILABLE_RECHECK_MS = 30_000
+/** A rate-limited one: the refusal says "in a minute", and each recheck
+ *  spends the same limit (e85 review). */
+const RATE_LIMITED_RECHECK_MS = 60_000
+const rateLimited = (): boolean =>
+  current.found.status === 'unavailable' && current.found.refusal !== undefined
 
 let primedWith: { home?: string; opts: PrimeOptions } = { opts: {} }
 let lastAttemptAt = 0
@@ -264,7 +269,7 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
           { instance: credential.instance, account: credential.account },
           primedWith.home
         ) !== null
-      : now - lastAttemptAt >= UNAVAILABLE_RECHECK_MS
+      : now - lastAttemptAt >= (rateLimited() ? RATE_LIMITED_RECHECK_MS : UNAVAILABLE_RECHECK_MS)
   if (!due) return null
   priming = null
   void primeNamespace(primedWith.home, primedWith.opts)
@@ -276,9 +281,13 @@ let settledFlag = true
  *  another project, and numbering with it - even once - would put that
  *  project's placeholders into this one's store (FR-013). */
 function reloadForAnotherProject(): Promise<ResolvedNamespace> {
+  // A rate limit is per account, not per project: it still refuses until the
+  // new project's answer arrives (e85 review).
+  const limited = current.found.status === 'unavailable' ? current.found.refusal : undefined
   current = localFrom({
     status: 'unavailable',
     reason: "the team's maps for the project now in use are still loading",
+    ...(limited ? { refusal: limited } : {}),
   })
   invalidated = false
   priming = null

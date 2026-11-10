@@ -225,7 +225,8 @@ describe('each command stays within its request budget', () => {
     cloud.limited.add('/api/maps')
     writeFileSync(join(cwd, 'a.ts'), 'export class Gamma {}\n')
     const r = await measure(['scrub', 'a.ts'])
-    expect(r.code, r.err).toBe(0)
+    // e85: refused, never numbered from the local namespace instead.
+    expect(r.code, r.err).toBe(2)
     expect(r.paths).toEqual(['GET /api/maps'])
   })
 

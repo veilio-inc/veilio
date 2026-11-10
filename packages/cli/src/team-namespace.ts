@@ -24,7 +24,13 @@ import {
   type TeamMapEnvelope,
   type TeamNamespaceAnalysis,
 } from '@veilio-inc/engine'
-import { readCredential, removeTeamRecord, writeTeamRecord, type Credential } from './credential.js'
+import {
+  readCredential,
+  readTeamRecord,
+  removeTeamRecord,
+  writeTeamRecord,
+  type Credential,
+} from './credential.js'
 import { printable } from './reservations.js'
 import {
   CloudError,
@@ -38,7 +44,7 @@ import {
 } from './cloud.js'
 import { readTeamUnlock } from './team-unlock.js'
 import { projectOverride, resolveOverride, type Env } from './client/project-scope.js'
-import type { Refusal } from './client/wording.js'
+import { refusalFromCloudError, type Refusal } from './client/wording.js'
 
 export type TeamNamespaceResult =
   /**
@@ -85,8 +91,11 @@ export type TeamNamespaceResult =
    *  `teamId`: which team, so new names can still be numbered from this
    *  checkout's reserved.json (spec 066). */
   | { status: 'locked'; teamId?: string }
-  /** In a team, and the maps could not be read. `reason` says why. */
-  | { status: 'unavailable'; reason: string }
+  /** In a team, and the maps could not be read. `reason` says why.
+   *  `refusal`: Cloud rate-limited the read (429). Numbering from the local
+   *  namespace then is refused, in the words every rate-limited command
+   *  uses (e85, founder 2026-11-10); the other reasons still fall back. */
+  | { status: 'unavailable'; reason: string; refusal?: Refusal }
   /**
    * VEILIO_PROJECT names no project the team works in, or a name two share
    * (spec 052 FR-012a). Not 'unavailable': numbering from the local map with a
@@ -184,7 +193,7 @@ export async function resolveTeamNamespace(
     } catch (err) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(err)) return { status: 'local' }
-      if (!transient(err)) return { status: 'unavailable', reason: describe(err) }
+      if (!transient(err)) return unavailable(err, credential, home)
     }
     await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS))
     if (giveUp.signal.aborted) return gaveUp()
@@ -193,10 +202,29 @@ export async function resolveTeamNamespace(
     } catch (again) {
       if (giveUp.signal.aborted) return gaveUp()
       if (noTeamToSpeakOf(again)) return { status: 'local' }
-      return { status: 'unavailable', reason: describe(again) }
+      return unavailable(again, credential, home)
     }
   } finally {
     if (timer) clearTimeout(timer)
+  }
+}
+
+/** A read that failed; a rate limit carries its refusal (see 'unavailable')
+ *  when this machine knows a team - the unlock's, or the one last listed. A
+ *  member with no team masks locally on a 429, as before (e85 review). */
+function unavailable(
+  err: unknown,
+  credential: Credential,
+  home: string | undefined
+): TeamNamespaceResult & { status: 'unavailable' } {
+  const limited =
+    err instanceof CloudError &&
+    err.status === 429 &&
+    (readTeamUnlock(credential, home) !== null || readTeamRecord(credential, home) !== null)
+  return {
+    status: 'unavailable',
+    reason: describe(err),
+    ...(limited ? { refusal: refusalFromCloudError(err) } : {}),
   }
 }
 

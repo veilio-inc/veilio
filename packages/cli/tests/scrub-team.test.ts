@@ -3,9 +3,10 @@ import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { main } from '../src/index.js'
-import { EXIT_OK, type Io } from '../src/commands.js'
+import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
 import { loadMap, resolveMapPath, saveMap } from '../src/store.js'
-import { mapsFor, teamScenario } from './helpers/team-scenario.js'
+import { ACCOUNT, INSTANCE, mapsFor, teamScenario } from './helpers/team-scenario.js'
+import { writeTeamRecord } from '../src/credential.js'
 import { isolateHome } from './helpers/isolated-home.js'
 
 isolateHome()
@@ -136,6 +137,54 @@ describe('veilio scrub, signed in to a team', () => {
     const r = await scrub(CODE, home)
     expect(r.out).toMatch(LOCAL_ONLY)
     expect(r.err).toMatch(/could not read the team's maps/)
+  })
+
+  // e85 (founder, 2026-11-10): a rate limit refuses, in the words every
+  // rate-limited command already uses - never local numbering with a note.
+  it.each(['scrub', 'scrub --team'])(
+    'Cloud rate-limits the read (429): `%s` refuses, prints nothing and writes nothing',
+    async (command) => {
+      const { home } = await teamScenario(fetchMock, {
+        maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
+        failures: 5,
+        failStatus: 429,
+      })
+      const r = await scrub(CODE, home, command.split(' '))
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.out).toBe('')
+      expect(r.map).toEqual({})
+      expect(r.err).toContain(
+        'Run the command again in a minute; if it keeps failing, contact the instance’s support.'
+      )
+      expect(r.err).not.toMatch(/could not read the team's maps/)
+    }
+  )
+
+  it('signed in with no team known on this machine: a 429 masks locally, as before', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
+      locked: true,
+      failures: 5,
+      failStatus: 429,
+    })
+    const r = await scrub(CODE, home)
+    expect(r.code, r.err).toBe(EXIT_OK)
+    expect(r.out).toMatch(LOCAL_ONLY)
+    expect(r.err).toMatch(/could not read the team's maps/)
+  })
+
+  it('the team known only from the last listing (key locked): a 429 refuses', async () => {
+    const { home } = await teamScenario(fetchMock, {
+      maps: mapsFor({ namespace: TEAM, aliases: {}, conflicts: {} }),
+      locked: true,
+      failures: 5,
+      failStatus: 429,
+    })
+    writeTeamRecord({ instance: INSTANCE, account: ACCOUNT, teamId: 'team-1' }, home)
+    const r = await scrub(CODE, home)
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.out).toBe('')
+    expect(r.err).toContain('Run the command again in a minute')
   })
 
   it('a hanging instance: gives up after 5 seconds and still writes the masked text', async () => {

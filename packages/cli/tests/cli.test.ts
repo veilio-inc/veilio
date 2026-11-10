@@ -87,6 +87,16 @@ describe('argument handling', () => {
     expect(out).toContain('keys fingerprint')
   })
 
+  // e85: the CLI expands no globs, so a quoted one opened a file named
+  // `src/**/*.ts`; and `team trust` reads the sign-in, so it needs one.
+  it('help shows only examples that run, and says team trust needs a sign-in', async () => {
+    const { out } = await run(['--help'])
+    expect(out).toContain('veilio scan src/*.ts --json > findings.json')
+    expect(out).not.toMatch(/scan '/)
+    const trust = (await run(['team', 'trust', '--help'])).out.replace(/\s+/g, ' ')
+    expect(trust).toContain('Needs no network, but you must be signed in.')
+  })
+
   it('rejects an unknown command', async () => {
     const r = await run(['frobnicate'])
     expect(r.code).toBe(EXIT_ERROR)
