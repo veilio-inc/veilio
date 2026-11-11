@@ -20,6 +20,7 @@ export {
 } from '../vendor/engine/index.js'
 import { DEFAULT_RAW_ONLY, normaliseRawOnlyPattern } from '../vendor/engine/index.js'
 import {
+  bracket,
   outsideQuotes,
   shellExpands,
   shellWords,
@@ -1524,21 +1525,8 @@ type GlobToken =
   | { kind: 'char'; c: string }
   | { kind: 'any' }
   | { kind: 'star'; deep: boolean; free?: true }
-  | { kind: 'class'; set: string; negated: boolean }
-
-/** Where the bracket class opened at `i` closes: past a first character
- *  (which may be `]`) and past any POSIX class inside (`[[:alpha:]]`), which
- *  is part of the class. -1 when it does not close. */
-function classEnd(glob: string, i: number): number {
-  for (let j = glob.startsWith('[:', i + 1) ? i + 1 : i + 2; j < glob.length; j++) {
-    if (glob[j] === '[' && glob[j + 1] === ':') {
-      const end = glob.indexOf(':]', j + 2)
-      if (end === -1) return -1
-      j = end + 1
-    } else if (glob[j] === ']') return j
-  }
-  return -1
-}
+  /** A bracket expression expanded exactly: one of these characters. */
+  | { kind: 'class'; chars: string[] }
 
 function globTokens(glob: string): GlobToken[] {
   const out: GlobToken[] = []
@@ -1550,11 +1538,14 @@ function globTokens(glob: string): GlobToken[] {
       if (deep) i++
       out.push({ kind: 'star', deep })
     } else if (c === '?') out.push({ kind: 'any' })
-    else if (c === '[' && classEnd(glob, i) > 0) {
-      const end = classEnd(glob, i)
-      const negated = /^[!^]/.test(glob.slice(i + 1, end))
-      out.push({ kind: 'class', set: glob.slice(i + 1 + (negated ? 1 : 0), end), negated })
-      i = end
+    else if (c === '[' && bracket(glob, i)) {
+      // By the one bracket reader (reading table A2): its characters when
+      // it is expanded exactly, else one character, whatever it is.
+      const b = bracket(glob, i)!
+      out.push(
+        b.chars ? { kind: 'class', chars: b.chars.map((x) => x.toLowerCase()) } : { kind: 'any' }
+      )
+      i = b.end - 1
     } else out.push({ kind: 'char', c: c.toLowerCase() })
   }
   return out
@@ -1563,8 +1554,8 @@ function globTokens(glob: string): GlobToken[] {
 /** Whether one string could match both globs (ignoring case, `*` and `?`
  *  stopping at `/`, `**` not). `a` is a shell word, so its wildcards do not
  *  match a leading `.` (`*.ts` is not `.env.ts`) unless `dots` says the shell
- *  lets them; `b` is a raw-only pattern. A class is read as able to match
- *  whatever it is set against: this errs toward refusing.
+ *  lets them; `b` is a raw-only pattern. A bracket expression is its
+ *  characters when it is expanded exactly, else any one character.
  *
  *  The pattern's `*` may take the word's letters (`server.pe?` is `*.pem`),
  *  and the word's `*` may stand for the pattern's fixed text (`id_*` is
@@ -1598,13 +1589,7 @@ function globsOverlap(a: string, b: string, dots = false): boolean {
     const other = lit === t ? u : t
     if (!lit) return true
     if (other.kind === 'any') return lit.c !== '/'
-    if (other.kind === 'class') {
-      const inSet =
-        other.set.toLowerCase().includes(lit.c) ||
-        /[a-z]-[a-z]/i.test(other.set) ||
-        other.set.includes('[:')
-      return lit.c !== '/' && (other.negated ? true : inSet)
-    }
+    if (other.kind === 'class') return lit.c !== '/' && other.chars.includes(lit.c)
     return true
   }
   // `took`: 1 once the word's `*` stood for the pattern's text, 2 once the
@@ -1664,19 +1649,4 @@ export function globMayBeRawOnly(word: string, extra: readonly string[], dots = 
   )
 }
 
-/** What `$'...'` spells: the escapes read as bash reads them. */
-export function ansiC(text: string): string {
-  return text.replace(
-    /\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|[\s\S])/g,
-    (_, e: string) => {
-      if (/^[xuU]/.test(e)) return String.fromCodePoint(parseInt(e.slice(1), 16))
-      if (/^[0-7]/.test(e)) return String.fromCharCode(parseInt(e, 8) & 255)
-      if (e[0] === 'c') return ''
-      return (
-        { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[
-          e
-        ] ?? e
-      )
-    }
-  )
-}
+export { ansiC } from './shell.ts'

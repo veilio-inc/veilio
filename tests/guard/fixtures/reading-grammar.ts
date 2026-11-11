@@ -325,6 +325,20 @@ const QUALIFIERS = [
   ':P',
 ]
 
+/** zsh's modifiers (zshexpn, "Modifiers"), alone and joined (`&`, which
+ *  repeats a substitution, cannot be written in a word the oracle runs). */
+const MODIFIERS = [
+  ...'aAcehlpPqQrtuxw',
+  'h1',
+  't1',
+  't:r',
+  'r:t',
+  'h:t',
+  'a:h',
+  's/bak/pem/',
+  'gs/x/y/',
+]
+
 export const OPERATORS: readonly Operator[] = [
   { id: 'O1', edits: perChar(any, (ch) => [`${ch}''`, `${ch}""`], 'spelled') },
   { id: 'O2', edits: perChar(any, (ch) => [`'${ch}'`], 'spelled') },
@@ -724,6 +738,30 @@ export const OPERATORS: readonly Operator[] = [
               ],
               'zsh'
             )(c)
+    ),
+  },
+  {
+    // zsh: each history modifier of the manual as a glob qualifier
+    // (coordinator ruling, 2026-11-11): `:t`, `:h`, `:a` and `:A` give back
+    // a part, or the absolute form, of a name the word matched, so the word
+    // is judged as written; every other one may write another name
+    // (`server.pem.bak(:r)` is `server.pem`). Real zsh checks the split.
+    id: 'O41',
+    edits: both(
+      () =>
+        MODIFIERS.map((m): Edit => (s) => {
+          if (s.tail !== '' || s.wrap.length > 0 || s.whole !== null) return false
+          s.tail = `(:${m})`
+          only('zsh')(s)
+          return true
+        }),
+      wholeName(
+        (c) =>
+          c.id !== 'PEM'
+            ? []
+            : MODIFIERS.flatMap((m) => [`${c.name}.bak(:${m})`, `${c.name}.bak(.:${m})`]),
+        'zsh'
+      )
     ),
   },
   {

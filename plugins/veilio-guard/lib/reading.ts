@@ -2,7 +2,7 @@
 // of a parsed command, wherever it stands, is turned into what the shell can
 // make of it and judged by the one raw-only judge (lib/guard.ts beforeTool).
 import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
-import type { List, Part, Redirect, Simple, Word } from './shell.ts'
+import { bracket, type List, type Part, type Redirect, type Simple, type Word } from './shell.ts'
 
 export const isWord = (x: object): x is Word =>
   Array.isArray((x as Word).parts) && typeof (x as Word).raw === 'string'
@@ -95,25 +95,28 @@ function runTime(text: string): string | null {
 const quote = (t: string) => t.replace(/[*?[\]{},]/g, QUOTED)
 const MAX_SPELLINGS = 64
 
-/** A bracket list or range of up to 64 characters as a brace list of them
- *  (reading table E8); null for a class that is negated, holds a POSIX class
- *  or is larger. */
-function bracketList(glob: string): string | null {
-  const m = /^\[([^!^[\]][^[\]]*)\]$/.exec(glob)
-  if (!m) return null
-  const chars = new Set<string>()
-  const set = m[1]!
-  for (let i = 0; i < set.length; i++) {
-    const [a, b] = [set.codePointAt(i)!, set.codePointAt(i + 2)]
-    if (set[i + 1] === '-' && b !== undefined && b >= a) {
-      if (b - a >= MAX_SPELLINGS) return null
-      for (let c = a; c <= b; c++) chars.add(String.fromCodePoint(c))
-      i += 2
-    } else chars.add(set[i]!)
-    if (chars.size > MAX_SPELLINGS) return null
-  }
-  const list = [...chars].map(quote)
+/** A bracket expression as the shell can read it (reading table A2): a
+ *  brace list of its characters when it is expanded exactly, else `?` - one
+ *  character, whatever it is. Text that is no bracket expression is itself. */
+function bracketList(glob: string): string {
+  const b = glob.startsWith('[') ? bracket(glob, 0, true) : null
+  if (!b || b.end !== glob.length) return glob
+  if (b.chars === null) return '?'
+  const list = b.chars.map(quote)
   return list.length === 1 ? list[0]! : `{${list.join(',')}}`
+}
+
+/** Text with each bracket expression in it read (see bracketList). */
+export function bracketsRead(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length;) {
+    const b = text[i] === '[' ? bracket(text, i) : null
+    if (b) {
+      out += bracketList(text.slice(i, b.end))
+      i = b.end
+    } else out += text[i++]
+  }
+  return out
 }
 
 /** What the shell can make of a word, as names and globs, by the reading
@@ -129,9 +132,28 @@ export function spellings(
   w: Word,
   o: { home: string | null; homeKnown: boolean; strict: boolean }
 ): string[] | 'any' {
-  const texts = textsOfWord(w, o)
+  const glued = textsOfWord(w, o)
   // A part that rewrites written text (Z5): the word could be any name.
-  if (texts === 'any') return 'any'
+  if (glued === 'any') return 'any'
+  const texts = [...glued]
+  // An unquoted part the shell fills in may break the word in two (A4:
+  // `cat$IFS.env`), or be empty: the text between any two of them, with
+  // those in between read as empty, is a word of its own too.
+  const breaks = [-1]
+  w.parts.forEach((p, k) => {
+    if ((p.kind === 'param' || p.kind === 'subst') && !p.quoted) breaks.push(k)
+  })
+  breaks.push(w.parts.length)
+  // Past 24 of them the word could be cut too many ways to read: any name.
+  if (breaks.length > 26) return 'any'
+  for (let a = 0; a < breaks.length; a++)
+    for (let b = a + 1; b < breaks.length; b++) {
+      const [from, to] = [breaks[a]! + 1, breaks[b]!]
+      if (to <= from || (from === 0 && to === w.parts.length)) continue
+      const t = textsOfWord({ ...w, parts: w.parts.slice(from, to) }, o, from === 0)
+      if (t === 'any') return 'any'
+      texts.push(...t)
+    }
   const out = new Set<string>()
   for (const t of texts) {
     const read = runTime(o.strict ? strictRead(t) : t)
@@ -146,7 +168,8 @@ export function spellings(
  *  (`id_ed${x:-$((25519))}` is `id_ed*`). */
 function textsOfWord(
   w: Word,
-  o: { home: string | null; homeKnown: boolean; strict: boolean }
+  o: { home: string | null; homeKnown: boolean; strict: boolean },
+  start = true
 ): string[] | 'any' {
   const home = o.homeKnown && o.home !== null ? quote(o.home) : null
   let texts: string[] = ['']
@@ -159,7 +182,7 @@ function textsOfWord(
   }
   w.parts.forEach((p, k) => {
     if (any) return
-    const alternatives = partSpellings(p, home, o, k === 0)
+    const alternatives = partSpellings(p, home, o, start && k === 0)
     if (alternatives === 'any') any = true
     else add(alternatives)
   })
@@ -183,10 +206,12 @@ function partSpellings(
           : p.text,
       ]
     case 'glob':
-      return [bracketList(p.text) ?? p.text]
+      return [bracketList(p.text)]
     case 'brace':
       return [o.strict ? ANY_TEXT : p.text]
     case 'zglob':
+      // A qualifier that puts text into the name or runs code (A3).
+      if (p.rewrites) return 'any'
       // A qualifier names no text; `**` still errs toward refusing a name
       // it ends, and under strict reading it may be a group after all.
       return [!p.any ? '*' : p.star || (p.qualifier && !o.strict) ? '**' : ANY_TEXT]

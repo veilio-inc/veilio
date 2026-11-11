@@ -322,3 +322,180 @@ test('20,000 unclosed braces are not read, and fast', () => {
   expect(parseShell(`echo ${'a{'.repeat(20_000)}`, 'sh')).toEqual({ ok: false, why: 'depth' })
   expect(Date.now() - t).toBeLessThan(2_000)
 })
+
+// Spec 091 addendum 2, reading table A1: what stands between `${` and `}` is
+// read by one grammar - something before the name, the name, subscripts, an
+// operator and its operands - and text it has no row for is unreadable.
+describe('addendum 2, A1: an expansion is read by a grammar, in every operand', () => {
+  const part = (text: string) => {
+    const p = parseShell(`cat ${text}`, 'sh')
+    if (!p.ok) throw new Error(`unreadable (${p.why}): ${text}`)
+    const n = p.list.items[0]!.node.stages[0]!
+    if (n.type !== 'simple') throw new Error('not a simple command')
+    return n.words[1]!.parts[0]!
+  }
+  const param = (text: string) => {
+    const p = part(text)
+    if (p.kind !== 'param') throw new Error(`${text} is read as ${p.kind}`)
+    return p
+  }
+
+  test.each([
+    ['an offset', '${x:$(a)}'],
+    ['a length', '${x:0:$(a)}'],
+    ['a prefix pattern', '${x#$(a)}'],
+    ['a longest prefix pattern', '${x##$(a)}'],
+    ['a suffix pattern', '${x%$(a)}'],
+    ['a longest suffix pattern', '${x%%$(a)}'],
+    ['a pattern to replace', '${x/$(a)/z}'],
+    ['a pattern to replace everywhere', '${x//$(a)/z}'],
+    ['a pattern at the start', '${x/#$(a)/z}'],
+    ['a pattern at the end', '${x/%$(a)/z}'],
+    ['a subscript', '${x[$(a)]}'],
+    ['a subscript, in backticks', '${x[`a`]}'],
+    ['a subscript of a length', '${#x[$(a)]}'],
+    ['a subscript behind !', '${!x[$(a)]}'],
+    ['a case pattern', '${x^$(a)}'],
+    ['a lower-case pattern', '${x,,$(a)}'],
+    ['old arithmetic in an offset', '${x:$[ $(a) ]}'],
+    ['a zsh :s pattern', '${x:s/$(a)/z/}'],
+    ['a zsh :/ pattern', '${x:/$(a)/z}'],
+    ['zsh flags', '${(j:$(a):)x}'],
+  ])('the command inside %s is read: %s', (_, text) => {
+    expect((param(text).substs ?? []).map(list)).toEqual(['W(a)'])
+  })
+
+  test.each([
+    ['a default', '${x:-.env}'],
+    ['a default without the colon', '${x-.env}'],
+    ['an assigned default', '${x:=.env}'],
+    ['an alternate value', '${x:+.env}'],
+    ['an error text', '${x:?.env}'],
+    ['a replacement', '${x/a/.env}'],
+    ['a replacement behind an escaped /', '${x/a\\/b/.env}'],
+    ['a zsh ::= value', '${x::=.env}'],
+    ['a zsh :s replacement', '${x:s/a/.env/}'],
+    ['a zsh :s replacement between commas', '${x:s,a,.env,}'],
+    ['a zsh :gs replacement', '${x:gs/a/.env/}'],
+    ['a zsh :/ replacement', '${x:/a/.env}'],
+    ['a default behind a subscript', '${x[1]:-.env}'],
+  ])('text the expansion can put into the word is its operand: %s %s', (_, text) => {
+    expect(param(text).operand?.map((w) => w.literal)).toEqual(['.env'])
+    expect(param(text).transforms).toBeUndefined()
+  })
+
+  test('text in a pattern, an offset or a subscript is not the word', () => {
+    for (const text of ['${x#.env}', '${x%.env}', '${x/.env/}', '${x:.env}', '${x[.env]}'])
+      expect(param(text).operand?.map((w) => w.literal) ?? [], text).toEqual([])
+  })
+
+  test.each([
+    '${~x:-.env}',
+    '${=x:-.env}',
+    '${==x:-.env}',
+    '${^x:-.env}',
+    '${^^x:-.env}',
+    '${+x:-.env}',
+    '${~~x:-.env}',
+    '${=~x:-.env}',
+    '${~:-.env}',
+    '${(L)x:-.ENV}',
+    '${"${:-.env}"}',
+    '${"$(true)":-.env}',
+    `\${'x':-.env}`,
+    '${${:-.eXnv}/X}',
+    '${x:l:s/a/.env/}',
+    '${x:s/a/.ENV/:l}',
+  ])(
+    'zsh: something before the name, or a second operator, with written text rewrites it: %s',
+    (text) => {
+      expect(param(text).transforms).toBe(true)
+    }
+  )
+
+  test.each(['${~x}', '${=x}', '${^x}', '${+x}', '${(f)x}', '${(P)x}', '${${x}:t}'])(
+    'zsh: with no written text it is a value like any other: %s',
+    (text) => {
+      expect(param(text).transforms).toBeUndefined()
+    }
+  )
+
+  test('$[...] is arithmetic, wherever it stands, and the commands inside it are read', () => {
+    expect(part('$[25519]')).toEqual({ kind: 'arith', text: '$[25519]' })
+    const p = part('$[ $(a) + 1 ]')
+    expect(p.kind === 'arith' && (p.substs ?? []).map(list)).toEqual(['W(a)'])
+    const inside = param('${x:-$[25519]}').operand![0]!.parts[0]!
+    expect(inside.kind).toBe('arith')
+    expect(part('"$[1]"').kind).toBe('arith')
+    // With no closing bracket it is text.
+    expect(part('$[1').kind).toBe('lit')
+  })
+
+  test('${ cmd; } and ${|cmd;} are command substitutions (bash 5.3)', () => {
+    for (const text of ['${ cat a; }', '${|cat a;}']) {
+      const p = part(text)
+      expect(p.kind === 'subst' && p.list && list(p.list), text).toBe('W(cat) W(a)')
+    }
+  })
+
+  test.each(['${x.y}', '${x }', '${x*}', '${x[1}', '${x!}', '${(Lx}', '${x@}', "${'x:-a}"])(
+    'text the grammar has no row for makes the command unreadable: %s',
+    (text) => {
+      expect(parseShell(`echo ${text}`, 'sh')).toEqual({ ok: false, why: 'unknown' })
+    }
+  )
+
+  test.each([
+    '${x}',
+    '${10}',
+    '${#}',
+    '${#x}',
+    '${#x[@]}',
+    '${##}',
+    '${?}',
+    '${$}',
+    '${!}',
+    '${-}',
+    '${@}',
+    '${*}',
+    '${#@}',
+    '${!x}',
+    '${!x[@]}',
+    '${!prefix*}',
+    '${!prefix@}',
+    '${x[@]}',
+    '${x[$i]}',
+    '${x[i+1]}',
+    '${x[${#x[@]}-1]}',
+    '${BASH_REMATCH[1]}',
+    '${x:1:2}',
+    '${x: -1}',
+    '${@:2}',
+    '${x^^}',
+    '${x,,}',
+    '${x~~}',
+    '${x@Q}',
+    '${x//a/b}',
+    '${x//\\//-}',
+    '${x%%.*}',
+    '${x##*/}',
+    '${x:-}',
+    '${1:-default}',
+    '${x:+"$y"}',
+    '${x+"$@"}',
+    '${x:=${y:-z}}',
+    '${x?}',
+    '${x:h}',
+    '${x:t:r}',
+    '${x:#pattern}',
+    '${(f)x}',
+    '${(s:,:)x}',
+    '${x[(r)a*]}',
+    '${=x}',
+    '${${x%.*}##*/}',
+    '${#${x}}',
+  ])('an ordinary expansion is still read: %s', (text) => {
+    expect(parseShell(`echo ${text}`, 'sh').ok).toBe(true)
+    expect(parseShell(`echo "${text}"`, 'sh').ok).toBe(true)
+  })
+})

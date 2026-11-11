@@ -218,7 +218,8 @@ describe('spellings: the reading table', () => {
 
   test.each([
     ['E8 a bracket list', `.e[n]v`, ['.env']],
-    ['E8 a bracket range', `.e[m-o]v`, ['.emv', '.env', '.eov']],
+    // A2: a range of letters stands for them in both cases (a collating locale folds them).
+    ['E8 a bracket range', `.e[m-o]v`, ['.emv', '.env', '.eov', '.eMv', '.eNv', '.eOv']],
     ['E8 a bracket list of several', `server.pe[mx]`, ['server.pem', 'server.pex']],
   ])('%s: %s', (_, word, expected) => {
     expect([...spell(word)].sort()).toEqual([...expected].sort())
@@ -230,41 +231,44 @@ describe('spellings: the reading table', () => {
     ['$BASE..$HEAD', ['..']],
     ['"$(pwd)":/app', [':/app']],
     [`$Z.e''nv`, ['.env']],
-    ['.e${Z}nv', ['.env']],
-    ['$DIR/.env', ['**/.env']],
-    ['$A/$B', []],
+    // A4: the text on each side of an unquoted run-time part is read too.
+    ['.e${Z}nv', ['.env', '.e', 'nv']],
+    ['$DIR/.env', ['**/.env', '/.env']],
+    ['$A/$B', ['/']],
     ['$F', []],
     ['"$1"', []],
-    ['secrets/$f', ['secrets/**']],
+    ['secrets/$f', ['secrets/**', 'secrets/']],
     ['id_ed$((25519))', ['id_ed*']],
     ['id_ed${x:-$((25519))}', ['id_ed', 'id_ed*']],
     ['id_ed${x:-${y:-$((25519))}}', ['id_ed', 'id_ed*']],
     ['f$((i+1)).txt', ['f*.txt']],
     ['$((n))', []],
     ['logs/$((n))', ['logs/**']],
-    ['.e$(echo n)v', ['.ev']],
+    ['.e$(echo n)v', ['.ev', '.e', 'v']],
     ['${x}nv', ['nv']],
-    ['sec$X/customers.csv', ['sec/customers.csv']],
+    ['sec$X/customers.csv', ['sec/customers.csv', 'sec', '/customers.csv']],
     ['"$(pwd)"/src', ['**/src']],
-    ['`pwd`/.env', ['**/.env']],
+    ['`pwd`/.env', ['**/.env', '/.env']],
   ])('E10, E12: %s is read as %j', (word, expected) => {
     expect(spell(word)).toEqual(expected)
   })
 
   test('E6, E7: with HOME set in the command, ~ and $HOME are any folder', () => {
     expect(spell('~/x', { homeKnown: false })).toEqual(['**/x'])
-    expect(spell('$HOME/x', { homeKnown: false })).toEqual(['**/x'])
+    expect(spell('$HOME/x', { homeKnown: false })).toEqual(['**/x', '/x'])
   })
 
   test('E6, E7: ~+, ~-, ~user, $PWD and $OLDPWD are any folder, not the session directory', () => {
-    for (const w of ['~+/x', '~-/x', '~dev/x', '$PWD/x', '"$PWD"/x', '$OLDPWD/x'])
-      expect(spell(w), w).toEqual(['**/x'])
+    for (const w of ['~+/x', '~-/x', '~dev/x', '"$PWD"/x']) expect(spell(w), w).toEqual(['**/x'])
+    // Unquoted, the text after the variable is a word of its own too (A4).
+    for (const w of ['$PWD/x', '$OLDPWD/x']) expect(spell(w), w).toEqual(['**/x', '/x'])
   })
 
   test('E9: a wildcard stays a wildcard; a quoted one is an ordinary character', () => {
     expect(spell('.en?')).toEqual(['.en?'])
-    expect(spell('.en[[:alpha:]]')).toEqual(['.en[[:alpha:]]'])
-    expect(spell('.e[!x]v')).toEqual(['.e[!x]v'])
+    // A2: a bracket expression that is not expanded exactly is one character.
+    expect(spell('.en[[:alpha:]]')).toEqual(['.en?'])
+    expect(spell('.e[!x]v')).toEqual(['.e?v'])
     expect(spell(`'.en*'`).some((s) => /[*?[]/.test(s))).toBe(false)
   })
 
@@ -295,8 +299,8 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     expect(spell(word)).toEqual(expected)
   })
 
-  test('Z1: a group alone is as before, and a function definition is not a group', () => {
-    expect(spell('(.env|x)')).toEqual(['(.env|x)'])
+  test('A3: a group alone is any text too, and a function definition is not a group', () => {
+    expect(spell('(.env|x)')).toEqual([ANY])
     expect(parseShell('f() { cat x; }', 'sh').ok).toBe(true)
     expect(parseShell('f ( ) { cat x; }', 'sh').ok).toBe(true)
   })
@@ -307,6 +311,87 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     expect(spell('${y/.env}')).toEqual([])
     expect(spell('${y/.env/}')).toEqual([])
     expect(spell('${${x}/a/.env}')).toBe('any')
+  })
+
+  test.each([
+    // A quoted wildcard character is an ordinary one: shown as \u0001.
+    ['a ] first in the list', '.[]e]nv', ['.\u0001nv', '.env']],
+    ['a ] after a backslash', '.[e\\]]nv', ['.env', '.\u0001nv']],
+    ['a backslash first', '.[\\]e]nv', ['.\u0001nv', '.env']],
+    ['a quoted member', `.e["n"]v`, ['.env']],
+    ['a range of digits', 'f[1-3]', ['f1', 'f2', 'f3']],
+    ['a range of capitals', 'f[A-B]', ['fA', 'fa', 'fB', 'fb']],
+  ])('A2: %s is a member: %s', (_, word, expected) => {
+    expect([...spell(word)].sort()).toEqual([...expected].sort())
+  })
+
+  test.each([
+    ['negated', '.[!\\]]nv'],
+    ['negated with ^', '.[^x]nv'],
+    ['a collating symbol', '.[[.e.]]nv'],
+    ['an equivalence class', '.[[=e=]]nv'],
+    ['a class', '.[[:alpha:]]nv'],
+    ['a range with mixed ends', '.[d-F]nv'],
+    ['a range from a capital to a small letter', '.[E-e]nv'],
+    ['a range of other characters', '.[+-z]nv'],
+    ['more than 64 characters', `.[a-zA-Z0-9_${"'"}!@#$%${"'"}]nv`],
+  ])('A2: a bracket expression that is %s is one character: %s', (_, word) => {
+    expect(spell(word)).toEqual(['.?nv'])
+  })
+
+  test('A2: a [ with no closing ] is text, as the shells read it', () => {
+    expect(spell('a[b')).toEqual(['a[b'])
+    expect(parseShell('[ -f x ] && echo [', 'sh').ok).toBe(true)
+  })
+
+  test.each([
+    ['((.e)nv)', [ANY]],
+    ['(.(e)nv)', [ANY]],
+    ['(.e(n|x)v|y)', [ANY]],
+    ['.e((n))v', [`.e${ANY}v`]],
+    ['.e(((n|x))|y)v', [`.e${ANY}v`]],
+  ])('A3: groups inside groups are any text: %s', (word, expected) => {
+    expect(spell(word)).toEqual(expected)
+  })
+
+  test.each([`sub(e:'REPLY=.env':)`, 'sub(+f)', '*(P:.env:)', 'sub(:s/sub/.env/)', 'sub(P:.env:)'])(
+    'A3: a qualifier that writes the name or runs code makes the word any name: %s',
+    (word) => {
+      expect(spell(word)).toBe('any')
+    }
+  )
+
+  test('A3: a qualifier that only filters or sorts is as before', () => {
+    expect(spell('*.ts(om)')).toEqual(['*.ts**'])
+    expect(spell('*(.)')).toEqual(['**'])
+    expect(spell('src/*(N)')).toEqual(['src/**'])
+  })
+
+  test('A3: !(...) is *, which matches no leading dot', () => {
+    expect(spell('!(node_modules)')).toEqual(['*'])
+    expect(spell('.e!(x)')).toEqual(['.e*'])
+    expect(spell('src/!(a|b).ts')).toEqual(['src/*.ts'])
+    expect(dotsMatch(arg('!(node_modules)'), false)).toBe(false)
+  })
+
+  test.each([
+    ['cat$IFS.env', '.env'],
+    [`cat$IFS'.env'`, '.env'],
+    ['cat${IFS%?}.env', '.env'],
+    ['a$(true).env', '.env'],
+    ['a`true`.env', '.env'],
+  ])('A4: the text beside an unquoted run-time part is a word of its own: %s', (text, expected) => {
+    const p = parseShell(text, 'sh')
+    if (!p.ok) throw new Error(p.why)
+    const read = spellings(wordsOf(p.list)[0]!, { home: HOME, homeKnown: true, strict: false })
+    expect(read).toContain(expected)
+  })
+
+  test('A4: inside double quotes the word is not broken; arithmetic and ~ break nothing', () => {
+    expect(spell('"a$x.env"')).toEqual(['a.env'])
+    expect(spell('"$a.$b"')).toEqual(['.'])
+    expect(spell('id_ed$((1))x')).toEqual(['id_ed*x'])
+    expect(spell('~/x')).toEqual([`${HOME}/x`])
   })
 
   test('Z4: ${:-x} is a written value', () => {

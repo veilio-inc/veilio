@@ -479,6 +479,10 @@ export const REVIEWED: Readonly<Record<string, readonly string[]>> = {
     // Wider than `e` (research addendum 2, §1).
     `cat sub(:s/sub/.env/)`,
     `cat *(P:.env:)`,
+    // Coordinator ruling, 2026-11-11: every modifier but `:t`, `:h`, `:a`, `:A`.
+    `cat server.pem.bak(:r)`,
+    `cat .env.bak(:r)`,
+    `cat x(:s/x/.env/)`,
   ],
   B17: [`x=a; cat \${x/a/.e[n]v}`],
 }
@@ -1018,6 +1022,7 @@ export const LIMITS: readonly { limit: string; command: string; tool?: 'PowerShe
   { limit: 'L2', command: `cat .e"$(echo n)"v` },
   { limit: 'L2', command: `cat $(printf .e; printf nv)` },
   { limit: 'L2', command: `ls | xargs cat` },
+  { limit: 'L2', command: `bash -c "$(cat build.sh)"` },
   { limit: 'L3', command: `./build.sh` },
   { limit: 'L3', command: `python3 -c 'open(".e"+"nv")'` },
   { limit: 'L3', command: `python3 -c 'print(open(".e"+"nv").read())'` },

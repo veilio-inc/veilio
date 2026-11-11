@@ -461,11 +461,17 @@ export type Part =
       /** The value written after `:-`, `-`, `:=`, `=`, `:+`, `+`, `:?`, `?`,
        *  and (zsh) an expansion standing where the name does. */
       operand?: Word[]
-      /** zsh: the expansion rewrites text written in the command (flags, or
-       *  an operator on an expansion standing where the name does). */
+      /** zsh: the expansion rewrites text written in the command (something
+       *  before the name, or an operator on an expansion standing where the
+       *  name does). */
       transforms?: true
+      /** The commands inside the operands that put no text into the word (a
+       *  subscript, a pattern, an offset, a length). */
+      substs?: List[]
+      /** Inside double quotes: the shell does not split the word here. */
+      quoted?: true
     }
-  | { kind: 'subst'; list: List | null }
+  | { kind: 'subst'; list: List | null; quoted?: true }
   /** `substs`: the commands of the `$(...)` and backticks inside. */
   | { kind: 'arith'; text: string; substs?: List[] }
   | { kind: 'glob'; text: string }
@@ -474,7 +480,16 @@ export type Part =
    *  that end the word, hold no `|`, `(` or `~` and follow no `@ + ! ? *` -
    *  zsh reads them as glob qualifiers (`*.ts(om)`), not as text. `star`:
    *  parentheses after the word's own `*` (`*(.)`, ksh's `*(x)`): that `*`. */
-  | { kind: 'zglob'; text: string; any: boolean; qualifier?: true; star?: true }
+  /** `rewrites`: a qualifier that can put text into the name or run code
+   *  (it holds `e`, `+`, `P` or a `:` modifier): the word could be any name. */
+  | {
+      kind: 'zglob'
+      text: string
+      any: boolean
+      qualifier?: true
+      star?: true
+      rewrites?: true
+    }
   | { kind: 'brace'; text: string }
   | { kind: 'tilde'; user: string }
   | { kind: 'ansic'; text: string }
@@ -528,6 +543,23 @@ export type List = { items: { node: Pipeline; joinedBy: Joint | null }[] }
 export type ParseResult =
   { ok: true; list: List } | { ok: false; why: 'unbalanced' | 'depth' | 'unknown' }
 
+/** What `$'...'` spells: the escapes read as bash reads them. */
+export function ansiC(text: string): string {
+  return text.replace(
+    /\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|[\s\S])/g,
+    (_, e: string) => {
+      if (/^[xuU]/.test(e)) return String.fromCodePoint(parseInt(e.slice(1), 16))
+      if (/^[0-7]/.test(e)) return String.fromCharCode(parseInt(e, 8) & 255)
+      if (e[0] === 'c') return ''
+      return (
+        { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[
+          e
+        ] ?? e
+      )
+    }
+  )
+}
+
 class Unreadable extends Error {
   constructor(readonly why: 'unbalanced' | 'depth' | 'unknown') {
     super(why)
@@ -573,7 +605,7 @@ function substsOf(words: readonly Word[]): List[] {
     for (const p of w.parts) {
       if (p.kind === 'subst' && p.list) out.push(p.list)
       else if (p.kind === 'arith') out.push(...(p.substs ?? []))
-      else if (p.kind === 'param') out.push(...substsOf(p.operand ?? []))
+      else if (p.kind === 'param') out.push(...(p.substs ?? []), ...substsOf(p.operand ?? []))
     }
   return out
 }
@@ -607,6 +639,101 @@ function tildes(w: Word): Word {
     })
   })
   return makeWord(parts, w.raw)
+}
+
+/** A bracket expression read by the POSIX grammar (reading table A2), from
+ *  its `[` at `i`: a `]` first in the list or after a backslash is a member;
+ *  `[.x.]`, `[=x=]` and `[:class:]` are parts of it. `chars`: its members,
+ *  when it is single characters and ranges whose two ends are both lower-case
+ *  letters, both upper-case letters or both digits - a range of letters
+ *  standing for them in both cases, as a collating locale folds them - and no
+ *  more than 64; null for anything else (negated, a class, mixed ends): one
+ *  character, whatever it is. Null result: no closing `]`, so the `[` is
+ *  text. `word`: in a shell word, where a blank or an operator ends the word
+ *  and a quoted run is members. */
+export function bracket(
+  s: string,
+  i: number,
+  word = false
+): { end: number; chars: string[] | null } | null {
+  // No `]` beyond a first member: text (and no scan of the rest for each `[`).
+  if (s.indexOf(']', i + 2) === -1) return null
+  let j = i + 1
+  let exact = true
+  if (s[j] === '!' || s[j] === '^') {
+    exact = false
+    j++
+  }
+  const chars = new Set<string>()
+  const kind = (c: string) =>
+    /^[a-z]$/.test(c) ? 'lower' : /^[A-Z]$/.test(c) ? 'upper' : /^[0-9]$/.test(c) ? 'digit' : null
+  for (let first = true; j < s.length; first = false) {
+    const c = s[j]!
+    if (c === ']' && !first)
+      return { end: j + 1, chars: exact && chars.size > 0 && chars.size <= 64 ? [...chars] : null }
+    if (word && /[\s;&|()<>]/.test(c)) return null
+    let member: string
+    if (c === '[' && /[.=:]/.test(s[j + 1] ?? '') && s.indexOf(`${s[j + 1]}]`, j + 2) !== -1) {
+      exact = false
+      j = s.indexOf(`${s[j + 1]}]`, j + 2) + 2
+      continue
+    } else if (c === '\\' && j + 1 < s.length) {
+      member = s[j + 1]!
+      j += 2
+    } else if (word && (c === "'" || c === '"')) {
+      const end = s.indexOf(c, j + 1)
+      if (end === -1) return null
+      for (const m of s.slice(j + 1, end)) chars.add(m)
+      j = end + 1
+      continue
+    } else {
+      member = c
+      j++
+    }
+    const to = s[j] === '-' && s[j + 1] !== undefined && s[j + 1] !== ']' ? s[j + 1]! : null
+    if (to === null) chars.add(member)
+    else {
+      const high = to === '\\' && j + 2 < s.length ? s[j + 2]! : to
+      // `[a-[.z.]]` and other ends the grammar has no exact reading for.
+      if (kind(member) === null || kind(member) !== kind(high) || high < member || to === '[')
+        exact = false
+      else
+        for (let code = member.charCodeAt(0); code <= high.charCodeAt(0); code++) {
+          const ch = String.fromCharCode(code)
+          chars.add(ch)
+          if (kind(ch) !== 'digit') chars.add(ch.toLowerCase()).add(ch.toUpperCase())
+        }
+      if (to !== '[') j += to === '\\' ? 3 : 2
+      else j++
+    }
+    if (chars.size > 64) exact = false
+  }
+  return null
+}
+
+/** Where the bracket or parenthesis opened at `i` closes (past it), with the
+ *  ones inside it, quotes and backslashes passed over; -1 when it does not. */
+function closes(s: string, i: number): number {
+  const [open, close] = s[i] === '[' ? ['[', ']'] : ['(', ')']
+  let depth = 0
+  for (let j = i; j < s.length; j++) {
+    const c = s[j]!
+    if (c === '\\') j++
+    else if (c === "'" || c === '"') {
+      const end = s.indexOf(c, j + 1)
+      if (end === -1) return -1
+      j = end
+    } else if (c === open) depth++
+    else if (c === close && --depth === 0) return j + 1
+  }
+  return -1
+}
+
+/** Where the unescaped `d` at or after `i` stands; the text's length when there is none. */
+function delimiter(s: string, i: number, d: string): number {
+  let j = i
+  while (j < s.length && s[j] !== d) j += s[j] === '\\' ? 2 : 1
+  return Math.min(j, s.length)
 }
 
 /** A declaration builtin's argument read as an assignment, by its text after
@@ -719,7 +846,7 @@ class Reader {
         r.i = k
         if (tick) {
           const parts: Part[] = []
-          r.backtick(parts)
+          r.backtick(parts, false)
           const p = parts[0]
           if (p?.kind === 'subst' && p.list) out.push(p.list)
         } else {
@@ -1297,11 +1424,12 @@ class Reader {
         this.i = end + 1
       } else if (c === '"') this.double(parts)
       else if (c === '$') this.dollar(parts, false)
-      else if (c === '`') this.backtick(parts)
+      else if (c === '`') this.backtick(parts, false)
       else if (c === '*' || c === '?') take({ kind: 'glob', text: c }, 1)
       else if (c === '[') {
-        const m = /^\[[^\s;&|()<>\]]*\]/.exec(s.slice(this.i))
-        if (m && m[0].length > 2) take({ kind: 'glob', text: m[0] }, m[0].length)
+        // A bracket expression, by the POSIX grammar; with no closing `]`, text.
+        const b = bracket(s, this.i, true)
+        if (b) take({ kind: 'glob', text: s.slice(this.i, b.end) }, b.end - this.i)
         else take({ kind: 'lit', text: '[', quoted: false }, 1)
       } else if (c === '{') {
         const end = this.braceEnd()
@@ -1328,10 +1456,22 @@ class Reader {
           parts.length === 1 &&
           parts[0]!.kind === 'lit' &&
           /^\w+\+?=$/.test(s.slice(start, this.i))
-        if (!array && text.length > 2 && (parts.length > 0 || !ends)) {
+        if (!array && text.length > 2) {
+          // A group is any text in its place, at any depth, also when it is
+          // the whole word (`((.e)nv)`).
           const last = parts[parts.length - 1]
+          const alone = parts.length === 0
           let grouped = false
           let star = false
+          // `!(x)` matches what `*` matches, and no leading dot.
+          const negation = last?.kind === 'lit' && !last.quoted && last.text.endsWith('!')
+          if (negation) {
+            last.text = last.text.slice(0, -1)
+            if (last.text === '') parts.pop()
+            parts.push({ kind: 'glob', text: '*' })
+            this.i = end
+            continue
+          }
           if (last?.kind === 'glob' && last.text === '*') {
             // `*(.)` ending the word is that `*`; inside it, `*` and a group.
             grouped = true
@@ -1347,7 +1487,17 @@ class Reader {
           }
           const part: Part = { kind: 'zglob', text, any: true }
           if (star) part.star = true
-          else if (!grouped && ends && !/[|(~]/.test(text.slice(1, -1))) part.qualifier = true
+          else if (!grouped && !alone && ends && !/[|(~]/.test(text.slice(1, -1)))
+            part.qualifier = true
+          // A qualifier that puts text into the name or runs code: `e`, `+`,
+          // `P`, and every `:` modifier but `:t`, `:h`, `:a` and `:A`, which
+          // give back a part, or the absolute form, of a name the word matched.
+          const [filters, ...modifiers] = text.slice(1, -1).split(':')
+          if (
+            (part.star || part.qualifier) &&
+            (/[eP+]/.test(filters!) || modifiers.some((m) => !/^[thaA]$/.test(m)))
+          )
+            part.rewrites = true
           parts.push(part)
         } else parts.push({ kind: 'glob', text })
         this.i = end
@@ -1438,7 +1588,7 @@ class Reader {
       } else if (c === '$' || c === '`') {
         flush()
         if (c === '$') this.dollar(parts, true)
-        else this.backtick(parts)
+        else this.backtick(parts, true)
       } else {
         text += c
         this.i++
@@ -1460,11 +1610,22 @@ class Reader {
         return
       }
     }
+    if (next === '[') {
+      // Old arithmetic: `$[...]` is `$((...))`.
+      const end = closes(s, this.i + 1)
+      if (end !== -1) {
+        const text = s.slice(this.i, end)
+        const substs = substsOf(this.inner(text.slice(2, -1)))
+        parts.push(substs.length > 0 ? { kind: 'arith', text, substs } : { kind: 'arith', text })
+        this.i = end
+        return
+      }
+    }
     if (next === '(') {
       this.i += 2
       const list = this.list(new Set([')']))
       this.expect(')')
-      parts.push({ kind: 'subst', list })
+      parts.push(quoted ? { kind: 'subst', list, quoted } : { kind: 'subst', list })
     } else if (next === '{') {
       let depth = 0
       let j = this.i + 1
@@ -1474,46 +1635,7 @@ class Reader {
         else if (s[j] === '}' && --depth === 0) break
       }
       if (j >= s.length) throw new Unreadable('unbalanced')
-      const inner = s.slice(this.i + 2, j)
-      const m = /^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])/.exec(inner)
-      const name = m ? m[0].replace(/^[#!](?=.)/, '') : ''
-      const op = inner.slice(m ? m[0].length : 0)
-      // zsh: flags (`${(L)x}`), and an expansion where the name stands
-      // (`${${x}...}`); then the name, and what follows it.
-      const flags = /^\((?:[^()]|\([^()]*\))*\)/.exec(inner)?.[0] ?? ''
-      let rest = inner.slice(flags.length)
-      const named: Word[] = []
-      if (/^\$[{(]/.test(rest)) {
-        if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
-        const r = new Reader(rest, this.depth, this.frames)
-        const inside: Part[] = []
-        r.dollar(inside, quoted)
-        this.frames.n--
-        named.push(makeWord(inside, rest.slice(0, r.i)))
-        rest = rest.slice(r.i)
-      } else
-        rest = rest.slice(/^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])?/.exec(rest)![0].length)
-      // Text written in the command, past a subscript (`${a[0]:-v}`): a
-      // default or alternate value (zsh's `::=` too), or the replacement of
-      // a substitution - `/pat/TEXT`, `//pat/TEXT`, `/#pat/TEXT`,
-      // `/%pat/TEXT`, zsh `:/pat/TEXT`, `:s/l/TEXT/`, `:gs/l/TEXT/`. The
-      // pattern is not text.
-      const value = /^(?:\[[^\]]*\])?(?:::=|:?[-=+?])/.exec(rest)
-      const swap = value ? null : /^(?:\[[^\]]*\])?(:g?s|:)?\/[/#%]?/.exec(rest)
-      let text: string | null = value ? rest.slice(value[0].length) : null
-      if (swap) {
-        // The replacement starts after the pattern's closing, unescaped `/`.
-        let at = swap[0].length
-        while (at < rest.length && rest[at] !== '/') at += rest[at] === '\\' ? 2 : 1
-        if (at < rest.length)
-          text = rest.slice(at + 1).replace(swap[1]?.endsWith('s') ? /\/$/ : /$^/, '')
-      }
-      const operand = [...named, ...(text !== null ? this.operand(text, quoted) : [])]
-      const part: Part = { kind: 'param', name, op }
-      if (text !== null || named.length > 0) part.operand = operand
-      if ((flags !== '' || (named.length > 0 && rest !== '')) && holdsText(operand))
-        part.transforms = true
-      parts.push(part)
+      parts.push(this.expansion(s.slice(this.i + 2, j), quoted))
       this.i = j + 1
     } else if ((next === "'" || next === '"') && !quoted) {
       let j = this.i + 2
@@ -1524,7 +1646,11 @@ class Reader {
     } else {
       const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])/.exec(s.slice(this.i + 1))
       if (m) {
-        parts.push({ kind: 'param', name: m[0], op: '' })
+        parts.push(
+          quoted
+            ? { kind: 'param', name: m[0], op: '', quoted }
+            : { kind: 'param', name: m[0], op: '' }
+        )
         this.i += 1 + m[0].length
       } else {
         parts.push({ kind: 'lit', text: '$', quoted })
@@ -1533,7 +1659,123 @@ class Reader {
     }
   }
 
-  private backtick(parts: Part[]): void {
+  /** What stands between `${` and `}`, read by one grammar (reading table
+   *  A1): something before the name, the name, subscripts, an operator and
+   *  its operands. Each operand is read as words: text the expansion can put
+   *  into the word is one more spelling of it (`operand`); a subscript, a
+   *  pattern, an offset or a length is read for the commands inside it
+   *  (`substs`). Text the grammar does not account for is unreadable. */
+  private expansion(inner: string, quoted: boolean): Part {
+    // bash 5.3: `${ cmd; }` and `${|cmd;}` run commands.
+    if (/^[ \t\n|]/.test(inner)) {
+      if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+      const list = new Reader(inner.slice(1), this.depth, this.frames).read()
+      this.frames.n--
+      return quoted ? { kind: 'subst', list, quoted } : { kind: 'subst', list }
+    }
+    // The name and what follows it, as the cd rules read them.
+    const m = /^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])/.exec(inner)
+    const name = m ? m[0].replace(/^[#!](?=.)/, '') : ''
+    const op = inner.slice(m ? m[0].length : 0)
+    const named: Word[] = []
+    const substs: List[] = []
+    const read = (text: string) => {
+      if (text !== '') substs.push(...substsOf(this.operand(text, quoted)))
+    }
+    let k = 0
+    // zsh: flags, and `~`, `=`, `^`, `+` before the name.
+    let prefixed = false
+    for (;;) {
+      if (inner[k] === '(') {
+        const end = closes(inner, k)
+        if (end === -1) throw new Unreadable('unknown')
+        read(inner.slice(k + 1, end - 1))
+        k = end
+      } else if (/[~=^+]/.test(inner[k] ?? '')) k++
+      else break
+      prefixed = true
+    }
+    // `#` (a length) and `!` (another variable's name) before a name.
+    const indirect = inner[k] === '!'
+    if (/[#!]/.test(inner[k] ?? '') && /[A-Za-z_0-9@*#?$!"'-]/.test(inner[k + 1] ?? '')) k++
+    if (inner[k] === '$' && /[{(]/.test(inner[k + 1] ?? '')) {
+      // zsh: an expansion standing where the name does.
+      if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+      const r = new Reader(inner.slice(k), this.depth, this.frames)
+      const inside: Part[] = []
+      r.dollar(inside, quoted)
+      this.frames.n--
+      named.push(makeWord(inside, inner.slice(k, k + r.i)))
+      k += r.i
+    } else if (inner[k] === '"' || (inner[k] === "'" && !quoted)) {
+      // zsh: a quoted string where the name stands.
+      if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+      const r = new Reader(inner.slice(k), this.depth, this.frames)
+      const inside: Part[] = []
+      if (inner[k] === '"') r.double(inside)
+      else {
+        const end = inner.indexOf("'", k + 1)
+        if (end === -1) throw new Unreadable('unknown')
+        inside.push({ kind: 'lit', text: inner.slice(k + 1, end), quoted: true })
+        r.i = end - k + 1
+      }
+      this.frames.n--
+      named.push(makeWord(inside, inner.slice(k, k + r.i)))
+      k += r.i
+      prefixed = true
+    } else k += /^(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])?/.exec(inner.slice(k))![0].length
+    // `${!prefix*}` and `${!prefix@}`: the names that start so.
+    if (indirect && /^[*@]$/.test(inner.slice(k))) k++
+    while (inner[k] === '[') {
+      const end = closes(inner, k)
+      if (end === -1) throw new Unreadable('unknown')
+      read(inner.slice(k + 1, end - 1))
+      k = end
+    }
+    const rest = inner.slice(k)
+    // Text the expansion can put into the word.
+    let text: string | null = null
+    // More than one operator, one of them holding text: it may be rewritten.
+    let chained = false
+    let o: RegExpExecArray | null
+    if (rest === '' || /^@[A-Za-z]+$/.test(rest)) {
+      // The value alone, or bash's `${x@Q}`.
+    } else if ((o = /^(?:::=|:?[-=+?])/.exec(rest))) text = rest.slice(o[0].length)
+    else if ((o = /^(?:##?|%%?|\^\^?|,,?|~~?)/.exec(rest))) read(rest.slice(o[0].length))
+    else if ((o = /^:?\/[/#%]?/.exec(rest))) {
+      // `/pat/TEXT`, `//`, `/#`, `/%`, zsh `:/`: the pattern is not text.
+      const at = delimiter(rest, o[0].length, '/')
+      read(rest.slice(o[0].length, at))
+      if (at < rest.length) text = rest.slice(at + 1)
+    } else if (rest[0] === ':') {
+      // An offset and a length, or zsh's modifiers; of those `:s` and `:gs`
+      // hold text, between any delimiter that is not a letter or a digit.
+      const sub = /:g?s([^A-Za-z0-9\s])/.exec(rest)
+      if (!sub) read(rest.slice(1))
+      else {
+        const d = sub[1]!
+        const from = sub.index + sub[0].length
+        const mid = delimiter(rest, from, d)
+        const end = delimiter(rest, mid + 1, d)
+        read(rest.slice(1, sub.index))
+        read(rest.slice(from, mid))
+        if (mid < rest.length) text = rest.slice(mid + 1, end)
+        const tail = rest.slice(end + 1)
+        read(tail.replace(/^:/, ''))
+        chained = sub.index > 0 || tail !== ''
+      }
+    } else throw new Unreadable('unknown')
+    const operand = [...named, ...(text !== null ? this.operand(text, quoted) : [])]
+    const part: Part = { kind: 'param', name, op }
+    if (text !== null || named.length > 0) part.operand = operand
+    if (substs.length > 0) part.substs = substs
+    if (quoted) part.quoted = true
+    if ((prefixed || chained || (named.length > 0 && rest !== '')) && holdsText(operand))
+      part.transforms = true
+    return part
+  }
+
+  private backtick(parts: Part[], quoted: boolean): void {
     const s = this.s
     let j = this.i + 1
     let inner = ''
@@ -1544,7 +1786,8 @@ class Reader {
     if (j >= s.length) throw new Unreadable('unbalanced')
     this.i = j + 1
     const r = new Reader(inner, this.depth, this.frames)
-    parts.push({ kind: 'subst', list: r.read() })
+    const list = r.read()
+    parts.push(quoted ? { kind: 'subst', list, quoted } : { kind: 'subst', list })
   }
 
   /** The whole text, here-documents fed to a shell read once their bodies are. */

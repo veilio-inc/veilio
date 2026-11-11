@@ -60,6 +60,8 @@ export function makeFixture(): Fixture {
     [join(proj, '.veilio/guard.json')]: '{"rawOnly":["secrets/**"]}',
     [join(proj, 'src/index.ts')]: 'export {}\n',
     [join(proj, 'a.txt')]: 'a\n',
+    // Not raw-only by its name; zsh's `(:r)` takes its suffix off.
+    [join(proj, 'server.pem.bak')]: 'a copy that is not a key\n',
     [join(home, '.veilio/map.json')]: body('HOME'),
   }
   const onDisk = { [join(proj, 'mysh')]: '/bin/sh' }
