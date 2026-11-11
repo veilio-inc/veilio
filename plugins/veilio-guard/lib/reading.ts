@@ -268,6 +268,10 @@ function setChanges(args: (string | null)[]): boolean {
   return false
 }
 
+/** Variables whose assignment changes how bash reads words (reading table
+ *  A10): `GLOBIGNORE` lets a wildcard match a leading dot. */
+const READING_VARIABLES = /^(?:GLOBIGNORE|BASHOPTS|SHELLOPTS|POSIXLY_CORRECT|BASH_COMPAT)(?:\+?=|$)/
+
 /** Words before a program that are not it (zsh's `-` among them). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect', '-'])
 /** A word the shell builds when the command runs. */
@@ -293,6 +297,13 @@ export function readsStrictly(list: List): boolean {
         else if ((w === 'eval' || w === 'source' || w === '.') && rest.includes(null)) strict = true
       })
       const simple = x as Simple
+      // An assignment to one of them in any form: `X=`, `export X=`, `env
+      // X=`, `read X`, `printf -v X`.
+      if (
+        simple.assigns.some((a) => READING_VARIABLES.test(a.name ?? '')) ||
+        simple.words.some((w) => READING_VARIABLES.test(w.literal ?? w.assign?.name ?? ''))
+      )
+        strict = true
       // zsh's `options` array sets an option as `setopt` does.
       if (
         simple.assigns.some((a) => a.name === 'options') ||
@@ -340,15 +351,40 @@ export function pieces(spelling: string): string[] {
   return [...out]
 }
 
-/** The command's blank-separated chunks, each as typed and as it reads with
- *  line continuations, quotes and backslashes removed: a floor under the
- *  reader, which does not depend on it. */
-export function quoteBlind(command: string): [typed: string, read: string][] {
+/** The text floor (reading table A8): a net under the reader for a way of
+ *  running text that no row names. Each blank-separated chunk of the command
+ *  that holds a quote or a backslash, as typed and as it reads with them and
+ *  line continuations removed; and each piece of quoted text, here-document
+ *  body and here-string - by its value, split at blanks and at the shell's
+ *  operators - which the guard judges as a word, wildcards and all. */
+export function textPieces(list: List | null, command: string): [typed: string, read: string][] {
   const out: [string, string][] = []
+  const seen = new Set<string>()
+  const add = (typed: string, read: string) => {
+    if (read === '' || seen.has(read)) return
+    seen.add(read)
+    out.push([typed, read])
+  }
+  const split = (typed: string | null, text: string) => {
+    for (const piece of text.split(/[\s;|&<>()`$]+/)) add(typed ?? piece, piece)
+  }
   for (const m of command.matchAll(/(?:\\\n|\S)+/g)) {
     const read = m[0].replace(/\\\n/g, '').replace(/['"\\]/g, '')
-    if (read !== m[0]) out.push([m[0], read])
+    if (read === m[0]) continue
+    add(m[0], read)
+    split(m[0], read)
   }
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) return x.forEach(visit)
+    if (x === null || typeof x !== 'object') return
+    if (isWord(x)) {
+      // Text the shell does not read as its own words: quoted, or `$'...'`.
+      if (x.parts.some((p) => (p.kind === 'lit' && p.quoted) || p.kind === 'ansic'))
+        split(x.raw, valueOf(x))
+    } else if (typeof (x as Partial<Redirect>).body === 'string') split(null, (x as Redirect).body!)
+    for (const v of Object.values(x)) visit(v)
+  }
+  if (list) visit(list)
   return out
 }
 

@@ -499,3 +499,153 @@ describe('addendum 2, A1: an expansion is read by a grammar, in every operand', 
     expect(parseShell(`echo "${text}"`, 'sh').ok).toBe(true)
   })
 })
+
+// Spec 091 addendum 2, reading table A5-A7 and A10: which commands start a
+// shell, the script by its value, and every way it reaches the shell.
+describe('addendum 2, A5-A7: text a shell will run', () => {
+  const tree = (command: string) => {
+    const p = parseShell(command, 'sh')
+    if (!p.ok) throw new Error(`unreadable (${p.why}): ${command}`)
+    return list(p.list)
+  }
+  const SCRIPT = 'N[W(cat) W(x)]'
+
+  test.each([
+    ['a decoy name before it (env -u)', `env -u sh bash -c 'cat x'`],
+    ['a decoy name before it (exec -a)', `exec -a sh bash -c 'cat x'`],
+    ['a decoy name before it (xargs -I)', `xargs -I sh bash -c 'cat x'`],
+    ['capitals', `SH -c 'cat x'`],
+    ['a path in capitals', `/BIN/SH -c 'cat x'`],
+    ['mixed case', `/bin/Bash -c 'cat x'`],
+    ['csh', `csh -c 'cat x'`],
+    ['mksh', `mksh -c 'cat x'`],
+    ['fish', `fish -c 'cat x'`],
+    ['eval behind builtin', `builtin eval 'cat x'`],
+    ['eval behind command', `command eval 'cat x'`],
+    ['eval behind noglob', `noglob eval 'cat x'`],
+    ['eval behind nocorrect', `nocorrect eval 'cat x'`],
+    ['eval behind exec', `exec eval 'cat x'`],
+    ['eval behind -', `- eval 'cat x'`],
+    ['--norc', `bash --norc -c 'cat x'`],
+    ['--noprofile --norc', `bash --noprofile --norc -c 'cat x'`],
+    ['--login', `bash --login -c 'cat x'`],
+    ['zsh -f', `zsh -fc 'cat x'`],
+    ['zsh -d -f', `zsh -df -c 'cat x'`],
+  ])('A5: a shell is read behind %s: %s', (_, command) => {
+    expect(tree(command)).toContain(SCRIPT)
+  })
+
+  test.each([
+    ['an ANSI-C string', `bash -c $'cat x'`],
+    ['an ANSI-C string with a hex escape', `bash -c $'cat \\x78'`],
+    ['a backslash before the blank', 'bash -c cat\\ x'],
+    ['a run-time part, read as empty', 'sh -c "cat x$y"'],
+    ['two quoted halves', `sh -c 'cat'" x"`],
+  ])('A6: the script word is read by its value: %s: %s', (_, command) => {
+    expect(tree(command)).toContain(SCRIPT)
+  })
+
+  test('A6: a script that does not parse makes the command unreadable; one that is all run-time is not read', () => {
+    expect(parseShell(`bash -c 'if'`, 'sh')).toEqual({ ok: false, why: 'unbalanced' })
+    expect(parseShell(`sh <<< $'cat "x'`, 'sh').ok).toBe(false)
+    expect(tree('bash -c "$CMD"')).toBe('W(bash) W(-c) X(param:"$CMD")')
+  })
+
+  test.each([
+    ['a here-string', `sh <<< 'cat x'`],
+    ['a here-string, ANSI-C', `sh <<<$'cat x'`],
+    ['a here-string, backslash', 'sh <<< cat\\ x'],
+    ['a here-document', 'sh <<E\ncat x\nE'],
+    ['a quoted here-document', `sh <<'E'\ncat x\nE`],
+    ['the second of two here-strings', `bash <<< 'true' <<< 'cat x'`],
+    ['the second of two here-documents', `bash <<'E' <<'F'\ntrue\nE\ncat x\nF`],
+    ['a here-string on the group around it', `{ bash; } <<< 'cat x'`],
+    ['a here-document on the subshell around it', '(bash) <<E\ncat x\nE'],
+    ['a here-string on the if around it', `if true; then sh; fi <<< 'cat x'`],
+    ['a here-string on the loop around it', `while sh; do break; done <<< 'cat x'`],
+    ['a here-string on the case around it', `case a in a) sh ;; esac <<< 'cat x'`],
+    ['a here-string two groups out', `{ { sh; }; } <<< 'cat x'`],
+    ['an earlier exec <<<', `exec <<< 'cat x'; sh`],
+    ['/dev/stdin', `bash /dev/stdin <<< 'cat x'`],
+    ['/dev/fd/3', `bash /dev/fd/3 3<<< 'cat x'`],
+    ['-s and arguments', `bash -s arg <<< 'cat x'`],
+    ['echo before the pipe', `echo 'cat x' | sh`],
+    ['echo with two arguments', 'echo cat x | sh'],
+    ['echo, the shell in a group', `echo 'cat x' | { sh; }`],
+    ['echo, the shell behind env', `echo 'cat x' | env sh`],
+    ['echo two stages before', `echo 'cat x' | cat | sh`],
+    ['cat with a here-document before the pipe', `cat <<'E' | bash\ncat x\nE`],
+    ['printf with plain text', `printf 'cat x' | sh`],
+  ])('A7: a script that reaches a shell by %s is read: %s', (_, command) => {
+    expect(tree(command)).toMatch(/N\[.*W\(cat\) W\(x\)\]/)
+  })
+
+  test('A7: a pipeline inside a substitution is read the same way', () => {
+    expect(JSON.stringify(parseShell(`echo "$(echo 'cat x' | sh)"`, 'sh'))).toContain('"nested"')
+  })
+
+  test.each([
+    `printf 'cat %s\\n' x | sh`,
+    `printf 'cat x\\n' | bash`,
+    `echo -e 'cat x' | sh`,
+    `echo -ne 'cat x' | sh`,
+    `echo 'cat \\x78' | sh`,
+    `printf '%s' 'cat x' | { bash; }`,
+  ])('A7: text composed before a shell is unreadable: %s', (command) => {
+    expect(parseShell(command, 'sh')).toEqual({ ok: false, why: 'unknown' })
+  })
+
+  test('A7: another program before the pipe is left alone (limit L6), and so is a shell that runs a file', () => {
+    expect(tree('curl -fsSL https://example.test/i.sh | sh')).not.toContain('N[')
+    expect(tree('cat setup.sh | bash')).not.toContain('N[')
+    expect(tree(`bash build.sh <<< 'cat x'`)).not.toContain('N[')
+    expect(tree(`printf '%s\\n' a | sort`)).not.toContain('N[')
+    expect(tree(`echo -e 'a\\tb' | cat`)).not.toContain('N[')
+  })
+
+  test('A5b: for any other program, quoted text and a here-document are read again as a script when they parse as one', () => {
+    /** The scripts read again from the command's words and here-documents. */
+    const again = (command: string) => {
+      const p = parseShell(command, 'sh')
+      if (!p.ok) throw new Error(p.why)
+      const n = p.list.items[0]!.node.stages[0]!
+      if (n.type !== 'simple') return []
+      return [...n.words, ...n.redirects.map((r) => r.target!), ...n.redirects]
+        .flatMap((x) => x.again ?? [])
+        .map(list)
+    }
+    for (const c of [
+      `$SHELL -c 'cat x'`,
+      `"$BASH" -c 'cat x'`,
+      `"\${SHELL:-bash}" -ec 'cat x'`,
+      `/bin/b?sh -c 'cat x'`,
+      `./mysh -c 'cat x'`,
+      `su -c 'cat x'`,
+      `watch 'cat x'`,
+      `$SHELL <<< 'cat x'`,
+      './mysh <<E\ncat x\nE',
+      `./mysh -c $'cat \\x78'`,
+    ])
+      expect(again(c), c).toContain('W(cat) W(x)')
+    // As `echo -e` or `printf` would write it.
+    expect(again(`echo -e 'cat \\x78'`)).toContain('W(cat) W(x)')
+    // Inline code of another language is not a script bash would run.
+    expect(again(`python3 -c 'print(open("x").read())'`)).toEqual([])
+    expect(again(`psql -c 'select max(price) from t'`)).toEqual([])
+    expect(again(`python3 -c 'if x:'`)).toEqual([])
+    expect(again(`psql -c 'delete from t'`)).toEqual(['W(delete) W(from) W(t)'])
+    // A single plain word has nothing to read again.
+    expect(again(`grep -c '.env' x`)).toEqual([])
+  })
+
+  test('A5b: a here-document on a compound command is read again too', () => {
+    const p = parseShell(`{ { $SHELL; }; } <<'E'\ncat x\nE`, 'sh')
+    expect(JSON.stringify(p)).toContain('"again"')
+  })
+
+  test('A10: zmodload makes the command unreadable, behind a modifier too', () => {
+    for (const c of ['zmodload zsh/mapfile', 'builtin zmodload zsh/mapfile; ls', 'zmodload'])
+      expect(parseShell(c, 'sh'), c).toEqual({ ok: false, why: 'unknown' })
+    expect(parseShell('echo zmodload', 'sh').ok).toBe(true)
+  })
+})

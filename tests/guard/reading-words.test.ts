@@ -4,10 +4,10 @@ import { ANY_TEXT as ANY, globMayBeRawOnly } from '../../plugins/veilio-guard/li
 import {
   dotsMatch,
   pieces,
-  quoteBlind,
   namesVeilioFolder,
   readsStrictly,
   spellings,
+  textPieces,
   textsOf,
   wordsOf,
 } from '../../plugins/veilio-guard/lib/reading.ts'
@@ -107,6 +107,13 @@ describe('wordsOf: a word is returned wherever it stands', () => {
       `bash -c 'cat ${W}' -O dotglob`,
       `bash -e <<EOF\ncat ${W}\nEOF`,
       `bash <<< 'cat ${W}'`,
+      // Addendum 2 (research D22): options that change neither the script word nor how words are read.
+      `bash --norc -c 'cat ${W}'`,
+      `bash --noprofile --norc -c 'cat ${W}'`,
+      `bash --login -ec 'cat ${W}'`,
+      `zsh -fc 'cat ${W}'`,
+      `zsh -df -c 'cat ${W}'`,
+      `zsh -f -o pipefail -c 'cat ${W}'`,
     ].map((c) => c.replace(/'cat \.e''nv'/, `"cat .e''nv"`))
   )('a nested shell in a known shape is read: %s', (command) => {
     expect(holds(command), command).toBe(true)
@@ -121,7 +128,9 @@ describe('wordsOf: a word is returned wherever it stands', () => {
     'bash -o posix -c "ls"',
     'bash +e -c "ls"',
     'bash -ac "ls"',
-    'bash --norc -c "ls"',
+    // A long option after the letters is not in the shapes.
+    'bash -e --norc -c "ls"',
+    'bash --posix -c "ls"',
     'bash --rcfile /dev/null -c "ls"',
     'bash -c --norc "ls"',
     'bash -c -- "ls"',
@@ -159,9 +168,15 @@ describe('wordsOf: a word is returned wherever it stands', () => {
     }
   )
 
-  test('a here-document: an escaped substitution does not run and is not read', () => {
-    expect(words(`cat <<EOF\n\\$(cat ${W})\nEOF`).map((w) => w.raw)).not.toContain(W)
-    expect(words(`cat <<EOF\n\\\\\\$(cat ${W})\nEOF`).map((w) => w.raw)).not.toContain(W)
+  test('a here-document: an escaped substitution does not run and is not read as one', () => {
+    // Not a substitution of this shell. (Since addendum 2 the body is also
+    // read as text a program that is a shell under another name could run,
+    // A5b; for `cat` it is data, A12 - both below.)
+    for (const c of [`cat <<EOF\n\\$(cat ${W})\nEOF`, `cat <<EOF\n\\\\\\$(cat ${W})\nEOF`]) {
+      const p = parseShell(c, 'sh')
+      const n = p.ok ? p.list.items[0]!.node.stages[0]! : null
+      expect(n?.type === 'simple' && n.redirects[0]!.substs, c).toBeUndefined()
+    }
   })
 
   test('a here-document under a plain delimiter with a substitution that cannot be read is unreadable', () => {
@@ -532,12 +547,126 @@ describe('pieces: the parts of a word a program may take as a file name', () => 
   })
 })
 
-describe('quoteBlind: the text floor', () => {
+describe('textPieces: the text floor (reading table A8)', () => {
+  const floor = (command: string) => {
+    const p = parseShell(command, 'sh')
+    return textPieces(p.ok ? p.list : null, command)
+  }
   test('a chunk is read with quotes, backslashes and line continuations removed', () => {
-    expect(quoteBlind(`cat .e''nv x`)).toEqual([[`.e''nv`, '.env']])
-    expect(quoteBlind('cat .e\\\nnv')).toEqual([['.e\\\nnv', '.env']])
-    expect(quoteBlind(`dd if=".e"nv`)).toEqual([[`if=".e"nv`, 'if=.env']])
-    expect(quoteBlind('cat src/index.ts')).toEqual([])
+    expect(floor(`cat .e''nv x`)).toEqual([[`.e''nv`, '.env']])
+    expect(floor('cat .e\\\nnv')).toEqual([['.e\\\nnv', '.env']])
+    expect(floor(`dd if=".e"nv`)).toEqual([[`if=".e"nv`, 'if=.env']])
+    expect(floor('cat src/index.ts')).toEqual([])
+  })
+
+  test('quoted text is split at blanks and at the operators of the shell, each piece shown as typed', () => {
+    expect(floor(`watch 'cat .en[v]'`)).toEqual([
+      [`'cat`, 'cat'],
+      [`.en[v]'`, '.en[v]'],
+    ])
+    expect(floor(`x 'a;b|c&d<e>f(g)h\`i$j'`).map(([, read]) => read)).toEqual([
+      'a;b|c&d<e>f(g)h`i$j',
+      ...'abcdefghij',
+    ])
+  })
+
+  test('an ANSI-C string is read by its value', () => {
+    expect(floor(`su -c $'cat .e\\x6ev'`).map(([, read]) => read)).toContain('.env')
+  })
+
+  test('a here-document body and a here-string are pieces too', () => {
+    expect(floor('python3 <<E\ncat .en[v] x\nE').map(([, read]) => read)).toEqual([
+      'cat',
+      '.en[v]',
+      'x',
+    ])
+    expect(floor(`python3 <<< 'cat .en[v]'`).map(([, read]) => read)).toContain('.en[v]')
+  })
+
+  test('a command the reader cannot read still has its chunks', () => {
+    expect(floor(`cat .e''nv "`)).toContainEqual([`.e''nv`, '.env'])
+  })
+})
+
+describe('addendum 2: scripts and settings', () => {
+  const READ = { home: HOME, homeKnown: true, strict: false }
+  /** Whether some word of the command, wherever the reader found it, can be `.env`. */
+  const reads = (command: string) =>
+    words(command).some((w) => {
+      const s = spellings(w, READ)
+      return s === 'any' || s.includes('.env')
+    })
+
+  test.each([
+    [`read 'a[$(cat .e[n]v >&2)]' <<< x`],
+    [`: $(( 'a[$(cat .e[n]v >&2)]' ))`],
+    [`[[ 'a[$(cat .e[n]v >&2)]' -eq 0 ]]`],
+    [`declare -a 'a=($(cat .e[n]v >&2))'`],
+    [`PS4='$(cat .e[n]v >&2)'; set -x; :`],
+    [`BASH_ENV='$(cat .e[n]v >&2)' bash -c :`],
+    ['printf -v x \\$\\(cat\\ .e[n]v\\)'],
+    [`echo 'a \`cat .e[n]v\` b'`],
+    [`echo 'diff <(cat .e[n]v) x'`],
+    [`echo '=(cat .e[n]v)'`],
+    [`echo '\${ cat .e[n]v; }'`],
+    [`echo "\\$(cat .e[n]v)"`],
+    [`echo $'$(cat .e\\x6ev)'`],
+  ])('A9: a substitution written inside quotes or after a backslash is read: %s', (command) => {
+    expect(reads(command), command).toBe(true)
+  })
+
+  test('A9: quoted text that is no command is passed over, never unreadable', () => {
+    for (const c of [
+      `awk '{ print $(NF-1) }' f`,
+      `echo 'a $( b'`,
+      `echo 'x \` y'`,
+      `sed 's/=(/x/' f`,
+    ])
+      expect(parseShell(c, 'sh').ok, c).toBe(true)
+    // wordsWithin walks the tree's shape: `again` needed no change there.
+    // (The substitution, then the whole text read as a script: both under `again`.)
+    expect(words(`echo '$(cat a)'`).map((w) => w.raw)).toEqual([
+      'echo',
+      `'$(cat a)'`,
+      'cat',
+      'a',
+      '$(cat a)',
+      'cat',
+      'a',
+    ])
+    // The text a pipe or a program hands to a shell, whatever it is spelled with.
+    expect(reads(`echo 'cat .e'"'"'n'"'"'v' | ./mysh`)).toBe(true)
+    expect(reads(`./mysh < <(echo $'cat .e$\\'\\\\x6e\\'v')`)).toBe(true)
+    expect(reads(`( $SHELL ) <<< 'cat .e"n"v'`)).toBe(true)
+    expect(reads("./mysh <<E\ncat .e\\$'\\x6e'v\nE")).toBe(true)
+  })
+
+  test.each([
+    'GLOBIGNORE=x; ls *',
+    'export GLOBIGNORE=x; ls',
+    'declare GLOBIGNORE=x',
+    'typeset -x GLOBIGNORE=x',
+    'env GLOBIGNORE=x bash -c ls',
+    'read GLOBIGNORE <<< x',
+    'printf -v GLOBIGNORE x',
+    'GLOBIGNORE+=x ls',
+    'BASHOPTS=dotglob bash -c ls',
+    'SHELLOPTS=x ls',
+    'POSIXLY_CORRECT=1 ls',
+    'export BASH_COMPAT=3.1',
+  ])(
+    'A10: an assignment to a variable that changes how words are read is read strictly: %s',
+    (c) => {
+      const p = parseShell(c, 'sh')
+      expect(p.ok && readsStrictly(p.list), c).toBe(true)
+    }
+  )
+
+  test('A10: IFS and LC_ALL trigger nothing', () => {
+    for (const c of ['IFS=, read -r a b', 'LC_ALL=C sort x', 'export LANG=C', 'GLOBIGNORED=x ls']) {
+      const p = parseShell(c, 'sh')
+      expect(p.ok && readsStrictly(p.list), c).toBe(false)
+    }
   })
 })
 

@@ -134,6 +134,8 @@ const REFUSED = [
   // A here-document's body: what the shell runs in it is read.
   `cat <<EOF\n\\\\$(cat .e[n]v)\nEOF`,
   `cat <<EOF\n$((cat .e[n]v); echo)\nEOF`,
+  // Addendum 2 (A8): quoted text is judged with its wildcards; this was a pinned limit, and it does read .env.
+  `find . -name '.en*' -exec cat {} +`,
 ]
 for (const command of REFUSED)
   test(`refused: ${command}`, async ($, on) => {
@@ -215,7 +217,6 @@ const LIMITS: [limit: string, command: string][] = [
   ['L2 a quoted command prints part of the name', `cat .e"$(echo n)"v`],
   ['L2 names arrive on a pipe', `ls | xargs cat`],
   ['L3 a script opens the file itself', `python3 -c 'open(".e"+"nv")'`],
-  ['L3 find runs the command', `find . -name '.en*' -exec cat {} +`],
   ['L3 a search over a directory', `grep -r KEY .`],
   ['L4 a path part that is only wildcards', `cat */customers.csv`],
   ['L5 a prefix wildcard against *.pem', `cat server.p*`],

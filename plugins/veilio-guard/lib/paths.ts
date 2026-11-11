@@ -732,7 +732,7 @@ class Walker {
     }
     if (n.nested) {
       // eval runs in this shell; a nested shell in a child.
-      if (program === 'eval') return this.list(n.nested, after)
+      if (name === 'eval') return this.list(n.nested, after)
       await this.child(() => this.list(n.nested!, here))
     }
     if (program === 'exit' || program === 'return') return { ok: null, fail: null }

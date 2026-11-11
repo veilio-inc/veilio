@@ -33,6 +33,7 @@ import {
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
+  braceNames,
   globMayBeRawOnly,
   isRawOnly,
   mcpConfigName,
@@ -56,8 +57,9 @@ import {
   dotsMatch,
   isWord,
   namesVeilioFolder,
+  bracketsRead,
   pieces,
-  quoteBlind,
+  textPieces,
   readsStrictly,
   spellings,
   textsOf,
@@ -2181,9 +2183,27 @@ export class Guard {
         // Spec 091 FR-009: then the same check on the text with line
         // continuations, quotes and backslashes removed - a floor that does
         // not depend on the reader, showing the chunk as it was typed.
+        const floor = textPieces(parsed?.ok ? parsed.list : null, c)
+        // A piece with a wildcard, a bracket or a brace is judged as a word
+        // (reading table A8): expanded, and matched against the list.
+        for (const [typed, read] of floor) {
+          if (!/[*?[{]/.test(read)) continue
+          for (const name of braceNames(bracketsRead(read)))
+            for (const piece of pieces(name)) {
+              if (piece.startsWith('-')) continue
+              const hit = /[*?[]/.test(piece)
+                ? globMayBeRawOnly(piece, this.extraRawOnly)
+                : (await this.spelledHits(piece, [])).rawOnly
+              if (hit)
+                return this.deny(
+                  `Veilio keeps ${this.typed(typed, budget)} away from the model. Ask the user for what you need from it`,
+                  false
+                )
+            }
+        }
         const texts: [word: string, typed: string | null][] = [
           ...pathsInCommand(c).map((word): [string, null] => [word, null]),
-          ...quoteBlind(c).flatMap(([typed, read]) =>
+          ...floor.flatMap(([typed, read]) =>
             pathsInCommand(read).map((word): [string, string] => [word, typed])
           ),
         ]
