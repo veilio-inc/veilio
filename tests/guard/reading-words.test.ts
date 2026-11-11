@@ -5,12 +5,15 @@ import {
   dotsMatch,
   pieces,
   quoteBlind,
+  namesVeilioFolder,
   readsStrictly,
   spellings,
+  textsOf,
   wordsOf,
 } from '../../plugins/veilio-guard/lib/reading.ts'
 import { parseShell, type Word } from '../../plugins/veilio-guard/lib/shell.ts'
 import { fixtureGuard } from './fixtures/cd-project.ts'
+import { F1, F2, F8, INTERPRETER_ALLOWED, INTERPRETER_REFUSED } from './fixtures/reading-corpora.ts'
 import { POSITIONS } from './fixtures/reading-grammar.ts'
 
 // Spec 091: the reader's parts, one test per row of the reading table
@@ -379,6 +382,47 @@ describe('the wildcard judge (reading table §3)', () => {
   test('a bracket list is each of its characters', () => {
     expect(spell('serve[r].pem')).toEqual(['server.pem'])
     expect(spell('server.pe[m]')).toEqual(['server.pem'])
+  })
+})
+
+describe("text that names Veilio's folder as a path (reading table §4, FR-011)", () => {
+  const names = (command: string) => {
+    const p = parseShell(command, 'sh')
+    return p.ok ? textsOf(p.list).some(namesVeilioFolder) : namesVeilioFolder(command)
+  }
+  test.each([...INTERPRETER_REFUSED, ...F1, ...F2])('refused: %s', (command) => {
+    expect(names(command)).toBe(true)
+  })
+
+  test.each([
+    ...INTERPRETER_ALLOWED,
+    ...F8,
+    'ls ~/.veilio',
+    'cat ~/.veilio/map.json',
+    `cat ~/.veil''io/map.json`,
+    'git commit -m "veilio: read .veilio lazily"',
+    `node -e "fetch('https://veilio.dev/x.veilio')"`,
+    `node -e "fetch('https://veilio.dev/docs')"`,
+    'echo "see .veilio docs"',
+    'cat notes/.veilio-x.txt',
+    'grep -r "\\.veilio\\b" src',
+  ])('not text that names the folder: %s', (command) => {
+    expect(names(command)).toBe(false)
+  })
+
+  test.each([
+    [`'.vei'+'lio/x'`, true],
+    [`"/.vei"."lio"`, true],
+    [`".vei" "lio/x"`, true],
+    [`~/.veil""io/x`, true],
+    [`join(home, '.veilio', 'map.json')`, true],
+    ['~/.vei\\\nlio/map.json', true],
+    ['https://api.veilio.dev/health', false],
+    ['notes/.veilio-x.txt', false],
+    ['see .veilio docs', false],
+    ['x.veilio/y', false],
+  ])('%s -> %s', (text, expected) => {
+    expect(namesVeilioFolder(text)).toBe(expected)
   })
 })
 

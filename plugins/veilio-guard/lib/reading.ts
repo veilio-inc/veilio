@@ -2,7 +2,7 @@
 // of a parsed command, wherever it stands, is turned into what the shell can
 // make of it and judged by the one raw-only judge (lib/guard.ts beforeTool).
 import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
-import type { List, Part, Simple, Word } from './shell.ts'
+import type { List, Part, Redirect, Simple, Word } from './shell.ts'
 
 export const isWord = (x: object): x is Word =>
   Array.isArray((x as Word).parts) && typeof (x as Word).raw === 'string'
@@ -291,5 +291,71 @@ export function quoteBlind(command: string): [typed: string, read: string][] {
     const read = m[0].replace(/\\\n/g, '').replace(/['"\\]/g, '')
     if (read !== m[0]) out.push([m[0], read])
   }
+  return out
+}
+
+/** Text that names Veilio's folder as a path: `.veilio` beside a `/` or `~`,
+ *  or as a whole quoted string, also when the name is joined from pieces
+ *  (`'.vei'+'lio/x'`, `"/.vei"."lio"`, `".vei" "lio"`, `.veil""io`). A web
+ *  address (`api.veilio.dev`), a longer name (`.veilio-x.txt`) and a mention
+ *  (`see .veilio docs`) are not a path. No list of programs, wrappers or
+ *  flags: whatever receives the text, it names the folder or it does not.
+ *
+ *  shortcut: defence in depth only. A name built another way (`chr(46)`, a
+ *  list joined later), a script in a file and code fed on a pipe are not
+ *  read; programs the agent runs act as the user (SECURITY.md). Upgrade: a
+ *  sandbox, not a longer pattern. */
+export function namesVeilioFolder(text: string): boolean {
+  const joined = text.replace(/\\\n/g, '').replace(/['"]\s*[.+]?\s*['"]/g, '')
+  const bare = joined.replace(/['"\\]/g, '')
+  return (
+    /['"]\.veilio['"]/i.test(joined) ||
+    /[/~]\.veilio(?![A-Za-z0-9-]|\.[A-Za-z])/i.test(bare) ||
+    /(?<![A-Za-z0-9-])\.veilio\//i.test(bare)
+  )
+}
+
+/** A word's value after the shell removes its quotes, with what it expands
+ *  left as written. */
+function valueOf(w: Word): string {
+  if (w.literal !== null) return w.literal
+  return w.parts
+    .map((p) => {
+      switch (p.kind) {
+        case 'param':
+          return `\${${p.name}${p.op}}`
+        case 'subst':
+          return '$'
+        case 'tilde':
+          return `~${p.user}`
+        case 'ansic':
+          return p.text.startsWith("$'") ? ansiC(p.text.slice(2, -1)) : p.text.slice(2, -1)
+        default:
+          return p.text
+      }
+    })
+    .join('')
+}
+
+/** The texts of a command that are more than a path: each word whose value
+ *  holds a blank, a quote, a parenthesis or `+` (code after `-c`, `-e`,
+ *  `--eval=`, a quoted argument), every here-document body and every
+ *  here-string. */
+export function textsOf(list: List): string[] {
+  const out: string[] = []
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) return x.forEach(visit)
+    if (x === null || typeof x !== 'object') return
+    if (isWord(x)) {
+      const value = valueOf(x)
+      if (/[\s'"()+]/.test(value)) out.push(value)
+    } else {
+      const r = x as Partial<Redirect>
+      if (typeof r.body === 'string') out.push(r.body)
+      if (r.op === '<<<' && r.target) out.push(valueOf(r.target))
+    }
+    for (const v of Object.values(x)) visit(v)
+  }
+  visit(list)
   return out
 }

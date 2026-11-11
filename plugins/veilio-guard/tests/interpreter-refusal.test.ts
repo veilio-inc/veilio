@@ -25,6 +25,25 @@ for (const command of [
   `echo hi; python3 -c 'import os; open(os.path.expanduser("~/.vei"+"lio/x"),"w")'`,
   `ls && node -e "require('fs').writeFileSync('.veil'+'io/x','{}')"`,
   `python3 - <<'EOF'\nimport os; p=os.path.expanduser('~/.vei'+'lio/x')\nEOF`,
+  // Spec 091: however the flag is attached...
+  `node --eval="require('fs').readFileSync(process.env.HOME+'/.veil'+'io/map.json')"`,
+  `python3 -c"open('.vei'+'lio/x')"`,
+  `python3 -c$'open(".vei"+"lio/x")'`,
+  `sh -c'cat ~/.veil""io/credential.json'`,
+  // ...whatever stands before the program...
+  `env -u X python3 -c "open('.vei'+'lio/x')"`,
+  `sudo -u me node -e "require('fs').readFileSync('.vei'+'lio/map.json')"`,
+  `nice -n 5 python3 -c "open('.vei'+'lio/x')"`,
+  `timeout 5 sh -c 'cat ~/.veil""io/x'`,
+  `echo x | xargs python3 -c "open('.vei'+'lio/x')"`,
+  `uv run python -c "import os;os.path.join(h,'.vei'+'lio','map.json')"`,
+  `pnpm exec node -e "require('fs').readFileSync('.vei'+'lio/map.json')"`,
+  `find . -exec python3 -c "open('.vei'+'lio/x')" \\;`,
+  // ...and whatever program receives the text.
+  `awk 'BEGIN{while((getline l < (ENVIRON["HOME"] "/.vei" "lio/map.json"))>0) print l}'`,
+  `jq -rn '"\\(env.HOME)/.vei" + "lio/map.json"'`,
+  `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
+  `git commit -m "maps live in ~/.veilio/map.json"`,
 ])
   test(`an interpreter command that names Veilio's files is refused: ${command.slice(0, 40)}`, async ($, on) => {
     project(on, {}, { home: HOME })
@@ -50,6 +69,12 @@ for (const command of [
   `python3 -c 'print(open("/work/veilio-app/a.txt").read())'`,
   `node -e "console.log(require('@veilio-inc/engine'))"`,
   `ls src`,
+  // Spec 091: a web address is not a path; a plain path word is judged by
+  // the raw-only rules alone.
+  `bash -c "curl -s https://api.veilio.dev/health"`,
+  `echo "see https://docs.veilio.dev/guard"`,
+  `node -e "fetch('https://veilio.dev/docs')"`,
+  `ls ~/.veilio`,
 ])
   test(`an ordinary interpreter command still runs: ${command}`, async ($, on) => {
     project(on, {}, { home: HOME })

@@ -34,7 +34,6 @@ import {
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
   globMayBeRawOnly,
-  interpreterNamesGuardState,
   isRawOnly,
   mcpConfigName,
   isWriteProtected,
@@ -56,10 +55,12 @@ import { parseShell, restoreRefusal, type Word } from './shell.ts'
 import {
   dotsMatch,
   isWord,
+  namesVeilioFolder,
   pieces,
   quoteBlind,
   readsStrictly,
   spellings,
+  textsOf,
   wordsWithin,
 } from './reading.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
@@ -1946,7 +1947,13 @@ export class Guard {
       const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
         if (typeof c !== 'string') continue
-        if (interpreterNamesGuardState(c)) return this.deny(INTERPRETER_GUARD_STATE)
+        // Spec 091 FR-011: text in the command (code after -c or -e, a quoted
+        // argument, a here-document) that names Veilio's folder as a path,
+        // whatever program receives it. A command the reader cannot read is
+        // judged on its whole text.
+        const shRead = parseShell(c, 'sh')
+        if (shRead.ok ? textsOf(shRead.list).some(namesVeilioFolder) : namesVeilioFolder(c))
+          return this.deny(INTERPRETER_GUARD_STATE)
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
@@ -1959,7 +1966,8 @@ export class Guard {
         // Spec 086: the cd rules, on what the reader reads; a command it
         // cannot read is judged as main judges it (FR-003).
         const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
-        const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
+        const parsed =
+          e.tool === 'Bash' ? shRead : e.tool === 'PowerShell' ? parseShell(c, dialect) : null
         let moves: string[] = []
         // T029 review: code run from text, and new names for commands, in a
         // PowerShell command the reader read too.

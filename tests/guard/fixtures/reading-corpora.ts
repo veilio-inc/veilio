@@ -61,7 +61,7 @@ const SPELLINGS_REFUSED = [
 ]
 
 /** The first list of plugins/veilio-guard/tests/interpreter-refusal.test.ts at 3ee41fe0. */
-const INTERPRETER_REFUSED = [
+export const INTERPRETER_REFUSED = [
   `python3 -c 'import os;p=os.path.expanduser("~/.vei"+"lio/map.json");open(p,"w").write("{}")'`,
   `python3 -c "print(open('/home/dev/.veilio/credentials').read())"`,
   `node -e "require('fs').writeFileSync(process.env.HOME+'/.veil'+'io/map.json','{}')"`,
@@ -82,14 +82,14 @@ const INTERPRETER_REFUSED = [
 ]
 
 /** F1: inline code with the flag attached, with `=`, or in `$'...'`. */
-const F1 = [
+export const F1 = [
   `node --eval="require('fs').readFileSync(process.env.HOME+'/.veil'+'io/map.json')"`,
   `python3 -c"open('.vei'+'lio/x')"`,
   `python3 -c$'open(".vei"+"lio/x")'`,
   `sh -c'cat ~/.veil""io/credential.json'`,
 ]
 /** F2: the same behind a wrapper, and programs no list named. */
-const F2 = [
+export const F2 = [
   `env -u X python3 -c "open('.vei'+'lio/x')"`,
   `sudo -u me node -e "require('fs').readFileSync('.vei'+'lio/map.json')"`,
   `nice -n 5 python3 -c "open('.vei'+'lio/x')"`,
@@ -101,6 +101,10 @@ const F2 = [
   `pnpm exec node -e "require('fs').readFileSync('.vei'+'lio/map.json')"`,
   `find . -exec python3 -c "open('.vei'+'lio/x')" \\;`,
   `awk 'BEGIN{while((getline l < (ENVIRON["HOME"] "/.vei" "lio/map.json"))>0) print l}'`,
+  `jq -rn '"\\(env.HOME)/.vei" + "lio/map.json"'`,
+  `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
+  `git commit -m "maps live in ~/.veilio/map.json"`,
+  `cat <<< "~/.veil""io/map.json"`,
 ]
 /** F4: a spelled name in a position the earlier check did not see. */
 const F4 = [
@@ -412,7 +416,7 @@ const SPELLINGS_ALLOWED = [
   `cat {a,b}{.e,x}nvx`,
 ]
 /** The second list of interpreter-refusal.test.ts at 3ee41fe0. */
-const INTERPRETER_ALLOWED = [
+export const INTERPRETER_ALLOWED = [
   `python3 -c 'print(1+1)'`,
   `node -e "console.log(process.version)"`,
   `python3 script.py`,
