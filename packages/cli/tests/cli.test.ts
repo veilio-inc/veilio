@@ -269,6 +269,23 @@ describe('restore', () => {
     expect(restored.out).toBe(TS)
   })
 
+  it('a name the map holds is masked in a comment and restores exactly', async () => {
+    // Two `//` comments and no doc comment: the default restore removes a
+    // JSDoc block as AI noise, the file's own included.
+    const commented =
+      'export class QuasarLedgerReconciler {\n' +
+      '  // calls settleInvoice for AcmePay\n' +
+      '  settleInvoice() { return 1 } // QuasarLedgerReconciler inline\n' +
+      '}\n'
+    const scrubbed = await run(['scrub'], commented)
+    expect(scrubbed.out).not.toContain('QuasarLedgerReconciler')
+    expect(scrubbed.out).not.toContain('settleInvoice')
+    expect(scrubbed.out).toContain('for AcmePay')
+    const restored = await run(['restore'], scrubbed.out)
+    expect(restored.code).toBe(EXIT_OK)
+    expect(restored.out).toBe(commented)
+  })
+
   it('strips AI-generated noise', async () => {
     await run(['scrub'], TS)
     const r = await run(['restore'], '/** Generated doc. */\nconst x = 1\n')

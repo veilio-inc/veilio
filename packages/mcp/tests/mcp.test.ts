@@ -494,6 +494,33 @@ describe('restore_text', () => {
     expect(restored.text).toContain('chargeCard')
   })
 
+  // Two `//` comments and no doc comment: restore removes a JSDoc block as AI
+  // noise, the file's own included.
+  const COMMENTED =
+    'export class QuasarLedgerReconciler {\n' +
+    '  // calls settleInvoice for AcmePay\n' +
+    '  settleInvoice() { return 1 } // QuasarLedgerReconciler inline\n' +
+    '}\n'
+
+  it('anonymize_file: a name the map holds is masked in a comment and restores exactly', () => {
+    write('ledger.ts', COMMENTED)
+    const masked = call('anonymize_file', { path: 'ledger.ts' })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    expect(body).not.toContain('QuasarLedgerReconciler')
+    expect(body).not.toContain('settleInvoice')
+    expect(body).toContain('for AcmePay')
+    expect(call('restore_text', { text: body }).text).toContain(COMMENTED)
+  })
+
+  it('anonymize_text: a name the map holds is masked in a comment and restores exactly', () => {
+    const masked = call('anonymize_text', { text: COMMENTED })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    expect(body).not.toContain('QuasarLedgerReconciler')
+    expect(body).not.toContain('settleInvoice')
+    expect(body).toContain('for AcmePay')
+    expect(call('restore_text', { text: body }).text).toContain(COMMENTED)
+  })
+
   it('errors when there is no map yet', () => {
     const res = call('restore_text', { text: '__CLS__1' })
     expect(res.isError).toBe(true)

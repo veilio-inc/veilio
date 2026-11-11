@@ -613,8 +613,9 @@ function summarizeComments(segments) {
 /**
  * How much comment prose this source would send unmasked.
  *
- * `anonymize` returns the same measurement for the text it produced, which is
- * the number to prefer. This entry point exists for the moments after that,
+ * Reads the text as given, with no map: a name `anonymize` would replace in a
+ * comment is counted here. `anonymize` returns the measurement for the text it
+ * produced, which is the number to prefer. This entry point exists for the moments after that,
  * when a manual mark has just moved a name out of a comment — or an unmark has
  * put one back — and the figure on screen would otherwise describe the previous
  * version of the text.
@@ -901,6 +902,15 @@ export function isPlaceholder(token) {
  * `language` selects the keyword set; it defaults to TypeScript so standalone
  * callers keep prior behavior.
  */
+/** Whether a word is taken as a name at all: longer than two characters, not
+ *  a keyword of the language, not written entirely in capitals, not shaped
+ *  like a placeholder. One rule for code and for a held name in a comment. */
+function isNameShaped(name, language) {
+    return (name.length > 2 &&
+        !isKeyword(name, language) &&
+        !/^[A-Z][A-Z0-9_]*$/.test(name) &&
+        !PLACEHOLDER_TOKEN.test(name));
+}
 export function extractIdentifiers(code, language = DEFAULT_LANGUAGE) {
     const seen = new Set();
     // Blank out comments first so their prose words are never extracted; strings
@@ -912,12 +922,8 @@ export function extractIdentifiers(code, language = DEFAULT_LANGUAGE) {
     let match;
     while ((match = regex.exec(scannable)) !== null) {
         const name = match[1];
-        if (name.length > 2 &&
-            !isKeyword(name, language) &&
-            !/^[A-Z][A-Z0-9_]*$/.test(name) &&
-            !PLACEHOLDER_TOKEN.test(name)) {
+        if (isNameShaped(name, language))
             seen.add(name);
-        }
     }
     return Array.from(seen).sort((a, b) => b.length - a.length);
 }
@@ -1274,6 +1280,12 @@ function overlapsAny(spans, start, end) {
  *  may hold under an identifier kind). ASCII until spec 082 widens it. */
 export const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 const WORDS = /[A-Za-z_$][\w$]*/g;
+/** A word of a comment that may be a name: ASCII as in code (spec 082), and
+ *  whole only when no letter or digit of any script stands beside it - in
+ *  prose `fooBar` inside `żfooBar` is part of another word. */
+const COMMENT_WORD = /(?<![\p{L}\p{N}_$])[A-Za-z_$][A-Za-z0-9_$]*(?![\p{L}\p{N}_$])/gu;
+/** A placeholder of the string role, in either family. */
+const STRING_ROLE = /^__(?:LOCAL_[A-Z0-9]{6}_)?STR__\d+$/;
 /** The grammar values are read by: the file's kind; a file in a language
  *  the engine reads, a language the caller names, or text that reads as
  *  code, is code. A `text` file (`.md`, `.txt`, `.tfvars`, `.bat`)
@@ -1626,9 +1638,27 @@ export function anonymize(code, options = {}) {
     for (const [start, end] of values)
         for (const [w] of scannable.slice(start, end).matchAll(WORDS))
             valueWords.add(w);
-    const identifiers = missed.length === 0
+    // One tokenize pass feeds the comment names, the substitution and the
+    // exposure count, so the spans reported are the spans written.
+    const segments = tokenizeForMasking(source, language);
+    // Names the map already holds that this text uses in comments only. They go
+    // through the loop below like a held name of the code - whitelist, ordinary
+    // words - and nothing is minted for them: a comment adds nothing to the map.
+    const inCode = new Set(extractedNames);
+    const commentOnly = new Set();
+    let segmentStart = 0;
+    for (const s of segments) {
+        if (s.isComment)
+            for (const [w] of scannable
+                .slice(segmentStart, segmentStart + s.text.length)
+                .matchAll(COMMENT_WORD))
+                if (reverseExisting[w] && !inCode.has(w) && isNameShaped(w, language))
+                    commentOnly.add(w);
+        segmentStart += s.text.length;
+    }
+    const identifiers = missed.length === 0 && commentOnly.size === 0
         ? extractedNames
-        : [...new Set([...extractedNames, ...missed])].sort((a, b) => b.length - a.length);
+        : [...new Set([...extractedNames, ...missed, ...commentOnly])].sort((a, b) => b.length - a.length);
     const roleOf = classifyIdentifiers(scannable, language);
     // Split rules by type, sort by sort_order ASC (lower = earlier)
     const whitelist = rules
@@ -1681,10 +1711,13 @@ export function anonymize(code, options = {}) {
         // placeholder of its own (the old entry still restores old text). Without
         // this the engine's entry would win, and a masking that leaves ordinary
         // words readable would show the codename (code review, spec 064).
+        // A name that stands only in comments keeps the entry it has: a replace
+        // rule does not reach a word of a comment.
         if (reverseExisting[name] &&
-            !(isRolePlaceholder(reverseExisting[name]) &&
-                isOrdinaryWord(name) &&
-                replacers.some((r) => safeMatch(r.pattern, name, budget))))
+            (commentOnly.has(name) ||
+                !(isRolePlaceholder(reverseExisting[name]) &&
+                    isOrdinaryWord(name) &&
+                    replacers.some((r) => safeMatch(r.pattern, name, budget)))))
             continue; // already mapped
         // 2. Replace: first match wins
         const matched = replacers.find((r) => safeMatch(r.pattern, name, budget));
@@ -1738,6 +1771,16 @@ export function anonymize(code, options = {}) {
     const pattern = inAlternation.length === 0
         ? null
         : new RegExp(`(?<![a-zA-Z0-9_$])(?:${inAlternation.map(escapeRegex).join('|')})(?![a-zA-Z0-9_$])`, 'g');
+    // Outside a credential and a value position: where an ordinary word, and in
+    // a comment a lowercase literal word, is left readable.
+    const isFree = (at, end) => !overlapsAny(secretSpans, at, end) && !covers(values, at, end);
+    // What is written for the substitutable name `m` standing at `at` in
+    // `source`: the one decision for code and comments.
+    const placeholderAt = (m, at) => inSpan(verbatim, at) ||
+        (!alreadyMapped.has(m) && overlapsAny(secretSpans, at, at + m.length)) ||
+        (ordinary.has(m) && isFree(at, at + m.length))
+        ? m
+        : (reverseExisting[m] ?? m);
     // `start` is the segment's offset in `source`, so a match can be checked
     // against the verbatim spans. Oversized tokens skip that check: no span
     // holds a word anywhere near MAX_REGEX_ATOM characters long.
@@ -1746,30 +1789,35 @@ export function anonymize(code, options = {}) {
         : (text, start) => {
             let out = pattern === null
                 ? text
-                : text.replace(pattern, (m, offset) => inSpan(verbatim, start + offset) ||
-                    (!alreadyMapped.has(m) &&
-                        overlapsAny(secretSpans, start + offset, start + offset + m.length)) ||
-                    (ordinary.has(m) &&
-                        !overlapsAny(secretSpans, start + offset, start + offset + m.length) &&
-                        !covers(values, start + offset, start + offset + m.length))
-                    ? m
-                    : (reverseExisting[m] ?? m));
+                : text.replace(pattern, (m, offset) => placeholderAt(m, start + offset));
             for (const name of oversized) {
                 out = replaceWholeWord(out, name, reverseExisting[name]);
             }
             return out;
         };
-    // One tokenize pass feeds both the substitution and the exposure count, so
-    // the spans reported are by construction the spans left verbatim.
-    const segments = tokenizeForMasking(source, language);
+    // A comment is prose: one fixed word pattern and a lookup, so a word next to
+    // a letter of any script is never cut, and nothing is compiled per call.
+    // A lowercase word held as a one-word string literal stays readable there.
+    const held = new Set(substitutable);
+    const substituteComment = held.size === 0
+        ? (text) => text
+        : (text, start) => text.replace(COMMENT_WORD, (m, offset) => {
+            if (!held.has(m))
+                return m;
+            const at = start + offset;
+            return STRING_ROLE.test(reverseExisting[m]) &&
+                /^[a-z]+$/.test(m) &&
+                isFree(at, at + m.length)
+                ? m
+                : placeholderAt(m, at);
+        });
     let offset = 0;
-    const anonymized = segments
-        .map((s) => {
+    const written = segments.map((s) => {
         const start = offset;
         offset += s.text.length;
-        return s.isComment ? s.text : substitute(s.text, start);
-    })
-        .join('');
+        return { ...s, text: (s.isComment ? substituteComment : substitute)(s.text, start) };
+    });
+    const anonymized = written.map((s) => s.text).join('');
     return {
         anonymized,
         map,
@@ -1777,10 +1825,10 @@ export function anonymize(code, options = {}) {
         language,
         languageFallback,
         secrets: scan.findings,
-        // Measured on `source` — post-redaction and post-manual-mask — because that
-        // is the text whose comments are copied into `anonymized`. Measuring the
-        // raw input would keep charging for a name the user has already marked.
-        comments: summarizeComments(segments),
+        // Measured on the comments as written to `anonymized` - after redaction,
+        // manual marks and the names the map holds. Measuring the input would keep
+        // charging for a name that no longer leaves.
+        comments: summarizeComments(written),
         ...(budget.spent ? { rulesStopped: true } : {}),
     };
 }

@@ -3,10 +3,11 @@ import { anonymize, restore, extractIdentifiers } from '../src/engine.js'
 
 // Comments are natural-language prose; masking their words turns the output into
 // what reads as ciphertext (`// → __P5__ __P6__ it …`) and trips downstream-AI
-// refusals. Identifiers inside STRING literals are still masked on purpose (see
-// engine.edge.test.ts) — that privacy behavior must be preserved.
+// refusals. Only a name the map holds is masked in a comment (see
+// comment-names.test.ts). Identifiers inside STRING literals are still masked on
+// purpose (see engine.edge.test.ts) — that privacy behavior must be preserved.
 
-describe('anonymize leaves comments unmasked', () => {
+describe('anonymize leaves comment prose as written', () => {
   it('does not mask words inside a line comment', () => {
     const { anonymized, map } = anonymize(
       'const userToken = grabToken() // resolve the credential later'
@@ -118,7 +119,7 @@ describe('code that only looks like a comment opener is masked as code (L7)', ()
     })
   }
 
-  it('real comments are left as they were', () => {
+  it('real comments keep their prose', () => {
     const ts = anonymize(
       'const ratio = totalAmount / itemCount // keep the PaymentGateway note\n' +
         '// see https://example.invalid/x for PaymentGateway\n' +
@@ -151,7 +152,9 @@ describe('code that only looks like a comment opener is masked as code (L7)', ()
         language: 'ruby',
       }
     ).anonymized
-    expect(rb).toContain('state=end_transfer is prose on PaymentGateway')
+    // The block still ends where it did: the words before `=end` at the line
+    // start are comment prose, and the name the code declares is masked in it.
+    expect(rb).toContain('state=end_transfer is prose on __CLS__1\n=end\n')
     expect(rb).not.toMatch(/class PaymentGateway/)
   })
 })

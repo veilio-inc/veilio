@@ -92,8 +92,8 @@ Not masked:
   pasted with no path whose language is only guessed is read by the
   net too, for a line's own `KEY=value` or `KEY := value`. In code a
   bare `key = word` may name a variable and keeps a reversible placeholder;
-- **comments**, on purpose (below). The result's `comments` counts how much
-  prose goes out as written;
+- **comments**, apart from names the map holds (below). The result's `comments`
+  counts how much comment text goes out as written;
 - **names written entirely in capitals** — constants, enum members, environment
   variable names: `ACME_TENANT_ID`, `process.env.ACME_API_KEY`. They stay
   readable so that SQL keywords and `MAX_RETRIES` stay code, which means a
@@ -127,9 +127,15 @@ partial. It rides on the result rather than in UI state, so the web app, the CLI
 and the MCP server all see the same fact rather than each deciding whether to
 mention it.
 
-Comments are never masked — they are prose, and turning them into ciphertext is
-what makes a downstream model refuse to help. That applies to `#` comments,
-Python docstrings, SQL `--`, and Ruby `=begin` blocks, not just `//`.
+Comment text is prose and is left as written — turning it into ciphertext is
+what makes a downstream model refuse to help — with one exception: a name the
+map holds is replaced by its placeholder wherever it stands as a whole word in
+a comment, so a comment cannot say what the placeholder beside it means. That
+covers `#` comments, Python docstrings, SQL `--`, and Ruby `=begin` blocks, not
+just `//`. A name the map does not hold yet, a person, a customer or a ticket
+number in a comment goes out as typed; mark those by hand (below). Single
+ordinary words and lowercase one-word string literals stay readable in
+comments.
 
 ## Credential guard
 
@@ -385,14 +391,15 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
     pass `{ existingMap }`. An object whose keys are all placeholders is still
     read as a map. The form is removed in the next major version.
   - `comments` — `{ total, inline, characters, severity }`: how much comment
-    prose left **unmasked**. Comments are prose and are deliberately not masked,
-    which makes this the largest thing the engine does not do for you — reported
-    rather than left to be discovered. `inline` counts blocks sitting after the
+    text left **as written**. In comments only names the map holds are masked,
+    which makes the rest the largest thing the engine does not do for you —
+    reported rather than left to be discovered. `inline` counts blocks sitting after the
     file's first line of code; a licence header above it grades `low`, anything
     in the body grades `medium`, and it never goes higher: the engine cannot
     read the prose, so it never claims a comment _is_ sensitive. Consecutive
     line comments count as one block; blocks with no letters or digits in them,
-    and placeholders standing in for terms already marked, are not counted.
+    and placeholders (for a name the map holds, or a term marked by hand), are
+    not counted.
   - **Throws `ManualMaskError`** when a term in `options.manual` scans as a
     credential, is already a placeholder, or is a keyword in the resolved
     language. Marks replayed from `existingMap` never throw — a mark made in one
@@ -426,8 +433,8 @@ These invariants are enforced in CI by `tests/purity.test.ts`.
 ### Marking spans by hand
 
 Custom rules can only rename identifiers the extractor already found. That
-leaves out the two things most often needing masking: a name inside a comment,
-and a bare account or case number. Both are prose as far as extraction is
+leaves out the two things most often needing masking: a name that stands only
+in a comment — a person, a customer — and a bare account or case number. Both are prose as far as extraction is
 concerned.
 
 ```ts
@@ -463,7 +470,9 @@ thrown on. It stays in the map and applies again where it is valid.
 
 - `measureCommentExposure(code, language?)` → `CommentExposure` — the same
   measurement `anonymize` returns, for text it did not produce (after a manual
-  mark is undone, say)
+  mark is undone, say). It reads the text as given, with no map, so it counts a
+  name `anonymize` would replace in a comment; the `comments` of an `anonymize`
+  result is the figure for what was sent.
 - `detectSecrets(code, options?)` → `SecretFinding[]` — scan without modifying
 - `scanSecrets(code, policy?, options?)` → `{ findings, code, regulated }` —
   `options.path`, `options.root` and `options.fileKind` as for `anonymize`; `regulated`

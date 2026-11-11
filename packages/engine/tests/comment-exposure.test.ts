@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { anonymize, measureCommentExposure } from '../src/engine.js'
 import type { Language } from '../src/languages.js'
 
-// 004-b3. The engine masks identifiers and leaves comment prose alone, and that
+// 004-b3. The engine masks identifiers and leaves comment prose alone - apart
+// from a name the map holds, which is masked in a comment as in code - and that
 // trade is right — masked prose reads as ciphertext and trips downstream-AI
 // refusals. What was wrong was that the trade was invisible: the output looked
 // handled, and the sentence naming a customer went out with it.
