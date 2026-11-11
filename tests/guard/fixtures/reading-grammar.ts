@@ -421,7 +421,14 @@ export const OPERATORS: readonly Operator[] = [
             { front: '~+/', relative: false },
           ])(c),
   },
-  { id: 'O23', edits: digitRun((d) => [`$((${d}))`, `$(( ${d} + 0 ))`], 'spelled') },
+  {
+    id: 'O23',
+    // Also inside a written default: read where it stands, it is still digits.
+    edits: digitRun(
+      (d) => [`$((${d}))`, `$(( ${d} + 0 ))`, `\${x:-$((${d}))}`, `\${x:-\${y:-$((${d}))}}`],
+      'spelled'
+    ),
+  },
   {
     id: 'O24',
     edits: perChar(globbable, (ch) => [`(${ch})`, `(${ch}|x)`], 'wild', only('zsh')),

@@ -182,6 +182,17 @@ const SUBSTITUTED = [
   `y=a; cat \${a[0]/a/.e[n]v}`,
   `y=a; node -e "\${y/a/require('fs').readFileSync('.vei'+'lio/x')}"`,
 ]
+/** A written value is read where it stands in the word, not on its own:
+ *  arithmetic or a run-time part inside it is glued to the text around it. */
+const IN_PLACE = [
+  `cat id_ed\${x:-$((25519))}`,
+  `cat id_ed\${x:-$(( 25519 + 0 ))}`,
+  `cat "id_ed\${x:-$((25519))}"`,
+  `y=a; cat id_ed\${y/a/$((25519))}`,
+  `cat .e\${x:-\${Z}n}v`,
+  `cat \${x:-$Z}.env`,
+  `cat secrets\${x:-$Z}/customers.csv`,
+]
 const F6 = [`cat .en[[:alpha:]]`, `cat server.pe[m]`, `cat serve[r].pem`, `cat server.pe?`]
 const F7 = [
   `cat .e(n)v`,
@@ -379,6 +390,7 @@ export const ATTACK: readonly string[] = [
     ...ATTACHED,
     ...F5,
     ...SUBSTITUTED,
+    ...IN_PLACE,
     ...F6,
     ...F7,
     ...HEREDOC,

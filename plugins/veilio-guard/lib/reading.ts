@@ -129,8 +129,28 @@ export function spellings(
   w: Word,
   o: { home: string | null; homeKnown: boolean; strict: boolean }
 ): string[] | 'any' {
+  const texts = textsOfWord(w, o)
+  // A part that rewrites written text (Z5): the word could be any name.
+  if (texts === 'any') return 'any'
+  const out = new Set<string>()
+  for (const t of texts) {
+    const read = runTime(o.strict ? strictRead(t) : t)
+    if (read !== null) for (const name of braceNames(read)) out.add(name)
+  }
+  return [...out]
+}
+
+/** A word's texts with its run-time parts still marked: a written value
+ *  inside a parameter is read where it stands in the word, so a number or a
+ *  run-time part in it is glued to the text around the parameter
+ *  (`id_ed${x:-$((25519))}` is `id_ed*`). */
+function textsOfWord(
+  w: Word,
+  o: { home: string | null; homeKnown: boolean; strict: boolean }
+): string[] | 'any' {
   const home = o.homeKnown && o.home !== null ? quote(o.home) : null
   let texts: string[] = ['']
+  let any = false
   const add = (alternatives: string[]) => {
     const next: string[] = []
     for (const t of texts) for (const a of alternatives) next.push(t + a)
@@ -138,19 +158,12 @@ export function spellings(
     texts = next.length > MAX_SPELLINGS ? texts.map((t) => `${t}**`) : next
   }
   w.parts.forEach((p, k) => {
-    if (texts.length === 0) return
+    if (any) return
     const alternatives = partSpellings(p, home, o, k === 0)
-    if (alternatives === 'any') texts = []
+    if (alternatives === 'any') any = true
     else add(alternatives)
   })
-  // A part that rewrites written text (Z5): the word could be any name.
-  if (texts.length === 0) return 'any'
-  const out = new Set<string>()
-  for (const t of texts) {
-    const read = runTime(o.strict ? strictRead(t) : t)
-    if (read !== null) for (const name of braceNames(read)) out.add(name)
-  }
-  return [...out]
+  return any ? 'any' : texts
 }
 
 function partSpellings(
@@ -189,7 +202,7 @@ function partSpellings(
       // A value written in the command is one more spelling (E11).
       const out = [UNKNOWN]
       for (const word of p.operand) {
-        const s = spellings(word, o)
+        const s = textsOfWord(word, o)
         if (s === 'any') return 'any'
         out.push(...s)
       }
