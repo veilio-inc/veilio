@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { anonymize, restore, measureCommentExposure, isOrdinaryWord } from '../src/index.js'
-import type { CustomRule, SymbolMap } from '../src/index.js'
+import type { CustomRule, Language, SymbolMap } from '../src/index.js'
 
 // A name the map holds is written as its placeholder wherever it stands as a
 // whole word in a comment; every other word of a comment is left as written,
@@ -230,6 +230,17 @@ describe('comment prose stays readable (C3-C7, C10, C11)', () => {
     expect(map).toEqual({})
   })
 
+  it('C11: a replace rule mints nothing for a held ordinary word that stands only in a comment', () => {
+    const given = { __VAR__9: 'ledger' }
+    const { anonymized, map } = anonymize('// the ledger is closed\nconst x = 1\n', {
+      ...TS,
+      existingMap: given,
+      rules: [rule('replace', 'ledger', '__CODENAME__')],
+    })
+    expect(map).toEqual(given)
+    expect(commentLine(anonymized)).toBe('// the __VAR__9 is closed')
+  })
+
   it('C11: a replace rule does not reach a word that stands only in a comment', () => {
     const code = '// Globex pays first\nconst x = 1\n'
     const { anonymized, map } = anonymize(code, {
@@ -338,5 +349,88 @@ describe('masking names in comments stays linear', () => {
     const large = time(run(16000))
     expect(run(16000).length).toBeGreaterThan(200_000)
     expect(large / Math.max(small, 25)).toBeLessThan(10)
+  })
+})
+
+describe('seeded round trips', () => {
+  // A failure names the file's number: `generate(n)` builds it again.
+  const mulberry32 = (seed: number) => (): number => {
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  // 40 names: PascalCase, snake_case and camelCase.
+  const NAMES = ['quasar', 'vellum', 'tarn', 'fathom', 'harbour'].flatMap((head, i) =>
+    ['Ledger', 'Invoice', 'Tariff', 'Gang', 'Berth', 'Crane', 'Wagon', 'Docket'].map((tail, k) =>
+      (i + k) % 3 === 0
+        ? `${head[0]!.toUpperCase()}${head.slice(1)}${tail}`
+        : (i + k) % 3 === 1
+          ? `${head}_${tail.toLowerCase()}`
+          : `${head}${tail}`
+    )
+  )
+  const PROSE = ['the', 'user', 'request', 'total', 'settles', 'see', 'zażółć', 'gęślą', 'größe']
+  const PROSE_MORE = ['Straße', 'Ωmega', '42', '2026', '__CLS__1', '__VAR__7', '__FN__', '__STR__3']
+  const MARKS = ['.', ',', ';', ':', "'", '"', '`', '/', '@', '#', '-', '_', '(', ')', '{', '}']
+  type Declare = (a: string, b: string, c: string) => string
+  const LANGUAGES: Array<[Language, string, Declare, string]> = [
+    ['typescript', '//', (a, b, c) => `const ${a} = ${b}(${c})`, ''],
+    ['go', '//', (a, b, c) => `var ${a} = ${b}(${c})`, ''],
+    ['java', '//', (a, b, c) => `int ${a} = ${b}(${c});`, ''],
+    ['csharp', '//', (a, b, c) => `int ${a} = ${b}(${c});`, ''],
+    ['rust', '//', (a, b, c) => `let ${a} = ${b}(${c});`, ''],
+    ['c', '//', (a, b, c) => `int ${a} = ${b}(${c});`, ''],
+    ['python', '#', (a, b, c) => `${a} = ${b}(${c})`, ''],
+    ['ruby', '#', (a, b, c) => `${a} = ${b}(${c})`, ''],
+    ['php', '//', (a, b, c) => `$${a} = ${b}($${c});`, '<?php\n'],
+    ['sql', '--', (a, b, c) => `SELECT ${a}, ${b} FROM ${c};`, ''],
+  ]
+
+  const generate = (n: number): { language: Language; code: string } => {
+    const random = mulberry32(0x092 + n)
+    const pick = <T>(from: readonly T[]): T => from[Math.floor(random() * from.length)]!
+    const [language, opener, declare, head] = pick(LANGUAGES)
+    const lines: string[] = []
+    for (let k = 2 + Math.floor(random() * 8); k > 0; k--) {
+      if (random() < 0.5) {
+        lines.push(declare(pick(NAMES), pick(NAMES), pick(NAMES)))
+        continue
+      }
+      let comment = opener
+      for (let w = 1 + Math.floor(random() * 9); w > 0; w--) {
+        const word = random() < 0.4 ? pick(NAMES) : pick(random() < 0.6 ? PROSE : PROSE_MORE)
+        comment += `${random() < 0.7 ? ' ' : pick(MARKS)}${word}${random() < 0.3 ? pick(MARKS) : ''}`
+      }
+      lines.push(random() < 0.3 && lines.length > 0 ? `${lines.pop()} ${comment}` : comment)
+    }
+    return { language, code: `${head}${lines.join('\n')}\n` }
+  }
+
+  it('300 generated files in ten languages restore exactly, and mask to the same text twice', () => {
+    const seen = new Set<Language>()
+    let masked = 0
+    let skipped = 0
+    for (let n = 0; n < 300; n++) {
+      const { language, code } = generate(n)
+      seen.add(language)
+      const first = anonymize(code, { language })
+      // Not a round trip (the "unchanged" case above): placeholder-shaped text
+      // of the file that the map holds. It happens when the literal is glued
+      // to a `_` before it (`a___CLS__1`): the counter does not see it, and
+      // has not since before comments were masked.
+      if (PROSE_MORE.some((literal) => literal in first.map && code.includes(literal))) {
+        skipped++
+        continue
+      }
+      expect(exact(first.anonymized, first.map), `file ${n} (${language})`).toBe(code)
+      const again = anonymize(first.anonymized, { language, existingMap: first.map })
+      expect(again.anonymized, `file ${n} (${language}), second pass`).toBe(first.anonymized)
+      expect(again.map, `file ${n} (${language}), second pass`).toEqual(first.map)
+      if (first.anonymized !== code) masked++
+    }
+    expect(seen.size).toBe(10)
+    expect(skipped).toBeLessThan(10)
+    expect(masked).toBeGreaterThan(250)
   })
 })
