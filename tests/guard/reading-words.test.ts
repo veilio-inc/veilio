@@ -1061,8 +1061,10 @@ describe('the guard', () => {
   })
 
   test('a command Veilio cannot read is refused', async () => {
-    expect(await refused(`cat .e''nv "`)).toContain('a command Veilio cannot read')
-    expect(await refused(`echo "unbalanced`)).toContain('a command Veilio cannot read')
+    expect(await refused(`cat .e''nv "`)).toBe(
+      "Veilio refused this call: Veilio cannot read `cat .e''nv \"` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it."
+    )
+    expect(await refused(`echo "unbalanced`)).toContain('as a shell command')
   })
 
   test('a refusal shows the word as typed, and the piece of a plain word', async () => {

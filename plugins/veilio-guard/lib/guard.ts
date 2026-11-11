@@ -1759,12 +1759,14 @@ export class Guard {
   private cost: Cost | null = null
   /** The steps the last shell command took of MAX_STEPS. */
   lastSteps = 0
-  /** A command Veilio cannot read: refused, with the command as typed (cut
+  /** A command Veilio cannot read - unbalanced, a shell given a script or an
+   *  option the reader does not know, a zsh module, past the budget, or
+   *  anything the reader threw: refused, with the command as typed (cut
    *  where it is longer than anyone would read). */
   private unreadable(command: string, budget: RuleBudget | undefined): { deny: string } {
     const shown = command.length > 400 ? `${command.slice(0, 400)}…` : command
     return this.deny(
-      `Veilio refused this call: Veilio cannot tell where \`${this.applyText(shown, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+      `Veilio refused this call: Veilio cannot read \`${this.applyText(shown, 'result', undefined, budget)}\` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it`,
       false
     )
   }
@@ -2233,8 +2235,12 @@ export class Guard {
             return this.unreadable(c, budget)
           else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
             // A PowerShell command the reader does not model, naming a
-            // location command anywhere: refused (review of the PowerShell path).
-            return this.unreadable(c, budget)
+            // location command anywhere: refused (review of the PowerShell
+            // path). A cd refusal: it keeps the cd text.
+            return this.deny(
+              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+              false
+            )
           else moves = this.shellDirsOf(c)
           // Spec 085 H17: a word after a cd names a file in the directory the
           // shell moved to, in this call or an earlier one: checked there too.

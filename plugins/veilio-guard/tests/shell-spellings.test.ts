@@ -12,7 +12,7 @@ const FILES = {
 }
 
 /** In the refusal of a command Veilio cannot read. */
-const CANNOT_READ = 'a command Veilio cannot read'
+const CANNOT_READ = 'as a shell command, so it cannot tell whether it names a file'
 
 const REFUSED = [
   `cat .e''nv`,
@@ -399,7 +399,7 @@ test('a command Veilio cannot read is refused', async ($, on) => {
   on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
   for (const command of [`cat .e''nv "`, 'echo "unbalanced', 'bash -cO']) {
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
-    expect(out.deny, command).toContain('a command Veilio cannot read')
+    expect(out.deny, command).toContain(CANNOT_READ)
   }
   expect(ran).toBe(false)
 })

@@ -17,7 +17,7 @@ import { guardAt, memoryFixture, verdict } from './fixtures/reading-shell.ts'
 // Veilio cannot read. The budget is a count of steps, so the verdict is the
 // same on every machine; the clock here only catches a missing budget.
 const LIMIT_MS = 1000
-const UNREADABLE = 'a command Veilio cannot read'
+const UNREADABLE = 'as a shell command, so it cannot tell whether it names a file'
 
 test('the cost corpus is the 36 inputs of the review and its 3,000-star line', () => {
   expect(COST.length).toBe(37)

@@ -142,7 +142,8 @@ export function bracketsRead(text: string): string {
  *  runs (`$x`, `$(...)`, `$PWD`, `~user`) is read as nothing beside other
  *  text and as any folder when it is a whole path part, so `"$a.$b"` is `.`
  *  and `$DIR/.env` is `.env` in any folder; a word made only of such parts
- *  has no spelling. `**` stands for any text; a wildcard or brace character that
+ *  has no spelling. Unquoted, such a part may also break the word in two,
+ *  so the text between any two of them is a spelling of its own (A4). `**` stands for any text; a wildcard or brace character that
  *  was quoted is not one. */
 export function spellings(
   w: Word,
@@ -449,8 +450,9 @@ export function textPieces(
   return out
 }
 
-/** Text that names Veilio's folder as a path: `.veilio` beside a `/` or `~`,
- *  or as a whole quoted string, also when the name is joined from pieces
+/** Text that names Veilio's folder as a path: `.veilio` after a `/`, `\` or
+ *  `~`, or followed by `/` or `\` whatever stands before it (A11), or as a
+ *  whole quoted string, also when the name is joined from pieces
  *  (`'.vei'+'lio/x'`, `"/.vei"."lio"`, `".vei" "lio"`, `.veil""io`). A web
  *  address (`api.veilio.dev`), a longer name (`.veilio-x.txt`) and a mention
  *  (`see .veilio docs`) are not a path. No list of programs, wrappers or

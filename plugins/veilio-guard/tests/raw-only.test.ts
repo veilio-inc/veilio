@@ -506,6 +506,9 @@ const A2 = (w: string) =>
   `Veilio keeps ${w} away from the model. Ask the user for what you need from it.`
 const N1 = (t: string, form: string) =>
   `Veilio refused this call: Veilio cannot tell where \`${t}\` takes the shell (${form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.`
+/** A command Veilio cannot read (spec 091 addendum 2: its own text, not the cd one). */
+const UNREAD = (t: string) =>
+  `Veilio refused this call: Veilio cannot read \`${t}\` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it.`
 const N2 =
   'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user.'
 const HOME_FILES = {
@@ -719,15 +722,9 @@ const REVIEWED: [string, string | undefined][] = [
   ['mkdir build && cd build && cmake ..', undefined],
   // Past the reader's bounds: a command Veilio cannot read is refused,
   // whatever it holds (spec 091 FR-010; before, only one that built text).
-  [`echo ${'{'.repeat(201)} ls`, N1(`echo ${'{'.repeat(201)} ls`, 'a command Veilio cannot read')],
-  [
-    `echo ${'{'.repeat(201)}; foo`,
-    N1(`echo ${'{'.repeat(201)}; foo`, 'a command Veilio cannot read'),
-  ],
-  [
-    `echo ${'{'.repeat(201)}; cd src`,
-    N1(`echo ${'{'.repeat(201)}; cd src`, 'a command Veilio cannot read'),
-  ],
+  [`echo ${'{'.repeat(201)} ls`, UNREAD(`echo ${'{'.repeat(201)} ls`)],
+  [`echo ${'{'.repeat(201)}; foo`, UNREAD(`echo ${'{'.repeat(201)}; foo`)],
+  [`echo ${'{'.repeat(201)}; cd src`, UNREAD(`echo ${'{'.repeat(201)}; cd src`)],
   // After an interpreter or a shell ran, every cd but a logical `cd ..` and
   // `cd -` is refused (coordinator's rule (b)): a link it made is not entered.
   ['perl -e 1; cd k', N1('perl -e 1', 'a cd after code this command ran')],
@@ -825,10 +822,7 @@ const REVIEWED: [string, string | undefined][] = [
   // past the reader's bounds, anything that could move the shell: refused
   [
     `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
-    N1(
-      `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
-      'a command Veilio cannot read'
-    ),
+    UNREAD(`echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`),
   ],
   [
     'x=.kub; trap "cd ~/${x}e" DEBUG; cat config',
