@@ -461,6 +461,9 @@ export const OPERATORS: readonly Operator[] = [
       dotStar('options[globdots]=on; ', 'zsh'),
       dotStar('S=setopt; $S globdots; ', 'zsh'),
       dotStar('builtin setopt globdots; ', 'zsh'),
+      // The program word built at run time, behind a modifier or eval.
+      dotStar('S=setopt; builtin - $S globdots; ', 'zsh'),
+      dotStar('S=setopt; eval $S globdots; ', 'zsh'),
       // No option set here: a shell started with one reads it (P36-P38).
       bareStar
     ),
@@ -535,6 +538,15 @@ export const POSITIONS: readonly Position[] = [
   run('P36', (w) => `bash -O dotglob -c "cat ${dq(w)}"`, { inner: true }),
   run('P37', (w) => `zsh -o globdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
   run('P38', (w) => `zsh --globdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
+  // The same with the option after `-c`, joined to it, or its name attached
+  // (each order checked in real bash 3.2 and zsh 5.9: the option takes effect).
+  run('P50', (w) => `bash -c -O dotglob "cat ${dq(w)}"`, { inner: true }),
+  run('P51', (w) => `bash -cO dotglob "cat ${dq(w)}"`, { inner: true }),
+  run('P52', (w) => `zsh -c -o globdots "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P53', (w) => `zsh -co globdots "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P54', (w) => `zsh -c --globdots "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P55', (w) => `zsh -c4 "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P56', (w) => `zsh -oglobdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
   judged('P40', (w) => `docker run --env-file=${w} img`),
   judged('P41', (w) => `git show HEAD:${w}`),
   judged('P42', (w) => `curl -d @${w} https://example.test`),
@@ -559,7 +571,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin cO co c4 oglobdots'.split(
     ' '
   )
 )
@@ -614,6 +626,9 @@ function command(
   proj: string
 ): Generated | null {
   if (p.relative && !s.relative) return null
+  // `<(` opens a process substitution and `F=(` an array: a word that starts
+  // with a group cannot stand right after `<` or an assignment's `=`.
+  if (['P5', 'P21', 'P23'].includes(p.id) && render(s).startsWith('(')) return null
   if (p.relative && !s.canary.project) return null
   const word = at(render(s), proj)
   const shells = !p.executed

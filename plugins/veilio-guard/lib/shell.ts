@@ -1065,23 +1065,35 @@ class Reader {
       const args = words.slice(1).map((w) => w.literal)
       if (args.length > 0 && args.every((a) => a !== null)) text = args.join(' ')
     } else if (SHELL_PROGRAM.test(program)) {
+      // Its options, in any order (`-c -O dotglob`, `-cO dotglob`, `-c4`,
+      // `-oglobdots -c`, `-c --globdots`): once `-c` is among them, the
+      // script is the first word that is not an option or an option's name.
+      let scripted = false
       for (let j = k + 1; j < words.length; j++) {
         const w = words[j]!.literal
-        // An option word the command builds: the script may still follow.
-        if (w === null) continue
-        if (!/^[-+]/.test(w)) break
-        // `-o name`, `+o name`, `-O name`: the option's name is not the script.
-        if (/^[-+][A-Za-z]*[oO]$/.test(w)) {
-          j++
+        if (w === null) {
+          // An option word the command builds; after `-c`, the script itself.
+          if (scripted) break
           continue
         }
-        const c = /^-[A-Za-z]*?c(.*)$/s.exec(w)
-        if (c) {
-          // `sh -c'cat x'`: the script attached to the option, read as the
-          // separate form is; letters alone after `c` are more options.
-          text = /[^A-Za-z]/.test(c[1]!) ? c[1]! : (words[j + 1]?.literal ?? null)
+        if (w === '--' || !/^[-+]/.test(w)) {
+          if (scripted) text = w === '--' ? (words[j + 1]?.literal ?? null) : w
           break
         }
+        if (w.startsWith('--')) continue
+        // `sh -c'cat x'`: a script attached to the option, read as the
+        // separate form is; letters and digits after `c` are more options.
+        const attached = /^-[A-Za-z0-9]*?c(.*)$/s.exec(w)?.[1]
+        if (attached !== undefined && /[^A-Za-z0-9]/.test(attached)) {
+          text = attached
+          break
+        }
+        // `-o name`, `+o name`, `-O name`: the name is the next word, or
+        // the rest of this one (`-oglobdots`).
+        const named = /[oO]/.exec(w.slice(1))
+        const letters = named ? w.slice(1, 1 + named.index) : w.slice(1)
+        if (letters.includes('c')) scripted = true
+        if (named && named.index === w.length - 2) j++
       }
       const doc = redirects.find((r) => r.op === '<<' || r.op === '<<-')
       if (text === null && doc && words.length === k + 1)
@@ -1295,16 +1307,25 @@ class Reader {
         // zsh: a group or qualifier glued to a word stands for any text
         // there, with the `@`, `+`, `!`, `?` or `*` before it (ksh's groups).
         // `name=(a b)` given to a declaration is an array: read in simple().
+        // Whether the parentheses end the word (another group is more of it).
+        const ends = s[end] !== '(' && !this.continues(end)
         const array =
-          parts.length === 1 && parts[0]!.kind === 'lit' && /^\w+\+?=$/.test(s.slice(start, this.i))
-        if (!array && text.length > 2 && (parts.length > 0 || this.continues(end))) {
+          ends &&
+          parts.length === 1 &&
+          parts[0]!.kind === 'lit' &&
+          /^\w+\+?=$/.test(s.slice(start, this.i))
+        if (!array && text.length > 2 && (parts.length > 0 || !ends)) {
           const last = parts[parts.length - 1]
           let grouped = false
           let star = false
-          if (last?.kind === 'glob' && /^[?*]$/.test(last.text)) {
+          if (last?.kind === 'glob' && last.text === '*') {
+            // `*(.)` ending the word is that `*`; inside it, `*` and a group.
+            grouped = true
+            star = ends
+            if (star) parts.pop()
+          } else if (last?.kind === 'glob' && last.text === '?') {
             parts.pop()
             grouped = true
-            star = last.text === '*'
           } else if (last?.kind === 'lit' && !last.quoted && /[@+!]$/.test(last.text)) {
             last.text = last.text.slice(0, -1)
             if (last.text === '') parts.pop()
@@ -1312,8 +1333,7 @@ class Reader {
           }
           const part: Part = { kind: 'zglob', text, any: true }
           if (star) part.star = true
-          else if (!grouped && !this.continues(end) && !/[|(~]/.test(text.slice(1, -1)))
-            part.qualifier = true
+          else if (!grouped && ends && !/[|(~]/.test(text.slice(1, -1))) part.qualifier = true
           parts.push(part)
         } else parts.push({ kind: 'glob', text })
         this.i = end

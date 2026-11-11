@@ -189,7 +189,41 @@ const F7 = [
   `options=(globdots on); cat *nv`,
   `S=setopt; $S globdots; cat *nv`,
   `noglob builtin $S globdots; cat *nv`,
+  `bash -c -O dotglob 'cat *nv'`,
+  `bash -cO dotglob 'cat *nv'`,
+  `zsh -c -o globdots 'cat *nv'`,
+  `zsh -co globdots 'cat *nv'`,
+  `zsh -c --globdots 'cat *nv'`,
+  `zsh -c4 'cat *nv'`,
+  `zsh -oglobdots -c 'cat *nv'`,
+  `S=setopt; command -p $S globdots; cat *nv`,
+  `S=setopt; builtin - $S globdots; cat *nv`,
+  `S=setopt; exec -a x $S globdots; cat *nv`,
+  `S=setopt; eval $S globdots; cat *nv`,
+  `S=setopt; eval "$S globdots"; cat *nv`,
 ]
+/** Code that names Veilio's folder, given in every shape a word can take:
+ *  the text rule reads a word unless its whole value is a path. */
+const CODE = `open('.vei'+'lio/x')`
+const TEXT_SHAPES: ((code: string) => string)[] = [
+  (c) => `"${c}"`,
+  (c) => `{"${c}",x}`,
+  (c) => `{x,"${c}"}`,
+  (c) => `*"${c}"`,
+  (c) => `?"${c}"`,
+  (c) => `[a]"${c}"`,
+  (c) => `x("${c}")`,
+  (c) => `("${c}")`,
+  (c) => `x<->"${c}"`,
+  (c) => `$(( 1 ))"${c}"`,
+  (c) => `~"${c}"`,
+  (c) => `$'${c.replace(/'/g, "\\'")}'`,
+  (c) => `\${x:-"${c}"}`,
+]
+const SHAPED = TEXT_SHAPES.flatMap((shape) => [
+  `python3 -c ${shape(CODE)}`,
+  `env -i python3 -c${shape(CODE)}`,
+])
 /** A here-document's body: what the shell runs in it is read. */
 const HEREDOC = [
   `cat <<EOF\n$(cat .e[n]v)\nEOF`,
@@ -278,6 +312,7 @@ export const ATTACK: readonly string[] = [
     ...F6,
     ...F7,
     ...HEREDOC,
+    ...SHAPED,
     ...M2,
   ]),
 ]

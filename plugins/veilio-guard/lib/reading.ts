@@ -234,20 +234,23 @@ function setChanges(args: (string | null)[]): boolean {
 /** A shell's options that leave how it reads words as it is: errexit,
  *  nounset, xtrace, verbose, login, interactive, stdin, and `-c` itself. */
 const SHELL_LETTERS = 'euxvlisc'
-/** Words before a program that are not it. */
-const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect'])
+/** Words before a program that are not it (zsh's `-` among them). */
+const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect', '-'])
+/** A word the shell builds when the command runs. */
+const built = (w: Word): boolean =>
+  w.parts.some((p) => p.kind === 'param' || p.kind === 'subst' || p.kind === 'arith')
 
-/** Whether a shell is started with an option outside the plain ones before
- *  its script: any other letter or digit, `-o`/`+o`/`-O`, a long option, or
- *  an option word the command builds. */
+/** Whether a shell is started with an option outside the plain ones, among
+ *  the words before its script (the first that is not an option, or `--`):
+ *  any other letter or digit, `-o`/`+o`/`-O`, a long option, or a word the
+ *  command builds. */
 function shellChanges(args: (string | null)[]): boolean {
   for (const a of args) {
     if (a === null) return true
     if (a === '--' || !/^[-+]/.test(a)) return false
     if (a.startsWith('--')) return true
-    const letters = a.slice(1)
-    if ([...letters].some((letter) => !SHELL_LETTERS.includes(letter))) return true
-    if (letters.includes('c')) return false
+    // Options may follow `-c` (`bash -c -O dotglob '...'`): read to the script.
+    if ([...a.slice(1)].some((letter) => !SHELL_LETTERS.includes(letter))) return true
   }
   return false
 }
@@ -268,6 +271,8 @@ export function readsStrictly(list: List): boolean {
           strict ||= rest.some((a) => a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a)))
         else if (w === 'set') strict ||= setChanges(rest)
         else if (w !== null && SHELL.test(w)) strict ||= shellChanges(rest)
+        // Text the command builds, run as commands: it may be any of these.
+        else if ((w === 'eval' || w === 'source' || w === '.') && rest.includes(null)) strict = true
       })
       const simple = x as Simple
       // zsh's `options` array sets an option as `setopt` does.
@@ -276,9 +281,18 @@ export function readsStrictly(list: List): boolean {
         simple.words.some((w) => /^options(?:\[[^\]]*\])?\+?=/.test(w.raw))
       )
         strict = true
-      // A program word the command builds (`$S globdots`) may be any of these.
-      const program = simple.words.find((w) => !PREFIXES.has(w.literal ?? ''))
-      if (program?.parts.some((p) => p.kind === 'param' || p.kind === 'subst')) strict = true
+      // A program word the command builds (`$S globdots`) may be any of
+      // these. Behind a modifier and its options (`command -p`, `exec -a x`,
+      // `-`) the program is not told from an option's value: any built word.
+      let at = 0
+      while (
+        at < simple.words.length &&
+        (PREFIXES.has(simple.words[at]!.literal ?? '') ||
+          (at > 0 && (simple.words[at]!.literal ?? '').startsWith('-')))
+      )
+        at++
+      if (at > 0 ? simple.words.slice(at).some(built) : simple.words.slice(0, 1).some(built))
+        strict = true
     }
     for (const v of Object.values(x)) visit(v)
   }
@@ -349,21 +363,34 @@ export function namesVeilioFolder(text: string): boolean {
 
 /** The characters of a path, and of several given to one option. */
 const PATH_TEXT = /^[\p{L}\p{N}_.~/\\@%:,=-]*$/u
+/** Those, and what a wildcard, a brace list or a zsh group is written with. */
+const GLOB_TEXT = /^[\p{L}\p{N}_.~/\\@%:,=*?[\]!^{}()|<>#-]*$/u
 
 /** Whether a word's whole value is a path (or paths joined by `=`, `:`, `,`):
- *  what the raw-only rules judge. A variable, a command's output and a
- *  wildcard stand for path text. */
+ *  what the raw-only rules judge. Each part is checked: a variable and a
+ *  command's output stand for path text; a wildcard, a brace list or a group
+ *  only when what is written in it is path text; any other part is not. */
 function isPath(w: Word): boolean {
   return w.parts.every((p) => {
     switch (p.kind) {
       case 'lit':
         return PATH_TEXT.test(p.text)
       case 'ansic':
-        return PATH_TEXT.test(p.text.startsWith("$'") ? ansiC(p.text.slice(2, -1)) : '(')
+        return PATH_TEXT.test(
+          p.text.startsWith("$'") ? ansiC(p.text.slice(2, -1)) : p.text.slice(2, -1)
+        )
       case 'param':
         return p.operand === undefined
-      default:
+      case 'tilde':
+      case 'subst':
         return true
+      case 'glob':
+      case 'brace':
+      case 'zglob':
+        return GLOB_TEXT.test(p.text)
+      // Anything else is not known to be a path: read as text.
+      default:
+        return false
     }
   })
 }

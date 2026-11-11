@@ -67,6 +67,20 @@ describe('wordsOf: a word is returned wherever it stands', () => {
     ['a here-document, $(( that is a command', `cat <<EOF\n$((cat ${W}); echo)\nEOF`],
     ['a here-document, inside arithmetic', `cat <<EOF\n$(( $(cat ${W}) ))\nEOF`],
     ['a script after a shell option', `zsh -o extendedglob -c 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    [
+      'a script after options that follow -c',
+      `bash -c -O dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`,
+    ],
+    ['a script after -cO name', `bash -cO dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['a script after -c4', `zsh -c4 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    [
+      'a script after an attached option name',
+      `zsh -oglobdots -c 'cat ${W.replace(/'/g, `'\\''`)}'`,
+    ],
+    [
+      'a script after a long option that follows -c',
+      `zsh -c --globdots 'cat ${W.replace(/'/g, `'\\''`)}'`,
+    ],
     ['zsh =( )', `cat =(cat ${W})`],
     ['a group glued to a word in a for list', `for f in src/*(N) ${W}; do :; done`],
     ['a script attached to -c', `sh -c'cat ${W.replace(/'/g, `'\\''`)}'`],
@@ -208,6 +222,9 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     ['Z2 a qualifier after a name it ends', 'server.pem(.)', ['server.pem**']],
     ['Z1 a group that ends the word', 'server.pe(m|x)', [`server.pe${ANY}`]],
     ['Z2 a qualifier on a bare wildcard', '*(.)', ['**']],
+    ['Z1 a group after * inside the word', 'serv*(.)pem', [`serv*${ANY}pem`]],
+    ['Z1 a group before a qualifier', 'server.pe(m)(.)', [`server.pe${ANY}**`]],
+    ['Z1 a group after = that the word goes on from', 'if=(s)erver.pem', [`if=${ANY}erver.pem`]],
     ['Z3 a numeric range', 'id_ed<->', ['id_ed*']],
     ['Z3 a numeric range with bounds', 'f<1-9>.txt', ['f*.txt']],
   ])('%s: %s', (_, word, expected) => {
@@ -279,6 +296,18 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'bash -O extglob -c ls',
     'bash +o posix -c ls',
     'zsh --globdots -c ls',
+    'bash -c -O dotglob ls',
+    'bash -cO dotglob ls',
+    'zsh -c --globdots ls',
+    'zsh -c4 ls',
+    'zsh -oglobdots -c ls',
+    'bash -c "$script"',
+    'command -p $S globdots; ls',
+    'builtin - $S globdots; ls',
+    'exec -a x $S globdots',
+    '- $S globdots; ls',
+    'eval $S globdots; ls',
+    'eval "$S globdots"; ls',
     'zsh -4 -c ls',
     'zsh -G -c ls',
     'zsh "$FLAGS" -c ls',
@@ -309,6 +338,10 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'bash -x script.sh',
     'bash -- script.sh',
     'bash script.sh --globdots',
+    'bash -c "ls" -O dotglob',
+    'command -v node',
+    'exec node server.js',
+    'eval "ls src"',
     'echo "$x"',
     'F=1 ls',
     'npm config set registry https://example.test',
@@ -429,6 +462,42 @@ describe("text that names Veilio's folder as a path (reading table §4, FR-011)"
     'docker run --env-file=~/.veilio/x img',
   ])('not text that names the folder: %s', (command) => {
     expect(names(command)).toBe(false)
+  })
+
+  test('a word is text unless every part of it is path text', () => {
+    const texts = (command: string) => {
+      const p = parseShell(command, 'sh')
+      return p.ok ? textsOf(p.list) : null
+    }
+    // Paths, and what stands for path text.
+    for (const w of [
+      'src/a.ts',
+      '~/x',
+      '$DIR/x',
+      '"$(pwd)"/x',
+      '*.ts',
+      'a{b,c}.ts',
+      'x[ab]',
+      '--file=a:b,c',
+      'f*(.)',
+      '(a|b)x',
+    ])
+      expect(texts(`cmd ${w}`), w).toEqual([])
+    // Text: anything else, whatever part of the word holds it.
+    for (const w of [
+      '"a b"',
+      '{"a b",x}',
+      '{x,y()}"z w"',
+      '*"a b"',
+      '("a b")',
+      'x("a b")',
+      '$((1+2))',
+      '${x:-"a b"}',
+      `$'a b'`,
+      'a+b',
+      'a$b;c'.replace(';', '\\;'),
+    ])
+      expect(texts(`cmd ${w}`)?.length, w).toBeGreaterThan(0)
   })
 
   test.each([
