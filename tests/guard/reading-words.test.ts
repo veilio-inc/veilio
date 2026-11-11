@@ -45,7 +45,8 @@ describe('wordsOf: a word is returned wherever it stands', () => {
   test.each(
     [...POSITIONS, ...CLUSTERS].filter((p) => p.executed).map((p) => [p.id, p.make(W)] as const)
   )('%s %s', (_, command) => {
-    expect(holds(command), command).toBe(true)
+    // Read where it stands, or the command is one Veilio does not read (refused).
+    expect(!parseShell(command, 'sh').ok || holds(command), command).toBe(true)
   })
 
   test.each([
@@ -65,33 +66,8 @@ describe('wordsOf: a word is returned wherever it stands', () => {
     ['a here-document, a backtick after two backslashes', `cat <<EOF\n\\\\\`cat ${W}\`\nEOF`],
     ['a here-document, $(( that is a command', `cat <<EOF\n$((cat ${W}); echo)\nEOF`],
     ['a here-document, inside arithmetic', `cat <<EOF\n$(( $(cat ${W}) ))\nEOF`],
-    ['a script after a shell option', `zsh -o extendedglob -c 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    [
-      'a script after options that follow -c',
-      `bash -c -O dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`,
-    ],
-    ['a script after -cO name', `bash -cO dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    ['a script after -c4', `zsh -c4 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    [
-      'a script after an attached option name',
-      `zsh -oglobdots -c 'cat ${W.replace(/'/g, `'\\''`)}'`,
-    ],
-    [
-      'a script after a long option that follows -c',
-      `zsh -c --globdots 'cat ${W.replace(/'/g, `'\\''`)}'`,
-    ],
-    [
-      'bash: O takes the next word, c still counts',
-      `bash -Oc dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`,
-    ],
-    ['bash: two O take two words', `bash -OOc dotglob extglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    ['bash: letters after O still count', `bash -cOe dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    ['sh: o then c', `sh -oc pipefail 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    ['zsh: o takes the rest of its word', `zsh -ecoglobdots 'cat ${W.replace(/'/g, `'\\''`)}'`],
-    ['zsh: an attached name after -c', `zsh -c -oglobdots 'cat ${W.replace(/'/g, `'\\''`)}'`],
     ['zsh =( )', `cat =(cat ${W})`],
     ['a group glued to a word in a for list', `for f in src/*(N) ${W}; do :; done`],
-    ['a script attached to -c', `sh -c'cat ${W.replace(/'/g, `'\\''`)}'`],
     ['a function body', `f() { cat ${W}; }`],
     ['a pipeline stage in the background', `cat ${W} | cat &`],
     ['[[ ]]', `[[ -f ${W} ]]`],
@@ -114,26 +90,74 @@ describe('wordsOf: a word is returned wherever it stands', () => {
       expect(parseShell(c, 'sh').ok, c).toBe(true)
   })
 
-  test('a shell whose script word cannot be told is unreadable', () => {
-    // An option's name is missing; an option word built at run time before -c.
-    expect(parseShell('bash -cO', 'sh').ok).toBe(false)
-    // A lone `+`; a long option after -c with more than one word left.
-    expect(parseShell(`bash -c + 'ls'`, 'sh').ok).toBe(false)
-    expect(parseShell(`zsh -c --emulate zsh 'ls'`, 'sh').ok).toBe(false)
-    expect(parseShell(`bash "$FLAGS" -c 'ls'`, 'sh').ok).toBe(false)
-    // A script built at run time, and a script file, are read as before.
-    for (const c of [
-      'bash -c "$CMD"',
-      'bash "$SCRIPT_DIR/build.sh" --release',
-      'sh "$0" --help',
-      'bash -eo pipefail -c "ls"',
-    ])
-      expect(parseShell(c, 'sh').ok, c).toBe(true)
-    // bash takes `dotglob` for O's name; zsh takes `globdots` for o's, in the same word.
-    expect(words(`bash -Oc dotglob 'cat x' y`).map((w) => w.raw)).toContain('x')
-    expect(words(`zsh -oglobdots 'cat x'`).map((w) => w.raw)).not.toContain('x')
-    expect(words(`zsh -oglobdots -c 'cat x'`).map((w) => w.raw)).toContain('x')
+  // A nested shell: only an allow-list of invocation shapes is read; any
+  // other shape that may run a script given in the command is unreadable.
+  test.each(
+    [
+      `bash -c 'cat ${W}'`,
+      `sh -ec 'cat ${W}'`,
+      `bash -lc 'cat ${W}'`,
+      `bash -xec 'cat ${W}' arg`,
+      `bash -e -u -c 'cat ${W}'`,
+      `bash -o pipefail -c 'cat ${W}'`,
+      `bash -euo pipefail -c 'cat ${W}'`,
+      `sh -euxo pipefail -c 'cat ${W}'`,
+      `zsh -o errexit -o nounset -c 'cat ${W}'`,
+      `env FOO=1 bash -c 'cat ${W}'`,
+      `bash -c 'cat ${W}' -O dotglob`,
+      `bash -e <<EOF\ncat ${W}\nEOF`,
+      `bash <<< 'cat ${W}'`,
+    ].map((c) => c.replace(/'cat \.e''nv'/, `"cat .e''nv"`))
+  )('a nested shell in a known shape is read: %s', (command) => {
+    expect(holds(command), command).toBe(true)
   })
+
+  test.each([
+    'bash -O dotglob -c "ls"',
+    'bash -c -O dotglob "ls"',
+    'bash -cO dotglob "ls"',
+    'bash -Oc dotglob "ls"',
+    'bash -oc pipefail "ls"',
+    'bash -o posix -c "ls"',
+    'bash +e -c "ls"',
+    'bash -ac "ls"',
+    'bash --norc -c "ls"',
+    'bash --rcfile /dev/null -c "ls"',
+    'bash -c --norc "ls"',
+    'bash -c -- "ls"',
+    'bash -c - "ls"',
+    'bash -- -c "ls"',
+    'bash "$FLAGS" -c "ls"',
+    'zsh -o globdots -c "ls"',
+    'zsh -oglobdots -c "ls"',
+    'zsh -Oc "ls"',
+    'zsh -c4 "ls"',
+    'zsh -bc "ls"',
+    'zsh --emulate sh -c "ls"',
+    "sh -c'ls src'",
+    "zsh -o globdots <<'EOF'\nls\nEOF",
+    "bash -O dotglob <<< 'ls'",
+  ])('any other shape that may run a script from the command is unreadable: %s', (command) => {
+    expect(parseShell(command, 'sh').ok, command).toBe(false)
+  })
+
+  test.each([
+    'bash scripts/build.sh',
+    'bash -x scripts/build.sh',
+    'bash --norc scripts/build.sh',
+    'bash -O extglob scripts/build.sh',
+    'bash -n scripts/build.sh',
+    'bash "$SCRIPT_DIR/build.sh" --release',
+    'sh "$0" --help',
+    'bash -c "$CMD"',
+    'bash --version',
+    'zsh --help',
+  ])(
+    'a shell that runs a file, or a script built at run time, is read as before: %s',
+    (command) => {
+      expect(parseShell(command, 'sh').ok, command).toBe(true)
+    }
+  )
 
   test('a here-document: an escaped substitution does not run and is not read', () => {
     expect(words(`cat <<EOF\n\\$(cat ${W})\nEOF`).map((w) => w.raw)).not.toContain(W)
@@ -321,25 +345,12 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'set -o extendedglob; ls',
     'set -G; ls',
     'set -4; ls',
-    'zsh -o extendedglob -c ls',
-    'bash -O extglob -c ls',
-    'bash +o posix -c ls',
-    'zsh --globdots -c ls',
-    'bash -c -O dotglob ls',
-    'bash -cO dotglob ls',
-    'zsh -c --globdots ls',
-    'zsh -c4 ls',
-    'zsh -oglobdots -c ls',
-    'bash -c "$script"',
     'command -p $S globdots; ls',
     'builtin - $S globdots; ls',
     'exec -a x $S globdots',
     '- $S globdots; ls',
     'eval $S globdots; ls',
     'eval "$S globdots"; ls',
-    'zsh -4 -c ls',
-    'zsh -G -c ls',
-    'bash --noprofile -c ls',
     'options[globdots]=on; ls',
     'options=(globdots on); ls',
     'typeset options[globdots]=on; ls',

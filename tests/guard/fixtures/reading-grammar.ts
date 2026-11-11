@@ -537,6 +537,11 @@ export const POSITIONS: readonly Position[] = [
   run('P33', (w) => `cd sub && cat ../${w}`, { relative: true }),
   run('P34', (w) => `cd sub; cat "$PWD"/../${w}`, { relative: true }),
   run('P35', (w) => `test -r ${w} && cat ${w}`),
+  // A shell behind a program that runs it.
+  run('P64', (w) => `env X=1 sh -c "cat ${dq(w)}"`, { inner: true }),
+  run('P65', (w) => `nice -n 5 bash -c "cat ${dq(w)}"`, { inner: true }),
+  run('P66', (w) => `echo x | xargs -I{} sh -c "cat ${dq(w)}"`, { inner: true }),
+  run('P67', (w) => `command bash -c "cat ${dq(w)}"`, { inner: true }),
   // A shell started with an option that changes how it reads words.
   run('P36', (w) => `bash -O dotglob -c "cat ${dq(w)}"`, { inner: true }),
   run('P37', (w) => `zsh -o globdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
@@ -660,7 +665,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin X n I cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
     ' '
   )
 )

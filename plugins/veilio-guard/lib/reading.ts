@@ -212,7 +212,6 @@ const SET_PLAIN = new Set(
   'errexit nounset pipefail xtrace verbose noclobber noglob errtrace functrace posix'.split(' ')
 )
 const SET_LETTERS = 'euxvfCabhmnET'
-const SHELL = /^(?:.*\/)?(?:bash|sh|zsh|ksh|dash)$/
 
 /** Whether `set`'s arguments name an option outside the plain ones. */
 function setChanges(args: (string | null)[]): boolean {
@@ -231,29 +230,11 @@ function setChanges(args: (string | null)[]): boolean {
   return false
 }
 
-/** A shell's options that leave how it reads words as it is: errexit,
- *  nounset, xtrace, verbose, login, interactive, stdin, and `-c` itself. */
-const SHELL_LETTERS = 'euxvlisc'
 /** Words before a program that are not it (zsh's `-` among them). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect', '-'])
 /** A word the shell builds when the command runs. */
 const built = (w: Word): boolean =>
   w.parts.some((p) => p.kind === 'param' || p.kind === 'subst' || p.kind === 'arith')
-
-/** Whether a shell is started with an option outside the plain ones, among
- *  the words before its script (the first that is not an option, or `--`):
- *  any other letter or digit, `-o`/`+o`/`-O`, a long option, or a word the
- *  command builds. */
-function shellChanges(args: (string | null)[]): boolean {
-  for (const a of args) {
-    if (a === null) return true
-    if (a === '--' || !/^[-+]/.test(a)) return false
-    if (a.startsWith('--')) return true
-    // Options may follow `-c` (`bash -c -O dotglob '...'`): read to the script.
-    if ([...a.slice(1)].some((letter) => !SHELL_LETTERS.includes(letter))) return true
-  }
-  return false
-}
 
 /** Whether a command changes how the shell reads words. */
 export function readsStrictly(list: List): boolean {
@@ -270,7 +251,6 @@ export function readsStrictly(list: List): boolean {
         else if (w === 'shopt')
           strict ||= rest.some((a) => a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a)))
         else if (w === 'set') strict ||= setChanges(rest)
-        else if (w !== null && SHELL.test(w)) strict ||= shellChanges(rest)
         // Text the command builds, run as commands: it may be any of these.
         else if ((w === 'eval' || w === 'source' || w === '.') && rest.includes(null)) strict = true
       })

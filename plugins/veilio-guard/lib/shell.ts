@@ -547,17 +547,13 @@ const SPECIAL = /[ \t\r\n;&|()<>'"`\\$*?[{]/
 const KEYWORD =
   /^(?:if|then|elif|else|fi|for|while|until|do|done|case|esac|function|select|time|!|\{|\}|\[\[)(?=[ \t\r\n;&|()<>]|$)/
 const SHELL_PROGRAM = /^(?:.*\/)?(?:bash|sh|zsh|dash|ksh)$/
-const SHELL_WRAPPERS = new Set([
-  'env',
-  'command',
-  'exec',
-  'builtin',
-  'nohup',
-  'nice',
-  'sudo',
-  'xargs',
-  'time',
-])
+/** A nested shell's option words that are read (see nestedOf): plain
+ *  letters; plain letters ending in `o`, which takes a name; and the cluster
+ *  holding `c`, after which the script stands. */
+const SHELL_PLAIN = /^-[euxvlis]+$/
+const SHELL_NAMED = /^-[euxvlis]*o$/
+const SHELL_SCRIPT = /^-[euxvlis]*c[euxvlis]*$/
+const SHELL_NAMES = new Set(['pipefail', 'errexit', 'nounset', 'xtrace', 'verbose'])
 const DECLARES = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'integer'])
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?$/
 const REDIRECT = /^(\d+)?(<<<|<<-|<<|<>|<&|>&|>>|>\||&>>|&>|<|>)/
@@ -1057,92 +1053,64 @@ class Reader {
 
   /** The command a nested shell runs, when its text is literal. */
   private nestedOf(words: Word[], redirects: Redirect[]): List | undefined {
-    let k = 0
-    while (k < words.length - 1 && SHELL_WRAPPERS.has(words[k]!.literal ?? '')) k++
+    // A shell is read wherever its name stands among the words: behind any
+    // program that runs it, whatever that program's own arguments are
+    // (`env X=1 sh -c`, `timeout 5 bash -c`, `xargs -I{} sh -c`).
+    const k =
+      words[0]?.literal === 'eval'
+        ? 0
+        : Math.max(
+            words.findIndex((w) => SHELL_PROGRAM.test(w.literal ?? '')),
+            0
+          )
     const program = words[k]?.literal ?? ''
     let text: string | null = null
     if (program === 'eval' && k === 0) {
       const args = words.slice(1).map((w) => w.literal)
       if (args.length > 0 && args.every((a) => a !== null)) text = args.join(' ')
     } else if (SHELL_PROGRAM.test(program)) {
-      // Its options, read letter by letter as the shell reads them
-      // (verified in bash 3.2 and zsh 5.9): `c` says a script follows; in
-      // bash and sh every `o`/`O` takes one following word, in order, and
-      // the letters after it still count (`-Oc dotglob`, `-OOc a b`, `-cOe
-      // a`); in zsh `o` takes the rest of its word when there is one
-      // (`-oglobdots`, `-ecoglobdots`), else the next word, and `O` is a
-      // letter like any other. The script is the first word left that is
-      // not an option, or the word after `--`, `-` or zsh's `-b`.
-      const zsh = /(?:^|\/)zsh$/.test(program)
-      let scripted = false
+      // Which word is the script is not worked out by reading options as
+      // two shells do: only these shapes are read (each verified in bash,
+      // sh, zsh and dash: the script is the word after the cluster holding
+      // `c`, and none of the options changes how words are read):
+      //   [-euxvlis]…  [-…o NAME]…  -[euxvlis]c[euxvlis]  SCRIPT  [args…]
+      // with NAME one of pipefail, errexit, nounset, xtrace, verbose.
+      // Without `-c` the shell runs a file, or its input, as before.
       let j = k + 1
+      let known = true
+      let scripted = false
       for (; j < words.length; j++) {
         const w = words[j]!.literal
-        if (w === null) {
-          // After `-c`, the script itself, built at run time. Before it, an
-          // option word the command builds: with a `-c` word still to come,
-          // which word is the script cannot be told.
-          if (
-            !scripted &&
-            words.slice(j + 1).some((x) => /^[-+][A-Za-z0-9]*c/.test(x.literal ?? ''))
-          )
-            throw new Unreadable('unknown')
-          break
-        }
-        // `--` and `-` end the options: the next word is the script, even
-        // one that starts with `-`. What a lone `+` does is not told.
-        if (w === '--' || w === '-') {
+        if (w !== null && SHELL_SCRIPT.test(w)) {
+          scripted = true
           j++
           break
         }
-        if (w === '+') throw new Unreadable('unknown')
-        if (!/^[-+]/.test(w)) break
-        if (w.startsWith('--')) {
-          // A long option may take the next word as its value (`--rcfile f`,
-          // `--emulate sh`). Before `-c` that word is stepped over when a
-          // `-c` word follows it; after `-c` the script is only told when
-          // one word is left.
-          const next = words[j + 1]?.literal
-          if (scripted) {
-            if (j + 2 < words.length) throw new Unreadable('unknown')
-          } else if (
-            next != null &&
-            !/^[-+]/.test(next) &&
-            words.slice(j + 2).some((x) => /^[-+][A-Za-z0-9]*c/.test(x.literal ?? ''))
-          )
-            j++
+        if (w !== null && SHELL_PLAIN.test(w)) continue
+        if (w !== null && SHELL_NAMED.test(w) && SHELL_NAMES.has(words[j + 1]?.literal ?? '')) {
+          j++
           continue
         }
-        // `sh -c'cat x'`: a script attached to the option, read as the
-        // separate form is (no shell takes it so; the text rule's finding).
-        const attached = /^-[A-Za-z0-9]*?c(.*)$/s.exec(w)?.[1]
-        if (attached !== undefined && /[^A-Za-z0-9_]/.test(attached)) {
-          text = attached
-          scripted = false
-          break
-        }
-        // zsh: `b` ends the options after this word.
-        let ended = false
-        for (let at = 1; at < w.length; at++) {
-          if (w[at] === 'c') scripted = true
-          else if (zsh && w[at] === 'b') ended = true
-          // `o` takes a name in every shell; `O` in bash and sh only (in
-          // zsh it is a letter like any other).
-          else if (w[at] === 'o' || (w[at] === 'O' && !zsh)) {
-            // zsh: the option's name is the rest of this word.
-            if (zsh && at < w.length - 1) break
-            // The name is the next word; none left: the shell itself fails.
-            if (++j >= words.length) throw new Unreadable('unknown')
-          }
-        }
-        if (ended) {
-          j++
-          break
-        }
+        // A file to run, or a word outside the shapes above.
+        known = w !== null && !/^[-+]/.test(w)
+        break
       }
+      // Any other shape that may still run a script given in the command is
+      // not guessed - the command is unreadable: an option word outside the
+      // shapes with a `-c` word at or after it, or with the shell's input
+      // given here; and a word after `-c` that is itself an option (the
+      // shells go on reading options there).
+      const optionWithC = (x: Word | undefined) => /^[-+][A-Za-z0-9]*c/.test(x?.literal ?? '')
+      const input = redirects.some((r) => r.op.startsWith('<<'))
+      if (!known && (input || words.slice(j).some(optionWithC))) throw new Unreadable('unknown')
+      if (scripted && /^[-+]/.test(words[j]?.literal ?? '')) throw new Unreadable('unknown')
       if (scripted) text = words[j]?.literal ?? null
+      // A here-string is the shell's script too.
+      const here = redirects.find((r) => r.op === '<<<')
+      if (known && !scripted && j === words.length && here?.target?.literal != null)
+        text = here.target.literal
       const doc = redirects.find((r) => r.op === '<<' || r.op === '<<-')
-      if (text === null && doc && words.length === k + 1)
+      if (text === null && doc && !scripted && j === words.length)
         this.pendingNested.push({ doc, depth: this.depth + 1 })
     }
     if (text === null) return undefined
