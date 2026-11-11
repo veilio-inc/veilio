@@ -194,6 +194,12 @@ async function ready($: Host): Promise<Guard> {
         }
         return undefined
       },
+      // A leftover of an older version's off switch (retireLegacyOffRecord).
+      remove: async (path) => {
+        await $.process.run(
+          (await windows) ? ['cmd', '/c', 'del', '/f', '/q', path] : ['rm', '-f', path]
+        )
+      },
       windows: async () => windows,
       list: (root) => gitList($, root, []),
       listVeilio: (root) => gitList($, root, ['--', ':(icase).veilio']),
@@ -217,8 +223,6 @@ async function ready($: Host): Promise<Guard> {
         )
       await g.load(cwd, await home)
       for (const text of g.notices.splice(0)) $.ui.log(text)
-      // The organisation's guard ignores a project's own off switch.
-      if (g.state === 'off' && (await isManaged($)) !== false) g.state = 'on'
       guard = g
       return g
     })
@@ -302,7 +306,7 @@ export function register(on: On, options: Options = {}) {
     $.ui.invalidate('ui.render')
     await $.command.register({
       name: 'veilio',
-      description: 'Veilio guard: status, and switch it on or off for this project',
+      description: 'Veilio guard: status, and switch it on or off until this session ends',
       argumentHint: '[on|off]',
       immediate: true,
     })
@@ -313,6 +317,8 @@ export function register(on: On, options: Options = {}) {
   // after it, so attachments are named again from here.
   on('session.end', async ($, e, next) => {
     saidAttached = false
+    // /veilio off lasts until the session ends, a /clear included.
+    if (guard?.state === 'off') await guard.setEnabled(true).catch(() => undefined)
     return next(e)
   })
 
@@ -556,9 +562,8 @@ export function register(on: On, options: Options = {}) {
         text: "Veilio guard is set up by your organisation's managed settings, so it can't be switched off here.",
       }
     }
-    let recorded = false
     if (arg === 'off' || arg === 'on') {
-      recorded = await g.setEnabled(arg === 'on')
+      await g.setEnabled(arg === 'on')
       for (const text of g.notices.splice(0)) $.ui.log(text)
       $.ui.invalidate('ui.render')
     }
@@ -568,13 +573,6 @@ export function register(on: On, options: Options = {}) {
       const [, ...rest] = text.split('\n')
       return { text: [stillStopped(g.stoppedReason), ...rest].join('\n') }
     }
-    if (arg !== 'off' || !recorded) return { text }
-    // strings.md #17, on the first line of the reply.
-    const [first, ...rest] = text.split('\n')
-    return {
-      text: [`${first} Recorded for this project in ~/.veilio/guard-state.json.`, ...rest].join(
-        '\n'
-      ),
-    }
+    return { text }
   })
 }

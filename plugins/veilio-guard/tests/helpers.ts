@@ -2,7 +2,7 @@
 // makes ($.fs.*, $.session.cwd, $.ui.log/toast, $.command.register) answered
 // the way Claude Code would answer them, with every write recorded.
 import { RECORDED, type Fields, type RecordedRun, type ToolRecord } from './fixtures/recorded.ts'
-import { hmacSha256, type ToolEvent } from '../lib/guard.ts'
+import type { ToolEvent } from '../lib/guard.ts'
 import type { TestOn } from './kit.ts'
 
 // Every hook test: a map grown any way but grow() throws (review of 5347c7c).
@@ -219,6 +219,11 @@ export function project(
       if (!(a in p.files)) return { value: { exitCode: 1, stdout: '', stderr: 'No such file' } }
       return ok(`${(p.modes[a] ?? 0o644).toString(8)}\n`)
     }
+    // `rm -f <path>`, as the guard removes an older version's leftovers.
+    if (e.argv[0] === 'rm' && !opts.windows) {
+      delete p.files[abs(e.argv[e.argv.length - 1]!)]
+      return ok('')
+    }
     if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }
     p.git.push([...e.argv])
     const tracked = Object.keys(p.files)
@@ -335,44 +340,4 @@ export function res(out: unknown): ToolRecord {
   const result = outcome(out).result
   if (!isFields(result)) throw new Error(`no result record: ${JSON.stringify(out)}`)
   return result
-}
-
-// ── the off record (security audit 2026-11-11, H1) ──────────────────────────
-
-/** A per-install secret, as the guard keeps it in ~/.veilio/guard-secret. */
-export const SECRET = 'ab'.repeat(32)
-export const NONCE = '0f'.repeat(8)
-
-/** The MAC a /veilio off record carries, computed here without the guard's
- *  code: HMAC-SHA-256 under the secret's bytes over the record's fields. */
-export async function offMac(
-  secretHex: string,
-  key: string,
-  changedAt: string,
-  nonce = NONCE,
-  enabled = false
-): Promise<string> {
-  const bytes = Uint8Array.from(secretHex.match(/../g) ?? [], (h) => parseInt(h, 16))
-  const sig = await hmacSha256(
-    bytes,
-    new TextEncoder().encode(`veilio-off-v2|${key}|${enabled}|${changedAt}|${nonce}`)
-  )
-  return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** The files of a machine where the user ran /veilio off for `root`. */
-export async function offFiles(
-  home: string,
-  root = ROOT,
-  secret = SECRET
-): Promise<Record<string, string>> {
-  const changedAt = '2026-11-07'
-  const mac = await offMac(secret, root, changedAt)
-  return {
-    [`${home}/.veilio/guard-secret`]: secret,
-    [`${home}/.veilio/guard-state.json`]: JSON.stringify({
-      version: 1,
-      projects: { [root]: { enabled: false, changedAt, nonce: NONCE, mac } },
-    }),
-  }
 }

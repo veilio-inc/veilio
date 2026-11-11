@@ -1,7 +1,7 @@
 // Spec 033 R7: the developer reads the real names; the model and the stored
 // transcript keep the placeholders. And the band says what the guard is doing.
 import { expect, mock, test } from 'claude-code/testing'
-import { CANARY, mapFile, offFiles, project, ROOT } from './helpers.ts'
+import { CANARY, mapFile, project, ROOT } from './helpers.ts'
 import type { Fields } from './fixtures/recorded.ts'
 import type { TestHost, TestOn } from './kit.ts'
 
@@ -144,9 +144,9 @@ test('the band says the guard is on, with what it did', async ($, on) => {
 })
 
 test('the band warns while the guard is off', async ($, on) => {
-  // Spec 078 FR-010: off is recorded under ~/.veilio, not in guard.json.
-  await loaded($, on, await offFiles('/home/dev'), { home: '/home/dev' })
+  await loaded($, on, {}, { home: '/home/dev' })
   drawn(on, [])
+  await $.command.run({ command: 'veilio', args: 'off' })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
   const ui = await $.ui.mount(
     SITE('AbovePrompt', {
@@ -159,7 +159,7 @@ test('the band warns while the guard is off', async ($, on) => {
     })
   )
   expect(
-    await ui.find({ type: 'Text', text: /OFF for this project: Claude reads raw code/ })
+    await ui.find({ type: 'Text', text: /OFF until this session ends: Claude reads raw code/ })
   ).toBeDefined()
 })
 

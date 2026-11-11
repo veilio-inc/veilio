@@ -35,6 +35,25 @@ const REFUSED = [
   `cat *.pem`,
   `cat id_*`,
   `cat .*`,
+  `cat .en{v..v}`,
+  `cat .e{m..o}v`,
+  `cat f{1..3}/../.e''nv`,
+  `cat {a..c}/../.e{n..n}v`,
+  `cat .e$'n'v`,
+  `cat .e$'\\x6e'v`,
+  `cat $'.env'`,
+  `cat ~/.v*/map.json`,
+  `cat ~/.veil''io/map.json`,
+  `cat ~/.e''nv`,
+  `cat $HOME/.v*/guard-s*`,
+  `cat \${HOME}/.v*/map.json`,
+  `cat $HOME/.e''nv`,
+  `cat $DIR/.v*/map.json`,
+  `cat $DIR/.en*`,
+  `cat "$DIR"/.en*`,
+  `cat $(pwd)/.en*`,
+  `cat {a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{.e,x}nv`,
+  `cat {f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,g0,g1,g2,g3,g4,g5,g6,g7,g8,g9,h0,h1,h2,h3,h4,h5,h6,h7,h8,h9,i0,i1,i2,i3,i4,i5,i6,i7,i8,i9,j0,j1,j2,j3,j4,j5,j6,j7,j8,j9,k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,.env}`,
 ]
 for (const command of REFUSED)
   test(`refused: ${command}`, async ($, on) => {
@@ -58,6 +77,16 @@ const ALLOWED = [
   `grep -r foo src/*`,
   `git add -A && git commit -m "x"`,
   `echo "a*b"`,
+  `ls $DIR/*.ts`,
+  `cat $DIR/src/index.ts`,
+  `ls $HOME/*.ts`,
+  `cat ~/notes.txt`,
+  `cat "$DIR"/src/*.ts`,
+  `cat $'src/index.ts'`,
+  `echo {1..5}`,
+  `mkdir -p {a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}`,
+  `mkdir -p src/{a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}`,
+  `cat {a,b}{.e,x}nvx`,
 ]
 for (const command of ALLOWED)
   test(`still allowed: ${command}`, async ($, on) => {

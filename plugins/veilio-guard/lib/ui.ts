@@ -8,7 +8,7 @@ export const COVERAGE_LINK =
 
 export function bandText(g: Guard): string {
   if (g.state === 'off')
-    return 'Veilio guard OFF for this project: Claude reads raw code. /veilio on'
+    return 'Veilio guard OFF until this session ends: Claude reads raw code. /veilio on'
   if (g.state === 'stopped')
     return `Veilio guard stopped: ${g.stoppedReason}. Every tool call is refused.`
   const names = Object.keys(g.map).length
@@ -22,12 +22,9 @@ export function bandText(g: Guard): string {
   // Spec 078 FR-011 (strings.md #14): who gets real names, last.
   const restores = g.mcpRestore.length ? ` · real names to: ${g.mcpRestore.join(', ')}` : ''
   // Not in strings.md yet: awaiting the founder's approval.
-  // PENDING APPROVAL (wording) for the unverified-record text.
-  const record = g.offRecordUnreadable
-    ? ' · ~/.veilio/guard-state.json could not be read, so the guard stays on'
-    : g.offRecordUnverified
-      ? ' · an off record in ~/.veilio/guard-state.json was not made by /veilio off and was ignored, so the guard stays on'
-      : ''
+  const record = g.legacyOffRecord
+    ? ' · /veilio off now lasts for one session, so the guard is on'
+    : ''
   return `Veilio guard on · ${names} name${names === 1 ? '' : 's'} in the map${indexing}${teamNumbers(g)} · ${customRules(g)} · ${g.counts.withheld} withheld · ${g.counts.denied} refused${record}${restores}`
 }
 
@@ -106,7 +103,7 @@ export function statusText(g: Guard, managed: boolean): string {
     'instruction files Claude Code adds, with known names as placeholders and secrets removed.',
     'What it does not cover, and the test behind each claim: ' + COVERAGE_LINK,
     '',
-    '/veilio off   switch it off for this project (Claude then reads raw code)',
+    '/veilio off   switch it off until this session ends (Claude then reads raw code)',
     '/veilio on    switch it back on',
   ].join('\n')
 }

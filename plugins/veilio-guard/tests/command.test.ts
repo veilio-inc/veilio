@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import { PROMPT_FAILED } from '../lib/guard.ts'
 import { COLD_FILES } from './fixtures/cold.ts'
-import { CANARY, eventOf, mapFile, offFiles, project, recorded, ROOT } from './helpers.ts'
+import { CANARY, eventOf, mapFile, project, recorded, ROOT } from './helpers.ts'
 
 test('/veilio reports state, the map and coverage', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
@@ -14,23 +14,21 @@ test('/veilio reports state, the map and coverage', async ($, on) => {
   expect(out.text).toContain('by you (personal)')
 })
 
-test('/veilio off: written for the project, and the next result reaches the model as it is', async ($, on) => {
+test('/veilio off: the next result reaches the model as it is', async ($, on) => {
   const read = recorded('Read')
-  const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: '/home/dev' })
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: '/home/dev' })
   on('tool.call', () => read.r)
   const out = await $.command.run({ command: 'veilio', args: 'off' })
-  expect(out.text).toContain('OFF for this project')
-  // Spec 078 FR-010: recorded under ~/.veilio, not in the project.
-  const state = JSON.parse(p.files['/home/dev/.veilio/guard-state.json'])
-  expect(state.projects[ROOT].enabled).toBe(false)
+  expect(out.text).toContain('OFF until this session ends')
   const r = await $.tool.call(eventOf(read))
   expect(JSON.stringify(r)).toContain(CANARY)
 })
 
 test('/veilio on: back on, and scrubbing again', async ($, on) => {
   const read = recorded('Read')
-  project(on, await offFiles('/home/dev'), { home: '/home/dev' })
+  project(on, {}, { home: '/home/dev' })
   on('tool.call', () => read.r)
+  await $.command.run({ command: 'veilio', args: 'off' })
   await $.command.run({ command: 'veilio', args: 'on' })
   const r = await $.tool.call(eventOf(read))
   expect(JSON.stringify(r)).not.toContain(CANARY)
@@ -103,45 +101,15 @@ test(
   }
 )
 
-test('/veilio off is recorded under ~/.veilio, not in the project, and /veilio on clears it', async ($, on) => {
+test('/veilio off is not recorded in the project, and /veilio on leaves no file', async ($, on) => {
   const p = project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: HOME })
   const off = await $.command.run({ command: 'veilio', args: 'off' })
   expect(off.text.split('\n')[0]).toBe(
-    'Veilio guard OFF for this project: Claude reads raw code. /veilio on Recorded for this project in ~/.veilio/guard-state.json.'
+    'Veilio guard OFF until this session ends: Claude reads raw code. /veilio on'
   )
-  const record = JSON.parse(p.files[STATE])
-  expect(record.version).toBe(1)
-  expect(record.projects[ROOT].enabled).toBe(false)
-  expect(record.projects[ROOT].changedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-  expect(p.modes[STATE]).toBe(0o600)
   expect(p.files[`${ROOT}/.veilio/guard.json`]).toBeUndefined()
   await $.command.run({ command: 'veilio', args: 'on' })
-  expect(JSON.parse(p.files[STATE]).projects[ROOT]).toBeUndefined()
-})
-
-test('an off record written earlier keeps the guard off when it loads', async ($, on) => {
-  const read = recorded('Read')
-  project(
-    on,
-    {
-      [`${ROOT}/.veilio/map.json`]: mapFile({}),
-      ...(await offFiles(HOME)),
-    },
-    { home: HOME }
-  )
-  on('tool.call', () => read.r)
-  const r = await $.tool.call(eventOf(read))
-  expect(JSON.stringify(r)).toContain(CANARY)
-})
-
-test('an unreadable off record keeps the guard on, and the band says so', async ($, on) => {
-  const read = recorded('Read')
-  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}), [STATE]: '{"version":' }, { home: HOME })
-  on('tool.call', () => read.r)
-  const r = await $.tool.call(eventOf(read))
-  expect(JSON.stringify(r)).not.toContain(CANARY)
-  const status = await $.command.run({ command: 'veilio', args: '' })
-  expect(status.text.split('\n')[0]).toContain('~/.veilio/guard-state.json could not be read')
+  expect(p.files[STATE]).toBeUndefined()
 })
 
 const SETTINGS_REFUSED =
@@ -309,8 +277,8 @@ test('/veilio keeps its own hook', async ($, on) => {
 test('a command runs as typed while the guard is off', async ($, on) => {
   const ran = commands(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }),
-    ...(await offFiles('/home/dev')),
   })
+  await $.command.run({ command: 'veilio', args: 'off' })
   await $.command.run({ command: 'review', args: CANARY })
   expect(ran[0]?.args).toBe(CANARY)
 })

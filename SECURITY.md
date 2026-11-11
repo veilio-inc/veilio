@@ -60,6 +60,9 @@ Saved maps are not tied to a version: anyone who can write your map files can pu
 ### Known limitation — names with letters outside A–Z
 Names that contain letters outside A–Z are not yet masked whole. A name written only in Greek or Cyrillic letters (for example `παραγγελία`) is not masked at all. A name that mixes A–Z with other letters (for example `wyślijPaczkę` or `größeBerechnen`) is masked only in its A–Z parts, so the other letters reach the model. Names written only in A–Z are not affected. Until this is fixed, rename such names, or leave files that use them out of what you send. Full support is planned for the next release (#224).
 
+### Known limitation: programs the agent runs act as you
+A program the agent starts runs as your user, so it can read and change any file you can, including `~/.veilio`, the project's `.veilio/guard.json` and Claude Code's own settings. The raw-only list (refused when a command names a file; wildcard-only words and names built at run time are not read) raises the cost of reading them and does not stop a determined agent. The off switch is held in memory for one session and is not a file, so a program cannot switch the guard off for later sessions. The strong controls are the output filter, which removes credentials from everything the model sees, and managed installs, which force the guard on.
+
 ### Export passphrases have a floor, not a strength guarantee
 A `.veilio` file is the one artifact designed to leave the machine, so once it
 has, its passphrase is attacked offline at whatever rate the attacker's hardware

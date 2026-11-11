@@ -1417,59 +1417,137 @@ const INLINE_INTERPRETER =
   /(?:^|[\s;&|(`])(?:python[\d.]*|pypy[\d]*|node(?:js)?|bun|deno|ruby|perl|php|lua|osascript|pwsh|powershell|(?:ba|z|da|k|c)?sh)(?=\s|$)/i
 const INLINE_CODE = /(?:\s-[A-Za-z]*[cerpEC](?=[\s=]|$)|\s--(?:eval|print|command)\b|<<)/
 
-/** An interpreter run on code given in the command (-c, -e, --eval, -r, a
- *  heredoc) whose text, once quotes, backslashes, `+` and whitespace are
- *  removed, names Veilio's own files: the off record and its secret live in
- *  ~/.veilio, and a script can write them under a name it builds.
+/** An interpreter run on code given in the command (-c, -e, --eval, -r, -p, a
+ *  heredoc) whose code, once quotes, backslashes, `+` and whitespace are
+ *  removed, names `.veilio`: the maps, credentials and keys kept there are read
+ *  or changed by a script under a name it builds. Only the inline code or the
+ *  heredoc body is read, not the rest of the command.
  *
  *  shortcut: defence in depth only. A script can build the name from pieces
  *  this does not join (chr(), a list, an environment variable), and an
- *  interpreter run on a file the agent wrote earlier is not read at all. The
- *  off record's MAC is what holds; same-user processes can never be fully
- *  stopped (SECURITY.md). Upgrade: a sandbox, not a longer pattern. */
+ *  interpreter run on a file the agent wrote earlier is not read at all.
+ *  Programs the agent runs act as the user (SECURITY.md). Upgrade: a sandbox,
+ *  not a longer pattern. */
 export function interpreterNamesGuardState(command: string): boolean {
-  const plain = command.replace(/['"\\]/g, '')
-  if (!INLINE_INTERPRETER.test(plain) || !INLINE_CODE.test(plain)) return false
-  // `.veilio`, not `veilio`: a project or a folder named for the product
-  // (a checkout of this repository) must still run its scripts.
-  return /\.veilio|guard-?state|guard-?secret/i.test(plain.replace(/[+\s]/g, ''))
+  const names = (text: string) =>
+    // `.veilio`, not `veilio`: a project or a folder named for the product
+    // (a checkout of this repository) must still run its scripts.
+    /\.veilio/i.test(text.replace(/[+\s]/g, ''))
+  // `"a"."b"` (perl, php) and `"a"+"b"` join like adjacent strings.
+  const unquote = (t: string) => t.replace(/['"]\s*[.+]\s*['"]/g, '').replace(/['"\\]/g, '')
+  const whole = unquote(command)
+  for (const segment of splitChain(command) ?? [command]) {
+    const plain = unquote(segment)
+    if (!INLINE_INTERPRETER.test(plain)) continue
+    const flag = INLINE_CODE.exec(plain)
+    if (!flag) continue
+    // Only the code the interpreter is given: what follows its inline-code
+    // flag, or a heredoc's body (which runs to the end of the command and may
+    // hold `;` and `|`, so it is not cut at them).
+    const code = flag[0] === '<<' ? whole.slice(whole.indexOf('<<')) : plain.slice(flag.index)
+    if (names(code)) return true
+  }
+  return false
 }
 
-/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`. At most 64;
- *  null past that, and the caller must refuse the word: it fails closed, as
- *  reading a long list as one unexpanded word would hide a name in it. */
+/** The alternatives of a brace group's inside: a comma list, or a numeric or
+ *  single-letter sequence (`1..3`, `a..e`, with an optional step). Null when
+ *  it is neither (`{a}` stays as written); 'big' when a sequence has more than
+ *  `limit` members. */
+function alternatives(inner: string, limit: number): string[] | 'big' | null {
+  const parts: string[] = []
+  let depth = 0
+  let from = 0
+  for (let j = 0; j < inner.length; j++) {
+    if (inner[j] === '{') depth++
+    else if (inner[j] === '}') depth--
+    else if (inner[j] === ',' && depth === 0) {
+      parts.push(inner.slice(from, j))
+      from = j + 1
+    }
+  }
+  if (parts.length > 0) return [...parts, inner.slice(from)]
+  const m = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$/.exec(inner)
+  if (!m) return null
+  const num = /^-?\d+$/.test(m[1]!)
+  if (num !== /^-?\d+$/.test(m[2]!)) return null
+  const [a, b] = num
+    ? [parseInt(m[1]!, 10), parseInt(m[2]!, 10)]
+    : [m[1]!.charCodeAt(0), m[2]!.charCodeAt(0)]
+  const step = Math.abs(parseInt(m[3] ?? '1', 10)) || 1
+  if (Math.abs(b - a) / step + 1 > limit) return 'big'
+  const out: string[] = []
+  for (let v = a; a <= b ? v <= b : v >= b; v += a <= b ? step : -step)
+    out.push(num ? String(v) : String.fromCharCode(v))
+  return out
+}
+
+/** The top-level brace groups of a word: where each starts and ends, and what
+ *  is inside. */
+function braceGroups(word: string): { start: number; end: number; inner: string }[] {
+  const out: { start: number; end: number; inner: string }[] = []
+  let depth = 0
+  let open = -1
+  for (let i = 0; i < word.length; i++) {
+    if (word[i] === '{') {
+      if (depth++ === 0) open = i
+    } else if (word[i] === '}' && depth > 0 && --depth === 0)
+      out.push({ start: open, end: i, inner: word.slice(open + 1, i) })
+  }
+  return out
+}
+
+/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`, `{1..3}` is
+ *  `1 2 3`. At most 64; null past that (see braceNames). */
 export function expandBraces(word: string, limit = 64): string[] | null {
   const out: string[] = []
   const walk = (w: string): void => {
     if (out.length > limit) return
-    let depth = 0
-    let open = -1
-    for (let i = 0; i < w.length; i++) {
-      if (w[i] === '{') {
-        if (depth++ === 0) open = i
-      } else if (w[i] === '}' && depth > 0 && --depth === 0) {
-        const inner = w.slice(open + 1, i)
-        const parts: string[] = []
-        let d = 0
-        let from = 0
-        for (let j = 0; j < inner.length; j++) {
-          if (inner[j] === '{') d++
-          else if (inner[j] === '}') d--
-          else if (inner[j] === ',' && d === 0) {
-            parts.push(inner.slice(from, j))
-            from = j + 1
-          }
-        }
-        parts.push(inner.slice(from))
-        if (parts.length < 2) continue
-        for (const part of parts) walk(w.slice(0, open) + part + w.slice(i + 1))
+    for (const g of braceGroups(w)) {
+      const alt = alternatives(g.inner, limit)
+      if (alt === null) continue
+      if (alt === 'big') {
+        out.push(...Array(limit + 1).fill(w))
         return
       }
+      for (const a of alt) walk(w.slice(0, g.start) + a + w.slice(g.end + 1))
+      return
     }
     out.push(w)
   }
   walk(word)
   return out.length > limit ? null : out
+}
+
+/** Every brace group of a word read as "anything": `**`. */
+const wildBraces = (w: string): string => {
+  let out = ''
+  let at = 0
+  for (const g of braceGroups(w))
+    if (alternatives(g.inner, 64) !== null) {
+      out += `${w.slice(at, g.start)}**`
+      at = g.end + 1
+    }
+  return out + w.slice(at)
+}
+
+/** What a shell word can spell, as names and globs: expanded when it has no
+ *  more than 64 spellings; otherwise one candidate per alternative of each
+ *  group, the other groups read as `**` (a sum of the groups' sizes, not their
+ *  product), so a name hidden among many alternatives is still seen and an
+ *  ordinary `mkdir -p {a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}` is not refused. */
+export function braceNames(word: string): string[] {
+  const exact = expandBraces(word)
+  if (exact !== null) return exact
+  const out: string[] = []
+  for (const g of braceGroups(word)) {
+    const alt = alternatives(g.inner, 64)
+    if (alt === null || alt === 'big') continue
+    const before = wildBraces(word.slice(0, g.start))
+    const after = wildBraces(word.slice(g.end + 1))
+    for (const a of alt) out.push(before + wildBraces(a) + after)
+  }
+  return out.length > 0 ? out : [wildBraces(word)]
 }
 
 type GlobToken =
@@ -1581,16 +1659,51 @@ export function globMayBeRawOnly(word: string, extra: readonly string[]): boolea
   )
 }
 
+/** What `$'...'` spells: the escapes read as bash reads them. */
+function ansiC(text: string): string {
+  return text.replace(
+    /\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|[\s\S])/g,
+    (_, e: string) => {
+      if (/^[xuU]/.test(e)) return String.fromCodePoint(parseInt(e.slice(1), 16))
+      if (/^[0-7]/.test(e)) return String.fromCharCode(parseInt(e, 8) & 255)
+      if (e[0] === 'c') return ''
+      return (
+        { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[
+          e
+        ] ?? e
+      )
+    }
+  )
+}
+
 /** A word as the shell would spell it before it expands anything but quotes
  *  and escapes: plain text, wildcards and braces stay as they are, and a
- *  wildcard or brace that was quoted is made an ordinary character. Null when
- *  something else builds part of it (`$x`, `$(...)`, `~user`). */
-export function spelledWord(w: Word): string | null {
+ *  wildcard or brace that was quoted is made an ordinary character. `$'..'`
+ *  is decoded, and a leading `~`, `$HOME` and `${HOME}` are the known `home`.
+ *
+ *  Anything else the shell builds (`$x`, `$(...)`, `~user`) is unknown and
+ *  stands as `**`, "anything", but only in a word that also has a wildcard or
+ *  a brace: `ls $DIR/*.ts` is judged as `**` followed by `/*.ts`, and
+ *  `cat $DIR/.v*` as a glob that could be `.veilio`; a word with an unknown
+ *  part and no wildcard (`cat $F`) is null, as it always was. */
+export function spelledWord(w: Word, home: string | null = null): string | null {
+  const quote = (t: string) => t.replace(/[*?[\]{},]/g, '\u0001')
   let out = ''
+  let unknown = false
+  let wild = false
   for (const p of w.parts) {
-    if (p.kind === 'lit') out += p.quoted ? p.text.replace(/[*?[\]{},]/g, '\u0001') : p.text
-    else if (p.kind === 'glob' || p.kind === 'brace') out += p.text
-    else return null
+    if (p.kind === 'lit') out += p.quoted ? quote(p.text) : p.text
+    else if (p.kind === 'glob' || p.kind === 'brace') {
+      wild = true
+      out += p.text
+    } else if (p.kind === 'tilde' && p.user === '' && home !== null) out += quote(home)
+    else if (p.kind === 'param' && p.name === 'HOME' && p.op === '' && home !== null)
+      out += quote(home)
+    else if (p.kind === 'ansic' && p.text.startsWith("$'")) out += quote(ansiC(p.text.slice(2, -1)))
+    else {
+      unknown = true
+      out += '**'
+    }
   }
-  return out
+  return unknown && !wild ? null : out
 }

@@ -33,7 +33,7 @@ import {
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
-  expandBraces,
+  braceNames,
   globMayBeRawOnly,
   interpreterNamesGuardState,
   isRawOnly,
@@ -136,6 +136,9 @@ export interface GuardIO {
   /** Whether the path itself is a link, not followed (review round 1 #5).
    *  Absent: a link that leads nowhere is found only once written through. */
   isLink?(path: string): Promise<boolean>
+  /** Removes a file (a leftover of an older version's off switch). Absent: it
+   *  is left where it is, and still never read. */
+  remove?(path: string): Promise<void>
   /** Whether the machine is Windows. Absent: the engine reads the platform. */
   windows?(): Promise<boolean>
 }
@@ -238,10 +241,8 @@ export const MCP_IGNORED =
 /** strings.md #9. */
 const SETTINGS_PROTECTED =
   "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
-// PENDING APPROVAL (wording): the refusal for an interpreter command that names
-// the guard's own files.
 const INTERPRETER_GUARD_STATE =
-  "a script run from the command line that names Veilio's own files could switch the guard off, so the agent may not run it. Ask the user to run this call"
+  "a script run from the command line that names Veilio's own files could read or change them, so the agent may not run it. Ask the user to run this call"
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
@@ -289,39 +290,6 @@ const WITHHELD_TEXT: Record<Withheld['kind'], string> = {
 const withheldText = (w: Withheld) =>
   w.label ? `${WITHHELD_TEXT[w.kind]} (${w.label})` : WITHHELD_TEXT[w.kind]
 
-/** HMAC-SHA-256 (RFC 2104) on the one primitive the host's `crypto.subtle`
- *  gives a mod, `digest`: it has no `importKey`. Exported for the tests, which
- *  check it against RFC 4231 and against another implementation. */
-export async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
-  const sha = async (b: Uint8Array) =>
-    new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', b as BufferSource))
-  const k = new Uint8Array(64)
-  k.set(key.length > 64 ? await sha(key) : key)
-  const pad = (byte: number, tail: Uint8Array) => {
-    const out = new Uint8Array(64 + tail.length)
-    out.set(k.map((x) => x ^ byte))
-    out.set(tail, 64)
-    return out
-  }
-  return sha(pad(0x5c, await sha(pad(0x36, message))))
-}
-
-/** The MAC an off record carries: HMAC-SHA-256, under the install's secret, of
- *  the project's key, the flag, the date and the record's own random nonce. */
-async function offMac(
-  secretHex: string,
-  key: string,
-  changedAt: string,
-  nonce: string
-): Promise<string> {
-  const bytes = Uint8Array.from(secretHex.match(/../g) ?? [], (h) => parseInt(h, 16))
-  const sig = await hmacSha256(
-    bytes,
-    new TextEncoder().encode(`veilio-off-v2|${key}|false|${changedAt}|${nonce}`)
-  )
-  return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
@@ -331,10 +299,9 @@ export class Guard {
   /** Said once a session (register.ts logs them): settings the guard ignored. */
   notices: string[] = []
   /** The off record could not be read: the guard stays on, and the band says so. */
-  offRecordUnreadable = false
-  /** The off record names this project but carries no valid MAC: something
-   *  other than /veilio off wrote it, so it is ignored and the band says so. */
-  offRecordUnverified = false
+  /** A guard-state.json from an older version named this project as off: it
+   *  is removed and not honoured, and the band says so for this session. */
+  legacyOffRecord = false
   /** The session's working directory: what a search's paths are read from. */
   cwd = ''
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
@@ -543,7 +510,7 @@ export class Guard {
           .catch(() => undefined)
       : undefined
     await this.readSettings()
-    await this.readOffRecord()
+    await this.retireLegacyOffRecord()
     await this.reloadMap()
     this.stopIfTracked(committed)
     await this.checkRecord()
@@ -782,95 +749,31 @@ export class Guard {
     this.notices.push(text)
   }
 
-  get offRecordPath(): string | undefined {
-    return this.home ? join(this.home, '.veilio', 'guard-state.json') : undefined
-  }
-
-  /** The project's key in the off record: the root's real path. */
-  private async recordKey(): Promise<string> {
-    return (await this.io.realPath(this.root)) ?? this.root
-  }
-
-  /** The off record, or null when there is none; throws when it cannot be read. */
-  private async offRecord(): Promise<{ version: 1; projects: Record<string, unknown> } | null> {
-    const path = this.offRecordPath
-    if (!path || !(await this.io.exists(path))) return null
-    const parsed: unknown = JSON.parse(await this.io.read(path))
-    const projects = (parsed as { projects?: unknown } | null)?.projects
-    if (!projects || typeof projects !== 'object' || Array.isArray(projects))
-      throw new Error('not an off record')
-    return { version: 1, projects: projects as Record<string, unknown> }
-  }
-
-  /** Spec 078 FR-010: whether /veilio off was run for this project. An
-   *  unreadable record never turns the guard off, and neither does one the
-   *  agent could have written: the record is honoured only with a MAC under
-   *  the install's secret (security audit 2026-11-11, H1). The secret is made
-   *  here, at load, so it exists before any tool call can run. */
-  private async readOffRecord(): Promise<void> {
-    this.offRecordUnreadable = false
-    this.offRecordUnverified = false
+  /** /veilio off lasts for the session and lives only in this object: nothing
+   *  about on or off is read from or written to disk, so no file can switch the
+   *  guard off. Files an older version kept for it are removed, and the band
+   *  says so once when one had this project off. */
+  private async retireLegacyOffRecord(): Promise<void> {
+    this.legacyOffRecord = false
+    if (!this.home) return
+    const dir = join(this.home, '.veilio')
+    const state = join(dir, 'guard-state.json')
     try {
-      const secret = await this.offSecret(false)
-      const record = await this.offRecord()
-      const key = await this.recordKey()
-      const entry = record?.projects[key] as
-        { enabled?: unknown; changedAt?: unknown; nonce?: unknown; mac?: unknown } | undefined
-      if (entry?.enabled !== false) return
-      const signed = secret !== null && (await this.verified(secret, key, entry))
-      if (signed) {
-        if (this.state === 'on') this.state = 'off'
-      } else this.offRecordUnverified = true
-    } catch {
-      this.offRecordUnreadable = true
-    }
-  }
-
-  /** Whether an off entry carries the MAC `secret` gives for it. */
-  private async verified(
-    secret: string,
-    key: string,
-    entry: { changedAt?: unknown; nonce?: unknown; mac?: unknown }
-  ): Promise<boolean> {
-    return (
-      typeof entry.changedAt === 'string' &&
-      typeof entry.nonce === 'string' &&
-      /^[0-9a-f]{16,}$/.test(entry.nonce) &&
-      typeof entry.mac === 'string' &&
-      entry.mac === (await offMac(secret, key, entry.changedAt, entry.nonce))
-    )
-  }
-
-  get offSecretPath(): string | undefined {
-    return this.home ? join(this.home, '.veilio', 'guard-secret') : undefined
-  }
-
-  /** The install's secret: 32 random bytes as hex in an owner-only file next
-   *  to the off record (~/.veilio is raw-only, so the agent's tools cannot
-   *  read it). Made when absent; one that is there but not a secret is
-   *  replaced only when `replace` (the user's own /veilio off). Null when it
-   *  cannot be had, and then no record is honoured or made. `rotate`: a new
-   *  one whatever is there (/veilio on), so every earlier record stops
-   *  verifying. */
-  private async offSecret(replace: boolean, rotate = false): Promise<string | null> {
-    const path = this.offSecretPath
-    if (!path) return null
-    try {
-      if (!rotate && (await this.io.exists(path))) {
-        const text = (await this.io.read(path)).trim()
-        if (/^[0-9a-f]{64}$/.test(text)) return text
-        if (!replace) return null
+      if (await this.io.exists(state)) {
+        try {
+          const projects = (JSON.parse(await this.io.read(state)) as { projects?: unknown } | null)
+            ?.projects as Record<string, { enabled?: unknown } | undefined> | undefined
+          const key = (await this.io.realPath(this.root)) ?? this.root
+          this.legacyOffRecord = projects?.[key]?.enabled === false
+        } catch {
+          // Any content: it is removed all the same.
+        }
+        await this.io.remove?.(state)
       }
-      const secret = [...globalThis.crypto.getRandomValues(new Uint8Array(32))]
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
-      await this.createOwnerOnly(path, '', false)
-      // Written only once the file is known owner-only, where that can be checked.
-      if (this.io.mode && !(await this.ownerOnly(path))) return null
-      await this.io.write(path, secret)
-      return secret
+      const secret = join(dir, 'guard-secret')
+      if (await this.io.exists(secret)) await this.io.remove?.(secret)
     } catch {
-      return null
+      // Not removed: still never read.
     }
   }
 
@@ -1146,64 +1049,13 @@ export class Guard {
     this.stoppedReason = reason
   }
 
-  /** /veilio off|on: recorded in ~/.veilio/guard-state.json (spec 078
-   *  FR-010), never in the project. Says whether it was recorded. */
-  async setEnabled(enabled: boolean): Promise<boolean> {
-    const path = this.offRecordPath
-    let recorded = false
-    // Only a record with a MAC is ever honoured, so without a secret there is
-    // nothing to record: the guard is off for this session only.
-    const secret = enabled || !path ? null : await this.offSecret(true)
-    // /veilio on rotates the secret: a record or a secret copied while the
-    // guard was off stops working. Other projects' valid records are signed
-    // again under the new one. Same-user processes can still read the current
-    // secret while the guard is off; this limits the window.
-    const old = enabled && path ? await this.offSecret(false) : null
-    const fresh = enabled && path ? await this.offSecret(true, true) : null
-    if (path && (enabled || secret !== null)) {
-      let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
-      try {
-        record = (await this.offRecord()) ?? record
-      } catch {
-        // An unreadable record is replaced: this is the user's own choice.
-      }
-      const key = await this.recordKey()
-      const projects = { ...record.projects }
-      if (enabled) {
-        delete projects[key]
-        for (const [k, v] of Object.entries(projects)) {
-          const e = v as { enabled?: unknown; changedAt?: string; nonce?: string }
-          if (
-            old !== null &&
-            fresh !== null &&
-            e?.enabled === false &&
-            (await this.verified(old, k, e))
-          )
-            projects[k] = { ...e, mac: await offMac(fresh, k, e.changedAt!, e.nonce!) }
-          else delete projects[k]
-        }
-      } else {
-        const changedAt = new Date().toISOString().slice(0, 10)
-        const nonce = [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('')
-        projects[key] = {
-          enabled: false,
-          changedAt,
-          nonce,
-          mac: await offMac(secret!, key, changedAt, nonce),
-        }
-      }
-      const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
-      if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
-      await this.io.write(path, text)
-      this.offRecordUnreadable = false
-      this.offRecordUnverified = false
-      recorded = true
-    }
+  /** /veilio off|on: held in memory for the session (see
+   *  retireLegacyOffRecord). */
+  async setEnabled(enabled: boolean): Promise<void> {
+    this.legacyOffRecord = false
     if (!enabled) {
       this.state = 'off'
-      return recorded
+      return
     }
     // Review round 1 #6: stopped while the settings and the map are read
     // again and git is asked, so no call runs on what was not checked; on
@@ -1223,7 +1075,6 @@ export class Guard {
       this.state = 'on'
       this.stoppedReason = ''
     }
-    return recorded
   }
 
   /** Spec 078 FR-014: .veilio and the map must be where they appear, not a
@@ -2126,20 +1977,19 @@ export class Guard {
               // on the raw text below does not see (`.e''nv`, `{.e,x}nv`), in
               // the session's directory or as the absolute path it names. A
               // wildcard word is refused when it could name a raw-only file.
-              const spelt = spelledWord(w)
+              const spelt = spelledWord(w, point.home)
               if (spelt !== null && (spelt !== w.raw || /[*?[{]/.test(spelt))) {
-                const names = expandBraces(spelt)
-                if (names === null)
-                  return this.deny(
-                    `Veilio keeps ${this.applyText(w.raw, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
-                    false
-                  )
+                const names = braceNames(spelt)
                 for (const name of names) {
                   const spelled = dialect === 'ps' ? name.replace(/\\/g, '/') : name
                   const h = /[*?[]/.test(spelled)
-                    ? { written: false, rawOnly: globMayBeRawOnly(spelled, this.extraRawOnly) }
+                    ? {
+                        written: false,
+                        mcp: null,
+                        rawOnly: globMayBeRawOnly(spelled, this.extraRawOnly),
+                      }
                     : await this.spelledHits(spelled)
-                  if (h.written) return this.denyProtected([{ ...h, mcp: null }])
+                  if (h.written) return this.denyProtected([h])
                   if (h.rawOnly)
                     return this.deny(
                       `Veilio keeps ${this.applyText(w.raw, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
