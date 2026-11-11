@@ -87,6 +87,11 @@ const REFUSED = [
   `cat \${x:-.env}`,
   `cat "\${x:-.env}"`,
   `cat \${HOME:+.env}`,
+  // Text written inside a substitution is one more spelling too.
+  `y=a; cat \${y/a/.e[n]v}`,
+  `y=a; cat .e\${y/a/n}v`,
+  `cat \${x/#/.e[n]v}`,
+  `cat \${x::=.e[n]v}`,
   // Bracket lists and POSIX classes; a single-character wildcard.
   `cat .en[[:alpha:]]`,
   `cat server.pe[m]`,
@@ -175,6 +180,8 @@ const ALLOWED = [
   `mv "$f" "\${f%.txt}.md"`,
   `ssh "$user@$host" ls`,
   `git log "$a...$b"`,
+  `mv "$f" "\${f/.txt/.md}"`,
+  `echo "\${PATH//:/ }"`,
   // zsh qualifiers on words that name nothing raw-only; ordinary options.
   `ls *(.)`,
   `print -l **/*.ts(om)`,

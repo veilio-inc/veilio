@@ -616,6 +616,18 @@ describe('the guard', () => {
     expect(await refused('cd sub && cd .. && cat ${x:-notes}')).toBeNull()
   })
 
+  test('a remembered raw-only answer is forgotten when the list changes', async () => {
+    const g = await fixtureGuard()
+    const ask = async () =>
+      'deny' in
+      (await g.beforeTool({ tool: 'Bash', command: 'cat build/out.txt', description: 'x' }))
+    expect(await ask()).toBe(false)
+    g.extraRawOnly.push('build/**')
+    expect(await ask()).toBe(true)
+    g.extraRawOnly = []
+    expect(await ask()).toBe(false)
+  })
+
   test('the text floor refuses a quote spelling the reader was not asked about', async () => {
     expect(await refused(`case x in .e''nv) ;; esac`)).toContain(".e''nv")
   })

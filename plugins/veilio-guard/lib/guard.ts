@@ -1709,16 +1709,52 @@ export class Guard {
   private async pathHits(
     path: string
   ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }> {
-    const raw =
-      isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
-    const written = isWriteProtected(path)
-    if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path) }
-    const real = await this.io.realPath(this.here(path))
-    return {
-      written: written || (real !== undefined && isWriteProtected(real)),
-      rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
-      mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
+    // One command asks about the same path several times (as a word, as raw
+    // text, in each directory): answered once per call.
+    const known = this.hitsThisCall?.get(path)
+    if (known) return known
+    const hits = (async () => {
+      const raw = this.rawOnlyPath(path) || this.rawOnlyPath(normalisePath(path))
+      const written = isWriteProtected(path)
+      if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path) }
+      const real = await this.io.realPath(this.here(path))
+      return {
+        written: written || (real !== undefined && isWriteProtected(real)),
+        rawOnly: raw || (real !== undefined && this.rawOnlyPath(real)),
+        mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
+      }
+    })()
+    this.hitsThisCall?.set(path, hits)
+    return hits
+  }
+
+  /** What pathHits answered in the call being judged; null outside one. */
+  private hitsThisCall: Map<
+    string,
+    Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }>
+  > | null = null
+  private rawOnlyKnown = new Map<string, boolean>()
+  private rawOnlyKnownFor: { list: string[]; size: number } | null = null
+
+  /** isRawOnly for the guard's list, remembered by path: the engine compiles
+   *  every pattern on each call, which was most of a call's time. The answer
+   *  depends on the path and the list only; a changed list forgets it. */
+  private rawOnlyPath(path: string): boolean {
+    const list = this.extraRawOnly
+    if (
+      this.rawOnlyKnownFor?.list !== list ||
+      this.rawOnlyKnownFor.size !== list.length ||
+      this.rawOnlyKnown.size > 20_000
+    ) {
+      this.rawOnlyKnown.clear()
+      this.rawOnlyKnownFor = { list, size: list.length }
     }
+    let answer = this.rawOnlyKnown.get(path)
+    if (answer === undefined) {
+      answer = isRawOnly(path, list)
+      this.rawOnlyKnown.set(path, answer)
+    }
+    return answer
   }
 
   /** A command word as it was typed, for a refusal: known names are put back
@@ -1832,6 +1868,18 @@ export class Guard {
     e: ToolEvent,
     budget: RuleBudget = ruleBudget()
   ): Promise<{ deny: string } | { args: ToolEvent }> {
+    try {
+      return await this.judgeCall(e, budget)
+    } finally {
+      // What pathHits remembered holds for this call only.
+      this.hitsThisCall = null
+    }
+  }
+
+  private async judgeCall(
+    e: ToolEvent,
+    budget: RuleBudget
+  ): Promise<{ deny: string } | { args: ToolEvent }> {
     let policy = argumentPolicy(e.tool, this.mcpRestore)
     const servers = mcpServersOf(e.tool)
     // Spec 085 R2-9: a listed server the project's .mcp.json declares too may
@@ -1944,6 +1992,7 @@ export class Guard {
           false
         )
     if (policy.command) {
+      this.hitsThisCall = new Map()
       const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
         if (typeof c !== 'string') continue
