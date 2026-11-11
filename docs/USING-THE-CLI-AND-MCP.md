@@ -167,7 +167,7 @@ Veilio Cloud, eight more for maps, the team and projects (below):
 
 | Tool | What it does |
 |---|---|
-| `anonymize_file` | Reads a file inside the project root and returns it anonymized - the real code never enters the assistant's context. A raw-only file (.env, private keys, credential stores, .veilio/) is refused, never read. |
+| `anonymize_file` | Reads a file inside the project root and returns it anonymized, so the assistant gets the masked text without reading the file itself. In comments only names the map holds are masked; the result says how much comment text was left as written. A raw-only file (.env, private keys, credential stores, .veilio/) is refused, never read. |
 | `anonymize_text` | Anonymizes text you or the assistant pass in. |
 | `restore_text` | Off unless the server is started with `VEILIO_MCP_RESTORE=1` (below). Puts real names back into an answer and strips AI noise. Lists what it could not restore; with `strict: true` it returns an error instead of text that still holds a placeholder or a redaction. A redacted value (`__REDACTED_CREDENTIAL_1__`) cannot be restored, so it is always named: that text is not the original file. |
 | `scan_secrets` | Reports credentials without putting their values in context: a finding shows only a value's last four characters and its length. A raw-only file is refused, never read. |

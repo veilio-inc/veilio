@@ -48,7 +48,7 @@ test.describe('comment exposure notice', () => {
     await anonymize(page, SOURCE)
     await expect(notice(page)).toBeVisible()
     await expect(notice(page)).toContainText('2 comments, 1 inside the body')
-    await expect(notice(page)).toContainText('comment text is never masked')
+    await expect(notice(page)).toContainText('in comments only names the map holds are masked')
   })
 
   test('SC-002 - a file without comments says nothing', async ({ page }) => {

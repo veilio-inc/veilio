@@ -25,6 +25,12 @@ import { resetNamespaceCache } from '../src/namespace.js'
  * previews lose their leading characters (`AKIA…MPLE` is `…MPLE`), and the
  * anonymize_file and scan_secrets descriptions say raw-only files are refused
  * and what a preview shows. Every changed line was checked to be one of these.
+ *
+ * Spec 092 (the founder approved the wording on 2026-11-11): the anonymize_file
+ * description and the comment note on a result say what is masked in comments.
+ * Those two texts were replaced by hand (one description, six notes) - the
+ * fixture was not regenerated.
+ *
  * The recording runs with restore_text on (VEILIO_MCP_RESTORE=1), so its steps
  * still cover it; off is tests/restore-opt-in.test.ts.
  */

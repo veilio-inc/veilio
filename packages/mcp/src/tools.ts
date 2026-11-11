@@ -467,7 +467,9 @@ function runAnonymize(
   // two lines are the only place it can learn what the masking did NOT cover.
   // The engine puts both on every result precisely so this server does not have
   // to decide for itself; dropping them here would leave an agent believing the
-  // output is clean when a name is sitting in a comment inside it.
+  // output is clean when a customer's name is sitting in a comment inside it.
+  // The comment figure counts what was left as written: a name the map holds
+  // is a placeholder there, and is not counted.
   const caveats: string[] = []
   if (mismatch) caveats.push(mismatch)
   if (tooLarge) caveats.push(`WARNING: ${PROJECT_TOO_LARGE_NOTE.replace(/^veilio: /, '')}`)
@@ -482,10 +484,11 @@ function runAnonymize(
   if (result.comments.total > 0) {
     const { total, inline, characters } = result.comments
     caveats.push(
-      `Comment prose is NOT masked: ${total} comment${total === 1 ? '' : 's'} ` +
+      `Comment text is left as written, except names the map holds: ` +
+        `${total} comment${total === 1 ? '' : 's'} ` +
         `(${inline === 0 ? 'above the code' : `${inline} inside the body`}), ` +
-        `${characters} characters, left exactly as written. Names, customers and ticket ` +
-        `numbers in them are still real. Treat them as unmasked when quoting or forwarding.`
+        `${characters} characters. People, customers, ticket numbers and names the map does ` +
+        `not hold are still real in them. Treat that text as unmasked when quoting or forwarding.`
     )
   }
 
@@ -531,10 +534,13 @@ export const TOOLS: ToolDefinition[] = [
     name: 'anonymize_file',
     title: 'Anonymize a file',
     description:
-      `Read a file from disk and return it with every proprietary identifier replaced by a ` +
-      `placeholder (__CLS__1, __FN__2, …) and every credential irreversibly redacted. ` +
-      `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so the real ` +
-      `identifiers never enter your context — you only ever see the masked form. Use it before ` +
+      `Read a file from disk and return it with the identifiers ${PRODUCT_NAME} masks replaced by ` +
+      `placeholders (__CLS__1, __FN__2, …) and every credential it detects irreversibly redacted. ` +
+      `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so you get the ` +
+      `masked text without reading the file. A name the map holds is replaced in code, in strings ` +
+      `and in comments. Left as written: the rest of comment text (people, customers, ticket ` +
+      `numbers, names the map does not hold yet), names in capitals and single common words - ` +
+      `each result says how much comment text was left. Use it before ` +
       `reasoning about, quoting, or forwarding proprietary source. The symbol map is stored ` +
       `locally so the developer can restore an answer later. Files on the raw-only list ` +
       `(.env, private keys, credential stores, .veilio/) are refused, never read.`,

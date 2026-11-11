@@ -395,8 +395,8 @@ export default function ScrubPage() {
         {mode === 'send' && <SecretPanel findings={secretFindings} />}
         {mode === 'send' && <LanguageFallbackNotice show={languageFallback} />}
 
-        {/* Comment prose is not masked, and the anonymized panel gives no sign
-            of it. Same placement and the same reason: above the copy action. */}
+        {/* Comment text is left as written, apart from names the map holds, and
+            the anonymized panel gives no sign of it. Same placement and the same reason: above the copy action. */}
         {mode === 'send' && <CommentNotice exposure={commentExposure} />}
 
         {/* Main panels */}

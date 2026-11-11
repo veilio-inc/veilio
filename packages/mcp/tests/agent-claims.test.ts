@@ -21,13 +21,37 @@ const TEXTS = {
     ) as { result: { instructions: string } }
   ).result.instructions,
 }
+// What the server tells a model about each tool, `restore_text` included.
+const TOOL_TEXTS = Object.fromEntries(
+  (
+    handleMessage(
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      { cwd: '/', mapPath: null, restoreText: true }
+    ) as { result: { tools: { name: string; description: string }[] } }
+  ).result.tools.map((t) => [`tool ${t.name} description`, t.description])
+)
 const OVERCLAIM =
-  /only ever sees|never enter your context|never sees `?PaymentGateway|without the real identifiers (ever )?entering its context|anonymize files before it reads them/i
+  /only ever sees?|never enters? (your|the assistant'?s?) context|never sees `?PaymentGateway|without the real identifiers (ever )?entering its context|anonymize files before it reads them/i
 const LIMIT = /(does not|not) stop (an|the) agent reading|own (file|file, search) and shell tools/i
 
 describe('what MCP promises an agent (spec 067)', () => {
   it.each(Object.entries(TEXTS))(
     '%s does not say the agent never sees the real names',
+    (_, text) => {
+      expect(text).not.toMatch(OVERCLAIM)
+    }
+  )
+  it('lists every tool, restore_text included', () => {
+    expect(Object.keys(TOOL_TEXTS)).toEqual(
+      expect.arrayContaining([
+        'tool anonymize_file description',
+        'tool anonymize_text description',
+        'tool restore_text description',
+      ])
+    )
+  })
+  it.each(Object.entries(TOOL_TEXTS))(
+    '%s does not say the model never sees the real names',
     (_, text) => {
       expect(text).not.toMatch(OVERCLAIM)
     }
