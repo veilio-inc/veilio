@@ -1,7 +1,14 @@
 import { spawnSync } from 'node:child_process'
 import { describe, expect, test } from 'vitest'
-import { globMayBeRawOnly } from '../../plugins/veilio-guard/lib/paths.ts'
-import { pieces, quoteBlind, spellings, wordsOf } from '../../plugins/veilio-guard/lib/reading.ts'
+import { ANY_TEXT as ANY, globMayBeRawOnly } from '../../plugins/veilio-guard/lib/paths.ts'
+import {
+  dotsMatch,
+  pieces,
+  quoteBlind,
+  readsStrictly,
+  spellings,
+  wordsOf,
+} from '../../plugins/veilio-guard/lib/reading.ts'
 import { parseShell, type Word } from '../../plugins/veilio-guard/lib/shell.ts'
 import { fixtureGuard } from './fixtures/cd-project.ts'
 import { POSITIONS } from './fixtures/reading-grammar.ts'
@@ -32,17 +39,19 @@ describe('wordsOf: a word is returned wherever it stands', () => {
   /** W is a word of the command, or the end of one that holds no command. */
   const holds = (command: string) =>
     words(command).some((w) => w.raw === W || (w.raw.endsWith(W) && !/\$\(|`|[<=]\(/.test(w.raw)))
-  test.each(
-    POSITIONS.filter((p) => p.executed && p.shell !== 'zsh').map((p) => [p.id, p.make(W)] as const)
-  )('%s %s', (_, command) => {
-    expect(holds(command), command).toBe(true)
-  })
+  test.each(POSITIONS.filter((p) => p.executed).map((p) => [p.id, p.make(W)] as const))(
+    '%s %s',
+    (_, command) => {
+      expect(holds(command), command).toBe(true)
+    }
+  )
 
   test.each([
     ['a redirect on until', `until cat; do :; done < ${W}`],
     ['a here-string', `cat <<< ${W}`],
     ['a declared assignment', `declare -x F=${W}`],
     ['an array assignment', `a=(x ${W})`],
+    ['a declared array', `declare -a f=(x ${W})`],
     ['a case word', `case ${W} in x) ;; esac`],
     ['a substitution in a case pattern', `case x in $(cat ${W})) ;; esac`],
     ['a substitution in an arithmetic for', `for (( i=$(cat ${W}); i<1; i++ )); do :; done`],
@@ -50,6 +59,13 @@ describe('wordsOf: a word is returned wherever it stands', () => {
     ['a nested default', `echo \${x:-\${y:-$(cat ${W})}}`],
     ['a backtick in a here-document', `cat <<EOF\n\`cat ${W}\`\nEOF`],
     ['a here-document under a quoted delimiter', `cat <<'EOF'\n$(cat ${W})\nEOF`],
+    ['a here-document, after two backslashes', `cat <<EOF\n\\\\$(cat ${W})\nEOF`],
+    ['a here-document, a backtick after two backslashes', `cat <<EOF\n\\\\\`cat ${W}\`\nEOF`],
+    ['a here-document, $(( that is a command', `cat <<EOF\n$((cat ${W}); echo)\nEOF`],
+    ['a here-document, inside arithmetic', `cat <<EOF\n$(( $(cat ${W}) ))\nEOF`],
+    ['a script after a shell option', `zsh -o extendedglob -c 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['zsh =( )', `cat =(cat ${W})`],
+    ['a group glued to a word in a for list', `for f in src/*(N) ${W}; do :; done`],
     ['a script attached to -c', `sh -c'cat ${W.replace(/'/g, `'\\''`)}'`],
     ['a function body', `f() { cat ${W}; }`],
     ['a pipeline stage in the background', `cat ${W} | cat &`],
@@ -71,6 +87,11 @@ describe('wordsOf: a word is returned wherever it stands', () => {
       "cat > notes.md <<'EOF'\nit's `unbalanced and $(not closed\nEOF",
     ])
       expect(parseShell(c, 'sh').ok, c).toBe(true)
+  })
+
+  test('a here-document: an escaped substitution does not run and is not read', () => {
+    expect(words(`cat <<EOF\n\\$(cat ${W})\nEOF`).map((w) => w.raw)).not.toContain(W)
+    expect(words(`cat <<EOF\n\\\\\\$(cat ${W})\nEOF`).map((w) => w.raw)).not.toContain(W)
   })
 
   test('a here-document under a plain delimiter with a substitution that cannot be read is unreadable', () => {
@@ -171,6 +192,123 @@ describe('spellings: the reading table', () => {
   })
 })
 
+describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
+  test.each([
+    ['Z1 a group', '.e(n)v', [`.e${ANY}v`]],
+    ['Z1 alternatives', '.e(n|x)v', [`.e${ANY}v`]],
+    ['Z1 a group that starts the word', '(s)erver.pem', [`${ANY}erver.pem`]],
+    ['Z1 ksh @( )', '.e@(n)v', [`.e${ANY}v`]],
+    ['Z1 ksh ?( )', '.e?(x)nv', [`.e${ANY}nv`]],
+    ['Z1 ksh +( )', '.e+(n)v', [`.e${ANY}v`]],
+    ['Z2 a qualifier', '.e*(.)', ['.e**']],
+    ['Z2 a qualifier after a name', '*.ts(om)', ['*.ts**']],
+    ['Z2 a qualifier after a name it ends', 'server.pem(.)', ['server.pem**']],
+    ['Z1 a group that ends the word', 'server.pe(m|x)', [`server.pe${ANY}`]],
+    ['Z2 a qualifier on a bare wildcard', '*(.)', ['**']],
+    ['Z3 a numeric range', 'id_ed<->', ['id_ed*']],
+    ['Z3 a numeric range with bounds', 'f<1-9>.txt', ['f*.txt']],
+  ])('%s: %s', (_, word, expected) => {
+    expect(spell(word)).toEqual(expected)
+  })
+
+  test('Z1: a group alone is as before, and a function definition is not a group', () => {
+    expect(spell('(.env|x)')).toEqual(['(.env|x)'])
+    expect(parseShell('f() { cat x; }', 'sh').ok).toBe(true)
+    expect(parseShell('f ( ) { cat x; }', 'sh').ok).toBe(true)
+  })
+
+  test('Z4: ${:-x} is a written value', () => {
+    expect(spell('${:-.env}')).toEqual(['.env'])
+    expect(spell('.e${:-n}v')).toContain('.env')
+    expect(spell('${${:-.env}}')).toContain('.env')
+  })
+
+  test.each(['${${:-.eXnv}/X}', '${(L):-.ENV}', '${(j::)${:-.env}}', 'x${${:-.ENV}:l}'])(
+    'Z5: %s rewrites written text, so it could be any name',
+    (word) => {
+      expect(spell(word)).toBe('any')
+    }
+  )
+
+  test.each(['${(k)parameters}', '${(U)name}', '${(s:,:)list}', '${${x}/a/b}', '${x/a/b}'])(
+    'Z5: %s holds no written value',
+    (word) => {
+      expect(spell(word)).toEqual([])
+    }
+  )
+
+  test.each([
+    ['#', '.eq#nv', `.e${ANY}nv`],
+    ['##', '.eq##nv', `.e${ANY}nv`],
+    ['# after a class', '.e[a-z]#v', `.e${ANY}v`],
+    ['^', '.e^xnv', `.e${ANY}`],
+    ['^ in a folder', 'se^x/customers.csv', `se${ANY}/customers.csv`],
+    ['~', '.env~x', `.env${ANY}`],
+    ['braceccl', '.e{n}v', `.e${ANY}v`],
+    ['a brace list', '{.e,x}nv', `${ANY}nv`],
+  ])('Z6 strict reading: %s in %s', (_, word, expected) => {
+    expect(spell(word, { strict: true })).toEqual([expected])
+  })
+
+  test('Z6: a leading ~ and a quoted # are themselves under strict reading', () => {
+    expect(spell('~/x', { strict: true })).toEqual([`${HOME}/x`])
+    expect(spell(`'a#b'`, { strict: true })).toEqual(['a#b'])
+  })
+
+  const list = (command: string) => {
+    const p = parseShell(command, 'sh')
+    if (!p.ok) throw new Error(command)
+    return p.list
+  }
+  test.each([
+    'setopt extendedglob; ls',
+    'unsetopt nomatch; ls',
+    'emulate sh; ls',
+    'builtin setopt braceccl; ls',
+    'shopt -s extglob; ls',
+    'shopt -s dotglob; ls',
+    'shopt -s "$opt"; ls',
+    'set -o globdots; ls',
+    'set -o extendedglob; ls',
+    'set -G; ls',
+    'set -4; ls',
+    'zsh -o extendedglob -c ls',
+    'bash -O extglob -c ls',
+    'bash +o posix -c ls',
+    'echo "$(setopt globdots; ls)"',
+    '{ setopt globdots; }; ls',
+  ])('§2: %s is read strictly', (command) => {
+    expect(readsStrictly(list(command))).toBe(true)
+  })
+
+  test.each([
+    'set -euo pipefail; ls src',
+    'set -x; npm test',
+    'set +e; ls',
+    'set -- a b',
+    'shopt -s nullglob; rm -f *.o',
+    'shopt -s globstar; ls **/*.ts',
+    'shopt -u failglob; ls',
+    'bash -c "ls"',
+    'bash -lc "ls"',
+    'npm config set registry https://example.test',
+    'git remote set-url origin x',
+    'ls',
+  ])('§2: %s is not', (command) => {
+    expect(readsStrictly(list(command))).toBe(false)
+  })
+
+  test('a word beside a group or qualifier, and every word under strict reading, may match a leading dot', () => {
+    expect(dotsMatch(arg('*nv(D)'), false)).toBe(true)
+    expect(dotsMatch(arg('*nv'), false)).toBe(false)
+    expect(dotsMatch(arg('*nv'), true)).toBe(true)
+    expect(globMayBeRawOnly('*nv', [], true)).toBe(true)
+    expect(globMayBeRawOnly('*nv', [], false)).toBe(false)
+    expect(globMayBeRawOnly('*.o', [], true)).toBe(false)
+    expect(globMayBeRawOnly('*.ts**', [], true)).toBe(false)
+  })
+})
+
 describe('pieces: the parts of a word a program may take as a file name', () => {
   test.each([
     ['if=.env', '.env'],
@@ -227,6 +365,15 @@ describe('the wildcard judge (reading table §3)', () => {
     '**/*.ts',
   ])('%s is not refused', (word) => {
     expect(globMayBeRawOnly(word, ['secrets/**'])).toBe(false)
+  })
+
+  test("any text from a group or an option is not the word's own *: it may stand for a pattern's text", () => {
+    expect(globMayBeRawOnly(`server.pe${ANY}`, [])).toBe(true)
+    expect(globMayBeRawOnly('server.pe*', [])).toBe(false)
+    expect(globMayBeRawOnly(`${ANY}*`, [])).toBe(true)
+    expect(globMayBeRawOnly('***', [])).toBe(false)
+    expect(globMayBeRawOnly('*.md**', [], true)).toBe(false)
+    expect(globMayBeRawOnly(`*.md${ANY}`, [], true)).toBe(true)
   })
 
   test('a bracket list is each of its characters', () => {

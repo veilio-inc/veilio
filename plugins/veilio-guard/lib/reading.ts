@@ -1,8 +1,8 @@
 // Spec 091: one reader of a command's words (the reading table). Every word
 // of a parsed command, wherever it stands, is turned into what the shell can
 // make of it and judged by the one raw-only judge (lib/guard.ts beforeTool).
-import { ansiC, braceNames } from './paths.ts'
-import type { List, Part, Word } from './shell.ts'
+import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
+import type { List, Part, Simple, Word } from './shell.ts'
 
 export const isWord = (x: object): x is Word =>
   Array.isArray((x as Word).parts) && typeof (x as Word).raw === 'string'
@@ -39,6 +39,42 @@ const UNKNOWN = '\ue002'
 /** An arithmetic expansion: digits the shell works out when the command runs. */
 const NUMBER = '\ue004'
 const RUN_TIME = /[\ue002\ue004]/g
+// Strict reading (reading table §2): what an option may make of these.
+/** `{` and `}`: braceccl reads `{a-z}` as a class. */
+const OPEN = '\ue005'
+const CLOSE = '\ue006'
+/** `#`: extendedglob repeats what stands before it. */
+const REPEAT = '\ue007'
+/** `^`: extendedglob reads what follows in the path part as "anything but". */
+const NOT = '\ue008'
+/** `~` inside a word: extendedglob reads what follows as an exception. */
+const EXCEPT = '\ue00b'
+const STRICT: Readonly<Record<string, string>> = {
+  '{': OPEN,
+  '}': CLOSE,
+  '#': REPEAT,
+  '^': NOT,
+  '~': EXCEPT,
+}
+
+/** A spelling under strict reading: each marked place read as any text,
+ *  with what the operator there applies to. */
+function strictRead(text: string): string {
+  let t = text
+    .replace(/\ue005[^\ue005\ue006/]*\ue006/g, ANY_TEXT)
+    .replace(/[\ue005\ue006]/g, ANY_TEXT)
+    .replace(/\ue00b[^]*$/, ANY_TEXT)
+    .replace(/\ue008[^/]*/g, ANY_TEXT)
+  for (let at = t.indexOf(REPEAT); at !== -1; at = t.indexOf(REPEAT)) {
+    // What `#` repeats: a class, a group already read as any text, or a character.
+    const before = t.slice(0, at)
+    const from = /[\]}]$/.test(before)
+      ? Math.max(before.lastIndexOf(before.endsWith(']') ? '[' : '{'), 0)
+      : Math.max(at - 1, 0)
+    t = `${t.slice(0, from)}${ANY_TEXT}${t.slice(at).replace(/^\ue007+/, '')}`
+  }
+  return t
+}
 
 /** A spelling with its run-time parts read (reading table E10, E12): beside
  *  other text in a path part, a value is nothing and a number is `*`; a path
@@ -101,14 +137,17 @@ export function spellings(
     // Past the cap the word is read as "anything" in this place.
     texts = next.length > MAX_SPELLINGS ? texts.map((t) => `${t}**`) : next
   }
-  for (const p of w.parts) {
-    const alternatives = partSpellings(p, home, o)
-    if (alternatives === 'any') return 'any'
-    add(alternatives)
-  }
+  w.parts.forEach((p, k) => {
+    if (texts.length === 0) return
+    const alternatives = partSpellings(p, home, o, k === 0)
+    if (alternatives === 'any') texts = []
+    else add(alternatives)
+  })
+  // A part that rewrites written text (Z5): the word could be any name.
+  if (texts.length === 0) return 'any'
   const out = new Set<string>()
   for (const t of texts) {
-    const read = runTime(t)
+    const read = runTime(o.strict ? strictRead(t) : t)
     if (read !== null) for (const name of braceNames(read)) out.add(name)
   }
   return [...out]
@@ -117,21 +156,34 @@ export function spellings(
 function partSpellings(
   p: Part,
   home: string | null,
-  o: { home: string | null; homeKnown: boolean; strict: boolean }
+  o: { home: string | null; homeKnown: boolean; strict: boolean },
+  first: boolean
 ): string[] | 'any' {
   switch (p.kind) {
     case 'lit':
-      return [p.quoted ? quote(p.text) : p.text]
+      if (p.quoted) return [quote(p.text)]
+      return [
+        o.strict
+          ? p.text.replace(/[{}#^~]/g, (c, at: number) =>
+              c === '~' && first && at === 0 ? c : STRICT[c]!
+            )
+          : p.text,
+      ]
     case 'glob':
       return [bracketList(p.text) ?? p.text]
     case 'brace':
-      return [p.text]
+      return [o.strict ? ANY_TEXT : p.text]
+    case 'zglob':
+      // A qualifier names no text; `**` still errs toward refusing a name
+      // it ends, and under strict reading it may be a group after all.
+      return [!p.any ? '*' : p.star || (p.qualifier && !o.strict) ? '**' : ANY_TEXT]
     case 'ansic':
       if (p.text.startsWith("$'")) return [quote(ansiC(p.text.slice(2, -1)))]
       return /[$`]/.test(p.text.slice(1)) ? [UNKNOWN] : [quote(p.text.slice(2, -1))]
     case 'tilde':
       return [p.user === '' && home !== null ? home : UNKNOWN]
     case 'param': {
+      if (p.transforms) return 'any'
       if (p.operand === undefined)
         return [p.name === 'HOME' && p.op === '' && home !== null ? home : UNKNOWN]
       // A value written in the command is one more spelling (E11).
@@ -149,6 +201,69 @@ function partSpellings(
       return [UNKNOWN]
   }
 }
+
+// The options that leave how words are read as it is (reading table §2).
+const SHOPT_PLAIN = new Set(
+  'globstar nullglob failglob nocaseglob nocasematch expand_aliases inherit_errexit lastpipe'.split(
+    ' '
+  )
+)
+const SET_PLAIN = new Set(
+  'errexit nounset pipefail xtrace verbose noclobber noglob errtrace functrace posix'.split(' ')
+)
+const SET_LETTERS = 'euxvfCabhmnET'
+const SHELL = /^(?:.*\/)?(?:bash|sh|zsh|ksh|dash)$/
+
+/** Whether `set`'s arguments name an option outside the plain ones. */
+function setChanges(args: (string | null)[]): boolean {
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]!
+    if (a === null) return true
+    if (a === '--' || a === '-' || !/^[-+]/.test(a)) return false
+    for (const letter of a.slice(1)) {
+      if (letter === 'o') {
+        const name = args[++k]
+        if (name === undefined) return false
+        if (name === null || !SET_PLAIN.has(name)) return true
+      } else if (!SET_LETTERS.includes(letter)) return true
+    }
+  }
+  return false
+}
+
+/** Whether a command changes how the shell reads words. */
+export function readsStrictly(list: List): boolean {
+  let strict = false
+  const visit = (x: unknown): void => {
+    if (strict) return
+    if (Array.isArray(x)) return x.forEach(visit)
+    if (x === null || typeof x !== 'object') return
+    if ((x as { type?: unknown }).type === 'simple') {
+      const words = (x as Simple).words.map((w) => w.literal)
+      words.forEach((w, k) => {
+        const rest = words.slice(k + 1)
+        if (w === 'setopt' || w === 'unsetopt' || w === 'emulate') strict = true
+        else if (w === 'shopt')
+          strict ||= rest.some((a) => a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a)))
+        else if (w === 'set') strict ||= setChanges(rest)
+        else if (w !== null && SHELL.test(w)) {
+          for (const a of rest) {
+            if (a === null || !/^[-+]/.test(a) || /^-[A-Za-z]*c/.test(a)) break
+            if (/^[-+][A-Za-z]*[oO]/.test(a)) strict = true
+          }
+        }
+      })
+    }
+    for (const v of Object.values(x)) visit(v)
+  }
+  visit(list)
+  return strict
+}
+
+/** Whether a word's wildcards may match a leading dot: under strict reading
+ *  (globdots, dotglob), and beside a zsh group or qualifier (`*(D)`). */
+export const dotsMatch = (w: Word, strict: boolean): boolean =>
+  strict || w.parts.some((p) => p.kind === 'zglob' && (p.qualifier || p.star))
 
 /** A spelling and the pieces of it a program may take as a file name: around
  *  `=`, `:` and `,`, after a leading `@`, after a short option's letter. */

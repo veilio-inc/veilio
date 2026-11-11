@@ -1353,6 +1353,7 @@ function formOf(p: Part): string {
     case 'subst':
       return 'a command substitution'
     case 'glob':
+    case 'zglob':
       return 'a glob'
     case 'brace':
       return 'braces'
@@ -1596,10 +1597,16 @@ export function braceNames(word: string): string[] {
   return out.length > 0 ? out : [wildBraces(word)]
 }
 
+/** In a spelling (lib/reading.ts): any text may stand here - a zsh group or
+ *  qualifier, or what an option may make of a brace, `#`, `^` or `~`. Not a
+ *  wildcard the command wrote, so the limit on the word's `*` (see
+ *  globsOverlap) does not hold for it. A private-use character. */
+export const ANY_TEXT = '\ue000'
+
 type GlobToken =
   | { kind: 'char'; c: string }
   | { kind: 'any' }
-  | { kind: 'star'; deep: boolean }
+  | { kind: 'star'; deep: boolean; free?: true }
   | { kind: 'class'; set: string; negated: boolean }
 
 /** Where the bracket class opened at `i` closes: past a first character
@@ -1620,7 +1627,8 @@ function globTokens(glob: string): GlobToken[] {
   const out: GlobToken[] = []
   for (let i = 0; i < glob.length; i++) {
     const c = glob.charAt(i)
-    if (c === '*') {
+    if (c === ANY_TEXT) out.push({ kind: 'star', deep: true, free: true })
+    else if (c === '*') {
       const deep = glob[i + 1] === '*'
       if (deep) i++
       out.push({ kind: 'star', deep })
@@ -1656,7 +1664,11 @@ function globsOverlap(a: string, b: string, dots = false): boolean {
   const bareWild = (i: number) => {
     let k = i
     while (k > 0 && !isSlash(A[k - 1]!)) k--
-    for (; k < A.length && !isSlash(A[k]!); k++) if (A[k]!.kind === 'char') return false
+    for (; k < A.length && !isSlash(A[k]!); k++) {
+      const t = A[k]!
+      // Any text from a group or an option may be a name; a wildcard is not one.
+      if (t.kind === 'char' || (t.kind === 'star' && t.free)) return false
+    }
     return true
   }
   const dotStart = (j: number) => !dots && (j === 0 || isSlash(B[j - 1]!))
@@ -1694,8 +1706,11 @@ function globsOverlap(a: string, b: string, dots = false): boolean {
         go(i + 1, j, took) ||
         (!!y &&
           (x.deep || !isSlash(y)) &&
-          !(y.kind === 'char' && (bareWild(i) || (y.c === '.' && dotStart(j)) || took === 2)) &&
-          go(i, j + 1, y.kind === 'char' ? 1 : took))
+          !(
+            y.kind === 'char' &&
+            (bareWild(i) || (y.c === '.' && dotStart(j)) || (took === 2 && !x.free))
+          ) &&
+          go(i, j + 1, y.kind === 'char' && !x.free ? 1 : took))
     else if (y?.kind === 'star')
       r =
         go(i, j + 1, took) ||

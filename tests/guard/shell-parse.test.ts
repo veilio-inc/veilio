@@ -139,9 +139,9 @@ describe('parseShell, contracts/tokenizer.md', () => {
 
 describe('parseShell, the forms the cd rules read', () => {
   test.each([
-    ['a zsh glob qualifier after a word', 'cd ~/.kube(/)', 'W(cd) X(tilde,glob:~/.kube(/))'],
-    ['a zsh alternation', 'cd ~/.ku(b|x)e', 'W(cd) X(tilde,glob:~/.ku(b|x)e)'],
-    ['a zsh numeric glob', 'cd ~/.kub<->', 'W(cd) X(tilde,glob:~/.kub<->)'],
+    ['a zsh glob qualifier after a word', 'cd ~/.kube(/)', 'W(cd) X(tilde,zglob:~/.kube(/))'],
+    ['a zsh alternation', 'cd ~/.ku(b|x)e', 'W(cd) X(tilde,zglob:~/.ku(b|x)e)'],
+    ['a zsh numeric glob', 'cd ~/.kub<->', 'W(cd) X(tilde,zglob:~/.kub<->)'],
     [
       'an array assignment',
       'cdpath+=(~/.config); cd gcloud',

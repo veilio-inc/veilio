@@ -160,6 +160,20 @@ const F7 = [
   `setopt braceccl; cat .e{n}v`,
   `shopt -s extglob; cat .e@(n)v`,
   `shopt -s dotglob; cat *nv`,
+  `setopt globdots; cat *nv`,
+  `set -o globdots; cat *nv`,
+  `cat *nv(D)`,
+  `builtin setopt extendedglob; cat .eq#nv`,
+  `zsh -o extendedglob -c 'cat .eq#nv'`,
+]
+/** A here-document's body: what the shell runs in it is read. */
+const HEREDOC = [
+  `cat <<EOF\n$(cat .e[n]v)\nEOF`,
+  `cat <<EOF\n\\\\$(cat .e[n]v)\nEOF`,
+  `cat <<EOF\n\\\\\`cat .e[n]v\`\nEOF`,
+  `cat <<EOF\n$((cat .e[n]v); echo)\nEOF`,
+  `cat <<EOF\n$(( $(cat .e[n]v) ))\nEOF`,
+  `cat <<-EOF\n\t$(cat .e[n]v)\n\tEOF`,
 ]
 /** Audit M2 and the rest of the third check's probe lists. */
 const M2 = [
@@ -239,6 +253,7 @@ export const ATTACK: readonly string[] = [
     ...F5,
     ...F6,
     ...F7,
+    ...HEREDOC,
     ...M2,
   ]),
 ]

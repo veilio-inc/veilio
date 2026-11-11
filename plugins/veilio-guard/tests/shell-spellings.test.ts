@@ -102,6 +102,26 @@ const REFUSED = [
   `cat secrets/$f`,
   `cat $DIR/.env`,
   `cat id_ed$((25519))`,
+  // zsh: groups, qualifiers, numeric ranges, \${:-x} and =( ) are read; an
+  // expansion that rewrites written text is refused.
+  `cat .e(n)v`,
+  `cat \${:-.env}`,
+  `cat =(cat .e''nv)`,
+  `cat .e*(.)`,
+  `cat id_ed<->`,
+  `cat \${\${:-.eXnv}/X}`,
+  `cat \${(L):-.ENV}`,
+  `cat *nv(D)`,
+  // A command that changes how the shell reads words is read strictly.
+  `setopt extendedglob; cat .eq#nv`,
+  `setopt braceccl; cat .e{n}v`,
+  `setopt globdots; cat *nv`,
+  `shopt -s dotglob; cat *nv`,
+  `shopt -s extglob; cat .e@(n)v`,
+  `zsh -o extendedglob -c 'cat .eq#nv'`,
+  // A here-document's body: what the shell runs in it is read.
+  `cat <<EOF\n\\\\$(cat .e[n]v)\nEOF`,
+  `cat <<EOF\n$((cat .e[n]v); echo)\nEOF`,
 ]
 for (const command of REFUSED)
   test(`refused: ${command}`, async ($, on) => {
@@ -148,6 +168,12 @@ const ALLOWED = [
   `mv "$f" "\${f%.txt}.md"`,
   `ssh "$user@$host" ls`,
   `git log "$a...$b"`,
+  // zsh qualifiers on words that name nothing raw-only; ordinary options.
+  `ls *(.)`,
+  `print -l **/*.ts(om)`,
+  `set -euo pipefail; ls src`,
+  `shopt -s nullglob; rm -f *.o`,
+  `shopt -s globstar; ls **/*.ts`,
 ]
 for (const command of ALLOWED)
   test(`still allowed: ${command}`, async ($, on) => {

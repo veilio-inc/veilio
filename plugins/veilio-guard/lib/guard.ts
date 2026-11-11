@@ -53,7 +53,15 @@ import {
   type Var,
 } from './paths.ts'
 import { parseShell, restoreRefusal, type Word } from './shell.ts'
-import { isWord, pieces, quoteBlind, spellings, wordsWithin } from './reading.ts'
+import {
+  dotsMatch,
+  isWord,
+  pieces,
+  quoteBlind,
+  readsStrictly,
+  spellings,
+  wordsWithin,
+} from './reading.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -2014,6 +2022,9 @@ export class Guard {
           // here-document) is judged where the nearest word or command
           // around it is read; one in a command the walk never reaches, in
           // the session's directory alone.
+          // A command that changes how the shell reads words (`setopt`, an
+          // unusual `shopt` or `set` option) is read strictly.
+          const strict = readsStrictly(parsed.list)
           const where = new Map<Word, Set<string>>()
           for (const point of walk.points)
             for (const w of point.words) {
@@ -2036,15 +2047,23 @@ export class Guard {
             let at = [...(where.get(w) ?? [])]
             for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
               if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
-            const read = spellings(w, { home, homeKnown, strict: false })
-            for (const spelling of read === 'any' ? [] : read) {
+            const read = spellings(w, { home, homeKnown, strict })
+            // A zsh expansion that rewrites text written in the command:
+            // the word could be any name.
+            if (read === 'any')
+              return this.deny(
+                `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
+                false
+              )
+            const dots = dotsMatch(w, strict)
+            for (const spelling of read) {
               const name = dialect === 'ps' ? spelling.replace(/\\/g, '/') : spelling
               for (const piece of pieces(name)) {
-                const h = /[*?[]/.test(piece)
+                const h = /[*?[\ue000]/.test(piece)
                   ? {
                       written: false,
                       mcp: null,
-                      rawOnly: globMayBeRawOnly(piece, this.extraRawOnly),
+                      rawOnly: globMayBeRawOnly(piece, this.extraRawOnly, dots),
                     }
                   : await this.spelledHits(piece, at)
                 if (h.written) return this.denyProtected([h])

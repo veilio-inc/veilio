@@ -458,13 +458,23 @@ export type Part =
       kind: 'param'
       name: string
       op: string
-      /** The value written after `:-`, `-`, `:=`, `=`, `:+`, `+`, `:?`, `?`. */
+      /** The value written after `:-`, `-`, `:=`, `=`, `:+`, `+`, `:?`, `?`,
+       *  and (zsh) an expansion standing where the name does. */
       operand?: Word[]
+      /** zsh: the expansion rewrites text written in the command (flags, or
+       *  an operator on an expansion standing where the name does). */
+      transforms?: true
     }
   | { kind: 'subst'; list: List | null }
   /** `substs`: the commands of the `$(...)` and backticks inside. */
   | { kind: 'arith'; text: string; substs?: List[] }
   | { kind: 'glob'; text: string }
+  /** zsh: a group or qualifier glued to a word (`any`: any text may stand
+   *  there), or a numeric range `<1-9>` (digits). `qualifier`: parentheses
+   *  that end the word, hold no `|`, `(` or `~` and follow no `@ + ! ? *` -
+   *  zsh reads them as glob qualifiers (`*.ts(om)`), not as text. `star`:
+   *  parentheses after the word's own `*` (`*(.)`, ksh's `*(x)`): that `*`. */
+  | { kind: 'zglob'; text: string; any: boolean; qualifier?: true; star?: true }
   | { kind: 'brace'; text: string }
   | { kind: 'tilde'; user: string }
   | { kind: 'ansic'; text: string }
@@ -570,6 +580,18 @@ function substsOf(words: readonly Word[]): List[] {
       else if (p.kind === 'param') out.push(...substsOf(p.operand ?? []))
     }
   return out
+}
+
+/** Whether words hold text written in the command (not only what the shell
+ *  fills in when it runs). */
+function holdsText(words: readonly Word[]): boolean {
+  return words.some((w) =>
+    w.parts.some((p) =>
+      p.kind === 'param'
+        ? holdsText(p.operand ?? [])
+        : p.kind !== 'subst' && p.kind !== 'arith' && p.kind !== 'tilde'
+    )
+  )
 }
 
 /** An assignment's value: `~` at its start and after each unquoted `:` is a
@@ -689,8 +711,12 @@ class Reader {
     const out: List[] = []
     for (let k = 0; k < body.length; k++) {
       const tick = body[k] === '`'
-      if (!tick && !(body[k] === '$' && body[k + 1] === '(' && body[k + 2] !== '(')) continue
-      if (body[k - 1] === '\\' && !quoted) continue
+      if (!tick && !(body[k] === '$' && body[k + 1] === '(')) continue
+      // Under a plain delimiter an odd run of backslashes before it escapes
+      // it; an even run is backslashes, and the substitution runs.
+      let slashes = 0
+      while (body[k - 1 - slashes] === '\\') slashes++
+      if (!quoted && slashes % 2 === 1) continue
       const frames = this.frames.n
       try {
         const r = new Reader(body, this.depth, this.frames)
@@ -701,6 +727,9 @@ class Reader {
           const p = parts[0]
           if (p?.kind === 'subst' && p.list) out.push(p.list)
         } else {
+          // `$((` closed by `))` is arithmetic: the substitutions inside it
+          // are met as the scan goes on. Otherwise it is a command.
+          if (body[k + 2] === '(' && r.arithEnd(k + 3) !== -1) continue
           r.i += 2
           out.push(r.list(new Set([')'])))
           r.expect(')')
@@ -1014,7 +1043,12 @@ class Reader {
     if (DECLARES.has(program))
       for (const w of words.slice(1)) {
         const a = declared(w)
-        if (a) w.assign = a
+        if (!a) continue
+        // `declare -a f=(a b)`: the array's words.
+        const [only, ...more] = Array.isArray(a.value) ? [] : a.value.parts
+        if (only?.kind === 'glob' && more.length === 0 && /^\([^]*\)$/.test(only.text))
+          a.value = this.inner(only.text.slice(1, -1)).map(tildes)
+        w.assign = a
       }
     const nested = this.nestedOf(words, redirects)
     if (nested) simple.nested = nested
@@ -1033,7 +1067,12 @@ class Reader {
     } else if (SHELL_PROGRAM.test(program)) {
       for (let j = k + 1; j < words.length; j++) {
         const w = words[j]!.literal
-        if (w === null || !w.startsWith('-')) break
+        if (w === null || !/^[-+]/.test(w)) break
+        // `-o name`, `+o name`, `-O name`: the option's name is not the script.
+        if (/^[-+][A-Za-z]*[oO]$/.test(w)) {
+          j++
+          continue
+        }
         const c = /^-[A-Za-z]*?c(.*)$/s.exec(w)
         if (c) {
           // `sh -c'cat x'`: the script attached to the option, read as the
@@ -1244,19 +1283,52 @@ class Reader {
         const m = /^~([A-Za-z0-9_.+-]*)/.exec(s.slice(this.i))!
         parts.push({ kind: 'tilde', user: m[1]! })
         this.i += m[0].length
-      } else if (c === '(' && args) {
+      } else if (c === '(' && (args || (parts.length > 0 && !/^\(\s*\)/.test(s.slice(this.i))))) {
         const end = this.parenEnd(this.i)
-        if (end === -1) throw new Unreadable('unbalanced')
-        parts.push({ kind: 'glob', text: s.slice(this.i, end) })
+        if (end === -1) {
+          if (!args) break
+          throw new Unreadable('unbalanced')
+        }
+        const text = s.slice(this.i, end)
+        // zsh: a group or qualifier glued to a word stands for any text
+        // there, with the `@`, `+`, `!`, `?` or `*` before it (ksh's groups).
+        // `name=(a b)` given to a declaration is an array: read in simple().
+        const array =
+          parts.length === 1 && parts[0]!.kind === 'lit' && /^\w+\+?=$/.test(s.slice(start, this.i))
+        if (!array && text.length > 2 && (parts.length > 0 || this.continues(end))) {
+          const last = parts[parts.length - 1]
+          let grouped = false
+          let star = false
+          if (last?.kind === 'glob' && /^[?*]$/.test(last.text)) {
+            parts.pop()
+            grouped = true
+            star = last.text === '*'
+          } else if (last?.kind === 'lit' && !last.quoted && /[@+!]$/.test(last.text)) {
+            last.text = last.text.slice(0, -1)
+            if (last.text === '') parts.pop()
+            grouped = true
+          }
+          const part: Part = { kind: 'zglob', text, any: true }
+          if (star) part.star = true
+          else if (!grouped && !this.continues(end) && !/[|(~]/.test(text.slice(1, -1)))
+            part.qualifier = true
+          parts.push(part)
+        } else parts.push({ kind: 'glob', text })
         this.i = end
-      } else if ((c === '<' || c === '>') && s[this.i + 1] === '(') {
+      } else if (
+        ((c === '<' || c === '>') && s[this.i + 1] === '(') ||
+        // zsh: `=(cmd)` at a word's start is the command's output in a file.
+        (c === '=' && atStart && s[this.i + 1] === '(')
+      ) {
         this.i += 2
         const list = this.list(new Set([')']))
         this.expect(')')
         parts.push({ kind: 'subst', list })
       } else if (c === '<' && /^<\d*-\d*>/.test(s.slice(this.i))) {
         const m = /^<\d*-\d*>/.exec(s.slice(this.i))!
-        parts.push({ kind: 'glob', text: m[0] })
+        // zsh: glued to a word, a range of numbers.
+        const glued = parts.length > 0 || this.continues(this.i + m[0].length)
+        parts.push(glued ? { kind: 'zglob', text: m[0], any: false } : { kind: 'glob', text: m[0] })
         this.i += m[0].length
       } else if (/[ \t\r\n;&|()<>]/.test(c)) break
       else {
@@ -1268,6 +1340,11 @@ class Reader {
     }
     if (this.i === start) return null
     return makeWord(parts, s.slice(start, this.i))
+  }
+
+  /** Whether the word goes on at `at`. */
+  private continues(at: number): boolean {
+    return at < this.s.length && !/[ \t\r\n;&|()<>]/.test(this.s[at]!)
   }
 
   /** Where a `{a,b}` or `{1..3}` brace expansion ends, or -1 when the `{` is
@@ -1365,13 +1442,32 @@ class Reader {
       const m = /^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])/.exec(inner)
       const name = m ? m[0].replace(/^[#!](?=.)/, '') : ''
       const op = inner.slice(m ? m[0].length : 0)
+      // zsh: flags (`${(L)x}`), and an expansion where the name stands
+      // (`${${x}...}`); then the name, and what follows it.
+      const flags = /^\((?:[^()]|\([^()]*\))*\)/.exec(inner)?.[0] ?? ''
+      let rest = inner.slice(flags.length)
+      const named: Word[] = []
+      if (/^\$[{(]/.test(rest)) {
+        if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+        const r = new Reader(rest, this.depth, this.frames)
+        const inside: Part[] = []
+        r.dollar(inside, quoted)
+        this.frames.n--
+        named.push(makeWord(inside, rest.slice(0, r.i)))
+        rest = rest.slice(r.i)
+      } else
+        rest = rest.slice(/^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])?/.exec(rest)![0].length)
       // A value written in the command, past a subscript (`${a[0]:-v}`).
-      const written = /^(?:\[[^\]]*\])?:?[-=+?]/.exec(op)
-      parts.push(
-        written
-          ? { kind: 'param', name, op, operand: this.operand(op.slice(written[0].length), quoted) }
-          : { kind: 'param', name, op }
-      )
+      const written = /^(?:\[[^\]]*\])?:?[-=+?]/.exec(rest)
+      const operand = [
+        ...named,
+        ...(written ? this.operand(rest.slice(written[0].length), quoted) : []),
+      ]
+      const part: Part = { kind: 'param', name, op }
+      if (written || named.length > 0) part.operand = operand
+      if ((flags !== '' || (named.length > 0 && rest !== '')) && holdsText(operand))
+        part.transforms = true
+      parts.push(part)
       this.i = j + 1
     } else if ((next === "'" || next === '"') && !quoted) {
       let j = this.i + 2

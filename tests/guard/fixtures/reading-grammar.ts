@@ -217,16 +217,19 @@ const innerStar: Operator['edits'] = (c, everywhere) => {
   return out
 }
 
-/** A leading `*` for a part's leading dot, with the option that lets it match. */
+/** A leading `*` for a part's leading dot, with what lets it match: an
+ *  option set before the command, or zsh's `(D)` qualifier behind the word. */
 const dotStar =
-  (pre: string, shell: Shell): Operator['edits'] =>
+  (pre: string, shell: Shell, tail = ''): Operator['edits'] =>
   (c) => {
     if (c.name[0] !== '.') return []
     return [
       (s) => {
         if (s.whole !== null || s.pre !== '' || s.atoms[0]!.kind !== 'plain') return false
+        if (tail !== '' && (s.tail !== '' || s.wrap.length > 0)) return false
         s.atoms[0] = { text: '*', kind: 'wild' }
         s.pre = pre
+        if (tail !== '') s.tail = tail
         only(shell)(s)
         return true
       },
@@ -389,19 +392,23 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'O25',
-    edits: (c, everywhere) =>
-      perChar(
-        globbable,
-        () => ['?'],
-        'wild'
-      )(c, everywhere).flatMap((e) =>
-        ['(.)', '(N)'].map((tail): Edit => (s) => {
-          if (s.tail !== '' || s.wrap.length > 0 || !e(s)) return false
-          s.tail = tail
-          only('zsh')(s)
-          return true
-        })
-      ),
+    edits: both(
+      (c, everywhere) =>
+        perChar(
+          globbable,
+          () => ['?'],
+          'wild'
+        )(c, everywhere).flatMap((e) =>
+          ['(.)', '(N)'].map((tail): Edit => (s) => {
+            if (s.tail !== '' || s.wrap.length > 0 || !e(s)) return false
+            s.tail = tail
+            only('zsh')(s)
+            return true
+          })
+        ),
+      // `(D)`: the word's wildcards match a leading dot.
+      dotStar('', 'zsh', '(D)')
+    ),
   },
   { id: 'O26', edits: digitRun(() => ['<->', '<1-99999>'], 'wild', 'zsh') },
   {
