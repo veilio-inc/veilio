@@ -49,9 +49,9 @@ export const ME = 'me@example.test'
 export const TEAMMATE = 'ada@example.test'
 export const PASSPHRASE = 'correct horse battery staple'
 export const SALT = new Uint8Array(32).fill(9)
-/** Low on purpose: every test derives the key, and 600k iterations per test is
- *  minutes of CPU for no extra coverage. The client reads it from the vault. */
-export const ITERATIONS = 1000
+/** The client refuses a vault below this cost (vault-key.ts), so the fixture
+ *  has to be at it. The client reads it from the vault. */
+export const ITERATIONS = 600_000
 export const TEAM_RAW = new Uint8Array(32).fill(7)
 export const PMK_RAW = new Uint8Array(32).fill(5)
 export const TEAM_ID = 'team-1'

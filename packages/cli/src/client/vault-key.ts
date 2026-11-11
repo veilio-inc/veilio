@@ -9,8 +9,10 @@
 
 import {
   checkVaultVerifier,
+  CURRENT_VAULT_KDF,
   deriveVaultKey,
   fromBase64,
+  parseKdfParams,
   type CryptoKeyLike,
 } from '@veilio-inc/engine'
 import { getVault } from '../cloud.js'
@@ -32,11 +34,17 @@ export async function vaultKeyFor(
   if (!vault.initialized) return refuse('no_vault')
   const typed = passphrase ? await passphrase() : ''
   if (typed === '') return refuse('no_passphrase')
-  const key = await deriveVaultKey(
-    typed,
-    fromBase64(vault.salt),
-    vault.kdf ? { name: 'PBKDF2-SHA256', iterations: vault.kdf.iterations } : undefined
-  )
+  // The server chooses this number. Bounded above by the engine (a hostile
+  // value would pin this process) and below by today's cost (a weakened vault
+  // would be opened - and its passphrase attacked - at a price the server set).
+  let kdf
+  try {
+    kdf = parseKdfParams(vault.kdf, CURRENT_VAULT_KDF)
+  } catch {
+    return refuse('vault_kdf_refused')
+  }
+  if (kdf.iterations < CURRENT_VAULT_KDF.iterations) return refuse('vault_kdf_refused')
+  const key = await deriveVaultKey(typed, fromBase64(vault.salt), kdf)
   // Before anything is opened, sealed or written: a wrong passphrase is named
   // as one, rather than surfacing later as an authentication-tag failure that
   // reads like corruption - or as a key wrapped for good under the wrong one.
