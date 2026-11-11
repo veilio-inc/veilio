@@ -124,6 +124,31 @@ describe('spellings: the reading table', () => {
     expect([...spell(word)].sort()).toEqual([...expected].sort())
   })
 
+  test.each([
+    ['"$a.$b"', ['.']],
+    ['$f.txt', ['.txt']],
+    ['$BASE..$HEAD', ['..']],
+    ['"$(pwd)":/app', [':/app']],
+    [`$Z.e''nv`, ['.env']],
+    ['.e${Z}nv', ['.env']],
+    ['$DIR/.env', ['**/.env']],
+    ['$A/$B', []],
+    ['$F', []],
+    ['"$1"', []],
+    ['secrets/$f', ['secrets/**']],
+    ['id_ed$((25519))', ['id_ed*']],
+    ['f$((i+1)).txt', ['f*.txt']],
+    ['$((n))', []],
+    ['logs/$((n))', ['logs/**']],
+    ['.e$(echo n)v', ['.ev']],
+    ['${x}nv', ['nv']],
+    ['sec$X/customers.csv', ['sec/customers.csv']],
+    ['"$(pwd)"/src', ['**/src']],
+    ['`pwd`/.env', ['**/.env']],
+  ])('E10, E12: %s is read as %j', (word, expected) => {
+    expect(spell(word)).toEqual(expected)
+  })
+
   test('E6, E7: with HOME set in the command, ~ and $HOME are any folder', () => {
     expect(spell('~/x', { homeKnown: false })).toEqual(['**/x'])
     expect(spell('$HOME/x', { homeKnown: false })).toEqual(['**/x'])

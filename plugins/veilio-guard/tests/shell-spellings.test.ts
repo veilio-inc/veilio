@@ -92,6 +92,16 @@ const REFUSED = [
   `cat server.pe?`,
   // $PWD after a cd is not the session's directory.
   `cd src && cat "$PWD"/../secrets/customers.csv`,
+  // A part the shell fills in at run time is read as nothing beside other
+  // text, and as any folder on its own: what is left names the file.
+  `cat .e\${Z}nv`,
+  `cat .env$X`,
+  `cat $X.pem`,
+  `cat $STAGE.env`,
+  `cat secrets$X/customers.csv`,
+  `cat secrets/$f`,
+  `cat $DIR/.env`,
+  `cat id_ed$((25519))`,
 ]
 for (const command of REFUSED)
   test(`refused: ${command}`, async ($, on) => {
@@ -127,9 +137,47 @@ const ALLOWED = [
   `mkdir -p {a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}`,
   `mkdir -p src/{a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}`,
   `cat {a,b}{.e,x}nvx`,
+  // Spec 091: a variable or a command's output beside other text.
+  `echo "$a.$b"`,
+  `echo "$major.$minor"`,
+  `cat $f.txt`,
+  `git diff $BASE..$HEAD -- src`,
+  `git log --oneline $(git merge-base main HEAD)..HEAD`,
+  `docker run -v "$(pwd)":/app img`,
+  `tar czf "$name.tar.gz" src`,
+  `mv "$f" "\${f%.txt}.md"`,
+  `ssh "$user@$host" ls`,
+  `git log "$a...$b"`,
 ]
 for (const command of ALLOWED)
   test(`still allowed: ${command}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny, command).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+
+// The documented limits (COVERAGE.md "Not covered"): a name that exists only
+// when the command runs is not read, nor is a path part that is only
+// wildcards. Pinned as running, so the documents cannot say otherwise.
+const LIMITS: [limit: string, command: string][] = [
+  ['L1 a variable set earlier holds the name', `cat $F`],
+  ['L1 a variable holds part of the name', `x=.e; cat \${x}nv`],
+  ['L1 a variable completes a folder name', `cat sec$X/customers.csv`],
+  ['L2 a command prints part of the name', `cat .e$(echo n)v`],
+  ['L2 a quoted command prints part of the name', `cat .e"$(echo n)"v`],
+  ['L2 names arrive on a pipe', `ls | xargs cat`],
+  ['L3 a script opens the file itself', `python3 -c 'open(".e"+"nv")'`],
+  ['L3 find runs the command', `find . -name '.en*' -exec cat {} +`],
+  ['L3 a search over a directory', `grep -r KEY .`],
+  ['L4 a path part that is only wildcards', `cat */customers.csv`],
+  ['L5 a prefix wildcard against *.pem', `cat server.p*`],
+  ['L6 names from a file on a pipe', `cat list.txt | xargs cat`],
+]
+for (const [limit, command] of LIMITS)
+  test(`a name built at run time is not read: ${limit}: ${command}`, async ($, on) => {
     project(on, FILES)
     let ran = false
     on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))

@@ -34,8 +34,28 @@ export const wordsOf = (list: List): Word[] => wordsWithin(list).map((p) => p.wo
 
 /** A wildcard or brace character that was quoted: an ordinary character. */
 const QUOTED = '\u0001'
-/** A part the shell fills in when the command runs. */
-const UNKNOWN = '\u0002'
+/** A part the shell fills in when the command runs (a private-use character). */
+const UNKNOWN = '\ue002'
+/** An arithmetic expansion: digits the shell works out when the command runs. */
+const NUMBER = '\ue004'
+const RUN_TIME = /[\ue002\ue004]/g
+
+/** A spelling with its run-time parts read (reading table E10, E12): beside
+ *  other text in a path part, a value is nothing and a number is `*`; a path
+ *  part of its own is any folder. Null for a word made only of them: it
+ *  names nothing the command says. */
+function runTime(text: string): string | null {
+  if (text.search(RUN_TIME) === -1) return text
+  if (text.replace(RUN_TIME, '').replaceAll('/', '') === '') return null
+  return text
+    .split('/')
+    .map((part) =>
+      part !== '' && part.replace(RUN_TIME, '') === ''
+        ? '**'
+        : part.replaceAll(UNKNOWN, '').replaceAll(NUMBER, '*')
+    )
+    .join('/')
+}
 const quote = (t: string) => t.replace(/[*?[\]{},]/g, QUOTED)
 const MAX_SPELLINGS = 64
 
@@ -63,8 +83,12 @@ function bracketList(glob: string): string | null {
 /** What the shell can make of a word, as names and globs, by the reading
  *  table: quotes, escapes and ANSI-C quotes read exactly, brace and bracket
  *  lists expanded, `~` and `$HOME` the known home, a default written in the
- *  command one more spelling. `**` stands for any text; a wildcard or brace
- *  character that was quoted is not one. */
+ *  command one more spelling. A part the shell fills in when the command
+ *  runs (`$x`, `$(...)`, `$PWD`, `~user`) is read as nothing beside other
+ *  text and as any folder when it is a whole path part, so `"$a.$b"` is `.`
+ *  and `$DIR/.env` is `.env` in any folder; a word made only of such parts
+ *  has no spelling. `**` stands for any text; a wildcard or brace character that
+ *  was quoted is not one. */
 export function spellings(
   w: Word,
   o: { home: string | null; homeKnown: boolean; strict: boolean }
@@ -84,8 +108,8 @@ export function spellings(
   }
   const out = new Set<string>()
   for (const t of texts) {
-    const read = t.split(UNKNOWN).join('**')
-    for (const name of braceNames(read)) out.add(name)
+    const read = runTime(t)
+    if (read !== null) for (const name of braceNames(read)) out.add(name)
   }
   return [...out]
 }
@@ -119,6 +143,8 @@ function partSpellings(
       }
       return out
     }
+    case 'arith':
+      return [NUMBER]
     default:
       return [UNKNOWN]
   }
