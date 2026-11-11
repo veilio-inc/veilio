@@ -44,6 +44,12 @@ for (const command of [
   `jq -rn '"\\(env.HOME)/.vei" + "lio/map.json"'`,
   `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
   `git commit -m "maps live in ~/.veilio/map.json"`,
+  // A backslash is a separator too, and a backtick a quote.
+  `python3 -c "open(home + '\\\\.vei' + 'lio\\\\x')"`,
+  'node -e \'const d = `.veilio`; require("fs").readdirSync(d)\'',
+  'node -e \'require("fs").readFileSync(h + `/.vei` + `lio/x`)\'',
+  // Code in one word with no blank, quote or parenthesis.
+  `perl -e open\\$f,\\$ENV{HOME}.q{/.veilio/map.json}`,
 ])
   test(`an interpreter command that names Veilio's files is refused: ${command.slice(0, 40)}`, async ($, on) => {
     project(on, {}, { home: HOME })
@@ -75,6 +81,8 @@ for (const command of [
   `echo "see https://docs.veilio.dev/guard"`,
   `node -e "fetch('https://veilio.dev/docs')"`,
   `ls ~/.veilio`,
+  `curl -s https://api.veilio.dev/v1/x?a=.veilio`,
+  `git commit -m "docs: mention .veilio in the README"`,
 ])
   test(`an ordinary interpreter command still runs: ${command}`, async ($, on) => {
     project(on, {}, { home: HOME })

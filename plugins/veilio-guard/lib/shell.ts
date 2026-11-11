@@ -1067,7 +1067,9 @@ class Reader {
     } else if (SHELL_PROGRAM.test(program)) {
       for (let j = k + 1; j < words.length; j++) {
         const w = words[j]!.literal
-        if (w === null || !/^[-+]/.test(w)) break
+        // An option word the command builds: the script may still follow.
+        if (w === null) continue
+        if (!/^[-+]/.test(w)) break
         // `-o name`, `+o name`, `-O name`: the option's name is not the script.
         if (/^[-+][A-Za-z]*[oO]$/.test(w)) {
           j++

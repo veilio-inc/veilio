@@ -105,6 +105,17 @@ export const F2 = [
   `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
   `git commit -m "maps live in ~/.veilio/map.json"`,
   `cat <<< "~/.veil""io/map.json"`,
+  // A backslash is a separator too; a backtick is a quote.
+  `python3 -c "open('C:\\\\Users\\\\me\\\\.veilio\\\\map.json')"`,
+  `python3 -c "open(home + '\\\\.vei' + 'lio\\\\x')"`,
+  'node -e \'require("fs").readFileSync(`${process.env.HOME}/.veilio/x`)\'',
+  'node -e \'const d = `.veilio`; require("fs").readdirSync(d)\'',
+  'node -e \'require("fs").readFileSync(h + `/.vei` + `lio/x`)\'',
+  // Code in one word with no blank, quote, parenthesis or `+`.
+  "node -e 'require`fs`.readdirSync`.veilio`'",
+  `perl -e open\\$f,\\$ENV{HOME}.q{/.veilio/map.json}`,
+  `ruby -e puts\\[IO.read\\[ENV.fetch\\[%q{HOME}\\]<<%q{/.veilio/x}\\]\\]`,
+  `php -r readfile\\[\\$_ENV{HOME}.DIRECTORY_SEPARATOR.q{.veilio/x}\\]\\;`,
 ]
 /** F4: a spelled name in a position the earlier check did not see. */
 const F4 = [
@@ -169,6 +180,15 @@ const F7 = [
   `cat *nv(D)`,
   `builtin setopt extendedglob; cat .eq#nv`,
   `zsh -o extendedglob -c 'cat .eq#nv'`,
+  `bash -O dotglob -c 'cat *nv'`,
+  `zsh -o globdots -c 'cat *nv'`,
+  `zsh --globdots -c 'cat *nv'`,
+  `zsh -4 -c 'cat *nv'`,
+  `zsh "$FLAGS" -c 'cat *nv'`,
+  `options[globdots]=on; cat *nv`,
+  `options=(globdots on); cat *nv`,
+  `S=setopt; $S globdots; cat *nv`,
+  `noglob builtin $S globdots; cat *nv`,
 ]
 /** A here-document's body: what the shell runs in it is read. */
 const HEREDOC = [
@@ -593,6 +613,24 @@ const PLAIN: readonly string[] = [
   `true && echo ok`,
   `cd src && ls`,
   `(cd src && ls)`,
+  // Read strictly, and still run: strict reading is not a refusal.
+  `bash -c 'rm -f *.o'`,
+  `bash -lc 'ls *.ts'`,
+  `sh -ec 'ls src/*.ts'`,
+  `bash -x scripts/build.sh`,
+  `bash -euo pipefail -c 'ls *.md'`,
+  `bash --noprofile --norc -c 'ls *.ts'`,
+  `"$EDITOR" notes.txt`,
+  `"$(command -v node)" scripts/run.js *.json`,
+  `setopt extendedglob; ls src/*.ts`,
+  // A plain path under ~/.veilio's own folder name, a web address and a
+  // mention are not text that names the folder.
+  `ls -d ~/.veilio`,
+  `du -sh ~/.veilio`,
+  `curl -s https://api.veilio.dev/x`,
+  `curl -s -o out.json https://api.veilio.dev/v1/x?a=.veilio`,
+  `echo "see .veilio docs"`,
+  `git commit -m "docs: mention .veilio in the README"`,
   `pushd src >/dev/null; ls; popd >/dev/null`,
 ]
 

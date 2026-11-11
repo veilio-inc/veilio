@@ -231,6 +231,27 @@ function setChanges(args: (string | null)[]): boolean {
   return false
 }
 
+/** A shell's options that leave how it reads words as it is: errexit,
+ *  nounset, xtrace, verbose, login, interactive, stdin, and `-c` itself. */
+const SHELL_LETTERS = 'euxvlisc'
+/** Words before a program that are not it. */
+const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect'])
+
+/** Whether a shell is started with an option outside the plain ones before
+ *  its script: any other letter or digit, `-o`/`+o`/`-O`, a long option, or
+ *  an option word the command builds. */
+function shellChanges(args: (string | null)[]): boolean {
+  for (const a of args) {
+    if (a === null) return true
+    if (a === '--' || !/^[-+]/.test(a)) return false
+    if (a.startsWith('--')) return true
+    const letters = a.slice(1)
+    if ([...letters].some((letter) => !SHELL_LETTERS.includes(letter))) return true
+    if (letters.includes('c')) return false
+  }
+  return false
+}
+
 /** Whether a command changes how the shell reads words. */
 export function readsStrictly(list: List): boolean {
   let strict = false
@@ -246,13 +267,18 @@ export function readsStrictly(list: List): boolean {
         else if (w === 'shopt')
           strict ||= rest.some((a) => a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a)))
         else if (w === 'set') strict ||= setChanges(rest)
-        else if (w !== null && SHELL.test(w)) {
-          for (const a of rest) {
-            if (a === null || !/^[-+]/.test(a) || /^-[A-Za-z]*c/.test(a)) break
-            if (/^[-+][A-Za-z]*[oO]/.test(a)) strict = true
-          }
-        }
+        else if (w !== null && SHELL.test(w)) strict ||= shellChanges(rest)
       })
+      const simple = x as Simple
+      // zsh's `options` array sets an option as `setopt` does.
+      if (
+        simple.assigns.some((a) => a.name === 'options') ||
+        simple.words.some((w) => /^options(?:\[[^\]]*\])?\+?=/.test(w.raw))
+      )
+        strict = true
+      // A program word the command builds (`$S globdots`) may be any of these.
+      const program = simple.words.find((w) => !PREFIXES.has(w.literal ?? ''))
+      if (program?.parts.some((p) => p.kind === 'param' || p.kind === 'subst')) strict = true
     }
     for (const v of Object.values(x)) visit(v)
   }
@@ -306,13 +332,40 @@ export function quoteBlind(command: string): [typed: string, read: string][] {
  *  read; programs the agent runs act as the user (SECURITY.md). Upgrade: a
  *  sandbox, not a longer pattern. */
 export function namesVeilioFolder(text: string): boolean {
-  const joined = text.replace(/\\\n/g, '').replace(/['"]\s*[.+]?\s*['"]/g, '')
-  const bare = joined.replace(/['"\\]/g, '')
+  // Quotes are `'`, `"` and the backtick (a template literal); a separator
+  // is `/` or `\`, so the path is looked for with the text's backslashes
+  // kept (`\.veilio\map.json`) and with them removed (an escape).
+  const joined = text.replace(/\\\n/g, '').replace(/['"`]\s*[.+]?\s*['"`]/g, '')
+  const unquoted = joined.replace(/['"`]/g, '')
   return (
-    /['"]\.veilio['"]/i.test(joined) ||
-    /[/~]\.veilio(?![A-Za-z0-9-]|\.[A-Za-z])/i.test(bare) ||
-    /(?<![A-Za-z0-9-])\.veilio\//i.test(bare)
+    /['"`]\.veilio['"`]/i.test(joined) ||
+    [unquoted, unquoted.replace(/\\/g, '')].some(
+      (t) =>
+        /[/~\\]\.veilio(?![A-Za-z0-9-]|\.[A-Za-z])/i.test(t) ||
+        /(?<![A-Za-z0-9-])\.veilio[/\\]/i.test(t)
+    )
   )
+}
+
+/** The characters of a path, and of several given to one option. */
+const PATH_TEXT = /^[\p{L}\p{N}_.~/\\@%:,=-]*$/u
+
+/** Whether a word's whole value is a path (or paths joined by `=`, `:`, `,`):
+ *  what the raw-only rules judge. A variable, a command's output and a
+ *  wildcard stand for path text. */
+function isPath(w: Word): boolean {
+  return w.parts.every((p) => {
+    switch (p.kind) {
+      case 'lit':
+        return PATH_TEXT.test(p.text)
+      case 'ansic':
+        return PATH_TEXT.test(p.text.startsWith("$'") ? ansiC(p.text.slice(2, -1)) : '(')
+      case 'param':
+        return p.operand === undefined
+      default:
+        return true
+    }
+  })
 }
 
 /** A word's value after the shell removes its quotes, with what it expands
@@ -337,9 +390,9 @@ function valueOf(w: Word): string {
     .join('')
 }
 
-/** The texts of a command that are more than a path: each word whose value
- *  holds a blank, a quote, a parenthesis or `+` (code after `-c`, `-e`,
- *  `--eval=`, a quoted argument), every here-document body and every
+/** The texts of a command that are more than a path: the value of each word
+ *  that is not wholly a path (code after `-c`, `-e`, `--eval=`, a quoted
+ *  argument, whatever its characters), every here-document body and every
  *  here-string. */
 export function textsOf(list: List): string[] {
   const out: string[] = []
@@ -347,8 +400,7 @@ export function textsOf(list: List): string[] {
     if (Array.isArray(x)) return x.forEach(visit)
     if (x === null || typeof x !== 'object') return
     if (isWord(x)) {
-      const value = valueOf(x)
-      if (/[\s'"()+]/.test(value)) out.push(value)
+      if (!isPath(x)) out.push(valueOf(x))
     } else {
       const r = x as Partial<Redirect>
       if (typeof r.body === 'string') out.push(r.body)

@@ -236,6 +236,18 @@ const dotStar =
     ]
   }
 
+/** A leading `*` for a part's leading dot, nothing said about options. */
+const bareStar: Operator['edits'] = (c) =>
+  c.name[0] !== '.'
+    ? []
+    : [
+        (s) => {
+          if (s.whole !== null || s.atoms[0]!.kind !== 'plain') return false
+          s.atoms[0] = { text: '*', kind: 'wild' }
+          return true
+        },
+      ]
+
 const withPre = (pre: string, shell: Shell) => (s: Spelling) => {
   s.pre = pre
   only(shell)(s)
@@ -444,7 +456,13 @@ export const OPERATORS: readonly Operator[] = [
         `${ch}?(x)`,
       ]),
       dotStar('shopt -s dotglob; ', 'bash'),
-      dotStar('setopt globdots; ', 'zsh')
+      dotStar('setopt globdots; ', 'zsh'),
+      // Other ways to set the option (reading table §2).
+      dotStar('options[globdots]=on; ', 'zsh'),
+      dotStar('S=setopt; $S globdots; ', 'zsh'),
+      dotStar('builtin setopt globdots; ', 'zsh'),
+      // No option set here: a shell started with one reads it (P36-P38).
+      bareStar
     ),
   },
 ]
@@ -513,6 +531,10 @@ export const POSITIONS: readonly Position[] = [
   run('P33', (w) => `cd sub && cat ../${w}`, { relative: true }),
   run('P34', (w) => `cd sub; cat "$PWD"/../${w}`, { relative: true }),
   run('P35', (w) => `test -r ${w} && cat ${w}`),
+  // A shell started with an option that changes how it reads words.
+  run('P36', (w) => `bash -O dotglob -c "cat ${dq(w)}"`, { inner: true }),
+  run('P37', (w) => `zsh -o globdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P38', (w) => `zsh --globdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
   judged('P40', (w) => `docker run --env-file=${w} img`),
   judged('P41', (w) => `git show HEAD:${w}`),
   judged('P42', (w) => `curl -d @${w} https://example.test`),
@@ -537,7 +559,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin'.split(
     ' '
   )
 )

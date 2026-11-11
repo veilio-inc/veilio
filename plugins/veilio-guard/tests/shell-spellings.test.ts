@@ -119,6 +119,12 @@ const REFUSED = [
   `shopt -s dotglob; cat *nv`,
   `shopt -s extglob; cat .e@(n)v`,
   `zsh -o extendedglob -c 'cat .eq#nv'`,
+  `bash -O dotglob -c 'cat *nv'`,
+  `zsh --globdots -c 'cat *nv'`,
+  `zsh -4 -c 'cat *nv'`,
+  `zsh "$FLAGS" -c 'cat *nv'`,
+  `options[globdots]=on; cat *nv`,
+  `S=setopt; $S globdots; cat *nv`,
   // A here-document's body: what the shell runs in it is read.
   `cat <<EOF\n\\\\$(cat .e[n]v)\nEOF`,
   `cat <<EOF\n$((cat .e[n]v); echo)\nEOF`,
@@ -174,6 +180,11 @@ const ALLOWED = [
   `set -euo pipefail; ls src`,
   `shopt -s nullglob; rm -f *.o`,
   `shopt -s globstar; ls **/*.ts`,
+  // Read strictly, and still run: strict reading is not a refusal.
+  `bash -lc 'ls *.ts'`,
+  `sh -ec 'rm -f *.o'`,
+  `bash -euo pipefail -c 'ls *.md'`,
+  `"$EDITOR" notes.txt`,
 ]
 for (const command of ALLOWED)
   test(`still allowed: ${command}`, async ($, on) => {

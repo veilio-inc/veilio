@@ -278,6 +278,17 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'zsh -o extendedglob -c ls',
     'bash -O extglob -c ls',
     'bash +o posix -c ls',
+    'zsh --globdots -c ls',
+    'zsh -4 -c ls',
+    'zsh -G -c ls',
+    'zsh "$FLAGS" -c ls',
+    'bash --noprofile -c ls',
+    'options[globdots]=on; ls',
+    'options=(globdots on); ls',
+    'typeset options[globdots]=on; ls',
+    'S=setopt; $S globdots; ls',
+    'noglob builtin $S globdots; ls',
+    '"$(echo setopt)" globdots; ls',
     'echo "$(setopt globdots; ls)"',
     '{ setopt globdots; }; ls',
   ])('§2: %s is read strictly', (command) => {
@@ -294,6 +305,12 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'shopt -u failglob; ls',
     'bash -c "ls"',
     'bash -lc "ls"',
+    'sh -ec "ls"',
+    'bash -x script.sh',
+    'bash -- script.sh',
+    'bash script.sh --globdots',
+    'echo "$x"',
+    'F=1 ls',
     'npm config set registry https://example.test',
     'git remote set-url origin x',
     'ls',
@@ -405,7 +422,11 @@ describe("text that names Veilio's folder as a path (reading table §4, FR-011)"
     `node -e "fetch('https://veilio.dev/docs')"`,
     'echo "see .veilio docs"',
     'cat notes/.veilio-x.txt',
-    'grep -r "\\.veilio\\b" src',
+    'cd ~/.veilio',
+    'ls -d ~/.veilio',
+    'curl -s https://api.veilio.dev/x',
+    'cat "$DIR/.veilio/map.json"',
+    'docker run --env-file=~/.veilio/x img',
   ])('not text that names the folder: %s', (command) => {
     expect(names(command)).toBe(false)
   })
@@ -421,6 +442,13 @@ describe("text that names Veilio's folder as a path (reading table §4, FR-011)"
     ['notes/.veilio-x.txt', false],
     ['see .veilio docs', false],
     ['x.veilio/y', false],
+    ["open('C:\\\\Users\\\\me\\\\.veilio\\\\map.json')", true],
+    ["home + '\\\\.vei' + 'lio\\\\x'", true],
+    ['`${h}/.veilio/x`', true],
+    ['const d = `.veilio`', true],
+    ['h + `/.vei` + `lio/x`', true],
+    ['open$f,$ENV{HOME}.q{/.veilio/map.json}', true],
+    ['https://api.veilio.dev/v1/x?a=.veilio', false],
   ])('%s -> %s', (text, expected) => {
     expect(namesVeilioFolder(text)).toBe(expected)
   })

@@ -25,7 +25,7 @@ test('the corpora are what the reading table asks for', () => {
     ).toBe(true)
   // An ordinary command names no raw-only file and no path under .veilio.
   const named = ORDINARY.filter((c) =>
-    /(?:^|[\s/'"=])(?:\.env|secrets\/|server\.pem|id_ed25519)|[/~]\.veilio(?![-\w])/.test(c)
+    /(?:^|[\s/'"=])(?:\.env|secrets\/|server\.pem|id_ed25519)|[/~]\.veilio\//.test(c)
   )
   expect(named).toEqual([])
 })
