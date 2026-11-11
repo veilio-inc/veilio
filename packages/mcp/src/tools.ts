@@ -81,6 +81,7 @@ import { describeAge } from '@veilio-inc/cli/rules'
 import { PROJECT_TOO_LARGE_NOTE, thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { projectOverride, refusal, rulesSkippedSentences } from '@veilio-inc/cli/client'
+import { rulesWaitingNote } from '@veilio-inc/cli/rules-open'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -373,7 +374,8 @@ function restoreReportLines(report: RestoreReport): string {
 function rulesLine(r: ResolvedRules): string {
   if (r.source === 'none') return 'Custom rules: none'
   const n = `${r.rules.length} custom rule${r.rules.length === 1 ? '' : 's'}`
-  if (r.source === 'cloud') return `Custom rules: ${n} from Cloud`
+  if (r.source === 'cloud')
+    return `Custom rules: ${n} from Cloud${r.waiting?.length ? ` (${rulesWaitingNote(r.waiting)})` : ''}`
   return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
 }
 
@@ -505,7 +507,10 @@ function runAnonymize(
     rulesLine(rules),
     // Beside the source, on every result while it holds: rules the account set
     // were not applied, so the masking is less than its owner expects.
-    ...rulesSkippedSentences(rules.skipped),
+    // The rules line has just said which team's rules wait (spec 092).
+    ...rulesSkippedSentences(
+      rules.waiting?.length ? { ...rules.skipped, teamUnconfirmed: 0 } : rules.skipped
+    ),
     ...(rules.notices ?? []).map((n) => `WARNING: ${n.replace(/^veilio: /, '')}`),
     // Spec 066 R8: on every result while this checkout's last reservation is
     // refused, and whenever this call numbered names on this machine only.

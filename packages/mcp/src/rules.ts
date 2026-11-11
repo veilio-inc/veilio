@@ -16,7 +16,7 @@ import {
   removeRules,
   writeRules,
 } from '@veilio-inc/cli/rules'
-import { openFetchedRules } from '@veilio-inc/cli/rules-open'
+import { openFetchedRules, type RulesWaiting } from '@veilio-inc/cli/rules-open'
 import { NO_RULES_SKIPPED, type RulesSkipped } from '@veilio-inc/cli/client'
 import type { CustomRule } from '@veilio-inc/engine'
 
@@ -32,6 +32,9 @@ export interface ResolvedRules {
   /** Team whitelists new to this member, told once (spec 085 R2-7): on every
    *  result of the session that first saw them. */
   notices?: string[]
+  /** Team rules held back until a key is confirmed (spec 092). Only for
+   *  'cloud': the cache keeps the count alone. */
+  waiting?: RulesWaiting[]
 }
 
 const NONE: ResolvedRules = { source: 'none', rules: [], skipped: NO_RULES_SKIPPED }
@@ -47,7 +50,7 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
     const fetched = await listRules(credential)
     // Opened with the keys on this machine, as `veilio rules pull` opens them:
     // this server has no passphrase to ask for.
-    const { personal, team, skipped } = await openFetchedRules(fetched, credential, home)
+    const { personal, team, skipped, waiting } = await openFetchedRules(fetched, credential, home)
     const rules = mergeRules(personal, team)
     const told = newTeamWhitelists(rules, home)
     // Refresh the CLI's cache too, so `veilio scrub` on this machine agrees
@@ -67,7 +70,7 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
     } catch {
       // ignore
     }
-    return { source: 'cloud', rules, skipped, notices: told.notices }
+    return { source: 'cloud', rules, skipped, notices: told.notices, waiting }
   } catch (err) {
     // The plan no longer includes rules: stop applying the old ones, here and
     // in the CLI, rather than letting a stale whitelist keep names readable.

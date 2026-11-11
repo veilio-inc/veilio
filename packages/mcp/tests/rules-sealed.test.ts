@@ -3,12 +3,15 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { readRules, writeRules } from '@veilio-inc/cli/rules'
-import type { RuleBody } from '@veilio-inc/engine'
+import { writeTeamUnlock } from '@veilio-inc/cli/team-unlock'
+import { toBase64, type RuleBody } from '@veilio-inc/engine'
 import { primeRules, resetRulesCache } from '../src/rules.js'
 import { callTool } from '../src/tools.js'
 import {
   INSTANCE,
   ME,
+  TEAM_ID,
+  TEAM_RAW,
   sealedPersonalRule,
   sealedTeamRule,
   signIn,
@@ -165,6 +168,148 @@ describe('team rules in the MCP server (R2-7, R2-8)', () => {
     serve({ teamRules: [await sealedTeamRule('t1', 0, EXACT)] })
     const resolved = await primeRules(home)
     expect(resolved.rules).toEqual([])
-    expect(anonymize()).toContain('sealed under a team key whose sender you have not confirmed')
+    // Spec 092: said on the rules line, in place of the general sentence.
+    expect(anonymize()).toContain(
+      'Custom rules: 0 custom rules from Cloud (1 team rule for team "team-1" waits for a key confirmation)'
+    )
+  })
+})
+
+// Spec 092: the rules line says how many team rules wait for a key
+// confirmation, and for which team; the general sentence is then left out.
+describe('team rules waiting for a key confirmation (092)', () => {
+  const OTHER_KEY = new Uint8Array(32).fill(6)
+  const GENERAL = 'whose sender you have not confirmed'
+  const planted = (n: number): RuleBody => ({
+    name: `Planted${n}`,
+    type: 'replace',
+    pattern: `^PaymentGateway${n}$`,
+    placeholder: '__GATEWAY__',
+    enabled: true,
+  })
+  /** The team key(s) on disk, none confirmed, as `team unlock` stores them. */
+  function unconfirmed(keys: { version: number; raw: Uint8Array; who: string }[]): void {
+    writeTeamUnlock(
+      {
+        v: 1,
+        instance: INSTANCE,
+        account: ME,
+        teamId: TEAM_ID,
+        teamName: 'Zespół',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        keys: keys.map((k) => ({
+          version: k.version,
+          key: toBase64(k.raw),
+          granter: {
+            id: `u-${k.who}`,
+            publicKey: `GRANTER-${k.who}`,
+            label: `${k.who}@example.com`,
+            current: true,
+          },
+          writable: false,
+        })),
+      },
+      home
+    )
+  }
+  const expectNoSecrets = (text: string): void => {
+    for (const secret of [
+      'Planted',
+      'PaymentGateway',
+      '__GATEWAY__',
+      toBase64(TEAM_RAW),
+      'GRANTER-ola',
+      'ola@example.com',
+    ])
+      expect(text).not.toContain(secret)
+  }
+
+  it('two rules: the parenthesis, word for word, and no general sentence', async () => {
+    signIn(home)
+    unconfirmed([{ version: 1, raw: TEAM_RAW, who: 'ola' }])
+    serve({
+      teamRules: [
+        await sealedTeamRule('r1', 0, planted(1)),
+        await sealedTeamRule('r2', 1, planted(2)),
+      ],
+    })
+    await primeRules(home)
+    const text = anonymize()
+    expect(text).toContain(
+      '\nCustom rules: 0 custom rules from Cloud (2 team rules for team "Zespół" wait for a key confirmation)\n'
+    )
+    expect(text).not.toContain(GENERAL)
+    expectNoSecrets(text)
+  })
+
+  it('one rule: the singular', async () => {
+    signIn(home)
+    unconfirmed([{ version: 1, raw: TEAM_RAW, who: 'ola' }])
+    serve({ teamRules: [await sealedTeamRule('r1', 0, planted(1))] })
+    await primeRules(home)
+    const text = anonymize()
+    expect(text).toContain(
+      '\nCustom rules: 0 custom rules from Cloud (1 team rule for team "Zespół" waits for a key confirmation)\n'
+    )
+    expect(text).not.toContain(GENERAL)
+  })
+
+  it("two granters: the team's total, nobody named", async () => {
+    signIn(home)
+    unconfirmed([
+      { version: 1, raw: TEAM_RAW, who: 'ola' },
+      { version: 2, raw: OTHER_KEY, who: 'jan' },
+    ])
+    serve({
+      teamRules: [
+        await sealedTeamRule('r1', 0, planted(1)),
+        await sealedTeamRule('r2', 1, planted(2), { key: OTHER_KEY, version: 2 }),
+        await sealedTeamRule('r3', 2, planted(3)),
+      ],
+    })
+    await primeRules(home)
+    const text = anonymize()
+    expect(text).toContain(
+      '\nCustom rules: 0 custom rules from Cloud (3 team rules for team "Zespół" wait for a key confirmation)\n'
+    )
+    expect(text).not.toContain('jan@example.com')
+    expectNoSecrets(text)
+  })
+
+  it('with a personal rule applied, the count before the parenthesis is its own', async () => {
+    signIn(home, { pmk: true })
+    unconfirmed([{ version: 1, raw: TEAM_RAW, who: 'ola' }])
+    serve({
+      rules: [await sealedPersonalRule('p1', 0, REPLACE)],
+      teamRules: [
+        await sealedTeamRule('r1', 0, planted(1)),
+        await sealedTeamRule('r2', 1, planted(2)),
+      ],
+    })
+    await primeRules(home)
+    expect(anonymize()).toContain(
+      '\nCustom rules: 1 custom rule from Cloud (2 team rules for team "Zespół" wait for a key confirmation)\n'
+    )
+  })
+
+  it('Cloud unreachable: the cached line and the general sentence, as before', async () => {
+    signIn(home)
+    unconfirmed([{ version: 1, raw: TEAM_RAW, who: 'ola' }])
+    serve({
+      teamRules: [
+        await sealedTeamRule('r1', 0, planted(1)),
+        await sealedTeamRule('r2', 1, planted(2)),
+      ],
+    })
+    await primeRules(home)
+    resetRulesCache()
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    expect((await primeRules(home)).source).toBe('cached')
+    const text = anonymize()
+    expect(text).toMatch(
+      /\nCustom rules: 0 custom rules cached, pulled .* - Cloud did not answer\n/
+    )
+    expect(text).toContain(`2 team rules not applied: they are sealed under a team key ${GENERAL}.`)
+    expect(text).not.toContain('wait for a key confirmation')
   })
 })
