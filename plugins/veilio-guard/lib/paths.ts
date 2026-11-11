@@ -1413,39 +1413,85 @@ export async function walkCd(
 
 // ── security audit 2026-11-11: spellings and interpreters ───────────────────
 
-const INLINE_INTERPRETER =
-  /(?:^|[\s;&|(`])(?:python[\d.]*|pypy[\d]*|node(?:js)?|bun|deno|ruby|perl|php|lua|osascript|pwsh|powershell|(?:ba|z|da|k|c)?sh)(?=\s|$)/i
-const INLINE_CODE = /(?:\s-[A-Za-z]*[cerpEC](?=[\s=]|$)|\s--(?:eval|print|command)\b|<<)/
+const INTERPRETER_NAME =
+  /^(?:python[\d.]*|pypy[\d.]*|node(?:js)?|bun|deno|ruby|perl|php|lua|osascript|pwsh|powershell|tsx|ts-node|Rscript|(?:ba|z|da|k|c)?sh)$/i
+/** Programs that run the next word as a command (`env python3 -c ...`,
+ *  `npx tsx -e ...`). */
+const RUNNERS = new Set([
+  'env',
+  'command',
+  'exec',
+  'nohup',
+  'nice',
+  'sudo',
+  'time',
+  'npx',
+  'bunx',
+  'pnpx',
+])
+const INLINE_FLAG = /^(?:-[A-Za-z]*[cerpEC]|--eval|--print|--command|-Command)$/
+
+function simplesIn(x: unknown, out: Simple[]): void {
+  if (Array.isArray(x)) for (const v of x) simplesIn(v, out)
+  else if (x && typeof x === 'object') {
+    if ((x as { type?: unknown }).type === 'simple') out.push(x as Simple)
+    for (const v of Object.values(x)) simplesIn(v, out)
+  }
+}
 
 /** An interpreter run on code given in the command (-c, -e, --eval, -r, -p, a
- *  heredoc) whose code, once quotes, backslashes, `+` and whitespace are
- *  removed, names `.veilio`: the maps, credentials and keys kept there are read
- *  or changed by a script under a name it builds. Only the inline code or the
- *  heredoc body is read, not the rest of the command.
+ *  heredoc or here-string of its own) whose code, once quotes, backslashes,
+ *  `+` joins and whitespace are removed, names `.veilio`: the maps,
+ *  credentials and keys kept there are read or changed by a script under a
+ *  name it builds. The command name is read from the parsed command (its
+ *  basename, past `env`, `npx` and the like), and only that command's own
+ *  inline code or heredoc is read: a commit message that says "node" and
+ *  ".veilio" is not.
  *
  *  shortcut: defence in depth only. A script can build the name from pieces
  *  this does not join (chr(), a list, an environment variable), and an
- *  interpreter run on a file the agent wrote earlier is not read at all.
- *  Programs the agent runs act as the user (SECURITY.md). Upgrade: a sandbox,
- *  not a longer pattern. */
+ *  interpreter fed on a pipe or run on a file the agent wrote earlier is not
+ *  read at all. Programs the agent runs act as the user (SECURITY.md).
+ *  Upgrade: a sandbox, not a longer pattern. */
 export function interpreterNamesGuardState(command: string): boolean {
-  const names = (text: string) =>
-    // `.veilio`, not `veilio`: a project or a folder named for the product
-    // (a checkout of this repository) must still run its scripts.
-    /\.veilio/i.test(text.replace(/[+\s]/g, ''))
+  // `.veilio`, not `veilio`: a project or a folder named for the product
+  // (a checkout of this repository) must still run its scripts.
   // `"a"."b"` (perl, php) and `"a"+"b"` join like adjacent strings.
-  const unquote = (t: string) => t.replace(/['"]\s*[.+]\s*['"]/g, '').replace(/['"\\]/g, '')
-  const whole = unquote(command)
-  for (const segment of splitChain(command) ?? [command]) {
-    const plain = unquote(segment)
-    if (!INLINE_INTERPRETER.test(plain)) continue
-    const flag = INLINE_CODE.exec(plain)
-    if (!flag) continue
-    // Only the code the interpreter is given: what follows its inline-code
-    // flag, or a heredoc's body (which runs to the end of the command and may
-    // hold `;` and `|`, so it is not cut at them).
-    const code = flag[0] === '<<' ? whole.slice(whole.indexOf('<<')) : plain.slice(flag.index)
-    if (names(code)) return true
+  const names = (text: string) =>
+    /\.veilio/i.test(
+      text
+        .replace(/['"]\s*[.+]\s*['"]/g, '')
+        .replace(/['"\\]/g, '')
+        .replace(/[+\s]/g, '')
+    )
+  const parsed = parseShell(command, 'sh')
+  // A command the reader cannot read: judged on its whole text, which refuses
+  // only one that also names an interpreter.
+  if (!parsed.ok)
+    return names(command) && /\b(?:python|node|ruby|perl|php|sh|bash|tsx|deno|bun)/i.test(command)
+  const simples: Simple[] = []
+  simplesIn(parsed.list, simples)
+  for (const simple of simples) {
+    const words = simple.words
+    let i = 0
+    while (i < words.length) {
+      const name = (words[i]!.literal ?? '').split(/[\\/]/).pop() ?? ''
+      if (INTERPRETER_NAME.test(name)) break
+      if (!RUNNERS.has(name)) {
+        i = words.length
+        break
+      }
+      i++
+      while (i < words.length && (/^-/.test(words[i]!.raw) || /^[A-Za-z_]\w*=/.test(words[i]!.raw)))
+        i++
+    }
+    if (i >= words.length) continue
+    const code: string[] = []
+    for (let k = i + 1; k < words.length; k++)
+      if (INLINE_FLAG.test(words[k]!.raw) && words[k + 1]) code.push(words[k + 1]!.raw)
+    for (const r of simple.redirects)
+      if (r.op.startsWith('<<')) code.push(r.body ?? r.target?.raw ?? '')
+    if (code.some(names)) return true
   }
   return false
 }
@@ -1679,31 +1725,34 @@ function ansiC(text: string): string {
 /** A word as the shell would spell it before it expands anything but quotes
  *  and escapes: plain text, wildcards and braces stay as they are, and a
  *  wildcard or brace that was quoted is made an ordinary character. `$'..'`
- *  is decoded, and a leading `~`, `$HOME` and `${HOME}` are the known `home`.
+ *  and `$".."` are read, a leading `~` and `$HOME` are the known `home`, and
+ *  `$PWD` and `~+` the session directory `cwd`.
  *
- *  Anything else the shell builds (`$x`, `$(...)`, `~user`) is unknown and
- *  stands as `**`, "anything", but only in a word that also has a wildcard or
- *  a brace: `ls $DIR/*.ts` is judged as `**` followed by `/*.ts`, and
- *  `cat $DIR/.v*` as a glob that could be `.veilio`; a word with an unknown
- *  part and no wildcard (`cat $F`) is null, as it always was. */
-export function spelledWord(w: Word, home: string | null = null): string | null {
+ *  Anything else the shell builds (`$x`, `$(...)`, `${x:-y}`, `~user`) is
+ *  unknown and stands as `**`, "anything": the word is then judged as a glob,
+ *  which refuses `$PWD`-like prefixes in front of a raw-only name
+ *  (`$(pwd)/.e''nv`) and passes `cat $F` and `$DIR/src/index.ts`, whose
+ *  resolvable remainder cannot name one. */
+export function spelledWord(
+  w: Word,
+  home: string | null = null,
+  cwd: string | null = null
+): string {
   const quote = (t: string) => t.replace(/[*?[\]{},]/g, '\u0001')
   let out = ''
-  let unknown = false
-  let wild = false
   for (const p of w.parts) {
     if (p.kind === 'lit') out += p.quoted ? quote(p.text) : p.text
-    else if (p.kind === 'glob' || p.kind === 'brace') {
-      wild = true
-      out += p.text
-    } else if (p.kind === 'tilde' && p.user === '' && home !== null) out += quote(home)
-    else if (p.kind === 'param' && p.name === 'HOME' && p.op === '' && home !== null)
+    else if (p.kind === 'glob' || p.kind === 'brace') out += p.text
+    else if (p.kind === 'tilde' && p.user === '' && home !== null) out += quote(home)
+    else if (p.kind === 'tilde' && p.user === '+' && cwd !== null) out += quote(cwd)
+    else if (p.kind === 'param' && p.op === '' && p.name === 'HOME' && home !== null)
       out += quote(home)
+    else if (p.kind === 'param' && p.op === '' && p.name === 'PWD' && cwd !== null)
+      out += quote(cwd)
     else if (p.kind === 'ansic' && p.text.startsWith("$'")) out += quote(ansiC(p.text.slice(2, -1)))
-    else {
-      unknown = true
-      out += '**'
-    }
+    else if (p.kind === 'ansic' && p.text.startsWith('$"') && !/[$`]/.test(p.text))
+      out += quote(p.text.slice(2, -1))
+    else out += '**'
   }
-  return unknown && !wild ? null : out
+  return out
 }

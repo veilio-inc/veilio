@@ -29,7 +29,10 @@ beforeAll(() => {
   writeFileSync(join(bin, 'npx'), `#!/bin/sh\nshift 2\nexec "${process.execPath}" "${CLI}" "$@"\n`)
   chmodSync(join(bin, 'npx'), 0o755)
   // npm view <spec> version: the registry answers, or (NPM_VIEW_FAILS) does not.
-  writeFileSync(join(bin, 'npm'), '#!/bin/sh\n[ -n "$NPM_VIEW_FAILS" ] && exit 1\necho 1.0.0\n')
+  writeFileSync(
+    join(bin, 'npm'),
+    '#!/bin/sh\n[ -n "$NPM_VIEW_FAILS" ] && exit 1\n[ -n "$NPM_VIEW_EMPTY" ] && exit 0\necho 1.0.0\n'
+  )
   chmodSync(join(bin, 'npm'), 0o755)
 })
 beforeEach(() => {
@@ -243,9 +246,15 @@ describe('the version the Action runs must be on the registry', () => {
     expect(r.stderr).toContain('@veilio-inc/cli@9.9.9')
     expect(readFileSync(join(work, 'ran'), 'utf8')).toBe('')
   })
+  it('fails when npm exits 0 and prints nothing', () => {
+    const r = scan({ VERSION: '9.9.9', NPM_VIEW_EMPTY: '1' })
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).toContain('could not be found on the npm registry')
+    expect(readFileSync(join(work, 'ran'), 'utf8')).toBe('')
+  })
   it('runs the CLI when the registry has it', () => {
     const r = scan({ VERSION: '0.12.1' })
-    expect(r.stderr).not.toContain('not on the npm registry')
+    expect(r.stderr).not.toContain('could not be found')
     expect(readFileSync(join(work, 'ran'), 'utf8')).toContain('ran')
   })
 })

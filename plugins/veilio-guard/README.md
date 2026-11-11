@@ -52,7 +52,7 @@ Veilio guard on · 42 names in the map · custom rules: 3 · 0 withheld · 0 ref
 ```
 
 - `/veilio` shows the state, the map, and what is covered.
-- `/veilio off` switches the guard off until the session ends. Every new session starts with the guard on, and nothing is written to disk, so no file can switch it off. Claude then reads raw code, and the line above the prompt says so on every turn.
+- `/veilio off` switches the guard off until the session ends. Every new session starts with the guard on, and the switch is not stored in a file. Claude then reads raw code, and the line above the prompt says so on every turn.
 - When the plugin's settings name MCP servers that get real names, the line above the prompt ends with ` · real names to: <server>, <server>`.
 - `/veilio on` switches it back on.
 

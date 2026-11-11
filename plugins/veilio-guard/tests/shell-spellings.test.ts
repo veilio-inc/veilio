@@ -2,7 +2,7 @@
 // reads as the real name (`.e''nv`, `.en*`, `{.e,x}nv`) is refused as the plain
 // name is. The word is read as the shell reads it, not as it was typed.
 import { expect, test } from 'claude-code/testing'
-import { project, ROOT } from './helpers.ts'
+import { project, ROOT, STRIPE } from './helpers.ts'
 
 const FILES = {
   [`${ROOT}/.env`]: 'X=1\n',
@@ -50,6 +50,15 @@ const REFUSED = [
   `cat $HOME/.e''nv`,
   `cat $DIR/.v*/map.json`,
   `cat $DIR/.en*`,
+  `cat "$PWD"/.e''nv`,
+  `cat $PWD/.e''nv`,
+  `cat $(pwd)/.e''nv`,
+  "cat `pwd`/.e''nv",
+  `cat $Z.e''nv`,
+  `cat ~+/.e''nv`,
+  `cat \${HOME:-x}/.e''nv`,
+  `cat $PWD/.veil''io/map.json`,
+  `cat $".e""nv"`,
   `cat "$DIR"/.en*`,
   `cat $(pwd)/.en*`,
   `cat {a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{.e,x}nv`,
@@ -77,6 +86,8 @@ const ALLOWED = [
   `grep -r foo src/*`,
   `git add -A && git commit -m "x"`,
   `echo "a*b"`,
+  `cat $F`,
+  `cat "$F"`,
   `ls $DIR/*.ts`,
   `cat $DIR/src/index.ts`,
   `ls $HOME/*.ts`,
@@ -109,4 +120,29 @@ test('a cd first does not hide the spelling', async ($, on) => {
   })
   expect(ran).toBe(false)
   expect(out.deny).toContain('away from the model')
+})
+
+// What the refusal shows is the word as it was typed, with known names masked,
+// and never a credential: the secret scan used to eat `/.en*` as one.
+test('a refusal shows the word as typed', async ($, on) => {
+  project(on, FILES)
+  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
+  for (const word of ['"$PWD"/.en*', '$DIR/.env', ".e''nv"]) {
+    const out = await $.tool.call({ tool: 'Bash', command: `cat ${word}`, description: 'x' })
+    expect(out.deny).toBe(
+      `Veilio keeps ${word} away from the model. Ask the user for what you need from it.`
+    )
+  }
+})
+
+test('a refusal never echoes a credential the word holds', async ($, on) => {
+  project(on, FILES)
+  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
+  const out = await $.tool.call({
+    tool: 'Bash',
+    command: `cat ${STRIPE}/.e''nv`,
+    description: 'x',
+  })
+  expect(out.deny).toContain('away from the model')
+  expect(out.deny).not.toContain(STRIPE)
 })

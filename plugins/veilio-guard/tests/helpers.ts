@@ -72,7 +72,7 @@ export type Options = {
   chmodIgnored?: boolean
   /** The machine is Windows ($.env OS=Windows_NT): no chmod, no stat. */
   windows?: boolean
-  /** $.env HOME: where the guard keeps ~/.veilio (spec 078 off record).
+  /** $.env HOME: where ~/.veilio is (spec 078).
    *  `/home/test` when not given. */
   home?: string
   /** Spec 085 R2-3: by default ~/.veilio/written.json records the map and
@@ -81,6 +81,8 @@ export type Options = {
   unrecorded?: boolean
   /** $.env CDPATH (spec 086): a bare cd is also looked up under it. */
   cdpath?: string
+  /** Removing a file fails (rm, or PowerShell's Remove-Item). */
+  rmFails?: boolean
   /** The test registers its own env.get handler. */
   ownEnv?: boolean
 }
@@ -219,9 +221,14 @@ export function project(
       if (!(a in p.files)) return { value: { exitCode: 1, stdout: '', stderr: 'No such file' } }
       return ok(`${(p.modes[a] ?? 0o644).toString(8)}\n`)
     }
-    // `rm -f <path>`, as the guard removes an older version's leftovers.
-    if (e.argv[0] === 'rm' && !opts.windows) {
-      delete p.files[abs(e.argv[e.argv.length - 1]!)]
+    // Removing an older version's leftovers: `rm -f <path>`, or on Windows
+    // PowerShell's Remove-Item with the path as a literal.
+    if ((e.argv[0] === 'rm' && !opts.windows) || (e.argv[0] === 'powershell' && opts.windows)) {
+      p.ops.push(`run ${e.argv.join(' ')}`)
+      if (opts.rmFails) return { value: { exitCode: 1, stdout: '', stderr: 'denied' } }
+      const last = e.argv[e.argv.length - 1]!
+      const literal = /^Remove-Item -LiteralPath '(.*)' -Force$/.exec(last)?.[1]
+      delete p.files[abs((literal ?? last).replace(/''/g, "'").replace(/\\/g, '/'))]
       return ok('')
     }
     if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }

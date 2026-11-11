@@ -196,9 +196,17 @@ async function ready($: Host): Promise<Guard> {
       },
       // A leftover of an older version's off switch (retireLegacyOffRecord).
       remove: async (path) => {
-        await $.process.run(
-          (await windows) ? ['cmd', '/c', 'del', '/f', '/q', path] : ['rm', '-f', path]
-        )
+        // The host has no file delete. No shell parses the path: argv only,
+        // and on Windows a literal path (`del` would read `/.veilio` as a switch).
+        const r = (await windows)
+          ? await $.process.run([
+              'powershell',
+              '-NoProfile',
+              '-Command',
+              `Remove-Item -LiteralPath '${path.replace(/\//g, '\\').replace(/'/g, "''")}' -Force`,
+            ])
+          : await $.process.run(['rm', '-f', path])
+        if (r.exitCode !== 0) throw new Error('not removed')
       },
       windows: async () => windows,
       list: (root) => gitList($, root, []),
@@ -239,8 +247,8 @@ async function ready($: Host): Promise<Guard> {
 // prependPlugins, so it runs before every mod a user installs, and a user's
 // own settings cannot switch it off (spec 033 US3).
 async function isManaged($: Host): Promise<boolean | 'unknown'> {
-  // Spec 085 R2-19: a policy that cannot be read is not "not managed": an
-  // off record or /veilio off must not switch off the organisation's guard.
+  // Spec 085 R2-19: a policy that cannot be read is not "not managed":
+  // /veilio off must not switch off the organisation's guard.
   let policy: unknown
   try {
     policy = await $.settings.read({ source: 'policy' })

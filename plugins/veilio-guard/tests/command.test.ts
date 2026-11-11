@@ -1,5 +1,5 @@
 // Spec 033 contracts/mod.md: /veilio reports the state, and switches the guard
-// off for this project only by name, with a warning that stays.
+// off until the session ends only by name, with a warning that stays.
 import { expect, test } from 'claude-code/testing'
 import { PROMPT_FAILED } from '../lib/guard.ts'
 import { COLD_FILES } from './fixtures/cold.ts'
@@ -67,7 +67,7 @@ test("/veilio off and on leave the project's own lists in guard.json", async ($,
 const HOME = '/home/dev'
 const STATE = `${HOME}/.veilio/guard-state.json`
 const BACK_ON =
-  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off for this project, run /veilio off.'
+  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off until this session ends, run /veilio off.'
 const MCP_IGNORED =
   "Veilio: mcpRestore in .veilio/guard.json was ignored, because a file in the project can be written by the agent. Set it in the plugin's settings (/config)."
 

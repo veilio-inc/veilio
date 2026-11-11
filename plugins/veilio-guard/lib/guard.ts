@@ -235,7 +235,7 @@ export const ENCODED_NAME =
   'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
 /** strings.md #15 and #16. */
 export const BACK_ON =
-  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off for this project, run /veilio off.'
+  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off until this session ends, run /veilio off.'
 export const MCP_IGNORED =
   "Veilio: mcpRestore in .veilio/guard.json was ignored, because a file in the project can be written by the agent. Set it in the plugin's settings (/config)."
 /** strings.md #9. */
@@ -294,11 +294,10 @@ export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
   root = ''
-  /** The user's home ($HOME): where the off record is kept (spec 078 FR-010). */
+  /** The user's home ($HOME): where an older version's leftovers are removed from. */
   home: string | undefined
   /** Said once a session (register.ts logs them): settings the guard ignored. */
   notices: string[] = []
-  /** The off record could not be read: the guard stays on, and the band says so. */
   /** A guard-state.json from an older version named this project as off: it
    *  is removed and not honoured, and the band says so for this session. */
   legacyOffRecord = false
@@ -760,18 +759,22 @@ export class Guard {
     const state = join(dir, 'guard-state.json')
     try {
       if (await this.io.exists(state)) {
+        let wasOff = false
         try {
           const projects = (JSON.parse(await this.io.read(state)) as { projects?: unknown } | null)
             ?.projects as Record<string, { enabled?: unknown } | undefined> | undefined
           const key = (await this.io.realPath(this.root)) ?? this.root
-          this.legacyOffRecord = projects?.[key]?.enabled === false
+          wasOff = projects?.[key]?.enabled === false
         } catch {
           // Any content: it is removed all the same.
         }
-        await this.io.remove?.(state)
+        await this.io.remove?.(state).catch(() => undefined)
+        // Said only when it is gone: a file that stays is never read, and the
+        // band cannot tell later sessions it was already said.
+        this.legacyOffRecord = wasOff && !(await this.io.exists(state))
       }
       const secret = join(dir, 'guard-secret')
-      if (await this.io.exists(secret)) await this.io.remove?.(secret)
+      if (await this.io.exists(secret)) await this.io.remove?.(secret).catch(() => undefined)
     } catch {
       // Not removed: still never read.
     }
@@ -1711,6 +1714,24 @@ export class Guard {
     }
   }
 
+  /** A command word as it was typed, for a refusal: known names are put back
+   *  to their placeholders, and nothing else is changed, so `$DIR/.env` and
+   *  `"$PWD"/.en*` read as written (the secret scan took `/.en*` for a key).
+   *  A word that still holds a credential, or is long or not printable, is
+   *  masked as any text for the model is. */
+  private typed(raw: string, budget: RuleBudget): string {
+    let text = raw
+    const names = Object.entries({ ...this.map, ...this.unsaved }).sort(
+      (a, b) => b[1].length - a[1].length
+    )
+    for (const [placeholder, real] of names) if (real) text = text.split(real).join(placeholder)
+    return text.length <= 200 &&
+      printable(text) === text &&
+      survivingSecrets(text, this.map).length === 0
+      ? text
+      : this.applyText(raw, 'result', undefined, budget)
+  }
+
   /** A word the shell spells without a wildcard: an absolute path as it is,
    *  a relative one from the session's directory. */
   private async spelledHits(name: string) {
@@ -1977,8 +1998,8 @@ export class Guard {
               // on the raw text below does not see (`.e''nv`, `{.e,x}nv`), in
               // the session's directory or as the absolute path it names. A
               // wildcard word is refused when it could name a raw-only file.
-              const spelt = spelledWord(w, point.home)
-              if (spelt !== null && (spelt !== w.raw || /[*?[{]/.test(spelt))) {
+              const spelt = spelledWord(w, point.home, this.cwd || this.root)
+              if (spelt !== w.raw || /[*?[{]/.test(spelt)) {
                 const names = braceNames(spelt)
                 for (const name of names) {
                   const spelled = dialect === 'ps' ? name.replace(/\\/g, '/') : name
@@ -1992,7 +2013,7 @@ export class Guard {
                   if (h.written) return this.denyProtected([h])
                   if (h.rawOnly)
                     return this.deny(
-                      `Veilio keeps ${this.applyText(w.raw, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                      `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
                       false
                     )
                 }
@@ -2014,7 +2035,7 @@ export class Guard {
                   if (h.written) return this.denyProtected([h])
                   if (h.rawOnly)
                     return this.deny(
-                      `Veilio keeps ${this.applyText(w.literal === null ? w.raw : piece, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                      `Veilio keeps ${this.typed(w.literal === null ? w.raw : piece, budget)} away from the model. Ask the user for what you need from it`,
                       false
                     )
                 }

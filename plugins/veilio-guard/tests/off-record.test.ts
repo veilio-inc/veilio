@@ -97,3 +97,24 @@ test('the session ending (a /clear included) puts the guard back on', async ($, 
   await $.session.end({ reason: 'clear', sessionId: 's1' } as never)
   expect(JSON.stringify(await $.tool.call(eventOf(read)))).not.toContain(CANARY)
 })
+
+test('on Windows an older record is removed with Remove-Item on a literal path, not through cmd', async ($, on) => {
+  const p = project(on, { ...MAP, [STATE]: LEGACY }, { home: HOME, windows: true })
+  const band = (await $.command.run({ command: 'veilio', args: '' })).text.split('\n')[0]
+  expect(p.files[STATE]).toBeUndefined()
+  expect(p.ops).toContain(
+    "run powershell -NoProfile -Command Remove-Item -LiteralPath '\\home\\dev\\.veilio\\guard-state.json' -Force"
+  )
+  expect(p.ops.some((o) => o.includes('cmd'))).toBe(false)
+  expect(band).toContain('lasts for one session')
+})
+
+test('when the older record cannot be removed the guard is still on and the band stays silent', async ($, on) => {
+  const read = recorded('Read')
+  const p = project(on, { ...MAP, [STATE]: LEGACY }, { home: HOME, rmFails: true })
+  on('tool.call', () => read.r)
+  expect(JSON.stringify(await $.tool.call(eventOf(read)))).not.toContain(CANARY)
+  const band = (await $.command.run({ command: 'veilio', args: '' })).text.split('\n')[0]
+  expect(p.files[STATE]).toBeDefined()
+  expect(band).not.toContain('lasts for one session')
+})

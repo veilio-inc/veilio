@@ -532,9 +532,9 @@ The Action scans pull requests on the pull_request and pull_request_target event
     sarif: veilio.sarif # optional: upload to code scanning
 ```
 
-`@main` works today. For a build you can audit and that does not change under you, use the full commit SHA of the release you reviewed in place of `main`; the Action's own default CLI version moves with its commit.
+`@main` works today. For a build you can audit and that does not change under you, pin the full commit SHA of the release you reviewed in place of `main`. Between a release being prepared and its packages reaching npm, `@main` can name a version that is not published yet; the step then fails without scanning. A pinned commit avoids this.
 
-The Action runs the CLI version it was released with. To run a different one, set `version:` to that version (for example `version: 0.12.1`). To run the newest published CLI instead, set `version: latest`; the Action then runs whatever is published on the day, with your repository's token. If the version is not on the npm registry, the step fails and names it; it never falls back to `latest`.
+The Action runs the CLI version it was released with. To run a different one, set `version:` to that version (for example `version: 0.12.1`). To run the newest published CLI instead, set `version: latest`; the Action then runs whatever is published on the day, with your repository's token. If the version cannot be found on the npm registry, the step fails and names it; it never falls back to `latest`.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR
