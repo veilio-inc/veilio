@@ -1070,8 +1070,9 @@ class Reader {
       // bash and sh every `o`/`O` takes one following word, in order, and
       // the letters after it still count (`-Oc dotglob`, `-OOc a b`, `-cOe
       // a`); in zsh `o` takes the rest of its word when there is one
-      // (`-oglobdots`, `-ecoglobdots`), else the next word. The script is
-      // the first word left that is not an option.
+      // (`-oglobdots`, `-ecoglobdots`), else the next word, and `O` is a
+      // letter like any other. The script is the first word left that is
+      // not an option, or the word after `--`, `-` or zsh's `-b`.
       const zsh = /(?:^|\/)zsh$/.test(program)
       let scripted = false
       let j = k + 1
@@ -1088,12 +1089,30 @@ class Reader {
             throw new Unreadable('unknown')
           break
         }
-        if (w === '--') {
+        // `--` and `-` end the options: the next word is the script, even
+        // one that starts with `-`. What a lone `+` does is not told.
+        if (w === '--' || w === '-') {
           j++
           break
         }
+        if (w === '+') throw new Unreadable('unknown')
         if (!/^[-+]/.test(w)) break
-        if (w.startsWith('--')) continue
+        if (w.startsWith('--')) {
+          // A long option may take the next word as its value (`--rcfile f`,
+          // `--emulate sh`). Before `-c` that word is stepped over when a
+          // `-c` word follows it; after `-c` the script is only told when
+          // one word is left.
+          const next = words[j + 1]?.literal
+          if (scripted) {
+            if (j + 2 < words.length) throw new Unreadable('unknown')
+          } else if (
+            next != null &&
+            !/^[-+]/.test(next) &&
+            words.slice(j + 2).some((x) => /^[-+][A-Za-z0-9]*c/.test(x.literal ?? ''))
+          )
+            j++
+          continue
+        }
         // `sh -c'cat x'`: a script attached to the option, read as the
         // separate form is (no shell takes it so; the text rule's finding).
         const attached = /^-[A-Za-z0-9]*?c(.*)$/s.exec(w)?.[1]
@@ -1102,14 +1121,23 @@ class Reader {
           scripted = false
           break
         }
+        // zsh: `b` ends the options after this word.
+        let ended = false
         for (let at = 1; at < w.length; at++) {
           if (w[at] === 'c') scripted = true
-          else if (w[at] === 'o' || w[at] === 'O') {
+          else if (zsh && w[at] === 'b') ended = true
+          // `o` takes a name in every shell; `O` in bash and sh only (in
+          // zsh it is a letter like any other).
+          else if (w[at] === 'o' || (w[at] === 'O' && !zsh)) {
             // zsh: the option's name is the rest of this word.
             if (zsh && at < w.length - 1) break
             // The name is the next word; none left: the shell itself fails.
             if (++j >= words.length) throw new Unreadable('unknown')
           }
+        }
+        if (ended) {
+          j++
+          break
         }
       }
       if (scripted) text = words[j]?.literal ?? null

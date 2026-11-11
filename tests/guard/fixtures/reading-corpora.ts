@@ -207,6 +207,23 @@ const F7 = [
   `zsh -c -oglobdots 'cat *nv'`,
   `zsh -o globdots -o extendedglob -c 'cat *nv'`,
   `bash "$FLAGS" -c 'cat .e[n]v'`,
+  // zsh's -O is a letter like any other: it takes no name.
+  `zsh -Oc 'cat .e[n]v'`,
+  `zsh -cO 'cat .e[n]v'`,
+  `zsh -O -c 'cat .e[n]v'`,
+  `zsh -O4c 'cat *nv'`,
+  // A long option's value is not the script.
+  `bash --rcfile /dev/null -c 'cat .e[n]v'`,
+  `zsh --emulate zsh -c 'cat .e[n]v'`,
+  `zsh -c --emulate zsh 'cat .e[n]v'`,
+  // What ends the options: the script is the next word, whatever it starts with.
+  `zsh -bc '-x; cat .e[n]v'`,
+  `zsh -c -b '-x; cat .e[n]v'`,
+  `zsh -c -- '-x; cat .e[n]v'`,
+  `zsh -c - '-x; cat .e[n]v'`,
+  `bash -c -- '-x; cat .e[n]v'`,
+  `bash -c - '-x; cat .e[n]v'`,
+  `bash -c + 'cat .e[n]v'`,
   `bash -cO`,
   `S=setopt; command -p $S globdots; cat *nv`,
   `S=setopt; builtin - $S globdots; cat *nv`,

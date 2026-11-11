@@ -488,6 +488,9 @@ export type Position = {
   inner?: true
   /** W must be a path relative to the project (it follows `../`). */
   relative?: true
+  /** One of many positions of a kind: tried with a sample of the spellings
+   *  (a brace list and a bracket list of the ENV canary), not with all. */
+  sample?: true
 }
 
 const run = (id: string, make: Position['make'], more: Partial<Position> = {}): Position => ({
@@ -572,6 +575,82 @@ export const POSITIONS: readonly Position[] = [
   judged('P49b', (w) => `grep -f${w} x`),
 ]
 
+// A shell's option clusters: each single-letter option the shell accepts
+// beside `-c` (measured in bash 3.2 and zsh 5.9: the script runs; left out
+// are -i, -l, -s and -n, which read start-up files or run nothing), in every
+// place it can stand around `-c`, and around `o`/`O` with their names. In
+// bash `o` and `O` each take the next word; in zsh only `o` does, and its
+// name may be the rest of its word; zsh's `-O` is a letter like any other.
+const BASH_LETTERS = [...'abefhkmprtuvxBCEHPT']
+// zsh's `-b` ends the options (the word after it is the script): its own rows below.
+const ZSH_LETTERS = [...'adefghkmprtuvwxyBCDEFGHIJKLMNPQRSTUVWXYZ0123456789']
+const clusters = (shell: Shell, letters: string[], forms: (l: string) => string[]): Position[] =>
+  letters.flatMap((l) =>
+    forms(l).map((options) =>
+      run(
+        `P:${shell} ${options}`,
+        (w) => `${shell} ${options} "cat ${dq(w)}"`,
+        shell === 'zsh' ? { shell: 'zsh', sample: true } : { inner: true, sample: true }
+      )
+    )
+  )
+export const CLUSTERS: readonly Position[] = [
+  ...clusters('bash', BASH_LETTERS, (l) => [
+    `-${l}c`,
+    `-c${l}`,
+    `-${l} -c`,
+    `-c -${l}`,
+    `-o${l}c pipefail`,
+    `-${l}co pipefail`,
+    `-${l} -o pipefail -c`,
+    `-O${l}c dotglob`,
+    `-c${l}O dotglob`,
+    `+O${l}c dotglob`,
+  ]),
+  ...clusters('zsh', ZSH_LETTERS, (l) => [
+    `-${l}c`,
+    `-c${l}`,
+    `-${l} -c`,
+    `-c -${l}`,
+    `-${l}co globdots`,
+    `-${l}c -oglobdots`,
+    `-${l}c +o globdots`,
+    `-O${l}c`,
+    `-c${l}O`,
+    `-${l} -O -c`,
+  ]),
+  // What ends the options: the script is the next word, whatever it starts with.
+  ...(
+    [
+      ['zsh', '-cb'],
+      ['zsh', '-bc'],
+      ['zsh', '-c -b'],
+      ['zsh', '-c --'],
+      ['zsh', '-c -'],
+      ['bash', '-c --'],
+      ['bash', '-c -'],
+      ['sh', '-c --'],
+    ] as const
+  ).flatMap(([shell, options]) =>
+    ['', '-x; '].map((start) =>
+      run(
+        `P:${shell} ${options} ${start}`,
+        (w) => `${shell} ${options} "${start}cat ${dq(w)}"`,
+        shell === 'zsh' ? { shell: 'zsh', sample: true } : { inner: true, sample: true }
+      )
+    )
+  ),
+  // A long option that takes a value.
+  run('P:bash --rcfile', (w) => `bash --rcfile /dev/null -c "cat ${dq(w)}"`, {
+    inner: true,
+    sample: true,
+  }),
+  run('P:zsh --emulate', (w) => `zsh --emulate zsh -c "cat ${dq(w)}"`, {
+    shell: 'zsh',
+    sample: true,
+  }),
+]
+
 // ── the closed vocabulary (§6) ──
 
 const VOCABULARY = new Set(
@@ -585,6 +664,9 @@ const FILLERS = new Set(
     ' '
   )
 )
+for (const p of CLUSTERS)
+  for (const m of p.make('W').matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) FILLERS.add(m[0])
+FILLERS.add('rcfile').add('emulate')
 const MARK = 'W'
 
 /** Throws unless an executed command is made of the closed vocabulary and its
@@ -673,6 +755,12 @@ export function fullProduct(proj: string): Generated[] {
           const g = command(`F:${c.id}:${o.id}.${k}:${p.id}`, [o.id], s, p, proj)
           if (g) out.push(g)
         }
+        // The many option clusters: with a brace list and a bracket list.
+        if (c.id === 'ENV' && k === 0 && (o.id === 'O10' || o.id === 'O12'))
+          for (const p of CLUSTERS) {
+            const g = command(`F:${c.id}:${o.id}.${k}:${p.id}`, [o.id], s, p, proj)
+            if (g) out.push(g)
+          }
       })
   return out
 }

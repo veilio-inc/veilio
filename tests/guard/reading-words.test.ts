@@ -14,7 +14,7 @@ import {
 import { parseShell, type Word } from '../../plugins/veilio-guard/lib/shell.ts'
 import { fixtureGuard } from './fixtures/cd-project.ts'
 import { F1, F2, F8, INTERPRETER_ALLOWED, INTERPRETER_REFUSED } from './fixtures/reading-corpora.ts'
-import { POSITIONS } from './fixtures/reading-grammar.ts'
+import { CLUSTERS, POSITIONS } from './fixtures/reading-grammar.ts'
 
 // Spec 091: the reader's parts, one test per row of the reading table
 // (contracts/reading-table.md in the spec): wordsOf (every position),
@@ -42,12 +42,11 @@ describe('wordsOf: a word is returned wherever it stands', () => {
   /** W is a word of the command, or the end of one that holds no command. */
   const holds = (command: string) =>
     words(command).some((w) => w.raw === W || (w.raw.endsWith(W) && !/\$\(|`|[<=]\(/.test(w.raw)))
-  test.each(POSITIONS.filter((p) => p.executed).map((p) => [p.id, p.make(W)] as const))(
-    '%s %s',
-    (_, command) => {
-      expect(holds(command), command).toBe(true)
-    }
-  )
+  test.each(
+    [...POSITIONS, ...CLUSTERS].filter((p) => p.executed).map((p) => [p.id, p.make(W)] as const)
+  )('%s %s', (_, command) => {
+    expect(holds(command), command).toBe(true)
+  })
 
   test.each([
     ['a redirect on until', `until cat; do :; done < ${W}`],
@@ -118,6 +117,9 @@ describe('wordsOf: a word is returned wherever it stands', () => {
   test('a shell whose script word cannot be told is unreadable', () => {
     // An option's name is missing; an option word built at run time before -c.
     expect(parseShell('bash -cO', 'sh').ok).toBe(false)
+    // A lone `+`; a long option after -c with more than one word left.
+    expect(parseShell(`bash -c + 'ls'`, 'sh').ok).toBe(false)
+    expect(parseShell(`zsh -c --emulate zsh 'ls'`, 'sh').ok).toBe(false)
     expect(parseShell(`bash "$FLAGS" -c 'ls'`, 'sh').ok).toBe(false)
     // A script built at run time, and a script file, are read as before.
     for (const c of [

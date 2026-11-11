@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { Guard, type GuardIO } from '../../../plugins/veilio-guard/lib/guard.ts'
 
 export type Shell = 'bash' | 'zsh'
@@ -198,7 +198,11 @@ export async function guardAt(f: Fixture, rawOnly: readonly string[]): Promise<G
     },
     write: async (p, t) => void (files[p] = t),
     exists: async (p) => exists(p),
-    realPath: async (p) => links[p] ?? (exists(p) ? p : undefined),
+    // As a file system does: `.` and `..` resolved before the link is followed.
+    realPath: async (path) => {
+      const p = posix.normalize(path)
+      return links[p] ?? (exists(p) ? p : undefined)
+    },
     isFile: async (p) => (links[p] ?? p) in files,
     fileSize: async (p) => files[links[p] ?? p]?.length,
   }

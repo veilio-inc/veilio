@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import {
   CANARIES,
+  CLUSTERS,
   combinations,
   fullProduct,
   OPERATORS,
@@ -138,7 +139,7 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       // The plain name in every position.
       const plainAllowed = new Set<string>()
       for (const c of CANARIES)
-        for (const p of POSITIONS) {
+        for (const p of [...POSITIONS, ...(c.id === 'ENV' ? CLUSTERS : [])]) {
           if (p.relative && !c.project) continue
           const plain = p.make(plainName(c))
           if (await isAllowed(plain)) {
@@ -179,10 +180,9 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       OPERATORS.map((o) => [o.id, new Map(available.map((s) => [s.shell, count()]))])
     )
     const byPosition = new Map(
-      POSITIONS.filter((p) => p.executed).map((p) => [
-        p.id,
-        new Map(available.map((s) => [s.shell, count()])),
-      ])
+      [...POSITIONS, ...CLUSTERS]
+        .filter((p) => p.executed)
+        .map((p) => [p.id, new Map(available.map((s) => [s.shell, count()]))])
     )
     let executed = 0
     let read = 0
