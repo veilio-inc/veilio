@@ -1065,36 +1065,54 @@ class Reader {
       const args = words.slice(1).map((w) => w.literal)
       if (args.length > 0 && args.every((a) => a !== null)) text = args.join(' ')
     } else if (SHELL_PROGRAM.test(program)) {
-      // Its options, in any order (`-c -O dotglob`, `-cO dotglob`, `-c4`,
-      // `-oglobdots -c`, `-c --globdots`): once `-c` is among them, the
-      // script is the first word that is not an option or an option's name.
+      // Its options, read letter by letter as the shell reads them
+      // (verified in bash 3.2 and zsh 5.9): `c` says a script follows; in
+      // bash and sh every `o`/`O` takes one following word, in order, and
+      // the letters after it still count (`-Oc dotglob`, `-OOc a b`, `-cOe
+      // a`); in zsh `o` takes the rest of its word when there is one
+      // (`-oglobdots`, `-ecoglobdots`), else the next word. The script is
+      // the first word left that is not an option.
+      const zsh = /(?:^|\/)zsh$/.test(program)
       let scripted = false
-      for (let j = k + 1; j < words.length; j++) {
+      let j = k + 1
+      for (; j < words.length; j++) {
         const w = words[j]!.literal
         if (w === null) {
-          // An option word the command builds; after `-c`, the script itself.
-          if (scripted) break
-          continue
-        }
-        if (w === '--' || !/^[-+]/.test(w)) {
-          if (scripted) text = w === '--' ? (words[j + 1]?.literal ?? null) : w
+          // After `-c`, the script itself, built at run time. Before it, an
+          // option word the command builds: with a `-c` word still to come,
+          // which word is the script cannot be told.
+          if (
+            !scripted &&
+            words.slice(j + 1).some((x) => /^[-+][A-Za-z0-9]*c/.test(x.literal ?? ''))
+          )
+            throw new Unreadable('unknown')
           break
         }
+        if (w === '--') {
+          j++
+          break
+        }
+        if (!/^[-+]/.test(w)) break
         if (w.startsWith('--')) continue
         // `sh -c'cat x'`: a script attached to the option, read as the
-        // separate form is; letters and digits after `c` are more options.
+        // separate form is (no shell takes it so; the text rule's finding).
         const attached = /^-[A-Za-z0-9]*?c(.*)$/s.exec(w)?.[1]
-        if (attached !== undefined && /[^A-Za-z0-9]/.test(attached)) {
+        if (attached !== undefined && /[^A-Za-z0-9_]/.test(attached)) {
           text = attached
+          scripted = false
           break
         }
-        // `-o name`, `+o name`, `-O name`: the name is the next word, or
-        // the rest of this one (`-oglobdots`).
-        const named = /[oO]/.exec(w.slice(1))
-        const letters = named ? w.slice(1, 1 + named.index) : w.slice(1)
-        if (letters.includes('c')) scripted = true
-        if (named && named.index === w.length - 2) j++
+        for (let at = 1; at < w.length; at++) {
+          if (w[at] === 'c') scripted = true
+          else if (w[at] === 'o' || w[at] === 'O') {
+            // zsh: the option's name is the rest of this word.
+            if (zsh && at < w.length - 1) break
+            // The name is the next word; none left: the shell itself fails.
+            if (++j >= words.length) throw new Unreadable('unknown')
+          }
+        }
       }
+      if (scripted) text = words[j]?.literal ?? null
       const doc = redirects.find((r) => r.op === '<<' || r.op === '<<-')
       if (text === null && doc && words.length === k + 1)
         this.pendingNested.push({ doc, depth: this.depth + 1 })

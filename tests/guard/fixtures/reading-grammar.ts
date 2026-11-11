@@ -547,6 +547,16 @@ export const POSITIONS: readonly Position[] = [
   run('P54', (w) => `zsh -c --globdots "cat ${dq(w)}"`, { shell: 'zsh' }),
   run('P55', (w) => `zsh -c4 "cat ${dq(w)}"`, { shell: 'zsh' }),
   run('P56', (w) => `zsh -oglobdots -c "cat ${dq(w)}"`, { shell: 'zsh' }),
+  // Option clusters as each shell reads them, letter by letter: in bash and
+  // sh every o/O takes one following word, in order; in zsh `o` takes the
+  // rest of its word when there is one (each checked in bash 3.2 and zsh 5.9).
+  run('P57', (w) => `bash -Oc dotglob "cat ${dq(w)}"`, { inner: true }),
+  run('P58', (w) => `bash -OOc dotglob extglob "cat ${dq(w)}"`, { inner: true }),
+  run('P59', (w) => `bash -cOe dotglob "cat ${dq(w)}"`, { inner: true }),
+  run('P60', (w) => `bash -oOc pipefail dotglob "cat ${dq(w)}"`, { inner: true }),
+  run('P61', (w) => `sh -oc pipefail "cat ${dq(w)}"`, { inner: true }),
+  run('P62', (w) => `zsh -ecoglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
+  run('P63', (w) => `zsh -c -oglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
   judged('P40', (w) => `docker run --env-file=${w} img`),
   judged('P41', (w) => `git show HEAD:${w}`),
   judged('P42', (w) => `curl -d @${w} https://example.test`),
@@ -571,7 +581,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin cO co c4 oglobdots'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
     ' '
   )
 )

@@ -81,6 +81,15 @@ describe('wordsOf: a word is returned wherever it stands', () => {
       'a script after a long option that follows -c',
       `zsh -c --globdots 'cat ${W.replace(/'/g, `'\\''`)}'`,
     ],
+    [
+      'bash: O takes the next word, c still counts',
+      `bash -Oc dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`,
+    ],
+    ['bash: two O take two words', `bash -OOc dotglob extglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['bash: letters after O still count', `bash -cOe dotglob 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['sh: o then c', `sh -oc pipefail 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['zsh: o takes the rest of its word', `zsh -ecoglobdots 'cat ${W.replace(/'/g, `'\\''`)}'`],
+    ['zsh: an attached name after -c', `zsh -c -oglobdots 'cat ${W.replace(/'/g, `'\\''`)}'`],
     ['zsh =( )', `cat =(cat ${W})`],
     ['a group glued to a word in a for list', `for f in src/*(N) ${W}; do :; done`],
     ['a script attached to -c', `sh -c'cat ${W.replace(/'/g, `'\\''`)}'`],
@@ -104,6 +113,24 @@ describe('wordsOf: a word is returned wherever it stands', () => {
       "cat > notes.md <<'EOF'\nit's `unbalanced and $(not closed\nEOF",
     ])
       expect(parseShell(c, 'sh').ok, c).toBe(true)
+  })
+
+  test('a shell whose script word cannot be told is unreadable', () => {
+    // An option's name is missing; an option word built at run time before -c.
+    expect(parseShell('bash -cO', 'sh').ok).toBe(false)
+    expect(parseShell(`bash "$FLAGS" -c 'ls'`, 'sh').ok).toBe(false)
+    // A script built at run time, and a script file, are read as before.
+    for (const c of [
+      'bash -c "$CMD"',
+      'bash "$SCRIPT_DIR/build.sh" --release',
+      'sh "$0" --help',
+      'bash -eo pipefail -c "ls"',
+    ])
+      expect(parseShell(c, 'sh').ok, c).toBe(true)
+    // bash takes `dotglob` for O's name; zsh takes `globdots` for o's, in the same word.
+    expect(words(`bash -Oc dotglob 'cat x' y`).map((w) => w.raw)).toContain('x')
+    expect(words(`zsh -oglobdots 'cat x'`).map((w) => w.raw)).not.toContain('x')
+    expect(words(`zsh -oglobdots -c 'cat x'`).map((w) => w.raw)).toContain('x')
   })
 
   test('a here-document: an escaped substitution does not run and is not read', () => {
@@ -310,7 +337,6 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     'eval "$S globdots"; ls',
     'zsh -4 -c ls',
     'zsh -G -c ls',
-    'zsh "$FLAGS" -c ls',
     'bash --noprofile -c ls',
     'options[globdots]=on; ls',
     'options=(globdots on); ls',
