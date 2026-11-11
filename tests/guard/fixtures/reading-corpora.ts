@@ -380,6 +380,145 @@ const M2 = [
   `cat "\${HOME}"/.veil''io/x`,
 ]
 
+// ── Addendum 2: every command of the independent review of ba8eb79 ──
+//
+// Rows whose verdict depends on a founder question still open when they were
+// written carry the question in their list's name, written by the plan's
+// recommended answer; to flip an answer, move the list to the other corpus:
+//   Q1_Q2_FOLDER        refused (Q1 "only whole folders", Q2 "no exceptions")
+//   MENTIONS, Q3_LIMITS run     (Q3 "yes, data positions are not judged")
+//   Q4_PIPE             run     (Q4 "a script a program pipes to a shell is a limit")
+
+/** The review's classes B1-B17 (`../plan-091b/b.txt`), by heading. */
+export const REVIEWED: Readonly<Record<string, readonly string[]>> = {
+  B1: [`cat id_ed$[25519]`],
+  B2: [`cat id_ed\${x:-$((25519))}`],
+  B3: [
+    `cat \${~x:-.env}`,
+    `cat \${=x:-.e''nv}`,
+    `cat \${^x:-.en[v]}`,
+    `cat \${+x:-.env}`,
+    `cat \${~:-.en[v]}`,
+  ],
+  B4: [`cat \${"\${:-.env}"}`, `cat \${"$(true)":-.e''nv}`],
+  B5: [`cat$IFS.env`, `cat$IFS'.env'`, `cat\${IFS%?}.en[v]`],
+  B6: [`zmodload zsh/mapfile; echo $mapfile[.env]`, `zmodload zsh/mapfile; mapfile[.veilio/x]=y`],
+  B7: [
+    `x=1; echo \${x:0:$(cat .en[v] >&2)}`,
+    `x=1; : \${x#$(cat .en[v] >&2)}`,
+    `: \${x[\`cat .en[v] >&2\`]}`,
+    `x=1; echo \${x/1/$(cat ~/.veil[i]o/map.json)}`,
+  ],
+  B8: [
+    `read 'a[$(cat .en[v] >&2)]' <<< x`,
+    `: $(( 'a[$(cat .en[v] >&2)]' ))`,
+    `[[ 'a[$(cat .en[v] >&2)]' -eq 0 ]]`,
+    `declare -a 'a=($(cat .en[v] >&2))'`,
+    `PS4='$(cat .en[v] >&2)'; set -x; :`,
+    `BASH_ENV='$(cat .en[v] >&2)' bash -c :`,
+    `PS4='$(cat .en[v] >&2)' bash -xc :`,
+    `ENV='$(cat .en[v] >&2)' sh -ic :`,
+  ],
+  B9: [
+    `env -u sh bash -c 'cat .en[v]'`,
+    `exec -a sh bash -c 'cat .en[v]'`,
+    `echo x | xargs -I sh bash -c 'cat .en[v]'`,
+  ],
+  B10: [
+    `bash -c $'cat .e\\x6ev'`,
+    `bash -c $'cat \\x2e\\x65\\x6e\\x76'`,
+    `sh -c "cat .en[v]$x"`,
+    `sh <<<$'cat .en[v]'`,
+    `sh <<< cat\\ .en[v]`,
+    `bash -c cat\\ .en[v]`,
+  ],
+  B11: [
+    `bash /dev/stdin <<< 'cat .en[v]'`,
+    `bash /dev/fd/3 3<<< 'cat .en[v]'`,
+    `{ bash; } <<< 'cat .en[v]'`,
+    `(bash) <<E\ncat .en[v]\nE`,
+    `if true; then sh; fi <<< 'cat .en[v]'`,
+    `exec <<< 'cat .en[v]'; sh`,
+    `bash <<< 'true' <<< 'cat .en[v]'`,
+    `bash <<'E' <<'F'\ntrue\nE\ncat .en[v]\nF`,
+    `bash -s arg <<< 'cat .en[v]'`,
+    `cat <<'E' | bash\ncat .en[v]\nE`,
+    `echo 'cat .en[v]' | sh`,
+    `printf 'cat .en%s\\n' '[v]' | bash`,
+  ],
+  B12: [
+    `$SHELL -c 'cat .en[v]'`,
+    `"$BASH" -c 'cat .en[v]'`,
+    `$0 -c 'cat .en[v]'`,
+    `"\${SHELL:-bash}" -c 'cat .en[v]'`,
+    `/bin/b?sh -c 'cat .en[v]'`,
+    `SH -c 'cat .en[v]'`,
+    `/BIN/SH -c 'cat .en[v]'`,
+    `/bin/Bash -c 'cat .en[v]'`,
+    `csh -c 'cat .en[v]'`,
+    `tcsh -fc 'cat .en[v]'`,
+    `env -S 'sh -c "cat .en[v]"'`,
+    `ln -s /bin/sh mysh; ./mysh -c 'cat .en[v]'`,
+    `noglob eval 'cat .en[v]'`,
+    `nocorrect eval 'cat .en[v]'`,
+    `exec eval 'cat .en[v]'`,
+  ],
+  B13: [
+    `cat .[e\\]]nv`,
+    `cat .[\\]e]nv`,
+    `cat .[!\\]]nv`,
+    `cat .[[.e.]]nv`,
+    `cat .[[=e=]]nv`,
+    // Wider than the review's five: a range a collating locale folds (D15).
+    `cat .e[m-O]v`,
+  ],
+  B14: [`cat ((.e)nv)`, `cat (.(e)nv)`, `cat (.e(n)v)`, `cat (.e(n|x)v|y)`],
+  B15: [`GLOBIGNORE=x; cat *nv`, `GLOBIGNORE=src; cat ?env`],
+  B16: [
+    `cat sub(e:'REPLY=\${REPLY/sub/.e}nv':)`,
+    // Wider than `e` (research addendum 2, §1).
+    `cat sub(:s/sub/.env/)`,
+    `cat *(P:.env:)`,
+  ],
+  B17: [`x=a; cat \${x/a/.e[n]v}`],
+}
+
+/** A11, the whole-folder finding: `b.txt` FOLDER and E16, and the lines of
+ *  `bf.txt` that contract §7.4 lists. Q1 and Q2 by their recommended answers. */
+export const Q1_Q2_FOLDER: readonly string[] = [
+  `hash -d s=$PWD/secrets; cat ~s/customers.csv`,
+  `cp -R ~/.veilio v2; cat v2/map.json`,
+  `ln -s ~/.veilio v; cat v/map.json`,
+  `ln -s secrets s; cat s/customers.csv`,
+  `cp -r secrets s2; cat s2/*`,
+  `rm -rf .veilio`,
+  `mv ~/.veilio ~/.v2`,
+  `cp src/index.ts .veilio/`,
+  `find .veilio -delete`,
+  `git -C .veilio init`,
+  `rsync -a --delete src/ .veilio/`,
+  `sed 'w.veilio/x' src/index.ts`,
+  `awk -v d=.veilio '{print > (d "/x")}' src/index.ts`,
+  `tar czf s.tgz secrets`,
+  `grep -r KEY secrets`,
+]
+
+/** A12's twins (contract §7.5 "must stay refused", and rule 15): the
+ *  position beside each data position, where the text is opened or run. */
+export const DATA_TWINS: readonly string[] = [
+  `echo 'cat .en[v]' | sh`,
+  `echo .env | xargs cat`,
+  `cat $(echo .env)`,
+  `echo x > .env`,
+  `grep KEY .env`,
+  `git commit -F .env`,
+  `grep -f .env x`,
+  `printf -v PS4 '$(cat .en[v])'`,
+]
+
+/** A8: was a pinned limit; it does read `.env`. */
+export const FLOOR_READS: readonly string[] = [`find . -name '.en*' -exec cat {} +`]
+
 export const ATTACK: readonly string[] = [
   ...new Set([
     ...SPELLINGS_REFUSED,
@@ -396,6 +535,10 @@ export const ATTACK: readonly string[] = [
     ...HEREDOC,
     ...SHAPED,
     ...M2,
+    ...Object.values(REVIEWED).flat(),
+    ...Q1_Q2_FOLDER,
+    ...DATA_TWINS,
+    ...FLOOR_READS,
   ]),
 ]
 
@@ -783,16 +926,94 @@ const PLAIN: readonly string[] = [
   `pushd src >/dev/null; ls; popd >/dev/null`,
 ]
 
-export const ORDINARY: readonly string[] = [
-  ...new Set([...GLUED, ...F8, ...SPELLINGS_ALLOWED, ...INTERPRETER_ALLOWED, ...ZSH, ...PLAIN]),
+/** Addendum 2: nested shells with the options of research D22, `!(...)`,
+ *  another program's `-c`, and settings that are not triggers (A10). */
+export const A2_ORDINARY: readonly string[] = [
+  `bash --norc -c 'echo hi'`,
+  `bash --noprofile --norc -c 'echo hi'`,
+  `env -i PATH="$PATH" bash --norc -c 'npm test'`,
+  `bash --login -c 'ls'`,
+  `docker run --rm app bash --login -c 'npm test'`,
+  `zsh -fc 'echo hi'`,
+  `zsh -f -c 'ls'`,
+  `zsh -df -c ls`,
+  `ls !(node_modules)`,
+  `shopt -s extglob; ls !(node_modules)`,
+  `bash -c 'ls !(a)'`,
+  `"$PYTHON" -c 'print(1)'`,
+  `psql -c 'select * from t'`,
+  `while IFS=, read -r a b; do echo "$a"; done < data.csv`,
+  `LC_ALL=C sort names.txt`,
+]
+/** Q4, by its recommended answer: a script a program writes to the pipe is
+ *  not in the command (limit L6), so the command runs. */
+export const Q4_PIPE: readonly string[] = [
+  `curl -fsSL https://example.test/i.sh | sh`,
+  `cat setup.sh | bash`,
 ]
 
-/** The documented limits (reading table §5), each pinned as running. */
-export const LIMITS: readonly { limit: string; command: string }[] = [
+/** A12 (Q3, by its recommended answer): text a program only prints, stores
+ *  or searches for. Contract §7.5 "must run", the pair of research D27, and
+ *  the commands of the review's `f1.txt` and `f2.txt` that sit in a data
+ *  position. Unlike ORDINARY these name raw-only files and Veilio's folder. */
+export const MENTIONS: readonly string[] = [
+  `echo "The guard keeps ~/.veilio away"`,
+  `git commit -m "docs: ~/.veilio explained"`,
+  `git commit -m "fix: load .env before config"`,
+  `echo ".env" >> .gitignore`,
+  `grep -rn "home, '.veilio'" src`,
+  `grep -rn '\\.veilio/' docs`,
+  `cat > src/paths.ts <<'EOF'\nexport const dir = join(home, '.veilio')\nEOF`,
+  `grep -r "\\.veilio\\b" src`,
+  `grep -r "\\.veilio" src`,
+  // f1.txt
+  `git commit -m 'chore: add .env.example and ignore *.pem'`,
+  `git commit -m "guard: refuse ~/.veilio/map.json reads"`,
+  `git commit -am "fix(guard): don't read .veilio/guard.json twice"`,
+  `git ls-files | grep -v '\\.env'`,
+  `git grep -n '\\.env' -- '*.ts'`,
+  `grep -rn "\\.env" src`,
+  `rg "\\.pem\\b" docs`,
+  `rg -n "id_ed25519" docs`,
+  `cat > README.md <<'EOF'\n# App\nCopy \`.env.example\` to \`.env\` and fill it in.\nVeilio keeps its map in \`~/.veilio/\`.\nEOF`,
+  `cat >> .gitignore <<'EOF'\n.env\n*.pem\n.veilio/\nEOF`,
+  `printf '%s\\n' '*.pem' 'id_*' >> .gitignore`,
+  `gh pr create --title "Ignore .env" --body "Adds .env and ~/.veilio to the ignore list"`,
+  `gh issue create --title "guard refuses grep for \\.veilio" --body "see .veilio/guard.json docs"`,
+  `echo 'run: cat ~/.veilio/map.json is refused'`,
+  // f2.txt
+  `echo "path is ~/.veilio"`,
+  `echo "docs: /.veilio is the folder"`,
+  `git commit -m "ignore .veilio/"`,
+]
+
+export const ORDINARY: readonly string[] = [
+  ...new Set([
+    ...GLUED,
+    ...F8,
+    ...SPELLINGS_ALLOWED,
+    ...INTERPRETER_ALLOWED,
+    ...ZSH,
+    ...PLAIN,
+    ...A2_ORDINARY,
+    ...Q4_PIPE.slice(0, 1),
+  ]),
+]
+
+/** Q3, by its recommended answer: a script the command has just written to
+ *  a file is a script file (limit L3), and `echo`'s arguments are data. */
+export const Q3_LIMITS: readonly { limit: string; command: string }[] = [
+  { limit: 'L3', command: `echo 'cat .env' > run.sh; sh run.sh` },
+]
+
+/** The documented limits (contract §7.6), each pinned as running. `tool`:
+ *  the shell tool that is given the command (Bash unless said). */
+export const LIMITS: readonly { limit: string; command: string; tool?: 'PowerShell' }[] = [
   { limit: 'L1', command: `cat $F` },
   { limit: 'L1', command: `cat "$1"` },
   { limit: 'L1', command: `x=.e; cat \${x}nv` },
   { limit: 'L1', command: `cat sec$X/customers.csv` },
+  { limit: 'L1', command: `a=.e; b=nv; cat $a$b` },
   { limit: 'L2', command: `cat .e$(echo n)v` },
   { limit: 'L2', command: `cat .e"$(echo n)"v` },
   { limit: 'L2', command: `cat $(printf .e; printf nv)` },
@@ -800,13 +1021,73 @@ export const LIMITS: readonly { limit: string; command: string }[] = [
   { limit: 'L3', command: `./build.sh` },
   { limit: 'L3', command: `python3 -c 'open(".e"+"nv")'` },
   { limit: 'L3', command: `python3 -c 'print(open(".e"+"nv").read())'` },
-  { limit: 'L3', command: `find . -name '.en*' -exec cat {} +` },
+  { limit: 'L3', command: `find . -newer x -exec cat {} +` },
   { limit: 'L3', command: `grep -r KEY .` },
   { limit: 'L3', command: `tar cf - .` },
+  // Q1, by its recommended answer: a folder that holds a raw-only file among others.
+  { limit: 'L3', command: `cp -R ~/.aws a; cat a/credentials` },
+  ...Q3_LIMITS,
   { limit: 'L4', command: `cat *` },
   { limit: 'L4', command: `cat */customers.csv` },
   { limit: 'L5', command: `cat server.p*` },
+  { limit: 'L5', command: `cat s*` },
   { limit: 'L6', command: `cat list.txt | xargs cat` },
   { limit: 'L6', command: `python3 < script.py` },
+  ...Q4_PIPE.map((command) => ({ limit: 'L6', command })),
   { limit: 'L7', command: `python3 -c 'open(chr(46)+"veilio/x")'` },
+  { limit: 'L8', command: `Get-Content (-join('.e','nv'))`, tool: 'PowerShell' },
+  // What the user's own start-up loaded (`zmodload zsh/mapfile` in ~/.zshenv).
+  { limit: 'L9', command: `echo $mapfile[.env]` },
+]
+
+// ── Addendum 2, rule R9: inputs that cost the reader the most ──
+
+const times = (unit: string, n: number): string => unit.repeat(n)
+const nest = (open: string, close: string, n: number, inside = ''): string =>
+  times(open, n) + inside + times(close, n)
+
+/** The 36 inputs of the review's `p1.txt` and its 3,000-star line, made from
+ *  their descriptions (sizes as the review measured them), not stored. */
+export const COST: readonly { name: string; make: () => string }[] = [
+  { name: 'one word of 200,000 characters', make: () => `echo ${times('a', 200000)}` },
+  { name: '40 brace pairs', make: () => `echo ${times('{a,b}', 40)}` },
+  { name: '12 brace pairs', make: () => `echo ${times('{a,b}', 12)}` },
+  { name: '11 brace pairs spelling a name', make: () => `cat {.e,x}${times('{n,y}', 10)}v` },
+  { name: '60 nested substitutions', make: () => `echo ${nest('$(', ')', 60, 'true')}` },
+  { name: '500 nested substitutions', make: () => `echo ${nest('$(', ')', 500, 'true')}` },
+  { name: '100,000 double quotes', make: () => `echo ${times('"', 99999)}` },
+  { name: '50,000 quoted words', make: () => `echo ${times(`'a' `, 50000)}` },
+  { name: '2,000 bracket ranges', make: () => `echo ${times('[a-z]', 2000)}` },
+  { name: '10,000 open brackets', make: () => `echo ${times('[', 10000)}` },
+  { name: '5,000 question marks', make: () => `cat ${times('?', 5000)}` },
+  { name: '3,000 stars', make: () => `cat ${times('*a', 3000)}` },
+  { name: '40 stars in a name', make: () => `cat .e${times('*', 40)}nvx` },
+  { name: '30 stars, two words', make: () => `cat ${times('a*', 30)}b .env0` },
+  { name: '300 nested defaults', make: () => `cat ${nest('${x:-', '}', 300, 'a')}` },
+  { name: '40 nested defaults', make: () => `cat ${nest('${x:-', '}', 40, '{a,b}')}` },
+  { name: '50,000 line continuations', make: () => `echo ${times('\\\n', 50000)}x` },
+  { name: '20,000 commands', make: () => `echo ${times('a;', 20000)}` },
+  { name: '5,000 pipeline stages', make: () => `echo ${times('a|', 5000)}a` },
+  {
+    name: '5 nested shells',
+    make: () =>
+      `bash -c "bash -c \\"bash -c \\\\\\"bash -c 'bash -c \\\\\\\\\\\\\\"cat .en[v]\\\\\\\\\\\\\\"'\\\\\\"\\""`,
+  },
+  { name: '3,000 nested parentheses', make: () => `echo ${nest('(', ')', 3000)}` },
+  { name: '30,000 quote pairs', make: () => `echo ${times(`"'"`, 30000)}` },
+  { name: '20,000 joined strings', make: () => `echo "' . '${times(`' . '`, 19999)}"` },
+  { name: '20,000 quoted pluses', make: () => `echo ${times(`'+' `, 20000)}` },
+  { name: "20,000 mentions of Veilio's folder", make: () => `echo ${times('.veilio ', 20000)}` },
+  { name: 'one path of 20,000 Veilio folders', make: () => `echo ${times('/.veilio', 20000)}` },
+  { name: '5,000 path parts', make: () => `cat ${times('a/', 5000)}x` },
+  { name: '5,000 parent folders', make: () => `cat ${times('../', 5000)}x` },
+  { name: 'a sequence of 100,000', make: () => `cat {1..100000}` },
+  { name: '8 sequences of 9', make: () => `cat ${times('{1..9}', 8)}` },
+  { name: 'a sequence of 99,999 after a name', make: () => `cat id_ed{1..99999}` },
+  { name: '30 bracket ranges before .pem', make: () => `cat ${times('[a-z]', 30)}.pem` },
+  { name: '20 bracket lists', make: () => `cat ${times('[ab]', 20)}` },
+  { name: 'a bracket spelling', make: () => `cat .e[n]v` },
+  { name: 'a here-document of 100,000 lines', make: () => `cat <<E${times('\nx', 100000)}\nE` },
+  { name: '2,000 nested arithmetic', make: () => `: ${nest('$((1+', '))', 2000, '1')}` },
+  { name: '3,000 stars alone (stack overflow at 0876180)', make: () => `cat ${times('*a', 3000)}` },
 ]

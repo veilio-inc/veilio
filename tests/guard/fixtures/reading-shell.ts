@@ -5,12 +5,17 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,6 +36,9 @@ export type Fixture = {
   files: Record<string, string>
   /** Paths that lead elsewhere, as a symbolic link does (in memory only). */
   links?: Record<string, string>
+  /** Symbolic links on disk: absolute path -> target (`mysh`, a shell under
+   *  a name that is not a shell's). */
+  onDisk?: Record<string, string>
 }
 
 /** The tree of the reading table's §6, in a fresh directory (real path). A
@@ -51,13 +59,16 @@ export function makeFixture(): Fixture {
     [join(proj, 'id_ed25519')]: body('KEY'),
     [join(proj, '.veilio/guard.json')]: '{"rawOnly":["secrets/**"]}',
     [join(proj, 'src/index.ts')]: 'export {}\n',
+    [join(proj, 'a.txt')]: 'a\n',
     [join(home, '.veilio/map.json')]: body('HOME'),
   }
-  const f: Fixture = { tmp, proj, home, tokens, files }
+  const onDisk = { [join(proj, 'mysh')]: '/bin/sh' }
+  const f: Fixture = { tmp, proj, home, tokens, files, onDisk }
   build(f)
   return f
 }
 
+// `sub` is also the name a zsh qualifier rewrites (`sub(:s/sub/.env/)`).
 const DIRS = (f: Fixture) => [join(f.proj, 'sub'), join(f.tmp, 't')]
 
 function build(f: Fixture): void {
@@ -66,6 +77,7 @@ function build(f: Fixture): void {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, text)
   }
+  for (const [path, target] of Object.entries(f.onDisk ?? {})) symlinkSync(target, path)
 }
 
 export function removeFixture(f: Fixture): void {
@@ -92,7 +104,10 @@ export function verifyFixture(f: Fixture): boolean {
         return out
       }),
       ...DIRS(f).map((d) => `${d}/`),
+      ...Object.keys(f.onDisk ?? {}),
     ])
+    for (const [path, target] of Object.entries(f.onDisk ?? {}))
+      if (readlinkSync(path) !== target) same = false
     const scratch = `${join(f.tmp, 't')}/`
     for (const p of tree(f.tmp)) if (!expected.has(p) && !p.startsWith(scratch)) same = false
   } catch {
@@ -114,11 +129,19 @@ const LIMIT_MS = 5000
 const CAP = 64 * 1024
 
 export type Run = { read: Set<CanaryId>; changed: boolean; killed: boolean; output: string }
+export type Locale = 'C' | 'en_US.UTF-8'
 
 /** A command run by a real shell in the fixture: exact argv and environment,
  *  stdin closed, killed after 5 s, output cut at 64 KB. `check: false` skips
- *  the fixture comparison (a caller running several at once checks after). */
-export function runIn(shell: Shell, command: string, f: Fixture, check = true): Promise<Run> {
+ *  the fixture comparison (a caller running several at once checks after).
+ *  `locale`: a real session runs under the user's, where a range collates. */
+export function runIn(
+  shell: Shell,
+  command: string,
+  f: Fixture,
+  check = true,
+  locale: Locale = 'C'
+): Promise<Run> {
   return new Promise((resolve) => {
     const child = spawn(shell, [...ARGV[shell], command], {
       cwd: f.proj,
@@ -126,7 +149,7 @@ export function runIn(shell: Shell, command: string, f: Fixture, check = true): 
         PATH: '/usr/bin:/bin',
         HOME: f.home,
         ZDOTDIR: f.home,
-        LC_ALL: 'C',
+        LC_ALL: locale,
         TMPDIR: join(f.tmp, 't'),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -212,12 +235,74 @@ export async function guardAt(f: Fixture, rawOnly: readonly string[]): Promise<G
   return g
 }
 
+/** A guard over the fixture's real files, as the hook builds it (rule R6):
+ *  `read`, `exists`, `realPath`, `isLink`, `isFile` and `fileSize` from the
+ *  file system, the project's list and its `.git/HEAD` as `guardAt` gives them. */
+export async function hookGuard(f: Fixture, rawOnly: readonly string[]): Promise<Guard> {
+  const config = join(f.proj, '.veilio/guard.json')
+  const head = join(f.proj, '.git/HEAD')
+  const io: GuardIO = {
+    read: async (p) =>
+      p === config
+        ? JSON.stringify({ rawOnly })
+        : p === head
+          ? 'ref: refs/heads/main\n'
+          : readFileSync(p, 'utf8'),
+    write: async () => {},
+    exists: async (p) => p === head || existsSync(p),
+    realPath: async (p) => {
+      try {
+        return realpathSync(p)
+      } catch {
+        return undefined
+      }
+    },
+    isLink: async (p) => {
+      try {
+        return lstatSync(p).isSymbolicLink()
+      } catch {
+        return false
+      }
+    },
+    isFile: async (p) => {
+      try {
+        return statSync(p).isFile()
+      } catch {
+        return false
+      }
+    },
+    fileSize: async (p) => {
+      try {
+        return statSync(p).size
+      } catch {
+        return undefined
+      }
+    },
+  }
+  const g = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await g.load(f.proj, f.home)
+  if (g.state !== 'on') throw new Error(`the oracle's guard is ${g.state}: ${g.stoppedReason}`)
+  return g
+}
+
+/** The verdict as the hook gets it (plugins/veilio-guard/hooks/register.ts,
+ *  `tool.call`): where the host says the shell is, then the call (rule R7). */
+export async function hookVerdict(
+  guard: Guard,
+  command: string,
+  cwd: string
+): Promise<{ verdict: 'refused' | 'allowed'; text: string | null }> {
+  guard.atHost(cwd)
+  return verdict(guard, command)
+}
+
 /** The guard's verdict on a Bash command, with the refusal's text. */
 export async function verdict(
   guard: Guard,
-  command: string
+  command: string,
+  tool: 'Bash' | 'PowerShell' = 'Bash'
 ): Promise<{ verdict: 'refused' | 'allowed'; text: string | null }> {
-  const v = await guard.beforeTool({ tool: 'Bash', command, description: 'x' })
+  const v = await guard.beforeTool({ tool, command, description: 'x' })
   return 'deny' in v ? { verdict: 'refused', text: v.deny } : { verdict: 'allowed', text: null }
 }
 
