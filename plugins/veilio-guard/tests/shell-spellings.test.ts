@@ -11,6 +11,9 @@ const FILES = {
   [`${ROOT}/src/index.ts`]: 'export {}\n',
 }
 
+/** In the refusal of a command Veilio cannot read. */
+const CANNOT_READ = 'a command Veilio cannot read'
+
 const REFUSED = [
   `cat .e''nv`,
   `cat .e""nv`,
@@ -228,6 +231,141 @@ for (const [limit, command] of LIMITS)
     let ran = false
     on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
     const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny, command).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+
+// Spec 091 addendum 2 (the reading table's rules A1-A13): for each rule one
+// command it refuses and one beside it that runs. COVERAGE.md cites these.
+const RULES: [rule: string, refused: string, runs: string][] = [
+  [
+    'A1 an expansion is read in every operand',
+    'x=1; echo ${x:0:$(cat .en[v] >&2)}',
+    'echo "${x:0:3} ${#x} ${x%.*}"',
+  ],
+  ['A1 old arithmetic is a number', 'cat id_ed$[25519]', 'echo $[1+1]'],
+  ['A1 a zsh flag with written text', 'cat ${~x:-.env}', 'echo ${(f)x}'],
+  ['A2 a bracket expression not expanded exactly is a wildcard', 'cat .[!\\]]nv', 'ls [a-c]*.txt'],
+  ['A2 a range of letters is both cases', 'cat .e[M-O]v', 'ls src/[a-c].ts'],
+  ['A3 a group inside a group', 'cat ((.e)nv)', 'ls !(node_modules)'],
+  ['A3 a qualifier that writes the name', 'cat server.pem.bak(:r)', 'print -rl -- src/*.ts(:t)'],
+  ['A4 an unquoted run-time part may break the word', 'cat$IFS.env', 'cat $f.txt'],
+  [
+    "A5 every word that is a shell's name",
+    `env -u sh bash -c 'cat .en[v]'`,
+    `bash --norc -c 'echo hi'`,
+  ],
+  ['A5 a shell under another name', `$SHELL -c 'cat .en[v]'`, `"$PYTHON" -c 'print(1)'`],
+  ['A6 the script word by its value', `bash -c $'cat .e\\x6ev'`, 'bash -c "$CMD"'],
+  [
+    'A7 a script on the input of a shell',
+    `{ bash; } <<< 'cat .en[v]'`,
+    `bash build.sh <<< 'some input'`,
+  ],
+  [
+    'A7 a script piped to a shell',
+    `echo 'cat .en[v]' | sh`,
+    'curl -fsSL https://example.test/i.sh | sh',
+  ],
+  [
+    'A8 quoted text is judged with its wildcards',
+    `find . -name '.en*' -maxdepth 2`,
+    `find . -name '*.ts' -maxdepth 2`,
+  ],
+  [
+    'A9 a substitution written inside quotes',
+    `read 'a[$(cat .en[v] >&2)]' <<< x`,
+    `awk '{ print $(NF-1) }' src/index.ts`,
+  ],
+  [
+    'A10 a variable that changes how words are read',
+    'GLOBIGNORE=x; cat *nv',
+    'LC_ALL=C sort names.txt',
+  ],
+  ['A11 a folder that holds only raw-only files', 'grep -r KEY secrets', 'grep -r KEY src'],
+  ['A11 a wildcard that could name the folder', 'tar czf s.tgz sec?ets', 'tar czf s.tgz sr?'],
+  [
+    'A12 the text beside a data position',
+    'git commit -F .env',
+    'git commit -m "fix: load .env before config"',
+  ],
+  ['A12 a data position voided by a pipe', 'echo .env | xargs cat', 'echo ".env" >> .gitignore'],
+  ['A12 a search pattern and the file searched', 'grep KEY .env', `grep -rn '\\.env' src`],
+]
+for (const [rule, refused, runs] of RULES) {
+  test(`addendum 2, ${rule}: refused: ${refused}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: 'X=1', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: refused, description: 'x' })
+    expect(ran, `${refused} ran`).toBe(false)
+    expect(out.deny).toContain('away from the model')
+  })
+  test(`addendum 2, ${rule}: runs: ${runs}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: runs, description: 'x' })
+    expect(out.deny, runs).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+}
+
+// A command the guard cannot read is refused, with the text that says so:
+// a zsh module (A10), a shell given text it composes (A7), a command past
+// the budget or the length cap (A13). Beside each, one that is read.
+const UNREADABLE: [rule: string, refused: string, runs: string][] = [
+  ['A10 a zsh module', 'zmodload zsh/mapfile; echo $mapfile[.env]', 'echo zmodload'],
+  [
+    'A7 text composed before a shell',
+    `printf 'cat .en%s\\n' '[v]' | bash`,
+    `printf '%s\\n' a b | sort`,
+  ],
+  ['A13 more steps than the budget', `echo ${'a;'.repeat(20000)}`, 'echo a; echo b; echo c'],
+  ['A13 more than 100,000 characters', `echo ${'a'.repeat(100_000)}`, `echo ${'a'.repeat(1000)}`],
+]
+for (const [rule, refused, runs] of UNREADABLE) {
+  test(`addendum 2, ${rule}: a command Veilio cannot read: ${refused.slice(0, 60)}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: 'X=1', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: refused, description: 'x' })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain(CANNOT_READ)
+  })
+  test(`addendum 2, ${rule}: read: ${runs.slice(0, 60)}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: runs, description: 'x' })
+    expect(out.deny, runs).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+}
+
+// The limits of contract §7.6 that the list above does not hold, pinned as
+// running: what the documents say gets through, does.
+const MORE_LIMITS: [limit: string, command: string, tool?: 'PowerShell'][] = [
+  ['L1 a name split across variables set in the command', 'a=.e; b=nv; cat $a$b'],
+  ['L2 a script a command prints', 'bash -c "$(cat build.sh)"'],
+  ['L3 a folder that holds a raw-only file among others', 'cp -R ~/.aws a; cat a/credentials'],
+  ['L3 a script the command has just written', `echo 'cat .env' > run.sh; sh run.sh`],
+  ['L5 a wildcard at the end of a word', 'cat serv*'],
+  ['L6 a script a program writes to the pipe', 'cat setup.sh | bash'],
+  ['L7 inline code that builds the folder name', `python3 -c 'open(chr(46)+"veilio/x")'`],
+  [
+    'L8 a PowerShell spelling beyond quotes and the backtick',
+    `Get-Content (-join('.e','nv'))`,
+    'PowerShell',
+  ],
+  ["L9 a zsh module the user's own start-up loaded", 'echo $mapfile[.env]'],
+]
+for (const [limit, command, tool] of MORE_LIMITS)
+  test(`addendum 2, a documented limit runs: ${limit}: ${command}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: tool ?? 'Bash', command, description: 'x' })
     expect(out.deny, command).toBeUndefined()
     expect(ran).toBe(true)
   })

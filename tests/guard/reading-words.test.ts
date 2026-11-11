@@ -379,12 +379,17 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     expect(spell(word)).toEqual(expected)
   })
 
-  test.each([`sub(e:'REPLY=.env':)`, 'sub(+f)', '*(P:.env:)', 'sub(:s/sub/.env/)', 'sub(P:.env:)'])(
-    'A3: a qualifier that writes the name or runs code makes the word any name: %s',
-    (word) => {
-      expect(spell(word)).toBe('any')
-    }
-  )
+  test.each([
+    `sub(e:'REPLY=.env':)`,
+    // `e` with another delimiter than the colon.
+    `sub(e{'x=.env'})`,
+    'sub(+f)',
+    '*(P:.env:)',
+    'sub(:s/sub/.env/)',
+    'sub(P:.env:)',
+  ])('A3: a qualifier that writes the name or runs code makes the word any name: %s', (word) => {
+    expect(spell(word)).toBe('any')
+  })
 
   test('A3: a qualifier that only filters or sorts is as before', () => {
     expect(spell('*.ts(om)')).toEqual(['*.ts**'])
@@ -621,6 +626,8 @@ describe('addendum 2: scripts and settings', () => {
     [`echo '\${ cat .e[n]v; }'`],
     [`echo "\\$(cat .e[n]v)"`],
     [`echo $'$(cat .e\\x6ev)'`],
+    // The text around it is no script (a quote does not close): the substitution is still read.
+    [`echo 'then $(cat .e[n]v) fi "'`],
   ])('A9: a substitution written inside quotes or after a backslash is read: %s', (command) => {
     expect(reads(command), command).toBe(true)
   })
@@ -1045,8 +1052,12 @@ describe('the guard', () => {
 
   test('A12: PowerShell is not read by these positions', async () => {
     const g = await fixtureGuard()
-    const v = await g.beforeTool({ tool: 'PowerShell', command: 'echo .env', description: 'x' })
-    expect('deny' in v).toBe(true)
+    // Judged as before addendum 2: text that names Veilio's folder as a path.
+    const command = 'echo "see ~/.veilio/ docs"'
+    expect('deny' in (await g.beforeTool({ tool: 'PowerShell', command, description: 'x' }))).toBe(
+      true
+    )
+    expect('deny' in (await g.beforeTool({ tool: 'Bash', command, description: 'x' }))).toBe(false)
   })
 
   test('a command Veilio cannot read is refused', async () => {

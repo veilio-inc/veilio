@@ -482,6 +482,8 @@ export const REVIEWED: Readonly<Record<string, readonly string[]>> = {
     `cat server.pem.bak(:r)`,
     `cat .env.bak(:r)`,
     `cat x(:s/x/.env/)`,
+    // `e` between braces, the name built by the code it runs.
+    `cat sub(e{'REPLY=.e\${x}nv'})`,
   ],
   B17: [`x=a; cat \${x/a/.e[n]v}`],
 }
