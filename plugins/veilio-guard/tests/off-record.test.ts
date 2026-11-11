@@ -99,13 +99,21 @@ test('the session ending (a /clear included) puts the guard back on', async ($, 
 })
 
 test('on Windows an older record is removed with Remove-Item on a literal path, not through cmd', async ($, on) => {
-  const p = project(on, { ...MAP, [STATE]: LEGACY }, { home: HOME, windows: true })
+  // A Windows home: the path given to Remove-Item is that path, literally.
+  const home = 'C:\\Users\\dev'
+  // The record, under either separator the host may hand the home back with.
+  const states = [`${home}/.veilio/guard-state.json`, 'C:/Users/dev/.veilio/guard-state.json']
+  const p = project(
+    on,
+    { ...MAP, ...Object.fromEntries(states.map((f) => [f, LEGACY])) },
+    { home, windows: true }
+  )
   const band = (await $.command.run({ command: 'veilio', args: '' })).text.split('\n')[0]
-  expect(p.files[STATE]).toBeUndefined()
   expect(p.ops).toContain(
-    "run powershell -NoProfile -Command Remove-Item -LiteralPath '\\home\\dev\\.veilio\\guard-state.json' -Force"
+    "run powershell -NoProfile -Command Remove-Item -LiteralPath 'C:\\Users\\dev\\.veilio\\guard-state.json' -Force"
   )
   expect(p.ops.some((o) => o.includes('cmd'))).toBe(false)
+  expect(Object.keys(p.files).filter((f) => f.includes('guard-state'))).toEqual([])
   expect(band).toContain('lasts for one session')
 })
 

@@ -87,7 +87,13 @@ export type Options = {
   ownEnv?: boolean
 }
 
-const abs = (p: string) => (p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`)
+// A drive path (`C:\\Users\\dev`) is absolute too: a Windows home. A host
+// that is not Windows may hand it back resolved against its own directory.
+const abs = (p: string) => {
+  const drive = /(?:^|[\\/])([A-Za-z]:[\\/].*)$/.exec(p)
+  if (drive) return drive[1]!
+  return p.startsWith('/') ? p : `${ROOT}/${p.replace(/^\.\//, '')}`
+}
 
 export function project(
   on: TestOn,
@@ -228,7 +234,10 @@ export function project(
       if (opts.rmFails) return { value: { exitCode: 1, stdout: '', stderr: 'denied' } }
       const last = e.argv[e.argv.length - 1]!
       const literal = /^Remove-Item -LiteralPath '(.*)' -Force$/.exec(last)?.[1]
-      delete p.files[abs((literal ?? last).replace(/''/g, "'").replace(/\\/g, '/'))]
+      // On Windows `\\` and `/` both separate: the file is found by either spelling.
+      const named = (literal ?? last).replace(/''/g, "'").replace(/\\/g, '/')
+      for (const f of Object.keys(p.files))
+        if ([named, abs(named)].includes(f.replace(/\\/g, '/'))) delete p.files[f]
       return ok('')
     }
     if (opts.noGit || e.argv[0] !== 'git') return { deny: `spawn ${e.argv[0]} ENOENT` }

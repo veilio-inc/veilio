@@ -82,6 +82,7 @@ const REFUSED = [
   `echo \${x:-$(cat .e''nv)}`,
   `echo $(( $(cat .e''nv) ))`,
   `cat <<EOF\n$(cat .e''nv)\nEOF`,
+  `cat <<< .e''nv`,
   // A default written in the command is one more spelling.
   `cat \${x:-.env}`,
   `cat "\${x:-.env}"`,
@@ -243,6 +244,17 @@ test('a bracket list names the file itself: a link and the settings are found by
     description: 'x',
   })
   expect(settings.deny).toBeDefined()
+  expect(ran).toBe(false)
+})
+
+test('a command Veilio cannot read is refused', async ($, on) => {
+  project(on, FILES)
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  for (const command of [`cat .e''nv "`, 'echo "unbalanced', 'bash -cO']) {
+    const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+    expect(out.deny, command).toContain('a command Veilio cannot read')
+  }
   expect(ran).toBe(false)
 })
 
