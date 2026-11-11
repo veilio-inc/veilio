@@ -1493,14 +1493,24 @@ class Reader {
         rest = rest.slice(r.i)
       } else
         rest = rest.slice(/^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])?/.exec(rest)![0].length)
-      // A value written in the command, past a subscript (`${a[0]:-v}`).
-      const written = /^(?:\[[^\]]*\])?:?[-=+?]/.exec(rest)
-      const operand = [
-        ...named,
-        ...(written ? this.operand(rest.slice(written[0].length), quoted) : []),
-      ]
+      // Text written in the command, past a subscript (`${a[0]:-v}`): a
+      // default or alternate value (zsh's `::=` too), or the replacement of
+      // a substitution - `/pat/TEXT`, `//pat/TEXT`, `/#pat/TEXT`,
+      // `/%pat/TEXT`, zsh `:/pat/TEXT`, `:s/l/TEXT/`, `:gs/l/TEXT/`. The
+      // pattern is not text.
+      const value = /^(?:\[[^\]]*\])?(?:::=|:?[-=+?])/.exec(rest)
+      const swap = value ? null : /^(?:\[[^\]]*\])?(:g?s|:)?\/[/#%]?/.exec(rest)
+      let text: string | null = value ? rest.slice(value[0].length) : null
+      if (swap) {
+        // The replacement starts after the pattern's closing, unescaped `/`.
+        let at = swap[0].length
+        while (at < rest.length && rest[at] !== '/') at += rest[at] === '\\' ? 2 : 1
+        if (at < rest.length)
+          text = rest.slice(at + 1).replace(swap[1]?.endsWith('s') ? /\/$/ : /$^/, '')
+      }
+      const operand = [...named, ...(text !== null ? this.operand(text, quoted) : [])]
       const part: Part = { kind: 'param', name, op }
-      if (written || named.length > 0) part.operand = operand
+      if (text !== null || named.length > 0) part.operand = operand
       if ((flags !== '' || (named.length > 0 && rest !== '')) && holdsText(operand))
         part.transforms = true
       parts.push(part)

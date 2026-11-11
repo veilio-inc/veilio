@@ -194,6 +194,14 @@ describe('spellings: the reading table', () => {
     ['E11 a nested default', `\${x:-\${y:-.env}}`, ['.env']],
     ['E11 a default in double quotes', `"\${x:-.env}"`, ['.env']],
     ['E11 a default for one letter', `.e\${x:-n}v`, ['.env']],
+    ['E11b a replacement', `\${y/a/.env}`, ['.env']],
+    ['E11b a replacement of every match', `\${y//a/.env}`, ['.env']],
+    ['E11b a replacement at the start', `\${y/#a/.env}`, ['.env']],
+    ['E11b a replacement at the end', `\${y/%a/.env}`, ['.env']],
+    ['E11b a replacement for one letter', `.e\${y/a/n}v`, ['.env']],
+    ['E11b a replacement beside text', `\${y/a/.e}nv`, ['.env']],
+    ['E11b a replacement past a subscript', `\${a[0]/a/.env}`, ['.env']],
+    ['E11b a pattern with an escaped slash', `\${y/a\\/b/.env}`, ['.env']],
   ])('%s: %s', (_, word, expected) => {
     const read = spell(word)
     for (const name of expected) expect(read, word).toContain(name)
@@ -290,6 +298,14 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     expect(parseShell('f ( ) { cat x; }', 'sh').ok).toBe(true)
   })
 
+  test('E11b: zsh ::=, :/, :s and :gs hold written text; a pattern alone does not', () => {
+    for (const w of ['${x::=.env}', '${y:/a/.env}', '${y:s/a/.env/}', '${y:gs/a/.env/}'])
+      expect(spell(w), w).toContain('.env')
+    expect(spell('${y/.env}')).toEqual([])
+    expect(spell('${y/.env/}')).toEqual([])
+    expect(spell('${${x}/a/.env}')).toBe('any')
+  })
+
   test('Z4: ${:-x} is a written value', () => {
     expect(spell('${:-.env}')).toEqual(['.env'])
     expect(spell('.e${:-n}v')).toContain('.env')
@@ -303,12 +319,17 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     }
   )
 
-  test.each(['${(k)parameters}', '${(U)name}', '${(s:,:)list}', '${${x}/a/b}', '${x/a/b}'])(
-    'Z5: %s holds no written value',
-    (word) => {
-      expect(spell(word)).toEqual([])
-    }
-  )
+  test.each([
+    '${(k)parameters}',
+    '${(U)name}',
+    '${(s:,:)list}',
+    '${${x}/a}',
+    '${x/a}',
+    '${x#a}',
+    '${x%.txt}',
+  ])('Z5: %s holds no written value', (word) => {
+    expect(spell(word)).toEqual([])
+  })
 
   test.each([
     ['#', '.eq#nv', `.e${ANY}nv`],

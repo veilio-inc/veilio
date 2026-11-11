@@ -162,6 +162,26 @@ const F5 = [
   `cat .e\${empty:-n}v`,
   `echo \${x:-$(cat .env)}`,
 ]
+/** Text written inside a substitution expansion is one more spelling. */
+const SUBSTITUTED = [
+  `cat \${x/#/.e[n]v}`,
+  `cat \${x/%/.e[n]v}`,
+  `y=a; cat \${y/a/.e[n]v}`,
+  `y=a; cat \${y//a/.e{n,}v}`,
+  `y=a; cat \${y/#a/.e[n]v}`,
+  `y=a; cat \${y/%a/.e[n]v}`,
+  `y=a; cat .e\${y/a/n}v`,
+  `y=a; cat \${y/a/.e}nv`,
+  `y=a; cat "\${y/a/.e[n]v}"`,
+  `y=a; cat \${y/a/\${x:-.e[n]v}}`,
+  `y=a; cat \${y/a/$(cat .e[n]v)}`,
+  `cat \${x::=.e[n]v}`,
+  `y=a; cat \${y:s/a/.e[n]v/}`,
+  `y=a; cat \${y:gs/a/.e[n]v/}`,
+  `y=a; cat \${y:/a/.e[n]v}`,
+  `y=a; cat \${a[0]/a/.e[n]v}`,
+  `y=a; node -e "\${y/a/require('fs').readFileSync('.vei'+'lio/x')}"`,
+]
 const F6 = [`cat .en[[:alpha:]]`, `cat server.pe[m]`, `cat serve[r].pem`, `cat server.pe?`]
 const F7 = [
   `cat .e(n)v`,
@@ -358,6 +378,7 @@ export const ATTACK: readonly string[] = [
     ...F4,
     ...ATTACHED,
     ...F5,
+    ...SUBSTITUTED,
     ...F6,
     ...F7,
     ...HEREDOC,
@@ -697,6 +718,14 @@ const PLAIN: readonly string[] = [
   `true && echo ok`,
   `cd src && ls`,
   `(cd src && ls)`,
+  // Substitutions whose written text names nothing raw-only.
+  `echo "\${PATH//:/ }"`,
+  `echo "\${name/-/_}.txt"`,
+  `mv "$f" "\${f/.txt/.md}"`,
+  `echo "\${branch//\\//-}"`,
+  `for f in *.jpeg; do mv "$f" "\${f/%.jpeg/.jpg}"; done`,
+  `echo \${v/#v/}`,
+  `echo "\${url/http:/https:}"`,
   // `$PWD` and `~+` after a cd are where the shell is, not the session's
   // directory, where `latest` is a link to .env.
   `cd src && cat "$PWD"/latest`,

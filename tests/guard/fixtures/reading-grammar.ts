@@ -263,6 +263,30 @@ const optioned = (
   return (c, everywhere) => inner(c, everywhere).map((e) => (s: Spelling) => s.pre === '' && e(s))
 }
 
+/** A replacement written in a substitution: `Y=a` is set first, and the
+ *  expansion puts the written text where `a` stood (bash and zsh), or zsh
+ *  assigns it. One per spelling (they set the command's start). */
+const substituted = (pre: string, forms: ((text: string) => string)[], ...shells: Shell[]) => {
+  const set = (s: Spelling) => {
+    s.pre = pre
+    if (shells.length) only(...shells)(s)
+  }
+  const perLetter = perChar(any, (ch) => forms.map((f) => f(ch)), 'spelled', set)
+  return (slashes: boolean): Operator['edits'] =>
+    (c, everywhere) => [
+      ...perLetter(c, everywhere).map((e) => (s: Spelling) => s.pre === '' && e(s)),
+      // The whole name as the written text (not behind a front such as `~/`).
+      ...(c.front !== '' || (!slashes && c.name.includes('/'))
+        ? []
+        : forms.map((f): Edit => (s) => {
+            if (s.pre !== '' || s.wrap.length > 0 || s.whole !== null) return false
+            s.wrap.push(f)
+            set(s)
+            return true
+          })),
+    ]
+}
+
 export const OPERATORS: readonly Operator[] = [
   { id: 'O1', edits: perChar(any, (ch) => [`${ch}''`, `${ch}""`], 'spelled') },
   { id: 'O2', edits: perChar(any, (ch) => [`'${ch}'`], 'spelled') },
@@ -438,6 +462,26 @@ export const OPERATORS: readonly Operator[] = [
         `\${(L):-${c.name.toUpperCase()}}`,
       ],
       'zsh'
+    ),
+  },
+  {
+    // Text written inside a substitution expansion (reading table E11b).
+    id: 'O30',
+    edits: both(
+      substituted('Y=a; ', [
+        (t) => `\${Y/a/${t}}`,
+        (t) => `\${Y//a/${t}}`,
+        (t) => `\${Y/#a/${t}}`,
+        (t) => `\${Y/%a/${t}}`,
+        (t) => `"\${Y/a/${t}}"`,
+      ])(true),
+      substituted(
+        '',
+        [(t) => `\${x/#/${t}}`, (t) => `\${x/%/${t}}`, (t) => `\${x::=${t}}`],
+        'zsh'
+      )(true),
+      substituted('Y=a; ', [(t) => `\${Y:/a/${t}}`], 'zsh')(true),
+      substituted('Y=a; ', [(t) => `\${Y:s/a/${t}/}`, (t) => `\${Y:gs/a/${t}/}`], 'zsh')(false)
     ),
   },
   {
@@ -665,7 +709,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin X n I cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin Y X n I cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
     ' '
   )
 )
