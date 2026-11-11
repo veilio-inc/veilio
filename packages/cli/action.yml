@@ -109,6 +109,13 @@ runs:
         MODE: ${{ steps.targets.outputs.mode }}
       run: |
         set -uo pipefail
+        # The default names the version released with this action, which is on
+        # npm only once the release has published. Until then there is nothing
+        # to run: said plainly, and never a quiet fall back to `latest`.
+        if ! npm view "@veilio-inc/cli@$VERSION" version > /dev/null 2>&1; then
+          echo "veilio action: @veilio-inc/cli@$VERSION is not on the npm registry, so nothing was scanned and this step fails. Set \`version:\` to a published version, or to \`latest\`." >&2
+          exit 1
+        fi
         args=""
         if [ "$STRICT" = "true" ]; then args="--strict"; fi
 
