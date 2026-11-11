@@ -1,5 +1,14 @@
 import { expect, test } from 'vitest'
-import { COST } from './fixtures/reading-corpora.ts'
+import { Guard, type GuardIO } from '../../plugins/veilio-guard/lib/guard.ts'
+import { globMayBeRawOnly } from '../../plugins/veilio-guard/lib/paths.ts'
+import {
+  MAX_COMMAND,
+  MAX_STEPS,
+  parseShell,
+  Unreadable,
+} from '../../plugins/veilio-guard/lib/shell.ts'
+import { CORPUS } from './fixtures/cd-corpus.ts'
+import { COST, MENTIONS, ORDINARY } from './fixtures/reading-corpora.ts'
 import { guardAt, memoryFixture, verdict } from './fixtures/reading-shell.ts'
 
 // Spec 091 addendum 2, rule R9 (contract A13): the reader has a budget of its
@@ -28,3 +37,86 @@ for (const { name, make } of COST)
       expect(v.text).toContain(UNREADABLE)
     }
   })
+
+test('a command of 100,000 characters is read; one more and it is not', () => {
+  expect(MAX_COMMAND).toBe(100_000)
+  expect(parseShell(`echo ${'a'.repeat(MAX_COMMAND - 5)}`, 'sh').ok).toBe(true)
+  expect(parseShell(`echo ${'a'.repeat(MAX_COMMAND - 4)}`, 'sh')).toEqual({
+    ok: false,
+    why: 'cost',
+  })
+  expect(parseShell(`echo ${'a'.repeat(MAX_COMMAND)}`, 'ps')).toEqual({ ok: false, why: 'cost' })
+})
+
+test('the reader counts its steps: past the budget a command is unreadable', () => {
+  expect(parseShell('echo a b c d e f', 'sh', { n: 0, steps: 10 })).toEqual({
+    ok: false,
+    why: 'cost',
+  })
+  expect(parseShell('echo a', 'sh', { n: 0, steps: 100 }).ok).toBe(true)
+  // The same count on every machine: 20,000 commands are past it, one is not.
+  expect(parseShell(`echo ${'a;'.repeat(20000)}`, 'sh')).toEqual({ ok: false, why: 'cost' })
+})
+
+test('the wildcard matcher does not recurse, and counts its steps', () => {
+  // 3,000 stars: a stack overflow at 0876180.
+  const stars = '*a'.repeat(3000)
+  expect(() =>
+    globMayBeRawOnly(stars, [], false, { n: 0, steps: Number.MAX_SAFE_INTEGER })
+  ).not.toThrow()
+  expect(() => globMayBeRawOnly(stars, [], false, { n: 0, steps: 1000 })).toThrow(Unreadable)
+  const cost = { n: 0, steps: 1000 }
+  expect(globMayBeRawOnly('.en*', [], false, cost)).toBe(true)
+  expect(cost.steps).toBeLessThan(1000)
+})
+
+test('no ordinary command comes near the budget: under a tenth of it', async () => {
+  const guard = await guardAt(memoryFixture(), ['secrets/**'])
+  let most = { steps: 0, command: '' }
+  for (const command of [...ORDINARY, ...MENTIONS, ...new Set(CORPUS.map((e) => e.command))]) {
+    await verdict(guard, command)
+    if (guard.lastSteps > most.steps) most = { steps: guard.lastSteps, command }
+  }
+  process.stdout.write(
+    `reading cost: the costliest corpus command takes ${Math.round(most.steps)} of ${MAX_STEPS} steps: ${JSON.stringify(most.command.slice(0, 100))}\n`
+  )
+  expect(most.steps).toBeGreaterThan(0)
+  expect(most.steps).toBeLessThan(MAX_STEPS / 10)
+}, 120_000)
+
+test('anything the reader throws is a refusal, with the text for a command Veilio cannot read', async () => {
+  const fixture = memoryFixture()
+  const files: Record<string, string> = {
+    ...fixture.files,
+    [`${fixture.proj}/.veilio/guard.json`]: '{"rawOnly":[]}',
+    [`${fixture.proj}/.git/HEAD`]: 'ref: refs/heads/main\n',
+  }
+  let broken = false
+  const io: GuardIO = {
+    read: async (p) => {
+      if (files[p] === undefined) throw new Error(`ENOENT: ${p}`)
+      return files[p]
+    },
+    write: async () => {},
+    exists: async (p) => p in files || Object.keys(files).some((x) => x.startsWith(`${p}/`)),
+    realPath: async (p) => {
+      if (broken) throw new Error('the file system gave up')
+      return p
+    },
+    isFile: async (p) => p in files,
+    fileSize: async (p) => files[p]?.length,
+  }
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(fixture.proj, fixture.home)
+  expect((await verdict(guard, 'cat src/index.ts')).verdict).toBe('allowed')
+  broken = true
+  const v = await verdict(guard, 'cat src/index.ts')
+  expect(v.verdict).toBe('refused')
+  expect(v.text).toContain(UNREADABLE)
+})
+
+test('a refusal of an over-long command shows its start, not all of it', async () => {
+  const v = await verdict(await guardAt(memoryFixture(), []), `echo ${'a'.repeat(MAX_COMMAND)}`)
+  expect(v.text).toContain(UNREADABLE)
+  expect(v.text!.length).toBeLessThan(1000)
+})

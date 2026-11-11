@@ -21,11 +21,13 @@ export {
 import { DEFAULT_RAW_ONLY, normaliseRawOnlyPattern } from '../vendor/engine/index.js'
 import {
   bracket,
+  spend,
   outsideQuotes,
   shellExpands,
   shellWords,
   splitChain,
   type Assign,
+  type Cost,
   type List,
   type Node,
   type Part,
@@ -1561,29 +1563,35 @@ function globTokens(glob: string): GlobToken[] {
  *  and the word's `*` may stand for the pattern's fixed text (`id_*` is
  *  `id_rsa*`), but not both in one match: `server.p*` is not `*.pem`, a
  *  documented limit, or every `src/a*` would be a key. */
-function globsOverlap(a: string, b: string, dots = false): boolean {
+function globsOverlap(a: string, b: string, dots = false, cost?: Cost): boolean {
   const A = globTokens(a)
   const B = globTokens(b)
-  const seen = new Map<number, boolean>()
+  const [n, m] = [A.length, B.length]
+  // A table over the two token lists, filled from their ends: no recursion,
+  // so a word of thousands of stars is read; 32 cells are a step (A13).
+  spend(cost, Math.ceil(((n + 1) * (m + 1)) / 32))
   // A word's segment of nothing but wildcards (`*`, `?`) stands for no
   // particular name, or `ls *` and `lib/*/*.rb` could never run: it matches a
   // pattern's wildcards only, not its letters. And a pattern's own `*` takes
   // none of the word's letters (`*.ts` is not `id_rsa*`), only `**` does.
-  const bareWild = (i: number) => {
-    let k = i
-    while (k > 0 && !isSlash(A[k - 1]!)) k--
-    for (; k < A.length && !isSlash(A[k]!); k++) {
-      const t = A[k]!
-      // Any text from a group or an option may be a name; a wildcard is not one.
-      if (t.kind === 'char' || (t.kind === 'star' && t.free)) return false
+  const bare: boolean[] = []
+  for (let from = 0; from <= n;) {
+    let to = from
+    // Any text from a group or an option may be a name; a wildcard is not one.
+    let named = false
+    for (; to < n && !isSlash(A[to]!); to++) {
+      const t = A[to]!
+      named ||= t.kind === 'char' || t.kind === 'class' || (t.kind === 'star' && !!t.free)
     }
-    return true
+    for (let k = from; k <= Math.min(to, n - 1); k++) bare[k] = !named
+    from = to + 1
   }
   const dotStart = (j: number) => !dots && (j === 0 || isSlash(B[j - 1]!))
   const single = (t: GlobToken, u: GlobToken, i: number, j: number): boolean => {
     if (t.kind === 'char' && u.kind === 'char') return t.c === u.c
-    if (t.kind !== 'char' && u.kind === 'char') {
-      if (bareWild(i) || (u.c === '.' && dotStart(j))) return false
+    // (A bracket list is its characters: it may hold the dot itself.)
+    if (t.kind !== 'char' && t.kind !== 'class' && u.kind === 'char') {
+      if (bare[i] || (u.c === '.' && dotStart(j))) return false
     }
     const lit = t.kind === 'char' ? t : u.kind === 'char' ? u : null
     const other = lit === t ? u : t
@@ -1594,34 +1602,33 @@ function globsOverlap(a: string, b: string, dots = false): boolean {
   }
   // `took`: 1 once the word's `*` stood for the pattern's text, 2 once the
   // pattern's `*` took the word's letters.
-  const go = (i: number, j: number, took: 0 | 1 | 2): boolean => {
-    const key = (i * (B.length + 1) + j) * 3 + took
-    const known = seen.get(key)
-    if (known !== undefined) return known
-    seen.set(key, false)
-    const x = A[i]
-    const y = B[j]
-    let r: boolean
-    if (!x && !y) r = true
-    else if (x?.kind === 'star')
-      r =
-        go(i + 1, j, took) ||
-        (!!y &&
-          (x.deep || !isSlash(y)) &&
-          !(
-            y.kind === 'char' &&
-            (bareWild(i) || (y.c === '.' && dotStart(j)) || (took === 2 && !x.free))
-          ) &&
-          go(i, j + 1, y.kind === 'char' && !x.free ? 1 : took))
-    else if (y?.kind === 'star')
-      r =
-        go(i, j + 1, took) ||
-        (!!x && (y.deep ? go(i + 1, j, took) : !isSlash(x) && took !== 1 && go(i + 1, j, 2)))
-    else r = !!x && !!y && single(x, y, i, j) && go(i + 1, j + 1, took)
-    seen.set(key, r)
-    return r
-  }
-  return go(0, 0, 0)
+  const cells = new Uint8Array((n + 1) * (m + 1) * 3)
+  const at = (i: number, j: number, took: number) => cells[(i * (m + 1) + j) * 3 + took] === 1
+  for (let i = n; i >= 0; i--)
+    for (let j = m; j >= 0; j--)
+      for (let took = 0; took < 3; took++) {
+        const x = A[i]
+        const y = B[j]
+        let r: boolean
+        if (!x && !y) r = true
+        else if (x?.kind === 'star')
+          r =
+            at(i + 1, j, took) ||
+            (!!y &&
+              (x.deep || !isSlash(y)) &&
+              !(
+                y.kind === 'char' &&
+                (bare[i] || (y.c === '.' && dotStart(j)) || (took === 2 && !x.free))
+              ) &&
+              at(i, j + 1, y.kind === 'char' && !x.free ? 1 : took))
+        else if (y?.kind === 'star')
+          r =
+            at(i, j + 1, took) ||
+            (!!x && (y.deep ? at(i + 1, j, took) : !isSlash(x) && took !== 1 && at(i + 1, j, 2)))
+        else r = !!x && !!y && single(x, y, i, j) && at(i + 1, j + 1, took)
+        if (r) cells[(i * (m + 1) + j) * 3 + took] = 1
+      }
+  return at(0, 0, 0)
 }
 const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
 
@@ -1632,21 +1639,67 @@ const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
  *
  *  shortcut: it does not look at the files that exist, so a glob that could
  *  match a raw-only name is refused when no such file is there. */
-export function globMayBeRawOnly(word: string, extra: readonly string[], dots = false): boolean {
+export function globMayBeRawOnly(
+  word: string,
+  extra: readonly string[],
+  dots = false,
+  cost?: Cost
+): boolean {
   const segments = normalisePath(word)
     .split('/')
     .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
-  const literal = (s: string) => /[^*?[\]!^]/.test(s.replace(/\[[^\]]*\]/g, ''))
+  // A segment that names something: not only wildcards.
+  const literal = (s: string) =>
+    globTokens(s).some(
+      (t) => t.kind === 'char' || t.kind === 'class' || (t.kind === 'star' && !!t.free)
+    )
   if (!segments.some(literal)) return false
   const patterns = [
     ...DEFAULT_RAW_ONLY,
     ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
   ]
-  return patterns.some((p) =>
-    p.includes('/')
-      ? segments.some((_, i) => globsOverlap(segments.slice(i).join('/'), p, dots))
-      : segments.some((s) => literal(s) && globsOverlap(s, p, dots))
-  )
+  // Any text (`**`, a zsh group) may stand for several path parts; without
+  // it a part of the word is a part of the name, which lets most of the
+  // matcher's work be skipped for an ordinary word (the verdict is the same).
+  const crosses = /\*\*|\ue000/.test(word)
+  const wildcard = (s: string) => /[*?[\ue000]/.test(s)
+  return patterns.some((p) => {
+    if (!p.includes('/')) {
+      const plain = !/[[\]]/.test(p)
+      return segments.some((s) =>
+        // A segment with no wildcard is matched as a name.
+        plain && !wildcard(s) ? nameGlob(p).test(s) : literal(s) && globsOverlap(s, p, dots, cost)
+      )
+    }
+    const parts = p.split('/')
+    const deep = parts.includes('**')
+    return segments.some((_, i) => {
+      const rest = segments.slice(i)
+      if (!crosses) {
+        // `a/b` is two parts long; `dir/**` is longer than `dir`.
+        if (deep ? rest.length < parts.length : rest.length !== parts.length) return false
+        // The pattern's first part must be able to be the word's.
+        if (!/[*?[]/.test(parts[0]!) && !wildcard(rest[0]!))
+          if (parts[0]!.toLowerCase() !== rest[0]!.toLowerCase()) return false
+      }
+      return globsOverlap(rest.join('/'), p, dots, cost)
+    })
+  })
+}
+
+/** A raw-only name pattern (`*.pem`, `id_rsa*`) as a matcher of one name. */
+const NAME_GLOBS = new Map<string, RegExp>()
+function nameGlob(pattern: string): RegExp {
+  let re = NAME_GLOBS.get(pattern)
+  if (!re) {
+    const body = pattern
+      .replace(/[.+^${}()|\\]/g, '\\$&')
+      .replace(/\*+/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+    re = new RegExp(`^${body}$`, 'i')
+    NAME_GLOBS.set(pattern, re)
+  }
+  return re
 }
 
 /** Whether a word names a folder all of whose files are raw-only (reading
@@ -1654,7 +1707,12 @@ export function globMayBeRawOnly(word: string, extra: readonly string[], dots = 
  *  `.kube`, `.azure`, `.config/gcloud`, a project's `secrets`. A wildcard
  *  word is refused when it could name one. A folder that holds a raw-only
  *  file among others (`.aws`, `.docker`, `.config`) is not one of these. */
-export function namesRawOnlyFolder(word: string, extra: readonly string[], dots = false): boolean {
+export function namesRawOnlyFolder(
+  word: string,
+  extra: readonly string[],
+  dots = false,
+  cost?: Cost
+): boolean {
   const segments = normalisePath(word)
     .split('/')
     .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
@@ -1667,7 +1725,9 @@ export function namesRawOnlyFolder(word: string, extra: readonly string[], dots 
     .map((p) => p.slice(0, -3))
   return folders.some((folder) => {
     const depth = folder.split('/').length
-    return segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots)
+    return (
+      segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots, cost)
+    )
   })
 }
 

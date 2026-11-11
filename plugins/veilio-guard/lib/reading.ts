@@ -5,6 +5,8 @@ import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
 import {
   bracket,
   placeOf,
+  spend,
+  type Cost,
   type List,
   type Part,
   type Pipeline,
@@ -107,10 +109,15 @@ const MAX_SPELLINGS = 64
 /** A bracket expression as the shell can read it (reading table A2): a
  *  brace list of its characters when it is expanded exactly, else `?` - one
  *  character, whatever it is. Text that is no bracket expression is itself. */
-function bracketList(glob: string): string {
+function bracketList(glob: string, kept = false): string {
   const b = glob.startsWith('[') ? bracket(glob, 0, true) : null
   if (!b || b.end !== glob.length) return glob
   if (b.chars === null) return '?'
+  // In a word that is a wildcard anyway the list stays one bracket
+  // expression for the matcher, which reads it the same: no spelling per
+  // character (`[a-z]*.py` is one glob, not 52).
+  if (kept && b.chars.length > 1 && b.chars.every((c) => /^[A-Za-z0-9_.]$/.test(c)))
+    return `[${b.chars.join('')}]`
   const list = b.chars.map(quote)
   return list.length === 1 ? list[0]! : `{${list.join(',')}}`
 }
@@ -139,7 +146,7 @@ export function bracketsRead(text: string): string {
  *  was quoted is not one. */
 export function spellings(
   w: Word,
-  o: { home: string | null; homeKnown: boolean; strict: boolean }
+  o: { home: string | null; homeKnown: boolean; strict: boolean; cost?: Cost }
 ): string[] | 'any' {
   const glued = textsOfWord(w, o)
   // A part that rewrites written text (Z5): the word could be any name.
@@ -166,7 +173,10 @@ export function spellings(
   const out = new Set<string>()
   for (const t of texts) {
     const read = runTime(o.strict ? strictRead(t) : t)
-    if (read !== null) for (const name of braceNames(read)) out.add(name)
+    if (read === null) continue
+    const names = braceNames(read)
+    spend(o.cost, names.length)
+    for (const name of names) out.add(name)
   }
   return [...out]
 }
@@ -177,21 +187,26 @@ export function spellings(
  *  (`id_ed${x:-$((25519))}` is `id_ed*`). */
 function textsOfWord(
   w: Word,
-  o: { home: string | null; homeKnown: boolean; strict: boolean },
+  o: { home: string | null; homeKnown: boolean; strict: boolean; cost?: Cost },
   start = true
 ): string[] | 'any' {
   const home = o.homeKnown && o.home !== null ? quote(o.home) : null
   let texts: string[] = ['']
   let any = false
+  // The word holds a wildcard that no list of names expands.
+  const wild = w.parts.some(
+    (p) => p.kind === 'zglob' || (p.kind === 'glob' && bracketList(p.text) === p.text.slice(0, 1))
+  )
   const add = (alternatives: string[]) => {
     const next: string[] = []
+    spend(o.cost, texts.length * alternatives.length)
     for (const t of texts) for (const a of alternatives) next.push(t + a)
     // Past the cap the word is read as "anything" in this place.
     texts = next.length > MAX_SPELLINGS ? texts.map((t) => `${t}**`) : next
   }
   w.parts.forEach((p, k) => {
     if (any) return
-    const alternatives = partSpellings(p, home, o, start && k === 0)
+    const alternatives = partSpellings(p, home, o, start && k === 0, wild)
     if (alternatives === 'any') any = true
     else add(alternatives)
   })
@@ -201,8 +216,9 @@ function textsOfWord(
 function partSpellings(
   p: Part,
   home: string | null,
-  o: { home: string | null; homeKnown: boolean; strict: boolean },
-  first: boolean
+  o: { home: string | null; homeKnown: boolean; strict: boolean; cost?: Cost },
+  first: boolean,
+  wild = false
 ): string[] | 'any' {
   switch (p.kind) {
     case 'lit':
@@ -215,7 +231,7 @@ function partSpellings(
           : p.text,
       ]
     case 'glob':
-      return [bracketList(p.text)]
+      return [bracketList(p.text, wild)]
     case 'brace':
       return [o.strict ? ANY_TEXT : p.text]
     case 'zglob':

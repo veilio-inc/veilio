@@ -571,7 +571,23 @@ export function ansiC(text: string): string {
   )
 }
 
-class Unreadable extends Error {
+/** What reading one command may cost (reading table A13): lists open at
+ *  once (`n`), brace scans, and `steps` left - spent by the parser, the
+ *  spellings, the wildcard matcher, the text floor and the path checks. A
+ *  count, not a clock: the verdict is the same on every machine. */
+export type Cost = { n: number; braces?: number; steps: number }
+/** A command longer than this is not read. */
+export const MAX_COMMAND = 100_000
+/** The steps one command may take. The costliest command of the corpora
+ *  (ordinary, mentions, the 3,768 recorded ones) takes under a tenth. */
+export const MAX_STEPS = 40_000
+export const newCost = (): Cost => ({ n: 0, steps: MAX_STEPS })
+/** Spends steps; past the budget the command is unreadable. */
+export function spend(cost: Cost | undefined, steps = 1): void {
+  if (cost && (cost.steps -= steps) < 0) throw new Unreadable('cost')
+}
+
+export class Unreadable extends Error {
   constructor(readonly why: 'unbalanced' | 'depth' | 'unknown' | 'cost') {
     super(why)
   }
@@ -823,7 +839,7 @@ class Reader {
   constructor(
     private readonly s: string,
     private readonly depth: number,
-    private readonly frames: { n: number; braces?: number },
+    private readonly frames: Cost,
     /** The reader of the command itself: its words' places are kept. */
     private readonly top = false
   ) {}
@@ -1000,6 +1016,7 @@ class Reader {
 
   private list(stops: Set<string>): List {
     if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+    spend(this.frames)
     const items: List['items'] = []
     let joint: Joint | null = null
     this.space()
@@ -1614,6 +1631,7 @@ class Reader {
     const s = this.s
     const start = this.i
     const parts: Part[] = []
+    spend(this.frames, 4)
     const lit = (text: string, quoted: boolean) => parts.push({ kind: 'lit', text, quoted })
     /** A part, and the reader moved past its `n` characters. */
     const take = (p: Part, n: number) => {
@@ -1737,6 +1755,8 @@ class Reader {
       }
     }
     if (this.i === start) return null
+    // A word of many parts costs what its parts do.
+    spend(this.frames, parts.length)
     const w = makeWord(parts, s.slice(start, this.i))
     if (this.top) PLACE.set(w, [start, this.i])
     const again = this.writtenAgain(parts)
@@ -2091,7 +2111,7 @@ function bashRuns(x: unknown): boolean {
   return Object.values(x).every(bashRuns)
 }
 
-function parseAt(text: string, depth: number, frames: { n: number; braces?: number }): List {
+function parseAt(text: string, depth: number, frames: Cost): List {
   if (depth > MAX_DEPTH) throw new Unreadable('depth')
   return new Reader(text, depth, frames).script()
 }
@@ -2122,7 +2142,7 @@ class PsReader {
   private i = 0
   constructor(
     private readonly s: string,
-    private readonly frames: { n: number; braces?: number }
+    private readonly frames: Cost
   ) {}
 
   read(): List {
@@ -2530,10 +2550,15 @@ class PsReader {
 
 /** A command read as the shell reads it (spec 086 data-model.md). `'sh'` is
  *  bash and zsh, both readings kept where they differ; `'ps'` PowerShell. */
-export function parseShell(command: string, dialect: 'sh' | 'ps'): ParseResult {
+export function parseShell(
+  command: string,
+  dialect: 'sh' | 'ps',
+  cost: Cost = newCost()
+): ParseResult {
+  if (command.length > MAX_COMMAND) return { ok: false, why: 'cost' }
   try {
-    if (dialect === 'ps') return { ok: true, list: new PsReader(command, { n: 0 }).read() }
-    return { ok: true, list: new Reader(command, 0, { n: 0 }, true).script() }
+    if (dialect === 'ps') return { ok: true, list: new PsReader(command, cost).read() }
+    return { ok: true, list: new Reader(command, 0, cost, true).script() }
   } catch (err) {
     if (err instanceof Unreadable) return { ok: false, why: err.why }
     throw err
