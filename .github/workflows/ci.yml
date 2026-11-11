@@ -32,6 +32,13 @@ jobs:
 
       - run: npm ci
 
+      # What ships to users: the runtime dependency trees of the app and the
+      # published packages. The dev and release toolchain (semantic-release and
+      # its npm chain) is audited by hand, as its moderate findings are not
+      # ours to fix; this gate is for what a user installs.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
