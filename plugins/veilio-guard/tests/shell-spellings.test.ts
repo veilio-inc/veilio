@@ -223,6 +223,29 @@ for (const [limit, command] of LIMITS)
     expect(ran).toBe(true)
   })
 
+// A bracket list is read as each of its characters, not as a wildcard
+// class: only then is a link followed, and Claude Code's settings found.
+test('a bracket list names the file itself: a link and the settings are found by it', async ($, on) => {
+  project(
+    on,
+    { ...FILES, [`${ROOT}/.claude/settings.json`]: '{}\n' },
+    {
+      links: { [`${ROOT}/notes`]: `${ROOT}/.env` },
+    }
+  )
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const link = await $.tool.call({ tool: 'Bash', command: 'cat note[s]', description: 'x' })
+  expect(link.deny).toContain('away from the model')
+  const settings = await $.tool.call({
+    tool: 'Bash',
+    command: 'echo {} > .claude/settings.jso[n]',
+    description: 'x',
+  })
+  expect(settings.deny).toBeDefined()
+  expect(ran).toBe(false)
+})
+
 test('a cd first does not hide the spelling', async ($, on) => {
   project(on, FILES)
   let ran = false

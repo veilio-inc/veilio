@@ -29,6 +29,8 @@ export type Fixture = {
   tokens: Record<CanaryId, string>
   /** Every file of the fixture: absolute path -> contents. */
   files: Record<string, string>
+  /** Paths that lead elsewhere, as a symbolic link does (in memory only). */
+  links?: Record<string, string>
 }
 
 /** The tree of the reading table's §6, in a fresh directory (real path). A
@@ -185,8 +187,9 @@ export async function guardAt(f: Fixture, rawOnly: readonly string[]): Promise<G
     [join(f.proj, '.git/HEAD')]: 'ref: refs/heads/main\n',
   }
   const dirs = new Set(DIRS(f))
+  const links = f.links ?? {}
   const exists = (p: string) =>
-    p in files || dirs.has(p) || Object.keys(files).some((x) => x.startsWith(`${p}/`))
+    p in files || p in links || dirs.has(p) || Object.keys(files).some((x) => x.startsWith(`${p}/`))
   const io: GuardIO = {
     read: async (p) => {
       const t = files[p]
@@ -195,9 +198,9 @@ export async function guardAt(f: Fixture, rawOnly: readonly string[]): Promise<G
     },
     write: async (p, t) => void (files[p] = t),
     exists: async (p) => exists(p),
-    realPath: async (p) => (exists(p) ? p : undefined),
-    isFile: async (p) => p in files,
-    fileSize: async (p) => files[p]?.length,
+    realPath: async (p) => links[p] ?? (exists(p) ? p : undefined),
+    isFile: async (p) => (links[p] ?? p) in files,
+    fileSize: async (p) => files[links[p] ?? p]?.length,
   }
   const g = new Guard(io, { rawOnly: [], mcpRestore: [] })
   await g.load(f.proj, f.home)
@@ -237,5 +240,7 @@ export function memoryFixture(): Fixture {
       [`${proj}/sub/keep`]: '',
       [`${home}/.veilio/map.json`]: '{}\n',
     },
+    // In the session's directory `latest` leads to .env; in src/ there is none.
+    links: { [`${proj}/latest`]: `${proj}/.env` },
   }
 }
