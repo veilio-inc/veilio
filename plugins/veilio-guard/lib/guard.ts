@@ -307,12 +307,17 @@ export async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<
 }
 
 /** The MAC an off record carries: HMAC-SHA-256, under the install's secret, of
- *  the project's key, the flag and the date. */
-async function offMac(secretHex: string, key: string, changedAt: string): Promise<string> {
+ *  the project's key, the flag, the date and the record's own random nonce. */
+async function offMac(
+  secretHex: string,
+  key: string,
+  changedAt: string,
+  nonce: string
+): Promise<string> {
   const bytes = Uint8Array.from(secretHex.match(/../g) ?? [], (h) => parseInt(h, 16))
   const sig = await hmacSha256(
     bytes,
-    new TextEncoder().encode(`veilio-off-v1|${key}|false|${changedAt}`)
+    new TextEncoder().encode(`veilio-off-v2|${key}|false|${changedAt}|${nonce}`)
   )
   return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
@@ -810,19 +815,30 @@ export class Guard {
       const record = await this.offRecord()
       const key = await this.recordKey()
       const entry = record?.projects[key] as
-        { enabled?: unknown; changedAt?: unknown; mac?: unknown } | undefined
+        { enabled?: unknown; changedAt?: unknown; nonce?: unknown; mac?: unknown } | undefined
       if (entry?.enabled !== false) return
-      const signed =
-        secret !== null &&
-        typeof entry.changedAt === 'string' &&
-        typeof entry.mac === 'string' &&
-        entry.mac === (await offMac(secret, key, entry.changedAt))
+      const signed = secret !== null && (await this.verified(secret, key, entry))
       if (signed) {
         if (this.state === 'on') this.state = 'off'
       } else this.offRecordUnverified = true
     } catch {
       this.offRecordUnreadable = true
     }
+  }
+
+  /** Whether an off entry carries the MAC `secret` gives for it. */
+  private async verified(
+    secret: string,
+    key: string,
+    entry: { changedAt?: unknown; nonce?: unknown; mac?: unknown }
+  ): Promise<boolean> {
+    return (
+      typeof entry.changedAt === 'string' &&
+      typeof entry.nonce === 'string' &&
+      /^[0-9a-f]{16,}$/.test(entry.nonce) &&
+      typeof entry.mac === 'string' &&
+      entry.mac === (await offMac(secret, key, entry.changedAt, entry.nonce))
+    )
   }
 
   get offSecretPath(): string | undefined {
@@ -833,12 +849,14 @@ export class Guard {
    *  to the off record (~/.veilio is raw-only, so the agent's tools cannot
    *  read it). Made when absent; one that is there but not a secret is
    *  replaced only when `replace` (the user's own /veilio off). Null when it
-   *  cannot be had, and then no record is honoured or made. */
-  private async offSecret(replace: boolean): Promise<string | null> {
+   *  cannot be had, and then no record is honoured or made. `rotate`: a new
+   *  one whatever is there (/veilio on), so every earlier record stops
+   *  verifying. */
+  private async offSecret(replace: boolean, rotate = false): Promise<string | null> {
     const path = this.offSecretPath
     if (!path) return null
     try {
-      if (await this.io.exists(path)) {
+      if (!rotate && (await this.io.exists(path))) {
         const text = (await this.io.read(path)).trim()
         if (/^[0-9a-f]{64}$/.test(text)) return text
         if (!replace) return null
@@ -1136,6 +1154,12 @@ export class Guard {
     // Only a record with a MAC is ever honoured, so without a secret there is
     // nothing to record: the guard is off for this session only.
     const secret = enabled || !path ? null : await this.offSecret(true)
+    // /veilio on rotates the secret: a record or a secret copied while the
+    // guard was off stops working. Other projects' valid records are signed
+    // again under the new one. Same-user processes can still read the current
+    // secret while the guard is off; this limits the window.
+    const old = enabled && path ? await this.offSecret(false) : null
+    const fresh = enabled && path ? await this.offSecret(true, true) : null
     if (path && (enabled || secret !== null)) {
       let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
       try {
@@ -1145,10 +1169,30 @@ export class Guard {
       }
       const key = await this.recordKey()
       const projects = { ...record.projects }
-      if (enabled) delete projects[key]
-      else {
+      if (enabled) {
+        delete projects[key]
+        for (const [k, v] of Object.entries(projects)) {
+          const e = v as { enabled?: unknown; changedAt?: string; nonce?: string }
+          if (
+            old !== null &&
+            fresh !== null &&
+            e?.enabled === false &&
+            (await this.verified(old, k, e))
+          )
+            projects[k] = { ...e, mac: await offMac(fresh, k, e.changedAt!, e.nonce!) }
+          else delete projects[k]
+        }
+      } else {
         const changedAt = new Date().toISOString().slice(0, 10)
-        projects[key] = { enabled: false, changedAt, mac: await offMac(secret!, key, changedAt) }
+        const nonce = [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('')
+        projects[key] = {
+          enabled: false,
+          changedAt,
+          nonce,
+          mac: await offMac(secret!, key, changedAt, nonce),
+        }
       }
       const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
       if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
@@ -2084,7 +2128,13 @@ export class Guard {
               // wildcard word is refused when it could name a raw-only file.
               const spelt = spelledWord(w)
               if (spelt !== null && (spelt !== w.raw || /[*?[{]/.test(spelt))) {
-                for (const name of expandBraces(spelt)) {
+                const names = expandBraces(spelt)
+                if (names === null)
+                  return this.deny(
+                    `Veilio keeps ${this.applyText(w.raw, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                    false
+                  )
+                for (const name of names) {
                   const spelled = dialect === 'ps' ? name.replace(/\\/g, '/') : name
                   const h = /[*?[]/.test(spelled)
                     ? { written: false, rawOnly: globMayBeRawOnly(spelled, this.extraRawOnly) }

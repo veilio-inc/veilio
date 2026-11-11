@@ -341,6 +341,7 @@ export function res(out: unknown): ToolRecord {
 
 /** A per-install secret, as the guard keeps it in ~/.veilio/guard-secret. */
 export const SECRET = 'ab'.repeat(32)
+export const NONCE = '0f'.repeat(8)
 
 /** The MAC a /veilio off record carries, computed here without the guard's
  *  code: HMAC-SHA-256 under the secret's bytes over the record's fields. */
@@ -348,12 +349,13 @@ export async function offMac(
   secretHex: string,
   key: string,
   changedAt: string,
+  nonce = NONCE,
   enabled = false
 ): Promise<string> {
   const bytes = Uint8Array.from(secretHex.match(/../g) ?? [], (h) => parseInt(h, 16))
   const sig = await hmacSha256(
     bytes,
-    new TextEncoder().encode(`veilio-off-v1|${key}|${enabled}|${changedAt}`)
+    new TextEncoder().encode(`veilio-off-v2|${key}|${enabled}|${changedAt}|${nonce}`)
   )
   return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
@@ -370,7 +372,7 @@ export async function offFiles(
     [`${home}/.veilio/guard-secret`]: secret,
     [`${home}/.veilio/guard-state.json`]: JSON.stringify({
       version: 1,
-      projects: { [root]: { enabled: false, changedAt, mac } },
+      projects: { [root]: { enabled: false, changedAt, nonce: NONCE, mac } },
     }),
   }
 }

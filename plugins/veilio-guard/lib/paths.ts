@@ -1435,10 +1435,10 @@ export function interpreterNamesGuardState(command: string): boolean {
   return /\.veilio|guard-?state|guard-?secret/i.test(plain.replace(/[+\s]/g, ''))
 }
 
-/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`. At most 64,
- *  and a word past that is returned as written (the caller then reads it as
- *  one word, with its braces). */
-export function expandBraces(word: string, limit = 64): string[] {
+/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`. At most 64;
+ *  null past that, and the caller must refuse the word: it fails closed, as
+ *  reading a long list as one unexpanded word would hide a name in it. */
+export function expandBraces(word: string, limit = 64): string[] | null {
   const out: string[] = []
   const walk = (w: string): void => {
     if (out.length > limit) return
@@ -1469,7 +1469,7 @@ export function expandBraces(word: string, limit = 64): string[] {
     out.push(w)
   }
   walk(word)
-  return out.length > limit ? [word] : out
+  return out.length > limit ? null : out
 }
 
 type GlobToken =
