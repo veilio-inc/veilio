@@ -130,6 +130,10 @@ const ARGV: Record<Shell, string[]> = {
 const LIMIT_MS = 5000
 const CAP = 64 * 1024
 
+/** Terminal escape sequences: `ESC [ ... letter` and `ESC ] ... BEL`. */
+// eslint-disable-next-line no-control-regex
+const ESCAPES = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g
+
 export type Run = { read: Set<CanaryId>; changed: boolean; killed: boolean; output: string }
 export type Locale = 'C' | 'en_US.UTF-8'
 
@@ -180,7 +184,10 @@ export function runIn(
       clearTimeout(timer)
       // Anything the command left running is not waited for.
       kill()
-      const read = new Set(CANARY_IDS.filter((id) => output.includes(f.tokens[id])))
+      // A program that colours its matches splits the token with escape
+      // sequences (`grep --color`): they are taken out before it is looked for.
+      const seen = output.replace(ESCAPES, '')
+      const read = new Set(CANARY_IDS.filter((id) => seen.includes(f.tokens[id])))
       resolve({ read, changed: check ? !verifyFixture(f) : false, killed, output })
     }
     child.on('error', done)

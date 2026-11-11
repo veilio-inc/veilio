@@ -8,7 +8,7 @@ import {
   Unreadable,
 } from '../../plugins/veilio-guard/lib/shell.ts'
 import { CORPUS } from './fixtures/cd-corpus.ts'
-import { COST, MENTIONS, ORDINARY } from './fixtures/reading-corpora.ts'
+import { COST, COST_A3, LONG_ORDINARY, MENTIONS, ORDINARY } from './fixtures/reading-corpora.ts'
 import { guardAt, memoryFixture, verdict } from './fixtures/reading-shell.ts'
 
 // Spec 091 addendum 2, rule R9 (contract A13): the reader has a budget of its
@@ -37,6 +37,51 @@ for (const { name, make } of COST)
       expect(v.text).toContain(UNREADABLE)
     }
   })
+
+// Addendum 3 (contract §8.1, A13 (2)): the budget prices what takes time.
+// Long plain text - a here-document written to a file, a commit message, many
+// plain paths - is ordinary and runs; what replaces the parser's price per
+// word as the bound is refused or answered in time.
+for (const { name, make } of COST_A3)
+  test(`a verdict within the budget: ${name}`, async () => {
+    const guard = await guardAt(memoryFixture(), ['secrets/**'])
+    const started = performance.now()
+    const v = await verdict(guard, make())
+    expect(performance.now() - started).toBeLessThan(LIMIT_MS)
+    expect(v.verdict).toBe('refused')
+    expect(v.text).toContain(UNREADABLE)
+  })
+
+for (const { name, make } of LONG_ORDINARY)
+  test(`long plain text runs: ${name}`, async () => {
+    const command = make()
+    expect(command.length).toBeLessThanOrEqual(MAX_COMMAND)
+    const guard = await guardAt(memoryFixture(), ['secrets/**'])
+    const started = performance.now()
+    const v = await verdict(guard, command)
+    expect(v.text).toBe(null)
+    expect(performance.now() - started).toBeLessThan(LIMIT_MS)
+  })
+
+test('the cost table: steps and time for every hostile and every long ordinary row', async () => {
+  const rows: string[] = []
+  for (const [kind, list] of [
+    ['hostile', [...COST, ...COST_A3]],
+    ['ordinary', LONG_ORDINARY],
+  ] as const)
+    for (const { name, make } of list) {
+      const command = make()
+      const guard = await guardAt(memoryFixture(), ['secrets/**'])
+      const started = performance.now()
+      const v = await verdict(guard, command)
+      const ms = performance.now() - started
+      rows.push(
+        `${kind.padEnd(9)}${name.slice(0, 62).padEnd(64)}${String(command.length).padStart(7)} chars  ${v.verdict.padEnd(8)}${String(Math.round(guard.lastSteps)).padStart(7)} steps${ms.toFixed(0).padStart(6)} ms`
+      )
+    }
+  process.stdout.write(`reading cost table (budget ${MAX_STEPS} steps)\n${rows.join('\n')}\n`)
+  expect(rows.length).toBe(COST.length + COST_A3.length + LONG_ORDINARY.length)
+}, 120_000)
 
 test('a command of 100,000 characters is read; one more and it is not', () => {
   expect(MAX_COMMAND).toBe(100_000)

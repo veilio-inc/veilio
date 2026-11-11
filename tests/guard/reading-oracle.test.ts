@@ -3,20 +3,32 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { Guard } from '../../plugins/veilio-guard/lib/guard.ts'
 import {
   bashIs,
+  bracketRuns,
   CANARIES,
   CLUSTERS,
   combinations,
+  continuedDelimiters,
+  dataQualifiers,
   deliveries,
   FOLDER_POSITIONS,
   FOLDERS,
   folders,
   fullProduct,
+  groupScripts,
   OPERANDS,
+  ordinaryShapes,
   plainName,
   POSITIONS,
+  searches,
+  searchTwins,
+  settingForms,
+  shHasPipefail,
+  sinks,
   triggers,
+  unknownOptions,
   type Generated,
   type Listed,
+  type Ordinary,
 } from './fixtures/reading-grammar.ts'
 import {
   hookGuard,
@@ -43,6 +55,8 @@ import {
 //   R7  the guard is called as the hook calls it: over the real files, the
 //       host's directory first.
 //   R8  what could fail is counted apart from what a rule refuses unrun.
+//   R11 the ordinary shapes the grammar generates are allowed, and a shell
+//       running them reads no canary and lists the file they were made for.
 // Only commands made from the grammar's closed vocabulary are run.
 const SEED = Number(process.env.VEILIO_ORACLE_SEED ?? 0x091)
 const N = Number(process.env.VEILIO_ORACLE_N ?? 10000)
@@ -59,6 +73,7 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
   let generated: Generated[] = []
   let guard: Guard
   let listed: Listed = { shopt: [], set: [], setopt: [], modules: [] }
+  let ordinary: Ordinary[] = []
   const allowed = new Map<string, boolean>()
   const ran: Ran[] = []
   const changed: string[] = []
@@ -130,6 +145,10 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       )
     )
     listed = listShells()
+    // `sh` is dash on Debian and Ubuntu: no `pipefail` there (position P61).
+    shHasPipefail(
+      spawnSync('sh', ['-oc', 'pipefail', 'true'], { env: { PATH: '/usr/bin:/bin' } }).status === 0
+    )
     guard = await hookGuard(fixture, ['secrets/**'])
     generated = [
       ...fullProduct(fixture.proj),
@@ -137,7 +156,17 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       ...folders(fixture.proj),
       ...deliveries(SEED, DELIVERIES),
       ...triggers(listed),
+      // Addendum 3 (contract §8.3): G3-G9.
+      ...searches(),
+      ...unknownOptions(),
+      ...sinks(),
+      ...dataQualifiers(),
+      ...groupScripts(),
+      ...continuedDelimiters(),
+      ...settingForms(),
+      ...bracketRuns(),
     ]
+    ordinary = [...ordinaryShapes(), ...searchTwins()]
     for (const g of generated) await isAllowed(g.command)
     for (const { shell, version } of available) {
       const started = Date.now()
@@ -163,7 +192,9 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       seed: SEED,
       operators: g.operatorIds.join('+'),
       position: g.positionId,
-      ...(g.positionId === 'delivery' || g.positionId === 'trigger' ? { values: g.values } : {}),
+      ...(g.positionId === 'delivery' || g.positionId === 'trigger' || /^G\d/.test(g.positionId)
+        ? { values: g.values }
+        : {}),
     })
 
   test('the oracle can see: a canary read is reported, a plain file is not, a hung command is killed', async () => {
@@ -173,6 +204,11 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       expect([...env.read], `${shell}: cat .env`).toEqual(['ENV'])
       const plain = await runIn(shell, 'cat src/index.ts', fixture)
       expect([...plain.read], `${shell}: cat src/index.ts`).toEqual([])
+      // A match a program colours is still a read: the escape codes that
+      // split the token are taken out first.
+      const coloured = await runIn(shell, 'grep --color=always CANARY .env', fixture)
+      expect(coloured.output, `${shell}: grep --color=always`).toContain('\x1b[')
+      expect([...coloured.read], `${shell}: grep --color=always CANARY .env`).toEqual(['ENV'])
       const started = Date.now()
       // Outside the generator's vocabulary, for this one command: the limit itself.
       const hung = await runIn(shell, 'sleep 30', fixture)
@@ -288,6 +324,34 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
     process.stdout.write(`reading oracle R5\n${lines.join('\n')}\n`)
     expect(dead).toEqual([])
   })
+
+  test(
+    'R11: every ordinary shape is allowed, reads no canary and lists the file it was made for',
+    async () => {
+      const failures: string[] = []
+      for (const o of ordinary) {
+        const v = await hookVerdict(guard, o.command, fixture.proj)
+        const shown = JSON.stringify(
+          o.command.length > 200 ? `${o.command.slice(0, 200)}…` : o.command
+        )
+        if (v.verdict !== 'allowed') failures.push(`refused: ${shown}`)
+        for (const { shell } of available) {
+          if (!o.shells.includes(shell)) continue
+          const r = await runIn(shell, o.command, fixture)
+          if (r.read.size > 0) failures.push(`${shell} read ${[...r.read].join(',')}: ${shown}`)
+          if (r.changed) failures.push(`${shell} changed the fixture: ${shown}`)
+          if (o.prints !== null && !r.output.includes(o.prints))
+            failures.push(`${shell} did not list ${o.prints}: ${shown}`)
+        }
+      }
+      process.stdout.write(
+        `reading oracle R11: ${ordinary.length} ordinary shapes, ${failures.length} failures\n`
+      )
+      expect(ordinary.length).toBeGreaterThan(200)
+      expect(failures).toEqual([])
+    },
+    TEN_MINUTES
+  )
 
   test('R8: what could fail is counted apart from what is refused unrun', () => {
     let unrun = 0

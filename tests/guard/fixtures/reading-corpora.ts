@@ -572,6 +572,237 @@ export const DATA_TWINS: readonly string[] = [
 /** A8: was a pinned limit; it does read `.env`. */
 export const FLOOR_READS: readonly string[] = [`find . -name '.en*' -exec cat {} +`]
 
+// ── Addendum 3 (conformance check of b101bd9; contract §8) ──
+
+/** Allowed at b101bd9 while a shell read a marker file with them: each a
+ *  missing case of a rule of §7, by the row of §8.1 that completes it. */
+export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
+  // A12 (3): an option that takes no value read as taking one.
+  searchOptions: [
+    `grep --color CANARY .env`,
+    `grep -n --color CANARY .env`,
+    `grep --colour CANARY .env`,
+    `egrep --color CANARY .env`,
+    `grep --color CANARY secrets/customers.csv`,
+    `grep -rn --color CANARY secrets`,
+    `grep --context CANARY .env`,
+    `git grep --no-index --color CANARY -- .env`,
+    `ag --after CANARY .env`,
+    `rg --pretty CANARY .env`,
+  ],
+  // A12 (3): a pattern attached to its option is the pattern.
+  attachedPattern: [
+    `grep -eCANARY .env`,
+    `grep -e. .env`,
+    `grep --regexp=CANARY .env`,
+    `grep -ieCANARY .env`,
+    `fgrep -eCANARY .env`,
+    `git grep --no-index -eCANARY .env`,
+    `rg -eCANARY .env`,
+    `rg --regexp=CANARY .env`,
+    `ag --literal -Q CANARY .env`,
+  ],
+  // A12 (4): a delimiter split by a line continuation is not a quoted one.
+  continuedDelimiter: [
+    'cat <<E\\\nOF\n$(cat .en[v])\nEOF',
+    'tee /dev/null <<E\\\nOF\n$(cat .en[v])\nEOF',
+    'cat <<\\\nEOF\n$(cat .en[v])\nEOF',
+  ],
+  // A12 (1), (4) and A7: output sent into a process substitution.
+  intoSubstitution: [
+    `echo 'cat .en[v]' > >(sh); sleep 1`,
+    `echo 'cat .e\${x}nv' > >(sh); sleep 1`,
+    `echo .env > >(xargs cat); sleep 1`,
+    `printf 'cat .en[v]' > >(sh); sleep 1`,
+    `exec > >(sh); echo 'cat .en[v]'; sleep 1`,
+    `exec 3> >(sh); echo 'cat .en[v]' >&3; exec 3>&-; sleep 1`,
+    `cat <<'E' > >(sh)\ncat .en[v]\nE\nsleep 1`,
+    `tee >(sh) > /dev/null <<'E'\ncat .en[v]\nE\nsleep 1`,
+    `echo 'cat .e\${x}nv' >> >(bash)`,
+    `echo 'cat .e\${x}nv' 2>&1 > >(zsh -f)`,
+  ],
+  // §2a: a shell with an option outside the shapes, its script on another channel.
+  unknownOptionChannel: [
+    `echo 'cat *nv' | bash -O dotglob`,
+    `echo 'cat ?env' | bash -O dotglob`,
+    `echo 'cat *nv' | zsh -o globdots`,
+    `echo 'cat *nv' | zsh --globdots`,
+    `echo 'cat *nv' | zsh -4`,
+    `echo 'cat .e@(n)v' | bash -O extglob`,
+    `echo 'cat .eq#nv' | zsh -o extendedglob`,
+    `echo 'cat *nv' | bash -O dotglob -s`,
+    `echo 'cat *nv' | bash -O dotglob /dev/stdin`,
+    `echo 'cat *nv' | bash -O dotglob -`,
+    `echo 'cat *nv' | env bash -O dotglob`,
+    `echo 'cat *nv' | sh -O dotglob`,
+    `bash -O dotglob < <(echo 'cat *nv')`,
+    `exec <<< 'cat *nv'; bash -O dotglob`,
+    `cat <<'E' | bash -O dotglob\ncat *nv\nE`,
+    `{ bash -O dotglob; } <<< 'cat *nv'`,
+    `bash -O dotglob < script.sh`,
+  ],
+  // A10: a setting named in another form.
+  settingForms: [
+    `printf -vGLOBIGNORE x; cat ?env`,
+    `: $((GLOBIGNORE=1)); cat ?env`,
+    `: \${GLOBIGNORE:=x}; cat *nv`,
+    `: \${GLOBIGNORE=x}; cat ?env`,
+    `for GLOBIGNORE in x; do cat *nv; done`,
+    `read -r GLOBIGNORE <<< x; cat *nv`,
+    `declare -x GLOBIGNORE=x; cat *nv`,
+    `typeset GLOBIGNORE=x; cat ?env`,
+    `printf -v"GLOBIGNORE" x; cat *nv`,
+    // The name is written in the command, whatever carries it on.
+    `x=GLOBIGNORE; export $x=y; cat *nv`,
+    `: $((BASHOPTS=1)); cat *nv`,
+  ],
+  // A12, first sentence: a qualifier that runs code, where text is only printed.
+  dataQualifier: [
+    `echo a.txt(e:'cat .en[v]':)`,
+    `echo *(e:'cat .en[v]':)`,
+    `echo a.txt(e:'cat .env':)`,
+    `git commit -m a.txt(e:'cat .en[v]':)`,
+    `printf '%s\\n' *(e:'cat .en[v]':)`,
+    `grep src/*(e:'cat .en[v]':) README.md`,
+  ],
+  // A5 (b): a script for a program that is not a known shell, with a group in it.
+  groupScript: [
+    `x=zsh; $x -c 'cat (.e)nv'`,
+    `x=zsh; $x -fc 'cat .e(n)v'`,
+    `./mysh -c 'cat .e\${x}nv\necho a(b)'`,
+    `./mysh <<'E'\ncat .e\${x}nv\necho a(b)\nE`,
+    `./mysh -c 'cat .e\${x}nv; echo $(echo (a))'`,
+    `x=sh; $x -c 'cat .e\${x}nv\necho a(b)'`,
+    `./mysh <<< 'cat .e\${x}nv; echo a(b)'`,
+  ],
+  // Twins of the commands that run from this addendum on: these stay refused.
+  twins: [
+    `gh release create v1.0.0 --notes-file .env`,
+    `gh pr create --title x --body-file .env`,
+    `git -C packages/app commit -F .env`,
+    `git -C .veilio init`,
+    `git --git-dir .env status`,
+    `git --unknown-option commit -m x .env`,
+    `cat *.(pem|txt)`,
+    `cat .e(n|x)v`,
+    `cat (.env|x)`,
+    `cat (secrets|docs)/customers.csv`,
+    `cat .e[a-z][a-z]`,
+    `cat [.x][e][m-o][v]`,
+    `cat server.[o-q][d-f][l-n]`,
+    `grep --color=auto KEY .env`,
+    `grep -e KEY .env`,
+    `grep -C 2 KEY .env`,
+    `printf -vF .env; cat "$F"`,
+  ],
+}
+
+/** Refused at b101bd9 and ordinary: each must run (contract §8.1, "runs now").
+ *  None names a raw-only file. */
+export const A3_ORDINARY: readonly string[] = [
+  // A2 / E5: several bracket expressions in one word.
+  `ls [0-9][0-9].log`,
+  `ls logs/[0-9][0-9].log`,
+  `ls src/[a-z][a-z].ts`,
+  `ls [0-9][0-9]`,
+  `ls x[0-9][0-9].log`,
+  `ls src/[0-9][0-9].ts`,
+  `ls [a-z][a-z][a-z]`,
+  `rm -f ../t/[0-9][0-9][0-9][0-9]-*.tmp`,
+  `ls logs/2026-[0-9][0-9]-[0-9][0-9].log`,
+  `ls migrations/[0-9][0-9][0-9]_*.sql`,
+  // A3: zsh groups of plain alternatives.
+  `ls src/*.(ts|tsx)`,
+  `ls (src|docs)/index.ts`,
+  `ls src/(index|main).ts`,
+  `ls *.(md|txt)`,
+  `print -l src/**/*.(js|jsx|ts|tsx)`,
+  // A12 (2): git and gh behind their global options.
+  `git -C packages/app commit -m "fix the loader"`,
+  `git -c user.name=dev commit -m "docs: say what is read"`,
+  `git --no-pager log --grep 'reader' --oneline`,
+  `gh release create v1.0.0 --notes "first release"`,
+  `gh -R acme/app release create v1.0.1 -n "fixes" -t "v1.0.1"`,
+  // A12 (3): a search with options the tables know.
+  `grep --color=auto -rn TODO src`,
+  `grep --color TODO src/index.ts`,
+  `grep -rn --include='*.ts' -e TODO -e FIXME src`,
+  `git grep -n --heading --break -e TODO -- src`,
+  `rg --pretty -n TODO src`,
+  // Output into a process substitution that names nothing raw-only.
+  `make 2>&1 | tee >(grep -c warning > warnings.txt)`,
+  `npm test > >(tee test.log) 2>&1`,
+  // A shell with an unusual option that is handed no script.
+  `bash --version | head -1`,
+  `bash -O extglob build.sh`,
+  `zsh --version`,
+]
+
+/** The same, where the text names a raw-only file or Veilio's folder in a
+ *  data position (so they belong with MENTIONS, not ORDINARY). */
+export const A3_MENTIONS: readonly string[] = [
+  `git -C packages/app commit -m "fix .env loading"`,
+  `git --no-pager -C app commit -am "load .env before ~/.veilio/map.json"`,
+  `gh release create v1.0.0 --notes "handles .env"`,
+  `gh release create v1.0.0 -n "reads ~/.veilio/map.json once" --title ".env support"`,
+  `gh -R acme/app pr create -t "Ignore .env" -b "and server.pem"`,
+  `grep --color=always -n '\\.env' src/index.ts`,
+  `grep -e'\\.env' -e '\\.pem' src/index.ts`,
+  `grep --regexp='\\.env' -r src`,
+  `git grep --color -n -e '\\.env' -- src`,
+  `rg --color=always -e'\\.veilio/' src`,
+]
+
+const lines = (n: number, line: (i: number) => string): string =>
+  Array.from({ length: n }, (_, i) => line(i)).join('\n')
+const MARKDOWN = (i: number) =>
+  i % 9 === 0 ? `## Section ${i}` : `- Step ${i}: run \`npm test\`, then read docs/report-${i}.md.`
+const PYTHON = (i: number) =>
+  i % 12 === 0
+    ? `def step_${i}(values, key="k${i}"):`
+    : `    result_${i} = compute(values[${i}], key=key)  # step ${i}`
+const TYPESCRIPT = (i: number) =>
+  `export const value${i}: Record<string, number> = { a: ${i}, b: scale(${i}) } // line ${i}`
+
+/** Long plain text (contract §8.1, A13 (2)): made, not stored. Each is
+ *  ordinary and must run; the longest stays under the 100,000-character cap. */
+export const LONG_ORDINARY: readonly { name: string; make: () => string }[] = [
+  ...[300, 600, 1000].flatMap((n) => [
+    {
+      name: `a here-document of ${n} lines of Markdown written to a file`,
+      make: () => `cat > docs/guide.md <<'EOF'\n${lines(n, MARKDOWN)}\nEOF`,
+    },
+    {
+      name: `a here-document of ${n} lines of Python written to a file`,
+      make: () => `cat > tools/steps.py <<'EOF'\n${lines(n, PYTHON)}\nEOF`,
+    },
+    {
+      name: `a here-document of ${n} lines of TypeScript written to a file`,
+      make: () => `cat > src/values.ts <<'EOF'\n${lines(n, TYPESCRIPT)}\nEOF`,
+    },
+  ]),
+  {
+    name: 'a here-document of 600 lines of Markdown under a plain delimiter',
+    make: () =>
+      `cat > docs/guide.md <<EOF\n${lines(600, (i) => `Step ${i}: read docs/report-${i}.md and note what changed.`)}\nEOF`,
+  },
+  {
+    name: 'a commit message of 1,000 lines',
+    make: () =>
+      `git commit -m "${lines(1000, (i) => `- change ${i}: the reader no longer counts plain words (see docs/report-${i}.md)`)}"`,
+  },
+  {
+    name: 'git add with 2,000 paths',
+    make: () =>
+      `git add ${Array.from({ length: 2000 }, (_, i) => `src/dir${i % 40}/file${i}.ts`).join(' ')}`,
+  },
+  {
+    name: 'git add with 500 paths',
+    make: () =>
+      `git add ${Array.from({ length: 500 }, (_, i) => `packages/app/src/module${i}.ts`).join(' ')}`,
+  },
+]
+
 export const ATTACK: readonly string[] = [
   ...new Set([
     ...SPELLINGS_REFUSED,
@@ -593,6 +824,7 @@ export const ATTACK: readonly string[] = [
     ...A11_NOW_REFUSED,
     ...DATA_TWINS,
     ...FLOOR_READS,
+    ...Object.values(A3_REFUSED).flat(),
   ]),
 ]
 
@@ -1051,6 +1283,7 @@ export const MENTIONS: readonly string[] = [
   `git commit -m'load .env first'`,
   `rg -n -e '\\.veilio/' -e 'id_rsa' src`,
   `tee notes.md <<'EOF'\nsee ~/.veilio/map.json\nEOF`,
+  ...A3_MENTIONS,
 ]
 
 export const ORDINARY: readonly string[] = [
@@ -1063,6 +1296,7 @@ export const ORDINARY: readonly string[] = [
     ...PLAIN,
     ...A2_ORDINARY,
     ...Q4_PIPE.slice(0, 1),
+    ...A3_ORDINARY,
   ]),
 ]
 
@@ -1085,6 +1319,8 @@ export const LIMITS: readonly {
   { limit: 'L1', command: `x=.e; cat \${x}nv` },
   { limit: 'L1', command: `cat sec$X/customers.csv` },
   { limit: 'L1', command: `a=.e; b=nv; cat $a$b` },
+  // A setting's name carried by variables (contract §8.2).
+  { limit: 'L1', command: `a=GLOB; b=IGNORE; export $a$b=y; cat *nv` },
   { limit: 'L2', command: `cat .e$(echo n)v` },
   { limit: 'L2', command: `cat .e"$(echo n)"v` },
   { limit: 'L2', command: `cat $(printf .e; printf nv)` },
@@ -1163,4 +1399,25 @@ export const COST: readonly { name: string; make: () => string }[] = [
   { name: 'a here-document of 100,000 lines', make: () => `cat <<E${times('\nx', 100000)}\nE` },
   { name: '2,000 nested arithmetic', make: () => `: ${nest('$((1+', '))', 2000, '1')}` },
   { name: '3,000 stars alone (stack overflow at 0876180)', make: () => `cat ${times('*a', 3000)}` },
+]
+
+/** Addendum 3: what bounds the time once a plain word costs the parser
+ *  nothing - path checks, wildcard words and commands. */
+export const COST_A3: readonly { name: string; make: () => string }[] = [
+  {
+    name: '14,000 distinct paths',
+    make: () => `cat ${Array.from({ length: 14000 }, (_, i) => `a${i}`).join(' ')}`,
+  },
+  {
+    name: '12,000 distinct wildcard words',
+    make: () => `ls ${Array.from({ length: 12000 }, (_, i) => `a${i}*`).join(' ')}`,
+  },
+  {
+    name: '9,000 quoted paths in inline code',
+    make: () => `node -e '${Array.from({ length: 9000 }, (_, i) => `f("b${i}")`).join(';')}'`,
+  },
+  {
+    name: '30,000 commands of one plain word',
+    make: () => times('a\n', 30000),
+  },
 ]

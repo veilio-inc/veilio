@@ -807,6 +807,8 @@ export type Position = {
   sample?: true
   /** bash from 4.0 only. */
   bash4?: true
+  /** Only where `sh` accepts `-o pipefail` (bash as sh; not dash). */
+  pipefail?: true
 }
 
 const run = (id: string, make: Position['make'], more: Partial<Position> = {}): Position => ({
@@ -880,7 +882,11 @@ export const POSITIONS: readonly Position[] = [
   run('P58', (w) => `bash -OOc dotglob extglob "cat ${dq(w)}"`, { inner: true }),
   run('P59', (w) => `bash -cOe dotglob "cat ${dq(w)}"`, { inner: true }),
   run('P60', (w) => `bash -oOc pipefail dotglob "cat ${dq(w)}"`, { inner: true }),
-  run('P61', (w) => `sh -oc pipefail "cat ${dq(w)}"`, { inner: true }),
+  // `sh` is bash on macOS and dash on Debian and Ubuntu, which has no
+  // `pipefail` and runs nothing: declared for a `sh` that accepts it (rule R5,
+  // contract §8.3). Its twin P68 names an option every `sh` has.
+  run('P61', (w) => `sh -oc pipefail "cat ${dq(w)}"`, { inner: true, pipefail: true }),
+  run('P68', (w) => `sh -oc errexit "cat ${dq(w)}"`, { inner: true }),
   run('P62', (w) => `zsh -ecoglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
   run('P63', (w) => `zsh -c -oglobdots "cat ${dq(w)}"`, { shell: 'zsh' }),
   // Addendum 2. A command in an operand of an expansion (all of them: OPERANDS).
@@ -987,6 +993,9 @@ const PAYLOADS: readonly { id: string; make: (w: string) => string }[] = [
 /** bash's major version, told by the oracle before it generates (3 until then). */
 let bashMajor = 3
 export const bashIs = (major: number): void => void (bashMajor = major)
+let shPipefail = true
+/** Whether this machine's `sh` accepts `-o pipefail`: the oracle asks it. */
+export const shHasPipefail = (has: boolean): void => void (shPipefail = has)
 
 /** Every operand of every expansion holding a command that names W: tried
  *  with a sample of the spellings, as the option clusters are. */
@@ -1085,7 +1094,7 @@ const VOCABULARY = new Set(
 )
 /** Words of the templates that are not programs: keywords, arguments, names. */
 const FILLERS = new Set(
-  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin Y X n I cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots'.split(
+  'then fi do done in esac x l i f F a r s c e if EOF dev null src index ts sub PWD W extendedglob braceccl extglob dotglob globdots O o S options on builtin Y X n I cO co c4 oglobdots Oc OOc cOe oOc oc pipefail ecoglobdots errexit'.split(
     ' '
   )
 )
@@ -1164,7 +1173,8 @@ function command(
         (sh) =>
           (!p.shell || p.shell === sh) &&
           (!p.inner || s.shells.has('bash')) &&
-          !(p.bash4 && bashMajor < 4)
+          !(p.bash4 && bashMajor < 4) &&
+          !(p.pipefail && !shPipefail)
       )
   // The proof is run too, so the word is checked for every position.
   const first = s.canary.folder ? FOLDER_POSITIONS[0]! : POSITIONS[0]!
@@ -1705,5 +1715,412 @@ export function triggers(listed: Listed): Generated[] {
   // The module of the review's class B6: a subscript that is a file's name.
   if (listed.modules.includes('zsh/mapfile'))
     add('zsh/mapfile', ['zsh'], 'zmodload zsh/mapfile; ', 'echo $mapfile[.env]')
+  return out
+}
+
+// ── addendum 3 (contract §8.3): shapes the conformance check found ungenerated ──
+//
+// Each generator is a product of its axes, made of fixed templates over the
+// oracle's fixture: the commands run only `cat`, `echo`, `printf`, `tee`,
+// `ls`, `xargs`, `sleep`, `grep` and `git grep --no-index`, write nothing in
+// the project, and name the ENV canary.
+
+const shape = (
+  kind: string,
+  n: number,
+  command: string,
+  shells: Shell[],
+  values: string[] = []
+): Generated => ({
+  id: `${kind}:${n}`,
+  operatorIds: [],
+  positionId: kind,
+  canary: 'ENV',
+  command,
+  plain: 'cat .env',
+  proof: command,
+  proofShells: shells,
+  shells,
+  locales: ['C'],
+  values,
+  carried: false,
+})
+
+/** A pattern that matches every canary's token. */
+const PATTERN = 'CANARY'
+
+/** The documented options of GNU grep 3 and of BSD grep (macOS), by name
+ *  only: which of them takes a value is what the real program answers. */
+const GREP_SHORT = 'ABCDEFGHIJLMOPRSTUVXZabcdefhilmnopqrsuvwxyz'.split('')
+const GREP_LONG =
+  'after-context before-context context count color colour devices directories extended-regexp regexp exclude exclude-dir exclude-from fixed-strings file basic-regexp with-filename no-filename help ignore-case no-ignore-case include include-dir files-without-match files-with-matches label mmap max-count line-number null only-matching quiet silent recursive dereference-recursive no-messages binary text byte-offset version invert-match word-regexp line-regexp null-data binary-files line-buffered initial-tab group-separator no-group-separator perl-regexp bz2decompress lzma xz decompress'.split(
+    ' '
+  )
+/** `git grep`'s documented options (git 2.4x), by name. */
+const GIT_GREP_SHORT = 'ABCEFGHILOPWachilnopqrvwz'.split('').concat(['e', 'f', 'm'])
+const GIT_GREP_LONG =
+  'cached untracked no-index no-exclude-standard exclude-standard recurse-submodules text textconv no-textconv ignore-case max-depth recursive no-recursive word-regexp invert-match full-name extended-regexp basic-regexp perl-regexp fixed-strings line-number column files-with-matches name-only files-without-match open-files-in-pager null only-matching count color no-color break heading show-function context after-context before-context function-context max-count threads and or not all-match quiet'.split(
+    ' '
+  )
+
+/** G3: each search program on PATH × each of its documented options × each
+ *  way of writing it, with a pattern that matches the marker and the file W.
+ *  The shell says which word the program took for the pattern. */
+export function searches(): Generated[] {
+  const out: Generated[] = []
+  const programs: { run: string; short: string[]; long: string[] }[] = [
+    ...['grep', 'egrep', 'fgrep'].map((run) => ({ run, short: GREP_SHORT, long: GREP_LONG })),
+    { run: 'git grep --no-index', short: GIT_GREP_SHORT, long: GIT_GREP_LONG },
+  ]
+  for (const { run, short, long } of programs) {
+    const add = (args: string) =>
+      out.push(shape('G3', out.length, `${run} ${args}`, ['bash'], [`G3: ${run}`]))
+    for (const letter of short)
+      for (const file of ['.env', '.en[v]']) {
+        add(`-${letter} ${PATTERN} ${file}`)
+        add(`-${letter} 1 ${PATTERN} ${file}`)
+        add(`-${letter}${PATTERN} ${file}`)
+        add(`-i${letter}${PATTERN} ${file}`)
+        add(`-${letter}1 ${PATTERN} ${file}`)
+        add(`-i${letter} ${PATTERN} ${file}`)
+      }
+    for (const name of long)
+      for (const file of ['.env', '.en[v]']) {
+        add(`--${name} ${PATTERN} ${file}`)
+        add(`--${name} 1 ${PATTERN} ${file}`)
+        add(`--${name}=${PATTERN} ${file}`)
+        add(`--${name}=1 ${PATTERN} ${file}`)
+        add(`-n --${name} ${PATTERN} -- ${file}`)
+      }
+  }
+  return out
+}
+
+/** A command that must run (rule R11), with what it must print when it
+ *  lists files (so the exact reading is the shell's own). */
+export type Ordinary = { command: string; shells: Shell[]; prints: string | null }
+
+/** G3, allow side: a search whose pattern names a raw-only file, with the
+ *  options an agent writes, over a file that is not raw-only. */
+export function searchTwins(): Ordinary[] {
+  const options = [
+    '',
+    '-n',
+    '-rn',
+    '--color',
+    '--color=always',
+    '--colour=never',
+    '-n --color',
+    '-i -n',
+    '-E',
+    '-F',
+    '-A 2',
+    '-A2',
+    '-B 1 -A 1',
+    '-m 1',
+    '--max-count=1',
+    '--include=*.ts -r',
+    '-e',
+    '-ie',
+    '--regexp',
+  ]
+  const out: Ordinary[] = []
+  for (const run of ['grep', 'egrep', 'fgrep', 'git grep --no-index'])
+    for (const o of options)
+      for (const pattern of [`'\\.env'`, `'server.pem'`, `.veilio`]) {
+        // `git grep` has `-e` only.
+        if (run.startsWith('git') && o === '--regexp') continue
+        const glued =
+          o === '--regexp' ? `${o}=${pattern}` : o.endsWith('e') ? `${o}${pattern}` : null
+        out.push({
+          command: `${run} ${glued ?? `${o} ${pattern}`.trim()} src/index.ts`,
+          shells: ['bash'],
+          prints: null,
+        })
+      }
+  return out
+}
+
+/** G4: a shell with an option outside the shapes of §2a × each channel that
+ *  can bring it a script × a script that reads W only with that option. */
+export function unknownOptions(): Generated[] {
+  const out: Generated[] = []
+  const settings: { shell: string; option: string; script: string }[] = [
+    { shell: 'bash', option: '-O dotglob', script: 'cat *nv' },
+    { shell: 'bash', option: '-O dotglob', script: 'cat ?env' },
+    { shell: 'bash', option: '-O extglob', script: 'cat .e@(n)v' },
+    { shell: 'bash', option: '+B -O dotglob', script: 'cat *nv' },
+    { shell: 'env bash', option: '-O dotglob', script: 'cat *nv' },
+    { shell: 'zsh', option: '-o globdots', script: 'cat *nv' },
+    { shell: 'zsh', option: '--globdots', script: 'cat *nv' },
+    { shell: 'zsh', option: '-4', script: 'cat ?env' },
+    { shell: 'zsh', option: '-o extendedglob', script: 'cat .eq#nv' },
+    { shell: 'command zsh', option: '-o globdots', script: 'cat *nv' },
+  ]
+  const channels: [id: string, make: (sh: string, script: string) => string][] = [
+    ['pipe from echo', (sh, s) => `echo '${s}' | ${sh}`],
+    ['pipe from a here-document', (sh, s) => `cat <<'E' | ${sh}\n${s}\nE`],
+    ['pipe, -s', (sh, s) => `echo '${s}' | ${sh} -s`],
+    ['pipe, /dev/stdin', (sh, s) => `echo '${s}' | ${sh} /dev/stdin`],
+    ['pipe, -', (sh, s) => `echo '${s}' | ${sh} -`],
+    ['here-string', (sh, s) => `${sh} <<< '${s}'`],
+    ['here-document', (sh, s) => `${sh} <<'E'\n${s}\nE`],
+    ['< <(echo)', (sh, s) => `${sh} < <(echo '${s}')`],
+    ['exec <<<', (sh, s) => `exec <<< '${s}'; ${sh}`],
+    ['here-string on a group', (sh, s) => `{ ${sh}; } <<< '${s}'`],
+    ['pipe into a group', (sh, s) => `echo '${s}' | { ${sh}; }`],
+    ['> >(shell)', (sh, s) => `echo '${s}' > >(${sh}); sleep 0.5`],
+  ]
+  for (const { shell, option, script } of settings)
+    for (const [id, make] of channels)
+      for (const outer of ['bash', 'zsh'] as const)
+        out.push(
+          shape('G4', out.length, make(`${shell} ${option}`, script), [outer], [`G4: ${id}`])
+        )
+  return out
+}
+
+/** G5: what a command writes, sent into a process substitution that a shell
+ *  (or xargs) reads. */
+export function sinks(): Generated[] {
+  const out: Generated[] = []
+  const scripts = ['cat .env', 'cat .en[v]', 'cat .e${x}nv', `cat .e''nv`]
+  const routes: [id: string, make: (sh: string, script: string) => string][] = [
+    ['echo > >(sh)', (sh, s) => `echo '${s.replace(/'/g, `'\\''`)}' > >(${sh}); sleep 0.5`],
+    ['printf > >(sh)', (sh, s) => `printf '${s.replace(/'/g, `'\\''`)}' > >(${sh}); sleep 0.5`],
+    ['echo >> >(sh)', (sh, s) => `echo "${dq(s)}" >> >(${sh}); sleep 0.5`],
+    ['exec > >(sh)', (sh, s) => `exec > >(${sh}); echo "${dq(s)}"; sleep 0.5`],
+    ['exec 3> >(sh)', (sh, s) => `exec 3> >(${sh}); echo "${dq(s)}" >&3; exec 3>&-; sleep 0.5`],
+    ['cat <<E > >(sh)', (sh, s) => `cat <<'E' > >(${sh})\n${s}\nE\nsleep 0.5`],
+    ['tee >(sh)', (sh, s) => `tee >(${sh}) > /dev/null <<'E'\n${s}\nE\nsleep 0.5`],
+    ['{ echo; } > >(sh)', (sh, s) => `{ echo "${dq(s)}"; } > >(${sh}); sleep 0.5`],
+  ]
+  for (const [id, make] of routes)
+    for (const sh of ['sh', 'bash', 'zsh -f'])
+      for (const script of scripts)
+        for (const outer of ['bash', 'zsh'] as const)
+          out.push(shape('G5', out.length, make(sh, script), [outer], [`G5: ${id}`]))
+  // A name, not a script, read by a program that opens what it is given.
+  for (const name of ['.env', `.e''nv`])
+    for (const outer of ['bash', 'zsh'] as const)
+      out.push(
+        shape(
+          'G5',
+          out.length,
+          `echo ${name} > >(xargs cat); sleep 0.5`,
+          [outer],
+          ['G5: echo > >(xargs cat)']
+        )
+      )
+  return out
+}
+
+/** G6 (zsh): a glob qualifier that runs code, in a word a program only
+ *  prints, stores or searches for. `git commit -m` is judged, never run. */
+export function dataQualifiers(): Generated[] {
+  const out: Generated[] = []
+  const codes = ['cat .env', 'cat .en[v]', `cat .e""nv`]
+  const words = (code: string) => [`a.txt(e:'${code}':)`, `*(e:'${code}':)`, `src/*(e:'${code}':)`]
+  const positions: [id: string, make: (w: string) => string, run: boolean][] = [
+    ['echo', (w) => `echo ${w}`, true],
+    ['echo -n', (w) => `echo -n x ${w}`, true],
+    ['printf', (w) => `printf '%s\\n' ${w}`, true],
+    ['echo > /dev/null', (w) => `echo ${w} > /dev/null`, true],
+    ['grep pattern', (w) => `grep ${w} src/index.ts`, true],
+    ['grep -e', (w) => `grep -e ${w} src/index.ts`, true],
+    ['git commit -m', (w) => `git commit -m ${w}`, false],
+    ['git commit --message=', (w) => `git commit --message=${w}`, false],
+    ['gh pr create --title', (w) => `gh pr create --title ${w}`, false],
+  ]
+  for (const [id, make, run] of positions)
+    for (const code of codes)
+      for (const w of words(code))
+        out.push(shape('G6', out.length, make(w), run ? ['zsh'] : [], run ? [`G6: ${id}`] : []))
+  return out
+}
+
+/** G7: a script for a program the reader does not know as a shell, one of
+ *  whose words holds a parenthesised group. */
+export function groupScripts(): Generated[] {
+  const out: Generated[] = []
+  const programs: [id: string, pre: string, word: string, zsh: boolean][] = [
+    ['./mysh', '', './mysh', false],
+    ['$x (sh)', 'x=sh; ', '$x', false],
+    ['$x (bash)', 'x=bash; ', '$x', false],
+    ['$x (zsh)', 'x=zsh; ', '$x', true],
+    ['"$x" (zsh)', 'x=zsh; ', '"$x" -f', true],
+  ]
+  /** Scripts every sh runs line by line, and two only zsh reads. */
+  const scripts: [text: string, zshOnly: boolean][] = [
+    ['cat .e${x}nv\necho a(b)', false],
+    ['cat .en[v]\necho $(echo (a))', false],
+    [`cat .e''nv\nf(x) y`, false],
+    ['cat (.e)nv', true],
+    ['cat .e(n)v', true],
+    ['cat .e${x}nv; echo a(b|c)', true],
+  ]
+  const channels: [id: string, make: (program: string, script: string) => string][] = [
+    ['-c', (p, s) => `${p} -c '${s.replace(/'/g, `'\\''`)}'`],
+    ['here-document', (p, s) => `${p} <<'E'\n${s}\nE`],
+    ['here-string', (p, s) => `${p} <<< '${s.replace(/'/g, `'\\''`)}'`],
+    ['pipe from echo', (p, s) => `echo '${s.replace(/'/g, `'\\''`)}' | ${p}`],
+  ]
+  for (const [id, pre, word, zsh] of programs)
+    for (const [script, zshOnly] of scripts) {
+      if (zshOnly !== zsh) continue
+      for (const [channel, make] of channels)
+        for (const outer of ['bash', 'zsh'] as const)
+          out.push(
+            shape('G7', out.length, pre + make(word, script), [outer], [`G7: ${id} ${channel}`])
+          )
+    }
+  return out
+}
+
+/** G8: a here-document whose delimiter is split by a line continuation - an
+ *  unquoted delimiter, so the substitution in the body runs. */
+export function continuedDelimiters(): Generated[] {
+  const out: Generated[] = []
+  const delimiters = ['\\\nEOF', 'E\\\nOF', 'EO\\\nF', 'E\\\nO\\\nF']
+  for (const program of ['cat', 'tee /dev/null', 'cat -'])
+    for (const op of ['<<', '<<-', '<< '])
+      for (const d of delimiters)
+        for (const inner of ['cat .env', 'cat .en[v]', `cat .e''nv`])
+          for (const outer of ['bash', 'zsh'] as const)
+            out.push(
+              shape(
+                'G8',
+                out.length,
+                `${program} ${op}${d}\n$(${inner})\nEOF`,
+                [outer],
+                [`G8: ${program} ${op.trim()}`]
+              )
+            )
+  return out
+}
+
+/** G9 (bash): each variable of A10 set in a form that is not `NAME=` or a
+ *  declaration's argument, then a wildcard that reads `.env` only if the
+ *  setting lets it match a leading dot. */
+export function settingForms(): Generated[] {
+  const out: Generated[] = []
+  const forms: [id: string, make: (name: string) => string][] = [
+    ['printf -vNAME', (n) => `printf -v${n} x; `],
+    ['printf -v"NAME"', (n) => `printf -v"${n}" x; `],
+    ['$((NAME=1))', (n) => `: $((${n}=1)); `],
+    ['$[NAME=1]', (n) => `: $[${n}=1]; `],
+    ['((NAME=1))', (n) => `((${n}=1)); `],
+    ['${NAME:=x}', (n) => `: \${${n}:=x}; `],
+    ['${NAME=x}', (n) => `: \${${n}=x}; `],
+    ['for NAME in', (n) => `for ${n} in x; do :; done; `],
+    ['read NAME', (n) => `read -r ${n} <<< x; `],
+    ['read (split name)', (n) => `read ${n.slice(0, 4)}''${n.slice(4)} <<< x; `],
+    ['declare -x NAME=', (n) => `declare -x ${n}=x; `],
+    ['export NAME+=', (n) => `export ${n}+=x; `],
+    ['typeset NAME=', (n) => `typeset ${n}=x; `],
+    ['NAME+=', (n) => `${n}+=x; `],
+  ]
+  // Forms that set the variable without its effect in bash 3.2 (measured: no
+  // read): run to catch a surprise in another bash, not counted as alive.
+  const QUIET = new Set(['${NAME:=x}', '${NAME=x}', 'for NAME in'])
+  for (const name of A10_VARIABLES)
+    for (const [id, make] of forms)
+      for (const glob of GLOBS)
+        out.push(
+          shape(
+            'G9',
+            out.length,
+            make(name) + glob,
+            ['bash'],
+            name === 'GLOBIGNORE' && !QUIET.has(id) ? [`G9: ${id}`] : []
+          )
+        )
+  return out
+}
+
+/** G10, the allow side: ordinary shapes that must run. The files named are
+ *  the fixture's own (`src/index.ts`, `a.txt`); what is written goes under
+ *  TMPDIR, outside the project. */
+export function ordinaryShapes(): Ordinary[] {
+  const both: Shell[] = ['bash', 'zsh']
+  const out: Ordinary[] = []
+  // Several bracket expressions in one word: more than 64 spellings.
+  for (const [word, prints] of [
+    ['src/[a-z][a-z]dex.ts', 'src/index.ts'],
+    ['src/in[a-z][a-z][a-z].ts', 'src/index.ts'],
+    ['src/[a-z][a-z][a-z][a-z][a-z].ts', 'src/index.ts'],
+    ['sr[a-z]/[a-z][a-z]dex.ts', 'src/index.ts'],
+    ['src/[h-j][m-o][c-e][d-f][w-y].ts', 'src/index.ts'],
+    ['[a-z].tx[a-z]', 'a.txt'],
+    ['[0-9][0-9].log', null],
+    ['logs/[0-9][0-9].log', null],
+    ['src/[0-9][0-9][0-9]_*.sql', null],
+    ['[a-z][a-z][a-z]', 'index.ts'],
+  ] as const)
+    out.push({ command: `ls ${word}`, shells: both, prints })
+  // zsh: a group of plain alternatives.
+  for (const [word, prints] of [
+    ['src/*.(ts|tsx)', 'src/index.ts'],
+    ['(src|docs)/index.ts', 'src/index.ts'],
+    ['src/(index|main).ts', 'src/index.ts'],
+    ['*.(md|txt)', 'a.txt'],
+    ['(src)/index.ts', 'src/index.ts'],
+    ['src/in(dex|put).(ts|js)', 'src/index.ts'],
+    ['s(r|)c/index.ts', 'src/index.ts'],
+  ] as const)
+    out.push({ command: `ls ${word}`, shells: ['zsh'], prints })
+  // Long plain text written to a file.
+  const text = (n: number, line: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => line(i)).join('\n')
+  const kinds: [ext: string, line: (i: number) => string][] = [
+    ['md', (i) => `- Step ${i}: run \`npm test\`, then read docs/report-${i}.md.`],
+    ['py', (i) => `    result_${i} = compute(values[${i}], key="k${i}")  # step ${i}`],
+    ['ts', (i) => `export const value${i}: Record<string, number> = { a: ${i}, b: scale(${i}) }`],
+  ]
+  for (const n of [300, 600, 1000])
+    for (const [ext, line] of kinds)
+      out.push({
+        command: `cat > "$TMPDIR/long.${n}.${ext}" <<'EOF'\n${text(n, line)}\nEOF`,
+        shells: both,
+        prints: null,
+      })
+  out.push({
+    command: `cat > "$TMPDIR/long.plain.md" <<EOF\n${text(600, (i) => `Step ${i}: read docs/report-${i}.md and note what changed.`)}\nEOF`,
+    shells: both,
+    prints: null,
+  })
+  // Many plain words.
+  out.push({
+    command: `: ${Array.from({ length: 2000 }, (_, i) => `src/dir${i % 40}/file${i}.ts`).join(' ')}`,
+    shells: both,
+    prints: null,
+  })
+  out.push({
+    command: `echo done ${Array.from({ length: 1000 }, (_, i) => `step${i}`).join(' ')} > /dev/null; ls src/index.ts`,
+    shells: both,
+    prints: 'src/index.ts',
+  })
+  return out
+}
+
+/** G11, the other side of G10's bracket shapes: a canary's name with three or
+ *  more of its letters each written as a range - more than 64 spellings, and
+ *  every one of them a read. */
+export function bracketRuns(): Generated[] {
+  const out: Generated[] = []
+  const range = (c: string) =>
+    `[${String.fromCharCode(c.charCodeAt(0) - 1)}-${String.fromCharCode(c.charCodeAt(0) + 1)}]`
+  for (const c of CANARIES) {
+    if (c.id === 'HOME') continue
+    const name = plainName(c)
+    for (const width of [3, 4])
+      for (let at = 0; at + width <= name.length; at++) {
+        const run = name.slice(at, at + width)
+        if (!/^[b-y]+$/.test(run)) continue
+        const word = name.slice(0, at) + [...run].map(range).join('') + name.slice(at + width)
+        for (const shell of ['bash', 'zsh'] as const)
+          out.push({ ...shape('G11', out.length, `cat ${word}`, [shell], ['G11']), canary: c.id })
+      }
+  }
   return out
 }
