@@ -26,8 +26,10 @@ inputs:
       Version of the Veilio CLI to run. The diff-scoped default scans each
       changed file with `veilio scan --blobs`, which a CLI older than this
       action's release does not have: a pinned older version fails the step.
+      Defaults to the CLI version released with this action; set `latest` to
+      run the newest published CLI instead.
     required: false
-    default: 'latest'
+    default: '0.12.1'
 
 outputs:
   findings:

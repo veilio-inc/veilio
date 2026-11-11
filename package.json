@@ -30,7 +30,7 @@
     "build:packages": "npm run build --workspace=packages/engine && npm run build --workspace=packages/cli && npm run build --workspace=packages/mcp",
     "test:packages": "npm run build:packages && npm run test --workspaces --if-present",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && node scripts/sync-action-version.mjs",
     "release": "npm run build:packages && changeset publish"
   },
   "dependencies": {
