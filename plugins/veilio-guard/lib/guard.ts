@@ -33,7 +33,6 @@ import {
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
-  braceNames,
   globMayBeRawOnly,
   interpreterNamesGuardState,
   isRawOnly,
@@ -45,17 +44,16 @@ import {
   rawOnlyDirectories,
   rawOnlyOf,
   shortNameAlias,
-  spelledWord,
   walkCd,
   windowsAlias,
   wordPath,
-  INTERPRETERS,
   MAX_DIRS,
   type CdContext,
   type DirState,
   type Var,
 } from './paths.ts'
-import { parseShell, restoreRefusal } from './shell.ts'
+import { parseShell, restoreRefusal, type Word } from './shell.ts'
+import { isWord, pieces, quoteBlind, spellings, wordsWithin } from './reading.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -1732,13 +1730,26 @@ export class Guard {
       : this.applyText(raw, 'result', undefined, budget)
   }
 
-  /** A word the shell spells without a wildcard: an absolute path as it is,
-   *  a relative one from the session's directory. */
-  private async spelledHits(name: string) {
+  /** A name the shell spells without a wildcard: an absolute path as it is,
+   *  a relative one in the session's directory (as written) and in each other
+   *  directory `dirs` the shell may be in during the command. */
+  private async spelledHits(name: string, dirs: readonly string[]) {
     const path = normalisePath(name)
-    const none = { written: false, rawOnly: false, mcp: null }
-    if (path === '') return none
-    return this.pathHits(/^[/\\~]|^[A-Za-z]:/.test(path) ? path : this.here(path))
+    const at = /^[/\\~]|^[A-Za-z]:/.test(path)
+      ? [path]
+      : [name, ...dirs.filter((d) => d !== this.cwd).map((d) => join(d, path))]
+    const out: { written: boolean; rawOnly: boolean; mcp: string | null } = {
+      written: false,
+      rawOnly: false,
+      mcp: null,
+    }
+    for (const p of at) {
+      const h = await this.pathHits(p)
+      out.written ||= h.written
+      out.rawOnly ||= h.rawOnly
+      out.mcp ??= h.mcp
+    }
+    return out
   }
 
   /** The refusal for a write-protected path: settings, or the MCP list (#59). */
@@ -1989,35 +2000,68 @@ export class Guard {
                   `Veilio keeps \`${this.applyText(/^(?:cd|chdir|pushd|popd|-)$/.test(l.target) ? d : l.target, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
                   false
                 )
-          // Each word of each command, in every directory the shell may be
-          // in there, `~` read with HOME as it is there (FR-010).
+          // Spec 091: every word of the command, wherever it stands (the
+          // reading table), as the shell can read it - quotes and escapes
+          // gone, braces and bracket lists expanded, a written default as one
+          // more spelling - and in the pieces a program may take as a file
+          // name, in each directory the shell may be in where the word is
+          // read. A wildcard is refused when it could name a raw-only file.
+          const home = typeof this.dirs.vars.HOME === 'object' ? this.dirs.vars.HOME.value : null
+          const homeKnown = home !== null && walk.points.every((point) => point.home === home)
+          // A word the cd walk read is judged where the walk says the shell
+          // is at that point. A word the walk does not read (a redirect on a
+          // loop, a written default, a command inside arithmetic or a
+          // here-document) is judged where the nearest word or command
+          // around it is read; one in a command the walk never reaches, in
+          // the session's directory alone.
+          const where = new Map<Word, Set<string>>()
           for (const point of walk.points)
             for (const w of point.words) {
-              // Security audit 2026-11-11 (M2): the word as the shell reads it
-              // - quotes and escapes gone, braces expanded - which the check
-              // on the raw text below does not see (`.e''nv`, `{.e,x}nv`), in
-              // the session's directory or as the absolute path it names. A
-              // wildcard word is refused when it could name a raw-only file.
-              const spelt = spelledWord(w, point.home, this.cwd || this.root)
-              if (spelt !== w.raw || /[*?[{]/.test(spelt)) {
-                const names = braceNames(spelt)
-                for (const name of names) {
-                  const spelled = dialect === 'ps' ? name.replace(/\\/g, '/') : name
-                  const h = /[*?[]/.test(spelled)
-                    ? {
-                        written: false,
-                        mcp: null,
-                        rawOnly: globMayBeRawOnly(spelled, this.extraRawOnly),
-                      }
-                    : await this.spelledHits(spelled)
-                  if (h.written) return this.denyProtected([h])
-                  if (h.rawOnly)
-                    return this.deny(
-                      `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
-                      false
-                    )
-                }
+              const dirs = where.get(w) ?? new Set()
+              for (const d of point.dirs) dirs.add(d)
+              where.set(w, dirs)
+            }
+          const around = new Map<object, string[]>()
+          const dirsAround = (x: object): string[] => {
+            let dirs = around.get(x)
+            if (dirs === undefined) {
+              dirs = [
+                ...new Set(wordsWithin(x).flatMap(({ word }) => [...(where.get(word) ?? [])])),
+              ]
+              around.set(x, dirs)
+            }
+            return dirs
+          }
+          for (const { word: w, within } of wordsWithin(parsed.list)) {
+            let at = [...(where.get(w) ?? [])]
+            for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
+              if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
+            const read = spellings(w, { home, homeKnown, strict: false })
+            for (const spelling of read === 'any' ? [] : read) {
+              const name = dialect === 'ps' ? spelling.replace(/\\/g, '/') : spelling
+              for (const piece of pieces(name)) {
+                const h = /[*?[]/.test(piece)
+                  ? {
+                      written: false,
+                      mcp: null,
+                      rawOnly: globMayBeRawOnly(piece, this.extraRawOnly),
+                    }
+                  : await this.spelledHits(piece, at)
+                if (h.written) return this.denyProtected([h])
+                if (h.rawOnly)
+                  return this.deny(
+                    // A word spelled as it was typed is shown by its piece
+                    // that names the file (`.env` of `--env-file=.env`).
+                    `Veilio keeps ${this.typed(spelling === w.raw ? piece : w.raw, budget)} away from the model. Ask the user for what you need from it`,
+                    false
+                  )
               }
+            }
+          }
+          // Each plain word of each command, in every directory the shell may
+          // be in there, `~` read with HOME as it is there (FR-010).
+          for (const point of walk.points)
+            for (const w of point.words) {
               const path = wordPath(w, point.home)
               if (path === null) continue
               // PowerShell's separator is `\\` too.
@@ -2041,9 +2085,9 @@ export class Guard {
                 }
               }
             }
-        } else if (dialect === 'sh' && parsed && SH_UNREADABLE.test(c))
-          // A bash/zsh command the reader cannot read (past its bounds), that
-          // names anything the walk refuses or follows: refused (re-review).
+        } else if (dialect === 'sh' && parsed)
+          // Spec 091 FR-010: a bash/zsh command the reader cannot read
+          // (unbalanced, or past its bounds) is refused.
           return this.deny(
             `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
             false
@@ -2058,7 +2102,16 @@ export class Guard {
         else moves = this.shellDirsOf(c)
         // Spec 085 H17: a word after a cd names a file in the directory the
         // shell moved to, in this call or an earlier one: checked there too.
-        for (const word of pathsInCommand(c)) {
+        // Spec 091 FR-009: then the same check on the text with line
+        // continuations, quotes and backslashes removed - a floor that does
+        // not depend on the reader, showing the chunk as it was typed.
+        const texts: [word: string, typed: string | null][] = [
+          ...pathsInCommand(c).map((word): [string, null] => [word, null]),
+          ...quoteBlind(c).flatMap(([typed, read]) =>
+            pathsInCommand(read).map((word): [string, string] => [word, typed])
+          ),
+        ]
+        for (const [word, typed] of texts) {
           const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
           // Spec 078 FR-012, found the way raw-only files are (review round 1).
           const hits = []
@@ -2068,7 +2121,7 @@ export class Guard {
             hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
           if (hit) {
             return this.deny(
-              `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+              `Veilio keeps ${typed === null ? this.applyText(word, 'result', undefined, budget) : this.typed(typed, budget)} away from the model. Ask the user for what you need from it`,
               false
             )
           }
@@ -2897,18 +2950,6 @@ const PS_CODE = new RegExp(
 )
 /** PowerShell giving a command a new name. */
 const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
-/** A bash/zsh command past the reader's bounds is refused when it holds any
- *  quote, backslash, `$`, backtick, parenthesis or newline, or names a cd or
- *  anything that can move the shell or run text; otherwise 078's verdict. */
-const SH_UNREADABLE = new RegExp(
-  String.raw`['"\\$` +
-    '`' +
-    String.raw`()\n]|(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|mv|options|mapfile|readarray|` +
-    INTERPRETERS +
-    String.raw`)(?![\w-])|(?:^|[;&|{\s])\.\s` +
-    // a lone word as a command: zsh may read it as a cd (AUTO_CD)
-    String.raw`|(?:^|[;&|\n])\s*[^\s;&|]+\s*(?:$|[;&|\n])`
-)
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/

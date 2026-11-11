@@ -716,9 +716,9 @@ const REVIEWED: [string, string | undefined][] = [
     N1('python3 -c "import os; os.symlink(1, 2)"', 'a cd after code this command ran'),
   ],
   ['mkdir build && cd build && cmake ..', undefined],
-  // Past the reader's bounds with no quote, backslash, $, backtick, paren or
-  // newline: nothing in it builds text, so 078's verdict.
-  [`echo ${'{'.repeat(201)} ls`, undefined],
+  // Past the reader's bounds: a command Veilio cannot read is refused,
+  // whatever it holds (spec 091 FR-010; before, only one that built text).
+  [`echo ${'{'.repeat(201)} ls`, N1(`echo ${'{'.repeat(201)} ls`, 'a command Veilio cannot read')],
   [
     `echo ${'{'.repeat(201)}; foo`,
     N1(`echo ${'{'.repeat(201)}; foo`, 'a command Veilio cannot read'),

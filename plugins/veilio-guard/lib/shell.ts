@@ -454,9 +454,16 @@ export function outsideQuotes(command: string): string {
  *  everything else the shell may expand. */
 export type Part =
   | { kind: 'lit'; text: string; quoted: boolean }
-  | { kind: 'param'; name: string; op: string }
+  | {
+      kind: 'param'
+      name: string
+      op: string
+      /** The value written after `:-`, `-`, `:=`, `=`, `:+`, `+`, `:?`, `?`. */
+      operand?: Word[]
+    }
   | { kind: 'subst'; list: List | null }
-  | { kind: 'arith'; text: string }
+  /** `substs`: the commands of the `$(...)` and backticks inside. */
+  | { kind: 'arith'; text: string; substs?: List[] }
   | { kind: 'glob'; text: string }
   | { kind: 'brace'; text: string }
   | { kind: 'tilde'; user: string }
@@ -466,7 +473,14 @@ export type Part =
 export type Word = { parts: Part[]; literal: string | null; raw: string; assign?: Assign }
 /** `name` null: a name the shell builds (`declare "${x}"=v`). */
 export type Assign = { name: string | null; op: '=' | '+='; value: Word | Word[] }
-export type Redirect = { fd: number | null; op: string; target: Word | null; body?: string }
+/** `substs`: the commands of the `$(...)` and backticks in a here-document's body. */
+export type Redirect = {
+  fd: number | null
+  op: string
+  target: Word | null
+  body?: string
+  substs?: List[]
+}
 export type Simple = {
   type: 'simple'
   assigns: Assign[]
@@ -493,7 +507,8 @@ export type Node =
       body: List
       redirects: Redirect[]
     }
-  | { type: 'case'; word: Word; arms: List[]; redirects: Redirect[] }
+  /** `substs`: the commands of the `$(...)` and backticks in its patterns. */
+  | { type: 'case'; word: Word; arms: List[]; redirects: Redirect[]; substs?: List[] }
   | { type: 'function'; name: string; body: Node }
 /** `background`: followed by `&`, so it runs in a subshell of its own. */
 export type Pipeline = { stages: Node[]; negated: boolean; timed: boolean; background?: true }
@@ -542,6 +557,19 @@ function makeWord(parts: Part[], raw: string): Word {
     ? parts.map((p) => (p as { text: string }).text).join('')
     : null
   return { parts, literal, raw }
+}
+
+/** The commands of every `$(...)` and backtick in words, at any depth of
+ *  written values and arithmetic. */
+function substsOf(words: readonly Word[]): List[] {
+  const out: List[] = []
+  for (const w of words)
+    for (const p of w.parts) {
+      if (p.kind === 'subst' && p.list) out.push(p.list)
+      else if (p.kind === 'arith') out.push(...(p.substs ?? []))
+      else if (p.kind === 'param') out.push(...substsOf(p.operand ?? []))
+    }
+  return out
 }
 
 /** An assignment's value: `~` at its start and after each unquoted `:` is a
@@ -598,6 +626,8 @@ function declared(w: Word): Assign | undefined {
 class Reader {
   private i = 0
   private pending: { r: Redirect; delim: string; strip: boolean; quoted: boolean }[] = []
+  /** `'` is an ordinary character (a written value inside double quotes). */
+  private plainQuote = false
   constructor(
     private readonly s: string,
     private readonly depth: number,
@@ -646,6 +676,81 @@ class Reader {
         body += (h.strip ? line.replace(/^\t+/, '') : line) + '\n'
       }
       h.r.body = body
+      const substs = this.bodySubsts(body, h.quoted)
+      if (substs.length > 0) h.r.substs = substs
+    }
+  }
+
+  /** The commands of each `$(...)` and backtick pair in a here-document's
+   *  body. The shell runs none under a quoted delimiter: there, one that
+   *  cannot be read is passed over; under a plain delimiter it makes the
+   *  command unreadable. */
+  private bodySubsts(body: string, quoted: boolean): List[] {
+    const out: List[] = []
+    for (let k = 0; k < body.length; k++) {
+      const tick = body[k] === '`'
+      if (!tick && !(body[k] === '$' && body[k + 1] === '(' && body[k + 2] !== '(')) continue
+      if (body[k - 1] === '\\' && !quoted) continue
+      const frames = this.frames.n
+      try {
+        const r = new Reader(body, this.depth, this.frames)
+        r.i = k
+        if (tick) {
+          const parts: Part[] = []
+          r.backtick(parts)
+          const p = parts[0]
+          if (p?.kind === 'subst' && p.list) out.push(p.list)
+        } else {
+          r.i += 2
+          out.push(r.list(new Set([')'])))
+          r.expect(')')
+        }
+        k = r.i - 1
+      } catch (err) {
+        if (!(err instanceof Unreadable) || !quoted) throw err
+        this.frames.n = frames
+      }
+    }
+    return out
+  }
+
+  /** The words of text inside an expansion (a parameter's written value, an
+   *  arithmetic expression), where the shell's operators are ordinary
+   *  characters. `plain`: inside double quotes, where `'` is one too. */
+  private inner(text: string, plain = false): Word[] {
+    // Bounded like any nesting: a value inside a value inside a value.
+    if (++this.frames.n > MAX_FRAMES) throw new Unreadable('depth')
+    const r = new Reader(text, this.depth, this.frames)
+    r.plainQuote = plain
+    const out: Word[] = []
+    while (r.i < text.length) {
+      const c = text[r.i]!
+      if (/\s/.test(c)) {
+        r.i++
+        continue
+      }
+      const w = r.word(true)
+      if (w) out.push(w)
+      else {
+        out.push(makeWord([{ kind: 'lit', text: c, quoted: false }], c))
+        r.i++
+      }
+    }
+    this.frames.n--
+    return out
+  }
+
+  /** A parameter's written value. Inside double quotes bash reads a `'`
+   *  there as itself and zsh as a quote: both readings, when both can be read. */
+  private operand(text: string, quoted: boolean): Word[] {
+    if (!quoted || !text.includes("'")) return this.inner(text)
+    const frames = this.frames.n
+    try {
+      return [...this.inner(text), ...this.inner(text, true)]
+    } catch (err) {
+      if (!(err instanceof Unreadable)) throw err
+      this.frames.n = frames
+      return this.inner(text, true)
     }
   }
 
@@ -757,7 +862,7 @@ class Reader {
       if (end !== -1) {
         const raw = s.slice(this.i, end)
         this.i = end
-        return this.simpleOf([makeWord([{ kind: 'arith', text: raw }], raw)])
+        return this.simpleOf([makeWord([this.arith(raw, 2)], raw)])
       }
     }
     if (s[this.i] === '(') {
@@ -929,8 +1034,11 @@ class Reader {
       for (let j = k + 1; j < words.length; j++) {
         const w = words[j]!.literal
         if (w === null || !w.startsWith('-')) break
-        if (/^-[A-Za-z]*c/.test(w)) {
-          text = words[j + 1]?.literal ?? null
+        const c = /^-[A-Za-z]*?c(.*)$/s.exec(w)
+        if (c) {
+          // `sh -c'cat x'`: the script attached to the option, read as the
+          // separate form is; letters alone after `c` are more options.
+          text = /[^A-Za-z]/.test(c[1]!) ? c[1]! : (words[j + 1]?.literal ?? null)
           break
         }
       }
@@ -979,6 +1087,10 @@ class Reader {
     if (s.startsWith('((', this.i)) {
       const end = this.arithEnd(this.i + 2)
       if (end === -1) throw new Unreadable('unbalanced')
+      // Its header, kept only when a substitution in it runs a command.
+      const header = this.arith(s.slice(this.i, end), 2)
+      if (header.kind === 'arith' && header.substs)
+        words = [makeWord([header], s.slice(this.i, end))]
       this.i = end
     } else {
       name = this.word()?.literal ?? null
@@ -1014,6 +1126,7 @@ class Reader {
     if (!/^in(?=[ \t\r\n]|$)/.test(this.s.slice(this.i))) throw new Unreadable('unknown')
     this.i += 2
     const arms: List[] = []
+    const substs: List[] = []
     const s = this.s
     for (;;) {
       this.space()
@@ -1022,7 +1135,9 @@ class Reader {
       if (s[this.i] === '(') this.i++
       for (;;) {
         this.blank()
-        if (!this.word(true)) throw new Unreadable('unknown')
+        const pattern = this.word(true)
+        if (!pattern) throw new Unreadable('unknown')
+        substs.push(...substsOf([pattern]))
         this.blank()
         if (s[this.i] !== '|') break
         this.i++
@@ -1034,7 +1149,10 @@ class Reader {
       if (end) this.i += end[0].length
     }
     this.i += 4
-    return { type: 'case', word, arms, redirects: this.redirects() }
+    const redirects = this.redirects()
+    return substs.length > 0
+      ? { type: 'case', word, arms, redirects, substs }
+      : { type: 'case', word, arms, redirects }
   }
 
   /** `[[ … ]]`: its operators are words of the test, not of the shell. */
@@ -1064,6 +1182,13 @@ class Reader {
   }
 
   // ── words ──
+
+  /** An arithmetic expression (`open` characters open it, `))` closes it),
+   *  with the commands of the substitutions inside. */
+  private arith(text: string, open: number): Part {
+    const substs = substsOf(this.inner(text.slice(open, -2)))
+    return substs.length > 0 ? { kind: 'arith', text, substs } : { kind: 'arith', text }
+  }
 
   /** Where `$((` or `((` ends (after its `))`), or -1 when it is not arithmetic. */
   private arithEnd(from: number): number {
@@ -1098,7 +1223,7 @@ class Reader {
         if (s[this.i + 1] === '\n') this.i += 2
         else if (this.i + 1 >= s.length) take({ kind: 'lit', text: '\\', quoted: true }, 1)
         else take({ kind: 'lit', text: s[this.i + 1]!, quoted: true }, 2)
-      } else if (c === "'") {
+      } else if (c === "'" && !this.plainQuote) {
         const end = s.indexOf("'", this.i + 1)
         if (end === -1) throw new Unreadable('unbalanced')
         lit(s.slice(this.i + 1, end), true)
@@ -1217,7 +1342,7 @@ class Reader {
     if (s.startsWith('$((', this.i)) {
       const end = this.arithEnd(this.i + 3)
       if (end !== -1) {
-        parts.push({ kind: 'arith', text: s.slice(this.i, end) })
+        parts.push(this.arith(s.slice(this.i, end), 3))
         this.i = end
         return
       }
@@ -1239,7 +1364,14 @@ class Reader {
       const inner = s.slice(this.i + 2, j)
       const m = /^[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])/.exec(inner)
       const name = m ? m[0].replace(/^[#!](?=.)/, '') : ''
-      parts.push({ kind: 'param', name, op: inner.slice(m ? m[0].length : 0) })
+      const op = inner.slice(m ? m[0].length : 0)
+      // A value written in the command, past a subscript (`${a[0]:-v}`).
+      const written = /^(?:\[[^\]]*\])?:?[-=+?]/.exec(op)
+      parts.push(
+        written
+          ? { kind: 'param', name, op, operand: this.operand(op.slice(written[0].length), quoted) }
+          : { kind: 'param', name, op }
+      )
       this.i = j + 1
     } else if ((next === "'" || next === '"') && !quoted) {
       let j = this.i + 2

@@ -1602,6 +1602,20 @@ type GlobToken =
   | { kind: 'star'; deep: boolean }
   | { kind: 'class'; set: string; negated: boolean }
 
+/** Where the bracket class opened at `i` closes: past a first character
+ *  (which may be `]`) and past any POSIX class inside (`[[:alpha:]]`), which
+ *  is part of the class. -1 when it does not close. */
+function classEnd(glob: string, i: number): number {
+  for (let j = glob.startsWith('[:', i + 1) ? i + 1 : i + 2; j < glob.length; j++) {
+    if (glob[j] === '[' && glob[j + 1] === ':') {
+      const end = glob.indexOf(':]', j + 2)
+      if (end === -1) return -1
+      j = end + 1
+    } else if (glob[j] === ']') return j
+  }
+  return -1
+}
+
 function globTokens(glob: string): GlobToken[] {
   const out: GlobToken[] = []
   for (let i = 0; i < glob.length; i++) {
@@ -1611,8 +1625,8 @@ function globTokens(glob: string): GlobToken[] {
       if (deep) i++
       out.push({ kind: 'star', deep })
     } else if (c === '?') out.push({ kind: 'any' })
-    else if (c === '[' && glob.indexOf(']', i + 2) > 0) {
-      const end = glob.indexOf(']', i + 2)
+    else if (c === '[' && classEnd(glob, i) > 0) {
+      const end = classEnd(glob, i)
       const negated = /^[!^]/.test(glob.slice(i + 1, end))
       out.push({ kind: 'class', set: glob.slice(i + 1 + (negated ? 1 : 0), end), negated })
       i = end
@@ -1623,10 +1637,15 @@ function globTokens(glob: string): GlobToken[] {
 
 /** Whether one string could match both globs (ignoring case, `*` and `?`
  *  stopping at `/`, `**` not). `a` is a shell word, so its wildcards do not
- *  match a leading `.` (`*.ts` is not `.env.ts`); `b` is a raw-only pattern.
- *  A class is read as able to match whatever it is set against: this errs
- *  toward refusing. */
-function globsOverlap(a: string, b: string): boolean {
+ *  match a leading `.` (`*.ts` is not `.env.ts`) unless `dots` says the shell
+ *  lets them; `b` is a raw-only pattern. A class is read as able to match
+ *  whatever it is set against: this errs toward refusing.
+ *
+ *  The pattern's `*` may take the word's letters (`server.pe?` is `*.pem`),
+ *  and the word's `*` may stand for the pattern's fixed text (`id_*` is
+ *  `id_rsa*`), but not both in one match: `server.p*` is not `*.pem`, a
+ *  documented limit, or every `src/a*` would be a key. */
+function globsOverlap(a: string, b: string, dots = false): boolean {
   const A = globTokens(a)
   const B = globTokens(b)
   const seen = new Map<number, boolean>()
@@ -1640,7 +1659,7 @@ function globsOverlap(a: string, b: string): boolean {
     for (; k < A.length && !isSlash(A[k]!); k++) if (A[k]!.kind === 'char') return false
     return true
   }
-  const dotStart = (j: number) => j === 0 || isSlash(B[j - 1]!)
+  const dotStart = (j: number) => !dots && (j === 0 || isSlash(B[j - 1]!))
   const single = (t: GlobToken, u: GlobToken, i: number, j: number): boolean => {
     if (t.kind === 'char' && u.kind === 'char') return t.c === u.c
     if (t.kind !== 'char' && u.kind === 'char') {
@@ -1651,13 +1670,18 @@ function globsOverlap(a: string, b: string): boolean {
     if (!lit) return true
     if (other.kind === 'any') return lit.c !== '/'
     if (other.kind === 'class') {
-      const inSet = other.set.toLowerCase().includes(lit.c) || /[a-z]-[a-z]/i.test(other.set)
+      const inSet =
+        other.set.toLowerCase().includes(lit.c) ||
+        /[a-z]-[a-z]/i.test(other.set) ||
+        other.set.includes('[:')
       return lit.c !== '/' && (other.negated ? true : inSet)
     }
     return true
   }
-  const go = (i: number, j: number): boolean => {
-    const key = i * (B.length + 1) + j
+  // `took`: 1 once the word's `*` stood for the pattern's text, 2 once the
+  // pattern's `*` took the word's letters.
+  const go = (i: number, j: number, took: 0 | 1 | 2): boolean => {
+    const key = (i * (B.length + 1) + j) * 3 + took
     const known = seen.get(key)
     if (known !== undefined) return known
     seen.set(key, false)
@@ -1667,17 +1691,20 @@ function globsOverlap(a: string, b: string): boolean {
     if (!x && !y) r = true
     else if (x?.kind === 'star')
       r =
-        go(i + 1, j) ||
+        go(i + 1, j, took) ||
         (!!y &&
-          go(i, j + 1) &&
           (x.deep || !isSlash(y)) &&
-          !(y.kind === 'char' && (bareWild(i) || (y.c === '.' && dotStart(j)))))
-    else if (y?.kind === 'star') r = go(i, j + 1) || (!!x && y.deep && go(i + 1, j))
-    else r = !!x && !!y && single(x, y, i, j) && go(i + 1, j + 1)
+          !(y.kind === 'char' && (bareWild(i) || (y.c === '.' && dotStart(j)) || took === 2)) &&
+          go(i, j + 1, y.kind === 'char' ? 1 : took))
+    else if (y?.kind === 'star')
+      r =
+        go(i, j + 1, took) ||
+        (!!x && (y.deep ? go(i + 1, j, took) : !isSlash(x) && took !== 1 && go(i + 1, j, 2)))
+    else r = !!x && !!y && single(x, y, i, j) && go(i + 1, j + 1, took)
     seen.set(key, r)
     return r
   }
-  return go(0, 0)
+  return go(0, 0, 0)
 }
 const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
 
@@ -1688,7 +1715,7 @@ const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
  *
  *  shortcut: it does not look at the files that exist, so a glob that could
  *  match a raw-only name is refused when no such file is there. */
-export function globMayBeRawOnly(word: string, extra: readonly string[]): boolean {
+export function globMayBeRawOnly(word: string, extra: readonly string[], dots = false): boolean {
   const segments = normalisePath(word)
     .split('/')
     .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
@@ -1700,13 +1727,13 @@ export function globMayBeRawOnly(word: string, extra: readonly string[]): boolea
   ]
   return patterns.some((p) =>
     p.includes('/')
-      ? segments.some((_, i) => globsOverlap(segments.slice(i).join('/'), p))
-      : segments.some((s) => literal(s) && globsOverlap(s, p))
+      ? segments.some((_, i) => globsOverlap(segments.slice(i).join('/'), p, dots))
+      : segments.some((s) => literal(s) && globsOverlap(s, p, dots))
   )
 }
 
 /** What `$'...'` spells: the escapes read as bash reads them. */
-function ansiC(text: string): string {
+export function ansiC(text: string): string {
   return text.replace(
     /\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|[\s\S])/g,
     (_, e: string) => {
@@ -1720,39 +1747,4 @@ function ansiC(text: string): string {
       )
     }
   )
-}
-
-/** A word as the shell would spell it before it expands anything but quotes
- *  and escapes: plain text, wildcards and braces stay as they are, and a
- *  wildcard or brace that was quoted is made an ordinary character. `$'..'`
- *  and `$".."` are read, a leading `~` and `$HOME` are the known `home`, and
- *  `$PWD` and `~+` the session directory `cwd`.
- *
- *  Anything else the shell builds (`$x`, `$(...)`, `${x:-y}`, `~user`) is
- *  unknown and stands as `**`, "anything": the word is then judged as a glob,
- *  which refuses `$PWD`-like prefixes in front of a raw-only name
- *  (`$(pwd)/.e''nv`) and passes `cat $F` and `$DIR/src/index.ts`, whose
- *  resolvable remainder cannot name one. */
-export function spelledWord(
-  w: Word,
-  home: string | null = null,
-  cwd: string | null = null
-): string {
-  const quote = (t: string) => t.replace(/[*?[\]{},]/g, '\u0001')
-  let out = ''
-  for (const p of w.parts) {
-    if (p.kind === 'lit') out += p.quoted ? quote(p.text) : p.text
-    else if (p.kind === 'glob' || p.kind === 'brace') out += p.text
-    else if (p.kind === 'tilde' && p.user === '' && home !== null) out += quote(home)
-    else if (p.kind === 'tilde' && p.user === '+' && cwd !== null) out += quote(cwd)
-    else if (p.kind === 'param' && p.op === '' && p.name === 'HOME' && home !== null)
-      out += quote(home)
-    else if (p.kind === 'param' && p.op === '' && p.name === 'PWD' && cwd !== null)
-      out += quote(cwd)
-    else if (p.kind === 'ansic' && p.text.startsWith("$'")) out += quote(ansiC(p.text.slice(2, -1)))
-    else if (p.kind === 'ansic' && p.text.startsWith('$"') && !/[$`]/.test(p.text))
-      out += quote(p.text.slice(2, -1))
-    else out += '**'
-  }
-  return out
 }
