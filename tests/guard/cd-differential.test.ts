@@ -12,6 +12,13 @@ import { replay, type Verdict } from './fixtures/cd-project.ts'
 // - restoreRefusal, splitChain and shellWords are exactly main's (FR-004).
 // The refusal text is not compared: 086 words new reasons, and a placeholder's
 // number depends on what was masked before it.
+// Spec 091 addendum 2: refusals where main ran, each listed with its rule
+// (strings-addendum-2 "Newly refused" #2). Anything else is a regression.
+const LISTED: Readonly<Record<string, string>> = {
+  // A8: quoted text is judged with its wildcards; in this sed script `.*`
+  // stands after a `/`, where it could be `.env` or `.veilio`.
+  'bench:701:2': 'Veilio keeps',
+}
 const BASE: Verdict[] = JSON.parse(
   readFileSync(join(import.meta.dirname, 'fixtures/cd-differential.base.json'), 'utf8')
 )
@@ -23,17 +30,22 @@ test('the cd differential: no new refusal off the attack list, the floor kept, t
   const floor: string[] = []
   const readers: string[] = []
   const accepted: string[] = []
+  const listed: string[] = []
   CORPUS.forEach((e, i) => {
     const [was, is] = [BASE[i]!, now[i]!]
     const show = `${e.id} ${JSON.stringify(e.command)}`
-    if (was.deny === null && is.deny !== null)
-      (e.source === 'attack' ? accepted : newly).push(`${show} -> ${is.deny}`)
+    if (was.deny === null && is.deny !== null) {
+      if (e.id in LISTED) listed.push(e.id)
+      else (e.source === 'attack' ? accepted : newly).push(`${show} -> ${is.deny}`)
+    }
     if (was.deny !== null && is.deny === null) floor.push(`${show} ran; main refused: ${was.deny}`)
     for (const k of ['restore', 'chain', 'words'] as const)
       if (JSON.stringify(was[k]) !== JSON.stringify(is[k]))
         readers.push(`${show} ${k}: ${JSON.stringify(was[k])} -> ${JSON.stringify(is[k])}`)
   })
   expect(newly).toEqual([])
+  // A listed entry that runs again is taken off the list.
+  expect(listed).toEqual(Object.keys(LISTED))
   expect(floor).toEqual([])
   expect(readers).toEqual([])
   expect(accepted).toMatchSnapshot()

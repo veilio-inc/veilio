@@ -61,10 +61,12 @@ test('R4: every attack command is refused', async () => {
 }, 120_000)
 
 test('R4: every documented limit runs', async () => {
-  const bash = LIMITS.filter((l) => !l.tool).map((l) => l.command)
+  const bash = LIMITS.filter((l) => !l.tool && !l.list).map((l) => l.command)
+  const byDefault = LIMITS.filter((l) => l.list === 'default').map((l) => l.command)
   const powershell = LIMITS.filter((l) => l.tool === 'PowerShell').map((l) => l.command)
   expect([
     ...(await refused(bash, ['secrets/**'])),
+    ...(await refused(byDefault, [])),
     ...(await refused(powershell, ['secrets/**'], 'PowerShell')),
   ]).toEqual([])
 }, 120_000)

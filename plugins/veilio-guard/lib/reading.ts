@@ -2,7 +2,16 @@
 // of a parsed command, wherever it stands, is turned into what the shell can
 // make of it and judged by the one raw-only judge (lib/guard.ts beforeTool).
 import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
-import { bracket, type List, type Part, type Redirect, type Simple, type Word } from './shell.ts'
+import {
+  bracket,
+  placeOf,
+  type List,
+  type Part,
+  type Pipeline,
+  type Redirect,
+  type Simple,
+  type Word,
+} from './shell.ts'
 
 export const isWord = (x: object): x is Word =>
   Array.isArray((x as Word).parts) && typeof (x as Word).raw === 'string'
@@ -281,10 +290,20 @@ const built = (w: Word): boolean =>
 /** Whether a command changes how the shell reads words. */
 export function readsStrictly(list: List): boolean {
   let strict = false
+  const again = rereadLists(list)
+  // In text only read again as a script (awk's `NR==1{print $0}`), a word
+  // that looks built is no sign of a command that sets an option.
+  let text = 0
   const visit = (x: unknown): void => {
     if (strict) return
     if (Array.isArray(x)) return x.forEach(visit)
     if (x === null || typeof x !== 'object') return
+    if (again.has(x)) {
+      text++
+      for (const v of Object.values(x)) visit(v)
+      text--
+      return
+    }
     if ((x as { type?: unknown }).type === 'simple') {
       const words = (x as Simple).words.map((w) => w.literal)
       words.forEach((w, k) => {
@@ -320,13 +339,30 @@ export function readsStrictly(list: List): boolean {
           (at > 0 && (simple.words[at]!.literal ?? '').startsWith('-')))
       )
         at++
-      if (at > 0 ? simple.words.slice(at).some(built) : simple.words.slice(0, 1).some(built))
+      if (
+        text === 0 &&
+        (at > 0 ? simple.words.slice(at).some(built) : simple.words.slice(0, 1).some(built))
+      )
         strict = true
     }
     for (const v of Object.values(x)) visit(v)
   }
   visit(list)
   return strict
+}
+
+/** The lists that are text read again as a script (`Word.again`,
+ *  `Redirect.again`): what a shell would run if the text reached one. */
+export function rereadLists(tree: unknown): Set<object> {
+  const out = new Set<object>()
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) return x.forEach(visit)
+    if (x === null || typeof x !== 'object') return
+    for (const l of (x as { again?: List[] }).again ?? []) out.add(l)
+    for (const v of Object.values(x)) visit(v)
+  }
+  visit(tree)
+  return out
 }
 
 /** Whether a word's wildcards may match a leading dot: under strict reading
@@ -357,7 +393,11 @@ export function pieces(spelling: string): string[] {
  *  line continuations removed; and each piece of quoted text, here-document
  *  body and here-string - by its value, split at blanks and at the shell's
  *  operators - which the guard judges as a word, wildcards and all. */
-export function textPieces(list: List | null, command: string): [typed: string, read: string][] {
+export function textPieces(
+  list: List | null,
+  command: string,
+  data: Data = NO_DATA
+): [typed: string, read: string][] {
   const out: [string, string][] = []
   const seen = new Set<string>()
   const add = (typed: string, read: string) => {
@@ -377,11 +417,16 @@ export function textPieces(list: List | null, command: string): [typed: string, 
   const visit = (x: unknown): void => {
     if (Array.isArray(x)) return x.forEach(visit)
     if (x === null || typeof x !== 'object') return
+    if (data.inside.has(x)) return
     if (isWord(x)) {
       // Text the shell does not read as its own words: quoted, or `$'...'`.
-      if (x.parts.some((p) => (p.kind === 'lit' && p.quoted) || p.kind === 'ansic'))
+      if (
+        !data.words.has(x) &&
+        x.parts.some((p) => (p.kind === 'lit' && p.quoted) || p.kind === 'ansic')
+      )
         split(x.raw, valueOf(x))
-    } else if (typeof (x as Partial<Redirect>).body === 'string') split(null, (x as Redirect).body!)
+    } else if (typeof (x as Partial<Redirect>).body === 'string' && !data.bodies.has(x as Redirect))
+      split(null, (x as Redirect).body!)
     for (const v of Object.values(x)) visit(v)
   }
   if (list) visit(list)
@@ -410,7 +455,8 @@ export function namesVeilioFolder(text: string): boolean {
     [unquoted, unquoted.replace(/\\/g, '')].some(
       (t) =>
         /[/~\\]\.veilio(?![A-Za-z0-9-]|\.[A-Za-z])/i.test(t) ||
-        /(?<![A-Za-z0-9-])\.veilio[/\\]/i.test(t)
+        // After any character: `sed 'w.veilio/x'` writes there (A11).
+        /\.veilio[/\\]/i.test(t)
     )
   )
 }
@@ -475,20 +521,231 @@ function valueOf(w: Word): string {
  *  that is not wholly a path (code after `-c`, `-e`, `--eval=`, a quoted
  *  argument, whatever its characters), every here-document body and every
  *  here-string. */
-export function textsOf(list: List): string[] {
+export function textsOf(list: List, data: Data = NO_DATA): string[] {
   const out: string[] = []
   const visit = (x: unknown): void => {
     if (Array.isArray(x)) return x.forEach(visit)
     if (x === null || typeof x !== 'object') return
+    if (data.inside.has(x)) return
     if (isWord(x)) {
-      if (!isPath(x)) out.push(valueOf(x))
+      // A path word is judged by the raw-only rules; one that holds
+      // `.veilio/` after another character (`w.veilio/x`) is text too (A11).
+      if (!data.words.has(x) && (!isPath(x) || /[^/~\\]\.veilio[/\\]/i.test(valueOf(x))))
+        out.push(valueOf(x))
     } else {
       const r = x as Partial<Redirect>
-      if (typeof r.body === 'string') out.push(r.body)
+      if (typeof r.body === 'string' && !data.bodies.has(x as Redirect)) out.push(r.body)
       if (r.op === '<<<' && r.target) out.push(valueOf(r.target))
     }
     for (const v of Object.values(x)) visit(v)
   }
   visit(list)
   return out
+}
+
+// ── data positions (reading table A12) ──
+
+/** Text a program only prints, stores or searches for: `words` are not
+ *  judged themselves (the commands of a substitution inside one still are),
+ *  `bodies` are here-documents whose text is not judged, and nothing under
+ *  `inside` is (a word's text or a body read again as a script). */
+export type Data = { words: Set<Word>; bodies: Set<Redirect>; inside: Set<object> }
+const NO_DATA: Data = { words: new Set(), bodies: new Set(), inside: new Set() }
+
+const MESSAGE_COMMANDS = new Set(['commit', 'tag', 'merge', 'stash', 'notes'])
+/** The search programs' options: letters that take no value, letters that
+ *  take one, and long options that take one as the next word. An option
+ *  outside them ends the reading: nothing of that command is data. */
+const SEARCH: Readonly<Record<string, { plain: string; valued: string; long: readonly string[] }>> =
+  {
+    grep: {
+      plain: 'EFGPRHILUVZabchilnoqrsvwxz',
+      valued: 'ABCDdefm',
+      long: 'regexp file include exclude exclude-dir max-count context after-context before-context label binary-files devices directories color colour'.split(
+        ' '
+      ),
+    },
+    rg: {
+      plain: 'FHILNPSUabchilnopqsuvwxz.',
+      valued: 'ABCEMTdefgjmrt',
+      long: 'regexp file glob iglob type type-not max-count context after-context before-context max-depth max-filesize max-columns threads encoding replace sort sortr color colors engine pre pre-glob ignore-file type-add path-separator'.split(
+        ' '
+      ),
+    },
+    ag: {
+      plain: 'DLQUacfilnrstuvwz',
+      valued: 'ABCGgmp',
+      long: 'after before context file-search-regex ignore ignore-dir depth max-count path-to-ignore pager workers'.split(
+        ' '
+      ),
+    },
+  }
+/** Long options of the search programs that take no value. */
+const SEARCH_PLAIN = new Set(
+  'line-number no-line-number ignore-case no-ignore-case smart-case case-sensitive recursive dereference-recursive invert-match word-regexp line-regexp files-with-matches files-without-match count extended-regexp fixed-strings basic-regexp perl-regexp pcre2 no-filename with-filename only-matching quiet silent no-messages null text hidden no-ignore no-ignore-vcs multiline multiline-dotall no-heading heading json vimgrep stats trim sort-files follow null-data byte-offset column no-column pretty untracked cached no-index break show-function function-context all-match and or not full-name literal'.split(
+    ' '
+  )
+)
+
+/** The pattern words of a search program's arguments: the value of each
+ *  `-e` / `--regexp`, or else the first operand. Empty when an option is not
+ *  known, so a file given to one (`grep -f FILE`) is never taken for it. */
+function patternWords(program: string, args: readonly Word[]): Word[] {
+  const table = SEARCH[program === 'egrep' || program === 'fgrep' ? 'grep' : program]
+  if (!table) return []
+  const given: Word[] = []
+  // With `-f FILE` the patterns are in the file: every operand is a file.
+  let fromFile = false
+  for (let k = 0; k < args.length; k++) {
+    // An option as written; a word the shell builds may be any option: not read.
+    const w = written(args[k]!)
+    if (w === null) return []
+    if (w === '--') return given.length > 0 || fromFile ? given : args.slice(k + 1, k + 2)
+    if (w.startsWith('--')) {
+      const [name, value] = w.slice(2).split(/=(.*)/s) as [string, string | undefined]
+      if (name === 'file') fromFile = true
+      if (value !== undefined) {
+        if (!table.long.includes(name)) return []
+      } else if (table.long.includes(name)) {
+        const next = args[++k]
+        if (!next) return []
+        if (name === 'regexp') given.push(next)
+      } else if (!SEARCH_PLAIN.has(name)) return []
+    } else if (w.startsWith('-') && w.length > 1) {
+      for (let at = 1; at < w.length; at++) {
+        const letter = w[at]!
+        if (table.valued.includes(letter)) {
+          if (letter === 'f') fromFile = true
+          // Its value is the rest of the word, or the next word.
+          if (at === w.length - 1) {
+            const next = args[++k]
+            if (!next) return []
+            if (letter === 'e') given.push(next)
+          }
+          break
+        }
+        if (!table.plain.includes(letter) && !/[0-9]/.test(letter)) return []
+      }
+    } else return given.length > 0 || fromFile ? given : [args[k]!]
+  }
+  return given
+}
+
+/** A word's text when all of it is written in the command (a wildcard as
+ *  itself); null when the shell builds any of it. */
+function written(w: Word): string | null {
+  let out = ''
+  for (const p of w.parts) {
+    if (p.kind !== 'lit' && p.kind !== 'glob' && p.kind !== 'brace') return null
+    out += p.text
+  }
+  return out
+}
+
+/** The values of options among a command's arguments: `-m TEXT`, a cluster
+ *  ending in the letter (`-am TEXT`), `--message TEXT`, `--message=TEXT`. */
+function optionValues(args: readonly Word[], short: string, long: readonly string[]): Word[] {
+  const out: Word[] = []
+  args.forEach((w, k) => {
+    const text = w.literal ?? ''
+    const next = args[k + 1]
+    // `--message=TEXT`, and the value attached to its letter (`-S'TEXT'`).
+    if (
+      long.some((l) => text.startsWith(`--${l}=`)) ||
+      (/^-[A-Za-z]./.test(text) && short.includes(text[1]!))
+    )
+      out.push(w)
+    else if (
+      next &&
+      (long.some((l) => text === `--${l}`) ||
+        (/^-[A-Za-z]+$/.test(text) && short.includes(text[text.length - 1]!)))
+    )
+      out.push(next)
+  })
+  return out
+}
+
+/** The data positions of a command (reading table A12), an allow-list: (1)
+ *  the arguments of `echo` and `printf` (not `printf -v`); (2) the message of
+ *  `git commit`, `tag`, `merge`, `stash`, `notes` and the title and body
+ *  given to `gh`; (3) the pattern of `grep`, `egrep`, `fgrep`, `rg`, `ag`,
+ *  `git grep`, and of `git log --grep`, `-S`, `-G`; (4) the body of a
+ *  here-document given to `cat` or `tee`. (1) and (4) only while the output
+ *  goes to the terminal or a file: as a stage of a pipeline with a later
+ *  stage, or inside a substitution, they are judged as before. A position
+ *  missing here is judged, so a gap is a refusal, never a read. */
+export function dataPositions(list: List): Data {
+  const data: Data = { words: new Set(), bodies: new Set(), inside: new Set() }
+  const word = (w: Word) => {
+    data.words.add(w)
+    for (const l of w.again ?? []) data.inside.add(l)
+  }
+  /** Lists whose output goes into a data position (`-m "$(cat <<'E' ...)"`). */
+  const intoData = new Set<object>()
+  /** `fed`: the command's output is read by another command. */
+  const visit = (x: unknown, fed: boolean): void => {
+    if (Array.isArray(x)) return x.forEach((e) => visit(e, fed))
+    if (x === null || typeof x !== 'object') return
+    // The commands of a substitution: their output is the word, so they
+    // are fed - unless the word is itself only printed, stored or searched for.
+    if ((x as Part).kind === 'subst') {
+      const l = (x as { list: List | null }).list
+      return visit(l, l === null || !intoData.has(l))
+    }
+    if (Array.isArray((x as Pipeline).stages)) {
+      const stages = (x as Pipeline).stages
+      stages.forEach((stage, k) => visit(stage, fed || k < stages.length - 1))
+      return
+    }
+    if ((x as Simple).type === 'simple') {
+      simple(x as Simple, fed)
+      for (const w of (x as Simple).words)
+        if (data.words.has(w))
+          for (const p of w.parts) if (p.kind === 'subst' && p.list) intoData.add(p.list)
+    }
+    for (const v of Object.values(x)) visit(v, fed)
+  }
+  const simple = (n: Simple, fed: boolean): void => {
+    const program = n.words[0]?.literal
+    const args = n.words.slice(1)
+    const sub = n.words[1]?.literal ?? ''
+    if (program === 'echo' || (program === 'printf' && !args.some((w) => w.literal === '-v'))) {
+      if (!fed) args.forEach(word)
+    } else if (program === 'git' && MESSAGE_COMMANDS.has(sub))
+      optionValues(args.slice(1), 'm', ['message']).forEach(word)
+    else if (program === 'git' && sub === 'log')
+      optionValues(args.slice(1), 'SG', ['grep']).forEach(word)
+    else if (program === 'git' && sub === 'grep') patternWords('grep', args.slice(1)).forEach(word)
+    else if (program === 'gh') optionValues(args, 'tb', ['title', 'body']).forEach(word)
+    else if (typeof program === 'string' && /^(?:e|f)?grep$|^rg$|^ag$/.test(program))
+      patternWords(program, args).forEach(word)
+    else if ((program === 'cat' || program === 'tee') && !fed)
+      for (const r of n.redirects)
+        if (r.op === '<<' || r.op === '<<-') {
+          data.bodies.add(r)
+          // Under a quoted delimiter the shell runs nothing in the body.
+          if (/['"\\\\]/.test(r.target?.raw ?? ''))
+            for (const l of r.substs ?? []) data.inside.add(l)
+          for (const l of r.again ?? []) data.inside.add(l)
+        }
+  }
+  visit(list, false)
+  return data
+}
+
+/** The command's text with its data positions blanked, for the checks that
+ *  read the text itself. Only words of the command itself have a place; data
+ *  inside a nested script stays, and is judged. */
+export function withoutData(command: string, data: Data): string {
+  const cut: [number, number][] = []
+  for (const x of [...data.words, ...data.bodies]) {
+    const at = placeOf(x)
+    if (at) cut.push(at)
+  }
+  if (cut.length === 0) return command
+  const chars = [...command]
+  // Blanks keep every other word where it was; a newline stays a newline.
+  for (const [from, to] of cut)
+    for (let i = from; i < to && i < command.length; i++) if (command[i] !== '\n') chars[i] = ' '
+  return chars.join('')
 }

@@ -43,7 +43,10 @@ for (const command of [
   `awk 'BEGIN{while((getline l < (ENVIRON["HOME"] "/.vei" "lio/map.json"))>0) print l}'`,
   `jq -rn '"\\(env.HOME)/.vei" + "lio/map.json"'`,
   `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
-  `git commit -m "maps live in ~/.veilio/map.json"`,
+  // Addendum 2 (A11): the folder itself, as a word of its own.
+  `ls ~/.veilio`,
+  `echo '.veilio' | python3 -c 'import sys; print(sys.stdin.read())'`,
+  `curl -s https://api.veilio.dev/v1/x?a=.veilio`,
   // A backslash is a separator too, and a backtick a quote.
   `python3 -c "open(home + '\\\\.vei' + 'lio\\\\x')"`,
   'node -e \'const d = `.veilio`; require("fs").readdirSync(d)\'',
@@ -67,7 +70,6 @@ for (const command of [
   `git commit -m "$(cat <<'EOF'\nnode scripts no longer read .veilio\nEOF\n)"`,
   `cat > notes.md <<'EOF'\nrun node on it; see .veilio docs\nEOF`,
   `echo "use node -e to check .veilio"`,
-  `echo '.veilio' | python3 -c 'import sys; print(sys.stdin.read())'`,
   `git commit -m "fix guard state" && sh -c 'echo hi'`,
   `echo .veilio; python3 -c 'print(1)'`,
   `cat notes/.veilio-x.txt | python3 -c 'import sys; print(len(sys.stdin.read()))'`,
@@ -75,14 +77,13 @@ for (const command of [
   `python3 -c 'print(open("/work/veilio-app/a.txt").read())'`,
   `node -e "console.log(require('@veilio-inc/engine'))"`,
   `ls src`,
-  // Spec 091: a web address is not a path; a plain path word is judged by
-  // the raw-only rules alone.
+  // Spec 091: a web address is not a path.
   `bash -c "curl -s https://api.veilio.dev/health"`,
   `echo "see https://docs.veilio.dev/guard"`,
   `node -e "fetch('https://veilio.dev/docs')"`,
-  `ls ~/.veilio`,
-  `curl -s https://api.veilio.dev/v1/x?a=.veilio`,
   `git commit -m "docs: mention .veilio in the README"`,
+  // Addendum 2 (A12): a commit message is text git only stores.
+  `git commit -m "maps live in ~/.veilio/map.json"`,
 ])
   test(`an ordinary interpreter command still runs: ${command}`, async ($, on) => {
     project(on, {}, { home: HOME })

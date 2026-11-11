@@ -1649,4 +1649,26 @@ export function globMayBeRawOnly(word: string, extra: readonly string[], dots = 
   )
 }
 
+/** Whether a word names a folder all of whose files are raw-only (reading
+ *  table A11): its path ends in the folder of a `dir/**` pattern - `.veilio`,
+ *  `.kube`, `.azure`, `.config/gcloud`, a project's `secrets`. A wildcard
+ *  word is refused when it could name one. A folder that holds a raw-only
+ *  file among others (`.aws`, `.docker`, `.config`) is not one of these. */
+export function namesRawOnlyFolder(word: string, extra: readonly string[], dots = false): boolean {
+  const segments = normalisePath(word)
+    .split('/')
+    .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
+  if (segments.length === 0) return false
+  const folders = [
+    ...DEFAULT_RAW_ONLY,
+    ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
+  ]
+    .filter((p) => p.endsWith('/**'))
+    .map((p) => p.slice(0, -3))
+  return folders.some((folder) => {
+    const depth = folder.split('/').length
+    return segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots)
+  })
+}
+
 export { ansiC } from './shell.ts'

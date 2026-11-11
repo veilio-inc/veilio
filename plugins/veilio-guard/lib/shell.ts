@@ -823,7 +823,9 @@ class Reader {
   constructor(
     private readonly s: string,
     private readonly depth: number,
-    private readonly frames: { n: number; braces?: number }
+    private readonly frames: { n: number; braces?: number },
+    /** The reader of the command itself: its words' places are kept. */
+    private readonly top = false
   ) {}
 
   all(): List {
@@ -859,7 +861,10 @@ class Reader {
     const s = this.s
     for (const h of this.pending.splice(0)) {
       let body = ''
+      const from = this.i
+      let to: number
       for (;;) {
+        to = this.i
         if (this.i >= s.length) break
         const end = s.indexOf('\n', this.i)
         const line = s.slice(this.i, end === -1 ? s.length : end)
@@ -868,6 +873,7 @@ class Reader {
         body += (h.strip ? line.replace(/^\t+/, '') : line) + '\n'
       }
       h.r.body = body
+      if (this.top) PLACE.set(h.r, [from, to])
       const substs = this.bodySubsts(body, h.quoted)
       if (substs.length > 0) h.r.substs = substs
     }
@@ -1655,11 +1661,13 @@ class Reader {
         // `name=(a b)` given to a declaration is an array: read in simple().
         // Whether the parentheses end the word (another group is more of it).
         const ends = s[end] !== '(' && !this.continues(end)
+        // (An array's words hold no group and no `|`: `if=((.e)nv)` is a group.)
         const array =
           ends &&
           parts.length === 1 &&
           parts[0]!.kind === 'lit' &&
-          /^\w+\+?=$/.test(s.slice(start, this.i))
+          /^\w+\+?=$/.test(s.slice(start, this.i)) &&
+          !/[(|]/.test(text.slice(1, -1))
         if (!array && text.length > 2) {
           // A group is any text in its place, at any depth, also when it is
           // the whole word (`((.e)nv)`).
@@ -1730,6 +1738,7 @@ class Reader {
     }
     if (this.i === start) return null
     const w = makeWord(parts, s.slice(start, this.i))
+    if (this.top) PLACE.set(w, [start, this.i])
     const again = this.writtenAgain(parts)
     if (again.length > 0) w.again = again
     return w
@@ -2046,6 +2055,12 @@ class Reader {
     return l
   }
 }
+
+/** Where a word of the command itself, or a here-document's body, stands in
+ *  the command's text (not kept for text read again: a nested script, a
+ *  written value). */
+const PLACE = new WeakMap<object, [from: number, to: number]>()
+export const placeOf = (x: Word | Redirect): [from: number, to: number] | undefined => PLACE.get(x)
 
 /** A shell that reads its input as its script. */
 const READS_INPUT = new WeakSet<Simple>()
@@ -2518,7 +2533,7 @@ class PsReader {
 export function parseShell(command: string, dialect: 'sh' | 'ps'): ParseResult {
   try {
     if (dialect === 'ps') return { ok: true, list: new PsReader(command, { n: 0 }).read() }
-    return { ok: true, list: parseAt(command, 0, { n: 0 }) }
+    return { ok: true, list: new Reader(command, 0, { n: 0 }, true).script() }
   } catch (err) {
     if (err instanceof Unreadable) return { ok: false, why: err.why }
     throw err

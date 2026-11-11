@@ -35,6 +35,7 @@ import {
   DEFAULT_RAW_ONLY,
   braceNames,
   globMayBeRawOnly,
+  namesRawOnlyFolder,
   isRawOnly,
   mcpConfigName,
   isWriteProtected,
@@ -58,9 +59,12 @@ import {
   isWord,
   namesVeilioFolder,
   bracketsRead,
+  dataPositions,
+  withoutData,
   pieces,
   textPieces,
   readsStrictly,
+  rereadLists,
   spellings,
   textsOf,
   wordsWithin,
@@ -1710,7 +1714,7 @@ export class Guard {
    *  or where it leads: resolved once for both (review round 2). */
   private async pathHits(
     path: string
-  ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }> {
+  ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null; folder: boolean }> {
     // One command asks about the same path several times (as a word, as raw
     // text, in each directory): answered once per call.
     const known = this.hitsThisCall?.get(path)
@@ -1718,9 +1722,13 @@ export class Guard {
     const hits = (async () => {
       const raw = this.rawOnlyPath(path) || this.rawOnlyPath(normalisePath(path))
       const written = isWriteProtected(path)
-      if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path) }
+      if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path), folder: false }
       const real = await this.io.realPath(this.here(path))
       return {
+        // A folder all of whose files are raw-only (A11), named or led to.
+        folder:
+          namesRawOnlyFolder(path, this.extraRawOnly) ||
+          (real !== undefined && namesRawOnlyFolder(real, this.extraRawOnly)),
         written: written || (real !== undefined && isWriteProtected(real)),
         rawOnly: raw || (real !== undefined && this.rawOnlyPath(real)),
         mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
@@ -1733,7 +1741,7 @@ export class Guard {
   /** What pathHits answered in the call being judged; null outside one. */
   private hitsThisCall: Map<
     string,
-    Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }>
+    Promise<{ written: boolean; rawOnly: boolean; mcp: string | null; folder: boolean }>
   > | null = null
   private rawOnlyKnown = new Map<string, boolean>()
   private rawOnlyKnownFor: { list: string[]; size: number } | null = null
@@ -1785,15 +1793,12 @@ export class Guard {
     const at = /^[/\\~]|^[A-Za-z]:/.test(path)
       ? [path]
       : [name, ...dirs.filter((d) => d !== this.cwd).map((d) => join(d, path))]
-    const out: { written: boolean; rawOnly: boolean; mcp: string | null } = {
-      written: false,
-      rawOnly: false,
-      mcp: null,
-    }
+    const out = { written: false, rawOnly: false, mcp: null as string | null, folder: false }
     for (const p of at) {
       const h = await this.pathHits(p)
       out.written ||= h.written
       out.rawOnly ||= h.rawOnly
+      out.folder ||= h.folder
       out.mcp ??= h.mcp
     }
     return out
@@ -2003,7 +2008,12 @@ export class Guard {
         // whatever program receives it. A command the reader cannot read is
         // judged on its whole text.
         const shRead = parseShell(c, 'sh')
-        if (shRead.ok ? textsOf(shRead.list).some(namesVeilioFolder) : namesVeilioFolder(c))
+        // Text a program only prints, stores or searches for is not judged
+        // (reading table A12): `data` for the reader's checks, `seen` - the
+        // command with those places blanked - for the checks on its text.
+        const data = e.tool === 'Bash' && shRead.ok ? dataPositions(shRead.list) : undefined
+        const seen = data ? withoutData(c, data) : c
+        if (shRead.ok ? textsOf(shRead.list, data).some(namesVeilioFolder) : namesVeilioFolder(c))
           return this.deny(INTERPRETER_GUARD_STATE)
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
@@ -2084,6 +2094,9 @@ export class Guard {
           // A command that changes how the shell reads words (`setopt`, an
           // unusual `shopt` or `set` option) is read strictly.
           const strict = readsStrictly(parsed.list)
+          // Text read again as a script is still text: a folder's bare name
+          // in it is a mention (`-t '.veilio folder'`), `.veilio/` a path (A11).
+          const reread = rereadLists(parsed.list)
           const where = new Map<Word, Set<string>>()
           for (const point of walk.points)
             for (const w of point.words) {
@@ -2103,6 +2116,7 @@ export class Guard {
             return dirs
           }
           for (const { word: w, within } of wordsWithin(parsed.list)) {
+            if (data && (data.words.has(w) || within.some((x) => data.inside.has(x)))) continue
             let at = [...(where.get(w) ?? [])]
             for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
               if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
@@ -2123,10 +2137,12 @@ export class Guard {
                       written: false,
                       mcp: null,
                       rawOnly: globMayBeRawOnly(piece, this.extraRawOnly, dots),
+                      folder: namesRawOnlyFolder(piece, this.extraRawOnly, dots),
                     }
                   : await this.spelledHits(piece, at)
                 if (h.written) return this.denyProtected([h])
-                if (h.rawOnly)
+                // A raw-only file, or a folder that holds only such files (A11).
+                if (h.rawOnly || (h.folder && !within.some((x) => reread.has(x))))
                   return this.deny(
                     // A word spelled as it was typed is shown by its piece
                     // that names the file (`.env` of `--env-file=.env`).
@@ -2140,6 +2156,7 @@ export class Guard {
           // be in there, `~` read with HOME as it is there (FR-010).
           for (const point of walk.points)
             for (const w of point.words) {
+              if (data?.words.has(w)) continue
               const path = wordPath(w, point.home)
               if (path === null) continue
               // PowerShell's separator is `\\` too.
@@ -2183,7 +2200,7 @@ export class Guard {
         // Spec 091 FR-009: then the same check on the text with line
         // continuations, quotes and backslashes removed - a floor that does
         // not depend on the reader, showing the chunk as it was typed.
-        const floor = textPieces(parsed?.ok ? parsed.list : null, c)
+        const floor = textPieces(parsed?.ok ? parsed.list : null, seen, data)
         // A piece with a wildcard, a bracket or a brace is judged as a word
         // (reading table A8): expanded, and matched against the list.
         for (const [typed, read] of floor) {
@@ -2202,7 +2219,7 @@ export class Guard {
             }
         }
         const texts: [word: string, typed: string | null][] = [
-          ...pathsInCommand(c).map((word): [string, null] => [word, null]),
+          ...pathsInCommand(seen).map((word): [string, null] => [word, null]),
           ...floor.flatMap(([typed, read]) =>
             pathsInCommand(read).map((word): [string, string] => [word, typed])
           ),

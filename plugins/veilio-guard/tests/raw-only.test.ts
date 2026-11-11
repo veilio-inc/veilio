@@ -577,7 +577,8 @@ const ATTACKS: [string, string | undefined][] = [
   // Round 5
   ['HOME=~/.kube cd; cat config', A1(`${HOME}/.kube`)],
   ['OLDPWD=~/.kube cd -', A1(`${HOME}/.kube`)],
-  ['env HOME=~/.kube cd', undefined],
+  // Addendum 2 (A11): a word that names a folder of only raw-only files is refused.
+  ['env HOME=~/.kube cd', A2('HOME=~/.kube')],
   ['exec cd src', undefined],
   ['LC_ALL=C cd src', undefined],
   ["bash -c 'HOME=~/.kube cd; cat config'", A1(`${HOME}/.kube`)],
@@ -620,14 +621,14 @@ const ATTACKS: [string, string | undefined][] = [
     'declare "${x}"=~/.config; cd gcloud',
     N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
   ],
-  ['HOME=~/.kube; cat ~/credentials', A2('~/credentials')],
+  ['HOME=~/.kube; cat ~/credentials', A2('~/.kube')],
   ['HOME=~/.kube; cd ~; cat config', A1('~')],
   // COVERAGE #47's parked forms: zsh `cd old new` (the root is /work/project), AUTO_CD, a loop
   ['cd project .kube', A1('project .kube')],
   ['X= cd project .kube', A1('project .kube')],
   ['if cd project .kube; then cat config; fi', A1('project .kube')],
   ['~/.kube', A1('~/.kube')],
-  ['.kube', undefined],
+  ['.kube', A2('.kube')],
   ['for HOME in ~/.kube; do cd; cat config; done', N1('HOME=', 'a cd in a loop')],
   ["cd ~/.kub$'\\x65'", N1("~/.kub$'\\x65'", 'ANSI-C quoting')],
   ['cd .vei{l..l}io', N1('.vei{l..l}io', 'braces')],

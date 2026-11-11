@@ -103,7 +103,6 @@ export const F2 = [
   `awk 'BEGIN{while((getline l < (ENVIRON["HOME"] "/.vei" "lio/map.json"))>0) print l}'`,
   `jq -rn '"\\(env.HOME)/.vei" + "lio/map.json"'`,
   `vim -c "exe 'e ~/.vei' . 'lio/map.json'" -c q`,
-  `git commit -m "maps live in ~/.veilio/map.json"`,
   `cat <<< "~/.veil""io/map.json"`,
   // A backslash is a separator too; a backtick is a quote.
   `python3 -c "open('C:\\\\Users\\\\me\\\\.veilio\\\\map.json')"`,
@@ -507,6 +506,25 @@ export const Q1_Q2_FOLDER: readonly string[] = [
   `grep -r KEY secrets`,
 ]
 
+/** A11 flips (strings-addendum-2 "Newly refused" #1): ordinary rows until
+ *  addendum 2, each names Veilio's folder as a word of its own - the folder
+ *  itself, a piped `echo`'s argument, the value after a `=` in an address. */
+export const A11_NOW_REFUSED: readonly string[] = [
+  `ls -d ~/.veilio`,
+  `du -sh ~/.veilio`,
+  `echo '.veilio' | python3 -c 'import sys; print(sys.stdin.read())'`,
+  `curl -s -o out.json https://api.veilio.dev/v1/x?a=.veilio`,
+  `ls .veilio`,
+  `test -d .veilio`,
+  `mkdir -p .veilio`,
+  `git check-ignore .veilio`,
+  `git add secrets`,
+  `ls ~/.kube`,
+  `cp -R ~/.config/gcloud /tmp/g`,
+  `grep -r KEY sec?ets`,
+  `ls s*`,
+]
+
 /** A12's twins (contract §7.5 "must stay refused", and rule 15): the
  *  position beside each data position, where the text is opened or run. */
 export const DATA_TWINS: readonly string[] = [
@@ -518,6 +536,35 @@ export const DATA_TWINS: readonly string[] = [
   `git commit -F .env`,
   `grep -f .env x`,
   `printf -v PS4 '$(cat .en[v])'`,
+  // Beside each position of A12: where the same text is opened or run.
+  `echo "$(cat .env)"`,
+  `echo .env > .env.bak; cat .env.bak`,
+  `printf '%s' .env | xargs cat`,
+  `echo "\`cat .en[v]\`"`,
+  `git commit -m x .env`,
+  `git commit --file=.env`,
+  `git commit -m "$(cat .env)"`,
+  `git log --grep x -- .env`,
+  `git log -S x .env`,
+  `gh issue create --title x --body-file .env`,
+  `grep -e x .env`,
+  `grep -A 3 x .env`,
+  `grep x -f .env`,
+  `grep --file=.env x`,
+  `grep --file .env x`,
+  `grep --unknown-option .env x`,
+  `rg -f .env x`,
+  `rg --pre .env x`,
+  `rg x .env`,
+  `ag x .env`,
+  `git grep x -- .env`,
+  `git grep -f .env`,
+  `cat <<'E' | bash\ncat .en[v]\nE`,
+  `cat .env <<'E'\nx\nE`,
+  `cat <<E\n$(cat .env)\nE`,
+  `tee .env <<'E'\nx\nE`,
+  `sed -n 's/.env//p' .env`,
+  `bash -c 'echo hi; cat .env'`,
 ]
 
 /** A8: was a pinned limit; it does read `.env`. */
@@ -541,6 +588,7 @@ export const ATTACK: readonly string[] = [
     ...M2,
     ...Object.values(REVIEWED).flat(),
     ...Q1_Q2_FOLDER,
+    ...A11_NOW_REFUSED,
     ...DATA_TWINS,
     ...FLOOR_READS,
   ]),
@@ -707,7 +755,6 @@ export const INTERPRETER_ALLOWED = [
   `git commit -m "$(cat <<'EOF'\nnode scripts no longer read .veilio\nEOF\n)"`,
   `cat > notes.md <<'EOF'\nrun node on it; see .veilio docs\nEOF`,
   `echo "use node -e to check .veilio"`,
-  `echo '.veilio' | python3 -c 'import sys; print(sys.stdin.read())'`,
   `git commit -m "fix guard state" && sh -c 'echo hi'`,
   `echo .veilio; python3 -c 'print(1)'`,
   `cat notes/.veilio-x.txt | python3 -c 'import sys; print(len(sys.stdin.read()))'`,
@@ -921,10 +968,7 @@ const PLAIN: readonly string[] = [
   `setopt extendedglob; ls src/*.ts`,
   // A plain path under ~/.veilio's own folder name, a web address and a
   // mention are not text that names the folder.
-  `ls -d ~/.veilio`,
-  `du -sh ~/.veilio`,
   `curl -s https://api.veilio.dev/x`,
-  `curl -s -o out.json https://api.veilio.dev/v1/x?a=.veilio`,
   `echo "see .veilio docs"`,
   `git commit -m "docs: mention .veilio in the README"`,
   `pushd src >/dev/null; ls; popd >/dev/null`,
@@ -948,6 +992,11 @@ export const A2_ORDINARY: readonly string[] = [
   `psql -c 'select * from t'`,
   `while IFS=, read -r a b; do echo "$a"; done < data.csv`,
   `LC_ALL=C sort names.txt`,
+  // Text read again as a script is still text: awk's code sets no option,
+  // and a folder's bare name in it is a mention.
+  `awk 'NR==1{print $0}' file.txt`,
+  `npm test -- -t '.veilio folder'`,
+  `jest -t "reads .kube and .azure"`,
 ]
 /** Q4, by its recommended answer: a script a program writes to the pipe is
  *  not in the command (limit L6), so the command runs. */
@@ -989,6 +1038,17 @@ export const MENTIONS: readonly string[] = [
   `echo "path is ~/.veilio"`,
   `echo "docs: /.veilio is the folder"`,
   `git commit -m "ignore .veilio/"`,
+  // An attack row until addendum 2 (strings-addendum-2 "No longer refused" #1).
+  `git commit -m "maps live in ~/.veilio/map.json"`,
+  // The message as Claude Code writes it: a here-document inside the value.
+  `git commit -m "$(cat <<'EOF'\nfix: load .env before config\n\nKeeps ~/.veilio/map.json out of the diff.\nEOF\n)"`,
+  `git tag -a v1 -m "ships .env handling"`,
+  `git log --grep '\\.env' --oneline`,
+  `git log -S '.veilio/guard.json' -- src`,
+  `git log -S'.veilio' --oneline`,
+  `git commit -m'load .env first'`,
+  `rg -n -e '\\.veilio/' -e 'id_rsa' src`,
+  `tee notes.md <<'EOF'\nsee ~/.veilio/map.json\nEOF`,
 ]
 
 export const ORDINARY: readonly string[] = [
@@ -1012,7 +1072,12 @@ export const Q3_LIMITS: readonly { limit: string; command: string }[] = [
 
 /** The documented limits (contract §7.6), each pinned as running. `tool`:
  *  the shell tool that is given the command (Bash unless said). */
-export const LIMITS: readonly { limit: string; command: string; tool?: 'PowerShell' }[] = [
+export const LIMITS: readonly {
+  limit: string
+  command: string
+  tool?: 'PowerShell'
+  list?: 'default'
+}[] = [
   { limit: 'L1', command: `cat $F` },
   { limit: 'L1', command: `cat "$1"` },
   { limit: 'L1', command: `x=.e; cat \${x}nv` },
@@ -1035,7 +1100,8 @@ export const LIMITS: readonly { limit: string; command: string; tool?: 'PowerShe
   { limit: 'L4', command: `cat *` },
   { limit: 'L4', command: `cat */customers.csv` },
   { limit: 'L5', command: `cat server.p*` },
-  { limit: 'L5', command: `cat s*` },
+  // With `secrets/**` listed, `s*` could be that folder (A11): the default list.
+  { limit: 'L5', command: `cat s*`, list: 'default' },
   { limit: 'L6', command: `cat list.txt | xargs cat` },
   { limit: 'L6', command: `python3 < script.py` },
   ...Q4_PIPE.map((command) => ({ limit: 'L6', command })),

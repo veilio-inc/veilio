@@ -1,7 +1,12 @@
 import { spawnSync } from 'node:child_process'
 import { describe, expect, test } from 'vitest'
-import { ANY_TEXT as ANY, globMayBeRawOnly } from '../../plugins/veilio-guard/lib/paths.ts'
 import {
+  ANY_TEXT as ANY,
+  globMayBeRawOnly,
+  namesRawOnlyFolder,
+} from '../../plugins/veilio-guard/lib/paths.ts'
+import {
+  dataPositions,
   dotsMatch,
   pieces,
   namesVeilioFolder,
@@ -9,12 +14,14 @@ import {
   spellings,
   textPieces,
   textsOf,
+  withoutData,
   wordsOf,
 } from '../../plugins/veilio-guard/lib/reading.ts'
 import { parseShell, type Word } from '../../plugins/veilio-guard/lib/shell.ts'
 import { fixtureGuard } from './fixtures/cd-project.ts'
 import { F1, F2, F8, INTERPRETER_ALLOWED, INTERPRETER_REFUSED } from './fixtures/reading-corpora.ts'
 import { CLUSTERS, POSITIONS } from './fixtures/reading-grammar.ts'
+import { guardAt, memoryFixture, verdict } from './fixtures/reading-shell.ts'
 
 // Spec 091: the reader's parts, one test per row of the reading table
 // (contracts/reading-table.md in the spec): wordsOf (every position),
@@ -365,6 +372,9 @@ describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
     ['(.e(n|x)v|y)', [ANY]],
     ['.e((n))v', [`.e${ANY}v`]],
     ['.e(((n|x))|y)v', [`.e${ANY}v`]],
+    // After `name=` too: an array's words hold no group.
+    ['if=((.e)nv)', [`if=${ANY}`]],
+    ['if=(.e(n|x)v|x)', [`if=${ANY}`]],
   ])('A3: groups inside groups are any text: %s', (word, expected) => {
     expect(spell(word)).toEqual(expected)
   })
@@ -662,6 +672,22 @@ describe('addendum 2: scripts and settings', () => {
     }
   )
 
+  test('text read again as a script sets no option by looking built, and names a folder only with a slash', async () => {
+    const p = parseShell(`awk 'NR==1{print $0}' f`, 'sh')
+    expect(p.ok && readsStrictly(p.list)).toBe(false)
+    // An option really set there still counts.
+    const q = parseShell(`$SHELL -c 'setopt globdots; cat *nv'`, 'sh')
+    expect(q.ok && readsStrictly(q.list)).toBe(true)
+    const g = await fixtureGuard()
+    const refused = async (command: string) =>
+      'deny' in (await g.beforeTool({ tool: 'Bash', command, description: 'x' }))
+    expect(await refused(`npm test -- -t '.veilio folder'`)).toBe(false)
+    expect(await refused(`npm test -- -t 'cat .veilio/map.json'`)).toBe(true)
+    expect(await refused(`$SHELL -c 'cat .e"n"v'`)).toBe(true)
+    // A shell the guard knows runs the text: there the folder is a word.
+    expect(await refused(`bash -c 'ls .veilio'`)).toBe(true)
+  })
+
   test('A10: IFS and LC_ALL trigger nothing', () => {
     for (const c of ['IFS=, read -r a b', 'LC_ALL=C sort x', 'export LANG=C', 'GLOBIGNORED=x ls']) {
       const p = parseShell(c, 'sh')
@@ -787,7 +813,10 @@ describe("text that names Veilio's folder as a path (reading table §4, FR-011)"
     ['https://api.veilio.dev/health', false],
     ['notes/.veilio-x.txt', false],
     ['see .veilio docs', false],
-    ['x.veilio/y', false],
+    // A11: `.veilio/` is a path whatever stands before it.
+    ['x.veilio/y', true],
+    ['w.veilio\\\\x', true],
+    ['x.veilio', false],
     ["open('C:\\\\Users\\\\me\\\\.veilio\\\\map.json')", true],
     ["home + '\\\\.vei' + 'lio\\\\x'", true],
     ['`${h}/.veilio/x`', true],
@@ -800,12 +829,225 @@ describe("text that names Veilio's folder as a path (reading table §4, FR-011)"
   })
 })
 
+describe('addendum 2, A11: a folder that holds only raw-only files', () => {
+  test.each([
+    '.veilio',
+    '~/.veilio',
+    '/home/dev/.veilio/',
+    'sub/../.veilio',
+    './.veilio/.',
+    '.VEILIO',
+    '.kube',
+    '~/.azure',
+    '.config/gcloud',
+    '~/.config/gcloud/',
+    'a/b/.kube',
+  ])('%s names one', (word) => {
+    expect(namesRawOnlyFolder(word, [])).toBe(true)
+  })
+
+  test("a project's dir/** pattern gives its folder", () => {
+    for (const word of ['secrets', './secrets/', 'x/secrets', '/p/secrets'])
+      expect(namesRawOnlyFolder(word, ['secrets/**']), word).toBe(true)
+    expect(namesRawOnlyFolder('secrets', [])).toBe(false)
+    expect(namesRawOnlyFolder('keys/prod', ['keys/prod/**'])).toBe(true)
+    expect(namesRawOnlyFolder('keys', ['keys/prod/**'])).toBe(false)
+  })
+
+  test.each([
+    '.aws',
+    '.docker',
+    '.config',
+    '~',
+    '.',
+    'src',
+    '.veilio-x',
+    'my.veilio',
+    '.config/gcloud2',
+    'gcloud',
+    '.veilio/map.json',
+    '.kube/config',
+    'secretsx',
+  ])(
+    '%s does not: a file in one, a longer name, or a folder that holds other files too',
+    (word) => {
+      expect(namesRawOnlyFolder(word, ['secrets/**'])).toBe(false)
+    }
+  )
+
+  test('a wildcard word that could name one is refused; a part of only wildcards is not', () => {
+    for (const word of ['.veil?o', '.v*', '~/.k*', 'sec*', 's*', 'se[c]rets', '.config/g*'])
+      expect(namesRawOnlyFolder(word, ['secrets/**']), word).toBe(true)
+    for (const word of ['*', '*/', '?', 'src*', '*.ts', 'lib/*', '*veilio', '.config/*'])
+      expect(namesRawOnlyFolder(word, ['secrets/**']), word).toBe(false)
+    // With a setting that lets a wildcard match a leading dot.
+    expect(namesRawOnlyFolder('*veilio', [], true)).toBe(true)
+  })
+})
+
+describe('addendum 2, A12: text a program only prints, stores or searches for', () => {
+  /** The command with its data positions blanked. */
+  const seen = (command: string) => {
+    const p = parseShell(command, 'sh')
+    if (!p.ok) throw new Error(`unreadable (${p.why}): ${command}`)
+    return withoutData(command, dataPositions(p.list))
+      .replace(/ +/g, ' ')
+      .replace(/ ?\n ?/g, '\n')
+      .trim()
+  }
+
+  test.each([
+    ['echo ".env" x', 'echo'],
+    ['echo .env >> .gitignore', 'echo >> .gitignore'],
+    [`printf '%s\\n' .env '*.pem'`, 'printf'],
+    ['git commit -m "load .env"', 'git commit -m'],
+    ['git commit -am "load .env" src', 'git commit -am src'],
+    ['git commit --message "load .env"', 'git commit --message'],
+    ['git commit --message=".env"', 'git commit'],
+    ['git commit -m".env"', 'git commit'],
+    ["git log -S'.env' --oneline", 'git log --oneline'],
+    ['git tag -a v1 -m ".env"', 'git tag -a v1 -m'],
+    ['git merge -m ".env" topic', 'git merge -m topic'],
+    ['git stash push -m ".env"', 'git stash push -m'],
+    ['git notes add -m ".env"', 'git notes add -m'],
+    ['git log --grep .env -S .pem -G id_rsa -- src', 'git log --grep -S -G -- src'],
+    ['git log --grep=.env', 'git log'],
+    [
+      'gh pr create --title ".env" --body "~/.veilio" -t a -b b',
+      'gh pr create --title --body -t -b',
+    ],
+    ['grep .env src', 'grep src'],
+    ['grep -rn --include=*.ts .env src', 'grep -rn --include=*.ts src'],
+    ['grep -e .env -e .pem src', 'grep -e -e src'],
+    ['grep --regexp .env src', 'grep --regexp src'],
+    ['grep -A 3 -m 1 .env src', 'grep -A 3 -m 1 src'],
+    ['grep -- .env src', 'grep -- src'],
+    ['egrep .env src', 'egrep src'],
+    ['fgrep -r .env src', 'fgrep -r src'],
+    ['rg -n -t ts .env src', 'rg -n -t ts src'],
+    ['ag -i .env src', 'ag -i src'],
+    ['git grep -n .env -- src', 'git grep -n -- src'],
+    ['git ls-files | grep -v .env', 'git ls-files | grep -v'],
+    [`cat > a.md <<'E'\n.env\nE`, `cat > a.md <<'E'\n\nE`],
+    [`tee a.md <<E\n.env\nE`, `tee a.md <<E\n\nE`],
+    ['echo "$(cat <<E\n.env\nE\n)"', 'echo'],
+  ])('data: %s', (command, expected) => {
+    expect(seen(command)).toBe(expected)
+  })
+
+  test.each([
+    // (1) and (4) are voided by a pipe or a substitution.
+    'echo .env | xargs cat',
+    'echo .env | sh',
+    'cat $(echo .env)',
+    'cat `echo .env`',
+    'cat <(echo .env)',
+    '{ echo .env; } | sh',
+    'if true; then echo .env; fi | sh',
+    `cat <<'E' | bash\n.env\nE`,
+    'x=$(cat <<E\n.env\nE\n)',
+    // Not a data position: the place beside it.
+    'printf -v x .env',
+    'git commit -F .env',
+    'git commit -m',
+    'git log --grep',
+    'git show -m .env',
+    'git -C x commit -m .env',
+    'gh pr create --body-file .env',
+    'grep -f .env x',
+    'grep --file .env x',
+    'grep --file=.env x',
+    'grep -zzf .env x',
+    'grep --new-option .env x',
+    'grep -J .env x',
+    'grep $OPTS .env x',
+    'sudo grep .env x',
+    'sed .env x',
+    'cat .env',
+    'cat <<< .env',
+    'python3 <<E\n.env\nE',
+  ])('not data: %s', (command) => {
+    expect(seen(command)).toBe(command.replace(/ +/g, ' '))
+  })
+
+  test('the files after the pattern, the redirect target and the other words are left', () => {
+    expect(seen('grep x .env')).toBe('grep .env')
+    expect(seen('grep -e x .env')).toBe('grep -e .env')
+    expect(seen('echo x > .env')).toBe('echo > .env')
+    expect(seen('git commit -m x .env')).toBe('git commit -m .env')
+    expect(seen('cat .env <<E\nx\nE')).toBe('cat .env <<E\n\nE')
+    expect(seen('rg --pre .env x')).toBe('rg --pre .env')
+    // With the patterns in a file, every operand is a file.
+    expect(seen('grep -f patterns.txt .env')).toBe('grep -f patterns.txt .env')
+    expect(seen('rg --file=patterns.txt .env')).toBe('rg --file=patterns.txt .env')
+  })
+
+  test('a substitution in a data word is still a command; its own data is data', () => {
+    const p = parseShell('echo "$(cat .env)" \'$(cat .pem)\'', 'sh')
+    if (!p.ok) throw new Error(p.why)
+    const data = dataPositions(p.list)
+    const judged = wordsOf(p.list)
+      .filter((w) => !data.words.has(w))
+      .map((w) => w.raw)
+    expect(judged).toContain('.env')
+    // Quoted text read again (A9) is not, for a data word.
+    expect(data.inside.size).toBe(2)
+  })
+})
+
 describe('the guard', () => {
   const refused = async (command: string) => {
     const g = await fixtureGuard()
     const v = await g.beforeTool({ tool: 'Bash', command, description: 'x' })
     return 'deny' in v ? v.deny : null
   }
+
+  test.each([
+    'ls .veilio',
+    'ls -d ~/.veilio',
+    'cp -R ~/.veilio v2',
+    'rm -rf .veilio',
+    'tar czf s.tgz secrets',
+    'grep -r KEY secrets',
+    'ln -s secrets s',
+    'ls latestdir',
+    'ls ~/.kube',
+    'git -C .veilio init',
+    `awk -v d=.veilio '{print > (d "/x")}' src/index.ts`,
+    'ls sec?ets',
+  ])('A11: a whole raw-only folder is refused like a file in it: %s', async (command) => {
+    const fixture = { ...memoryFixture(), links: { '/p/latestdir': '/p/secrets' } }
+    const v = await verdict(await guardAt(fixture, ['secrets/**']), command)
+    expect(v.text).toContain('away from the model')
+  })
+
+  test('A11: a folder that holds a raw-only file among others is not refused as a word', async () => {
+    for (const command of ['ls ~/.aws', 'ls ~/.config', 'ls .docker', 'cp -R ~/.aws a', 'ls src'])
+      expect(await refused(command), command).toBeNull()
+  })
+
+  test.each([
+    ['echo "path is ~/.veilio"', 'echo "path is ~/.veilio" | sh'],
+    ['echo ".env" >> .gitignore', 'echo x > .env'],
+    ['git commit -m "fix: load .env before config"', 'git commit -F .env'],
+    [`grep -rn '\\.veilio/' docs`, 'grep -rn x .env'],
+    [`grep -rn "home, '.veilio'" src`, 'grep -f .env x'],
+    [`printf '%s\\n' '*.pem' >> .gitignore`, `printf -v PS4 '$(cat .en[v])'`],
+    [
+      `cat > src/paths.ts <<'EOF'\nexport const dir = join(home, '.veilio')\nEOF`,
+      `cat <<'EOF' | bash\ncat .en[v]\nEOF`,
+    ],
+    [`echo '$(cat .env)'`, 'echo "$(cat .env)"'],
+  ])('A12: %s runs, and beside it %s is refused', async (data, twin) => {
+    expect(await refused(data), data).toBeNull()
+    expect(await refused(twin), twin).not.toBeNull()
+  })
+
+  test('A12: PowerShell is not read by these positions', async () => {
+    const g = await fixtureGuard()
+    const v = await g.beforeTool({ tool: 'PowerShell', command: 'echo .env', description: 'x' })
+    expect('deny' in v).toBe(true)
+  })
 
   test('a command Veilio cannot read is refused', async () => {
     expect(await refused(`cat .e''nv "`)).toContain('a command Veilio cannot read')
