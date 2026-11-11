@@ -18,7 +18,7 @@ export {
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
-import { normaliseRawOnlyPattern } from '../vendor/engine/index.js'
+import { DEFAULT_RAW_ONLY, normaliseRawOnlyPattern } from '../vendor/engine/index.js'
 import {
   outsideQuotes,
   shellExpands,
@@ -1409,4 +1409,188 @@ export async function walkCd(
       endAll: start,
     }
   }
+}
+
+// ── security audit 2026-11-11: spellings and interpreters ───────────────────
+
+const INLINE_INTERPRETER =
+  /(?:^|[\s;&|(`])(?:python[\d.]*|pypy[\d]*|node(?:js)?|bun|deno|ruby|perl|php|lua|osascript|pwsh|powershell|(?:ba|z|da|k|c)?sh)(?=\s|$)/i
+const INLINE_CODE = /(?:\s-[A-Za-z]*[cerpEC](?=[\s=]|$)|\s--(?:eval|print|command)\b|<<)/
+
+/** An interpreter run on code given in the command (-c, -e, --eval, -r, a
+ *  heredoc) whose text, once quotes, backslashes, `+` and whitespace are
+ *  removed, names Veilio's own files: the off record and its secret live in
+ *  ~/.veilio, and a script can write them under a name it builds.
+ *
+ *  shortcut: defence in depth only. A script can build the name from pieces
+ *  this does not join (chr(), a list, an environment variable), and an
+ *  interpreter run on a file the agent wrote earlier is not read at all. The
+ *  off record's MAC is what holds; same-user processes can never be fully
+ *  stopped (SECURITY.md). Upgrade: a sandbox, not a longer pattern. */
+export function interpreterNamesGuardState(command: string): boolean {
+  const plain = command.replace(/['"\\]/g, '')
+  if (!INLINE_INTERPRETER.test(plain) || !INLINE_CODE.test(plain)) return false
+  // `.veilio`, not `veilio`: a project or a folder named for the product
+  // (a checkout of this repository) must still run its scripts.
+  return /\.veilio|guard-?state|guard-?secret/i.test(plain.replace(/[+\s]/g, ''))
+}
+
+/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`. At most 64,
+ *  and a word past that is returned as written (the caller then reads it as
+ *  one word, with its braces). */
+export function expandBraces(word: string, limit = 64): string[] {
+  const out: string[] = []
+  const walk = (w: string): void => {
+    if (out.length > limit) return
+    let depth = 0
+    let open = -1
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] === '{') {
+        if (depth++ === 0) open = i
+      } else if (w[i] === '}' && depth > 0 && --depth === 0) {
+        const inner = w.slice(open + 1, i)
+        const parts: string[] = []
+        let d = 0
+        let from = 0
+        for (let j = 0; j < inner.length; j++) {
+          if (inner[j] === '{') d++
+          else if (inner[j] === '}') d--
+          else if (inner[j] === ',' && d === 0) {
+            parts.push(inner.slice(from, j))
+            from = j + 1
+          }
+        }
+        parts.push(inner.slice(from))
+        if (parts.length < 2) continue
+        for (const part of parts) walk(w.slice(0, open) + part + w.slice(i + 1))
+        return
+      }
+    }
+    out.push(w)
+  }
+  walk(word)
+  return out.length > limit ? [word] : out
+}
+
+type GlobToken =
+  | { kind: 'char'; c: string }
+  | { kind: 'any' }
+  | { kind: 'star'; deep: boolean }
+  | { kind: 'class'; set: string; negated: boolean }
+
+function globTokens(glob: string): GlobToken[] {
+  const out: GlobToken[] = []
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob.charAt(i)
+    if (c === '*') {
+      const deep = glob[i + 1] === '*'
+      if (deep) i++
+      out.push({ kind: 'star', deep })
+    } else if (c === '?') out.push({ kind: 'any' })
+    else if (c === '[' && glob.indexOf(']', i + 2) > 0) {
+      const end = glob.indexOf(']', i + 2)
+      const negated = /^[!^]/.test(glob.slice(i + 1, end))
+      out.push({ kind: 'class', set: glob.slice(i + 1 + (negated ? 1 : 0), end), negated })
+      i = end
+    } else out.push({ kind: 'char', c: c.toLowerCase() })
+  }
+  return out
+}
+
+/** Whether one string could match both globs (ignoring case, `*` and `?`
+ *  stopping at `/`, `**` not). `a` is a shell word, so its wildcards do not
+ *  match a leading `.` (`*.ts` is not `.env.ts`); `b` is a raw-only pattern.
+ *  A class is read as able to match whatever it is set against: this errs
+ *  toward refusing. */
+function globsOverlap(a: string, b: string): boolean {
+  const A = globTokens(a)
+  const B = globTokens(b)
+  const seen = new Map<number, boolean>()
+  // A word's segment of nothing but wildcards (`*`, `?`) stands for no
+  // particular name, or `ls *` and `lib/*/*.rb` could never run: it matches a
+  // pattern's wildcards only, not its letters. And a pattern's own `*` takes
+  // none of the word's letters (`*.ts` is not `id_rsa*`), only `**` does.
+  const bareWild = (i: number) => {
+    let k = i
+    while (k > 0 && !isSlash(A[k - 1]!)) k--
+    for (; k < A.length && !isSlash(A[k]!); k++) if (A[k]!.kind === 'char') return false
+    return true
+  }
+  const dotStart = (j: number) => j === 0 || isSlash(B[j - 1]!)
+  const single = (t: GlobToken, u: GlobToken, i: number, j: number): boolean => {
+    if (t.kind === 'char' && u.kind === 'char') return t.c === u.c
+    if (t.kind !== 'char' && u.kind === 'char') {
+      if (bareWild(i) || (u.c === '.' && dotStart(j))) return false
+    }
+    const lit = t.kind === 'char' ? t : u.kind === 'char' ? u : null
+    const other = lit === t ? u : t
+    if (!lit) return true
+    if (other.kind === 'any') return lit.c !== '/'
+    if (other.kind === 'class') {
+      const inSet = other.set.toLowerCase().includes(lit.c) || /[a-z]-[a-z]/i.test(other.set)
+      return lit.c !== '/' && (other.negated ? true : inSet)
+    }
+    return true
+  }
+  const go = (i: number, j: number): boolean => {
+    const key = i * (B.length + 1) + j
+    const known = seen.get(key)
+    if (known !== undefined) return known
+    seen.set(key, false)
+    const x = A[i]
+    const y = B[j]
+    let r: boolean
+    if (!x && !y) r = true
+    else if (x?.kind === 'star')
+      r =
+        go(i + 1, j) ||
+        (!!y &&
+          go(i, j + 1) &&
+          (x.deep || !isSlash(y)) &&
+          !(y.kind === 'char' && (bareWild(i) || (y.c === '.' && dotStart(j)))))
+    else if (y?.kind === 'star') r = go(i, j + 1) || (!!x && y.deep && go(i + 1, j))
+    else r = !!x && !!y && single(x, y, i, j) && go(i + 1, j + 1)
+    seen.set(key, r)
+    return r
+  }
+  return go(0, 0)
+}
+const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
+
+/** A word with a wildcard that could stand for a raw-only file: some tail of
+ *  its path overlaps one of the patterns (a pattern without `/` is a name
+ *  anywhere, as isRawOnly reads it). A segment of nothing but wildcards is
+ *  not counted, or `ls *` and `rm *.o` could never run.
+ *
+ *  shortcut: it does not look at the files that exist, so a glob that could
+ *  match a raw-only name is refused when no such file is there. */
+export function globMayBeRawOnly(word: string, extra: readonly string[]): boolean {
+  const segments = normalisePath(word)
+    .split('/')
+    .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
+  const literal = (s: string) => /[^*?[\]!^]/.test(s.replace(/\[[^\]]*\]/g, ''))
+  if (!segments.some(literal)) return false
+  const patterns = [
+    ...DEFAULT_RAW_ONLY,
+    ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
+  ]
+  return patterns.some((p) =>
+    p.includes('/')
+      ? segments.some((_, i) => globsOverlap(segments.slice(i).join('/'), p))
+      : segments.some((s) => literal(s) && globsOverlap(s, p))
+  )
+}
+
+/** A word as the shell would spell it before it expands anything but quotes
+ *  and escapes: plain text, wildcards and braces stay as they are, and a
+ *  wildcard or brace that was quoted is made an ordinary character. Null when
+ *  something else builds part of it (`$x`, `$(...)`, `~user`). */
+export function spelledWord(w: Word): string | null {
+  let out = ''
+  for (const p of w.parts) {
+    if (p.kind === 'lit') out += p.quoted ? p.text.replace(/[*?[\]{},]/g, '\u0001') : p.text
+    else if (p.kind === 'glob' || p.kind === 'brace') out += p.text
+    else return null
+  }
+  return out
 }

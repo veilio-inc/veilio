@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import { PROMPT_FAILED } from '../lib/guard.ts'
 import { COLD_FILES } from './fixtures/cold.ts'
-import { CANARY, eventOf, mapFile, project, recorded, ROOT } from './helpers.ts'
+import { CANARY, eventOf, mapFile, offFiles, project, recorded, ROOT } from './helpers.ts'
 
 test('/veilio reports state, the map and coverage', async ($, on) => {
   project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }) })
@@ -29,12 +29,7 @@ test('/veilio off: written for the project, and the next result reaches the mode
 
 test('/veilio on: back on, and scrubbing again', async ($, on) => {
   const read = recorded('Read')
-  const state = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
-  project(
-    on,
-    { '/home/dev/.veilio/guard-state.json': JSON.stringify(state) },
-    { home: '/home/dev' }
-  )
+  project(on, await offFiles('/home/dev'), { home: '/home/dev' })
   on('tool.call', () => read.r)
   await $.command.run({ command: 'veilio', args: 'on' })
   const r = await $.tool.call(eventOf(read))
@@ -130,10 +125,7 @@ test('an off record written earlier keeps the guard off when it loads', async ($
     on,
     {
       [`${ROOT}/.veilio/map.json`]: mapFile({}),
-      [STATE]: JSON.stringify({
-        version: 1,
-        projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } },
-      }),
+      ...(await offFiles(HOME)),
     },
     { home: HOME }
   )
@@ -315,10 +307,9 @@ test('/veilio keeps its own hook', async ($, on) => {
 })
 
 test('a command runs as typed while the guard is off', async ($, on) => {
-  const state = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
   const ran = commands(on, {
     [`${ROOT}/.veilio/map.json`]: mapFile({ __CLS__1: CANARY }),
-    '/home/dev/.veilio/guard-state.json': JSON.stringify(state),
+    ...(await offFiles('/home/dev')),
   })
   await $.command.run({ command: 'review', args: CANARY })
   expect(ran[0]?.args).toBe(CANARY)

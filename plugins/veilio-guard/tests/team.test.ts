@@ -1,7 +1,7 @@
 // Spec 033 US3 (this delivery's part): a team map pulled by the CLI is used as
 // it is, and a guard the organisation runs cannot be switched off here.
 import { expect, test } from 'claude-code/testing'
-import { CANARY, eventOf, mapFile, project, recorded, ROOT, res } from './helpers.ts'
+import { CANARY, eventOf, mapFile, offFiles, project, recorded, ROOT, res } from './helpers.ts'
 
 const TEAM = mapFile(
   { __CLS__14: CANARY },
@@ -68,12 +68,11 @@ test('R2-19: with the policy unreadable, /veilio off is refused and the guard st
 
 test('R2-19: with the policy unreadable, an off record is ignored', async ($, on) => {
   const read = recorded('Read')
-  const state = { version: 1, projects: { [ROOT]: { enabled: false, changedAt: '2026-11-07' } } }
   project(
     on,
     {
       [`${ROOT}/.veilio/map.json`]: TEAM,
-      '/home/dev/.veilio/guard-state.json': JSON.stringify(state),
+      ...(await offFiles('/home/dev')),
     },
     { failPolicy: true, home: '/home/dev' }
   )

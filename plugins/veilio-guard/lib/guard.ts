@@ -33,6 +33,9 @@ import {
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
+  expandBraces,
+  globMayBeRawOnly,
+  interpreterNamesGuardState,
   isRawOnly,
   mcpConfigName,
   isWriteProtected,
@@ -42,6 +45,7 @@ import {
   rawOnlyDirectories,
   rawOnlyOf,
   shortNameAlias,
+  spelledWord,
   walkCd,
   windowsAlias,
   wordPath,
@@ -234,6 +238,10 @@ export const MCP_IGNORED =
 /** strings.md #9. */
 const SETTINGS_PROTECTED =
   "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
+// PENDING APPROVAL (wording): the refusal for an interpreter command that names
+// the guard's own files.
+const INTERPRETER_GUARD_STATE =
+  "a script run from the command line that names Veilio's own files could switch the guard off, so the agent may not run it. Ask the user to run this call"
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
@@ -281,6 +289,34 @@ const WITHHELD_TEXT: Record<Withheld['kind'], string> = {
 const withheldText = (w: Withheld) =>
   w.label ? `${WITHHELD_TEXT[w.kind]} (${w.label})` : WITHHELD_TEXT[w.kind]
 
+/** HMAC-SHA-256 (RFC 2104) on the one primitive the host's `crypto.subtle`
+ *  gives a mod, `digest`: it has no `importKey`. Exported for the tests, which
+ *  check it against RFC 4231 and against another implementation. */
+export async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
+  const sha = async (b: Uint8Array) =>
+    new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', b as BufferSource))
+  const k = new Uint8Array(64)
+  k.set(key.length > 64 ? await sha(key) : key)
+  const pad = (byte: number, tail: Uint8Array) => {
+    const out = new Uint8Array(64 + tail.length)
+    out.set(k.map((x) => x ^ byte))
+    out.set(tail, 64)
+    return out
+  }
+  return sha(pad(0x5c, await sha(pad(0x36, message))))
+}
+
+/** The MAC an off record carries: HMAC-SHA-256, under the install's secret, of
+ *  the project's key, the flag and the date. */
+async function offMac(secretHex: string, key: string, changedAt: string): Promise<string> {
+  const bytes = Uint8Array.from(secretHex.match(/../g) ?? [], (h) => parseInt(h, 16))
+  const sig = await hmacSha256(
+    bytes,
+    new TextEncoder().encode(`veilio-off-v1|${key}|false|${changedAt}`)
+  )
+  return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
@@ -291,6 +327,9 @@ export class Guard {
   notices: string[] = []
   /** The off record could not be read: the guard stays on, and the band says so. */
   offRecordUnreadable = false
+  /** The off record names this project but carries no valid MAC: something
+   *  other than /veilio off wrote it, so it is ignored and the band says so. */
+  offRecordUnverified = false
   /** The session's working directory: what a search's paths are read from. */
   cwd = ''
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
@@ -759,15 +798,61 @@ export class Guard {
   }
 
   /** Spec 078 FR-010: whether /veilio off was run for this project. An
-   *  unreadable record never turns the guard off. */
+   *  unreadable record never turns the guard off, and neither does one the
+   *  agent could have written: the record is honoured only with a MAC under
+   *  the install's secret (security audit 2026-11-11, H1). The secret is made
+   *  here, at load, so it exists before any tool call can run. */
   private async readOffRecord(): Promise<void> {
     this.offRecordUnreadable = false
+    this.offRecordUnverified = false
     try {
+      const secret = await this.offSecret(false)
       const record = await this.offRecord()
-      const entry = record?.projects[await this.recordKey()] as { enabled?: unknown } | undefined
-      if (entry?.enabled === false && this.state === 'on') this.state = 'off'
+      const key = await this.recordKey()
+      const entry = record?.projects[key] as
+        { enabled?: unknown; changedAt?: unknown; mac?: unknown } | undefined
+      if (entry?.enabled !== false) return
+      const signed =
+        secret !== null &&
+        typeof entry.changedAt === 'string' &&
+        typeof entry.mac === 'string' &&
+        entry.mac === (await offMac(secret, key, entry.changedAt))
+      if (signed) {
+        if (this.state === 'on') this.state = 'off'
+      } else this.offRecordUnverified = true
     } catch {
       this.offRecordUnreadable = true
+    }
+  }
+
+  get offSecretPath(): string | undefined {
+    return this.home ? join(this.home, '.veilio', 'guard-secret') : undefined
+  }
+
+  /** The install's secret: 32 random bytes as hex in an owner-only file next
+   *  to the off record (~/.veilio is raw-only, so the agent's tools cannot
+   *  read it). Made when absent; one that is there but not a secret is
+   *  replaced only when `replace` (the user's own /veilio off). Null when it
+   *  cannot be had, and then no record is honoured or made. */
+  private async offSecret(replace: boolean): Promise<string | null> {
+    const path = this.offSecretPath
+    if (!path) return null
+    try {
+      if (await this.io.exists(path)) {
+        const text = (await this.io.read(path)).trim()
+        if (/^[0-9a-f]{64}$/.test(text)) return text
+        if (!replace) return null
+      }
+      const secret = [...globalThis.crypto.getRandomValues(new Uint8Array(32))]
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+      await this.createOwnerOnly(path, '', false)
+      // Written only once the file is known owner-only, where that can be checked.
+      if (this.io.mode && !(await this.ownerOnly(path))) return null
+      await this.io.write(path, secret)
+      return secret
+    } catch {
+      return null
     }
   }
 
@@ -1048,7 +1133,10 @@ export class Guard {
   async setEnabled(enabled: boolean): Promise<boolean> {
     const path = this.offRecordPath
     let recorded = false
-    if (path) {
+    // Only a record with a MAC is ever honoured, so without a secret there is
+    // nothing to record: the guard is off for this session only.
+    const secret = enabled || !path ? null : await this.offSecret(true)
+    if (path && (enabled || secret !== null)) {
       let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
       try {
         record = (await this.offRecord()) ?? record
@@ -1058,11 +1146,15 @@ export class Guard {
       const key = await this.recordKey()
       const projects = { ...record.projects }
       if (enabled) delete projects[key]
-      else projects[key] = { enabled: false, changedAt: new Date().toISOString().slice(0, 10) }
+      else {
+        const changedAt = new Date().toISOString().slice(0, 10)
+        projects[key] = { enabled: false, changedAt, mac: await offMac(secret!, key, changedAt) }
+      }
       const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
       if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
       await this.io.write(path, text)
       this.offRecordUnreadable = false
+      this.offRecordUnverified = false
       recorded = true
     }
     if (!enabled) {
@@ -1724,6 +1816,15 @@ export class Guard {
     }
   }
 
+  /** A word the shell spells without a wildcard: an absolute path as it is,
+   *  a relative one from the session's directory. */
+  private async spelledHits(name: string) {
+    const path = normalisePath(name)
+    const none = { written: false, rawOnly: false, mcp: null }
+    if (path === '') return none
+    return this.pathHits(/^[/\\~]|^[A-Za-z]:/.test(path) ? path : this.here(path))
+  }
+
   /** The refusal for a write-protected path: settings, or the MCP list (#59). */
   private denyProtected(hits: readonly { written: boolean; mcp: string | null }[]): {
     deny: string
@@ -1910,6 +2011,7 @@ export class Guard {
       const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
       for (const c of [e[policy.command], args[policy.command]]) {
         if (typeof c !== 'string') continue
+        if (interpreterNamesGuardState(c)) return this.deny(INTERPRETER_GUARD_STATE)
         // Spec 078 FR-008: a cd there would let a later command read it by a
         // short name, in this call or the next (the shell keeps its directory).
         // A glob target could be any of them (review round 1 of spec 078).
@@ -1975,6 +2077,26 @@ export class Guard {
           // in there, `~` read with HOME as it is there (FR-010).
           for (const point of walk.points)
             for (const w of point.words) {
+              // Security audit 2026-11-11 (M2): the word as the shell reads it
+              // - quotes and escapes gone, braces expanded - which the check
+              // on the raw text below does not see (`.e''nv`, `{.e,x}nv`), in
+              // the session's directory or as the absolute path it names. A
+              // wildcard word is refused when it could name a raw-only file.
+              const spelt = spelledWord(w)
+              if (spelt !== null && (spelt !== w.raw || /[*?[{]/.test(spelt))) {
+                for (const name of expandBraces(spelt)) {
+                  const spelled = dialect === 'ps' ? name.replace(/\\/g, '/') : name
+                  const h = /[*?[]/.test(spelled)
+                    ? { written: false, rawOnly: globMayBeRawOnly(spelled, this.extraRawOnly) }
+                    : await this.spelledHits(spelled)
+                  if (h.written) return this.denyProtected([{ ...h, mcp: null }])
+                  if (h.rawOnly)
+                    return this.deny(
+                      `Veilio keeps ${this.applyText(w.raw, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                      false
+                    )
+                }
+              }
               const path = wordPath(w, point.home)
               if (path === null) continue
               // PowerShell's separator is `\\` too.
