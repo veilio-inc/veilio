@@ -2076,7 +2076,7 @@ export function settingForms(): Generated[] {
   // `read NAME` and `NAME+=` in 3.2 only), so the generator is counted alive
   // as a whole, not form by form; every form is run in whatever bash is there.
   for (const name of A10_VARIABLES)
-    for (const [id, make] of forms)
+    for (const [, make] of forms)
       for (const glob of GLOBS)
         out.push(
           shape('G9', out.length, make(name) + glob, ['bash'], name === 'GLOBIGNORE' ? ['G9'] : [])
