@@ -151,6 +151,16 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
     shHasPipefail(
       spawnSync('sh', ['-oc', 'pipefail', 'true'], { env: { PATH: '/usr/bin:/bin' } }).status === 0
     )
+    // zsh/mapfile (operator O39): asked once whether it reads here, with the
+    // command the generator uses. Where it does not, the operator is still
+    // run and must still be refused; it is only not counted as alive.
+    if (available.some((a) => a.shell === 'zsh') && listed.modules.includes('zsh/mapfile')) {
+      const probe = await runIn('zsh', 'zmodload zsh/mapfile; echo $mapfile[.env]', fixture)
+      listed.mapfile = probe.read.size > 0
+      process.stdout.write(
+        `reading oracle: zsh/mapfile ${listed.mapfile ? 'reads' : `does not read here (exit output: ${JSON.stringify(probe.output.slice(0, 120))})`}\n`
+      )
+    }
     guard = await hookGuard(fixture, ['secrets/**'])
     generated = [
       ...fullProduct(fixture.proj),

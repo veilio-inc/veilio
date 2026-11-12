@@ -1659,7 +1659,17 @@ export function deliveries(seed: number, n: number): Generated[] {
 
 /** What the running shells list: bash's `shopt` and `set -o` names, zsh's
  *  option names and the modules it can load. */
-export type Listed = { shopt: string[]; set: string[]; setopt: string[]; modules: string[] }
+export type Listed = {
+  shopt: string[]
+  set: string[]
+  setopt: string[]
+  modules: string[]
+  /** Whether this machine's zsh reads a file through `zsh/mapfile` when asked
+   *  (the oracle tries it once): only then must the operator read a canary.
+   *  On one hosted Ubuntu runner it never did, though the module is in the
+   *  package; that `zmodload` is refused is tested either way. */
+  mapfile?: boolean
+}
 /** Variables whose assignment changes how bash reads words (contract A10). */
 export const A10_VARIABLES = [
   'GLOBIGNORE',
@@ -1677,7 +1687,12 @@ export function triggers(listed: Listed): Generated[] {
   const out: Generated[] = []
   // Shown alive (rule R5) only by the kinds that can let a wildcard match a
   // leading dot in the shells at hand; the others are run to catch a surprise.
-  const live = new Set(['shopt', 'setopt', 'GLOBIGNORE=', 'zsh/mapfile'])
+  const live = new Set([
+    'shopt',
+    'setopt',
+    'GLOBIGNORE=',
+    ...(listed.mapfile ? ['zsh/mapfile'] : []),
+  ])
   const add = (kind: string, shells: Shell[], pre: string, glob: string) =>
     out.push({
       id: `T:${kind}:${out.length}`,
