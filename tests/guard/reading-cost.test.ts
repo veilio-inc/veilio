@@ -168,6 +168,41 @@ test('anything the reader throws is a refusal, with the text for a command Veili
   expect(v.text).toContain(UNREADABLE)
 })
 
+// Addendum 3: the words that will be judged are counted, and charged, before
+// the command is walked - a flood is refused without one path being checked.
+test('a flood of plain words is refused before any of them is judged', async () => {
+  const fixture = memoryFixture()
+  const files: Record<string, string> = {
+    ...fixture.files,
+    [`${fixture.proj}/.veilio/guard.json`]: '{"rawOnly":[]}',
+    [`${fixture.proj}/.git/HEAD`]: 'ref: refs/heads/main\n',
+  }
+  let asked = 0
+  const io: GuardIO = {
+    read: async (p) => {
+      if (files[p] === undefined) throw new Error(`ENOENT: ${p}`)
+      return files[p]
+    },
+    write: async () => {},
+    exists: async (p) => p in files || Object.keys(files).some((x) => x.startsWith(`${p}/`)),
+    realPath: async (p) => {
+      asked++
+      return p
+    },
+    isFile: async (p) => p in files,
+    fileSize: async (p) => files[p]?.length,
+  }
+  const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+  await guard.load(fixture.proj, fixture.home)
+  asked = 0
+  expect((await verdict(guard, 'ls src docs')).verdict).toBe('allowed')
+  expect(asked).toBeGreaterThan(0)
+  asked = 0
+  const v = await verdict(guard, `ls ${'a '.repeat(45000)}`)
+  expect(v.text).toContain(UNREADABLE)
+  expect(asked).toBe(0)
+})
+
 test('a refusal of an over-long command shows its start, not all of it', async () => {
   const v = await verdict(await guardAt(memoryFixture(), []), `echo ${'a'.repeat(MAX_COMMAND)}`)
   expect(v.text).toContain(UNREADABLE)
