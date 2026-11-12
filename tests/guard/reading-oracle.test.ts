@@ -63,7 +63,8 @@ const N = Number(process.env.VEILIO_ORACLE_N ?? 10000)
 /** Seeded deliveries after the pairs (contract §7.8). */
 const DELIVERIES = Number(process.env.VEILIO_ORACLE_DELIVERIES ?? Math.ceil(N / 3))
 const AT_ONCE = 8
-const TEN_MINUTES = 600_000
+// A hosted Linux runner needs over ten minutes for the whole grammar (530 s before addendum 3).
+const TIME_LIMIT = 1_800_000
 
 type Ran = { shell: Shell; version: string; reads: Map<string, boolean>; ms: number }
 
@@ -177,7 +178,7 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       await runAll(shell, [...new Set(collating.map((g) => g.command))], reads, 'en_US.UTF-8')
       ran.push({ shell, version, reads, ms: Date.now() - started })
     }
-  }, TEN_MINUTES)
+  }, TIME_LIMIT)
 
   afterAll(() => {
     if (fixture) removeFixture(fixture)
@@ -291,7 +292,7 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       process.stdout.write(`reading oracle R2: ${failures.length} failures\n`)
       expect(failures).toEqual([])
     },
-    TEN_MINUTES
+    TIME_LIMIT
   )
 
   test('R5: every operator, position and axis value read a canary in each shell it is run in', () => {
@@ -350,7 +351,7 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       expect(ordinary.length).toBeGreaterThan(200)
       expect(failures).toEqual([])
     },
-    TEN_MINUTES
+    TIME_LIMIT
   )
 
   test('R8: what could fail is counted apart from what is refused unrun', () => {
