@@ -1014,6 +1014,9 @@ export const A4_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `jq . .env`,
     `jq '.a' .e[n]v`,
     `sed --no-such-option 's/.*/x/' .en*`,
+    // After an option the table does not know no word is exempt.
+    `sed --no-such-option 'r .en*' a.txt`,
+    `jq --no-such-option '.e*v' a.json`,
     `sed -f .env a.txt`,
     `jq -f .env a.json`,
     // `.key` is a raw-only name (`*.key`) written plainly, as `.env` is.
