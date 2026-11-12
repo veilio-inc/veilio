@@ -588,6 +588,8 @@ export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `grep --context CANARY .env`,
     `git grep --no-index --color CANARY -- .env`,
     `ag --after CANARY .env`,
+    `ag -A CANARY .env`,
+    `ag -C CANARY .env`,
     `rg --pretty CANARY .env`,
   ],
   // A12 (3): a pattern attached to its option is the pattern.
@@ -780,6 +782,8 @@ export const A3_MENTIONS: readonly string[] = [
   `gh release create v1.0.0 -n "reads ~/.veilio/map.json once" --title ".env support"`,
   `gh -R acme/app pr create -t "Ignore .env" -b "and server.pem"`,
   `grep --color=always -n '\\.env' src/index.ts`,
+  `grep -C 3 '\\.env' src/index.ts`,
+  `grep -rn -A 2 -B 2 '\\.veilio/' docs`,
   `grep -e'\\.env' -e '\\.pem' src/index.ts`,
   `grep --regexp='\\.env' -r src`,
   `git grep --color -n -e '\\.env' -- src`,

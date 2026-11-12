@@ -978,7 +978,6 @@ describe('addendum 2, A12: text a program only prints, stores or searches for', 
     'grep -zzf .env x',
     'grep --new-option .env x',
     'grep -K .env x',
-    'grep -C .env x',
     'grep --context .env x',
     'grep $OPTS .env x',
     'sudo grep .env x',
@@ -1001,6 +1000,9 @@ describe('addendum 2, A12: text a program only prints, stores or searches for', 
     expect(seen('grep -iex .env')).toBe('grep .env')
     expect(seen('grep --regexp=x .env')).toBe('grep .env')
     expect(seen('grep -C2 x .env')).toBe('grep -C2 .env')
+    expect(seen('grep -C 2 x .env')).toBe('grep -C 2 .env')
+    // The word after `-C` is its number, never the pattern.
+    expect(seen('grep -C .env x')).toBe('grep -C .env')
     expect(seen('grep -J x .env')).toBe('grep -J .env')
     expect(seen('git grep --color -e x .env')).toBe('git grep --color -e .env')
     expect(seen('rg --pretty x .env')).toBe('rg --pretty .env')

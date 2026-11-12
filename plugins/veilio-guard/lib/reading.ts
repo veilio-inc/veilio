@@ -653,12 +653,13 @@ type SearchOptions = {
   flags: readonly string[]
 }
 const words = (text: string): readonly string[] => text.split(' ')
-/** GNU grep 3 and BSD grep (macOS), `egrep` and `fgrep` with them. `-C` and
- *  `--context` take a number in GNU grep and an optional one in BSD grep. */
+/** GNU grep 3 and BSD grep (macOS), `egrep` and `fgrep` with them. `-C` takes
+ *  a number in both; `--context` takes one in GNU grep and an optional one,
+ *  attached, in BSD grep. */
 const GREP: SearchOptions = {
   plain: 'EFGHIJLMOPRSTUVXZabchilnopqrsuvwxyz',
-  valued: 'ABDdefm',
-  unsure: 'C',
+  valued: 'ABCDdefm',
+  unsure: '',
   long: words(
     'regexp file max-count after-context before-context label binary-files devices directories include exclude exclude-dir exclude-from include-dir group-separator'
   ),
