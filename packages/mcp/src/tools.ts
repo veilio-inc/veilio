@@ -81,6 +81,7 @@ import { describeAge } from '@veilio-inc/cli/rules'
 import { PROJECT_TOO_LARGE_NOTE, thirdPartyNames } from '@veilio-inc/cli/third-party'
 import { readCredential } from '@veilio-inc/cli/credential'
 import { projectOverride, refusal, rulesSkippedSentences } from '@veilio-inc/cli/client'
+import { rulesWaitingNote } from '@veilio-inc/cli/rules-open'
 import {
   ArgumentError,
   CLOUD_TOOLS,
@@ -373,7 +374,8 @@ function restoreReportLines(report: RestoreReport): string {
 function rulesLine(r: ResolvedRules): string {
   if (r.source === 'none') return 'Custom rules: none'
   const n = `${r.rules.length} custom rule${r.rules.length === 1 ? '' : 's'}`
-  if (r.source === 'cloud') return `Custom rules: ${n} from Cloud`
+  if (r.source === 'cloud')
+    return `Custom rules: ${n} from Cloud${r.waiting?.length ? ` (${rulesWaitingNote(r.waiting)})` : ''}`
   return `Custom rules: ${n} cached, pulled ${describeAge(r.pulledAt ?? '')} - Cloud did not answer`
 }
 
@@ -467,7 +469,9 @@ function runAnonymize(
   // two lines are the only place it can learn what the masking did NOT cover.
   // The engine puts both on every result precisely so this server does not have
   // to decide for itself; dropping them here would leave an agent believing the
-  // output is clean when a name is sitting in a comment inside it.
+  // output is clean when a customer's name is sitting in a comment inside it.
+  // The comment figure counts what was left as written: a name the map holds
+  // is a placeholder there, and is not counted.
   const caveats: string[] = []
   if (mismatch) caveats.push(mismatch)
   if (tooLarge) caveats.push(`WARNING: ${PROJECT_TOO_LARGE_NOTE.replace(/^veilio: /, '')}`)
@@ -482,10 +486,11 @@ function runAnonymize(
   if (result.comments.total > 0) {
     const { total, inline, characters } = result.comments
     caveats.push(
-      `Comment prose is NOT masked: ${total} comment${total === 1 ? '' : 's'} ` +
+      `Comment text is left as written, except names the map holds: ` +
+        `${total} comment${total === 1 ? '' : 's'} ` +
         `(${inline === 0 ? 'above the code' : `${inline} inside the body`}), ` +
-        `${characters} characters, left exactly as written. Names, customers and ticket ` +
-        `numbers in them are still real. Treat them as unmasked when quoting or forwarding.`
+        `${characters} characters. People, customers, ticket numbers and names the map does ` +
+        `not hold are still real in them. Treat that text as unmasked when quoting or forwarding.`
     )
   }
 
@@ -502,7 +507,10 @@ function runAnonymize(
     rulesLine(rules),
     // Beside the source, on every result while it holds: rules the account set
     // were not applied, so the masking is less than its owner expects.
-    ...rulesSkippedSentences(rules.skipped),
+    // The rules line has just said which team's rules wait (spec 092).
+    ...rulesSkippedSentences(
+      rules.waiting?.length ? { ...rules.skipped, teamUnconfirmed: 0 } : rules.skipped
+    ),
     ...(rules.notices ?? []).map((n) => `WARNING: ${n.replace(/^veilio: /, '')}`),
     // Spec 066 R8: on every result while this checkout's last reservation is
     // refused, and whenever this call numbered names on this machine only.
@@ -531,10 +539,13 @@ export const TOOLS: ToolDefinition[] = [
     name: 'anonymize_file',
     title: 'Anonymize a file',
     description:
-      `Read a file from disk and return it with every proprietary identifier replaced by a ` +
-      `placeholder (__CLS__1, __FN__2, …) and every credential irreversibly redacted. ` +
-      `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so the real ` +
-      `identifiers never enter your context — you only ever see the masked form. Use it before ` +
+      `Read a file from disk and return it with the identifiers ${PRODUCT_NAME} masks replaced by ` +
+      `placeholders (__CLS__1, __FN__2, …) and every credential it detects irreversibly redacted. ` +
+      `PREFER THIS over anonymize_text: ${PRODUCT_NAME} reads the file itself, so you get the ` +
+      `masked text without reading the file. A name the map holds is replaced in code, in strings ` +
+      `and in comments. Left as written: the rest of comment text (people, customers, ticket ` +
+      `numbers, names the map does not hold yet), names in capitals and single common words - ` +
+      `each result says how much comment text was left. Use it before ` +
       `reasoning about, quoting, or forwarding proprietary source. The symbol map is stored ` +
       `locally so the developer can restore an answer later. Files on the raw-only list ` +
       `(.env, private keys, credential stores, .veilio/) are refused, never read.`,

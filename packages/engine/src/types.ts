@@ -20,6 +20,9 @@ export type IdentifierRole = 'class' | 'function' | 'package' | 'variable' | 'st
  *  is deliberate: the CLI and MCP server paste the same text into the same
  *  models, and a warning only the web app knows about is not a warning.
  *
+ *  A name the map holds is the exception: it is replaced by its placeholder in
+ *  a comment as in code, and a placeholder is not counted here.
+ *
  *  This is a measurement, not a judgement. Deciding whether any of these words
  *  is sensitive would mean knowing what they mean, which is the one thing the
  *  engine refuses to do. */
@@ -194,7 +197,7 @@ export interface AnonymizeOptions {
    *
    *  Custom rules can only rename what the extractor already found, which
    *  leaves the two things people most often need masked out of reach: a name
-   *  inside a comment, and a bare account or case number. Both are prose to the
+   *  that stands only in a comment, and a bare account or case number. Both are prose to the
    *  extractor. These terms are matched as literal text instead, so they reach
    *  anywhere in the source.
    *

@@ -128,6 +128,11 @@ const A2 = (w: string) =>
   `Veilio keeps ${w} away from the model. Ask the user for what you need from it.`
 const N1 = (t: string, form: string) =>
   `Veilio refused this call: Veilio cannot tell where \`${t}\` takes the shell (${form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.`
+/** A PowerShell command the guard cannot read and refuses: the words for a
+ *  command Veilio cannot read (spec 091 addendum 3; until then the cd text
+ *  with "a command Veilio cannot read" in its parentheses). */
+const U1 = (t: string) =>
+  `Veilio refused this call: Veilio cannot read \`${t}\` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it.`
 const PS_TREE = {
   [`${HOME}/.aws/credentials`]: 'x\n',
   [`${HOME}/.kube/config`]: 'x\n',
@@ -172,10 +177,7 @@ for (const [command, expected] of [
   ["& 'Set-Location' ~\\.aws", N1("'Set-Location'", 'a call operator')],
   ['. Set-Location src', N1('Set-Location', 'a call operator')],
   ['Set-Location @a', N1('@a', 'splatting')],
-  [
-    '$a = @{Path = "x"}; Set-Location @a',
-    N1('$a = @{Path = "x"}; Set-Location @a', 'a command Veilio cannot read'),
-  ],
+  ['$a = @{Path = "x"}; Set-Location @a', U1('$a = @{Path = "x"}; Set-Location @a')],
   [
     'Set-Location Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws',
     N1('Microsoft.PowerShell.Core\\FileSystem::C:\\Users\\dev\\.aws', 'a path that is not plain'),
@@ -218,35 +220,20 @@ for (const [command, expected] of [
     ),
   ],
   // Unreadable, and its text has something the guard cannot let through
-  [
-    'switch ($x) { 1 { iex $s } }',
-    N1('switch ($x) { 1 { iex $s } }', 'a command Veilio cannot read'),
-  ],
-  ['$h = @{ a = 1 }; & $s', N1('$h = @{ a = 1 }; & $s', 'a command Veilio cannot read')],
-  [
-    '$h = @{ a = $ExecutionContext }',
-    N1('$h = @{ a = $ExecutionContext }', 'a command Veilio cannot read'),
-  ],
-  [
-    '$h = @{ a = 1 }; Start-Process x',
-    N1('$h = @{ a = 1 }; Start-Process x', 'a command Veilio cannot read'),
-  ],
+  ['switch ($x) { 1 { iex $s } }', U1('switch ($x) { 1 { iex $s } }')],
+  ['$h = @{ a = 1 }; & $s', U1('$h = @{ a = 1 }; & $s')],
+  ['$h = @{ a = $ExecutionContext }', U1('$h = @{ a = $ExecutionContext }')],
+  ['$h = @{ a = 1 }; Start-Process x', U1('$h = @{ a = 1 }; Start-Process x')],
   [
     'switch (Set-Location ~\\.aws) { default { 1 } }',
-    N1('switch (Set-Location ~\\.aws) { default { 1 } }', 'a command Veilio cannot read'),
+    U1('switch (Set-Location ~\\.aws) { default { 1 } }'),
   ],
-  [
-    'foreach ($x in (Set-Location ~\\.aws)) { }',
-    N1('foreach ($x in (Set-Location ~\\.aws)) { }', 'a command Veilio cannot read'),
-  ],
+  ['foreach ($x in (Set-Location ~\\.aws)) { }', U1('foreach ($x in (Set-Location ~\\.aws)) { }')],
   [
     'for ($i = 0; $i -lt 1; Set-Location ..) { }',
-    N1('for ($i = 0; $i -lt 1; Set-Location ..) { }', 'a command Veilio cannot read'),
+    U1('for ($i = 0; $i -lt 1; Set-Location ..) { }'),
   ],
-  [
-    '$h = @{ a = (Set-Location ~\\.aws) }',
-    N1('$h = @{ a = (Set-Location ~\\.aws) }', 'a command Veilio cannot read'),
-  ],
+  ['$h = @{ a = (Set-Location ~\\.aws) }', U1('$h = @{ a = (Set-Location ~\\.aws) }')],
   // 078's floor refuses a cd target with `*`, `?` or `[` first (FR-009)
   ['Set-Location ~\\.k*', A1('~.k*')],
   ['Set-Location -LiteralPath "src[1]"', A1('src[1]')],

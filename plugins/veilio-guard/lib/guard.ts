@@ -33,6 +33,9 @@ import {
   cdTargets,
   cdTargetsToJudge,
   DEFAULT_RAW_ONLY,
+  braceNames,
+  globMayBeRawOnly,
+  namesRawOnlyFolder,
   isRawOnly,
   mcpConfigName,
   isWriteProtected,
@@ -45,13 +48,40 @@ import {
   walkCd,
   windowsAlias,
   wordPath,
-  INTERPRETERS,
   MAX_DIRS,
   type CdContext,
   type DirState,
   type Var,
 } from './paths.ts'
-import { parseShell, restoreRefusal } from './shell.ts'
+import {
+  MAX_COMMAND,
+  MAX_STEPS,
+  newCost,
+  isTextScript,
+  parseShell,
+  restoreRefusal,
+  spend,
+  type Cost,
+  type Word,
+} from './shell.ts'
+import {
+  dotsMatch,
+  isWord,
+  namesVeilioFolder,
+  bracketsRead,
+  dataPositions,
+  judgedWords,
+  ownScripts,
+  type Data,
+  withoutData,
+  pieces,
+  textPieces,
+  readsStrictly,
+  rereadLists,
+  spellings,
+  textsOf,
+  wordsWithin,
+} from './reading.ts'
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
@@ -132,6 +162,9 @@ export interface GuardIO {
   /** Whether the path itself is a link, not followed (review round 1 #5).
    *  Absent: a link that leads nowhere is found only once written through. */
   isLink?(path: string): Promise<boolean>
+  /** Removes a file (a leftover of an older version's off switch). Absent: it
+   *  is left where it is, and still never read. */
+  remove?(path: string): Promise<void>
   /** Whether the machine is Windows. Absent: the engine reads the platform. */
   windows?(): Promise<boolean>
 }
@@ -228,12 +261,19 @@ export const ENCODED_NAME =
   'it holds a project name encoded (base64, hex, reversed or spelled down a column). Nothing from it was sent'
 /** strings.md #15 and #16. */
 export const BACK_ON =
-  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off for this project, run /veilio off.'
+  'Veilio guard is back on: an off setting in .veilio/guard.json was ignored, because a file in the project can be written by the agent. To switch the guard off until this session ends, run /veilio off.'
 export const MCP_IGNORED =
   "Veilio: mcpRestore in .veilio/guard.json was ignored, because a file in the project can be written by the agent. Set it in the plugin's settings (/config)."
 /** strings.md #9. */
 const SETTINGS_PROTECTED =
   "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
+/** What one path check costs of a command's budget (it asks the file system). */
+const PATH_STEPS = 12
+/** Longer than any path a system opens. */
+const MAX_PATH = 4096
+
+const INTERPRETER_GUARD_STATE =
+  "a script run from the command line that names Veilio's own files could read or change them, so the agent may not run it. Ask the user to run this call"
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 export const PROMPT_FAILED =
   'Veilio could not check this prompt, so it was not sent. Try again, or run /veilio to see why.'
@@ -285,12 +325,13 @@ export class Guard {
   state: GuardState = 'on'
   stoppedReason = ''
   root = ''
-  /** The user's home ($HOME): where the off record is kept (spec 078 FR-010). */
+  /** The user's home ($HOME): where an older version's leftovers are removed from. */
   home: string | undefined
   /** Said once a session (register.ts logs them): settings the guard ignored. */
   notices: string[] = []
-  /** The off record could not be read: the guard stays on, and the band says so. */
-  offRecordUnreadable = false
+  /** A guard-state.json from an older version named this project as off: it
+   *  is removed and not honoured, and the band says so for this session. */
+  legacyOffRecord = false
   /** The session's working directory: what a search's paths are read from. */
   cwd = ''
   /** Spec 074 pass 2 over search output; off, a search is masked exactly as
@@ -499,7 +540,7 @@ export class Guard {
           .catch(() => undefined)
       : undefined
     await this.readSettings()
-    await this.readOffRecord()
+    await this.retireLegacyOffRecord()
     await this.reloadMap()
     this.stopIfTracked(committed)
     await this.checkRecord()
@@ -709,9 +750,15 @@ export class Guard {
    *  route, may only tighten - add raw-only paths - whoever wrote it, tracked
    *  or not. Its mcpRestore and enabled are ignored, and said once. */
   private async readSettings(): Promise<void> {
-    this.extraRawOnly = [...this.config.rawOnly]
+    // The list is built whole and then swapped in: a call judged while the
+    // file is read (`/veilio on` in a running session) sees the list as it
+    // was, never the plugin's own patterns alone.
+    const rawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
-    if (!(await this.io.exists(this.settingsPath))) return
+    if (!(await this.io.exists(this.settingsPath))) {
+      this.extraRawOnly = rawOnly
+      return
+    }
     let settings: { enabled?: unknown; rawOnly?: unknown; mcpRestore?: unknown }
     // A read that fails throws to the caller (round 4 #6: /veilio on stops
     // with #43); only text that is not JSON stops the guard here.
@@ -722,7 +769,8 @@ export class Guard {
       this.stop(`.veilio/guard.json is not valid JSON`)
       return
     }
-    this.extraRawOnly.push(...rawOnlyOf(settings))
+    rawOnly.push(...rawOnlyOf(settings))
+    this.extraRawOnly = rawOnly
     // Spec 085 R2-15 (#61): a pattern that can never match protects nothing.
     for (const p of this.extraRawOnly)
       if (p && !p.startsWith('!') && normaliseRawOnlyPattern(p) === null)
@@ -738,36 +786,35 @@ export class Guard {
     this.notices.push(text)
   }
 
-  get offRecordPath(): string | undefined {
-    return this.home ? join(this.home, '.veilio', 'guard-state.json') : undefined
-  }
-
-  /** The project's key in the off record: the root's real path. */
-  private async recordKey(): Promise<string> {
-    return (await this.io.realPath(this.root)) ?? this.root
-  }
-
-  /** The off record, or null when there is none; throws when it cannot be read. */
-  private async offRecord(): Promise<{ version: 1; projects: Record<string, unknown> } | null> {
-    const path = this.offRecordPath
-    if (!path || !(await this.io.exists(path))) return null
-    const parsed: unknown = JSON.parse(await this.io.read(path))
-    const projects = (parsed as { projects?: unknown } | null)?.projects
-    if (!projects || typeof projects !== 'object' || Array.isArray(projects))
-      throw new Error('not an off record')
-    return { version: 1, projects: projects as Record<string, unknown> }
-  }
-
-  /** Spec 078 FR-010: whether /veilio off was run for this project. An
-   *  unreadable record never turns the guard off. */
-  private async readOffRecord(): Promise<void> {
-    this.offRecordUnreadable = false
+  /** /veilio off lasts for the session and lives only in this object: nothing
+   *  about on or off is read from or written to disk, so no file can switch the
+   *  guard off. Files an older version kept for it are removed, and the band
+   *  says so once when one had this project off. */
+  private async retireLegacyOffRecord(): Promise<void> {
+    this.legacyOffRecord = false
+    if (!this.home) return
+    const dir = join(this.home, '.veilio')
+    const state = join(dir, 'guard-state.json')
     try {
-      const record = await this.offRecord()
-      const entry = record?.projects[await this.recordKey()] as { enabled?: unknown } | undefined
-      if (entry?.enabled === false && this.state === 'on') this.state = 'off'
+      if (await this.io.exists(state)) {
+        let wasOff = false
+        try {
+          const projects = (JSON.parse(await this.io.read(state)) as { projects?: unknown } | null)
+            ?.projects as Record<string, { enabled?: unknown } | undefined> | undefined
+          const key = (await this.io.realPath(this.root)) ?? this.root
+          wasOff = projects?.[key]?.enabled === false
+        } catch {
+          // Any content: it is removed all the same.
+        }
+        await this.io.remove?.(state).catch(() => undefined)
+        // Said only when it is gone: a file that stays is never read, and the
+        // band cannot tell later sessions it was already said.
+        this.legacyOffRecord = wasOff && !(await this.io.exists(state))
+      }
+      const secret = join(dir, 'guard-secret')
+      if (await this.io.exists(secret)) await this.io.remove?.(secret).catch(() => undefined)
     } catch {
-      this.offRecordUnreadable = true
+      // Not removed: still never read.
     }
   }
 
@@ -1043,31 +1090,13 @@ export class Guard {
     this.stoppedReason = reason
   }
 
-  /** /veilio off|on: recorded in ~/.veilio/guard-state.json (spec 078
-   *  FR-010), never in the project. Says whether it was recorded. */
-  async setEnabled(enabled: boolean): Promise<boolean> {
-    const path = this.offRecordPath
-    let recorded = false
-    if (path) {
-      let record: { version: 1; projects: Record<string, unknown> } = { version: 1, projects: {} }
-      try {
-        record = (await this.offRecord()) ?? record
-      } catch {
-        // An unreadable record is replaced: this is the user's own choice.
-      }
-      const key = await this.recordKey()
-      const projects = { ...record.projects }
-      if (enabled) delete projects[key]
-      else projects[key] = { enabled: false, changedAt: new Date().toISOString().slice(0, 10) }
-      const text = `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
-      if (!(await this.io.exists(path))) await this.createOwnerOnly(path, '', false)
-      await this.io.write(path, text)
-      this.offRecordUnreadable = false
-      recorded = true
-    }
+  /** /veilio off|on: held in memory for the session (see
+   *  retireLegacyOffRecord). */
+  async setEnabled(enabled: boolean): Promise<void> {
+    this.legacyOffRecord = false
     if (!enabled) {
       this.state = 'off'
-      return recorded
+      return
     }
     // Review round 1 #6: stopped while the settings and the map are read
     // again and git is asked, so no call runs on what was not checked; on
@@ -1087,7 +1116,6 @@ export class Guard {
       this.state = 'on'
       this.stoppedReason = ''
     }
-    return recorded
   }
 
   /** Spec 078 FR-014: .veilio and the map must be where they appear, not a
@@ -1711,17 +1739,125 @@ export class Guard {
    *  or where it leads: resolved once for both (review round 2). */
   private async pathHits(
     path: string
-  ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null }> {
-    const raw =
-      isRawOnly(path, this.extraRawOnly) || isRawOnly(normalisePath(path), this.extraRawOnly)
-    const written = isWriteProtected(path)
-    if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path) }
-    const real = await this.io.realPath(this.here(path))
-    return {
-      written: written || (real !== undefined && isWriteProtected(real)),
-      rawOnly: raw || (real !== undefined && isRawOnly(real, this.extraRawOnly)),
-      mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
+  ): Promise<{ written: boolean; rawOnly: boolean; mcp: string | null; folder: boolean }> {
+    // One command asks about the same path several times (as a word, as raw
+    // text, in each directory): answered once per call.
+    const known = this.hitsThisCall?.get(path)
+    if (known) return known
+    // A word that is still longer than any path a system opens (PATH_MAX is
+    // 4,096 on Linux, 1,024 on macOS) once `./`, `//` and `x/../` are read
+    // out of it is text, not a file's name: a quoted script of a hundred
+    // lines is one word. A long spelling of a short path is judged by the
+    // short path (`././…/.env`).
+    if (path.length > MAX_PATH) {
+      const short = normalisePath(path)
+      if (short.length > MAX_PATH)
+        return { written: false, rawOnly: false, mcp: null, folder: false }
+      if (short !== path) return this.pathHits(short)
     }
+    // The engine's matcher tries each pattern at each part of the path.
+    spend(
+      this.cost ?? undefined,
+      PATH_STEPS + Math.ceil((path.split('/').length * path.length) / 400)
+    )
+    const hits = (async () => {
+      const raw = this.rawOnlyPath(path) || this.rawOnlyPath(normalisePath(path))
+      const written = isWriteProtected(path)
+      if (raw && written) return { written, rawOnly: raw, mcp: mcpConfigName(path), folder: false }
+      const real = await this.io.realPath(this.here(path))
+      return {
+        // A folder all of whose files are raw-only (A11), named or led to.
+        folder:
+          namesRawOnlyFolder(path, this.extraRawOnly) ||
+          (real !== undefined && namesRawOnlyFolder(real, this.extraRawOnly)),
+        written: written || (real !== undefined && isWriteProtected(real)),
+        rawOnly: raw || (real !== undefined && this.rawOnlyPath(real)),
+        mcp: mcpConfigName(path) ?? (real !== undefined ? mcpConfigName(real) : null),
+      }
+    })()
+    this.hitsThisCall?.set(path, hits)
+    return hits
+  }
+
+  /** The budget of the shell command being read (A13); null outside one. */
+  private cost: Cost | null = null
+  /** The steps the last shell command took of MAX_STEPS. */
+  lastSteps = 0
+  /** A command Veilio cannot read - unbalanced, a shell given a script or an
+   *  option the reader does not know, a zsh module, past the budget, or
+   *  anything the reader threw: refused, with the command as typed (cut
+   *  where it is longer than anyone would read). */
+  private unreadable(command: string, budget: RuleBudget | undefined): { deny: string } {
+    const shown = command.length > 400 ? `${command.slice(0, 400)}…` : command
+    return this.deny(
+      `Veilio refused this call: Veilio cannot read \`${this.applyText(shown, 'result', undefined, budget)}\` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it`,
+      false
+    )
+  }
+  /** What pathHits answered in the call being judged; null outside one. */
+  private hitsThisCall: Map<
+    string,
+    Promise<{ written: boolean; rawOnly: boolean; mcp: string | null; folder: boolean }>
+  > | null = null
+  private rawOnlyKnown = new Map<string, boolean>()
+  private rawOnlyKnownFor: { list: string[]; size: number } | null = null
+
+  /** isRawOnly for the guard's list, remembered by path: the engine compiles
+   *  every pattern on each call, which was most of a call's time. The answer
+   *  depends on the path and the list only; a changed list forgets it. */
+  private rawOnlyPath(path: string): boolean {
+    const list = this.extraRawOnly
+    if (
+      this.rawOnlyKnownFor?.list !== list ||
+      this.rawOnlyKnownFor.size !== list.length ||
+      this.rawOnlyKnown.size > 20_000
+    ) {
+      this.rawOnlyKnown.clear()
+      this.rawOnlyKnownFor = { list, size: list.length }
+    }
+    let answer = this.rawOnlyKnown.get(path)
+    if (answer === undefined) {
+      answer = isRawOnly(path, list)
+      this.rawOnlyKnown.set(path, answer)
+    }
+    return answer
+  }
+
+  /** A command word as it was typed, for a refusal: known names are put back
+   *  to their placeholders, and nothing else is changed, so `$DIR/.env` and
+   *  `"$PWD"/.en*` read as written (the secret scan took `/.en*` for a key).
+   *  A word that still holds a credential, or is long or not printable, is
+   *  masked as any text for the model is. */
+  private typed(raw: string, budget: RuleBudget): string {
+    let text = raw
+    const names = Object.entries({ ...this.map, ...this.unsaved }).sort(
+      (a, b) => b[1].length - a[1].length
+    )
+    for (const [placeholder, real] of names) if (real) text = text.split(real).join(placeholder)
+    return text.length <= 200 &&
+      printable(text) === text &&
+      survivingSecrets(text, this.map).length === 0
+      ? text
+      : this.applyText(raw, 'result', undefined, budget)
+  }
+
+  /** A name the shell spells without a wildcard: an absolute path as it is,
+   *  a relative one in the session's directory (as written) and in each other
+   *  directory `dirs` the shell may be in during the command. */
+  private async spelledHits(name: string, dirs: readonly string[]) {
+    const path = normalisePath(name)
+    const at = /^[/\\~]|^[A-Za-z]:/.test(path)
+      ? [path]
+      : [name, ...dirs.filter((d) => d !== this.cwd).map((d) => join(d, path))]
+    const out = { written: false, rawOnly: false, mcp: null as string | null, folder: false }
+    for (const p of at) {
+      const h = await this.pathHits(p)
+      out.written ||= h.written
+      out.rawOnly ||= h.rawOnly
+      out.folder ||= h.folder
+      out.mcp ??= h.mcp
+    }
+    return out
   }
 
   /** The refusal for a write-protected path: settings, or the MCP list (#59). */
@@ -1794,6 +1930,18 @@ export class Guard {
   async beforeTool(
     e: ToolEvent,
     budget: RuleBudget = ruleBudget()
+  ): Promise<{ deny: string } | { args: ToolEvent }> {
+    try {
+      return await this.judgeCall(e, budget)
+    } finally {
+      // What pathHits remembered holds for this call only.
+      this.hitsThisCall = null
+    }
+  }
+
+  private async judgeCall(
+    e: ToolEvent,
+    budget: RuleBudget
   ): Promise<{ deny: string } | { args: ToolEvent }> {
     let policy = argumentPolicy(e.tool, this.mcpRestore)
     const servers = mcpServersOf(e.tool)
@@ -1907,129 +2055,330 @@ export class Guard {
           false
         )
     if (policy.command) {
+      this.hitsThisCall = new Map()
       const dirs = rawOnlyDirectories([...DEFAULT_RAW_ONLY, ...this.extraRawOnly])
-      for (const c of [e[policy.command], args[policy.command]]) {
-        if (typeof c !== 'string') continue
-        // Spec 078 FR-008: a cd there would let a later command read it by a
-        // short name, in this call or the next (the shell keeps its directory).
-        // A glob target could be any of them (review round 1 of spec 078).
-        const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
-        if (into !== undefined)
-          return this.deny(
-            `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
-            false
-          )
-        // Spec 086: the cd rules, on what the reader reads; a command it
-        // cannot read is judged as main judges it (FR-003).
-        const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
-        const parsed = e.tool === 'Bash' || e.tool === 'PowerShell' ? parseShell(c, dialect) : null
-        let moves: string[] = []
-        // T029 review: code run from text, and new names for commands, in a
-        // PowerShell command the reader read too.
-        const psCode =
-          parsed?.ok && dialect === 'ps'
-            ? PS_CODE.test(c)
-              ? 'code run from text'
-              : PS_ALIAS.test(c)
-                ? 'a new name for a command'
+      // One budget for reading this call's command (reading table A13); a
+      // command read past it, or anything the reader throws, is a command
+      // Veilio cannot read: refused.
+      const cost = newCost()
+      this.cost = cost
+      let reading = ''
+      try {
+        // The command as given and with its placeholders restored: read once
+        // when the two are the same text (no placeholder in it).
+        for (const c of new Set([e[policy.command], args[policy.command]])) {
+          if (typeof c !== 'string') continue
+          reading = c
+          if (c.length > MAX_COMMAND) return this.unreadable(c, budget)
+          // Spec 091 FR-011: text in the command (code after -c or -e, a quoted
+          // argument, a here-document) that names Veilio's folder as a path,
+          // whatever program receives it. A command the reader cannot read is
+          // judged on its whole text.
+          const shRead = parseShell(c, 'sh', cost)
+          // Text a program only prints, stores or searches for is not judged
+          // (reading table A12): `data` for the reader's checks, `seen` - the
+          // command with those places blanked - for the checks on its text.
+          const data = e.tool === 'Bash' && shRead.ok ? dataPositions(shRead.list) : undefined
+          const seen = data ? withoutData(c, data) : c
+          // Scripts in another program's own language (`sed`, `awk`, `jq`,
+          // `python -c`, ...): judged for a name written plainly in them, not
+          // as shell wildcards and not as a shell's script (reading table §9).
+          const own = e.tool === 'Bash' && shRead.ok ? ownScripts(shRead.list) : null
+          const notShell: Data | undefined =
+            data && own
+              ? {
+                  words: new Set([...data.words, ...own.words]),
+                  bodies: data.bodies,
+                  inside: new Set([...data.inside, ...own.inside]),
+                }
+              : data
+          if (shRead.ok ? textsOf(shRead.list, data).some(namesVeilioFolder) : namesVeilioFolder(c))
+            return this.deny(INTERPRETER_GUARD_STATE)
+          // Spec 078 FR-008: a cd there would let a later command read it by a
+          // short name, in this call or the next (the shell keeps its directory).
+          // A glob target could be any of them (review round 1 of spec 078).
+          const into = cdTargetsToJudge(c).find((t) => /[*?[]/.test(t) || cdIntoRawOnly(t, dirs))
+          if (into !== undefined)
+            return this.deny(
+              `Veilio keeps \`${this.applyText(into, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+              false
+            )
+          // Spec 086: the cd rules, on what the reader reads; a command it
+          // cannot read is judged as main judges it (FR-003).
+          const dialect = e.tool === 'PowerShell' ? 'ps' : 'sh'
+          const parsed =
+            e.tool === 'Bash'
+              ? shRead
+              : e.tool === 'PowerShell'
+                ? parseShell(c, dialect, cost)
                 : null
-            : null
-        if (psCode)
-          return this.deny(
-            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (${psCode}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
-            false
-          )
-        if (parsed?.ok && dialect === 'ps' && PS_DRIVE.test(c) && PS_LOCATION.test(c))
-          return this.deny(
-            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a drive this command creates), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
-            false
-          )
-        if (parsed?.ok) {
-          const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
-          // Q3 = A: with no host report, a call that would leave the shell
-          // in more directories than the bound is refused before it runs.
-          const r =
-            walk.refusal ??
-            (this.hostOverflow || (walk.endAll === null && !this.hostReports && !this.assumeSuccess)
-              ? { kind: 'N1' as const, target: c, form: 'too many possible directories' }
-              : null)
-          if (r?.kind === 'N2')
+          let moves: string[] = []
+          // T029 review: code run from text, and new names for commands, in a
+          // PowerShell command the reader read too.
+          const psCode =
+            parsed?.ok && dialect === 'ps'
+              ? PS_CODE.test(c)
+                ? 'code run from text'
+                : PS_ALIAS.test(c)
+                  ? 'a new name for a command'
+                  : null
+              : null
+          if (psCode)
             return this.deny(
-              'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user',
+              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (${psCode}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
               false
             )
-          if (r)
+          if (parsed?.ok && dialect === 'ps' && PS_DRIVE.test(c) && PS_LOCATION.test(c))
             return this.deny(
-              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(r.target || c, 'result', undefined, budget)}\` takes the shell (${r.form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a drive this command creates), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
               false
             )
-          for (const l of walk.landings)
-            for (const d of l.dirs)
-              if (await this.landsRawOnly(d, dirs))
+          if (parsed?.ok) {
+            // One step for each word that will be judged, charged before the
+            // command is walked: a flood of words is refused for its cost
+            // here, not after the work each of them takes.
+            const judged = judgedWords(
+              parsed.list,
+              notShell ? { ...notShell, words: data!.words } : data
+            )
+            spend(cost, judged.words)
+            // Each word costs two steps more when it is spelled out, and each
+            // distinct plain word a path check at least: a command that
+            // cannot pay for them is refused before that work is done.
+            if (judged.spelled * 2 + judged.literals * PATH_STEPS > cost.steps)
+              return this.unreadable(c, budget)
+            const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
+            // Q3 = A: with no host report, a call that would leave the shell
+            // in more directories than the bound is refused before it runs.
+            const r =
+              walk.refusal ??
+              (this.hostOverflow ||
+              (walk.endAll === null && !this.hostReports && !this.assumeSuccess)
+                ? { kind: 'N1' as const, target: c, form: 'too many possible directories' }
+                : null)
+            if (r?.kind === 'N2')
+              return this.deny(
+                'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user',
+                false
+              )
+            if (r)
+              return this.deny(
+                `Veilio refused this call: Veilio cannot tell where \`${this.applyText(r.target || c, 'result', undefined, budget)}\` takes the shell (${r.form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
+                false
+              )
+            for (const l of walk.landings)
+              for (const d of l.dirs)
+                if (await this.landsRawOnly(d, dirs))
+                  return this.deny(
+                    // A target with no path in it (`cd`, `cd -`, `popd`) is shown as where it goes.
+                    `Veilio keeps \`${this.applyText(/^(?:cd|chdir|pushd|popd|-)$/.test(l.target) ? d : l.target, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+                    false
+                  )
+            // Spec 091: every word of the command, wherever it stands (the
+            // reading table), as the shell can read it - quotes and escapes
+            // gone, braces and bracket lists expanded, a written default as one
+            // more spelling - and in the pieces a program may take as a file
+            // name, in each directory the shell may be in where the word is
+            // read. A wildcard is refused when it could name a raw-only file.
+            const home = typeof this.dirs.vars.HOME === 'object' ? this.dirs.vars.HOME.value : null
+            const homeKnown = home !== null && walk.points.every((point) => point.home === home)
+            // A word the cd walk read is judged where the walk says the shell
+            // is at that point. A word the walk does not read (a redirect on a
+            // loop, a written default, a command inside arithmetic or a
+            // here-document) is judged where the nearest word or command
+            // around it is read; one in a command the walk never reaches, in
+            // the session's directory alone.
+            // A command that changes how the shell reads words (`setopt`, an
+            // unusual `shopt` or `set` option) is read strictly.
+            const strict = readsStrictly(parsed.list)
+            // Text read again as a script is still text: a folder's bare name
+            // in it is a mention (`-t '.veilio folder'`), `.veilio/` a path (A11).
+            const reread = rereadLists(parsed.list)
+            const where = new Map<Word, Set<string>>()
+            for (const point of walk.points)
+              for (const w of point.words) {
+                const dirs = where.get(w) ?? new Set()
+                for (const d of point.dirs) dirs.add(d)
+                where.set(w, dirs)
+              }
+            const around = new Map<object, string[]>()
+            const dirsAround = (x: object): string[] => {
+              let dirs = around.get(x)
+              if (dirs === undefined) {
+                dirs = [
+                  ...new Set(wordsWithin(x).flatMap(({ word }) => [...(where.get(word) ?? [])])),
+                ]
+                around.set(x, dirs)
+              }
+              return dirs
+            }
+            for (const { word: w, within } of wordsWithin(parsed.list)) {
+              if (notShell && within.some((x) => notShell.inside.has(x))) continue
+              if (data?.words.has(w)) {
+                // Text a program only prints or stores: not matched against
+                // the list. What the shell does while expanding the word is
+                // judged all the same - one it rewrites or runs code in
+                // (`echo *(e:'...':)`) is refused here as anywhere.
+                if (spellings(w, { home: null, homeKnown: false, strict: false, cost }) === 'any')
+                  return this.deny(
+                    `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
+                    false
+                  )
+                continue
+              }
+              // Text read again as a script because some program may run it
+              // may be code of another language, where `f(x)` is a call, not
+              // a glob: there a word holding a plain group that is not read
+              // exactly is left to the text floor. Every other word and
+              // command of the text is judged (reading table §8.1, A5 (b)).
+              if (
+                within.some(isTextScript) &&
+                w.parts.some((p) => p.kind === 'zglob' && p.any && !p.alternatives && !p.prefixed)
+              )
+                continue
+              let at = [...(where.get(w) ?? [])]
+              for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
+                if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
+              // A word of many bracket expressions is charged before it is
+              // matched: the matcher's work grows with their number squared.
+              const brackets = w.parts.reduce((n, p) => n + (p.kind === 'glob' ? 1 : 0), 0)
+              if (brackets > 8) spend(cost, brackets * brackets)
+              const read = spellings(w, { home, homeKnown, strict, cost })
+              // A zsh expansion that rewrites text written in the command:
+              // the word could be any name.
+              if (read === 'any')
                 return this.deny(
-                  // A target with no path in it (`cd`, `cd -`, `popd`) is shown as where it goes.
-                  `Veilio keeps \`${this.applyText(/^(?:cd|chdir|pushd|popd|-)$/.test(l.target) ? d : l.target, 'result', undefined, budget)}\` away from the model, and a cd there would let a later command read it. Name the files you need by their full path, or ask the user`,
+                  `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
                   false
                 )
-          // Each word of each command, in every directory the shell may be
-          // in there, `~` read with HOME as it is there (FR-010).
-          for (const point of walk.points)
-            for (const w of point.words) {
-              const path = wordPath(w, point.home)
-              if (path === null) continue
-              // PowerShell's separator is `\\` too.
-              const text = dialect === 'ps' ? path.replace(/\\/g, '/') : path
-              for (const piece of pathsInCommand(text)) {
-                // An absolute path as written is checked below; one `~` became is not.
-                const at = /^[/\\]|^[A-Za-z]:/.test(piece)
-                  ? w.literal === null
-                    ? [normalisePath(piece)]
-                    : []
-                  : // The session's directory: checked below, as written.
-                    point.dirs.filter((d) => d !== this.cwd).map((d) => join(d, piece))
-                for (const p of at) {
-                  const h = await this.pathHits(p)
+              const dots = dotsMatch(w, strict)
+              for (const spelling of read) {
+                const name = dialect === 'ps' ? spelling.replace(/\\/g, '/') : spelling
+                for (const piece of pieces(name)) {
+                  const h = /[*?[\ue000]/.test(piece)
+                    ? {
+                        written: false,
+                        mcp: null,
+                        rawOnly: globMayBeRawOnly(piece, this.extraRawOnly, dots, cost),
+                        folder: namesRawOnlyFolder(piece, this.extraRawOnly, dots, cost),
+                      }
+                    : await this.spelledHits(piece, at)
                   if (h.written) return this.denyProtected([h])
-                  if (h.rawOnly)
+                  // A raw-only file, or a folder that holds only such files (A11).
+                  if (h.rawOnly || (h.folder && !within.some((x) => reread.has(x))))
                     return this.deny(
-                      `Veilio keeps ${this.applyText(w.literal === null ? w.raw : piece, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
+                      // A word spelled as it was typed is shown by its piece
+                      // that names the file (`.env` of `--env-file=.env`).
+                      `Veilio keeps ${this.typed(spelling === w.raw ? piece : w.raw, budget)} away from the model. Ask the user for what you need from it`,
                       false
                     )
                 }
               }
             }
-        } else if (dialect === 'sh' && parsed && SH_UNREADABLE.test(c))
-          // A bash/zsh command the reader cannot read (past its bounds), that
-          // names anything the walk refuses or follows: refused (re-review).
-          return this.deny(
-            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
-            false
+            // Each plain word of each command, in every directory the shell may
+            // be in there, `~` read with HOME as it is there (FR-010).
+            for (const point of walk.points)
+              for (const w of point.words) {
+                if (data?.words.has(w)) continue
+                const path = wordPath(w, point.home)
+                if (path === null) continue
+                // PowerShell's separator is `\\` too.
+                const text = dialect === 'ps' ? path.replace(/\\/g, '/') : path
+                for (const piece of pathsInCommand(text)) {
+                  // An absolute path as written is checked below; one `~` became is not.
+                  const at = /^[/\\]|^[A-Za-z]:/.test(piece)
+                    ? w.literal === null
+                      ? [normalisePath(piece)]
+                      : []
+                    : // The session's directory: checked below, as written.
+                      point.dirs.filter((d) => d !== this.cwd).map((d) => join(d, piece))
+                  for (const p of at) {
+                    const h = await this.pathHits(p)
+                    if (h.written) return this.denyProtected([h])
+                    if (h.rawOnly)
+                      return this.deny(
+                        `Veilio keeps ${this.typed(w.literal === null ? w.raw : piece, budget)} away from the model. Ask the user for what you need from it`,
+                        false
+                      )
+                  }
+                }
+              }
+          } else if (dialect === 'sh' && parsed)
+            // Spec 091 FR-010: a bash/zsh command the reader cannot read
+            // (unbalanced, or past its bounds) is refused.
+            return this.unreadable(c, budget)
+          else if (dialect === 'ps' && parsed && !parsed.ok && parsed.why === 'cost')
+            return this.unreadable(c, budget)
+          else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
+            // A PowerShell command the reader does not model, naming a
+            // location command anywhere: refused (review of the PowerShell
+            // path), in the words for a command Veilio cannot read. The cd
+            // refusals above keep theirs.
+            return this.unreadable(c, budget)
+          else moves = this.shellDirsOf(c)
+          // Spec 085 H17: a word after a cd names a file in the directory the
+          // shell moved to, in this call or an earlier one: checked there too.
+          // Spec 091 FR-009: then the same check on the text with line
+          // continuations, quotes and backslashes removed - a floor that does
+          // not depend on the reader, showing the chunk as it was typed.
+          const floor = textPieces(parsed?.ok ? parsed.list : null, seen, data)
+          // A piece with a wildcard, a bracket or a brace is judged as a word
+          // (reading table A8): expanded, and matched against the list.
+          // Another program's own script is not shell wildcards.
+          const wild =
+            notShell && own && own.words.size > 0
+              ? textPieces(parsed?.ok ? parsed.list : null, withoutData(c, notShell), notShell)
+              : floor
+          for (const [typed, read] of wild) {
+            spend(cost)
+            if (!/[*?[{]/.test(read)) continue
+            const brackets = read.split('[').length - 1
+            if (brackets > 8) spend(cost, brackets * brackets)
+            for (const name of braceNames(bracketsRead(read)))
+              for (const piece of pieces(name)) {
+                if (piece.startsWith('-')) continue
+                const hit = /[*?[]/.test(piece)
+                  ? globMayBeRawOnly(piece, this.extraRawOnly, false, cost)
+                  : (await this.spelledHits(piece, [])).rawOnly
+                if (hit)
+                  return this.deny(
+                    `Veilio keeps ${this.typed(typed, budget)} away from the model. Ask the user for what you need from it`,
+                    false
+                  )
+              }
+          }
+          const texts: [word: string, typed: string | null][] = [
+            ...pathsInCommand(seen).map((word): [string, null] => [word, null]),
+            ...floor.flatMap(([typed, read]) =>
+              pathsInCommand(read).map((word): [string, string] => [word, typed])
+            ),
+          ]
+          // The path checks these will cost, before one is made.
+          const unasked = new Set(
+            texts.map(([word]) => word).filter((w) => !this.hitsThisCall?.has(w))
           )
-        else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
-          // A PowerShell command the reader does not model, naming a
-          // location command anywhere: refused (review of the PowerShell path).
-          return this.deny(
-            `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
-            false
-          )
-        else moves = this.shellDirsOf(c)
-        // Spec 085 H17: a word after a cd names a file in the directory the
-        // shell moved to, in this call or an earlier one: checked there too.
-        for (const word of pathsInCommand(c)) {
-          const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
-          // Spec 078 FR-012, found the way raw-only files are (review round 1).
-          const hits = []
-          for (const at of [word, ...under]) hits.push(await this.pathHits(at))
-          if (hits.some((h) => h.written)) return this.denyProtected(hits)
-          const hit =
-            hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
-          if (hit) {
-            return this.deny(
-              `Veilio keeps ${this.applyText(word, 'result', undefined, budget)} away from the model. Ask the user for what you need from it`,
-              false
-            )
+          if (unasked.size * PATH_STEPS > cost.steps) return this.unreadable(c, budget)
+          for (const [word, typed] of texts) {
+            const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
+            // Spec 078 FR-012, found the way raw-only files are (review round 1).
+            const hits = []
+            for (const at of [word, ...under]) hits.push(await this.pathHits(at))
+            if (hits.some((h) => h.written)) return this.denyProtected(hits)
+            const hit =
+              hits[0]!.rawOnly || shortNameAlias(word, this.windows) || hits.some((h) => h.rawOnly)
+            if (hit) {
+              return this.deny(
+                `Veilio keeps ${typed === null ? this.applyText(word, 'result', undefined, budget) : this.typed(typed, budget)} away from the model. Ask the user for what you need from it`,
+                false
+              )
+            }
           }
         }
+      } catch {
+        return this.unreadable(reading, budget)
+      } finally {
+        this.lastSteps = MAX_STEPS - cost.steps
+        this.cost = null
       }
     }
 
@@ -2854,18 +3203,6 @@ const PS_CODE = new RegExp(
 )
 /** PowerShell giving a command a new name. */
 const PS_ALIAS = /\w-alias\b|(?<![\w-])(?:sal|nal|ipal|epal)(?![\w-])|alias:/i
-/** A bash/zsh command past the reader's bounds is refused when it holds any
- *  quote, backslash, `$`, backtick, parenthesis or newline, or names a cd or
- *  anything that can move the shell or run text; otherwise 078's verdict. */
-const SH_UNREADABLE = new RegExp(
-  String.raw`['"\\$` +
-    '`' +
-    String.raw`()\n]|(?<![\w-])(?:cd|pushd|popd|chdir|eval|trap|source|emulate|shopt|setopt|unsetopt|set|alias|ln|cp|mv|options|mapfile|readarray|` +
-    INTERPRETERS +
-    String.raw`)(?![\w-])|(?:^|[;&|{\s])\.\s` +
-    // a lone word as a command: zsh may read it as a cd (AUTO_CD)
-    String.raw`|(?:^|[;&|\n])\s*[^\s;&|]+\s*(?:$|[;&|\n])`
-)
 /** A drive the command makes: with a location command beside it, refused. */
 const PS_DRIVE = /new-psdrive|(?<![\w-])(?:ndr|mount)(?![\w-])/i
 const MOVES = /(?:^|&&|\|\||[;|&\n(])\s*(?:cd|pushd|popd)(?:\s|$)/

@@ -26,8 +26,10 @@ inputs:
       Version of the Veilio CLI to run. The diff-scoped default scans each
       changed file with `veilio scan --blobs`, which a CLI older than this
       action's release does not have: a pinned older version fails the step.
+      Defaults to the CLI version released with this action; set `latest` to
+      run the newest published CLI instead.
     required: false
-    default: 'latest'
+    default: '0.12.1'
 
 outputs:
   findings:
@@ -107,6 +109,13 @@ runs:
         MODE: ${{ steps.targets.outputs.mode }}
       run: |
         set -uo pipefail
+        # The default names the version released with this action, which is on
+        # npm only once the release has published. Until then there is nothing
+        # to run: said plainly, and never a quiet fall back to `latest`.
+        if [ -z "$(npm view "@veilio-inc/cli@$VERSION" version 2>/dev/null)" ]; then
+          echo "veilio action: @veilio-inc/cli@$VERSION could not be found on the npm registry (not published, or the registry could not be reached), so nothing was scanned and this step fails. Set \`version:\` to a published version, or to \`latest\`." >&2
+          exit 1
+        fi
         args=""
         if [ "$STRICT" = "true" ]; then args="--strict"; fi
 

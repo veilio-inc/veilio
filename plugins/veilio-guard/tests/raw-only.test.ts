@@ -506,6 +506,9 @@ const A2 = (w: string) =>
   `Veilio keeps ${w} away from the model. Ask the user for what you need from it.`
 const N1 = (t: string, form: string) =>
   `Veilio refused this call: Veilio cannot tell where \`${t}\` takes the shell (${form}), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path.`
+/** A command Veilio cannot read (spec 091 addendum 2: its own text, not the cd one). */
+const UNREAD = (t: string) =>
+  `Veilio refused this call: Veilio cannot read \`${t}\` as a shell command, so it cannot tell whether it names a file Veilio keeps away from the model. Write it more simply, or ask the user to run it.`
 const N2 =
   'Veilio refused this call: it sets HOME and names `~`, so Veilio cannot tell which files `~` stands for. Name the files by their full path, or ask the user.'
 const HOME_FILES = {
@@ -577,7 +580,8 @@ const ATTACKS: [string, string | undefined][] = [
   // Round 5
   ['HOME=~/.kube cd; cat config', A1(`${HOME}/.kube`)],
   ['OLDPWD=~/.kube cd -', A1(`${HOME}/.kube`)],
-  ['env HOME=~/.kube cd', undefined],
+  // Addendum 2 (A11): a word that names a folder of only raw-only files is refused.
+  ['env HOME=~/.kube cd', A2('HOME=~/.kube')],
   ['exec cd src', undefined],
   ['LC_ALL=C cd src', undefined],
   ["bash -c 'HOME=~/.kube cd; cat config'", A1(`${HOME}/.kube`)],
@@ -620,14 +624,14 @@ const ATTACKS: [string, string | undefined][] = [
     'declare "${x}"=~/.config; cd gcloud',
     N1('gcloud', 'CDPATH set in this command to a value Veilio cannot read'),
   ],
-  ['HOME=~/.kube; cat ~/credentials', A2('~/credentials')],
+  ['HOME=~/.kube; cat ~/credentials', A2('~/.kube')],
   ['HOME=~/.kube; cd ~; cat config', A1('~')],
   // COVERAGE #47's parked forms: zsh `cd old new` (the root is /work/project), AUTO_CD, a loop
   ['cd project .kube', A1('project .kube')],
   ['X= cd project .kube', A1('project .kube')],
   ['if cd project .kube; then cat config; fi', A1('project .kube')],
   ['~/.kube', A1('~/.kube')],
-  ['.kube', undefined],
+  ['.kube', A2('.kube')],
   ['for HOME in ~/.kube; do cd; cat config; done', N1('HOME=', 'a cd in a loop')],
   ["cd ~/.kub$'\\x65'", N1("~/.kub$'\\x65'", 'ANSI-C quoting')],
   ['cd .vei{l..l}io', N1('.vei{l..l}io', 'braces')],
@@ -716,17 +720,11 @@ const REVIEWED: [string, string | undefined][] = [
     N1('python3 -c "import os; os.symlink(1, 2)"', 'a cd after code this command ran'),
   ],
   ['mkdir build && cd build && cmake ..', undefined],
-  // Past the reader's bounds with no quote, backslash, $, backtick, paren or
-  // newline: nothing in it builds text, so 078's verdict.
-  [`echo ${'{'.repeat(201)} ls`, undefined],
-  [
-    `echo ${'{'.repeat(201)}; foo`,
-    N1(`echo ${'{'.repeat(201)}; foo`, 'a command Veilio cannot read'),
-  ],
-  [
-    `echo ${'{'.repeat(201)}; cd src`,
-    N1(`echo ${'{'.repeat(201)}; cd src`, 'a command Veilio cannot read'),
-  ],
+  // Past the reader's bounds: a command Veilio cannot read is refused,
+  // whatever it holds (spec 091 FR-010; before, only one that built text).
+  [`echo ${'{'.repeat(201)} ls`, UNREAD(`echo ${'{'.repeat(201)} ls`)],
+  [`echo ${'{'.repeat(201)}; foo`, UNREAD(`echo ${'{'.repeat(201)}; foo`)],
+  [`echo ${'{'.repeat(201)}; cd src`, UNREAD(`echo ${'{'.repeat(201)}; cd src`)],
   // After an interpreter or a shell ran, every cd but a logical `cd ..` and
   // `cd -` is refused (coordinator's rule (b)): a link it made is not entered.
   ['perl -e 1; cd k', N1('perl -e 1', 'a cd after code this command ran')],
@@ -824,10 +822,7 @@ const REVIEWED: [string, string | undefined][] = [
   // past the reader's bounds, anything that could move the shell: refused
   [
     `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
-    N1(
-      `echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`,
-      'a command Veilio cannot read'
-    ),
+    UNREAD(`echo ${'{'.repeat(201)}; x=.kub; eval cd "~/\${x}e"; cat config`),
   ],
   [
     'x=.kub; trap "cd ~/${x}e" DEBUG; cat config',

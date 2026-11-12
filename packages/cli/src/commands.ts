@@ -329,7 +329,8 @@ export async function runScrub(
     // has a comment beside code, so this fires on almost every run; surviving
     // --quiet would defeat the flag and teach people to stop passing it. The
     // engine reports it on every result either way, so nothing is hidden from a
-    // caller that wants it.
+    // caller that wants it. The figure is the comment text left as written: a
+    // name the map holds is masked in a comment and not counted.
     const comments = results.reduce(
       (sum, { result }) => ({
         total: sum.total + result.comments.total,
@@ -342,8 +343,8 @@ export async function runScrub(
       const { total, inline, characters } = comments
       const where = inline === 0 ? 'above the code' : `${inline} inside the body`
       io.stderr(
-        `${BIN_NAME}: ${total} comment${total === 1 ? '' : 's'} (${where}) left as written — ` +
-          `${characters} characters of prose are NOT masked. Names and ticket numbers in them go out as typed.\n`
+        `${BIN_NAME}: ${total} comment${total === 1 ? '' : 's'} (${where}) hold${total === 1 ? 's' : ''} text left as written — ` +
+          `${characters} characters. Names the map holds are masked in comments; people, customers, ticket numbers and other words go out as typed.\n`
       )
     }
     const secrets = results.flatMap(({ name, result }) => result.secrets.map((f) => ({ f, name })))

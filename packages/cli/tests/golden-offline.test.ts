@@ -33,6 +33,10 @@ import type { Io } from '../src/commands.js'
  * text holding one is not the file. One line added by hand to "scrub then
  * restore" - the fixture was not regenerated.
  *
+ * Spec 092 (the founder approved the wording on 2026-11-11): the stderr comment note
+ * says what is masked in comments. That sentence was replaced by hand in the 13
+ * lines that hold it - the fixture was not regenerated.
+ *
  * The one thing normalised is the temp directory's path, which `map` prints.
  */
 

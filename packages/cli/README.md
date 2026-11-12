@@ -526,20 +526,15 @@ On Windows the CLI cannot check who owns a folder, so it uses a `.veilio` folder
 The Action scans pull requests on the pull_request and pull_request_target events, and pushes on push. On any other event it fails rather than scan the wrong commits; use `mode: paths` there.
 
 ```yaml
-- uses: veilio-inc/veilio/packages/cli@v0.1.0
+- uses: veilio-inc/veilio/packages/cli@main
   with:
     strict: false # also fail on emails / private IPs
     sarif: veilio.sarif # optional: upload to code scanning
 ```
 
-**This example does not work yet, and needs a tag that does not exist.** The
-`@v0.1.0` ref is a git tag on this repository, and the tags here are `engine-v*`
-(cut by semantic-release for the engine) and `@veilio-inc/cli@*` /
-`@veilio-inc/mcp@*` (cut by Changesets when the tools release) — neither shape
-matches. The Action's own script runs `npx --yes @veilio-inc/cli@<version>`,
-which is satisfied now that the CLI is published; what is left is a `v*.*.*` tag
-someone has to cut, and note that `v*.*.*` is also what triggers the Community
-Edition release workflow, so the two are not independent.
+`@main` works today. For a build you can audit and that does not change under you, pin the full commit SHA of the release you reviewed in place of `main`. Between a release being prepared and its packages reaching npm, `@main` can name a version that is not published yet; the step then fails without scanning. A pinned commit avoids this.
+
+The Action runs the CLI version it was released with. To run a different one, set `version:` to that version (for example `version: 0.12.1`). To run the newest published CLI instead, set `version: latest`; the Action then runs whatever is published on the day, with your repository's token. If the version cannot be found on the npm registry, the step fails and names it; it never falls back to `latest`.
 
 Scans the **pull-request diff** by default, not the whole tree. A repo adopting
 this mid-life almost always has a historical finding somewhere; blocking every PR

@@ -494,6 +494,33 @@ describe('restore_text', () => {
     expect(restored.text).toContain('chargeCard')
   })
 
+  // Two `//` comments and no doc comment: restore removes a JSDoc block as AI
+  // noise, the file's own included.
+  const COMMENTED =
+    'export class QuasarLedgerReconciler {\n' +
+    '  // calls settleInvoice for AcmePay\n' +
+    '  settleInvoice() { return 1 } // QuasarLedgerReconciler inline\n' +
+    '}\n'
+
+  it('anonymize_file: a name the map holds is masked in a comment and restores exactly', () => {
+    write('ledger.ts', COMMENTED)
+    const masked = call('anonymize_file', { path: 'ledger.ts' })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    expect(body).not.toContain('QuasarLedgerReconciler')
+    expect(body).not.toContain('settleInvoice')
+    expect(body).toContain('for AcmePay')
+    expect(call('restore_text', { text: body }).text).toContain(COMMENTED)
+  })
+
+  it('anonymize_text: a name the map holds is masked in a comment and restores exactly', () => {
+    const masked = call('anonymize_text', { text: COMMENTED })
+    const body = masked.text.split('--- masked code ---\n')[1]
+    expect(body).not.toContain('QuasarLedgerReconciler')
+    expect(body).not.toContain('settleInvoice')
+    expect(body).toContain('for AcmePay')
+    expect(call('restore_text', { text: body }).text).toContain(COMMENTED)
+  })
+
   it('errors when there is no map yet', () => {
     const res = call('restore_text', { text: '__CLS__1' })
     expect(res.isError).toBe(true)
@@ -797,7 +824,7 @@ describe('what the masking did not cover reaches the agent (004-b3, 002-b4)', ()
   it('tells the caller comment prose is unmasked', () => {
     write('a.ts', '// Ping Kowalska about Contoso, see INC-4471\n' + TS)
     const { text } = call('anonymize_file', { path: 'a.ts' })
-    expect(text).toMatch(/Comment prose is NOT masked/)
+    expect(text).toMatch(/Comment text is left as written, except names the map holds/)
     expect(text).toMatch(/1 comment/)
   })
 
@@ -812,12 +839,19 @@ describe('what the masking did not cover reaches the agent (004-b3, 002-b4)', ()
   it('says nothing about comments when the file has none', () => {
     write('a.ts', TS)
     const { text } = call('anonymize_file', { path: 'a.ts' })
-    expect(text).not.toMatch(/Comment prose/)
+    expect(text).not.toMatch(/Comment text/)
+  })
+
+  it('says nothing about comments when the only comment was a masked name', () => {
+    write('a.ts', 'export class QuasarLedgerReconciler {}\n// QuasarLedgerReconciler\n')
+    const { text } = call('anonymize_file', { path: 'a.ts' })
+    expect(text).toContain('// __CLS__1')
+    expect(text).not.toMatch(/Comment text/)
   })
 
   it('carries the same note through anonymize_text', () => {
     const { text } = call('anonymize_text', { text: '// Ping Kowalska\n' + TS })
-    expect(text).toMatch(/Comment prose is NOT masked/)
+    expect(text).toMatch(/Comment text is left as written, except names the map holds/)
   })
 
   it('warns when no language marker matched', () => {

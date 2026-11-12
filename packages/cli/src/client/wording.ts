@@ -33,6 +33,7 @@ export const REFUSAL_CODES = [
   'no_vault',
   'no_passphrase',
   'wrong_passphrase',
+  'vault_kdf_refused',
   'vault_locked',
   'no_pmk_yet',
   'pmk_unopenable',
@@ -177,6 +178,13 @@ export const WORDING: Record<RefusalCode, Words> = {
   wrong_passphrase: () => ({
     message: 'that vault passphrase is not right. Nothing was written or uploaded.',
     resolve: 'Run the command again with the passphrase you use in the web app.',
+  }),
+  // PENDING APPROVAL (wording).
+  vault_kdf_refused: () => ({
+    message:
+      'Cloud reported a key-derivation cost for your vault that is outside what Veilio accepts, so the passphrase was not used. Nothing was written or uploaded.',
+    resolve:
+      'Check that you are signed in to your own Cloud, then run the command again; if it persists, contact support.',
   }),
   vault_locked: () => ({
     message:

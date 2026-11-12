@@ -58,7 +58,7 @@ import {
   rulesPath,
   writeRules,
 } from './rules.js'
-import { openFetchedRules } from './rules-open.js'
+import { openFetchedRules, rulesWaitingLines } from './rules-open.js'
 import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
 import { DEFAULT_INSTANCE } from './cloud.js'
@@ -733,7 +733,7 @@ export async function runRulesPull(io: Io): Promise<number> {
     return reportCloudFailure(err, io)
   }
 
-  const { personal, team, skipped } = await openFetchedRules(fetched, credential, io.home)
+  const { personal, team, skipped, waiting } = await openFetchedRules(fetched, credential, io.home)
   const rules = mergeRules(personal, team)
   const told = newTeamWhitelists(rules, io.home)
   writeRules(
@@ -755,7 +755,11 @@ export async function runRulesPull(io: Io): Promise<number> {
   )
   for (const notice of told.notices) io.stdout(`${notice}\n`)
   // Not an error: masking works without them, and the fix is one command away.
-  for (const sentence of rulesSkippedSentences(skipped)) io.stdout(`${sentence}\n`)
+  // Spec 092: here the team and the granter are known, so the line that names
+  // them stands in place of the general unconfirmed-sender sentence.
+  for (const line of rulesWaitingLines(waiting, teamArg)) io.stdout(`${line}\n`)
+  const rest = waiting.length ? { ...skipped, teamUnconfirmed: 0 } : skipped
+  for (const sentence of rulesSkippedSentences(rest)) io.stdout(`${sentence}\n`)
   return EXIT_OK
 }
 

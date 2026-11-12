@@ -46,6 +46,9 @@ const NOT_TOOLS = new Set([
   // settings the cd rules refuse, not tools.
   'cdable_vars',
   'chase_links',
+  // A Node module in plugins/veilio-guard/COVERAGE.md (spec 091): one of the
+  // ways a `node -e` script starts a shell, not a tool.
+  'child_process',
 ])
 
 describe('MCP tools named in the public docs', () => {

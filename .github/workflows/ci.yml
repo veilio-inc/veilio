@@ -32,6 +32,13 @@ jobs:
 
       - run: npm ci
 
+      # What ships to users: the runtime dependency trees of the app and the
+      # published packages. The dev and release toolchain (semantic-release and
+      # its npm chain) is audited by hand, as its moderate findings are not
+      # ours to fix; this gate is for what a user installs.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -41,8 +48,16 @@ jobs:
       - name: Format
         run: npm run format:check
 
+      # The reading oracle (tests/guard/reading-oracle.test.ts) asks real bash
+      # and zsh whether a command read a raw-only file. The runner has bash;
+      # zsh is installed here, and both are required so neither is skipped.
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
       - name: Test
         run: npm test
+        env:
+          VEILIO_ORACLE_REQUIRE: bash,zsh
 
       # The three packages under packages/ each own a vitest config and are run
       # by their own scripts, not by the root vitest above — which excludes

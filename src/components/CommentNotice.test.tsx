@@ -34,9 +34,9 @@ describe('CommentNotice', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('states that comment text is not masked', () => {
+  it('states what is masked in comments', () => {
     render(<CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />)
-    expect(screen.getByText(/never masked/i)).toBeTruthy()
+    expect(screen.getByText(/only names the map holds are masked/i)).toBeTruthy()
   })
 
   it('says how many comments are affected', () => {
@@ -61,7 +61,7 @@ describe('CommentNotice', () => {
     // control by the label it actually wears - "Mask selection" - is the
     // difference between an instruction and a gesture at one.
     render(<CommentNotice exposure={exposureOf('const a = 1 // ping Maria about Contoso')} />)
-    const body = screen.getByText(/Names, customers and ticket numbers/)
+    const body = screen.getByText(/People, customers and ticket numbers/)
     expect(body.textContent).toMatch(/Mask selection/)
     expect(body.textContent).toMatch(/delete the comment/i)
   })

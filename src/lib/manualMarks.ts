@@ -4,7 +4,7 @@ import type { CommentExposure, StrippedItemType, SymbolMap } from '@veilio-inc/e
 export interface MarkState {
   output: string
   map: SymbolMap
-  /** How much comment prose the output still carries unmasked.
+  /** How much comment text the output still carries as written.
    *
    *  Carried alongside rather than recomputed by the caller: marking a name in
    *  a comment is the gesture the notice asks for, so the figure has to move

@@ -91,22 +91,26 @@ function serve(body: { rules?: unknown[]; teamRules?: unknown[] }): void {
   })
 }
 
+type Granter = { id: string | null; publicKey: string; label?: string; current?: boolean }
+
 function unlockTeam(
   teamId: string,
-  keys: { version: number; raw: Uint8Array }[],
-  writable = true
+  keys: { version: number; raw: Uint8Array; granter?: Granter; writable?: boolean }[],
+  writable = true,
+  teamName?: string
 ): void {
   writeTeamUnlock(
     {
       v: 1,
       ...OWNER,
       teamId,
+      ...(teamName === undefined ? {} : { teamName }),
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       keys: keys.map((k) => ({
         version: k.version,
         key: toBase64(k.raw),
-        granter: { id: 'u-granter', publicKey: 'GRANTER' },
-        writable,
+        granter: k.granter ?? { id: 'u-granter', publicKey: 'GRANTER' },
+        writable: k.writable ?? writable,
       })),
     },
     home
@@ -499,7 +503,7 @@ describe('team rules open only under confirmed keys (R2-8)', () => {
     enabled: true,
   }
 
-  it('under a key not confirmed: held back, counted, and said how to see it', async () => {
+  it('under a key not confirmed: held back, counted, and said whose key to confirm', async () => {
     signIn(home)
     unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }], false)
     serve({ teamRules: [await sealedTeamRule('rule-1', 0, planted, { version: 2 })] })
@@ -507,8 +511,9 @@ describe('team rules open only under confirmed keys (R2-8)', () => {
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(cached()?.rules).toEqual([])
     expect(cached()?.skipped?.teamUnconfirmed).toBe(1)
+    // Spec 092: `rules pull` names the team and whose key to confirm.
     expect(res.out).toContain(
-      '1 team rule not applied: they are sealed under a team key whose sender you have not confirmed. `veilio team unlock` shows that key.'
+      '1 team rule for team "team-1" is waiting: confirm the key of the teammate who granted your team key first - run `veilio team trust team-1 <fingerprint>` with the fingerprint they show on their dashboard.'
     )
     const scrubbed = await run(['scrub'], 'class PaymentGateway {}\n')
     expect(scrubbed.out).not.toContain('PaymentGateway')
@@ -530,5 +535,186 @@ describe('team rules open only under confirmed keys (R2-8)', () => {
     unlockTeam(TEAM_ID, [{ version: 2, raw: TEAM_RAW }], false)
     expect(cached()?.rules).toEqual([])
     expect(cached()?.skipped?.teamUnconfirmed).toBe(1)
+  })
+})
+
+// Spec 092: `rules pull` names the team, the count and whose key to confirm,
+// in place of the general unconfirmed-sender sentence; `scrub` keeps that one.
+describe('rules pull says which team rules wait for a key confirmation (092)', () => {
+  const OLA: Granter = {
+    id: 'u-ola',
+    publicKey: 'GRANTER-OLA',
+    label: 'ola@example.com',
+    current: true,
+  }
+  const JAN: Granter = {
+    id: 'u-jan',
+    publicKey: 'GRANTER-JAN',
+    label: 'jan@example.com',
+    current: true,
+  }
+  const body = (n: number): RuleBody => ({
+    name: `Planted${n}`,
+    type: 'replace',
+    pattern: `^PaymentGateway${n}$`,
+    placeholder: '__GATEWAY__',
+    enabled: true,
+  })
+  const rules = (n: number, opts: { key?: Uint8Array; version?: number; from?: number } = {}) =>
+    Promise.all(
+      Array.from({ length: n }, (_, i) => {
+        const id = (opts.from ?? 1) + i
+        return sealedTeamRule(`rule-${id}`, id, body(id), opts)
+      })
+    )
+  const GENERAL = 'whose sender you have not confirmed'
+  const line = (count: string, team: string, who: string, arg: string): string =>
+    `${count} for team "${team}" ${count.startsWith('1 ') ? 'is' : 'are'} waiting: confirm the key of ${who} first - ` +
+    `run \`veilio team trust ${arg} <fingerprint>\` with the fingerprint they show on their dashboard.\n`
+  /** Nothing of a rule or of a key belongs in the output. */
+  const expectNoSecrets = (out: string): void => {
+    for (const secret of [
+      'Planted',
+      'PaymentGateway',
+      '__GATEWAY__',
+      toBase64(TEAM_RAW),
+      toBase64(OTHER_KEY),
+      'GRANTER-OLA',
+      'GRANTER-JAN',
+    ])
+      expect(out).not.toContain(secret)
+  }
+
+  it('two rules: the line follows the summary, word for word, and replaces the general sentence', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW, granter: OLA }], false, 'Zespół')
+    serve({ teamRules: await rules(2) })
+    const res = await run(['rules', 'pull'])
+    expect(res.code, res.err).toBe(EXIT_OK)
+    expect(res.out).toBe(
+      'Pulled 0 custom rules (0 personal, 0 team). `veilio scrub` applies them.\n' +
+        line('2 team rules', 'Zespół', 'ola@example.com', 'Zespół')
+    )
+    expect(res.out).not.toContain(GENERAL)
+    expectNoSecrets(res.out + res.err)
+    // The cache keeps the count, for `scrub`, and nothing of the team or the granter.
+    expect(cached()?.skipped?.teamUnconfirmed).toBe(2)
+    const file = readFileSync(rulesPath(home), 'utf8')
+    expect(file).not.toContain('Zespół')
+    expect(file).not.toContain('ola@example.com')
+    expect(file).not.toContain('waiting')
+    // `scrub` reads that cache and keeps the general sentence.
+    expect((await run(['scrub'], SOURCE)).err).toContain(GENERAL)
+  })
+
+  it('one rule: the singular', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW, granter: OLA }], false, 'Zespół')
+    serve({ teamRules: await rules(1) })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain('\n' + line('1 team rule', 'Zespół', 'ola@example.com', 'Zespół'))
+    expect(res.out).not.toContain(GENERAL)
+  })
+
+  it('two keys of two granters: a line each with its own count, in served order', async () => {
+    signIn(home)
+    unlockTeam(
+      TEAM_ID,
+      [
+        { version: 1, raw: TEAM_RAW, granter: OLA },
+        { version: 2, raw: OTHER_KEY, granter: JAN },
+      ],
+      false,
+      'Zespół'
+    )
+    serve({
+      teamRules: [
+        ...(await rules(1, { key: OTHER_KEY, version: 2 })),
+        ...(await rules(2, { from: 2 })),
+      ],
+    })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain(
+      '\n' +
+        line('1 team rule', 'Zespół', 'jan@example.com', 'Zespół') +
+        line('2 team rules', 'Zespół', 'ola@example.com', 'Zespół')
+    )
+    expect(res.out).not.toContain(GENERAL)
+    expectNoSecrets(res.out + res.err)
+  })
+
+  it('counts only the rules held back: one under a confirmed key is applied', async () => {
+    signIn(home)
+    unlockTeam(
+      TEAM_ID,
+      [
+        { version: 1, raw: TEAM_RAW, granter: OLA },
+        { version: 2, raw: OTHER_KEY, granter: JAN, writable: true },
+      ],
+      false,
+      'Zespół'
+    )
+    serve({
+      teamRules: [
+        ...(await rules(1, { key: OTHER_KEY, version: 2 })),
+        ...(await rules(2, { from: 2 })),
+      ],
+    })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain('Pulled 1 custom rule (0 personal, 1 team)')
+    expect(res.out).toContain('\n' + line('2 team rules', 'Zespół', 'ola@example.com', 'Zespół'))
+    expect(res.out).not.toContain('jan@example.com')
+  })
+
+  it('a stored key without a granter label: the teammate is not named', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW }], false, 'Zespół')
+    serve({ teamRules: await rules(2) })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain(
+      '\n' + line('2 team rules', 'Zespół', 'the teammate who granted your team key', 'Zespół')
+    )
+  })
+
+  it('a name with a control character or a space is printed filtered, and the command takes the id', async () => {
+    signIn(home)
+    unlockTeam(
+      TEAM_ID,
+      [{ version: 1, raw: TEAM_RAW, granter: { ...OLA, label: 'ola\u001b[31m@example.com' } }],
+      false,
+      'My\u0007 Team'
+    )
+    serve({ teamRules: await rules(2) })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain(
+      '\n' + line('2 team rules', 'My? Team', 'ola?[31m@example.com', TEAM_ID)
+    )
+    // eslint-disable-next-line no-control-regex -- matching them is the point
+    expect(res.out).not.toMatch(/[\u0007\u001b]/)
+  })
+
+  it('a record without a team name: the id stands for it', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW, granter: OLA }], false)
+    serve({ teamRules: await rules(2) })
+    const res = await run(['rules', 'pull'])
+    expect(res.out).toContain('\n' + line('2 team rules', TEAM_ID, 'ola@example.com', TEAM_ID))
+  })
+
+  it('key confirmed: applied, no waiting line; no key at all: the team-key-locked sentence', async () => {
+    signIn(home)
+    unlockTeam(TEAM_ID, [{ version: 1, raw: TEAM_RAW, granter: OLA }], true, 'Zespół')
+    serve({ teamRules: await rules(2) })
+    const applied = await run(['rules', 'pull'])
+    expect(applied.out).toContain('(0 personal, 2 team)')
+    expect(applied.out).not.toContain('waiting')
+
+    rmSync(join(home, '.veilio'), { recursive: true, force: true })
+    signIn(home)
+    const locked = await run(['rules', 'pull'])
+    expect(locked.out).toContain(
+      '2 custom rules not applied: team key locked - run `veilio team unlock`, then `veilio rules pull`.'
+    )
+    expect(locked.out).not.toContain('waiting')
   })
 })

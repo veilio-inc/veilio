@@ -18,8 +18,9 @@ export declare function withAiPreamble(anonymized: string, map?: SymbolMap): str
 /**
  * How much comment prose this source would send unmasked.
  *
- * `anonymize` returns the same measurement for the text it produced, which is
- * the number to prefer. This entry point exists for the moments after that,
+ * Reads the text as given, with no map: a name `anonymize` would replace in a
+ * comment is counted here. `anonymize` returns the measurement for the text it
+ * produced, which is the number to prefer. This entry point exists for the moments after that,
  * when a manual mark has just moved a name out of a comment — or an unmark has
  * put one back — and the figure on screen would otherwise describe the previous
  * version of the text.
@@ -73,12 +74,6 @@ export declare function classifyIdentifiers(code: string, language?: Language): 
  *  `__proto__`, `constructor` and `prototype`, so a map validated with this
  *  cannot carry a prototype-pollution key. */
 export declare function isPlaceholder(token: string): boolean;
-/**
- * Extract qualifying identifiers from source code, sorted longest-first.
- * Filters out keywords, ALL_CAPS constants, placeholder-shaped tokens, and names ≤ 2 chars.
- * `language` selects the keyword set; it defaults to TypeScript so standalone
- * callers keep prior behavior.
- */
 export declare function extractIdentifiers(code: string, language?: Language): string[];
 /**
  * Whether a custom rule's `pattern` matches `name`, on the engine's linear

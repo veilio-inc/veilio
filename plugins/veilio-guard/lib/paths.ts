@@ -18,13 +18,16 @@ export {
   shortNameAlias,
   windowsAlias,
 } from '../vendor/engine/index.js'
-import { normaliseRawOnlyPattern } from '../vendor/engine/index.js'
+import { DEFAULT_RAW_ONLY, normaliseRawOnlyPattern } from '../vendor/engine/index.js'
 import {
+  bracket,
+  spend,
   outsideQuotes,
   shellExpands,
   shellWords,
   splitChain,
   type Assign,
+  type Cost,
   type List,
   type Node,
   type Part,
@@ -731,7 +734,7 @@ class Walker {
     }
     if (n.nested) {
       // eval runs in this shell; a nested shell in a child.
-      if (program === 'eval') return this.list(n.nested, after)
+      if (name === 'eval') return this.list(n.nested, after)
       await this.child(() => this.list(n.nested!, here))
     }
     if (program === 'exit' || program === 'return') return { ok: null, fail: null }
@@ -1353,6 +1356,7 @@ function formOf(p: Part): string {
     case 'subst':
       return 'a command substitution'
     case 'glob':
+    case 'zglob':
       return 'a glob'
     case 'brace':
       return 'braces'
@@ -1410,3 +1414,329 @@ export async function walkCd(
     }
   }
 }
+
+// ── security audit 2026-11-11: spellings (the reader is lib/reading.ts) ──────
+
+/** The alternatives of a brace group's inside: a comma list, or a numeric or
+ *  single-letter sequence (`1..3`, `a..e`, with an optional step). Null when
+ *  it is neither (`{a}` stays as written); 'big' when a sequence has more than
+ *  `limit` members. */
+function alternatives(inner: string, limit: number): string[] | 'big' | null {
+  const parts: string[] = []
+  let depth = 0
+  let from = 0
+  for (let j = 0; j < inner.length; j++) {
+    if (inner[j] === '{') depth++
+    else if (inner[j] === '}') depth--
+    else if (inner[j] === ',' && depth === 0) {
+      parts.push(inner.slice(from, j))
+      from = j + 1
+    }
+  }
+  if (parts.length > 0) return [...parts, inner.slice(from)]
+  const m = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$/.exec(inner)
+  if (!m) return null
+  const num = /^-?\d+$/.test(m[1]!)
+  if (num !== /^-?\d+$/.test(m[2]!)) return null
+  const [a, b] = num
+    ? [parseInt(m[1]!, 10), parseInt(m[2]!, 10)]
+    : [m[1]!.charCodeAt(0), m[2]!.charCodeAt(0)]
+  const step = Math.abs(parseInt(m[3] ?? '1', 10)) || 1
+  if (Math.abs(b - a) / step + 1 > limit) return 'big'
+  const out: string[] = []
+  for (let v = a; a <= b ? v <= b : v >= b; v += a <= b ? step : -step)
+    out.push(num ? String(v) : String.fromCharCode(v))
+  return out
+}
+
+/** The top-level brace groups of a word: where each starts and ends, and what
+ *  is inside. */
+function braceGroups(word: string): { start: number; end: number; inner: string }[] {
+  const out: { start: number; end: number; inner: string }[] = []
+  let depth = 0
+  let open = -1
+  for (let i = 0; i < word.length; i++) {
+    if (word[i] === '{') {
+      if (depth++ === 0) open = i
+    } else if (word[i] === '}' && depth > 0 && --depth === 0)
+      out.push({ start: open, end: i, inner: word.slice(open + 1, i) })
+  }
+  return out
+}
+
+/** The words a shell word can spell: `{a,b}c` is `ac` and `bc`, `{1..3}` is
+ *  `1 2 3`. At most 64; null past that (see braceNames). */
+export function expandBraces(word: string, limit = 64): string[] | null {
+  const out: string[] = []
+  const walk = (w: string): void => {
+    if (out.length > limit) return
+    for (const g of braceGroups(w)) {
+      const alt = alternatives(g.inner, limit)
+      if (alt === null) continue
+      if (alt === 'big') {
+        out.push(...Array(limit + 1).fill(w))
+        return
+      }
+      for (const a of alt) walk(w.slice(0, g.start) + a + w.slice(g.end + 1))
+      return
+    }
+    out.push(w)
+  }
+  walk(word)
+  return out.length > limit ? null : out
+}
+
+/** Every brace group of a word read as "anything": `**`. */
+const wildBraces = (w: string): string => {
+  let out = ''
+  let at = 0
+  for (const g of braceGroups(w))
+    if (alternatives(g.inner, 64) !== null) {
+      out += `${w.slice(at, g.start)}**`
+      at = g.end + 1
+    }
+  return out + w.slice(at)
+}
+
+/** What a shell word can spell, as names and globs: expanded when it has no
+ *  more than 64 spellings; otherwise one candidate per alternative of each
+ *  group, the other groups read as `**` (a sum of the groups' sizes, not their
+ *  product), so a name hidden among many alternatives is still seen and an
+ *  ordinary `mkdir -p {a,b,c,d}/{e,f,g,h}/{i,j,k,l,m}` is not refused. */
+export function braceNames(word: string): string[] {
+  const exact = expandBraces(word)
+  if (exact !== null) return exact
+  const out: string[] = []
+  for (const g of braceGroups(word)) {
+    const alt = alternatives(g.inner, 64)
+    if (alt === null || alt === 'big') continue
+    const before = wildBraces(word.slice(0, g.start))
+    const after = wildBraces(word.slice(g.end + 1))
+    for (const a of alt) out.push(before + wildBraces(a) + after)
+  }
+  return out.length > 0 ? out : [wildBraces(word)]
+}
+
+/** In a spelling (lib/reading.ts): any text may stand here - a zsh group or
+ *  qualifier, or what an option may make of a brace, `#`, `^` or `~`. Not a
+ *  wildcard the command wrote, so the limit on the word's `*` (see
+ *  globsOverlap) does not hold for it. A private-use character. */
+export const ANY_TEXT = '\ue000'
+
+type GlobToken =
+  | { kind: 'char'; c: string }
+  | { kind: 'any' }
+  | { kind: 'star'; deep: boolean; free?: true }
+  /** A bracket expression expanded exactly: one of these characters. */
+  | { kind: 'class'; chars: string[] }
+
+function globTokens(glob: string): GlobToken[] {
+  const out: GlobToken[] = []
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob.charAt(i)
+    if (c === ANY_TEXT) out.push({ kind: 'star', deep: true, free: true })
+    else if (c === '*') {
+      const deep = glob[i + 1] === '*'
+      if (deep) i++
+      out.push({ kind: 'star', deep })
+    } else if (c === '?') out.push({ kind: 'any' })
+    else if (c === '[' && bracket(glob, i)) {
+      // By the one bracket reader (reading table A2): its characters when
+      // it is expanded exactly, else one character, whatever it is.
+      const b = bracket(glob, i)!
+      out.push(
+        b.chars ? { kind: 'class', chars: b.chars.map((x) => x.toLowerCase()) } : { kind: 'any' }
+      )
+      i = b.end - 1
+    } else out.push({ kind: 'char', c: c.toLowerCase() })
+  }
+  return out
+}
+
+/** Whether one string could match both globs (ignoring case, `*` and `?`
+ *  stopping at `/`, `**` not). `a` is a shell word, so its wildcards do not
+ *  match a leading `.` (`*.ts` is not `.env.ts`) unless `dots` says the shell
+ *  lets them; `b` is a raw-only pattern. A bracket expression is its
+ *  characters when it is expanded exactly, else any one character.
+ *
+ *  The pattern's `*` may take the word's letters (`server.pe?` is `*.pem`),
+ *  and the word's `*` may stand for the pattern's fixed text (`id_*` is
+ *  `id_rsa*`), but not both in one match: `server.p*` is not `*.pem`, a
+ *  documented limit, or every `src/a*` would be a key. */
+function globsOverlap(a: string, b: string, dots = false, cost?: Cost): boolean {
+  const A = globTokens(a)
+  const B = globTokens(b)
+  const [n, m] = [A.length, B.length]
+  // A table over the two token lists, filled from their ends: no recursion,
+  // so a word of thousands of stars is read; 32 cells are a step (A13).
+  spend(cost, Math.ceil(((n + 1) * (m + 1)) / 32))
+  // A word's segment of nothing but wildcards (`*`, `?`) stands for no
+  // particular name, or `ls *` and `lib/*/*.rb` could never run: it matches a
+  // pattern's wildcards only, not its letters. And a pattern's own `*` takes
+  // none of the word's letters (`*.ts` is not `id_rsa*`), only `**` does.
+  const bare: boolean[] = []
+  for (let from = 0; from <= n;) {
+    let to = from
+    // Any text from a group or an option may be a name; a wildcard is not one.
+    let named = false
+    for (; to < n && !isSlash(A[to]!); to++) {
+      const t = A[to]!
+      named ||= t.kind === 'char' || t.kind === 'class' || (t.kind === 'star' && !!t.free)
+    }
+    for (let k = from; k <= Math.min(to, n - 1); k++) bare[k] = !named
+    from = to + 1
+  }
+  const dotStart = (j: number) => !dots && (j === 0 || isSlash(B[j - 1]!))
+  const single = (t: GlobToken, u: GlobToken, i: number, j: number): boolean => {
+    if (t.kind === 'char' && u.kind === 'char') return t.c === u.c
+    // (A bracket list is its characters: it may hold the dot itself.)
+    if (t.kind !== 'char' && t.kind !== 'class' && u.kind === 'char') {
+      if (bare[i] || (u.c === '.' && dotStart(j))) return false
+    }
+    const lit = t.kind === 'char' ? t : u.kind === 'char' ? u : null
+    const other = lit === t ? u : t
+    if (!lit) return true
+    if (other.kind === 'any') return lit.c !== '/'
+    if (other.kind === 'class') return lit.c !== '/' && other.chars.includes(lit.c)
+    return true
+  }
+  // `took`: 1 once the word's `*` stood for the pattern's text, 2 once the
+  // pattern's `*` took the word's letters.
+  const cells = new Uint8Array((n + 1) * (m + 1) * 3)
+  const at = (i: number, j: number, took: number) => cells[(i * (m + 1) + j) * 3 + took] === 1
+  for (let i = n; i >= 0; i--)
+    for (let j = m; j >= 0; j--)
+      for (let took = 0; took < 3; took++) {
+        const x = A[i]
+        const y = B[j]
+        let r: boolean
+        if (!x && !y) r = true
+        else if (x?.kind === 'star')
+          r =
+            at(i + 1, j, took) ||
+            (!!y &&
+              (x.deep || !isSlash(y)) &&
+              !(
+                y.kind === 'char' &&
+                (bare[i] || (y.c === '.' && dotStart(j)) || (took === 2 && !x.free))
+              ) &&
+              at(i, j + 1, y.kind === 'char' && !x.free ? 1 : took))
+        else if (y?.kind === 'star')
+          r =
+            at(i, j + 1, took) ||
+            (!!x && (y.deep ? at(i + 1, j, took) : !isSlash(x) && took !== 1 && at(i + 1, j, 2)))
+        else r = !!x && !!y && single(x, y, i, j) && at(i + 1, j + 1, took)
+        if (r) cells[(i * (m + 1) + j) * 3 + took] = 1
+      }
+  return at(0, 0, 0)
+}
+const isSlash = (t: GlobToken) => t.kind === 'char' && t.c === '/'
+
+/** A word with a wildcard that could stand for a raw-only file: some tail of
+ *  its path overlaps one of the patterns (a pattern without `/` is a name
+ *  anywhere, as isRawOnly reads it). A segment of nothing but wildcards is
+ *  not counted, or `ls *` and `rm *.o` could never run.
+ *
+ *  shortcut: it does not look at the files that exist, so a glob that could
+ *  match a raw-only name is refused when no such file is there. */
+export function globMayBeRawOnly(
+  word: string,
+  extra: readonly string[],
+  dots = false,
+  cost?: Cost
+): boolean {
+  const segments = normalisePath(word)
+    .split('/')
+    .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
+  // A segment that names something: not only wildcards.
+  const literal = (s: string) =>
+    globTokens(s).some(
+      (t) => t.kind === 'char' || t.kind === 'class' || (t.kind === 'star' && !!t.free)
+    )
+  if (!segments.some(literal)) return false
+  const patterns = [
+    ...DEFAULT_RAW_ONLY,
+    ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
+  ]
+  // Any text (`**`, a zsh group) may stand for several path parts; without
+  // it a part of the word is a part of the name, which lets most of the
+  // matcher's work be skipped for an ordinary word (the verdict is the same).
+  const crosses = /\*\*|\ue000/.test(word)
+  const wildcard = (s: string) => /[*?[\ue000]/.test(s)
+  return patterns.some((p) => {
+    if (!p.includes('/')) {
+      const plain = !/[[\]]/.test(p)
+      return segments.some((s) =>
+        // A segment with no wildcard is matched as a name.
+        plain && !wildcard(s) ? nameGlob(p).test(s) : literal(s) && globsOverlap(s, p, dots, cost)
+      )
+    }
+    const parts = p.split('/')
+    const deep = parts.includes('**')
+    return segments.some((_, i) => {
+      const rest = segments.slice(i)
+      if (!crosses) {
+        // `a/b` is two parts long; `dir/**` is longer than `dir`.
+        if (deep ? rest.length < parts.length : rest.length !== parts.length) return false
+        // The pattern's first part must be able to be the word's.
+        if (!/[*?[]/.test(parts[0]!) && !wildcard(rest[0]!))
+          if (parts[0]!.toLowerCase() !== rest[0]!.toLowerCase()) return false
+      }
+      return globsOverlap(rest.join('/'), p, dots, cost)
+    })
+  })
+}
+
+/** A raw-only name pattern (`*.pem`, `id_rsa*`) as a matcher of one name. */
+const NAME_GLOBS = new Map<string, RegExp>()
+function nameGlob(pattern: string): RegExp {
+  let re = NAME_GLOBS.get(pattern)
+  if (!re) {
+    const body = pattern
+      .replace(/[.+^${}()|\\]/g, '\\$&')
+      .replace(/\*+/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+    re = new RegExp(`^${body}$`, 'i')
+    NAME_GLOBS.set(pattern, re)
+  }
+  return re
+}
+
+/** Whether a word names a folder all of whose files are raw-only (reading
+ *  table A11): its path ends in the folder of a `dir/**` pattern - `.veilio`,
+ *  `.kube`, `.azure`, `.config/gcloud`, a project's `secrets`. A wildcard
+ *  word is refused when it could name one. A folder that holds a raw-only
+ *  file among others (`.aws`, `.docker`, `.config`) is not one of these. */
+export function namesRawOnlyFolder(
+  word: string,
+  extra: readonly string[],
+  dots = false,
+  cost?: Cost
+): boolean {
+  const segments = normalisePath(word)
+    .split('/')
+    .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
+  if (segments.length === 0) return false
+  return rawOnlyFolders(extra).some(
+    ([folder, depth]) =>
+      segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots, cost)
+  )
+}
+
+/** The folders of the list's `dir/**` patterns, each with its depth: built
+ *  once per list (a command of many paths asks for each of them). */
+const FOLDERS = new WeakMap<readonly string[], { size: number; folders: [string, number][] }>()
+function rawOnlyFolders(extra: readonly string[]): [string, number][] {
+  const known = FOLDERS.get(extra)
+  if (known && known.size === extra.length) return known.folders
+  const folders = [
+    ...DEFAULT_RAW_ONLY,
+    ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
+  ]
+    .filter((p) => p.endsWith('/**'))
+    .map((p): [string, number] => [p.slice(0, -3), p.slice(0, -3).split('/').length])
+  FOLDERS.set(extra, { size: extra.length, folders })
+  return folders
+}
+
+export { ansiC } from './shell.ts'

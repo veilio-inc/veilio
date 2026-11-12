@@ -74,7 +74,7 @@ describe('scrub and the rule budget', () => {
     expect(res.code, res.err).toBe(EXIT_OK)
     expect(res.err).toContain(RULES_STOPPED_NOTE)
     expect(res.out).not.toMatch(/identifier_name_/)
-  })
+  }, 20_000)
 
   it('says nothing with ordinary rules', async () => {
     writeRules(

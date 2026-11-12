@@ -269,6 +269,23 @@ describe('restore', () => {
     expect(restored.out).toBe(TS)
   })
 
+  it('a name the map holds is masked in a comment and restores exactly', async () => {
+    // Two `//` comments and no doc comment: the default restore removes a
+    // JSDoc block as AI noise, the file's own included.
+    const commented =
+      'export class QuasarLedgerReconciler {\n' +
+      '  // calls settleInvoice for AcmePay\n' +
+      '  settleInvoice() { return 1 } // QuasarLedgerReconciler inline\n' +
+      '}\n'
+    const scrubbed = await run(['scrub'], commented)
+    expect(scrubbed.out).not.toContain('QuasarLedgerReconciler')
+    expect(scrubbed.out).not.toContain('settleInvoice')
+    expect(scrubbed.out).toContain('for AcmePay')
+    const restored = await run(['restore'], scrubbed.out)
+    expect(restored.code).toBe(EXIT_OK)
+    expect(restored.out).toBe(commented)
+  })
+
   it('strips AI-generated noise', async () => {
     await run(['scrub'], TS)
     const r = await run(['restore'], '/** Generated doc. */\nconst x = 1\n')
@@ -560,7 +577,8 @@ describe('what the masking did not cover (004-b3, 002-b4)', () => {
     write('a.ts', '// Ping Kowalska about Contoso, see INC-4471\nexport class Gateway {}\n')
     const { err } = await run(['scrub', 'a.ts'])
     expect(err).toMatch(/comment/i)
-    expect(err).toMatch(/NOT masked/)
+    expect(err).toMatch(/holds text left as written/)
+    expect(err).toMatch(/Names the map holds are masked in comments/)
   })
 
   it('says how many comments and how much prose', async () => {
@@ -576,12 +594,19 @@ describe('what the masking did not cover (004-b3, 002-b4)', () => {
     expect(err).not.toMatch(/comment/i)
   })
 
+  it('says nothing about comments when the only comment was a masked name', async () => {
+    write('a.ts', 'export class QuasarLedgerReconciler {}\n// QuasarLedgerReconciler\n')
+    const { out, err } = await run(['scrub', 'a.ts'])
+    expect(out).toContain('// __CLS__1')
+    expect(err).not.toMatch(/comment/i)
+  })
+
   it('keeps the comment note out of stdout', async () => {
     // FR-002: stdout carries the artifact and nothing else, or the CLI cannot
     // sit in a pipe.
     write('a.ts', '// Ping Kowalska about Contoso\nexport class Gateway {}\n')
     const { out } = await run(['scrub', 'a.ts'])
-    expect(out).not.toMatch(/NOT masked/)
+    expect(out).not.toMatch(/left as written/)
     expect(out).toContain('// Ping Kowalska about Contoso')
   })
 
@@ -590,7 +615,7 @@ describe('what the masking did not cover (004-b3, 002-b4)', () => {
     // flag and teach people to stop passing it.
     write('a.ts', '// Ping Kowalska about Contoso\nexport class Gateway {}\n')
     const { err } = await run(['scrub', 'a.ts', '--quiet'])
-    expect(err).not.toMatch(/NOT masked/)
+    expect(err).not.toMatch(/left as written/)
   })
 
   it('warns when no language marker matched', async () => {

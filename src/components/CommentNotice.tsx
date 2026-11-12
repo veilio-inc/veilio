@@ -89,15 +89,16 @@ export default function CommentNotice({ exposure }: { exposure: CommentExposure 
       >
         <strong style={{ fontSize: 13 }}>{where} left as written</strong>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          - comment text is never masked{volume(exposure.characters)}.
+          - in comments only names the map holds are masked{volume(exposure.characters)}.
         </span>
       </div>
       {/* Acceptance scenario 3: say what to do. A risk with no next step is an
           apology, and the user closes it the same way either time. */}
       <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
-        Names, customers and ticket numbers written in comments go out exactly as typed. Select any
-        term in the anonymized panel and choose <strong>Mask selection</strong> to replace it
-        everywhere it appears - or delete the comment before you copy.
+        People, customers and ticket numbers written in comments go out exactly as typed, and so
+        does a name the map does not hold yet. Select any term in the anonymized panel and choose{' '}
+        <strong>Mask selection</strong> to replace it everywhere it appears - or delete the comment
+        before you copy.
       </p>
     </section>
   )

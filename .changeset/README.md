@@ -63,9 +63,12 @@ Changesets does not know when semantic-release ships a new engine. So widening t
 range is a manual edit — the one real cost of running two release tools — and three
 checks stand where a person would otherwise have to remember.
 
-Within Changesets' own half there is nothing to remember: `updateInternalDependencies`
-bumps the MCP server's dependency on the CLI and releases it automatically, because
-both are packages it owns. It is only the engine edge that is manual.
+Within Changesets' own half the MCP server's range on the CLI is raised only when the
+CLI's new version falls outside it: a CLI patch that stays in range leaves the MCP
+server's manifest, and so its published dependency, as it was. When the MCP server
+needs a CLI fix (it imports `@veilio-inc/cli/client`), the change carries a changeset
+for `@veilio-inc/mcp` too, so the MCP server is released with a range that excludes
+the CLI without the fix. The engine edge is manual as well.
 
 1. **The engine must not fall behind the declared range** —
    `tests/package-graph.test.ts`. npm links a workspace package only when its

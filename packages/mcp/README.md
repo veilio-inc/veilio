@@ -45,8 +45,10 @@ tools/call anonymize_file { "path": "src/gateway.ts" }
 Two more lines appear when they apply, and both are the model's only warning
 that the masking did not cover something: one when no language marker matched
 (the file was masked as TypeScript, which may be wrong), and one counting the
-**comment prose left exactly as written** — names and ticket numbers in comments
-are still real. Names written entirely in capitals are not masked either
+**comment text left as written**. In a comment, a name the map holds is replaced
+by its placeholder, as in code; everything else - people, customers, ticket
+numbers, a name whose file has not been masked yet - is still real. Names
+written entirely in capitals are not masked either
 (`ACME_TENANT_ID`); nothing counts those. Nor is a name that is a single common
 English word (`total`, `ledger`), shared vocabulary (`src`, `util`, `java`) or a
 toolchain's name (`vitest`, `junit`) as a name or a path segment: only distinctive
