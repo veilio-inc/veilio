@@ -2235,5 +2235,18 @@ export function ownLanguage(): Generated[] {
   ])
     for (const shell of ['bash', 'zsh'] as const)
       out.push(shape('G12', out.length, script, [shell], ['G12: a name in the script']))
+  // A shell started from the script itself (addendum 5): such a script is
+  // shell text again. `sed`'s `e` is GNU's: run everywhere, counted nowhere.
+  for (const script of [
+    `awk 'BEGIN { system("cat .en[v]") }'`,
+    `awk 'BEGIN { system("cat .e\\"\\"nv") }'`,
+    `awk 'BEGIN { "cat .en[v]" | getline l; print l }'`,
+    `awk 'BEGIN { while (("cat .e*v" | getline l) > 0) print l }'`,
+  ])
+    for (const shell of ['bash', 'zsh'] as const)
+      out.push(shape('G12', out.length, script, [shell], ['G12: a shell from the script']))
+  for (const script of [`sed '1e cat .en[v]' a.txt`, `sed 's/a/cat .en[v]/e' a.txt`])
+    for (const shell of ['bash', 'zsh'] as const)
+      out.push(shape('G12', out.length, script, [shell]))
   return out
 }

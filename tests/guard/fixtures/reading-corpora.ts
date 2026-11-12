@@ -1034,6 +1034,60 @@ export const A4_REFUSED: Readonly<Record<string, readonly string[]>> = {
   ],
 }
 
+// ── Addendum 5 (automated review of df5cc4d) ──
+
+/** Allowed at df5cc4d, refused before it or by the contract. */
+export const A5_REFUSED: Readonly<Record<string, readonly string[]>> = {
+  // A script in another program's language that starts a shell or expands a
+  // wildcard itself: judged as before the own-language table.
+  ownEscapes: [
+    `awk 'BEGIN{system("cat .en[v]")}'`,
+    `awk '{"cat .en[v]" | getline; print}' a.txt`,
+    `sed 's/x/cat .en[v]/e' a.txt`,
+    `sed '1e cat .en[v]' a.txt`,
+    `sed -n 's/x/cat .e*v/ep' a.txt`,
+    `perl -e 'system("cat .en[v]")'`,
+    "perl -e 'print `cat .en[v]`'",
+    `perl -e 'print qx(cat .en[v])'`,
+    `perl -e 'exec("cat .en[v]")'`,
+    `perl -e 'print glob(".en*")'`,
+    `perl -e 'print <.en*>'`,
+    `perl -e 'open(F, "cat .en[v] |"); print <F>'`,
+    "ruby -e 'puts `cat .en[v]`'",
+    `ruby -e 'system("cat .en[v]")'`,
+    `ruby -e 'puts %x(cat .en[v])'`,
+    `ruby -e 'puts Dir.glob(".en*")'`,
+    `ruby -e 'puts IO.popen("cat .en[v]").read'`,
+    `python3 -c 'import os; os.system("cat .en[v]")'`,
+    `python3 -c 'import subprocess; subprocess.run("cat .en[v]", shell=True)'`,
+    `python3 -c 'import glob; print(glob.glob(".en*"))'`,
+    `python3 -c 'import os; os.popen("cat .e*v").read()'`,
+    `node -e 'require("child_process").execSync("cat .en[v]")'`,
+    `node -e 'require("child_process").exec("cat .e*v")'`,
+    `psql -c '\\! cat .en[v]'`,
+    `psql -c "copy t from program 'cat .en[v]'"`,
+    `sqlite3 x.db '.shell cat .en[v]'`,
+    `sqlite3 x.db '.system cat .e*v'`,
+    `mysql -e 'system cat .en[v]'`,
+    `mysql -e '\\! cat .en[v]'`,
+  ],
+  // A path longer than any system opens, that is a short one once read.
+  longPath: [
+    `cat ${'./'.repeat(2100)}.env`,
+    `cat ${'sub/../'.repeat(700)}.en[v]`,
+    `cat ${'/'.repeat(4200)}etc/../.env`,
+  ],
+  // A built word that starts with a written `-` or `+`: an option.
+  builtOption: [
+    `echo 'cat *nv' | bash -$x`,
+    `bash -O"$y" < a.sh`,
+    `echo 'cat *nv' | zsh -o$z`,
+    `echo 'cat ?env' | bash +$x dotglob`,
+    `bash "-O"$y <<< 'cat *nv'`,
+    `exec <<< 'cat *nv'; zsh --$long`,
+  ],
+}
+
 export const ATTACK: readonly string[] = [
   ...new Set([
     ...SPELLINGS_REFUSED,
@@ -1057,6 +1111,7 @@ export const ATTACK: readonly string[] = [
     ...FLOOR_READS,
     ...Object.values(A3_REFUSED).flat(),
     ...Object.values(A4_REFUSED).flat(),
+    ...Object.values(A5_REFUSED).flat(),
   ]),
 ]
 
@@ -1557,6 +1612,10 @@ export const LIMITS: readonly {
   { limit: 'L1', command: `a=GLOB; b=IGNORE; export $a$b=y; cat *nv` },
   // The shell itself named through a variable (contract §9).
   { limit: 'L1', command: `x=zsh; $x -c 'cat .e(n*)v'` },
+  // An option the shell is given through a variable (addendum 5): a built
+  // word that starts with a run-time part is read as the file word.
+  { limit: 'L1', command: `echo 'cat *nv' | bash $opts` },
+  { limit: 'L1', command: `yes | bash "$installer"` },
   { limit: 'L2', command: `cat .e$(echo n)v` },
   { limit: 'L2', command: `cat .e"$(echo n)"v` },
   { limit: 'L2', command: `cat $(printf .e; printf nv)` },
