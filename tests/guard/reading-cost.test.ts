@@ -61,6 +61,10 @@ for (const { name, make } of LONG_ORDINARY)
     const v = await verdict(guard, command)
     expect(v.text).toBe(null)
     expect(performance.now() - started).toBeLessThan(LIMIT_MS)
+    // Text a program only stores is read once and costs little: well under
+    // half the budget for the longest here-document and message.
+    if (/here-document|commit message/.test(name))
+      expect(guard.lastSteps).toBeLessThan(MAX_STEPS / 2)
   })
 
 test('the cost table: steps and time for every hostile and every long ordinary row', async () => {

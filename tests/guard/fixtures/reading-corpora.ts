@@ -621,6 +621,16 @@ export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `echo 'cat .e\${x}nv' >> >(bash)`,
     `echo 'cat .e\${x}nv' 2>&1 > >(zsh -f)`,
     `command exec > >(sh); echo 'cat .e\${x}nv'`,
+    // Read by a program that is no shell: only the data rule sees it.
+    `exec > >(xargs cat); echo .env`,
+    `{ echo .env; } > >(xargs cat)`,
+    // Read only by delivering the text to the shell inside.
+    `exec > >(bash -O dotglob); echo 'cat *nv'`,
+    `echo 'cat *nv' > >(zsh -o globdots)`,
+    // A known shell reads a group in its script as zsh does; as text for
+    // some other program the same word would be left to the floor.
+    `exec > >(zsh -f); echo 'cat .e(n*)v'`,
+    `echo 'cat .e(n*)v' > >(zsh -f)`,
   ],
   // §2a: a shell with an option outside the shapes, its script on another channel.
   unknownOptionChannel: [
@@ -1430,6 +1440,11 @@ export const COST_A3: readonly { name: string; make: () => string }[] = [
   {
     name: '14,000 distinct paths',
     make: () => `cat ${Array.from({ length: 14000 }, (_, i) => `a${i}`).join(' ')}`,
+  },
+  // Past the budget by its path checks alone (each asks the file system).
+  {
+    name: '6,000 distinct paths',
+    make: () => `cat ${Array.from({ length: 6000 }, (_, i) => `a${i}`).join(' ')}`,
   },
   {
     name: '12,000 distinct wildcard words',
