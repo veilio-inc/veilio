@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.19.0](https://github.com/veilio-inc/veilio/compare/engine-v1.18.0...engine-v1.19.0) (2026-11-12)
+
+### Features
+
+* **engine:** a name the map holds is masked in comments too ([760b541](https://github.com/veilio-inc/veilio/commit/760b5412abb29135e186395db3538ec875efc3e4))
+
 ## [1.18.0](https://github.com/veilio-inc/veilio/compare/engine-v1.17.0...engine-v1.18.0) (2026-11-10)
 
 ### Features
