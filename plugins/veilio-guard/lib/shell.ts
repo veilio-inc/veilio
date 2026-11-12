@@ -1408,7 +1408,13 @@ class Reader {
       // option outside the shapes is a word written with `-` or `+`; a word
       // the shell builds where the file stands (`"$installer"`, `<(curl ...)`)
       // is a file whose text is not in the command.
-      if (!known && /^[-+]/.test(words[j]?.literal ?? '')) OPTION_UNKNOWN.add(simple)
+      // A built word that starts with a written `-` or `+` (`-$x`, `-O"$y"`)
+      // is an option too; one that starts with a run-time part cannot be
+      // told from the text and is read as the file word (limit L1).
+      const stopped = words[j]
+      const first = stopped?.parts[0]
+      if (!known && /^[-+]/.test(stopped?.literal ?? (first?.kind === 'lit' ? first.text : '')))
+        OPTION_UNKNOWN.add(simple)
       if (scripted && /^[-+]/.test(words[j]?.literal ?? '')) throw new Unreadable('unknown')
       // The script word by its value: a part the shell fills in is empty
       // there, never a reason to skip the word.

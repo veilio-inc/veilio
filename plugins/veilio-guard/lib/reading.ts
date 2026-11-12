@@ -913,31 +913,57 @@ function fromInput(args: readonly Word[], short: string, long: readonly string[]
  *  after one of the long options. By operand: the first (sqlite3: second)
  *  word that is no option, the program's options read from its table; an
  *  option outside the table means no word is taken for the script. */
-type OwnLanguage =
-  | { letters: string; long: readonly string[] }
-  | {
-      operand: 1 | 2
-      /** Letters and long names that take the next word. */
-      valued: readonly string[]
-      /** Long names that take the next two words. */
-      valued2?: readonly string[]
-      /** Options that carry the script themselves (each is one). */
-      script?: readonly string[]
-      /** Options that name a script file: then no operand is the script. */
-      file?: readonly string[]
-      /** Long options and words without a value; any letter cluster is one. */
-      flags?: readonly string[]
-    }
-const AWK: OwnLanguage = { operand: 1, valued: ['F', 'v'], file: ['f', 'file'] }
+type OwnLanguage = ({ letters: string; long: readonly string[] } | OwnOperand) & {
+  /** What in the program's language starts a shell or expands a file
+   *  wildcard itself: a script that holds one is shell text after all, and
+   *  is judged as any quoted text (wildcards, and read again as a script). */
+  escapes?: RegExp
+}
+type OwnOperand = {
+  operand: 1 | 2
+  /** Letters and long names that take the next word. */
+  valued: readonly string[]
+  /** Long names that take the next two words. */
+  valued2?: readonly string[]
+  /** Options that carry the script themselves (each is one). */
+  script?: readonly string[]
+  /** Options that name a script file: then no operand is the script. */
+  file?: readonly string[]
+  /** Long options and words without a value; any letter cluster is one. */
+  flags?: readonly string[]
+}
+/** awk: `system()`, a pipe to or from a command, `getline`. */
+const AWK: OwnLanguage = {
+  operand: 1,
+  valued: ['F', 'v'],
+  file: ['f', 'file'],
+  escapes: /system|\||getline/,
+}
+/** perl: `system`, `exec`, backticks, `qx`, `glob`, `<*.c>`, a piped `open`. */
+const PERL_ESCAPES = /system|exec|`|qx|glob|<[^>\n]*[*?[{~][^>\n]*>|\||readpipe|fork/
+/** ruby: backticks, `system`, `exec`, `%x`, `spawn`, `popen`, `Dir`, `glob`. */
+const RUBY_ESCAPES = /`|system|exec|%x|spawn|popen|Dir\b|glob|\|/
+/** python: `os.system`, `subprocess`, `popen`, `glob`, `exec*`, `spawn*`, `pty`. */
+const PYTHON_ESCAPES = /system|subprocess|popen|glob|exec|spawn|pty|commands/
+/** sed (GNU): the `e` command, and the `e` flag of `s`. */
+const SED_ESCAPES = /\/[A-Za-z0-9]*e[A-Za-z0-9]*\s*(?:$|[;}\n])|(?:^|[;{\n]|[0-9$/]\s*)\s*e(?:\s|$)/
 const OWN: Readonly<Record<string, OwnLanguage>> = {
-  perl: { letters: 'e', long: [] },
-  ruby: { letters: 'e', long: [] },
-  python: { letters: 'c', long: [] },
-  python3: { letters: 'c', long: [] },
-  node: { letters: 'ep', long: ['eval', 'print'] },
-  psql: { letters: 'c', long: ['command'] },
-  mysql: { letters: 'e', long: ['execute'] },
+  perl: { letters: 'e', long: [], escapes: PERL_ESCAPES },
+  ruby: { letters: 'e', long: [], escapes: RUBY_ESCAPES },
+  python: { letters: 'c', long: [], escapes: PYTHON_ESCAPES },
+  python3: { letters: 'c', long: [], escapes: PYTHON_ESCAPES },
+  // node: `child_process` and its `exec`, `spawn`, `fork`; a glob library.
+  node: {
+    letters: 'ep',
+    long: ['eval', 'print'],
+    escapes: /child_process|exec|spawn|fork|glob/,
+  },
+  // psql: every backslash command (`\\!`, `\\copy ... program`, `\\o |cmd`), `program`.
+  psql: { letters: 'c', long: ['command'], escapes: /\\|program/i },
+  // mysql: `system`, `\\!`, `source`, `\\.`.
+  mysql: { letters: 'e', long: ['execute'], escapes: /system|\\|source/i },
   sed: {
+    escapes: SED_ESCAPES,
     operand: 1,
     valued: ['l', 'line-length'],
     script: ['e', 'expression'],
@@ -960,6 +986,8 @@ const OWN: Readonly<Record<string, OwnLanguage>> = {
     operand: 2,
     valued: ['cmd', 'separator', 'init', 'nullvalue', 'newline', 'vfs'],
     flags: words('header noheader csv json line list column html batch readonly bail echo'),
+    // sqlite3: dot-commands (`.shell`, `.system`, `.once |cmd`, `.read`, `.import`).
+    escapes: /(?:^|[\s;])\.[a-z]/,
   },
 }
 
@@ -969,8 +997,9 @@ const OWN: Readonly<Record<string, OwnLanguage>> = {
  *  name written plainly in it and not as shell wildcards or a shell script. */
 export function ownScripts(tree: unknown): { words: Set<Word>; inside: Set<object> } {
   const out = { words: new Set<Word>(), inside: new Set<object>() }
-  const take = (w: Word | undefined) => {
-    if (!w) return
+  const take = (w: Word | undefined, escapes?: RegExp) => {
+    // A script that can start a shell or expand a wildcard is shell text.
+    if (!w || escapes?.test(valueOf(w))) return
     out.words.add(w)
     for (const l of w.again ?? []) out.inside.add(l)
   }
@@ -984,7 +1013,8 @@ export function ownScripts(tree: unknown): { words: Set<Word>; inside: Set<objec
     const table = OWN[(all[0]?.literal ?? '').replace(/^.*\//, '')]
     if (!table) return
     const args = all.slice(1)
-    if ('letters' in table) return optionValues(args, table.letters, table.long).forEach(take)
+    const own = (w: Word) => take(w, table.escapes)
+    if ('letters' in table) return optionValues(args, table.letters, table.long).forEach(own)
     const found: Word[] = []
     let operands = 0
     let fromFile = false
@@ -1029,7 +1059,7 @@ export function ownScripts(tree: unknown): { words: Set<Word>; inside: Set<objec
         } else return
       }
     }
-    if (!fromFile || found.length > 0) found.forEach(take)
+    if (!fromFile || found.length > 0) found.forEach(own)
   }
   visit(tree)
   return out

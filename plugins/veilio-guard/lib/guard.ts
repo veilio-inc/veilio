@@ -1744,10 +1744,17 @@ export class Guard {
     // text, in each directory): answered once per call.
     const known = this.hitsThisCall?.get(path)
     if (known) return known
-    // No system opens a path longer than this (PATH_MAX is 4,096 on Linux,
-    // 1,024 on macOS): a quoted script of a hundred lines is one word, and
-    // is text, not a file's name.
-    if (path.length > MAX_PATH) return { written: false, rawOnly: false, mcp: null, folder: false }
+    // A word that is still longer than any path a system opens (PATH_MAX is
+    // 4,096 on Linux, 1,024 on macOS) once `./`, `//` and `x/../` are read
+    // out of it is text, not a file's name: a quoted script of a hundred
+    // lines is one word. A long spelling of a short path is judged by the
+    // short path (`././…/.env`).
+    if (path.length > MAX_PATH) {
+      const short = normalisePath(path)
+      if (short.length > MAX_PATH)
+        return { written: false, rawOnly: false, mcp: null, folder: false }
+      if (short !== path) return this.pathHits(short)
+    }
     // The engine's matcher tries each pattern at each part of the path.
     spend(
       this.cost ?? undefined,
