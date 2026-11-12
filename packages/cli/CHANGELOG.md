@@ -1,5 +1,17 @@
 # @veilio-inc/cli
 
+## 0.13.0
+
+### Minor Changes
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`760b541`](https://github.com/veilio-inc/veilio/commit/760b5412abb29135e186395db3538ec875efc3e4) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio scrub` masks a name the map holds wherever it stands in a comment, so a comment no longer shows what the placeholder beside it means. Other comment text is left as written, and the note on stderr counts only that. `veilio restore` puts the names back as before.
+
+### Patch Changes
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`241f0a7`](https://github.com/veilio-inc/veilio/commit/241f0a7dd6fb0af17b2bc00458f35865d9ba5dc9) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `veilio rules pull` says when team rules are waiting for a key confirmation: how many, for which team, whose key to confirm and the command to run.
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`8db279a`](https://github.com/veilio-inc/veilio/commit/8db279a74c78218d6946d0f9f5c5acf65edaa7f1) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The GitHub Action runs the CLI version it was released with instead of `latest`; set the `version` input to `latest` to track the newest. The vault passphrase step refuses a key-derivation cost from Cloud below 600,000 or above 4,000,000 iterations, instead of running whatever number the server reports.
+
 ## 0.12.1
 
 ### Patch Changes

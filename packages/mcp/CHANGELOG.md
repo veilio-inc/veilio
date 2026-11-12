@@ -1,5 +1,19 @@
 # @veilio-inc/mcp
 
+## 0.11.0
+
+### Minor Changes
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`760b541`](https://github.com/veilio-inc/veilio/commit/760b5412abb29135e186395db3538ec875efc3e4) Thanks [@DlgSHi](https://github.com/DlgSHi)! - `anonymize_file` and `anonymize_text` mask a name the map holds wherever it stands in a comment. The tool description no longer says real identifiers never enter the model's context: it says what is masked and what is left as written.
+
+### Patch Changes
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`241f0a7`](https://github.com/veilio-inc/veilio/commit/241f0a7dd6fb0af17b2bc00458f35865d9ba5dc9) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The custom-rules line of a result says when team rules wait for a key confirmation.
+
+- [#238](https://github.com/veilio-inc/veilio/pull/238) [`3ee41fe`](https://github.com/veilio-inc/veilio/commit/3ee41fe056c4e8e6d9318578f6ede8cf0309b541) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Depends on the CLI release that refuses a key-derivation cost from Cloud below 600,000 or above 4,000,000 iterations.
+- Updated dependencies [[`760b541`](https://github.com/veilio-inc/veilio/commit/760b5412abb29135e186395db3538ec875efc3e4), [`241f0a7`](https://github.com/veilio-inc/veilio/commit/241f0a7dd6fb0af17b2bc00458f35865d9ba5dc9), [`8db279a`](https://github.com/veilio-inc/veilio/commit/8db279a74c78218d6946d0f9f5c5acf65edaa7f1)]:
+  - @veilio-inc/cli@0.13.0
+
 ## 0.10.1
 
 ### Patch Changes
