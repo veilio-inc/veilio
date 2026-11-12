@@ -1458,4 +1458,17 @@ export const COST_A3: readonly { name: string; make: () => string }[] = [
     name: '30,000 commands of one plain word',
     make: () => times('a\n', 30000),
   },
+  // Floods of plain words: each is judged, and is counted before it is.
+  { name: '50,000 plain words, all the same', make: () => `cat ${times('a ', 49990)}` },
+  { name: '39,000 plain words', make: () => `ls ${times('a ', 39000)}` },
+  {
+    name: '50,000 words in quoted text for another program',
+    make: () => `watch '${times('a b ', 24990)}'`,
+  },
+  { name: '20,000 assignments', make: () => `${times('a=b ', 20000)}true` },
+  { name: '9,900 commands of one plain word', make: () => times('a;', 9900) },
+  {
+    name: '14,000 commands in quoted text for another program',
+    make: () => `ssh h '${times('cat x; ', 14000)}'`,
+  },
 ]

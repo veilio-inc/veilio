@@ -70,6 +70,7 @@ import {
   namesVeilioFolder,
   bracketsRead,
   dataPositions,
+  judgedWords,
   withoutData,
   pieces,
   textPieces,
@@ -2106,6 +2107,10 @@ export class Guard {
               false
             )
           if (parsed?.ok) {
+            // One step for each word that will be judged, charged before the
+            // command is walked: a flood of words is refused for its cost
+            // here, not after the work each of them takes.
+            spend(cost, judgedWords(parsed.list, data))
             const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
             // Q3 = A: with no host report, a call that would leave the shell
             // in more directories than the bound is refused before it runs.
@@ -2198,7 +2203,6 @@ export class Guard {
               let at = [...(where.get(w) ?? [])]
               for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
                 if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
-              spend(cost)
               const read = spellings(w, { home, homeKnown, strict, cost })
               // A zsh expansion that rewrites text written in the command:
               // the word could be any name.

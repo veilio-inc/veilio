@@ -44,6 +44,25 @@ export function wordsWithin(tree: unknown): { word: Word; within: object[] }[] {
 /** Every word of a parsed command (see wordsWithin). */
 export const wordsOf = (list: List): Word[] => wordsWithin(list).map((p) => p.word)
 
+/** How many words of a parsed command are judged one by one: every word but
+ *  those in or under a data position. Counted before the command is walked,
+ *  so a command of tens of thousands of words is refused for its cost before
+ *  the work that each word takes is done. */
+export function judgedWords(tree: unknown, data: Data = NO_DATA): number {
+  let n = 0
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) {
+      for (const e of x) visit(e)
+      return
+    }
+    if (x === null || typeof x !== 'object' || data.inside.has(x)) return
+    if (isWord(x) && !data.words.has(x)) n++
+    for (const v of Object.values(x)) visit(v)
+  }
+  visit(tree)
+  return n
+}
+
 /** A wildcard or brace character that was quoted: an ordinary character. */
 const QUOTED = '\u0001'
 /** A part the shell fills in when the command runs (a private-use character). */
@@ -292,9 +311,10 @@ const SET_PLAIN = new Set(
 )
 const SET_LETTERS = 'euxvfCabhmnET'
 
-/** Whether `set`'s arguments name an option outside the plain ones. */
-function setChanges(args: (string | null)[]): boolean {
-  for (let k = 0; k < args.length; k++) {
+/** Whether `set`'s arguments (the words from `from` on) name an option
+ *  outside the plain ones. */
+function setChanges(args: readonly (string | null)[], from: number): boolean {
+  for (let k = from; k < args.length; k++) {
     const a = args[k]!
     if (a === null) return true
     if (a === '--' || a === '-' || !/^[-+]/.test(a)) return false
@@ -351,15 +371,28 @@ export function readsStrictly(list: List): boolean {
       strict = true
     if ((x as { type?: unknown }).type === 'simple') {
       const words = (x as Simple).words.map((w) => w.literal)
-      words.forEach((w, k) => {
-        const rest = words.slice(k + 1)
+      // The words after a `shopt`, or after `eval`, `source` or `.`, are
+      // looked through once: what the first of them finds nothing in holds
+      // nothing for a later one either (a command of many words is read in
+      // one pass, not once per word).
+      let shoptSeen = false
+      let builtSeen = false
+      for (let k = 0; k < words.length && !strict; k++) {
+        const w = words[k]
         if (w === 'setopt' || w === 'unsetopt' || w === 'emulate') strict = true
-        else if (w === 'shopt')
-          strict ||= rest.some((a) => a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a)))
-        else if (w === 'set') strict ||= setChanges(rest)
+        else if (w === 'shopt' && !shoptSeen) {
+          shoptSeen = true
+          for (let j = k + 1; j < words.length && !strict; j++) {
+            const a = words[j]!
+            strict = a === null || (!a.startsWith('-') && !SHOPT_PLAIN.has(a))
+          }
+        } else if (w === 'set') strict = setChanges(words, k + 1)
         // Text the command builds, run as commands: it may be any of these.
-        else if ((w === 'eval' || w === 'source' || w === '.') && rest.includes(null)) strict = true
-      })
+        else if ((w === 'eval' || w === 'source' || w === '.') && !builtSeen) {
+          builtSeen = true
+          strict = words.includes(null, k + 1)
+        }
+      }
       const simple = x as Simple
       // zsh's `options` array sets an option as `setopt` does.
       if (
@@ -900,8 +933,8 @@ export function dataPositions(list: List): Data {
   let execSink = false
   for (const { word: w, within } of wordsWithin(list)) {
     const n = within[within.length - 1] as Partial<Simple> | undefined
-    // `exec` anywhere among the command's words: `command exec > >(sh)`.
-    if (n?.type === 'simple' && n.words?.includes(w) && w.literal === 'exec')
+    // `exec` anywhere in the command: `command exec > >(sh)`.
+    if (w.literal === 'exec' && n?.type === 'simple')
       execSink ||= sink((n.redirects ?? []).map((r) => r.target))
   }
   visit(list, execSink)

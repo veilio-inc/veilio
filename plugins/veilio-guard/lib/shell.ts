@@ -1107,7 +1107,7 @@ class Reader {
   private command(): Node {
     this.blank()
     // Each command costs a fixed amount, whatever its words.
-    spend(this.frames, 2)
+    spend(this.frames, 3)
     const s = this.s
     if (s.startsWith('((', this.i)) {
       const end = this.arithEnd(this.i + 2)
