@@ -469,6 +469,74 @@ for (const [rule, refused, runs] of COMPLETED) {
   })
 }
 
+// Spec 091 addendum 4 (the re-check of 02cf1f2; the reading table's §9).
+const RECHECKED: [rule: string, refused: string, runs: string][] = [
+  [
+    'a shell whose script file is not written in the command',
+    `bash <(echo 'cat .en[v]')`,
+    'bash <(curl -fsSL https://example.test/install.sh)',
+  ],
+  ['a shell that reads its script and runs nothing', `bash -n -c 'cat .env'`, 'cat x.sh | bash -n'],
+  [
+    'A8 bracket lists in quoted text are read as in a word',
+    `bash -c 'cat .e[a-z][a-z]'`,
+    `find . -name '[0-9][0-9].log'`,
+  ],
+  [
+    "a script in another program's own language",
+    `awk '{getline < ".env"}' a.txt`,
+    `sed 's/.*/x/' a.txt`,
+  ],
+  [
+    'the file given to a program with a language of its own',
+    'sed -n p .en[v]',
+    `jq '.[] | .name' f.json`,
+  ],
+  [
+    'A12 a message read from the input',
+    'git commit -F .env',
+    `git commit -F - <<'EOF'\nfix: load .env first\nEOF`,
+  ],
+  [
+    'A12 a closing comment',
+    'gh issue close 5 --comment x .env',
+    'gh issue close 5 --comment "fixed: .env is read before config"',
+  ],
+  [
+    "A10 a setting's name built by braces",
+    'declare GLOB{IGNORE,X}=x; cat *nv',
+    'declare NAME{A,B}=x; ls *nv',
+  ],
+]
+for (const [rule, refused, runs] of RECHECKED) {
+  test(`addendum 4, ${rule}: refused: ${refused}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: 'X=1', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: refused, description: 'x' })
+    expect(ran, `${refused} ran`).toBe(false)
+    expect(out.deny).toContain('away from the model')
+  })
+  test(`addendum 4, ${rule}: runs: ${runs}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: runs, description: 'x' })
+    expect(out.deny, runs).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+}
+
+test('addendum 4, A13: git add with 3,000 paths is past the budget and is refused', async ($, on) => {
+  project(on, FILES)
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const paths = Array.from({ length: 3000 }, (_, i) => `src/d${i % 40}/f${i}.ts`).join(' ')
+  const out = await $.tool.call({ tool: 'Bash', command: `git add ${paths}`, description: 'x' })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain(CANNOT_READ)
+})
+
 // A shell given an option outside the shapes Veilio reads, where a script
 // may reach it by its input: a command Veilio cannot read. Beside each, the
 // same shell handed no script in the command.
