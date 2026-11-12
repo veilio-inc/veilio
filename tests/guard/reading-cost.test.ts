@@ -8,7 +8,14 @@ import {
   Unreadable,
 } from '../../plugins/veilio-guard/lib/shell.ts'
 import { CORPUS } from './fixtures/cd-corpus.ts'
-import { COST, COST_A3, LONG_ORDINARY, MENTIONS, ORDINARY } from './fixtures/reading-corpora.ts'
+import {
+  COST,
+  COST_A3,
+  COST_A4,
+  LONG_ORDINARY,
+  MENTIONS,
+  ORDINARY,
+} from './fixtures/reading-corpora.ts'
 import { guardAt, memoryFixture, verdict } from './fixtures/reading-shell.ts'
 
 // Spec 091 addendum 2, rule R9 (contract A13): the reader has a budget of its
@@ -52,6 +59,19 @@ for (const { name, make } of COST_A3)
     expect(v.text).toContain(UNREADABLE)
   })
 
+// Addendum 4 (contract §9, A13): the re-check's cases. Each ends - with an
+// answer or a refusal - without the work its size would take: the budget is
+// charged before the work. `runs`: ordinary, and must be allowed.
+for (const { name, make, runs } of COST_A4)
+  test(`charged before the work: ${name}`, async () => {
+    const guard = await guardAt(memoryFixture(), ['secrets/**'])
+    const started = performance.now()
+    const v = await verdict(guard, make())
+    expect(performance.now() - started).toBeLessThan(LIMIT_MS)
+    if (runs) expect(v.text).toBe(null)
+    else expect(v.text).toContain(UNREADABLE)
+  })
+
 for (const { name, make } of LONG_ORDINARY)
   test(`long plain text runs: ${name}`, async () => {
     const command = make()
@@ -70,7 +90,8 @@ for (const { name, make } of LONG_ORDINARY)
 test('the cost table: steps and time for every hostile and every long ordinary row', async () => {
   const rows: string[] = []
   for (const [kind, list] of [
-    ['hostile', [...COST, ...COST_A3]],
+    ['hostile', [...COST, ...COST_A3, ...COST_A4.filter((c) => !c.runs)]],
+    ['ordinary', COST_A4.filter((c) => c.runs)],
     ['ordinary', LONG_ORDINARY],
   ] as const)
     for (const { name, make } of list) {
@@ -84,7 +105,7 @@ test('the cost table: steps and time for every hostile and every long ordinary r
       )
     }
   process.stdout.write(`reading cost table (budget ${MAX_STEPS} steps)\n${rows.join('\n')}\n`)
-  expect(rows.length).toBe(COST.length + COST_A3.length + LONG_ORDINARY.length)
+  expect(rows.length).toBe(COST.length + COST_A3.length + COST_A4.length + LONG_ORDINARY.length)
 }, 120_000)
 
 test('a command of 100,000 characters is read; one more and it is not', () => {
@@ -201,6 +222,16 @@ test('a flood of plain words is refused before any of them is judged', async () 
   const v = await verdict(guard, `ls ${'a '.repeat(45000)}`)
   expect(v.text).toContain(UNREADABLE)
   expect(asked).toBe(0)
+  // Addendum 4: 3,000 different names cannot pay for their path checks, and
+  // the command is refused before the first of them.
+  const names = Array.from({ length: 3000 }, (_, i) => `f${i}.txt`).join(' ')
+  expect((await verdict(guard, `ls ${names}`)).text).toContain(UNREADABLE)
+  expect(asked).toBe(0)
+  // The same for names in a script of another program's language.
+  const code = Array.from({ length: 4000 }, (_, i) => `f("g${i}")`).join(';')
+  expect((await verdict(guard, `node -e '${code}'`)).text).toContain(UNREADABLE)
+  // (the command's own few words were checked; none of the 4,000 names was)
+  expect(asked).toBeLessThan(10)
 })
 
 test('a refusal of an over-long command shows its start, not all of it', async () => {

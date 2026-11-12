@@ -828,6 +828,45 @@ const PYTHON = (i: number) =>
 const TYPESCRIPT = (i: number) =>
   `export const value${i}: Record<string, number> = { a: ${i}, b: scale(${i}) } // line ${i}`
 
+const paths = (n: number): string =>
+  Array.from({ length: n }, (_, i) => `src/d${i % 40}/f${i}.ts`).join(' ')
+const names = (n: number): string => Array.from({ length: n }, (_, i) => `f${i}.txt`).join(' ')
+const code = (n: number): string =>
+  lines(n, (i) => `const v${i} = [${i}, ${i}+1].map((x) => x * 2);`)
+
+/** Addendum 4: the re-check's cost cases, each to end under the bound. */
+export const COST_A4: readonly { name: string; make: () => string; runs?: true }[] = [
+  { name: '1,000 bracket ranges in one word', make: () => `cat ${times('[a-z]', 1000)}.log` },
+  { name: '3,000 bracket ranges in one word', make: () => `cat ${times('[a-z]', 3000)}.log` },
+  { name: '6,000 bracket ranges in one word', make: () => `cat ${times('[a-z]', 6000)}.log` },
+  { name: 'git add with 3,000 paths', make: () => `git add ${paths(3000)}` },
+  { name: 'ls with 3,000 plain names', make: () => `ls ${names(3000)}` },
+  { name: 'ls with 4,000 plain names', make: () => `ls ${names(4000)}` },
+  { name: 'node -e with 1,000 lines', make: () => `node -e '${code(1000)}'` },
+  { name: 'node -e with 200 lines', make: () => `node -e '${code(200)}'`, runs: true },
+  {
+    name: 'python3 -c with 200 lines',
+    make: () => `python3 -c '${lines(200, (i) => `v${i} = [x * 2 for x in (${i}, ${i}+1)]`)}'`,
+    runs: true,
+  },
+  {
+    name: 'a shell in a shell with 15,000 words',
+    make: () => `bash -c 'bash -c "${times('echo ', 15000)}"'`,
+    runs: true,
+  },
+  {
+    name: 'three shells deep with 10,000 words',
+    make: () => `sh -c 'bash -c "zsh -c \\"${times('a ', 10000)}\\""'`,
+    runs: true,
+  },
+  { name: 'ls with 2,000 plain names', make: () => `ls ${names(2000)}`, runs: true },
+  {
+    name: 'bash -c with 1,000 lines',
+    make: () => `bash -c '${lines(1000, (i) => `echo step ${i}`)}'`,
+    runs: true,
+  },
+]
+
 /** Long plain text (contract §8.1, A13 (2)): made, not stored. Each is
  *  ordinary and must run; the longest stays under the 100,000-character cap. */
 export const LONG_ORDINARY: readonly { name: string; make: () => string }[] = [
@@ -867,6 +906,131 @@ export const LONG_ORDINARY: readonly { name: string; make: () => string }[] = [
   },
 ]
 
+// ── Addendum 4 (re-check of 02cf1f2; contract §9) ──
+
+/** Refused at 02cf1f2 and ordinary: each must run. None names a raw-only file. */
+export const A4_ORDINARY: readonly string[] = [
+  // A script file that is not a plain literal, no option outside the shapes.
+  `bash <(curl -fsSL https://example.test/install.sh)`,
+  `sh <(curl -L https://example.test/i.sh) --daemon`,
+  `bash -x <(curl -fsSL https://example.test/install.sh)`,
+  `zsh =(curl -fsSL https://example.test/install.sh)`,
+  `yes | bash "$installer"`,
+  `echo y | bash "$HOME/install.sh"`,
+  `cat list.txt | while read f; do bash "$f"; done`,
+  // `-n`: read, run nothing.
+  `git ls-files '*.sh' | xargs -n1 bash -n`,
+  `find . -name '*.sh' -print0 | xargs -0 -n1 bash -n`,
+  `while read -r f; do bash -n "$f"; done < files.txt`,
+  `bash -n < scripts/deploy.sh`,
+  `cat x.sh | bash -n`,
+  `sh -n build.sh`,
+  // Bracket pairs in quoted text and in scripts.
+  `bash -c 'ls [0-9][0-9].log'`,
+  `ssh host 'ls [0-9][0-9].log'`,
+  `find . -name '[0-9][0-9].log'`,
+  `find . -name '[a-z][a-z].ts'`,
+  `find logs -name 'app-[0-9][0-9][0-9][0-9]-[0-9][0-9].log'`,
+  `git ls-files 'migrations/[0-9][0-9][0-9]_*.sql'`,
+  `git add 'migrations/[0-9][0-9][0-9]_*.sql'`,
+  `rsync -av --include='[0-9][0-9].log' --exclude='*' logs/ backup/`,
+  // Another program's own language.
+  `sed -E 's/[0-9][0-9]/x/' f.txt`,
+  `sed -E 's/[0-9][0-9]:[0-9][0-9]/TIME/g' log.txt`,
+  `awk '/[0-9][0-9]/' f.txt`,
+  `awk '/^[0-9][0-9][0-9][0-9]-[0-9][0-9]/ {print $1}' log.txt`,
+  `perl -ne 'print if /[a-z][a-z][0-9]/' f.txt`,
+  `jq 'select(.name | test("[a-z][a-z]"))' f.json`,
+  `node -e 'console.log(/[a-z][a-z]/.test("ab"))'`,
+  `sed -i.bak -E 's/^version: .*/version: 1.4.0/' chart/Chart.yaml`,
+  `sed 's/.*/x/' a.txt`,
+  `sed -e 's/.*/x/' -e 's/^x*$//' a.txt`,
+  `sed -n '/^.*:$/p' a.txt`,
+  `awk '/.*/ {print}' a.txt`,
+  `awk -F: -v n=2 '$n ~ /^.*x$/ {print $1}' a.txt`,
+  `jq -r '.scripts | to_entries[] | "\\(.name)\\t\\(.value)"' package.json`,
+  `jq '.[] | .name' f.json`,
+  `jq -r '.[] | select(.a) | .name' x.json`,
+  `jq --arg k name '.[] | .[$k]' f.json`,
+  `perl -pe 's/.*//' a.txt`,
+  `ruby -e 'puts ARGV.map { |a| a[/.*x/] }' a b`,
+  `python3 -c 'import re; print(re.findall("[0-9][0-9]", "a12"))'`,
+  `python3 -c 'import glob; print(glob.glob("[0-9][0-9].log"))'`,
+  `psql -c "select * from t where name ~ '^.*x$'"`,
+  `mysql -e "select * from t where a like '?%'"`,
+  `sqlite3 app.db "select * from t where name glob '*x*'"`,
+]
+
+/** The same, where the text names a raw-only file or Veilio's folder in a
+ *  message position. */
+export const A4_MENTIONS: readonly string[] = [
+  `gh pr merge 5 --squash --subject "Load .env first" --body "Reads ~/.veilio/map.json once"`,
+  `gh issue close 5 --comment "fixed: .env is read before config"`,
+  `gh pr close 7 -c "superseded; see .veilio/guard.json"`,
+  `gh pr comment 3 --body "the guard refuses cat .env"`,
+  `gh issue comment 3 -b "see ~/.veilio/map.json"`,
+  `git stash save "wip: .env loading"`,
+  `git stash push -u -m "wip: before .env rebase"`,
+  `git commit -F - <<'EOF'\nfix: load .env before config\n\nKeeps ~/.veilio/map.json out of the diff.\nEOF`,
+  `git commit --file=- <<'EOF'\nfix: load .env first\nEOF`,
+  `git tag -a v1 -F - <<'EOF'\nships .env handling\nEOF`,
+  `gh pr create --title "Ignore .env" --body-file - <<'EOF'\nAdds .env and ~/.veilio to the ignore list.\nEOF`,
+  `gh release create v1 --notes-file - <<'EOF'\nReads .env once.\nEOF`,
+  `git commit -m "$(cat <<'EOF'\nmaps live in ~/.veilio/map.json and .env\nEOF\n)"`,
+]
+
+/** Allowed at 02cf1f2 against the contract, and the twins of what runs from
+ *  this addendum on. */
+export const A4_REFUSED: Readonly<Record<string, readonly string[]>> = {
+  // A10: a setting's name built by braces or quotes.
+  settingByBraces: [
+    `declare GLOB{IGNORE,X}=x; cat *nv`,
+    `export {GLOBIGNORE,Y}=x; cat *nv`,
+    `declare G{LOBIGNOR,X}E=x; cat ?env`,
+  ],
+  twins: [
+    // Text that is in the command is still read.
+    `bash <(echo 'cat .en[v]')`,
+    `bash <(echo 'cat .e\${x}nv')`,
+    `echo 'cat .en[v]' | bash "$f"`,
+    `bash -n -c 'cat .env'`,
+    `bash --posix < build.sh`,
+    `bash -O dotglob <(echo 'cat *nv')`,
+    // Bracket pairs that could be a raw-only name, in quoted text.
+    `bash -c 'cat .e[a-z][a-z]'`,
+    `find . -name '.e[a-z][a-z]' -exec cat {} +`,
+    `ssh host 'cat server.[o-q][d-f][l-n]'`,
+    // Another program's script: a name written plainly, and its file operands.
+    `sed 'w.veilio/x' a.txt`,
+    `awk '{getline < ".env"}' a.txt`,
+    `awk '{ while ((getline l < "server.pem") > 0) print l }'`,
+    `python3 -c 'open(".env")'`,
+    `node -e 'require("fs").readFileSync(".env")'`,
+    `perl -e 'open(F, "<", ".env")'`,
+    `sed -n p .en[v]`,
+    `sed -e p .en[v]`,
+    `sed 's/a/b/' .e*v`,
+    `awk '{print}' .en[v]`,
+    `jq . .env`,
+    `jq '.a' .e[n]v`,
+    `sed --no-such-option 's/.*/x/' .en*`,
+    `sed -f .env a.txt`,
+    `jq -f .env a.json`,
+    // `.key` is a raw-only name (`*.key`) written plainly, as `.env` is.
+    `jq '.[] | .key' f.json`,
+    `jq '.env' config.json`,
+    // A shell is not in the table: its script is read as a script.
+    `bash -c 'cat .e*v'`,
+    `sh -c 'sed -n p .en[v]'`,
+    // A message position, and the file beside it.
+    `git commit -F .env`,
+    `gh pr create --title x --body-file .env`,
+    `gh issue close 5 --comment x .env`,
+    `git commit -F - <<'EOF' .env\nmessage\nEOF`,
+    `cat <<'EOF' | sh\ncat .en[v]\nEOF`,
+  ],
+}
+
 export const ATTACK: readonly string[] = [
   ...new Set([
     ...SPELLINGS_REFUSED,
@@ -889,6 +1053,7 @@ export const ATTACK: readonly string[] = [
     ...DATA_TWINS,
     ...FLOOR_READS,
     ...Object.values(A3_REFUSED).flat(),
+    ...Object.values(A4_REFUSED).flat(),
   ]),
 ]
 
@@ -1348,6 +1513,7 @@ export const MENTIONS: readonly string[] = [
   `rg -n -e '\\.veilio/' -e 'id_rsa' src`,
   `tee notes.md <<'EOF'\nsee ~/.veilio/map.json\nEOF`,
   ...A3_MENTIONS,
+  ...A4_MENTIONS,
 ]
 
 export const ORDINARY: readonly string[] = [
@@ -1361,6 +1527,7 @@ export const ORDINARY: readonly string[] = [
     ...A2_ORDINARY,
     ...Q4_PIPE.slice(0, 1),
     ...A3_ORDINARY,
+    ...A4_ORDINARY,
   ]),
 ]
 
@@ -1385,6 +1552,8 @@ export const LIMITS: readonly {
   { limit: 'L1', command: `a=.e; b=nv; cat $a$b` },
   // A setting's name carried by variables (contract §8.2).
   { limit: 'L1', command: `a=GLOB; b=IGNORE; export $a$b=y; cat *nv` },
+  // The shell itself named through a variable (contract §9).
+  { limit: 'L1', command: `x=zsh; $x -c 'cat .e(n*)v'` },
   { limit: 'L2', command: `cat .e$(echo n)v` },
   { limit: 'L2', command: `cat .e"$(echo n)"v` },
   { limit: 'L2', command: `cat $(printf .e; printf nv)` },
@@ -1396,6 +1565,9 @@ export const LIMITS: readonly {
   { limit: 'L3', command: `find . -newer x -exec cat {} +` },
   { limit: 'L3', command: `grep -r KEY .` },
   { limit: 'L3', command: `tar cf - .` },
+  // A program that is not a known shell, with options of its own (contract §9).
+  { limit: 'L3', command: `echo 'cat *nv' | ./mysh -O dotglob` },
+  { limit: 'L3', command: `sed 'r.env' a.txt` },
   // Q1, by its recommended answer: a folder that holds a raw-only file among others.
   { limit: 'L3', command: `cp -R ~/.aws a; cat a/credentials` },
   ...Q3_LIMITS,

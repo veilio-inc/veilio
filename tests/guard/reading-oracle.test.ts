@@ -17,6 +17,7 @@ import {
   groupScripts,
   OPERANDS,
   ordinaryShapes,
+  ownLanguage,
   plainName,
   POSITIONS,
   searches,
@@ -166,6 +167,8 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
       ...continuedDelimiters(),
       ...settingForms(),
       ...bracketRuns(),
+      // Addendum 4 (contract §9): G12.
+      ...ownLanguage(),
     ]
     ordinary = [...ordinaryShapes(), ...searchTwins()]
     for (const g of generated) await isAllowed(g.command)

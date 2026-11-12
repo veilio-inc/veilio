@@ -2070,6 +2070,9 @@ export function settingForms(): Generated[] {
     ['export NAME+=', (n) => `export ${n}+=x; `],
     ['typeset NAME=', (n) => `typeset ${n}=x; `],
     ['NAME+=', (n) => `${n}+=x; `],
+    // The name built by a brace list (the word's value, not its text).
+    ['declare NA{ME,X}=', (n) => `declare ${n.slice(0, 4)}{${n.slice(4)},X}=x; `],
+    ['export {NAME,X}=', (n) => `export {${n},X}=x; `],
   ]
   // Which forms give the variable its effect differs between bash 3.2 and
   // bash 5 (measured: `${NAME:=x}` and `for NAME in` in neither; `((NAME=1))`,
@@ -2115,6 +2118,25 @@ export function ordinaryShapes(): Ordinary[] {
     ['s(r|)c/index.ts', 'src/index.ts'],
   ] as const)
     out.push({ command: `ls ${word}`, shells: ['zsh'], prints })
+  // Addendum 4: bracket pairs in quoted text, another program's own
+  // language, a shell that only reads (`-n`) or is given a built file word.
+  for (const [command, prints] of [
+    [`bash -c 'ls src/[a-z][a-z]dex.ts'`, 'src/index.ts'],
+    [`sh -c 'ls src/in[a-z][a-z][a-z].ts'`, 'src/index.ts'],
+    [`find src -name '[a-z][a-z][a-z][a-z][a-z].ts'`, 'src/index.ts'],
+    [`find . -name '[0-9][0-9].log'`, null],
+    [`sed -n 's/.*/x/p' a.txt`, 'x'],
+    [`sed -E 's/[a-z][a-z]*/<&>/' a.txt`, '<a>'],
+    [`sed -e 's/.*/x/' -e 's/x*/<&>/' a.txt`, '<x>'],
+    [`awk '/.*/ {print "<" $0 ">"}' a.txt`, '<a>'],
+    [`awk -F: '/^[a-z][a-z]*$/ {print "<" $1 ">"}' a.txt`, '<a>'],
+    [`echo 'ls src/index.ts' | bash -n`, null],
+    [`bash -n < a.txt`, null],
+    [`f=a.txt; bash -n "$f"`, null],
+    [`bash <(echo 'ls src/index.ts')`, 'src/index.ts'],
+    [`echo 'ls src/index.ts' | bash -s -- -y`, 'src/index.ts'],
+  ] as const)
+    out.push({ command, shells: both, prints })
   // Long plain text written to a file.
   const text = (n: number, line: (i: number) => string) =>
     Array.from({ length: n }, (_, i) => line(i)).join('\n')
@@ -2168,5 +2190,35 @@ export function bracketRuns(): Generated[] {
           out.push({ ...shape('G11', out.length, `cat ${word}`, [shell], ['G11']), canary: c.id })
       }
   }
+  return out
+}
+
+/** G12: another program's own script beside a canary. The script is not
+ *  shell text; the file it is given, and a name written plainly in it, are
+ *  judged as always. */
+export function ownLanguage(): Generated[] {
+  const out: Generated[] = []
+  const files = ['.env', '.en[v]', `.e''nv`, '.e{n,x}v', '"$Z".env']
+  const commands: [id: string, make: (w: string) => string][] = [
+    ['sed script operand', (w) => `sed -n 's/.*/&/p' ${w}`],
+    ['sed -e', (w) => `sed -n -e p ${w}`],
+    ['sed -ne', (w) => `sed -ne '/.*/p' ${w}`],
+    ['sed -E', (w) => `sed -E 's/[A-Z][A-Z]*/&/' ${w}`],
+    ['awk program', (w) => `awk '/.*/ {print}' ${w}`],
+    ['awk -F', (w) => `awk -F_ '{print $0}' ${w}`],
+    ['awk -v', (w) => `awk -v n=1 '{print $n}' ${w}`],
+  ]
+  for (const [id, make] of commands)
+    for (const w of files)
+      for (const shell of ['bash', 'zsh'] as const)
+        out.push(shape('G12', out.length, make(w), [shell], [`G12: ${id}`]))
+  // A raw-only name written plainly in the script itself.
+  for (const script of [
+    `awk 'BEGIN { while ((getline l < ".env") > 0) print l }'`,
+    `sed -n '$r .env' a.txt`,
+    `awk 'BEGIN { system("cat .env") }'`,
+  ])
+    for (const shell of ['bash', 'zsh'] as const)
+      out.push(shape('G12', out.length, script, [shell], ['G12: a name in the script']))
   return out
 }
