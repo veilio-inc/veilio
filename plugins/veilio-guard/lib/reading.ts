@@ -642,7 +642,12 @@ const MESSAGE_COMMANDS = new Set(['commit', 'tag', 'merge', 'stash', 'notes'])
  *   `optional` long options whose value comes only as `--name=VALUE`
  *   `twoWay`   long options two versions read differently when bare: only
  *              `--name=VALUE` is read
- *   `flags`    long options without a value */
+ *   `flags`    long options without a value
+ *   `numbers`  the valued options (a letter, or a long name) whose value is
+ *              a number: a separate next word is that value only when it is
+ *              all digits. After any other word the program's builds are not
+ *              known to agree on whether the option took it, so the reading
+ *              ends (`grep -C KEY .env`). */
 type SearchOptions = {
   plain: string
   valued: string
@@ -651,6 +656,7 @@ type SearchOptions = {
   optional: readonly string[]
   twoWay: readonly string[]
   flags: readonly string[]
+  numbers: readonly string[]
 }
 const words = (text: string): readonly string[] => text.split(' ')
 /** GNU grep 3 and BSD grep (macOS), `egrep` and `fgrep` with them. `-C` takes
@@ -665,6 +671,7 @@ const GREP: SearchOptions = {
   ),
   optional: words('color colour'),
   twoWay: words('context'),
+  numbers: words('A B C m after-context before-context max-count'),
   flags: words(
     'extended-regexp fixed-strings basic-regexp perl-regexp ignore-case no-ignore-case invert-match word-regexp line-regexp count files-without-match files-with-matches only-matching quiet silent no-messages byte-offset with-filename no-filename line-number initial-tab null text recursive dereference-recursive line-buffered binary null-data no-group-separator mmap bz2decompress lzma xz decompress'
   ),
@@ -677,6 +684,7 @@ const GIT_GREP: SearchOptions = {
   long: words('max-depth max-count threads context after-context before-context'),
   optional: words('color open-files-in-pager'),
   twoWay: [],
+  numbers: words('A B C m max-depth max-count threads context after-context before-context'),
   flags: words(
     'cached untracked no-index no-exclude-standard exclude-standard recurse-submodules no-recurse-submodules text textconv no-textconv ignore-case recursive no-recursive word-regexp invert-match full-name extended-regexp basic-regexp perl-regexp fixed-strings line-number column files-with-matches name-only files-without-match null only-matching count no-color break heading show-function function-context all-match quiet and or not'
   ),
@@ -692,6 +700,9 @@ const RG: SearchOptions = {
   ),
   optional: [],
   twoWay: [],
+  numbers: words(
+    'A B C M d j m max-count threads max-depth after-context before-context context max-columns'
+  ),
   flags: words(
     'search-zip case-sensitive crlf fixed-strings ignore-case invert-match line-regexp mmap multiline multiline-dotall no-unicode null-data pcre2 smart-case stop-on-nonmatch text word-regexp auto-hybrid-regex no-pcre2-unicode binary follow glob-case-insensitive hidden ignore-file-case-insensitive no-ignore no-ignore-dot no-ignore-exclude no-ignore-files no-ignore-global no-ignore-parent no-ignore-vcs no-require-git one-file-system unrestricted block-buffered byte-offset column no-column heading no-heading include-zero line-buffered line-number no-line-number max-columns-preview null only-matching passthru pretty quiet trim vimgrep with-filename no-filename sort-files count count-matches files-with-matches files-without-match json debug no-ignore-messages no-messages stats trace no-config'
   ),
@@ -709,6 +720,7 @@ const AG: SearchOptions = {
   ),
   optional: words('after before context'),
   twoWay: [],
+  numbers: words('W m depth max-count width workers'),
   flags: words(
     'ackmate all-text all-types break nobreak case-sensitive color nocolor color-win-ansi column count debug filename nofilename files-with-matches files-without-matches fixed-strings follow nofollow group nogroup heading noheading hidden ignore-case invert-match line-numbers numbers nonumbers literal mmap nommap multiline nomultiline null one-device only-matching parallel passthrough passthru print-all-files print-long-lines recurse norecurse search-binary search-files search-zip silent skip-vcs-ignores smart-case stats stats-only unrestricted vimgrep word-regexp'
   ),
@@ -744,7 +756,7 @@ function patternWords(table: SearchOptions, args: readonly Word[]): Word[] {
         if (name === 'regexp') given.push(args[k]!)
       } else if (table.long.includes(name)) {
         const next = args[++k]
-        if (!next) return []
+        if (!next || (table.numbers.includes(name) && !isNumber(next))) return []
         if (name === 'regexp') given.push(next)
       } else if (!table.flags.includes(name) && !table.optional.includes(name)) return []
     } else if (w.startsWith('-') && w.length > 1) {
@@ -755,7 +767,7 @@ function patternWords(table: SearchOptions, args: readonly Word[]): Word[] {
           // Its value is the rest of the word, or the next word.
           if (at === w.length - 1) {
             const next = args[++k]
-            if (!next) return []
+            if (!next || (table.numbers.includes(letter) && !isNumber(next))) return []
             if (letter === 'e') given.push(next)
           } else if (letter === 'e') given.push(args[k]!)
           break
@@ -806,6 +818,9 @@ function subcommandAt(
   }
   return -1
 }
+
+/** A word that is a number as written: all digits, a sign before them allowed. */
+const isNumber = (w: Word): boolean => /^-?\d+$/.test(w.literal ?? '')
 
 /** A word's text when all of it is written in the command (a wildcard as
  *  itself); null when the shell builds any of it. */
