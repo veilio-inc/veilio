@@ -2071,20 +2071,15 @@ export function settingForms(): Generated[] {
     ['typeset NAME=', (n) => `typeset ${n}=x; `],
     ['NAME+=', (n) => `${n}+=x; `],
   ]
-  // Forms that set the variable without its effect in bash 3.2 (measured: no
-  // read): run to catch a surprise in another bash, not counted as alive.
-  const QUIET = new Set(['${NAME:=x}', '${NAME=x}', 'for NAME in'])
+  // Which forms give the variable its effect differs between bash 3.2 and
+  // bash 5 (measured: `${NAME:=x}` and `for NAME in` in neither; `((NAME=1))`,
+  // `read NAME` and `NAME+=` in 3.2 only), so the generator is counted alive
+  // as a whole, not form by form; every form is run in whatever bash is there.
   for (const name of A10_VARIABLES)
     for (const [id, make] of forms)
       for (const glob of GLOBS)
         out.push(
-          shape(
-            'G9',
-            out.length,
-            make(name) + glob,
-            ['bash'],
-            name === 'GLOBIGNORE' && !QUIET.has(id) ? [`G9: ${id}`] : []
-          )
+          shape('G9', out.length, make(name) + glob, ['bash'], name === 'GLOBIGNORE' ? ['G9'] : [])
         )
   return out
 }
