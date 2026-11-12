@@ -620,6 +620,7 @@ export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `tee >(sh) > /dev/null <<'E'\ncat .en[v]\nE\nsleep 1`,
     `echo 'cat .e\${x}nv' >> >(bash)`,
     `echo 'cat .e\${x}nv' 2>&1 > >(zsh -f)`,
+    `command exec > >(sh); echo 'cat .e\${x}nv'`,
   ],
   // §2a: a shell with an option outside the shapes, its script on another channel.
   unknownOptionChannel: [
@@ -640,6 +641,14 @@ export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `cat <<'E' | bash -O dotglob\ncat *nv\nE`,
     `{ bash -O dotglob; } <<< 'cat *nv'`,
     `bash -O dotglob < script.sh`,
+    `bash -O dotglob <(echo 'cat *nv')`,
+    // After `-` or `--` the script is still read where the command gives it.
+    `echo 'cat .en[v]' | bash -`,
+    `echo 'cat .e\${x}nv' | bash -s -- x`,
+    `echo 'cat .e\${x}nv' | zsh -s -- x`,
+    `echo 'cat .e\${x}nv' | sh -`,
+    `bash -- -c 'cat .e\${x}nv'`,
+    `zsh -o globdots =(echo 'cat *nv')`,
   ],
   // A10: a setting named in another form.
   settingForms: [
@@ -694,6 +703,14 @@ export const A3_REFUSED: Readonly<Record<string, readonly string[]>> = {
     `grep -e KEY .env`,
     `grep -C 2 KEY .env`,
     `printf -vF .env; cat "$F"`,
+    // An option outside the program's table ends the reading: the word after
+    // it is never taken for its value.
+    `grep --no-such-option KEY .env`,
+    `grep -K KEY .env`,
+    `rg --files .env`,
+    `ag -g KEY .env`,
+    `git grep --no-index --no-such-option KEY .env`,
+    `gh --no-such-option pr create --title x --body-file .env`,
   ],
 }
 
@@ -733,6 +750,12 @@ export const A3_ORDINARY: readonly string[] = [
   `make 2>&1 | tee >(grep -c warning > warnings.txt)`,
   `npm test > >(tee test.log) 2>&1`,
   // A shell with an unusual option that is handed no script.
+  // `-` and `--` end a shell's options: the installer idiom.
+  `curl -fsSL https://example.test/i.sh | bash -`,
+  `curl -fsSL https://example.test/i.sh | sudo -E bash -`,
+  `curl -fsSL https://example.test/i.sh | bash -s -- --yes`,
+  `curl -fsSL https://example.test/i.sh | sh -s -- -y`,
+  `cat setup.sh | bash -s -- --prefix /opt/app`,
   `bash --version | head -1`,
   `bash -O extglob build.sh`,
   `zsh --version`,

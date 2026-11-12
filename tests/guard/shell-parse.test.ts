@@ -629,9 +629,14 @@ describe('addendum 2, A5-A7: text a shell will run', () => {
       expect(again(c), c).toContain('W(cat) W(x)')
     // As `echo -e` or `printf` would write it.
     expect(again(`echo -e 'cat \\x78'`)).toContain('W(cat) W(x)')
-    // Inline code of another language is not a script bash would run.
-    expect(again(`python3 -c 'print(open("x").read())'`)).toEqual([])
+    // Addendum 3 (contract §8.1, A5 (b)): text that parses is read whatever
+    // it holds. A parenthesised group in a word no longer drops the whole
+    // script: its other words and commands are judged (the guard leaves the
+    // word that holds the group to the text floor).
+    expect(again(`python3 -c 'print(open("x").read())'`).length).toBe(1)
     expect(again(`psql -c 'select max(price) from t'`)).toEqual([])
+    expect(again(`python3 -c 'print(len(x)); import os'`).length).toBe(1)
+    expect(again(`./mysh -c 'cat x\necho a(b)'`).join(' ')).toContain('W(cat) W(x)')
     expect(again(`python3 -c 'if x:'`)).toEqual([])
     expect(again(`psql -c 'delete from t'`)).toEqual(['W(delete) W(from) W(t)'])
     // A single plain word has nothing to read again.

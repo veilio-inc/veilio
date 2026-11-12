@@ -301,28 +301,38 @@ describe('spellings: the reading table', () => {
 
 describe('spellings: zsh and strict reading (reading table Z1-Z6, §2)', () => {
   test.each([
-    ['Z1 a group', '.e(n)v', [`.e${ANY}v`]],
-    ['Z1 alternatives', '.e(n|x)v', [`.e${ANY}v`]],
-    ['Z1 a group that starts the word', '(s)erver.pem', [`${ANY}erver.pem`]],
+    // Addendum 3 (contract §8.1, A3): a group of plain alternatives is read
+    // exactly, as a brace list; any other group is any text, as before.
+    ['Z1 a group', '.e(n)v', ['.env', '.ev']],
+    ['Z1 alternatives', '.e(n|x)v', ['.env', '.exv']],
+    ['Z1 a group that starts the word', '(s)erver.pem', ['server.pem', 'erver.pem']],
+    ['Z1 a group with a wildcard', '.e(n*)v', [`.e${ANY}v`]],
+    ['Z1 a group in a group', '.e((n)|x)v', [`.e${ANY}v`]],
+    ['Z1 alternatives with an empty one', 's(r|)c/x', ['src/x', 'sc/x']],
     ['Z1 ksh @( )', '.e@(n)v', [`.e${ANY}v`]],
     ['Z1 ksh ?( )', '.e?(x)nv', [`.e${ANY}nv`]],
     ['Z1 ksh +( )', '.e+(n)v', [`.e${ANY}v`]],
     ['Z2 a qualifier', '.e*(.)', ['.e**']],
     ['Z2 a qualifier after a name', '*.ts(om)', ['*.ts**']],
     ['Z2 a qualifier after a name it ends', 'server.pem(.)', ['server.pem**']],
-    ['Z1 a group that ends the word', 'server.pe(m|x)', [`server.pe${ANY}`]],
+    ['Z1 a group that ends the word', 'server.pe(m|x)', ['server.pem', 'server.pex']],
     ['Z2 a qualifier on a bare wildcard', '*(.)', ['**']],
     ['Z1 a group after * inside the word', 'serv*(.)pem', [`serv*${ANY}pem`]],
-    ['Z1 a group before a qualifier', 'server.pe(m)(.)', [`server.pe${ANY}**`]],
-    ['Z1 a group after = that the word goes on from', 'if=(s)erver.pem', [`if=${ANY}erver.pem`]],
+    ['Z1 a group before a qualifier', 'server.pe(m)(.)', ['server.pem**', 'server.pe**']],
+    [
+      'Z1 a group after = that the word goes on from',
+      'if=(s)erver.pem',
+      ['if=server.pem', 'if=erver.pem'],
+    ],
     ['Z3 a numeric range', 'id_ed<->', ['id_ed*']],
     ['Z3 a numeric range with bounds', 'f<1-9>.txt', ['f*.txt']],
   ])('%s: %s', (_, word, expected) => {
     expect(spell(word)).toEqual(expected)
   })
 
-  test('A3: a group alone is any text too, and a function definition is not a group', () => {
-    expect(spell('(.env|x)')).toEqual([ANY])
+  test('A3: a group alone is read too, and a function definition is not a group', () => {
+    expect(spell('(.env|x)')).toEqual(['.env', 'x'])
+    expect(spell('(.en*|x)')).toEqual([ANY])
     expect(parseShell('f() { cat x; }', 'sh').ok).toBe(true)
     expect(parseShell('f ( ) { cat x; }', 'sh').ok).toBe(true)
   })
@@ -959,14 +969,17 @@ describe('addendum 2, A12: text a program only prints, stores or searches for', 
     'git commit -m',
     'git log --grep',
     'git show -m .env',
-    'git -C x commit -m .env',
+    'git --no-such-option x commit -m .env',
+    'git -C x commit -F .env',
     'gh pr create --body-file .env',
     'grep -f .env x',
     'grep --file .env x',
     'grep --file=.env x',
     'grep -zzf .env x',
     'grep --new-option .env x',
-    'grep -J .env x',
+    'grep -K .env x',
+    'grep -C .env x',
+    'grep --context .env x',
     'grep $OPTS .env x',
     'sudo grep .env x',
     'sed .env x',
@@ -980,6 +993,28 @@ describe('addendum 2, A12: text a program only prints, stores or searches for', 
   test('the files after the pattern, the redirect target and the other words are left', () => {
     expect(seen('grep x .env')).toBe('grep .env')
     expect(seen('grep -e x .env')).toBe('grep -e .env')
+    // Addendum 3: the pattern by the program's own options.
+    expect(seen('grep --color x .env')).toBe('grep --color .env')
+    expect(seen('grep -n --colour x .env')).toBe('grep -n --colour .env')
+    expect(seen('grep --color=auto x .env')).toBe('grep --color=auto .env')
+    expect(seen('grep -ex .env')).toBe('grep .env')
+    expect(seen('grep -iex .env')).toBe('grep .env')
+    expect(seen('grep --regexp=x .env')).toBe('grep .env')
+    expect(seen('grep -C2 x .env')).toBe('grep -C2 .env')
+    expect(seen('grep -J x .env')).toBe('grep -J .env')
+    expect(seen('git grep --color -e x .env')).toBe('git grep --color -e .env')
+    expect(seen('rg --pretty x .env')).toBe('rg --pretty .env')
+    expect(seen('ag --after=2 x .env')).toBe('ag --after=2 .env')
+    expect(seen('git -C app commit -m x .env')).toBe('git -C app commit -m .env')
+    expect(seen('git --no-pager -c a.b=c tag -m x .env')).toBe(
+      'git --no-pager -c a.b=c tag -m .env'
+    )
+    expect(seen('gh -R o/r release create v1 --notes x .env')).toBe(
+      'gh -R o/r release create v1 --notes .env'
+    )
+    expect(seen('gh release create v1 -n x --notes-file .env')).toBe(
+      'gh release create v1 -n --notes-file .env'
+    )
     expect(seen('echo x > .env')).toBe('echo > .env')
     expect(seen('git commit -m x .env')).toBe('git commit -m .env')
     expect(seen('cat .env <<E\nx\nE')).toBe('cat .env <<E\n\nE')

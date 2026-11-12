@@ -471,7 +471,9 @@ export type Part =
       /** Inside double quotes: the shell does not split the word here. */
       quoted?: true
     }
-  | { kind: 'subst'; list: List | null; quoted?: true }
+  /** `into`: `>(...)`, a process substitution that reads what is written to
+   *  it. `file`: `<(...)` or zsh's `=(...)`, whose output is a file's text. */
+  | { kind: 'subst'; list: List | null; quoted?: true; into?: true; file?: true }
   /** `substs`: the commands of the `$(...)` and backticks inside. */
   | { kind: 'arith'; text: string; substs?: List[] }
   | { kind: 'glob'; text: string }
@@ -482,6 +484,11 @@ export type Part =
    *  parentheses after the word's own `*` (`*(.)`, ksh's `*(x)`): that `*`. */
   /** `rewrites`: a qualifier that can put text into the name or run code
    *  (it holds `e`, `+`, `P` or a `:` modifier): the word could be any name. */
+  /** `alternatives`: a group whose alternatives are all plain text
+   *  (`(ts|tsx)`): exactly those, as a brace list; for one alone (`(n)`),
+   *  that text or nothing - where the word is cut into pieces it may be a
+   *  qualifier. `prefixed`: a ksh group (`@(`, `+(`, `?(`) or one after the
+   *  word's `*`. */
   | {
       kind: 'zglob'
       text: string
@@ -489,6 +496,8 @@ export type Part =
       qualifier?: true
       star?: true
       rewrites?: true
+      alternatives?: string[]
+      prefixed?: true
     }
   | { kind: 'brace'; text: string }
   | { kind: 'tilde'; user: string }
@@ -513,8 +522,8 @@ export type Redirect = {
   target: Word | null
   body?: string
   substs?: List[]
-  /** A here-document's body read as a script, when it parses as one bash
-   *  would run: whatever it is given to may be a shell (reading table A5b). */
+  /** A here-document's body read as a script, when it parses as one:
+   *  whatever it is given to may be a shell (reading table A5b). */
   again?: List[]
 }
 export type Simple = {
@@ -574,7 +583,10 @@ export function ansiC(text: string): string {
 /** What reading one command may cost (reading table A13): lists open at
  *  once (`n`), brace scans, and `steps` left - spent by the parser, the
  *  spellings, the wildcard matcher, the text floor and the path checks. A
- *  count, not a clock: the verdict is the same on every machine. */
+ *  count, not a clock: the verdict is the same on every machine. The prices
+ *  follow what takes time: a path check asks the file system, a wildcard is
+ *  matched against every pattern, a command and an expansion are read; a
+ *  word of plain text costs the parser nothing. */
 export type Cost = { n: number; braces?: number; steps: number }
 /** A command longer than this is not read. */
 export const MAX_COMMAND = 100_000
@@ -769,6 +781,12 @@ function closes(s: string, i: number): number {
   }
   return -1
 }
+
+/** Whether a here-document's delimiter is quoted, so the shell expands
+ *  nothing in the body: by its text once backslash-newline is removed (a line
+ *  continuation inside the delimiter quotes nothing). */
+export const quotedDelimiter = (r: Redirect): boolean =>
+  /['"\\]/.test((r.target?.raw ?? '').replace(/\\\n/g, ''))
 
 /** Where the unescaped `d` at or after `i` stands; the text's length when there is none. */
 function delimiter(s: string, i: number, d: string): number {
@@ -1088,6 +1106,8 @@ class Reader {
 
   private command(): Node {
     this.blank()
+    // Each command costs a fixed amount, whatever its words.
+    spend(this.frames, 2)
     const s = this.s
     if (s.startsWith('((', this.i)) {
       const end = this.arithEnd(this.i + 2)
@@ -1188,7 +1208,7 @@ class Reader {
     r.target = target
     if (r.op === '<<' || r.op === '<<-') {
       const delim = target.parts.map((p) => ('text' in p ? p.text : '')).join('')
-      this.pending.push({ r, delim, strip: r.op === '<<-', quoted: /['"\\]/.test(target.raw) })
+      this.pending.push({ r, delim, strip: r.op === '<<-', quoted: quotedDelimiter(r) })
     }
     return r
   }
@@ -1271,14 +1291,18 @@ class Reader {
       }
   }
 
-  /** Text read as a script when it parses as one bash would run (reading
-   *  table A5b, A8): whatever receives it - `$SHELL -c`, a shell under another
-   *  name, a pipe - may run it. Text that does not parse is left to the floor. */
+  /** Text read as a script when it parses as one (reading table A5b, A8):
+   *  whatever receives it - `$SHELL -c`, a shell under another name, a pipe -
+   *  may run it. A parenthesised group in one of its words does not stop the
+   *  reading: such text may be code of another language, full of calls, so
+   *  the guard leaves a word that holds one to the floor and judges the rest
+   *  (see isTextScript). Text that does not parse is left to the floor. */
   private reread(text: string): List[] {
     const frames = this.frames.n
     try {
       const list = parseAt(text, this.depth + 1, this.frames)
-      return bashRuns(list) ? [list] : []
+      TEXT_SCRIPTS.add(list)
+      return [list]
     } catch (err) {
       if (!(err instanceof Unreadable) || err.why === 'cost') throw err
       this.frames.n = frames
@@ -1326,6 +1350,8 @@ class Reader {
       let scripted = false
       let input = false
       let letters = false
+      const optionWithC = (x: Word | undefined) => /^[-+][A-Za-z0-9]*c/.test(x?.literal ?? '')
+      const here = redirects.some((r) => r.op.startsWith('<<'))
       for (; j < words.length; j++) {
         const w = words[j]!.literal
         if (w !== null && SHELL_SCRIPT.test(w)) {
@@ -1345,6 +1371,17 @@ class Reader {
           j++
           continue
         }
+        // `--` and `-` end the options (bash, zsh, sh and dash: the words
+        // after them are the file to run and its arguments, never options;
+        // `curl ... | bash -`, `... | sh -s -- -y`). With a word that could
+        // be `-c` after them, or the shell's input given here, the shells
+        // are not read: the word stays outside the shapes.
+        if ((w === '--' || w === '-') && !here && !words.slice(j + 1).some(optionWithC)) {
+          j++
+          const file = words[j]?.literal
+          input ||= file != null && INPUT_FILE.test(file)
+          break
+        }
         // A file to run, or a word outside the shapes above.
         known = w !== null && !/^[-+]/.test(w)
         input ||= w !== null && w !== '-' && INPUT_FILE.test(w)
@@ -1353,9 +1390,10 @@ class Reader {
       // An option word outside the shapes with a `-c` word at or after it,
       // or with the shell's input given here; and a word after `-c` that is
       // itself an option (the shells go on reading options there).
-      const optionWithC = (x: Word | undefined) => /^[-+][A-Za-z0-9]*c/.test(x?.literal ?? '')
-      const here = redirects.some((r) => r.op.startsWith('<<'))
       if (!known && (here || words.slice(j).some(optionWithC))) throw new Unreadable('unknown')
+      // The same shell may still be handed a script on a pipe, by a redirect
+      // or by an earlier `exec <`: known once the whole command is read.
+      if (!known) OPTION_UNKNOWN.add(simple)
       if (scripted && /^[-+]/.test(words[j]?.literal ?? '')) throw new Unreadable('unknown')
       // The script word by its value: a part the shell fills in is empty
       // there, never a reason to skip the word.
@@ -1389,6 +1427,8 @@ class Reader {
       return values.slice(0, 1)
     }
     if (program === 'cat' && stage.words.length === 1) return this.inputs(stage.redirects)
+    // `tee` writes its input on, whatever files it is given.
+    if (program === 'tee') return this.inputs(stage.redirects)
     return []
   }
 
@@ -1400,9 +1440,7 @@ class Reader {
       else if ((r.op === '<<' || r.op === '<<-') && r.body !== undefined)
         // Under a plain delimiter the shell takes a backslash off `$`, a
         // backtick and a backslash before the script is the shell's input.
-        out.push(
-          /['"\\]/.test(r.target?.raw ?? '') ? r.body : r.body.replace(/\\([$`\\\n])/g, '$1')
-        )
+        out.push(quotedDelimiter(r) ? r.body : r.body.replace(/\\([$`\\\n])/g, '$1'))
     }
     return out
   }
@@ -1414,16 +1452,27 @@ class Reader {
    *  what the earlier stages of its pipeline write (`fed`). */
   private deliver(l: List, around: readonly Redirect[], fed: readonly Simple[]): void {
     let exec: Redirect[] = []
+    /** `exec > >(...)`: every command after it writes into the substitution. */
+    const sinks: { list: List; after: Simple[] }[] = []
     for (const { node: pipeline } of l.items) {
       const earlier: Simple[] = [...fed]
       for (const stage of pipeline.stages) {
         this.deliverTo(stage, [...around, ...exec], earlier)
-        if (stage.type !== 'simple') continue
+        for (const sink of sinks) sink.after.push(...simplesIn(stage))
+        if (stage.type !== 'simple') {
+          earlier.push(SOME_STAGE)
+          continue
+        }
         earlier.push(stage)
-        if (stage.words.length === 1 && stage.words[0]!.literal === 'exec')
-          exec = [...exec, ...stage.redirects.filter((r) => r.op.startsWith('<<'))]
+        // `exec` with redirections only, also behind a modifier (`command exec`).
+        const literals = stage.words.map((w) => w.literal ?? '')
+        if (literals.includes('exec') && literals.every((w) => MODIFIERS.has(w))) {
+          exec = [...exec, ...stage.redirects.filter((r) => r.op.startsWith('<'))]
+          for (const list of sinksOf([], stage.redirects)) sinks.push({ list, after: [] })
+        }
       }
     }
+    for (const sink of sinks) if (sink.after.length > 0) this.deliver(sink.list, [], sink.after)
   }
 
   private deliverTo(n: Node, around: readonly Redirect[], fed: readonly Simple[]): void {
@@ -1435,10 +1484,27 @@ class Reader {
           if (again.length > 0) r.again = again
         }
     const inside = (l: List | null, redirects: readonly Redirect[] = []) => {
-      if (l) this.deliver(l, [...around, ...redirects.filter((r) => r.op.startsWith('<<'))], fed)
+      if (l) this.deliver(l, [...around, ...redirects.filter((r) => r.op.startsWith('<'))], fed)
+    }
+    // What a compound command writes into `>(...)` on its redirections.
+    if (n.type !== 'simple' && n.type !== 'function') {
+      const writers = simplesIn(n)
+      for (const l of sinksOf([], n.redirects)) this.deliver(l, [], writers)
     }
     switch (n.type) {
       case 'simple': {
+        // A shell with an option the reader does not know, where a script
+        // may reach it by its input: a pipe, a redirect on it or around it,
+        // an earlier `exec <` (reading table §2a, last row).
+        if (
+          OPTION_UNKNOWN.has(n) &&
+          (fed.length > 0 ||
+            around.length > 0 ||
+            n.redirects.some((r) => r.op.startsWith('<')) ||
+            // A script file that is a substitution written in the command.
+            n.words.some((w) => w.parts.some((p) => p.kind === 'subst' && p.file)))
+        )
+          throw new Unreadable('unknown')
         if (READS_INPUT.has(n)) {
           const texts = [
             ...this.inputs(n.redirects),
@@ -1447,8 +1513,11 @@ class Reader {
           ]
           for (const text of texts) this.attach(n, text)
         }
-        // The commands inside its words: a pipeline in a substitution.
-        for (const l of listsIn([n.assigns, n.words, n.redirects])) this.deliver(l, [], [])
+        // The commands inside its words: a pipeline in a substitution. What
+        // the command writes into `>(...)`, the commands there read (A7).
+        const sinks = new Set(sinksOf(n.words, n.redirects))
+        for (const l of listsIn([n.assigns, n.words, n.redirects]))
+          this.deliver(l, [], sinks.has(l) ? [n] : [])
         return
       }
       case 'subshell':
@@ -1631,7 +1700,6 @@ class Reader {
     const s = this.s
     const start = this.i
     const parts: Part[] = []
-    spend(this.frames, 4)
     const lit = (text: string, quoted: boolean) => parts.push({ kind: 'lit', text, quoted })
     /** A part, and the reader moved past its `n` characters. */
     const take = (p: Part, n: number) => {
@@ -1719,6 +1787,14 @@ class Reader {
           if (star) part.star = true
           else if (!grouped && !alone && ends && !/[|(~]/.test(text.slice(1, -1)))
             part.qualifier = true
+          // Plain alternatives (letters, digits, `_`, `.`, `-`): read exactly.
+          // One alone (`(N)`) is that text, or - a qualifier, where a program
+          // cuts the word into pieces - nothing.
+          else if (!grouped && /^[\w.-]*(?:\|[\w.-]*)*$/.test(text.slice(1, -1))) {
+            const inner = text.slice(1, -1)
+            part.alternatives = inner.includes('|') ? inner.split('|') : [inner, '']
+          }
+          if (grouped) part.prefixed = true
           // A qualifier that puts text into the name or runs code: `e`, `+`,
           // `P`, and every `:` modifier but `:t`, `:h`, `:a` and `:A`, which
           // give back a part, or the absolute form, of a name the word matched.
@@ -1739,7 +1815,9 @@ class Reader {
         this.i += 2
         const list = this.list(new Set([')']))
         this.expect(')')
-        parts.push({ kind: 'subst', list })
+        parts.push(
+          c === '>' ? { kind: 'subst', list, into: true } : { kind: 'subst', list, file: true }
+        )
       } else if (c === '<' && /^<\d*-\d*>/.test(s.slice(this.i))) {
         const m = /^<\d*-\d*>/.exec(s.slice(this.i))!
         // zsh: glued to a word, a range of numbers.
@@ -1755,8 +1833,10 @@ class Reader {
       }
     }
     if (this.i === start) return null
-    // A word of many parts costs what its parts do.
-    spend(this.frames, parts.length)
+    // A word costs what its parts do. One that is a single piece of plain
+    // text costs nothing: reading it takes no time worth counting, and long
+    // plain text (a here-document, a message, a list of paths) is ordinary.
+    if (parts.length > 1 || parts[0]!.kind !== 'lit') spend(this.frames, 4 + parts.length)
     const w = makeWord(parts, s.slice(start, this.i))
     if (this.top) PLACE.set(w, [start, this.i])
     const again = this.writtenAgain(parts)
@@ -2082,8 +2162,37 @@ class Reader {
 const PLACE = new WeakMap<object, [from: number, to: number]>()
 export const placeOf = (x: Word | Redirect): [from: number, to: number] | undefined => PLACE.get(x)
 
+/** Text read again as a script because whatever receives it may run it
+ *  (see Reader.reread): it may as well be code of another language. */
+const TEXT_SCRIPTS = new WeakSet<object>()
+export const isTextScript = (x: object): boolean => TEXT_SCRIPTS.has(x)
+
 /** A shell that reads its input as its script. */
 const READS_INPUT = new WeakSet<Simple>()
+/** A shell given an option outside the shapes that are read (see nestedOf). */
+const OPTION_UNKNOWN = new WeakSet<Simple>()
+/** A stage of a pipeline that is not one command: it feeds the next stage
+ *  something the reader does not take for text. */
+const SOME_STAGE: Simple = { type: 'simple', assigns: [], words: [], redirects: [] }
+
+/** The lists of the `>(...)` substitutions among a command's words and
+ *  redirect targets: what the command writes there, they read. */
+function sinksOf(words: readonly Word[], redirects: readonly Redirect[]): List[] {
+  const out: List[] = []
+  for (const w of [...words, ...redirects.map((r) => r.target)])
+    for (const p of w?.parts ?? []) if (p.kind === 'subst' && p.into && p.list) out.push(p.list)
+  return out
+}
+
+/** Every simple command under a node (the commands of a group, a loop). */
+function simplesIn(x: unknown, out: Simple[] = []): Simple[] {
+  if (Array.isArray(x)) for (const e of x) simplesIn(e, out)
+  else if (x !== null && typeof x === 'object') {
+    if ((x as Simple).type === 'simple') out.push(x as Simple)
+    for (const [k, v] of Object.entries(x)) if (k !== 'nested' && k !== 'again') simplesIn(v, out)
+  }
+  return out
+}
 
 /** The lists the same reader read inside words and redirections: the
  *  commands of substitutions, at any depth of written values. A nested
@@ -2099,16 +2208,6 @@ function listsIn(x: unknown): List[] {
   }
   visit(x)
   return out
-}
-
-/** Whether a script is one bash would run: no word holds a parenthesised
- *  group, which only zsh reads (as a glob). Inline code of another language
- *  (`print(open(x).read())`, `select max(price)`) is full of them. */
-function bashRuns(x: unknown): boolean {
-  if (Array.isArray(x)) return x.every(bashRuns)
-  if (x === null || typeof x !== 'object') return true
-  if ((x as Part).kind === 'zglob' && (x as { any?: boolean }).any) return false
-  return Object.values(x).every(bashRuns)
 }
 
 function parseAt(text: string, depth: number, frames: Cost): List {

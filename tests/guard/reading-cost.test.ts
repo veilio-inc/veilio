@@ -94,10 +94,14 @@ test('a command of 100,000 characters is read; one more and it is not', () => {
 })
 
 test('the reader counts its steps: past the budget a command is unreadable', () => {
-  expect(parseShell('echo a b c d e f', 'sh', { n: 0, steps: 10 })).toEqual({
+  // Addendum 3 (contract §8.1, A13 (2)): what is counted is structure - an
+  // expansion, a wildcard, a command - not a word of plain text, which this
+  // row counted until then (`echo a b c d e f`).
+  expect(parseShell('echo $a $b $c', 'sh', { n: 0, steps: 10 })).toEqual({
     ok: false,
     why: 'cost',
   })
+  expect(parseShell('echo a b c d e f', 'sh', { n: 0, steps: 10 }).ok).toBe(true)
   expect(parseShell('echo a', 'sh', { n: 0, steps: 100 }).ok).toBe(true)
   // The same count on every machine: 20,000 commands are past it, one is not.
   expect(parseShell(`echo ${'a;'.repeat(20000)}`, 'sh')).toEqual({ ok: false, why: 'cost' })

@@ -1717,18 +1717,26 @@ export function namesRawOnlyFolder(
     .split('/')
     .filter((s) => s !== '' && s !== '.' && s !== '..' && s !== '~')
   if (segments.length === 0) return false
+  return rawOnlyFolders(extra).some(
+    ([folder, depth]) =>
+      segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots, cost)
+  )
+}
+
+/** The folders of the list's `dir/**` patterns, each with its depth: built
+ *  once per list (a command of many paths asks for each of them). */
+const FOLDERS = new WeakMap<readonly string[], { size: number; folders: [string, number][] }>()
+function rawOnlyFolders(extra: readonly string[]): [string, number][] {
+  const known = FOLDERS.get(extra)
+  if (known && known.size === extra.length) return known.folders
   const folders = [
     ...DEFAULT_RAW_ONLY,
     ...extra.filter((p) => p && !p.startsWith('!')).map((p) => normaliseRawOnlyPattern(p) ?? p),
   ]
     .filter((p) => p.endsWith('/**'))
-    .map((p) => p.slice(0, -3))
-  return folders.some((folder) => {
-    const depth = folder.split('/').length
-    return (
-      segments.length >= depth && globsOverlap(segments.slice(-depth).join('/'), folder, dots, cost)
-    )
-  })
+    .map((p): [string, number] => [p.slice(0, -3), p.slice(0, -3).split('/').length])
+  FOLDERS.set(extra, { size: extra.length, folders })
+  return folders
 }
 
 export { ansiC } from './shell.ts'

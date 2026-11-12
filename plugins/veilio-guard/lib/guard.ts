@@ -57,6 +57,7 @@ import {
   MAX_COMMAND,
   MAX_STEPS,
   newCost,
+  isTextScript,
   parseShell,
   restoreRefusal,
   spend,
@@ -744,9 +745,15 @@ export class Guard {
    *  route, may only tighten - add raw-only paths - whoever wrote it, tracked
    *  or not. Its mcpRestore and enabled are ignored, and said once. */
   private async readSettings(): Promise<void> {
-    this.extraRawOnly = [...this.config.rawOnly]
+    // The list is built whole and then swapped in: a call judged while the
+    // file is read (`/veilio on` in a running session) sees the list as it
+    // was, never the plugin's own patterns alone.
+    const rawOnly = [...this.config.rawOnly]
     this.mcpRestore = [...this.config.mcpRestore]
-    if (!(await this.io.exists(this.settingsPath))) return
+    if (!(await this.io.exists(this.settingsPath))) {
+      this.extraRawOnly = rawOnly
+      return
+    }
     let settings: { enabled?: unknown; rawOnly?: unknown; mcpRestore?: unknown }
     // A read that fails throws to the caller (round 4 #6: /veilio on stops
     // with #43); only text that is not JSON stops the guard here.
@@ -757,7 +764,8 @@ export class Guard {
       this.stop(`.veilio/guard.json is not valid JSON`)
       return
     }
-    this.extraRawOnly.push(...rawOnlyOf(settings))
+    rawOnly.push(...rawOnlyOf(settings))
+    this.extraRawOnly = rawOnly
     // Spec 085 R2-15 (#61): a pattern that can never match protects nothing.
     for (const p of this.extraRawOnly)
       if (p && !p.startsWith('!') && normaliseRawOnlyPattern(p) === null)
@@ -2040,7 +2048,9 @@ export class Guard {
       this.cost = cost
       let reading = ''
       try {
-        for (const c of [e[policy.command], args[policy.command]]) {
+        // The command as given and with its placeholders restored: read once
+        // when the two are the same text (no placeholder in it).
+        for (const c of new Set([e[policy.command], args[policy.command]])) {
           if (typeof c !== 'string') continue
           reading = c
           if (c.length > MAX_COMMAND) return this.unreadable(c, budget)
@@ -2162,7 +2172,29 @@ export class Guard {
               return dirs
             }
             for (const { word: w, within } of wordsWithin(parsed.list)) {
-              if (data && (data.words.has(w) || within.some((x) => data.inside.has(x)))) continue
+              if (data && within.some((x) => data.inside.has(x))) continue
+              if (data?.words.has(w)) {
+                // Text a program only prints or stores: not matched against
+                // the list. What the shell does while expanding the word is
+                // judged all the same - one it rewrites or runs code in
+                // (`echo *(e:'...':)`) is refused here as anywhere.
+                if (spellings(w, { home: null, homeKnown: false, strict: false, cost }) === 'any')
+                  return this.deny(
+                    `Veilio keeps ${this.typed(w.raw, budget)} away from the model. Ask the user for what you need from it`,
+                    false
+                  )
+                continue
+              }
+              // Text read again as a script because some program may run it
+              // may be code of another language, where `f(x)` is a call, not
+              // a glob: there a word holding a plain group that is not read
+              // exactly is left to the text floor. Every other word and
+              // command of the text is judged (reading table §8.1, A5 (b)).
+              if (
+                within.some(isTextScript) &&
+                w.parts.some((p) => p.kind === 'zglob' && p.any && !p.alternatives && !p.prefixed)
+              )
+                continue
               let at = [...(where.get(w) ?? [])]
               for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
                 if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
@@ -2236,11 +2268,9 @@ export class Guard {
           else if (dialect === 'ps' && parsed && PS_UNREADABLE.test(c))
             // A PowerShell command the reader does not model, naming a
             // location command anywhere: refused (review of the PowerShell
-            // path). A cd refusal: it keeps the cd text.
-            return this.deny(
-              `Veilio refused this call: Veilio cannot tell where \`${this.applyText(c, 'result', undefined, budget)}\` takes the shell (a command Veilio cannot read), so a later command could read a file Veilio keeps away from the model. Use cd with a plain path, or name the files by their full path`,
-              false
-            )
+            // path), in the words for a command Veilio cannot read. The cd
+            // refusals above keep theirs.
+            return this.unreadable(c, budget)
           else moves = this.shellDirsOf(c)
           // Spec 085 H17: a word after a cd names a file in the directory the
           // shell moved to, in this call or an earlier one: checked there too.

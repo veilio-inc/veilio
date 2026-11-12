@@ -1763,14 +1763,23 @@ const GIT_GREP_LONG =
     ' '
   )
 
+/** Whether a program is on the oracle's PATH (`/usr/bin:/bin`): `egrep` and
+ *  `fgrep` are leaving some systems, and git is not everywhere. */
+const onPath = (program: string): boolean =>
+  existsSync(`/usr/bin/${program}`) || existsSync(`/bin/${program}`)
+
 /** G3: each search program on PATH × each of its documented options × each
  *  way of writing it, with a pattern that matches the marker and the file W.
  *  The shell says which word the program took for the pattern. */
 export function searches(): Generated[] {
   const out: Generated[] = []
   const programs: { run: string; short: string[]; long: string[] }[] = [
-    ...['grep', 'egrep', 'fgrep'].map((run) => ({ run, short: GREP_SHORT, long: GREP_LONG })),
-    { run: 'git grep --no-index', short: GIT_GREP_SHORT, long: GIT_GREP_LONG },
+    ...['grep', 'egrep', 'fgrep']
+      .filter(onPath)
+      .map((run) => ({ run, short: GREP_SHORT, long: GREP_LONG })),
+    ...(onPath('git')
+      ? [{ run: 'git grep --no-index', short: GIT_GREP_SHORT, long: GIT_GREP_LONG }]
+      : []),
   ]
   for (const { run, short, long } of programs) {
     const add = (args: string) =>
@@ -1825,11 +1834,13 @@ export function searchTwins(): Ordinary[] {
     '--regexp',
   ]
   const out: Ordinary[] = []
-  for (const run of ['grep', 'egrep', 'fgrep', 'git grep --no-index'])
+  for (const run of ['grep', 'egrep', 'fgrep', 'git grep --no-index'].filter((r) =>
+    onPath(r.split(' ')[0]!)
+  ))
     for (const o of options)
       for (const pattern of [`'\\.env'`, `'server.pem'`, `.veilio`]) {
-        // `git grep` has `-e` only.
-        if (run.startsWith('git') && o === '--regexp') continue
+        // `git grep` has `-e` only, `--color` in one spelling, and no `--include`.
+        if (run.startsWith('git') && /--regexp|--colour|--include/.test(o)) continue
         const glued =
           o === '--regexp' ? `${o}=${pattern}` : o.endsWith('e') ? `${o}${pattern}` : null
         out.push({
@@ -1856,6 +1867,16 @@ export function unknownOptions(): Generated[] {
     { shell: 'zsh', option: '-4', script: 'cat ?env' },
     { shell: 'zsh', option: '-o extendedglob', script: 'cat .eq#nv' },
     { shell: 'command zsh', option: '-o globdots', script: 'cat *nv' },
+    // After `-` and `--` no word is an option: the script must need none.
+    { shell: 'bash', option: '-', script: 'cat .e${x}nv' },
+    { shell: 'bash', option: '-s -- x', script: 'cat .e${x}nv' },
+    { shell: 'bash', option: '-- -O dotglob', script: 'cat *nv' },
+    { shell: 'bash', option: '-s - -O dotglob', script: 'cat ?env' },
+    { shell: 'sh', option: '-s -- -y', script: `cat .e''nv` },
+    { shell: 'zsh', option: '-', script: 'cat .e${x}nv' },
+    { shell: 'zsh', option: '-s -- x', script: 'cat .en[v]' },
+    { shell: 'zsh', option: '-- -o globdots', script: 'cat *nv' },
+    { shell: 'zsh', option: '-s -- --globdots', script: 'cat ?env' },
   ]
   const channels: [id: string, make: (sh: string, script: string) => string][] = [
     ['pipe from echo', (sh, s) => `echo '${s}' | ${sh}`],
@@ -1870,6 +1891,9 @@ export function unknownOptions(): Generated[] {
     ['here-string on a group', (sh, s) => `{ ${sh}; } <<< '${s}'`],
     ['pipe into a group', (sh, s) => `echo '${s}' | { ${sh}; }`],
     ['> >(shell)', (sh, s) => `echo '${s}' > >(${sh}); sleep 0.5`],
+    // The script as a file that is a substitution written in the command.
+    ['a file <(echo)', (sh, s) => `${sh} <(echo '${s}')`],
+    ['a file <(echo), redirected', (sh, s) => `${sh} <(echo '${s}') 2>&1`],
   ]
   for (const { shell, option, script } of settings)
     for (const [id, make] of channels)
@@ -1877,6 +1901,17 @@ export function unknownOptions(): Generated[] {
         out.push(
           shape('G4', out.length, make(`${shell} ${option}`, script), [outer], [`G4: ${id}`])
         )
+  // zsh: `=(...)` is the command's output in a file.
+  for (const { shell, option, script } of settings)
+    out.push(
+      shape(
+        'G4',
+        out.length,
+        `${shell} ${option} =(echo '${script}')`,
+        ['zsh'],
+        ['G4: a file =(echo)']
+      )
+    )
   return out
 }
 
@@ -1894,12 +1929,28 @@ export function sinks(): Generated[] {
     ['cat <<E > >(sh)', (sh, s) => `cat <<'E' > >(${sh})\n${s}\nE\nsleep 0.5`],
     ['tee >(sh)', (sh, s) => `tee >(${sh}) > /dev/null <<'E'\n${s}\nE\nsleep 0.5`],
     ['{ echo; } > >(sh)', (sh, s) => `{ echo "${dq(s)}"; } > >(${sh}); sleep 0.5`],
+    ['command exec > >(sh)', (sh, s) => `command exec > >(${sh}); echo "${dq(s)}"; sleep 0.5`],
+    ['builtin exec > >(sh)', (sh, s) => `builtin exec > >(${sh}); echo "${dq(s)}"; sleep 0.5`],
   ]
+  // Measured: behind `command` the redirection lasts in bash only, behind
+  // `builtin` in zsh only; each is run in the other shell too, uncounted.
+  const lasts: Readonly<Record<string, Shell>> = {
+    'command exec > >(sh)': 'bash',
+    'builtin exec > >(sh)': 'zsh',
+  }
   for (const [id, make] of routes)
     for (const sh of ['sh', 'bash', 'zsh -f'])
       for (const script of scripts)
         for (const outer of ['bash', 'zsh'] as const)
-          out.push(shape('G5', out.length, make(sh, script), [outer], [`G5: ${id}`]))
+          out.push(
+            shape(
+              'G5',
+              out.length,
+              make(sh, script),
+              [outer],
+              (lasts[id] ?? outer) === outer ? [`G5: ${id}`] : []
+            )
+          )
   // A name, not a script, read by a program that opens what it is given.
   for (const name of ['.env', `.e''nv`])
     for (const outer of ['bash', 'zsh'] as const)
@@ -2064,8 +2115,8 @@ export function ordinaryShapes(): Ordinary[] {
     ['(src|docs)/index.ts', 'src/index.ts'],
     ['src/(index|main).ts', 'src/index.ts'],
     ['*.(md|txt)', 'a.txt'],
-    ['(src)/index.ts', 'src/index.ts'],
     ['src/in(dex|put).(ts|js)', 'src/index.ts'],
+    ['(src)/index.ts', 'src/index.ts'],
     ['s(r|)c/index.ts', 'src/index.ts'],
   ] as const)
     out.push({ command: `ls ${word}`, shells: ['zsh'], prints })

@@ -5,6 +5,7 @@ import { ANY_TEXT, ansiC, braceNames } from './paths.ts'
 import {
   bracket,
   placeOf,
+  quotedDelimiter,
   spend,
   type Cost,
   type List,
@@ -109,7 +110,7 @@ const MAX_SPELLINGS = 64
 /** A bracket expression as the shell can read it (reading table A2): a
  *  brace list of its characters when it is expanded exactly, else `?` - one
  *  character, whatever it is. Text that is no bracket expression is itself. */
-function bracketList(glob: string, kept = false): string {
+function bracketList(glob: string, kept = false, many = false): string {
   const b = glob.startsWith('[') ? bracket(glob, 0, true) : null
   if (!b || b.end !== glob.length) return glob
   if (b.chars === null) return '?'
@@ -118,6 +119,9 @@ function bracketList(glob: string, kept = false): string {
   // character (`[a-z]*.py` is one glob, not 52).
   if (kept && b.chars.length > 1 && b.chars.every((c) => /^[A-Za-z0-9_.]$/.test(c)))
     return `[${b.chars.join('')}]`
+  // Too many spellings to list, and members the matcher has no class for:
+  // one character, whatever it is (A2) - never any text.
+  if (many && b.chars.length > 1) return '?'
   const list = b.chars.map(quote)
   return list.length === 1 ? list[0]! : `{${list.join(',')}}`
 }
@@ -198,6 +202,13 @@ function textsOfWord(
   const wild = w.parts.some(
     (p) => p.kind === 'zglob' || (p.kind === 'glob' && bracketList(p.text) === p.text.slice(0, 1))
   )
+  // Its bracket lists would expand to more spellings than are listed
+  // (`[0-9][0-9].log` is 100): each stays "one of these characters".
+  let listed = 1
+  for (const p of w.parts)
+    if (p.kind === 'glob' && p.text.startsWith('[') && listed <= MAX_SPELLINGS)
+      listed *= bracket(p.text, 0, true)?.chars?.length ?? 1
+  const many = listed > MAX_SPELLINGS
   const add = (alternatives: string[]) => {
     const next: string[] = []
     spend(o.cost, texts.length * alternatives.length)
@@ -207,7 +218,7 @@ function textsOfWord(
   }
   w.parts.forEach((p, k) => {
     if (any) return
-    const alternatives = partSpellings(p, home, o, start && k === 0, wild)
+    const alternatives = partSpellings(p, home, o, start && k === 0, wild || many, many)
     if (alternatives === 'any') any = true
     else add(alternatives)
   })
@@ -219,7 +230,8 @@ function partSpellings(
   home: string | null,
   o: { home: string | null; homeKnown: boolean; strict: boolean; cost?: Cost },
   first: boolean,
-  wild = false
+  wild = false,
+  many = false
 ): string[] | 'any' {
   switch (p.kind) {
     case 'lit':
@@ -232,12 +244,15 @@ function partSpellings(
           : p.text,
       ]
     case 'glob':
-      return [bracketList(p.text, wild)]
+      return [bracketList(p.text, wild, many)]
     case 'brace':
       return [o.strict ? ANY_TEXT : p.text]
     case 'zglob':
       // A qualifier that puts text into the name or runs code (A3).
       if (p.rewrites) return 'any'
+      // A group of plain alternatives is a list of them, as a brace list
+      // is; under strict reading an option may read it otherwise.
+      if (p.alternatives && !o.strict) return [...p.alternatives]
       // A qualifier names no text; `**` still errs toward refusing a name
       // it ends, and under strict reading it may be a group after all.
       return [!p.any ? '*' : p.star || (p.qualifier && !o.strict) ? '**' : ANY_TEXT]
@@ -294,9 +309,13 @@ function setChanges(args: (string | null)[]): boolean {
   return false
 }
 
-/** Variables whose assignment changes how bash reads words (reading table
- *  A10): `GLOBIGNORE` lets a wildcard match a leading dot. */
-const READING_VARIABLES = /^(?:GLOBIGNORE|BASHOPTS|SHELLOPTS|POSIXLY_CORRECT|BASH_COMPAT)(?:\+?=|$)/
+/** Variables whose value changes how bash reads words (reading table A10):
+ *  `GLOBIGNORE` lets a wildcard match a leading dot. A command that holds
+ *  one's name - in a word, an expansion, arithmetic, a loop's variable, an
+ *  assignment, glued to an option's letter (`printf -vGLOBIGNORE`) - may set
+ *  it: no list of the forms that do. */
+const READING_VARIABLE =
+  /(?:GLOBIGNORE|BASHOPTS|SHELLOPTS|POSIXLY_CORRECT|BASH_COMPAT)(?![A-Za-z0-9_])/
 
 /** Words before a program that are not it (zsh's `-` among them). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect', '-'])
@@ -321,6 +340,15 @@ export function readsStrictly(list: List): boolean {
       text--
       return
     }
+    // A setting's name: in a word as written (quotes and line continuations
+    // removed) or by its value, or as the name of a loop or an assignment.
+    if (
+      isWord(x)
+        ? READING_VARIABLE.test(x.raw.replace(/\\\n/g, '').replace(/['"\\]/g, '')) ||
+          READING_VARIABLE.test(valueOf(x))
+        : READING_VARIABLE.test(String((x as { name?: unknown }).name ?? ''))
+    )
+      strict = true
     if ((x as { type?: unknown }).type === 'simple') {
       const words = (x as Simple).words.map((w) => w.literal)
       words.forEach((w, k) => {
@@ -333,13 +361,6 @@ export function readsStrictly(list: List): boolean {
         else if ((w === 'eval' || w === 'source' || w === '.') && rest.includes(null)) strict = true
       })
       const simple = x as Simple
-      // An assignment to one of them in any form: `X=`, `export X=`, `env
-      // X=`, `read X`, `printf -v X`.
-      if (
-        simple.assigns.some((a) => READING_VARIABLES.test(a.name ?? '')) ||
-        simple.words.some((w) => READING_VARIABLES.test(w.literal ?? w.assign?.name ?? ''))
-      )
-        strict = true
       // zsh's `options` array sets an option as `setopt` does.
       if (
         simple.assigns.some((a) => a.name === 'options') ||
@@ -383,9 +404,14 @@ export function rereadLists(tree: unknown): Set<object> {
 }
 
 /** Whether a word's wildcards may match a leading dot: under strict reading
- *  (globdots, dotglob), and beside a zsh group or qualifier (`*(D)`). */
+ *  (globdots, dotglob), and beside a zsh group or qualifier (`*(D)`) - also a
+ *  group of one plain text, which is a qualifier where a piece of the word
+ *  ends at it (`-v *env(D):/x`). */
 export const dotsMatch = (w: Word, strict: boolean): boolean =>
-  strict || w.parts.some((p) => p.kind === 'zglob' && (p.qualifier || p.star))
+  strict ||
+  w.parts.some(
+    (p) => p.kind === 'zglob' && (p.qualifier || p.star || p.alternatives?.includes('') === true)
+  )
 
 /** A spelling and the pieces of it a program may take as a file name: around
  *  `=`, `:` and `,`, after a leading `@`, after a short option's letter. */
@@ -571,46 +597,102 @@ export type Data = { words: Set<Word>; bodies: Set<Redirect>; inside: Set<object
 const NO_DATA: Data = { words: new Set(), bodies: new Set(), inside: new Set() }
 
 const MESSAGE_COMMANDS = new Set(['commit', 'tag', 'merge', 'stash', 'notes'])
-/** The search programs' options: letters that take no value, letters that
- *  take one, and long options that take one as the next word. An option
- *  outside them ends the reading: nothing of that command is data. */
-const SEARCH: Readonly<Record<string, { plain: string; valued: string; long: readonly string[] }>> =
-  {
-    grep: {
-      plain: 'EFGPRHILUVZabchilnoqrsvwxz',
-      valued: 'ABCDdefm',
-      long: 'regexp file include exclude exclude-dir max-count context after-context before-context label binary-files devices directories color colour'.split(
-        ' '
-      ),
-    },
-    rg: {
-      plain: 'FHILNPSUabchilnopqsuvwxz.',
-      valued: 'ABCEMTdefgjmrt',
-      long: 'regexp file glob iglob type type-not max-count context after-context before-context max-depth max-filesize max-columns threads encoding replace sort sortr color colors engine pre pre-glob ignore-file type-add path-separator'.split(
-        ' '
-      ),
-    },
-    ag: {
-      plain: 'DLQUacfilnrstuvwz',
-      valued: 'ABCGgmp',
-      long: 'after before context file-search-regex ignore ignore-dir depth max-count path-to-ignore pager workers'.split(
-        ' '
-      ),
-    },
-  }
-/** Long options of the search programs that take no value. */
-const SEARCH_PLAIN = new Set(
-  'line-number no-line-number ignore-case no-ignore-case smart-case case-sensitive recursive dereference-recursive invert-match word-regexp line-regexp files-with-matches files-without-match count extended-regexp fixed-strings basic-regexp perl-regexp pcre2 no-filename with-filename only-matching quiet silent no-messages null text hidden no-ignore no-ignore-vcs multiline multiline-dotall no-heading heading json vimgrep stats trim sort-files follow null-data byte-offset column no-column pretty untracked cached no-index break show-function function-context all-match and or not full-name literal'.split(
-    ' '
-  )
-)
+/** A search program's options (reading table A12 (3), §8.1). Only what is in
+ *  a table is read; an option outside it ends the reading, so no word of that
+ *  command is data and a gap here is a refusal, never a read.
+ *   `plain`    letters without a value
+ *   `valued`   letters with a value: the rest of the word, or the next word
+ *   `unsure`   letters whose value is optional, or read differently by two
+ *              versions of the program: only digits attached are its value;
+ *              standing alone it ends the reading
+ *   `long`     long options with a value: `--name VALUE` or `--name=VALUE`
+ *   `optional` long options whose value comes only as `--name=VALUE`
+ *   `twoWay`   long options two versions read differently when bare: only
+ *              `--name=VALUE` is read
+ *   `flags`    long options without a value */
+type SearchOptions = {
+  plain: string
+  valued: string
+  unsure: string
+  long: readonly string[]
+  optional: readonly string[]
+  twoWay: readonly string[]
+  flags: readonly string[]
+}
+const words = (text: string): readonly string[] => text.split(' ')
+/** GNU grep 3 and BSD grep (macOS), `egrep` and `fgrep` with them. `-C` and
+ *  `--context` take a number in GNU grep and an optional one in BSD grep. */
+const GREP: SearchOptions = {
+  plain: 'EFGHIJLMOPRSTUVXZabchilnopqrsuvwxyz',
+  valued: 'ABDdefm',
+  unsure: 'C',
+  long: words(
+    'regexp file max-count after-context before-context label binary-files devices directories include exclude exclude-dir exclude-from include-dir group-separator'
+  ),
+  optional: words('color colour'),
+  twoWay: words('context'),
+  flags: words(
+    'extended-regexp fixed-strings basic-regexp perl-regexp ignore-case no-ignore-case invert-match word-regexp line-regexp count files-without-match files-with-matches only-matching quiet silent no-messages byte-offset with-filename no-filename line-number initial-tab null text recursive dereference-recursive line-buffered binary null-data no-group-separator mmap bz2decompress lzma xz decompress'
+  ),
+}
+/** `git grep` (git 2.4x). `-O[pager]` takes its value attached only. */
+const GIT_GREP: SearchOptions = {
+  plain: 'EFGHILPWachilnopqrvwz',
+  valued: 'ABCefm',
+  unsure: 'O',
+  long: words('max-depth max-count threads context after-context before-context'),
+  optional: words('color open-files-in-pager'),
+  twoWay: [],
+  flags: words(
+    'cached untracked no-index no-exclude-standard exclude-standard recurse-submodules no-recurse-submodules text textconv no-textconv ignore-case recursive no-recursive word-regexp invert-match full-name extended-regexp basic-regexp perl-regexp fixed-strings line-number column files-with-matches name-only files-without-match null only-matching count no-color break heading show-function function-context all-match quiet and or not'
+  ),
+}
+/** ripgrep 14 (`rg --help`). `--files`, `--type-list` and `--generate` take
+ *  no pattern and are left out: after them every word is judged. */
+const RG: SearchOptions = {
+  plain: 'FHILNPSUabchilnopqsuvwxz.0',
+  valued: 'ABCEMTdefgjmrt',
+  unsure: '',
+  long: words(
+    'regexp file pre pre-glob dfa-size-limit encoding engine max-count regex-size-limit threads glob iglob ignore-file max-depth max-filesize type type-not type-add type-clear after-context before-context color colors context context-separator field-context-separator field-match-separator hostname-bin hyperlink-format max-columns path-separator replace sort sortr'
+  ),
+  optional: [],
+  twoWay: [],
+  flags: words(
+    'search-zip case-sensitive crlf fixed-strings ignore-case invert-match line-regexp mmap multiline multiline-dotall no-unicode null-data pcre2 smart-case stop-on-nonmatch text word-regexp auto-hybrid-regex no-pcre2-unicode binary follow glob-case-insensitive hidden ignore-file-case-insensitive no-ignore no-ignore-dot no-ignore-exclude no-ignore-files no-ignore-global no-ignore-parent no-ignore-vcs no-require-git one-file-system unrestricted block-buffered byte-offset column no-column heading no-heading include-zero line-buffered line-number no-line-number max-columns-preview null only-matching passthru pretty quiet trim vimgrep with-filename no-filename sort-files count count-matches files-with-matches files-without-match json debug no-ignore-messages no-messages stats trace no-config'
+  ),
+}
+/** The Silver Searcher 2.2 (`ag`). Its `-A`, `-B`, `-C` and their long forms
+ *  take the next word only when it is a number, so they are `unsure` and
+ *  `optional`; `-g` and `--filename-pattern` search file names, with no
+ *  pattern operand, and are left out. */
+const AG: SearchOptions = {
+  plain: 'DFHLQRSUacfhilnorstuvwz0',
+  valued: 'GWmp',
+  unsure: 'ABC',
+  long: words(
+    'ackmate-dir-filter color-line-number color-match color-path depth file-search-regex ignore ignore-dir max-count pager path-to-ignore width workers'
+  ),
+  optional: words('after before context'),
+  twoWay: [],
+  flags: words(
+    'ackmate all-text all-types break nobreak case-sensitive color nocolor color-win-ansi column count debug filename nofilename files-with-matches files-without-matches fixed-strings follow nofollow group nogroup heading noheading hidden ignore-case invert-match line-numbers numbers nonumbers literal mmap nommap multiline nomultiline null one-device only-matching parallel passthrough passthru print-all-files print-long-lines recurse norecurse search-binary search-files search-zip silent skip-vcs-ignores smart-case stats stats-only unrestricted vimgrep word-regexp'
+  ),
+}
+const SEARCH: Readonly<Record<string, SearchOptions>> = {
+  grep: GREP,
+  egrep: GREP,
+  fgrep: GREP,
+  rg: RG,
+  ag: AG,
+}
 
 /** The pattern words of a search program's arguments: the value of each
- *  `-e` / `--regexp`, or else the first operand. Empty when an option is not
- *  known, so a file given to one (`grep -f FILE`) is never taken for it. */
-function patternWords(program: string, args: readonly Word[]): Word[] {
-  const table = SEARCH[program === 'egrep' || program === 'fgrep' ? 'grep' : program]
-  if (!table) return []
+ *  `-e` / `--regexp` - the next word, or the option's own word when the
+ *  pattern is attached (`-ePAT`, `-iePAT`, `--regexp=PAT`) - or else the
+ *  first operand. Empty when an option is not in the table, so a file after
+ *  one (`grep --color KEY FILE`, `grep -f FILE`) is never taken for it. */
+function patternWords(table: SearchOptions, args: readonly Word[]): Word[] {
   const given: Word[] = []
   // With `-f FILE` the patterns are in the file: every operand is a file.
   let fromFile = false
@@ -620,15 +702,17 @@ function patternWords(program: string, args: readonly Word[]): Word[] {
     if (w === null) return []
     if (w === '--') return given.length > 0 || fromFile ? given : args.slice(k + 1, k + 2)
     if (w.startsWith('--')) {
-      const [name, value] = w.slice(2).split(/=(.*)/s) as [string, string | undefined]
+      const eq = w.indexOf('=')
+      const name = eq === -1 ? w.slice(2) : w.slice(2, eq)
       if (name === 'file') fromFile = true
-      if (value !== undefined) {
-        if (!table.long.includes(name)) return []
+      if (eq !== -1) {
+        if (![table.long, table.optional, table.twoWay].some((l) => l.includes(name))) return []
+        if (name === 'regexp') given.push(args[k]!)
       } else if (table.long.includes(name)) {
         const next = args[++k]
         if (!next) return []
         if (name === 'regexp') given.push(next)
-      } else if (!SEARCH_PLAIN.has(name)) return []
+      } else if (!table.flags.includes(name) && !table.optional.includes(name)) return []
     } else if (w.startsWith('-') && w.length > 1) {
       for (let at = 1; at < w.length; at++) {
         const letter = w[at]!
@@ -639,7 +723,11 @@ function patternWords(program: string, args: readonly Word[]): Word[] {
             const next = args[++k]
             if (!next) return []
             if (letter === 'e') given.push(next)
-          }
+          } else if (letter === 'e') given.push(args[k]!)
+          break
+        }
+        if (table.unsure.includes(letter)) {
+          if (!/^\d+$/.test(w.slice(at + 1))) return []
           break
         }
         if (!table.plain.includes(letter) && !/[0-9]/.test(letter)) return []
@@ -647,6 +735,42 @@ function patternWords(program: string, args: readonly Word[]): Word[] {
     } else return given.length > 0 || fromFile ? given : [args[k]!]
   }
   return given
+}
+
+/** `git`'s and `gh`'s options before the subcommand: those that take the
+ *  next word (or `--name=VALUE`), and those that take none. */
+const GIT_VALUED = new Set(
+  words('-C -c --git-dir --work-tree --namespace --config-env --attr-source --super-prefix')
+)
+const GIT_FLAGS = new Set(
+  words(
+    '-p -P --paginate --no-pager --bare --no-replace-objects --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-optional-locks --no-lazy-fetch --no-advice'
+  )
+)
+const GH_VALUED = new Set(['-R', '--repo'])
+const NO_FLAGS = new Set<string>()
+
+/** Where a program's subcommand stands among its arguments, past its global
+ *  options; -1 when an option before it is not known, or a word is built at
+ *  run time: then nothing of the command is data. */
+function subcommandAt(
+  args: readonly Word[],
+  valued: ReadonlySet<string>,
+  flags: ReadonlySet<string>
+): number {
+  for (let k = 0; k < args.length; k++) {
+    const w = args[k]!.literal
+    if (w === null) return -1
+    if (!w.startsWith('-')) return k
+    if (valued.has(w)) k++
+    else if (
+      !flags.has(w) &&
+      !(w.startsWith('--') && w.includes('=') && valued.has(w.slice(0, w.indexOf('=')))) &&
+      !w.startsWith('--exec-path=')
+    )
+      return -1
+  }
+  return -1
 }
 
 /** A word's text when all of it is written in the command (a wildcard as
@@ -684,14 +808,17 @@ function optionValues(args: readonly Word[], short: string, long: readonly strin
 }
 
 /** The data positions of a command (reading table A12), an allow-list: (1)
- *  the arguments of `echo` and `printf` (not `printf -v`); (2) the message of
- *  `git commit`, `tag`, `merge`, `stash`, `notes` and the title and body
- *  given to `gh`; (3) the pattern of `grep`, `egrep`, `fgrep`, `rg`, `ag`,
- *  `git grep`, and of `git log --grep`, `-S`, `-G`; (4) the body of a
- *  here-document given to `cat` or `tee`. (1) and (4) only while the output
- *  goes to the terminal or a file: as a stage of a pipeline with a later
- *  stage, or inside a substitution, they are judged as before. A position
- *  missing here is judged, so a gap is a refusal, never a read. */
+ *  the arguments of `echo` and `printf` (not `printf -v`, `-vNAME`); (2) the message of
+ *  `git commit`, `tag`, `merge`, `stash`, `notes`, the title and body given
+ *  to `gh` and the notes given to `gh release` - `git` and `gh` read past
+ *  their global options (`git -C dir commit -m`); (3) the pattern of `grep`,
+ *  `egrep`, `fgrep`, `rg`, `ag`, `git grep`, and of `git log --grep`, `-S`,
+ *  `-G`; (4) the body of a here-document given to `cat` or `tee`. (1) and (4)
+ *  only while the output goes to the terminal or a file: as a stage of a
+ *  pipeline with a later stage, inside a substitution, or sent into a
+ *  `>(...)` substitution (by the command, by a compound command around it or
+ *  by an earlier `exec`), they are judged as before. A position missing here
+ *  is judged, so a gap is a refusal, never a read. */
 export function dataPositions(list: List): Data {
   const data: Data = { words: new Set(), bodies: new Set(), inside: new Set() }
   const word = (w: Word) => {
@@ -700,10 +827,19 @@ export function dataPositions(list: List): Data {
   }
   /** Lists whose output goes into a data position (`-m "$(cat <<'E' ...)"`). */
   const intoData = new Set<object>()
+  /** Whether words or redirections hold a `>(...)`: what is written there
+   *  is read by the commands inside it. */
+  const sink = (ws: readonly (Word | null)[]): boolean =>
+    ws.some((w) => w?.parts.some((p) => p.kind === 'subst' && p.into))
   /** `fed`: the command's output is read by another command. */
   const visit = (x: unknown, fed: boolean): void => {
     if (Array.isArray(x)) return x.forEach((e) => visit(e, fed))
     if (x === null || typeof x !== 'object') return
+    // Output redirected into `>(...)` - on a command or on a group, a loop,
+    // an `if` around it - is read by a program.
+    const redirects = (x as { redirects?: Redirect[] }).redirects
+    if (Array.isArray(redirects) && !fed)
+      fed = sink([...redirects.map((r) => r.target), ...((x as Simple).words ?? [])])
     // The commands of a substitution: their output is the word, so they
     // are fed - unless the word is itself only printed, stored or searched for.
     if ((x as Part).kind === 'subst') {
@@ -726,28 +862,49 @@ export function dataPositions(list: List): Data {
   const simple = (n: Simple, fed: boolean): void => {
     const program = n.words[0]?.literal
     const args = n.words.slice(1)
-    const sub = n.words[1]?.literal ?? ''
-    if (program === 'echo' || (program === 'printf' && !args.some((w) => w.literal === '-v'))) {
+    if (
+      program === 'echo' ||
+      (program === 'printf' && !args.some((w) => (w.literal ?? '').startsWith('-v')))
+    ) {
       if (!fed) args.forEach(word)
-    } else if (program === 'git' && MESSAGE_COMMANDS.has(sub))
-      optionValues(args.slice(1), 'm', ['message']).forEach(word)
-    else if (program === 'git' && sub === 'log')
-      optionValues(args.slice(1), 'SG', ['grep']).forEach(word)
-    else if (program === 'git' && sub === 'grep') patternWords('grep', args.slice(1)).forEach(word)
-    else if (program === 'gh') optionValues(args, 'tb', ['title', 'body']).forEach(word)
-    else if (typeof program === 'string' && /^(?:e|f)?grep$|^rg$|^ag$/.test(program))
-      patternWords(program, args).forEach(word)
+    } else if (program === 'git') {
+      const at = subcommandAt(args, GIT_VALUED, GIT_FLAGS)
+      const sub = at === -1 ? '' : args[at]!.literal!
+      const rest = args.slice(at + 1)
+      if (MESSAGE_COMMANDS.has(sub)) optionValues(rest, 'm', ['message']).forEach(word)
+      else if (sub === 'log') optionValues(rest, 'SG', ['grep']).forEach(word)
+      else if (sub === 'grep') patternWords(GIT_GREP, rest).forEach(word)
+    } else if (program === 'gh') {
+      const at = subcommandAt(args, GH_VALUED, NO_FLAGS)
+      if (at === -1) return
+      // `gh release`: the notes too. A file (`--notes-file`, `--body-file`,
+      // `-F`) is not text the command gives: judged.
+      const release = args[at]!.literal === 'release'
+      optionValues(
+        args.slice(at + 1),
+        release ? 'tbn' : 'tb',
+        release ? ['title', 'body', 'notes'] : ['title', 'body']
+      ).forEach(word)
+    } else if (typeof program === 'string' && SEARCH[program])
+      patternWords(SEARCH[program], args).forEach(word)
     else if ((program === 'cat' || program === 'tee') && !fed)
       for (const r of n.redirects)
         if (r.op === '<<' || r.op === '<<-') {
           data.bodies.add(r)
           // Under a quoted delimiter the shell runs nothing in the body.
-          if (/['"\\\\]/.test(r.target?.raw ?? ''))
-            for (const l of r.substs ?? []) data.inside.add(l)
+          if (quotedDelimiter(r)) for (const l of r.substs ?? []) data.inside.add(l)
           for (const l of r.again ?? []) data.inside.add(l)
         }
   }
-  visit(list, false)
+  // After `exec > >(...)` every command's output is read by a program.
+  let execSink = false
+  for (const { word: w, within } of wordsWithin(list)) {
+    const n = within[within.length - 1] as Partial<Simple> | undefined
+    // `exec` anywhere among the command's words: `command exec > >(sh)`.
+    if (n?.type === 'simple' && n.words?.includes(w) && w.literal === 'exec')
+      execSink ||= sink((n.redirects ?? []).map((r) => r.target))
+  }
+  visit(list, execSink)
   return data
 }
 
