@@ -393,6 +393,147 @@ test('a bracket list names the file itself: a link and the settings are found by
   expect(ran).toBe(false)
 })
 
+// Spec 091 addendum 3 (the conformance check of b101bd9; the reading table's
+// §8.1): each rule completed there, with one command it now refuses and one
+// beside it that runs. COVERAGE.md cites these.
+const COMPLETED: [rule: string, refused: string, runs: string][] = [
+  [
+    'A12 a search option that takes no value',
+    'grep --color KEY .env',
+    `grep --color '\\.env' src/index.ts`,
+  ],
+  ['A12 a pattern attached to its option', 'grep -eKEY .env', `grep -e'\\.env' src/index.ts`],
+  [
+    'A12 a search option Veilio does not know',
+    'grep --no-such-option KEY .env',
+    'grep --no-such-option KEY src/index.ts',
+  ],
+  [
+    'A12 a here-document under a delimiter split by a line continuation',
+    'cat <<E\\\nOF\n$(cat .en[v])\nEOF',
+    `cat <<'EOF'\n$(cat .en[v])\nEOF`,
+  ],
+  [
+    'A12 output sent into a process substitution',
+    `echo 'cat .en[v]' > >(sh)`,
+    `echo 'cat .en[v]' > notes.txt`,
+  ],
+  [
+    'A12 a qualifier that runs code, in text a program only prints',
+    `echo *(e:'cat .en[v]':)`,
+    `echo "*(e:'cat .en[v]':)"`,
+  ],
+  [
+    'A10 a setting named in any form',
+    'printf -vGLOBIGNORE x; cat ?env',
+    'printf -vname x; ls ?env',
+  ],
+  [
+    'A5 a script for a program that is not a known shell, with a group in it',
+    `./mysh -c 'cat .e\${x}nv\necho a(b)'`,
+    `python3 -c 'print(open("README.md").read()[:100])'`,
+  ],
+  [
+    'A2 several bracket lists in one word stay one character each',
+    'cat server.[o-q][d-f][l-n]',
+    'ls logs/[0-9][0-9].log',
+  ],
+  ['A3 a zsh group of plain alternatives is read exactly', 'cat *.(pem|txt)', 'ls src/*.(ts|tsx)'],
+  [
+    "A12 a message behind git's global options",
+    'git -C app commit -F .env',
+    'git -C app commit -m "fix .env loading"',
+  ],
+  [
+    'A12 release notes, and a notes file',
+    'gh release create v1.0.0 --notes-file .env',
+    'gh release create v1.0.0 --notes "handles .env"',
+  ],
+]
+for (const [rule, refused, runs] of COMPLETED) {
+  test(`addendum 3, ${rule}: refused: ${refused}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: 'X=1', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: refused, description: 'x' })
+    expect(ran, `${refused} ran`).toBe(false)
+    expect(out.deny).toContain('away from the model')
+  })
+  test(`addendum 3, ${rule}: runs: ${runs}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: runs, description: 'x' })
+    expect(out.deny, runs).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+}
+
+// A shell given an option outside the shapes Veilio reads, where a script
+// may reach it by its input: a command Veilio cannot read. Beside each, the
+// same shell handed no script in the command.
+const UNREADABLE_SHELL: [rule: string, refused: string, runs: string][] = [
+  [
+    'a shell with an unknown option, fed by a pipe',
+    `echo 'cat *nv' | bash -O dotglob`,
+    'bash -O extglob build.sh',
+  ],
+  [
+    'a shell with an unknown option, fed by a redirect',
+    `zsh -o globdots < <(echo 'cat *nv')`,
+    'zsh --version',
+  ],
+  [
+    'a shell with an unknown option, after exec redirected input',
+    `exec <<< 'cat *nv'; bash -O dotglob`,
+    'bash --version | head -1',
+  ],
+]
+for (const [rule, refused, runs] of UNREADABLE_SHELL) {
+  test(`addendum 3, ${rule}: a command Veilio cannot read: ${refused}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: 'X=1', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: refused, description: 'x' })
+    expect(ran).toBe(false)
+    expect(out.deny).toContain(CANNOT_READ)
+  })
+  test(`addendum 3, ${rule}: read: ${runs}`, async ($, on) => {
+    project(on, FILES)
+    let ran = false
+    on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+    const out = await $.tool.call({ tool: 'Bash', command: runs, description: 'x' })
+    expect(out.deny, runs).toBeUndefined()
+    expect(ran).toBe(true)
+  })
+}
+
+// Long plain text is ordinary (A13): the budget counts what takes time to
+// read, not words of plain text.
+test('addendum 3, A13: a here-document of 1,000 lines written to a file runs', async ($, on) => {
+  project(on, FILES)
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const body = Array.from(
+    { length: 1000 },
+    (_, i) => `export const value${i}: Record<string, number> = { a: ${i}, b: scale(${i}) }`
+  ).join('\n')
+  const command = `cat > src/values.ts <<'EOF'\n${body}\nEOF`
+  const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect(out.deny).toBeUndefined()
+  expect(ran).toBe(true)
+})
+
+test('addendum 3, A13: git add with 2,000 paths runs', async ($, on) => {
+  project(on, FILES)
+  let ran = false
+  on('tool.call', () => ((ran = true), { result: { stdout: '', stderr: '' } }))
+  const paths = Array.from({ length: 2000 }, (_, i) => `src/dir${i % 40}/file${i}.ts`).join(' ')
+  const out = await $.tool.call({ tool: 'Bash', command: `git add ${paths}`, description: 'x' })
+  expect(out.deny).toBeUndefined()
+  expect(ran).toBe(true)
+})
+
 test('a command Veilio cannot read is refused', async ($, on) => {
   project(on, FILES)
   let ran = false
