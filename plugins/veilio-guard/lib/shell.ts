@@ -587,7 +587,14 @@ export function ansiC(text: string): string {
  *  follow what takes time: a path check asks the file system, a wildcard is
  *  matched against every pattern, a command and an expansion are read; a
  *  word of plain text costs the parser nothing. */
-export type Cost = { n: number; braces?: number; steps: number }
+export type Cost = {
+  n: number
+  braces?: number
+  steps: number
+  /** Scripts already read in this command, by depth and text: a quoted
+   *  script is parsed once per level, whoever asks for it. */
+  parsed?: Map<string, List>
+}
 /** A command longer than this is not read. */
 export const MAX_COMMAND = 100_000
 /** The steps one command may take. The costliest command of the corpora
@@ -624,9 +631,10 @@ const isShell = (w: Word | undefined): boolean =>
 /** A nested shell's option words that are read (see nestedOf): plain
  *  letters; plain letters ending in `o`, which takes a name; and the cluster
  *  holding `c`, after which the script stands. */
-const SHELL_PLAIN = /^-[euxvlisfd]+$/
-const SHELL_NAMED = /^-[euxvlisfd]*o$/
-const SHELL_SCRIPT = /^-[euxvlisfd]*c[euxvlisfd]*$/
+// `n` reads the script and runs nothing (bash, zsh, dash): a plain letter.
+const SHELL_PLAIN = /^-[euxvlisfdn]+$/
+const SHELL_NAMED = /^-[euxvlisfdn]*o$/
+const SHELL_SCRIPT = /^-[euxvlisfdn]*c[euxvlisfdn]*$/
 /** bash's long options that change neither the script word nor how words are read. */
 const SHELL_LONG = new Set(['--norc', '--noprofile', '--login'])
 /** A file argument that is the shell's input. */
@@ -1281,6 +1289,10 @@ class Reader {
    *  parse makes the whole command unreadable (reading table A6). */
   private attach(simple: Simple, text: string): void {
     const list = parseAt(text, this.depth + 1, this.frames)
+    // A known shell runs it: read as a shell's script, whatever else the
+    // same text was read as.
+    ATTACHED.add(list)
+    TEXT_SCRIPTS.delete(list)
     if (!simple.nested) simple.nested = list
     else
       simple.nested = {
@@ -1301,7 +1313,7 @@ class Reader {
     const frames = this.frames.n
     try {
       const list = parseAt(text, this.depth + 1, this.frames)
-      TEXT_SCRIPTS.add(list)
+      if (!ATTACHED.has(list)) TEXT_SCRIPTS.add(list)
       return [list]
     } catch (err) {
       if (!(err instanceof Unreadable) || err.why === 'cost') throw err
@@ -1392,15 +1404,23 @@ class Reader {
       // itself an option (the shells go on reading options there).
       if (!known && (here || words.slice(j).some(optionWithC))) throw new Unreadable('unknown')
       // The same shell may still be handed a script on a pipe, by a redirect
-      // or by an earlier `exec <`: known once the whole command is read.
-      if (!known) OPTION_UNKNOWN.add(simple)
+      // or by an earlier `exec <`: known once the whole command is read. An
+      // option outside the shapes is a word written with `-` or `+`; a word
+      // the shell builds where the file stands (`"$installer"`, `<(curl ...)`)
+      // is a file whose text is not in the command.
+      if (!known && /^[-+]/.test(words[j]?.literal ?? '')) OPTION_UNKNOWN.add(simple)
       if (scripted && /^[-+]/.test(words[j]?.literal ?? '')) throw new Unreadable('unknown')
       // The script word by its value: a part the shell fills in is empty
       // there, never a reason to skip the word.
       // A word with nothing written in it is not a script the command gives (limit L1).
       const script = scripted && words[j] ? valueOfScript(words[j]!) : ''
-      if (script !== '') this.attach(simple, script)
-      else if (!scripted && known && (input || j === words.length)) READS_INPUT.add(simple)
+      if (script !== '') {
+        this.attach(simple, script)
+        // The same text read as "text some program may run" is this script:
+        // judged once, as the shell's.
+        const w = words[j]!
+        if (w.again) w.again = w.again.filter((l) => !ATTACHED.has(l))
+      } else if (!scripted && known && (input || j === words.length)) READS_INPUT.add(simple)
     }
   }
 
@@ -2165,6 +2185,8 @@ export const placeOf = (x: Word | Redirect): [from: number, to: number] | undefi
 /** Text read again as a script because whatever receives it may run it
  *  (see Reader.reread): it may as well be code of another language. */
 const TEXT_SCRIPTS = new WeakSet<object>()
+/** Scripts a known shell is given (see Reader.attach). */
+const ATTACHED = new WeakSet<object>()
 export const isTextScript = (x: object): boolean => TEXT_SCRIPTS.has(x)
 
 /** A shell that reads its input as its script. */
@@ -2212,7 +2234,15 @@ function listsIn(x: unknown): List[] {
 
 function parseAt(text: string, depth: number, frames: Cost): List {
   if (depth > MAX_DEPTH) throw new Unreadable('depth')
-  return new Reader(text, depth, frames).script()
+  // The same text at the same depth is read once: asked for as "text some
+  // program may run" and again as a known shell's script, it would be parsed
+  // twice at every level of nesting.
+  const key = `${depth}\u0000${text}`
+  const known = frames.parsed?.get(key)
+  if (known) return known
+  const list = new Reader(text, depth, frames).script()
+  ;(frames.parsed ??= new Map()).set(key, list)
+  return list
 }
 
 // ── PowerShell (research R3, FR-016) ──────────────────────────────────────

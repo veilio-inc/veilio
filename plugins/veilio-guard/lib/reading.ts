@@ -48,19 +48,31 @@ export const wordsOf = (list: List): Word[] => wordsWithin(list).map((p) => p.wo
  *  those in or under a data position. Counted before the command is walked,
  *  so a command of tens of thousands of words is refused for its cost before
  *  the work that each word takes is done. */
-export function judgedWords(tree: unknown, data: Data = NO_DATA): number {
+export function judgedWords(
+  tree: unknown,
+  data: Data = NO_DATA
+): { words: number; spelled: number; literals: number } {
   let n = 0
+  // Words whose spellings are worked out (all but a call-like word of text
+  // read again, which is left to the floor): two steps more each, at least.
+  let spelled = 0
+  // Each distinct plain word will cost one path check at least.
+  const literals = new Set<string>()
   const visit = (x: unknown): void => {
     if (Array.isArray(x)) {
       for (const e of x) visit(e)
       return
     }
     if (x === null || typeof x !== 'object' || data.inside.has(x)) return
-    if (isWord(x) && !data.words.has(x)) n++
+    if (isWord(x) && !data.words.has(x)) {
+      n++
+      if (!x.parts.some((p) => p.kind === 'zglob')) spelled++
+      if (x.literal) literals.add(x.literal)
+    }
     for (const v of Object.values(x)) visit(v)
   }
   visit(tree)
-  return n
+  return { words: n, spelled, literals: literals.size }
 }
 
 /** A wildcard or brace character that was quoted: an ordinary character. */
@@ -147,12 +159,25 @@ function bracketList(glob: string, kept = false, many = false): string {
 
 /** Text with each bracket expression in it read (see bracketList). */
 export function bracketsRead(text: string): string {
-  let out = ''
+  // As in a word: lists that would give more spellings than are listed each
+  // stay "one of these characters" (`'[0-9][0-9].log'`).
+  const found = new Map<number, number>()
+  let listed = 1
   for (let i = 0; i < text.length;) {
     const b = text[i] === '[' ? bracket(text, i) : null
     if (b) {
-      out += bracketList(text.slice(i, b.end))
+      found.set(i, b.end)
+      if (listed <= MAX_SPELLINGS) listed *= b.chars?.length ?? 1
       i = b.end
+    } else i++
+  }
+  const many = listed > MAX_SPELLINGS
+  let out = ''
+  for (let i = 0; i < text.length;) {
+    const end = found.get(i)
+    if (end !== undefined) {
+      out += bracketList(text.slice(i, end), many, many)
+      i = end
     } else out += text[i++]
   }
   return out
@@ -337,6 +362,17 @@ function setChanges(args: readonly (string | null)[], from: number): boolean {
 const READING_VARIABLE =
   /(?:GLOBIGNORE|BASHOPTS|SHELLOPTS|POSIXLY_CORRECT|BASH_COMPAT)(?![A-Za-z0-9_])/
 
+/** Whether a word's text holds a setting's name, as written or in one of its
+ *  brace spellings (`GLOB{IGNORE,X}`). */
+function namesSetting(text: string): boolean {
+  if (READING_VARIABLE.test(text)) return true
+  return (
+    text.includes('{') &&
+    text.length <= 400 &&
+    braceNames(text).some((n) => READING_VARIABLE.test(n))
+  )
+}
+
 /** Words before a program that are not it (zsh's `-` among them). */
 const PREFIXES = new Set(['builtin', 'command', 'noglob', 'exec', 'nocorrect', '-'])
 /** A word the shell builds when the command runs. */
@@ -364,7 +400,7 @@ export function readsStrictly(list: List): boolean {
     // removed) or by its value, or as the name of a loop or an assignment.
     if (
       isWord(x)
-        ? READING_VARIABLE.test(x.raw.replace(/\\\n/g, '').replace(/['"\\]/g, '')) ||
+        ? namesSetting(x.raw.replace(/\\\n/g, '').replace(/['"\\]/g, '')) ||
           READING_VARIABLE.test(valueOf(x))
         : READING_VARIABLE.test(String((x as { name?: unknown }).name ?? ''))
     )
@@ -856,6 +892,149 @@ function optionValues(args: readonly Word[], short: string, long: readonly strin
   return out
 }
 
+/** Whether an option that names a file is given `-`, the command's input:
+ *  `-F -`, `-F-`, `--file -`, `--file=-`. */
+function fromInput(args: readonly Word[], short: string, long: readonly string[]): boolean {
+  return args.some((w, k) => {
+    const text = w.literal ?? ''
+    const next = args[k + 1]?.literal
+    return (
+      long.some((l) => text === `--${l}=-` || (text === `--${l}` && next === '-')) ||
+      (short.includes(text[1] ?? ' ') && /^-[A-Za-z]-$/.test(text)) ||
+      (/^-[A-Za-z]+$/.test(text) && short.includes(text[text.length - 1]!) && next === '-')
+    )
+  })
+}
+
+// ── another program's own language (reading table §9) ──
+
+/** Programs that are not shells and take a script in their own language. By
+ *  letters: the script is the word after a cluster ending in one of them, or
+ *  after one of the long options. By operand: the first (sqlite3: second)
+ *  word that is no option, the program's options read from its table; an
+ *  option outside the table means no word is taken for the script. */
+type OwnLanguage =
+  | { letters: string; long: readonly string[] }
+  | {
+      operand: 1 | 2
+      /** Letters and long names that take the next word. */
+      valued: readonly string[]
+      /** Long names that take the next two words. */
+      valued2?: readonly string[]
+      /** Options that carry the script themselves (each is one). */
+      script?: readonly string[]
+      /** Options that name a script file: then no operand is the script. */
+      file?: readonly string[]
+      /** Long options and words without a value; any letter cluster is one. */
+      flags?: readonly string[]
+    }
+const AWK: OwnLanguage = { operand: 1, valued: ['F', 'v'], file: ['f', 'file'] }
+const OWN: Readonly<Record<string, OwnLanguage>> = {
+  perl: { letters: 'e', long: [] },
+  ruby: { letters: 'e', long: [] },
+  python: { letters: 'c', long: [] },
+  python3: { letters: 'c', long: [] },
+  node: { letters: 'ep', long: ['eval', 'print'] },
+  psql: { letters: 'c', long: ['command'] },
+  mysql: { letters: 'e', long: ['execute'] },
+  sed: {
+    operand: 1,
+    valued: ['l', 'line-length'],
+    script: ['e', 'expression'],
+    file: ['f', 'file'],
+    flags: words('quiet silent regexp-extended in-place separate unbuffered null-data posix debug'),
+  },
+  awk: AWK,
+  gawk: AWK,
+  mawk: AWK,
+  jq: {
+    operand: 1,
+    valued: ['indent', 'L'],
+    valued2: ['arg', 'argjson', 'slurpfile', 'rawfile'],
+    file: ['f', 'from-file'],
+    flags: words(
+      'raw-output compact-output null-input exit-status slurp sort-keys join-output ascii-output color-output monochrome-output raw-input tab stream seq unbuffered args jsonargs raw-output0'
+    ),
+  },
+  sqlite3: {
+    operand: 2,
+    valued: ['cmd', 'separator', 'init', 'nullvalue', 'newline', 'vfs'],
+    flags: words('header noheader csv json line list column html batch readonly bail echo'),
+  },
+}
+
+/** The script words of programs that speak their own language (`sed`, `awk`,
+ *  `jq`, `perl -e`, `python -c`, `node -e`, `psql -c`, ...), and the lists
+ *  read again from them: text that is not a shell's, so it is judged for a
+ *  name written plainly in it and not as shell wildcards or a shell script. */
+export function ownScripts(tree: unknown): { words: Set<Word>; inside: Set<object> } {
+  const out = { words: new Set<Word>(), inside: new Set<object>() }
+  const take = (w: Word | undefined) => {
+    if (!w) return
+    out.words.add(w)
+    for (const l of w.again ?? []) out.inside.add(l)
+  }
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) return x.forEach(visit)
+    if (x === null || typeof x !== 'object') return
+    if ((x as Simple).type === 'simple') scripts((x as Simple).words)
+    for (const v of Object.values(x)) visit(v)
+  }
+  const scripts = (all: readonly Word[]): void => {
+    const table = OWN[(all[0]?.literal ?? '').replace(/^.*\//, '')]
+    if (!table) return
+    const args = all.slice(1)
+    if ('letters' in table) return optionValues(args, table.letters, table.long).forEach(take)
+    const found: Word[] = []
+    let operands = 0
+    let fromFile = false
+    for (let k = 0; k < args.length; k++) {
+      const text = args[k]!.literal
+      // A word the shell builds may be an option: nothing is taken.
+      if (text === null) {
+        if (operands + 1 === table.operand && !fromFile && found.length === 0) return
+        operands++
+        continue
+      }
+      if (text === '--' || !text.startsWith('-') || text === '-') {
+        if (text === '--') continue
+        // An empty word is no script (`sed -i '' 's/a/b/'`).
+        if (text === '') continue
+        if (++operands === table.operand && !fromFile && found.length === 0) found.push(args[k]!)
+        continue
+      }
+      const eq = text.indexOf('=')
+      const name = text.startsWith('--') ? text.slice(2, eq === -1 ? undefined : eq) : text.slice(1)
+      const long = text.startsWith('--')
+      const is = (list: readonly string[] | undefined, n: string) => list?.includes(n) === true
+      // A letter with its value attached (`-F:`, `-es/a/b/`), or a cluster.
+      const letter = long ? name : name[0]!
+      if (is(table.script, letter)) {
+        if (long ? eq !== -1 : name.length > 1) found.push(args[k]!)
+        else if (args[k + 1]) found.push(args[++k]!)
+        operands = table.operand
+      } else if (is(table.file, letter)) {
+        fromFile = true
+        if (long ? eq === -1 : name.length === 1) k++
+      } else if (is(table.valued, letter)) {
+        if (long ? eq === -1 : name.length === 1) k++
+      } else if (long && is(table.valued2, name)) k += 2
+      else if (long ? !is(table.flags, name) : !/^[A-Za-z0-9.]+$/.test(name)) return
+      else if (!long && [...name].some((c) => is(table.script, c) || is(table.file, c))) {
+        // A cluster that ends in the script letter (`sed -ne 'p'`).
+        const last = name[name.length - 1]!
+        if (is(table.script, last) && args[k + 1]) {
+          found.push(args[++k]!)
+          operands = table.operand
+        } else return
+      }
+    }
+    if (!fromFile || found.length > 0) found.forEach(take)
+  }
+  visit(tree)
+  return out
+}
+
 /** The data positions of a command (reading table A12), an allow-list: (1)
  *  the arguments of `echo` and `printf` (not `printf -v`, `-vNAME`); (2) the message of
  *  `git commit`, `tag`, `merge`, `stash`, `notes`, the title and body given
@@ -920,8 +1099,17 @@ export function dataPositions(list: List): Data {
       const at = subcommandAt(args, GIT_VALUED, GIT_FLAGS)
       const sub = at === -1 ? '' : args[at]!.literal!
       const rest = args.slice(at + 1)
-      if (MESSAGE_COMMANDS.has(sub)) optionValues(rest, 'm', ['message']).forEach(word)
-      else if (sub === 'log') optionValues(rest, 'SG', ['grep']).forEach(word)
+      if (MESSAGE_COMMANDS.has(sub)) {
+        optionValues(rest, 'm', ['message']).forEach(word)
+        // `git stash save MESSAGE...`: the words that are no options.
+        if (sub === 'stash' && rest[0]?.literal === 'save')
+          rest
+            .slice(1)
+            .filter((w) => !(w.literal ?? '').startsWith('-'))
+            .forEach(word)
+        // `-F -`: the message is the here-document.
+        if (sub !== 'stash' && fromInput(rest, 'F', ['file'])) n.redirects.forEach(body)
+      } else if (sub === 'log') optionValues(rest, 'SG', ['grep']).forEach(word)
       else if (sub === 'grep') patternWords(GIT_GREP, rest).forEach(word)
     } else if (program === 'gh') {
       const at = subcommandAt(args, GH_VALUED, NO_FLAGS)
@@ -929,21 +1117,29 @@ export function dataPositions(list: List): Data {
       // `gh release`: the notes too. A file (`--notes-file`, `--body-file`,
       // `-F`) is not text the command gives: judged.
       const release = args[at]!.literal === 'release'
-      optionValues(
-        args.slice(at + 1),
-        release ? 'tbn' : 'tb',
-        release ? ['title', 'body', 'notes'] : ['title', 'body']
-      ).forEach(word)
+      // `gh pr close` and `gh issue close`: the closing comment (`-c`).
+      const close = args[at + 1]?.literal === 'close'
+      const rest = args.slice(at + 1)
+      optionValues(rest, `tb${release ? 'n' : ''}${close ? 'c' : ''}`, [
+        'title',
+        'body',
+        'subject',
+        ...(release ? ['notes'] : []),
+        ...(close ? ['comment'] : []),
+      ]).forEach(word)
+      // `--body-file -`, `--notes-file -`, `-F -`: the here-document is the text.
+      if (fromInput(rest, 'F', ['body-file', 'notes-file'])) n.redirects.forEach(body)
     } else if (typeof program === 'string' && SEARCH[program])
       patternWords(SEARCH[program], args).forEach(word)
-    else if ((program === 'cat' || program === 'tee') && !fed)
-      for (const r of n.redirects)
-        if (r.op === '<<' || r.op === '<<-') {
-          data.bodies.add(r)
-          // Under a quoted delimiter the shell runs nothing in the body.
-          if (quotedDelimiter(r)) for (const l of r.substs ?? []) data.inside.add(l)
-          for (const l of r.again ?? []) data.inside.add(l)
-        }
+    else if ((program === 'cat' || program === 'tee') && !fed) n.redirects.forEach(body)
+  }
+  /** A here-document whose body a program only stores. */
+  const body = (r: Redirect): void => {
+    if (r.op !== '<<' && r.op !== '<<-') return
+    data.bodies.add(r)
+    // Under a quoted delimiter the shell runs nothing in the body.
+    if (quotedDelimiter(r)) for (const l of r.substs ?? []) data.inside.add(l)
+    for (const l of r.again ?? []) data.inside.add(l)
   }
   // After `exec > >(...)` every command's output is read by a program.
   let execSink = false

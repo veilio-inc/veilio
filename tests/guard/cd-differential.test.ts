@@ -14,11 +14,10 @@ import { replay, type Verdict } from './fixtures/cd-project.ts'
 // number depends on what was masked before it.
 // Spec 091 addendum 2: refusals where main ran, each listed with its rule
 // (strings-addendum-2 "Newly refused" #2). Anything else is a regression.
-const LISTED: Readonly<Record<string, string>> = {
-  // A8: quoted text is judged with its wildcards; in this sed script `.*`
-  // stands after a `/`, where it could be `.env` or `.veilio`.
-  'bench:701:2': 'Veilio keeps',
-}
+// Addendum 4: the one listed entry, `bench:701:2` (a `sed -i 's/.*/.../'`
+// whose `.*` was judged as a shell wildcard), runs again - a sed script is
+// in sed's own language (contract §9) - and is off the list, which is empty.
+const LISTED: Readonly<Record<string, string>> = {}
 const BASE: Verdict[] = JSON.parse(
   readFileSync(join(import.meta.dirname, 'fixtures/cd-differential.base.json'), 'utf8')
 )

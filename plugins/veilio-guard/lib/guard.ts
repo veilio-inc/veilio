@@ -71,6 +71,8 @@ import {
   bracketsRead,
   dataPositions,
   judgedWords,
+  ownScripts,
+  type Data,
   withoutData,
   pieces,
   textPieces,
@@ -266,7 +268,9 @@ export const MCP_IGNORED =
 const SETTINGS_PROTECTED =
   "Claude Code's settings can switch the guard off, so the agent may not change them. Ask the user to make this change"
 /** What one path check costs of a command's budget (it asks the file system). */
-const PATH_STEPS = 8
+const PATH_STEPS = 12
+/** Longer than any path a system opens. */
+const MAX_PATH = 4096
 
 const INTERPRETER_GUARD_STATE =
   "a script run from the command line that names Veilio's own files could read or change them, so the agent may not run it. Ask the user to run this call"
@@ -1740,6 +1744,10 @@ export class Guard {
     // text, in each directory): answered once per call.
     const known = this.hitsThisCall?.get(path)
     if (known) return known
+    // No system opens a path longer than this (PATH_MAX is 4,096 on Linux,
+    // 1,024 on macOS): a quoted script of a hundred lines is one word, and
+    // is text, not a file's name.
+    if (path.length > MAX_PATH) return { written: false, rawOnly: false, mcp: null, folder: false }
     // The engine's matcher tries each pattern at each part of the path.
     spend(
       this.cost ?? undefined,
@@ -2065,6 +2073,18 @@ export class Guard {
           // command with those places blanked - for the checks on its text.
           const data = e.tool === 'Bash' && shRead.ok ? dataPositions(shRead.list) : undefined
           const seen = data ? withoutData(c, data) : c
+          // Scripts in another program's own language (`sed`, `awk`, `jq`,
+          // `python -c`, ...): judged for a name written plainly in them, not
+          // as shell wildcards and not as a shell's script (reading table §9).
+          const own = e.tool === 'Bash' && shRead.ok ? ownScripts(shRead.list) : null
+          const notShell: Data | undefined =
+            data && own
+              ? {
+                  words: new Set([...data.words, ...own.words]),
+                  bodies: data.bodies,
+                  inside: new Set([...data.inside, ...own.inside]),
+                }
+              : data
           if (shRead.ok ? textsOf(shRead.list, data).some(namesVeilioFolder) : namesVeilioFolder(c))
             return this.deny(INTERPRETER_GUARD_STATE)
           // Spec 078 FR-008: a cd there would let a later command read it by a
@@ -2110,7 +2130,16 @@ export class Guard {
             // One step for each word that will be judged, charged before the
             // command is walked: a flood of words is refused for its cost
             // here, not after the work each of them takes.
-            spend(cost, judgedWords(parsed.list, data))
+            const judged = judgedWords(
+              parsed.list,
+              notShell ? { ...notShell, words: data!.words } : data
+            )
+            spend(cost, judged.words)
+            // Each word costs two steps more when it is spelled out, and each
+            // distinct plain word a path check at least: a command that
+            // cannot pay for them is refused before that work is done.
+            if (judged.spelled * 2 + judged.literals * PATH_STEPS > cost.steps)
+              return this.unreadable(c, budget)
             const walk = await walkCd(parsed.list, this.dirs, this.cdContext, dialect)
             // Q3 = A: with no host report, a call that would leave the shell
             // in more directories than the bound is refused before it runs.
@@ -2177,7 +2206,7 @@ export class Guard {
               return dirs
             }
             for (const { word: w, within } of wordsWithin(parsed.list)) {
-              if (data && within.some((x) => data.inside.has(x))) continue
+              if (notShell && within.some((x) => notShell.inside.has(x))) continue
               if (data?.words.has(w)) {
                 // Text a program only prints or stores: not matched against
                 // the list. What the shell does while expanding the word is
@@ -2203,6 +2232,10 @@ export class Guard {
               let at = [...(where.get(w) ?? [])]
               for (let k = within.length - 1; k >= 0 && !where.has(w) && at.length === 0; k--)
                 if (isWord(within[k]!) || 'type' in within[k]!) at = dirsAround(within[k]!)
+              // A word of many bracket expressions is charged before it is
+              // matched: the matcher's work grows with their number squared.
+              const brackets = w.parts.reduce((n, p) => n + (p.kind === 'glob' ? 1 : 0), 0)
+              if (brackets > 8) spend(cost, brackets * brackets)
               const read = spellings(w, { home, homeKnown, strict, cost })
               // A zsh expansion that rewrites text written in the command:
               // the word could be any name.
@@ -2284,9 +2317,16 @@ export class Guard {
           const floor = textPieces(parsed?.ok ? parsed.list : null, seen, data)
           // A piece with a wildcard, a bracket or a brace is judged as a word
           // (reading table A8): expanded, and matched against the list.
-          for (const [typed, read] of floor) {
+          // Another program's own script is not shell wildcards.
+          const wild =
+            notShell && own && own.words.size > 0
+              ? textPieces(parsed?.ok ? parsed.list : null, withoutData(c, notShell), notShell)
+              : floor
+          for (const [typed, read] of wild) {
             spend(cost)
             if (!/[*?[{]/.test(read)) continue
+            const brackets = read.split('[').length - 1
+            if (brackets > 8) spend(cost, brackets * brackets)
             for (const name of braceNames(bracketsRead(read)))
               for (const piece of pieces(name)) {
                 if (piece.startsWith('-')) continue
@@ -2306,6 +2346,11 @@ export class Guard {
               pathsInCommand(read).map((word): [string, string] => [word, typed])
             ),
           ]
+          // The path checks these will cost, before one is made.
+          const unasked = new Set(
+            texts.map(([word]) => word).filter((w) => !this.hitsThisCall?.has(w))
+          )
+          if (unasked.size * PATH_STEPS > cost.steps) return this.unreadable(c, budget)
           for (const [word, typed] of texts) {
             const under = /^[/~\\]|^[A-Za-z]:/.test(word) ? [] : moves.map((d) => join(d, word))
             // Spec 078 FR-012, found the way raw-only files are (review round 1).
