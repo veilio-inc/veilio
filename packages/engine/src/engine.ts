@@ -952,11 +952,19 @@ function applyManualMasks(
     let stop = end
     if (NAME_RUN.test(code[at])) while (start > done && NAME_RUN.test(code[start - 1])) start--
     if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
-    const span = code.slice(start, stop)
+    let span = code.slice(start, stop)
     let written = reverseExisting[span]
     if (start !== at || stop !== end) {
       secrets ??= secretsIn()
       if (credentials.has(span) || overlapsAny(secrets, start, stop)) {
+        // The whole credential goes, not the run alone: what stayed beside the
+        // token would no longer read as a credential, and be minted as names.
+        for (const [a, b] of secrets)
+          if (start < b && a < stop) {
+            start = Math.max(done, Math.min(start, a))
+            stop = Math.max(stop, b)
+          }
+        span = code.slice(start, stop)
         if (generic < 0) generic = highestRedaction(code, 'CREDENTIAL')
         written = redactions.get(span) ?? `__REDACTED_CREDENTIAL_${++generic}__`
         redactions.set(span, written)

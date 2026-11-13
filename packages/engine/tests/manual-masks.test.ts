@@ -493,6 +493,42 @@ describe('manual masks', () => {
     })
   })
 
+  // A credential with other characters in it: the run around the mark is only
+  // a piece of it. Nothing of the rest may stay beside the token or be minted.
+  const JWT =
+    'eyJ' +
+    'hbGciOiJIUzI1NiJ9' +
+    '.' +
+    'eyJ' +
+    'zdWIiOiJAcmeQ4In0' +
+    '.' +
+    'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c'
+  const LONG_PASSWORD = 'Zt4pw-AcmeHunter7Zq9-x9Kd2'
+  describe.each([
+    ['a token of three parts', `const token = "${JWT}"`, JWT],
+    ['a token standing bare', `TOKEN=${JWT}\n`, JWT],
+    [
+      'a password with dashes in a connection string',
+      `const dsn = "postgres://svc:${LONG_PASSWORD}@db.internal:5432/app"`,
+      LONG_PASSWORD,
+    ],
+    [
+      'a value with dashes under a credential key',
+      `const password = "${LONG_PASSWORD}"`,
+      LONG_PASSWORD,
+    ],
+  ])('a mark in the middle of %s', (_name, code, secret) => {
+    const pieces = secret.split(/[^A-Za-z0-9_$]+/).filter((p) => p.length > 3)
+
+    it.each(MODES)('leaves no piece of it beside the token or in the map (%s)', (mode) => {
+      const { anonymized, map } = anonymize(code, { manual: ['Acme'], secrets: mode })
+
+      for (const piece of pieces) expect(anonymized).not.toContain(piece)
+      for (const value of Object.values(map))
+        if (value !== 'Acme') for (const piece of pieces) expect(value).not.toContain(piece)
+    })
+  })
+
   it.each([
     ['const firma = "AcmeŻółć"', 'Acme'],
     ['const firma = "ŻAcmeClient" // ŻAcmeClient i AcmeŻółć', 'Acme'],
