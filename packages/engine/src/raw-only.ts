@@ -38,23 +38,62 @@ export const DEFAULT_RAW_ONLY: readonly string[] = [
 // Matched ignoring case: NTFS and APFS, the default file systems on Windows and
 // macOS, open `.ENV` as `.env`. On a case-sensitive one this refuses a little
 // more than it must, which is the side to err on.
-function globToRegExp(glob: string): RegExp {
-  let re = ''
+// No regular expression: a repository's own glob (`*a*a*a…b`) made one
+// backtrack for hours and hung whoever asked (spec 093). The glob is walked
+// against the text once, keeping every place in it the text may have reached,
+// so the time is pattern length times text length whatever the glob holds.
+/** A glob past either cap is read as `**`: refusing more is the safe side. */
+const MAX_GLOB = 1024
+const MAX_STARS = 64
+
+/** The glob as steps: `**` (with the `/` after it) any run, `*` any run inside
+ *  a segment, `?` one character of a segment, anything else itself. */
+function globSteps(glob: string): string[] {
+  const steps: string[] = []
   for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i)
-    if (c === '*' && glob[i + 1] === '*') {
-      re += '.*'
+    if (glob[i] === '*' && glob[i + 1] === '*') {
+      steps.push('**')
       i++
       if (glob[i + 1] === '/') i++
-    } else if (c === '*') re += '[^/]*'
-    else if (c === '?') re += '[^/]'
-    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    } else steps.push(glob[i]!)
   }
-  return new RegExp(`^${re}$`, 'i')
+  return steps
+}
+
+/** Whether `steps` match `text` whole - or, with `anyTail`, from the start of
+ *  any of its segments. */
+function globMatches(steps: readonly string[], text: string, anyTail: boolean): boolean {
+  const m = steps.length
+  // at[i]: the text read so far may stand before step i (m: past the last).
+  let at = new Uint8Array(m + 1)
+  let next = new Uint8Array(m + 1)
+  // A `**` or `*` may match nothing: every place reached also reaches past it.
+  const skip = (set: Uint8Array): void => {
+    for (let i = 0; i < m; i++)
+      if (set[i] && (steps[i] === '**' || steps[i] === '*')) set[i + 1] = 1
+  }
+  at[0] = 1
+  skip(at)
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k]!
+    next.fill(0)
+    for (let i = 0; i < m; i++) {
+      if (!at[i]) continue
+      const step = steps[i]!
+      if (step === '**' || (step === '*' && c !== '/')) next[i] = 1
+      else if (step === '?' ? c !== '/' : step === c || step.toUpperCase() === c.toUpperCase())
+        next[i + 1] = 1
+    }
+    if (anyTail && c === '/') next[0] = 1
+    skip(next)
+    ;[at, next] = [next, at]
+  }
+  return at[m] === 1
 }
 
 function matches(path: string, pattern: string): boolean {
-  const re = globToRegExp(pattern)
+  if (pattern.length > MAX_GLOB || pattern.split('*').length - 1 > MAX_STARS) return true
+  const steps = globSteps(pattern)
   // NTFS opens `.env::$DATA`, `.env:x` and `.env.` as `.env`: a segment is
   // read without its stream and trailing dots or spaces (spec 078 review).
   const parts = path
@@ -63,9 +102,8 @@ function matches(path: string, pattern: string): boolean {
     .filter((p) => p !== '' && p !== '.')
   // A pattern with no slash matches a file name anywhere; one with a slash
   // matches any tail of the path, so `secrets/**` holds at any depth.
-  if (!pattern.includes('/')) return parts.some((p) => re.test(p))
-  for (let i = 0; i < parts.length; i++) if (re.test(parts.slice(i).join('/'))) return true
-  return false
+  if (!pattern.includes('/')) return parts.some((p) => globMatches(steps, p, false))
+  return parts.length > 0 && globMatches(steps, parts.join('/'), true)
 }
 
 /** A path no name match can judge on Windows: a segment holding a stream
