@@ -416,6 +416,42 @@ function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: Litera
   return -1
 }
 
+/** The offset just past the template literal that opens at `at`, following
+ *  its `${ }`: a template or a quoted string inside one ends nothing outside
+ *  it. -1 when it never closes (spec 093).
+ *  shortcut: a comment or regex literal inside `${ }` is read as code, so a
+ *  quote, brace or backtick in one miscounts; a lexer with state fixes it. */
+function templateEnd(code: string, at: number): number {
+  // One entry per open `${`: the `{` still open inside it.
+  const open: number[] = []
+  let inText = true
+  for (let i = at + 1; i < code.length; i++) {
+    const c = code[i]
+    if (c === '\\') i++
+    else if (inText) {
+      if (c === '`') {
+        if (open.length === 0) return i + 1
+        inText = false
+      } else if (c === '$' && code[i + 1] === '{') {
+        open.push(0)
+        inText = false
+        i++
+      }
+    } else if (c === '`') inText = true
+    else if (c === '{') open[open.length - 1]++
+    else if (c === '}') {
+      if (open[open.length - 1] === 0) {
+        open.pop()
+        inText = true
+      } else open[open.length - 1]--
+    } else if (c === '"' || c === "'") {
+      // '…' and "…" end at their quote or, unterminated, at the line break.
+      for (i++; i < code.length && code[i] !== c && code[i] !== '\n'; i++) if (code[i] === '\\') i++
+    }
+  }
+  return -1
+}
+
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
 
@@ -452,6 +488,7 @@ function tokenizeForMasking(
 
   let i = 0
   let noRegexBefore = -1
+  let noTemplateEnd = false
   const literalMemo: LiteralMemo = { terminators: new Map(), unclosed: new Set() }
   // A quote character opens nothing before this offset (see `forRestore`).
   const proseBefore = new Map<string, number>()
@@ -576,6 +613,25 @@ function tokenizeForMasking(
       // Still maskable (isComment: false); escape handling unchanged.
       flush(false)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
+      // A JavaScript template literal runs to its own closing backtick, past
+      // the templates inside its `${ }` (spec 093). Once one never closes, the
+      // rest reads as before, or a file of them is quadratic. Masking only:
+      // restore's reading of a markdown answer is unchanged.
+      const nested =
+        c === '`' && language === 'typescript' && !forRestore && !noTemplateEnd
+          ? templateEnd(code, i)
+          : -1
+      if (nested !== -1) {
+        segments.push({
+          text: code.slice(i, nested),
+          isComment: false,
+          isString: true,
+          isModuleSpecifier,
+        })
+        i = nested
+        continue
+      }
+      noTemplateEnd ||= c === '`'
       const opened = i
       let closed = false
       let str = c
