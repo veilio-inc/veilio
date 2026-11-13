@@ -327,6 +327,52 @@ function literalEnd(code, at, kind, memo) {
     }
     return -1;
 }
+/** The offset just past the template literal that opens at `at`, following
+ *  its `${ }`: a template or a quoted string inside one ends nothing outside
+ *  it. -1 when it never closes (spec 093).
+ *  shortcut: a comment or regex literal inside `${ }` is read as code, so a
+ *  quote, brace or backtick in one miscounts; a lexer with state fixes it. */
+function templateEnd(code, at) {
+    // One entry per open `${`: the `{` still open inside it.
+    const open = [];
+    let inText = true;
+    for (let i = at + 1; i < code.length; i++) {
+        const c = code[i];
+        if (c === '\\')
+            i++;
+        else if (inText) {
+            if (c === '`') {
+                if (open.length === 0)
+                    return i + 1;
+                inText = false;
+            }
+            else if (c === '$' && code[i + 1] === '{') {
+                open.push(0);
+                inText = false;
+                i++;
+            }
+        }
+        else if (c === '`')
+            inText = true;
+        else if (c === '{')
+            open[open.length - 1]++;
+        else if (c === '}') {
+            if (open[open.length - 1] === 0) {
+                open.pop();
+                inText = true;
+            }
+            else
+                open[open.length - 1]--;
+        }
+        else if (c === '"' || c === "'") {
+            // '…' and "…" end at their quote or, unterminated, at the line break.
+            for (i++; i < code.length && code[i] !== c && code[i] !== '\n'; i++)
+                if (code[i] === '\\')
+                    i++;
+        }
+    }
+    return -1;
+}
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
 /** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
@@ -356,6 +402,7 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
     const startsWithAt = (token, at) => code.startsWith(token, at);
     let i = 0;
     let noRegexBefore = -1;
+    let noTemplateEnd = false;
     const literalMemo = { terminators: new Map(), unclosed: new Set() };
     // A quote character opens nothing before this offset (see `forRestore`).
     const proseBefore = new Map();
@@ -471,6 +518,24 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             // Still maskable (isComment: false); escape handling unchanged.
             flush(false);
             const isModuleSpecifier = isModuleSpecifierContext(code, i);
+            // A JavaScript template literal runs to its own closing backtick, past
+            // the templates inside its `${ }` (spec 093). Once one never closes, the
+            // rest reads as before, or a file of them is quadratic. Masking only:
+            // restore's reading of a markdown answer is unchanged.
+            const nested = c === '`' && language === 'typescript' && !forRestore && !noTemplateEnd
+                ? templateEnd(code, i)
+                : -1;
+            if (nested !== -1) {
+                segments.push({
+                    text: code.slice(i, nested),
+                    isComment: false,
+                    isString: true,
+                    isModuleSpecifier,
+                });
+                i = nested;
+                continue;
+            }
+            noTemplateEnd ||= c === '`';
             const opened = i;
             let closed = false;
             let str = c;
@@ -666,7 +731,11 @@ export class ManualMaskError extends Error {
  *  secret, which is precisely what the one-way redaction path exists to stop.
  *  The credential has already been redacted irreversibly by the time we get
  *  here; there is nothing left for the user to usefully mark. */
-function applyManualMasks(code, requested, credentials, fromMap, map, reverseExisting, mint, language) {
+function applyManualMasks(code, requested, credentials, fromMap, map, reverseExisting, mint, language, 
+/** Where the credentials left in `code` stand; asked for at most once. */
+secretsIn, 
+/** Out: the names a term stands inside, for `anonymize` to mask whole. */
+inside) {
     // Replayed means "came from the map and was not asked for again". Deduping the
     // two lists into one and testing membership in the map would exempt a term the
     // user is marking right now just because a prior session had marked it — the
@@ -723,7 +792,65 @@ function applyManualMasks(code, requested, credentials, fromMap, map, reverseExi
     // its own output, so the text being masked is full of placeholders by then.
     const ordered = applicable.slice().sort((a, b) => b.length - a.length);
     const pattern = new RegExp(`${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`, 'g');
-    return code.replace(pattern, (match) => reverseExisting[match] ?? match);
+    // A term inside a longer run of name characters is not replaced there: the
+    // rest of the run was then minted as a name with the placeholder in it
+    // (`__MANUAL__1_API_URL`), which restore, one pass, could not bring back.
+    // The whole run is masked instead: a name by `anonymize`, like any name
+    // (`inside`); a run that is no name (`88412037`, two words, a letter of
+    // another script) as a mark of its own. A run that is or touches a
+    // credential left in the text is redacted one-way, as a name holding a
+    // credential is: no part of it may reach the map (spec 093).
+    let secrets;
+    let generic = -1;
+    const redactions = new Map();
+    let out = '';
+    let done = 0;
+    for (const m of code.matchAll(pattern)) {
+        const at = m.index;
+        const end = at + m[0].length;
+        // Inside a run already taken whole.
+        if (at < done)
+            continue;
+        let start = at;
+        let stop = end;
+        if (NAME_RUN.test(code[at]))
+            while (start > done && NAME_RUN.test(code[start - 1]))
+                start--;
+        if (NAME_RUN.test(code[end - 1]))
+            while (stop < code.length && NAME_RUN.test(code[stop]))
+                stop++;
+        let span = code.slice(start, stop);
+        let written = reverseExisting[span];
+        if (start !== at || stop !== end) {
+            secrets ??= secretsIn();
+            if (credentials.has(span) || overlapsAny(secrets, start, stop)) {
+                // The whole credential goes, not the run alone: what stayed beside the
+                // token would no longer read as a credential, and be minted as names.
+                for (const [a, b] of secrets)
+                    if (start < b && a < stop) {
+                        start = Math.max(done, Math.min(start, a));
+                        stop = Math.max(stop, b);
+                    }
+                span = code.slice(start, stop);
+                if (generic < 0)
+                    generic = highestRedaction(code, 'CREDENTIAL');
+                written = redactions.get(span) ?? `__REDACTED_CREDENTIAL_${++generic}__`;
+                redactions.set(span, written);
+            }
+            else if (IDENTIFIER.test(span)) {
+                inside.add(span);
+                written = span;
+            }
+            else if (written === undefined) {
+                written = mint(MANUAL_BASE);
+                map[written] = span;
+                reverseExisting[span] = written;
+            }
+        }
+        out += code.slice(done, start) + (written ?? span);
+        done = stop;
+    }
+    return out + code.slice(done);
 }
 /** Placeholder base per regulated format.
  *
@@ -1263,6 +1390,10 @@ function spreadRedactions(text, tokens, known) {
 }
 /** A character of an identifier, for whole-word matching. */
 const IDENT_CHAR = /[A-Za-z0-9_$]/;
+/** A character a name or a word runs through, in any script: what the code
+ *  matcher and the comment matcher (`COMMENT_WORD`) both stop at. Half of a
+ *  pair (a letter outside the basic plane) counts, the safe side. */
+const NAME_RUN = /[\p{L}\p{N}_$\uD800-\uDFFF]/u;
 /** The highest n of the `__REDACTED_<base>_n__` tokens in `text`, so a new
  *  token never repeats one already there. */
 function highestRedaction(text, base) {
@@ -1522,12 +1653,20 @@ export function anonymize(code, options = {}) {
     // classifier would have given the same token. Terms already in the map are
     // re-applied so a mark made in an earlier pass survives the round trip.
     const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)));
+    const inside = new Set();
+    const kind = valueKind(code, opts);
+    const net = guessedCode(opts);
     const marked = applyManualMasks(redacted, opts.manual ?? [], 
     // Refused for every credential found that is not merely possible,
     // whatever the policy: a manual mark is written to the map, and a
     // credential never is (founder decision 2026-10-26). Only an ambiguous
     // word may be marked.
-    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))), manualTermsIn(existingMap), map, reverseExisting, mint, language);
+    new Set(found.filter((f) => !f.ambiguous).map((f) => code.slice(f.start, f.end))), manualTermsIn(existingMap), map, reverseExisting, mint, language, 
+    // Found by a rule, or by the credential words (a value under `password`).
+    () => [
+        ...credentialSpans(redacted, where),
+        ...credentialsAmong(valuesIn(redacted, language, kind, net)),
+    ].map((s) => [s.start, s.end]), inside);
     // AFTER manual marks, on purpose — a value the author marked by hand is
     // already in `reverseExisting` and keeps its __MANUAL__n placeholder. That is
     // the entire implementation of "a manual mark wins over automatic detection";
@@ -1557,8 +1696,6 @@ export function anonymize(code, options = {}) {
     // `off` too - such a value is found by the credential words, not reported
     // by a rule - except where a rule found it, which those modes leave as
     // written by the user's choice.
-    const kind = valueKind(code, opts);
-    const net = guessedCode(opts);
     const policy = opts.secrets ?? 'redact';
     const reported = policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end]);
     let unvalued;
@@ -1656,9 +1793,15 @@ export function anonymize(code, options = {}) {
                     commentOnly.add(w);
         segmentStart += s.text.length;
     }
-    const identifiers = missed.length === 0 && commentOnly.size === 0
+    // Names a manual mark stands inside, where they still stand whole (a later
+    // pass may have redacted one): always masked, whatever a whitelist, the
+    // ordinary words or a keyword list would leave readable (spec 093).
+    // Outside a credential only, so no part of one is minted.
+    const standing = inside.size === 0 ? null : new Set(blankSpans(source, secretSpans).match(/[A-Za-z0-9_$]+/g));
+    const holdsMark = new Set([...inside].filter((n) => standing?.has(n)));
+    const identifiers = missed.length === 0 && commentOnly.size === 0 && holdsMark.size === 0
         ? extractedNames
-        : [...new Set([...extractedNames, ...missed, ...commentOnly])].sort((a, b) => b.length - a.length);
+        : [...new Set([...extractedNames, ...missed, ...commentOnly, ...holdsMark])].sort((a, b) => b.length - a.length);
     const roleOf = classifyIdentifiers(scannable, language);
     // Split rules by type, sort by sort_order ASC (lower = earlier)
     const whitelist = rules
@@ -1687,7 +1830,7 @@ export function anonymize(code, options = {}) {
         // still used (1.12.1 review: fail closed for what is new).
         if (secretValues.has(name) && !alreadyMapped.has(name))
             continue;
-        if (whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
+        if (!holdsMark.has(name) && whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
             whitelisted.add(name);
             continue;
         }
@@ -1699,7 +1842,8 @@ export function anonymize(code, options = {}) {
         // placeholder, written there and left readable elsewhere.
         // With the budget spent, a replace rule can no longer say a word is not
         // its codename: the word is masked rather than shown.
-        if (isOrdinaryWord(name) &&
+        if (!holdsMark.has(name) &&
+            isOrdinaryWord(name) &&
             !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
             !(hadReplacers && budget.spent)) {
             ordinary.add(name);
@@ -1776,7 +1920,7 @@ export function anonymize(code, options = {}) {
     const isFree = (at, end) => !overlapsAny(secretSpans, at, end) && !covers(values, at, end);
     // What is written for the substitutable name `m` standing at `at` in
     // `source`: the one decision for code and comments.
-    const placeholderAt = (m, at) => inSpan(verbatim, at) ||
+    const placeholderAt = (m, at) => (inSpan(verbatim, at) && !holdsMark.has(m)) ||
         (!alreadyMapped.has(m) && overlapsAny(secretSpans, at, at + m.length)) ||
         (ordinary.has(m) && isFree(at, at + m.length))
         ? m
@@ -1806,6 +1950,7 @@ export function anonymize(code, options = {}) {
                 return m;
             const at = start + offset;
             return STRING_ROLE.test(reverseExisting[m]) &&
+                !holdsMark.has(m) &&
                 /^[a-z]+$/.test(m) &&
                 isFree(at, at + m.length)
                 ? m
@@ -1861,7 +2006,7 @@ const STRIP_PATTERNS = [
     ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
     [
         'narration',
-        /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize).*/gm,
+        /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)\b.*/gm,
     ],
     ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
     ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
@@ -1909,6 +2054,23 @@ function stripNoise(text, wanted) {
     /** Where each item's own text begins: its first character no earlier item took. */
     const itemStart = [];
     let view = text;
+    // Where the string and template literals are, read once and only when a line
+    // pattern matches: a line inside one is the program's text, not a comment
+    // (spec 093). shortcut: restore's reading, which ends a template at the first
+    // backtick; one nested in `${ }` flips the reading until the next backtick.
+    let literals;
+    const inLiteral = (offset) => {
+        if (literals === undefined) {
+            literals = [];
+            let at = 0;
+            for (const s of tokenizeForMasking(text, 'typescript', true)) {
+                if (s.isString)
+                    literals.push([at, at + s.text.length]);
+                at += s.text.length;
+            }
+        }
+        return inSpan(literals, offset);
+    };
     for (const [type, pattern] of STRIP_PATTERNS) {
         if (!wanted.has(type))
             continue;
@@ -1920,7 +2082,7 @@ function stripNoise(text, wanted) {
                 m.index + m[0].length,
             ]);
         for (const [start, end] of spans) {
-            if (start === end)
+            if (start === end || (typeof pattern !== 'function' && inLiteral(start)))
                 continue;
             let own = start;
             while (own < end && isSpace(view[own]))
