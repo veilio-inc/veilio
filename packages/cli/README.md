@@ -523,7 +523,7 @@ On Windows the CLI cannot check who owns a folder, so it uses a `.veilio` folder
 
 ### GitHub Action
 
-The Action scans pull requests on the pull_request and pull_request_target events, and pushes on push. On any other event it fails rather than scan the wrong commits; use `mode: paths` there.
+The Action scans pull requests on the pull_request and pull_request_target events, and pushes on push. On any other event it fails rather than scan the wrong commits; set the `paths` input there.
 
 ```yaml
 - uses: veilio-inc/veilio/packages/cli@main
