@@ -199,7 +199,10 @@ describe('the Action names only inputs it declares (spec 093)', () => {
   const named = (text: string) =>
     [...text.matchAll(/`([a-z_-]+):[^`\n]*`|`([a-z_-]+)` input/g)].map((m) => m[1] ?? m[2])
   const readme = readFileSync(resolve(import.meta.dirname, '..', 'README.md'), 'utf8')
-  const section = readme.slice(readme.indexOf('### GitHub Action'), readme.indexOf('### Pre-commit'))
+  const section = readme.slice(
+    readme.indexOf('### GitHub Action'),
+    readme.indexOf('### Pre-commit')
+  )
 
   it.each([
     ['the failure message', script('Resolve scan targets').replace(/\\`/g, '`')],
