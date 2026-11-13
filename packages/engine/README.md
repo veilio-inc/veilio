@@ -347,9 +347,7 @@ audited:
 
 These invariants are enforced in CI by `tests/purity.test.ts`.
 
-> **Note (known limitation):** custom-rule patterns are compiled with `RegExp`.
-> A pathological user-supplied pattern can backtrack (ReDoS). See the repo
-> `SECURITY.md`. Treat rule patterns as untrusted input in hostile contexts.
+Custom rule patterns run on a linear-time matcher, not on the platform's regular expressions, so a pattern cannot make matching take more than time proportional to the text.
 
 ## API
 
