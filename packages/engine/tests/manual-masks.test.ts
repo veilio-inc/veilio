@@ -530,6 +530,42 @@ describe('manual masks', () => {
   })
 
   it.each([
+    ['const firma = "ŻClient" // Kowalska', ['Kowalska'], ['Kowalska']],
+    ['const firma = "ŻClient" + ledgerShard // Kowalska', ['Kowalska'], ['STR', 'VAR', 'Kowalska']],
+    ['const firma = "AcmeŻClient" // note', ['Acme'], ['Acme', 'STR']],
+  ])('leaves a placeholder beside a letter of another script whole: %s', (code, first, again) => {
+    const one = anonymize(code, { manual: first })
+    const two = anonymize(one.anonymized, { existingMap: one.map, manual: again })
+
+    expect(two.anonymized).toBe(one.anonymized)
+    expect(Object.values(two.map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
+    expect(restore(two.anonymized, two.map, { strip: 'none' }).restored).toBe(code)
+  })
+
+  it('replaces a term glued to a placeholder where it stands', () => {
+    const map = { __CLS__1: 'Client' }
+    const { anonymized, map: after } = anonymize('// AcmeŻ__CLS__1 here', {
+      existingMap: map,
+      manual: ['Acme'],
+    })
+
+    expect(anonymized).toBe('// __MANUAL__1Ż__CLS__1 here')
+    expect(restore(anonymized, after, { strip: 'none' }).restored).toBe('// AcmeŻClient here')
+  })
+
+  it('never mints a mark that could not be marked again', () => {
+    // A mark of its own is replayed from the map as a term on the next call,
+    // where a term that scans as a credential is refused.
+    const code = `// see Acme-${KEY}x and AcmeŻ ${KEY}`
+    for (const mode of MODES) {
+      const one = anonymize(code, { manual: ['Acme', 'see Acme'], secrets: mode })
+      for (const value of Object.values(one.map))
+        expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
+      expect(() => anonymize(code, { existingMap: one.map, secrets: mode })).not.toThrow()
+    }
+  })
+
+  it.each([
     ['const firma = "AcmeŻółć"', 'Acme'],
     ['const firma = "ŻAcmeClient" // ŻAcmeClient i AcmeŻółć', 'Acme'],
     ['// ΑcmeΔ, ŁAcmeClient, AcmeClientÖ und Acme9', 'cme'],

@@ -185,6 +185,8 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
  *  placeholders already in source (anonymize) and to scope a legend to the
  *  placeholders actually present in a snippet (withAiPreamble). */
 const PLACEHOLDER_SCAN = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
+/** The same, to ask once whether a text holds one (no `g`: no state kept). */
+const HOLDS_PLACEHOLDER = new RegExp(PLACEHOLDER_SCAN.source)
 
 /** Prepend the downstream-AI preamble (and, when a map is given, a placeholder
  *  legend) to anonymized code, ready to paste. The legend is scoped to the
@@ -952,6 +954,13 @@ function applyManualMasks(
     let stop = end
     if (NAME_RUN.test(code[at])) while (start > done && NAME_RUN.test(code[start - 1])) start--
     if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
+    // A run that holds a placeholder (`Ż__STR__1`, text already masked) is
+    // never taken whole: its name would be lost. The match is replaced where
+    // it stands, as it was, and a placeholder passes through.
+    if (HOLDS_PLACEHOLDER.test(code.slice(start, stop))) {
+      start = at
+      stop = end
+    }
     let span = code.slice(start, stop)
     let written = reverseExisting[span]
     if (start !== at || stop !== end) {
