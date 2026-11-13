@@ -2275,7 +2275,7 @@ const STRIP_PATTERNS: ReadonlyArray<
   ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize).*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)\b.*/gm,
   ],
   ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
@@ -2327,6 +2327,22 @@ function stripNoise(
   /** Where each item's own text begins: its first character no earlier item took. */
   const itemStart: number[] = []
   let view = text
+  // Where the string and template literals are, read once and only when a line
+  // pattern matches: a line inside one is the program's text, not a comment
+  // (spec 093). shortcut: restore's reading, which ends a template at the first
+  // backtick; one nested in `${ }` flips the reading until the next backtick.
+  let literals: Array<[number, number]> | undefined
+  const inLiteral = (offset: number): boolean => {
+    if (literals === undefined) {
+      literals = []
+      let at = 0
+      for (const s of tokenizeForMasking(text, 'typescript', true)) {
+        if (s.isString) literals.push([at, at + s.text.length])
+        at += s.text.length
+      }
+    }
+    return inSpan(literals, offset)
+  }
   for (const [type, pattern] of STRIP_PATTERNS) {
     if (!wanted.has(type)) continue
     const found: Array<[number, number]> = []
@@ -2338,7 +2354,7 @@ function stripNoise(
             m.index! + m[0].length,
           ])
     for (const [start, end] of spans) {
-      if (start === end) continue
+      if (start === end || (typeof pattern !== 'function' && inLiteral(start))) continue
       let own = start
       while (own < end && isSpace(view[own])) own++
       found.push([start, end])

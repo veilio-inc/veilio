@@ -94,3 +94,62 @@ describe('restore — strip options', () => {
     expect(STRIPPABLE_TYPES.length).toBeGreaterThan(4)
   })
 })
+
+// Spec 093: the narration filter matched a verb as a prefix (`Set` in
+// `Settings`), and every line filter also fired inside a template literal.
+describe('restore — the line filters take whole words, outside literals (spec 093)', () => {
+  it.each([
+    '// Settings must match prod',
+    '// Logic below is order-dependent',
+    '// Runtime: node 20',
+    '// Checksum of the header',
+  ])('keeps the real comment %s', (comment) => {
+    const input = `const a = 1\n  ${comment}\nconst b = 2`
+    expect(restore(input, {}).restored).toBe(input)
+  })
+
+  it.each([
+    '// Set the retry count',
+    '// Validate the rate before applying it',
+    '// Log the outcome',
+    '// Run the migration',
+    '// Check that the header is present',
+    '// Set: x',
+    '// Return',
+    '//Get the row',
+  ])('still removes the narration line %s', (comment) => {
+    const { restored, strippedItems } = restore(`const a = 1\n  ${comment}\nconst b = 2`, {})
+    expect(restored).toBe('const a = 1\nconst b = 2')
+    expect(strippedItems.map((i) => i.type)).toEqual(['narration'])
+  })
+
+  it.each([
+    '// Set the retry count',
+    '// TODO: later',
+    '// Step 1: open',
+    '// -----------',
+    '// @param rate the rate',
+  ])('keeps the line %s inside a template literal', (line) => {
+    const input = ['const help = `', `  ${line}`, '`', 'const b = 2'].join('\n')
+    const { restored, strippedCount } = restore(input, {})
+    expect(restored).toBe(input)
+    expect(strippedCount).toBe(0)
+  })
+
+  it('still removes a narration line of fenced code in a prose answer with apostrophes', () => {
+    const answer = [
+      "Here's the fix, it doesn't touch the rest:",
+      '```ts',
+      '// Set the retry count',
+      'const retries = 3',
+      '```',
+      "That's all.",
+    ].join('\n')
+    expect(restore(answer, {}).restored).not.toContain('Set the retry count')
+  })
+
+  it('removes a narration line after a template literal has closed', () => {
+    const input = 'const a = `x`\n// Set the retry count\nconst b = `y`'
+    expect(restore(input, {}).restored).toBe('const a = `x`\nconst b = `y`')
+  })
+})
