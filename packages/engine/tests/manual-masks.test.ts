@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectSecrets, hasBlockingSecrets } from '../src/secrets.js'
+import { credentialSpans, detectSecrets, hasBlockingSecrets } from '../src/secrets.js'
 import {
   anonymize,
   restore,
@@ -577,5 +577,147 @@ describe('manual masks', () => {
     expect(back.restored).toBe(code)
     expect(back.report.unresolved).toEqual([])
     expect(Object.values(map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
+  })
+
+  it.each(MODES)('still marks a word that only may be a credential, whole (%s)', (mode) => {
+    // An ambiguous word in a credential position may be marked by hand; it is
+    // then a mark like any other, and comes back.
+    const code = 'client_secret: "disabled"\n'
+    const { anonymized, map } = anonymize(code, {
+      path: 'a.yaml',
+      manual: ['disabled'],
+      secrets: mode,
+    })
+
+    expect(anonymized).toContain('"__MANUAL__1"')
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(code)
+  })
+
+  // ─── spec 093 · the four things that hold for every mark, wherever it stands ─
+  //
+  // One table instead of a case per review finding: each surrounding, in each
+  // `secrets` mode, masked once and masked again. [name, before, credential,
+  // after, the output with NO marks as origin/main 05931b6 gave it].
+  const SURROUNDINGS: [string, string, string, string, string][] = [
+    [
+      'inside a name',
+      'const u = ACME_API_URL + new AcmeClient()',
+      '',
+      '',
+      'const u = ACME_API_URL + new __CLS__2()',
+    ],
+    ['alone in a string', 'log("Acme")', '', '', 'log("__STR__1")'],
+    [
+      'inside a name in a string',
+      'log("PaymentAcmeGateway down")',
+      '',
+      '',
+      'log("__STR__1 __STR__2")',
+    ],
+    [
+      'in a comment',
+      'const total = 1 // ask Acme and the AcmeTeam',
+      '',
+      '',
+      'const total = 1 // ask Acme and the AcmeTeam',
+    ],
+    [
+      'beside Polish letters',
+      'const firma = "ŻAcmeClient" // AcmeŻółć',
+      '',
+      '',
+      'const __VAR__1 = "Ż__STR__1" // AcmeŻółć',
+    ],
+    ['beside Greek letters', '// ΑAcmeΔ und AcmeΩmega', '', '', '// ΑAcmeΔ und AcmeΩmega'],
+    [
+      'inside a number',
+      '// acct 88412037\nwire(88412037)',
+      '',
+      '',
+      '// acct 88412037\nwire(88412037)',
+    ],
+    [
+      'beside a placeholder',
+      '// AcmeŻ__CLS__1 and Acme here',
+      '',
+      '',
+      '// AcmeŻ__CLS__1 and Acme here',
+    ],
+    ['inside a key', 'const k = "', KEY, '"', 'const k = "__REDACTED_STRIPE_KEY_1__"'],
+    [
+      'inside a password of a connection string',
+      'const dsn = "postgres://svc:',
+      LONG_PASSWORD,
+      '@db.internal:5432/app"',
+      'const __VAR__1 = "__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app"',
+    ],
+    [
+      'inside a value under a credential key',
+      'const password = "',
+      LONG_PASSWORD,
+      '"',
+      'const password = "__REDACTED_CREDENTIAL_1__"',
+    ],
+    [
+      'a whole part of a credential',
+      'const password = "',
+      'Zt4pw-Acme-x9Kd2',
+      '"',
+      'const password = "__REDACTED_CREDENTIAL_1__"',
+    ],
+    [
+      'inside a credential that holds a placeholder',
+      'const password = "',
+      'Zt4pwŻ__CLS__1ŻAcmeHunter7Zq9',
+      '"',
+      'const password = "__REDACTED_CREDENTIAL_1__"',
+    ],
+  ]
+  const MARKS = ['Acme', 'ACME', '8841']
+  const HELD = { __CLS__1: 'Client' }
+
+  describe.each(SURROUNDINGS)('a mark %s', (_name, before, credential, after, unmarked) => {
+    const code = before + credential + after
+    const back = (text: string, map: Record<string, string>) =>
+      restore(text, map, { strip: 'none' }).restored
+
+    it('masks the text as before when nothing is marked', () => {
+      expect(anonymize(code, { existingMap: HELD }).anonymized).toBe(unmarked)
+    })
+
+    it.each(MODES)('hides the mark, restores the rest, keeps the map clean (%s)', (mode) => {
+      const once = anonymize(code, { existingMap: HELD, manual: MARKS, secrets: mode })
+      const twice = anonymize(once.anonymized, {
+        existingMap: once.map,
+        manual: MARKS,
+        secrets: mode,
+      })
+      const secrets = [
+        credential,
+        ...credentialSpans(code).map((s) => code.slice(s.start, s.end)),
+      ].filter((t) => t !== '')
+
+      for (const { anonymized, map } of [once, twice]) {
+        // 1. What is not a credential comes back; a credential stays one-way.
+        const restored = back(anonymized, map)
+        if (credential === '') expect(restored).toBe(back(code, HELD))
+        else {
+          expect(restored.startsWith(back(before, HELD)), restored).toBe(true)
+          expect(restored.endsWith(back(after, HELD)), restored).toBe(true)
+          expect(
+            restored.slice(back(before, HELD).length, restored.length - back(after, HELD).length)
+          ).toMatch(/^__REDACTED_[A-Z0-9_]+__$/)
+        }
+        // 2. No marked term is readable.
+        for (const term of MARKS) expect(anonymized).not.toContain(term)
+        // 3. No credential, and no piece of one, is in the map. The mark is the
+        //    user's own word, and the map must hold it to bring it back.
+        for (const value of Object.values(map)) {
+          expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
+          if (!MARKS.includes(value) && value.length >= 4)
+            for (const secret of secrets) expect(secret, value).not.toContain(value)
+        }
+      }
+    })
   })
 })

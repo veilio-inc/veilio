@@ -932,55 +932,78 @@ function applyManualMasks(
     `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
     'g'
   )
-  // A term inside a longer run of name characters is not replaced there: the
-  // rest of the run was then minted as a name with the placeholder in it
-  // (`__MANUAL__1_API_URL`), which restore, one pass, could not bring back.
-  // The whole run is masked instead: a name by `anonymize`, like any name
-  // (`inside`); a run that is no name (`88412037`, two words, a letter of
-  // another script) as a mark of its own. A run that is or touches a
-  // credential left in the text is redacted one-way, as a name holding a
-  // credential is: no part of it may reach the map (spec 093).
-  let secrets: (readonly [number, number])[] | undefined
-  let generic = -1
+  // Each match is one of four things (spec 093):
+  // - a placeholder, or a term standing alone: written as before;
+  // - a term inside a longer name (`ACME` in `ACME_API_URL`): not replaced, as
+  //   `__MANUAL__1_API_URL` was then minted as a name and never came back. The
+  //   name is masked whole by `anonymize`, like any name (`inside`); a run
+  //   that is no name (`88412037`, two words, another script's letter) becomes
+  //   a mark of its own;
+  // - a term in a run that holds a placeholder (`Ż__STR__1`, text already
+  //   masked): replaced where it stands, or that name would be lost;
+  // - a term touching a credential left in the text (not one that is that
+  //   credential whole - an ambiguous word may be marked): every credential it
+  //   touches is redacted one-way, so no part of one stays readable beside the
+  //   mark or reaches the map.
+  /** The run of name characters around [at, end), no further left than `floor`;
+   *  [at, end) itself when that run holds a placeholder. */
+  const runAround = (at: number, end: number, floor: number): [number, number] => {
+    let start = at
+    let stop = end
+    if (NAME_RUN.test(code[at])) while (start > floor && NAME_RUN.test(code[start - 1])) start--
+    if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
+    return HOLDS_PLACEHOLDER.test(code.slice(start, stop)) ? [at, end] : [start, stop]
+  }
+  // The credentials to redact are found first: one may begin before a
+  // placeholder or a term that a single pass would already have written.
+  const doomed: [number, number][] = []
+  const secrets = secretsIn()
+  let done = 0
+  if (secrets.length > 0)
+    for (const m of code.matchAll(pattern)) {
+      const at = m.index
+      if (at < done || PLACEHOLDER_TOKEN.test(m[0])) continue
+      let [start, stop] = runAround(at, at + m[0].length, done)
+      done = stop
+      const touched = secrets.filter(([a, b]) => start < b && a < stop)
+      if (touched.length === 0) continue
+      if (touched[0]![0] === at && touched[0]![1] === at + m[0].length) continue
+      for (const [a, b] of touched) {
+        start = Math.min(start, a)
+        stop = Math.max(stop, b)
+      }
+      const last = doomed[doomed.length - 1]
+      if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], stop)
+      else doomed.push([start, stop])
+      done = Math.max(done, stop)
+    }
+  let generic = doomed.length > 0 ? highestRedaction(code, 'CREDENTIAL') : 0
   const redactions = new Map<string, string>()
   let out = ''
-  let done = 0
+  done = 0
+  let next = 0
+  /** Write the redactions that begin at or before `upTo`. */
+  const redactTo = (upTo: number): void => {
+    for (; next < doomed.length && doomed[next]![0] <= upTo; next++) {
+      const [a, b] = doomed[next]!
+      const secret = code.slice(a, b)
+      if (!redactions.has(secret)) redactions.set(secret, `__REDACTED_CREDENTIAL_${++generic}__`)
+      out += code.slice(done, a) + redactions.get(secret)
+      done = b
+    }
+  }
   for (const m of code.matchAll(pattern)) {
     const at = m.index
     const end = at + m[0].length
-    // Inside a run already taken whole.
+    redactTo(at)
+    // Inside a run, or a credential, already taken whole.
     if (at < done) continue
-    let start = at
-    let stop = end
-    if (NAME_RUN.test(code[at])) while (start > done && NAME_RUN.test(code[start - 1])) start--
-    if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
-    // A run that holds a placeholder (`Ż__STR__1`, text already masked) is
-    // never taken whole: its name would be lost. The match is replaced where
-    // it stands, as it was, and a placeholder passes through.
-    if (HOLDS_PLACEHOLDER.test(code.slice(start, stop))) {
-      start = at
-      stop = end
-    }
-    let span = code.slice(start, stop)
+    const [start, stop] = PLACEHOLDER_TOKEN.test(m[0]) ? [at, end] : runAround(at, end, done)
+    const span = code.slice(start, stop)
     let written = reverseExisting[span]
-    if (start !== at || stop !== end) {
-      secrets ??= secretsIn()
-      if (credentials.has(span) || overlapsAny(secrets, start, stop)) {
-        // The whole credential goes, not the run alone: what stayed beside the
-        // token would no longer read as a credential, and be minted as names.
-        for (const [a, b] of secrets)
-          if (start < b && a < stop) {
-            start = Math.max(done, Math.min(start, a))
-            stop = Math.max(stop, b)
-          }
-        span = code.slice(start, stop)
-        if (generic < 0) generic = highestRedaction(code, 'CREDENTIAL')
-        written = redactions.get(span) ?? `__REDACTED_CREDENTIAL_${++generic}__`
-        redactions.set(span, written)
-      } else if (IDENTIFIER.test(span)) {
-        inside.add(span)
-        written = span
-      } else if (written === undefined) {
+    if (written === undefined && (start !== at || stop !== end)) {
+      if (IDENTIFIER.test(span)) inside.add(span)
+      else {
         written = mint(MANUAL_BASE)
         map[written] = span
         reverseExisting[span] = written
@@ -989,6 +1012,7 @@ function applyManualMasks(
     out += code.slice(done, start) + (written ?? span)
     done = stop
   }
+  redactTo(code.length)
   return out + code.slice(done)
 }
 
