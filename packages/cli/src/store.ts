@@ -347,6 +347,46 @@ export function loadMap(path: string): SymbolMap {
 
 export class MapOverwriteError extends Error {}
 
+// A run that died holding the lock must not stop every later save: its lock
+// is taken over once it is this old. A save holds it for milliseconds.
+const LOCK_STALE_MS = 10_000
+
+/**
+ * Run `work` while holding `<path>.lock` (spec 093 item 6). The lock is a
+ * file made with an exclusive create, so only one process has it; another
+ * waits for it. Every writer of the map in this package saves through here.
+ *
+ * shortcut: two waiting runs that find a dead run's lock stale in the same
+ * instant can both take it, and the guard plugin writes the map without it
+ * (COVERAGE.md); name the holder in the lock if either is ever seen.
+ */
+function withStoreLock(path: string, work: () => void): void {
+  const lock = `${path}.lock`
+  const pause = new Int32Array(new SharedArrayBuffer(4))
+  for (;;) {
+    try {
+      closeSync(openSync(lock, 'wx', 0o600))
+      break
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+    let age: number
+    try {
+      age = Date.now() - lstatSync(lock).mtimeMs
+    } catch {
+      continue // released meanwhile
+    }
+    // A time in the future is no younger: the clock moved.
+    if (Math.abs(age) > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true })
+    else Atomics.wait(pause, 0, 0, 10)
+  }
+  try {
+    work()
+  } finally {
+    rmSync(lock, { force: true })
+  }
+}
+
 /**
  * Write the map, refusing a write that would lose entries already on disk.
  *
@@ -370,7 +410,8 @@ export function saveMap(
   refuseNonNames('the map', map)
   // Judged before anything is written (spec 085 R2-3 review).
   const ours = storeIsOurs(path)
-  if (!options.force && existsSync(path)) {
+  const refuseLoss = (): void => {
+    if (options.force || !existsSync(path)) return
     const dropped = Object.entries(loadMap(path)).filter(
       ([placeholder, real]) => map[placeholder] !== real
     )
@@ -386,13 +427,20 @@ export function saveMap(
       )
     }
   }
+  refuseLoss()
   prepareStoreWrite('the map', path)
-  // Carried forward when the caller does not supply one, so an ordinary `scrub`
-  // does not quietly erase the provenance a `pull` recorded.
-  const remote = options.remote ?? loadRemote(path)
-  const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
-  // A new 0600 file each time, so a world-readable map already there is replaced too.
-  writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
+  // Spec 093 item 6: checked again and written as one step. Two runs that both
+  // passed the check above each wrote, and the one that wrote first had
+  // printed placeholders the file then gave to the other's names.
+  withStoreLock(path, () => {
+    refuseLoss()
+    // Carried forward when the caller does not supply one, so an ordinary `scrub`
+    // does not quietly erase the provenance a `pull` recorded.
+    const remote = options.remote ?? loadRemote(path)
+    const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
+    // A new 0600 file each time, so a world-readable map already there is replaced too.
+    writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
+  })
   recordWritten(path, ours)
 }
 
