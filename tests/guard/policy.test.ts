@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { RECORDED } from '../../plugins/veilio-guard/tests/fixtures/recorded.ts'
 import {
   argumentPolicy,
+  callsOwnCommand,
   languageOf,
   mcpServersOf,
   resultPolicy,
@@ -174,5 +175,36 @@ describe('languageOf: the language a source Read is scrubbed as', () => {
   it('detects from the content when the extension names no language the engine has', () => {
     expect(languageOf('/p/x.lua')).toBe('auto')
     expect(languageOf('/p/Makefile')).toBe('auto')
+  })
+})
+
+// Spec 093 item 10: /veilio is the person's command; a tool call naming it is
+// the model's.
+describe('callsOwnCommand', () => {
+  it.each([
+    [{ tool: 'Skill', skill: 'veilio', args: 'off' }],
+    [{ tool: 'Skill', skill: 'veilio' }],
+    [{ tool: 'Skill', skill: ' /veilio ', args: 'on' }],
+    [{ tool: 'Skill', skill: 'veilio-guard:veilio', args: 'off' }],
+    [{ tool: 'Skill', skill: 'veilio off' }],
+    [{ tool: 'SlashCommand', command: '/veilio off' }],
+    [{ tool: 'SlashCommand', command: '/veilio-guard:veilio' }],
+    [{ tool: 'SomeLaterTool', skill: 'veilio' }],
+  ])('%j names it', (e) => {
+    expect(callsOwnCommand(e)).toBe(true)
+  })
+
+  it.each([
+    [{ tool: 'Skill', skill: 'simplify', args: 'veilio off' }],
+    [{ tool: 'Skill', skill: 'veilio-docs' }],
+    [{ tool: 'Skill', skill: 'myveilio' }],
+    [{ tool: 'Skill', skill: 'veilio:setup' }],
+    [{ tool: 'Skill', skill: 7 }],
+    [{ tool: 'SlashCommand', command: '/review veilio off' }],
+    [{ tool: 'Bash', command: 'veilio scan --help' }],
+    [{ tool: 'Bash', command: '/veilio off' }],
+    [{ tool: 'Read', file_path: '/work/veilio' }],
+  ])('%j does not', (e) => {
+    expect(callsOwnCommand(e)).toBe(false)
   })
 })

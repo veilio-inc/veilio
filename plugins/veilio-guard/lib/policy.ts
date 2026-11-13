@@ -92,6 +92,23 @@ export function argumentPolicy(tool: string, mcpRestore: readonly string[]): Arg
   return NONE
 }
 
+/** strings.md #6 (spec 093, approved 2026-11-13). */
+export const OWN_COMMAND_REFUSED =
+  'Veilio: only the person at the keyboard can run the veilio command.'
+
+/**
+ * Whether a tool call names the guard's own command (spec 093 item 10): the
+ * Skill tool's `skill`, or a slash-command line, as `veilio` or with a
+ * plugin's name before it. /veilio is the person's switch; a tool call is the
+ * model's, so one that names it is refused whatever it asks. A shell command
+ * that runs the `veilio` CLI is not one.
+ */
+export function callsOwnCommand(e: Record<string, unknown>): boolean {
+  const own = (v: unknown) =>
+    typeof v === 'string' && /^\/?(?:[\w.-]+:)?veilio(?:\s|$)/.test(v.trim())
+  return own(e.skill) || (e.tool === 'SlashCommand' && own(e.command))
+}
+
 // Files the tokenizer understands. Anything else read with Read (notes,
 // configuration, logs) only has the known names replaced.
 const SOURCE_EXTENSIONS = new Set([

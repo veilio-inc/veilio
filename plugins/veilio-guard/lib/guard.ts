@@ -85,6 +85,8 @@ import {
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
+  callsOwnCommand,
+  OWN_COMMAND_REFUSED,
   isSourcePath,
   isMcpTool,
   mcpServersOf,
@@ -1943,6 +1945,8 @@ export class Guard {
     e: ToolEvent,
     budget: RuleBudget
   ): Promise<{ deny: string } | { args: ToolEvent }> {
+    // Spec 093 item 10: /veilio is typed by the person, never called by the model.
+    if (callsOwnCommand(e)) return { deny: OWN_COMMAND_REFUSED }
     let policy = argumentPolicy(e.tool, this.mcpRestore)
     const servers = mcpServersOf(e.tool)
     // Spec 085 R2-9: a listed server the project's .mcp.json declares too may
