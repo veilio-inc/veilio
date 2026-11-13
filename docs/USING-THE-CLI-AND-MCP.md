@@ -162,8 +162,9 @@ personal-maps key, rules), each file 0600. `logout` removes all of them.
 
 ## 4. The MCP server
 
-Once connected, your assistant gets five tools - and, once you are signed in to
-Veilio Cloud, eight more for maps, the team and projects (below):
+Once connected, your assistant gets four tools, and `restore_text` as a fifth
+when you switch it on - and, once you are signed in to Veilio Cloud, eight more
+for maps, the team and projects (below):
 
 | Tool | What it does |
 |---|---|

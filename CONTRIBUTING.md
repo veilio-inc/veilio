@@ -120,17 +120,18 @@ usually that it doesn't.
 
 ## Editing the legal notices
 
-The four documents in `public/legal/` each carry their own header line:
+The two documents in `public/legal/` (the Terms of Use and the Privacy Notice)
+each carry their own header line:
 
 ```
 _Last updated: 2026-08-14 · Document version 1.2 · Applies to: the self-hosted Community Edition only._
 ```
 
 **The version belongs to that document, not to the Community Edition.** Bump it —
-and the date — on the notice you actually revised, and leave the other three
-alone. They are separate instruments, and raising the Acceptable Use Policy's
+and the date — on the notice you actually revised, and leave the other one
+alone. They are separate instruments, and raising the Terms of Use's
 version because the Privacy Notice changed would assert a revision that never
-happened and put the number at odds with its own date. Expect the four to sit at
+happened and put the number at odds with its own date. Expect the two to sit at
 different versions; that is the history showing through, not drift.
 
 A typo fix or a reworded sentence that changes no meaning does not need a bump.
@@ -179,7 +180,8 @@ Useful checks before opening a PR:
 npm run typecheck
 npm run lint
 npm run format:check
-npm test           # runs the Vitest suite, including the engine purity tests
+npm test               # the root Vitest suite: the app, the guard's modules, the docs contract tests
+npm run test:packages  # builds the packages and runs their suites, the engine, CLI and MCP purity tests among them
 ```
 
 `npm run lint:fix && npm run format` fixes most of what the first two complain

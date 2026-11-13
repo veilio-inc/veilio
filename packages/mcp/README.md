@@ -71,8 +71,8 @@ masked, and a value whose key contains a credential word (`password: sunshine`,
 ### Map, team and project tools (signed in to Veilio Cloud)
 
 Listed only once `veilio login` has signed this machine in; with no sign-in -
-always, in the Community Edition - the server offers the five tools above and
-nothing else. Each is the `veilio` CLI's own command, through the same code, so
+always, in the Community Edition - the server offers the tools above (four, and
+`restore_text` when it is switched on) and nothing else. Each is the `veilio` CLI's own command, through the same code, so
 it refuses in the same words for the same reasons.
 
 | Tool            | Purpose                                                                                                                                                                                                              |

@@ -824,9 +824,10 @@ export function callTool(
 /**
  * The tools this server offers right now (spec 052 FR-023).
  *
- * Signed out - always, in the Community Edition - exactly the five offline
- * tools, as before: an agent shown map tools it can never use would keep
- * reaching for them. Signed in, the map, team and project tools too. Asked on
+ * Signed out - always, in the Community Edition - exactly the offline tools
+ * (four, and `restore_text` when it is switched on: `offered` below), as
+ * before: an agent shown map tools it can never use would keep reaching for
+ * them. Signed in, the map, team and project tools too. Asked on
  * every `tools/list`, from the credential file, so signing in or out while the
  * server runs is picked up without a restart.
  */
@@ -842,7 +843,7 @@ function offered(name: string, ctx: ToolContext): boolean {
 
 /**
  * Run any tool, the Cloud ones included, which need the network and so answer
- * asynchronously. The offline five run exactly as `callTool` runs them.
+ * asynchronously. The offline ones run exactly as `callTool` runs them.
  *
  * A Cloud tool called with nobody signed in - listed by an older client, or
  * named from memory - answers with the sign-in sentence and sends nothing.
