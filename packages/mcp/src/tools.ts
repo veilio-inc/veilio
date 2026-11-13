@@ -113,6 +113,9 @@ export interface ToolContext {
    * for them.
    */
   restoreText?: boolean
+  /** Spec 093 item 8: the line said on stderr at start when the project's
+   *  `.mcp.json` named either switch above, and both were left off for it. */
+  switchesIgnored?: string
   /**
    * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
    * repository's `.mcp.json` `env`, it pins that repository's project for

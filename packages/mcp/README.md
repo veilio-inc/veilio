@@ -101,8 +101,11 @@ the server's variable overrides it.
 - **Destructive tools are off by default.** `maps_remove`, a `maps_update`
   that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
   that would overwrite local entries, are refused unless you start the
-  server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting the agent
-  cannot reach. Removal is allowed only when the server was started with
+  server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting only you
+  can make: the server ignores it when the project's own `.mcp.json` sets it, so
+  a repository cannot turn it on for you. An agent that can change your shell
+  environment or your user-level MCP configuration can still set it. Removal is
+  allowed only when the server was started with
   `VEILIO_MCP_DESTRUCTIVE=1`. `confirmName` catches a wrong id; it is not proof
   that the person agreed (the model can read names from `maps_list`). Creating,
   pulling, listing and updates that drop nothing always work.

@@ -5,7 +5,8 @@
 // here corrupts the protocol and the client drops the connection. Diagnostics
 // go to stderr, which MCP clients surface as server logs.
 
-import { realpathSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import { join } from 'node:path'
 import { guardHint } from '@veilio-inc/cli/guard-hint'
 import { pathToFileURL } from 'node:url'
 import { FrameReader, type JsonRpcResponse } from './server.js'
@@ -24,22 +25,52 @@ export { TOOLS, CLOUD_TOOLS, callTool, callToolAsync, listTools } from './tools.
  * only an exact "1" turns it on: it is the person's decision, made where they
  * configure the server, and nothing a tool call carries can change it
  * (spec 052 FR-010).
+ *
+ * Nor can the project (spec 093 item 8): a repository's `.mcp.json` sets the
+ * environment of the servers it declares, so when that file - in the folder
+ * the server was started in, or in its `--root` - names either switch for any
+ * server, both are off and `switchesIgnored` says so.
  */
 export function contextFromArgv(
   argv: readonly string[],
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  startedIn: string = process.cwd()
 ): ToolContext {
+  const cli = parseCliContext(argv, startedIn)
+  const ignored = [startedIn, cli.cwd].some(projectSetsSwitch)
   return {
-    ...parseCliContext(argv),
-    destructive: env.VEILIO_MCP_DESTRUCTIVE === '1',
+    ...cli,
+    destructive: !ignored && env.VEILIO_MCP_DESTRUCTIVE === '1',
     // Spec 078 FR-018: the same pattern, read once here.
-    restoreText: env.VEILIO_MCP_RESTORE === '1',
+    restoreText: !ignored && env.VEILIO_MCP_RESTORE === '1',
     env,
+    ...(ignored ? { switchesIgnored: SWITCHES_IGNORED } : {}),
   }
 }
 
-function parseCliContext(argv: readonly string[]): ToolContext {
-  let cwd = process.cwd()
+const SWITCHES = ['VEILIO_MCP_RESTORE', 'VEILIO_MCP_DESTRUCTIVE']
+/** strings.md #4 (spec 093, approved 2026-11-13). */
+const SWITCHES_IGNORED =
+  "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
+
+/** Whether `<dir>/.mcp.json` names either switch in any server's `env`,
+ *  whatever its value. A file that is missing, unreadable or not the shape
+ *  Claude Code reads sets none: the person's environment decides. */
+function projectSetsSwitch(dir: string): boolean {
+  const record = (v: unknown): Record<string, unknown> =>
+    typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}
+  try {
+    const file = record(JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8')))
+    return Object.values(record(file.mcpServers)).some((server) =>
+      SWITCHES.some((name) => Object.hasOwn(record(record(server).env), name))
+    )
+  } catch {
+    return false
+  }
+}
+
+function parseCliContext(argv: readonly string[], startedIn: string): ToolContext {
+  let cwd = startedIn
   let mapPath: string | null = null
   for (let i = 0; i < argv.length; i++) {
     if ((argv[i] === '--root' || argv[i] === '-r') && argv[i + 1] !== undefined) {
@@ -55,6 +86,7 @@ async function start(): Promise<void> {
   const ctx = contextFromArgv(process.argv.slice(2))
   ctx.guardHint = guardHint('mcp', process.env)
   if (ctx.guardHint) process.stderr.write(`${ctx.guardHint}\n`)
+  if (ctx.switchesIgnored) process.stderr.write(`${ctx.switchesIgnored}\n`)
   if (ctx.restoreText)
     process.stderr.write(
       "veilio: restore_text is on (VEILIO_MCP_RESTORE=1). Its answers put the real names into the agent's context.\n"
