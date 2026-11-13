@@ -858,6 +858,8 @@ function applyManualMasks(
   reverseExisting: Record<string, string>,
   mint: Mint,
   language: Language,
+  /** Where the credentials left in `code` stand; asked for at most once. */
+  secretsIn: () => (readonly [number, number])[],
   /** Out: the names a term stands inside, for `anonymize` to mask whole. */
   inside: Set<string>
 ): string {
@@ -932,8 +934,13 @@ function applyManualMasks(
   // rest of the run was then minted as a name with the placeholder in it
   // (`__MANUAL__1_API_URL`), which restore, one pass, could not bring back.
   // The whole run is masked instead: a name by `anonymize`, like any name
-  // (`inside`); a run that is no name (`88412037`, two words) as a mark of its
-  // own. One equal to a credential is left to the credential rules (spec 093).
+  // (`inside`); a run that is no name (`88412037`, two words, a letter of
+  // another script) as a mark of its own. A run that is or touches a
+  // credential left in the text is redacted one-way, as a name holding a
+  // credential is: no part of it may reach the map (spec 093).
+  let secrets: (readonly [number, number])[] | undefined
+  let generic = -1
+  const redactions = new Map<string, string>()
   let out = ''
   let done = 0
   for (const m of code.matchAll(pattern)) {
@@ -943,17 +950,20 @@ function applyManualMasks(
     if (at < done) continue
     let start = at
     let stop = end
-    if (IDENT_CHAR.test(code[at])) while (start > done && IDENT_CHAR.test(code[start - 1])) start--
-    if (IDENT_CHAR.test(code[end - 1]))
-      while (stop < code.length && IDENT_CHAR.test(code[stop])) stop++
+    if (NAME_RUN.test(code[at])) while (start > done && NAME_RUN.test(code[start - 1])) start--
+    if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
     const span = code.slice(start, stop)
     let written = reverseExisting[span]
     if (start !== at || stop !== end) {
-      if (IDENTIFIER.test(span)) {
+      secrets ??= secretsIn()
+      if (credentials.has(span) || overlapsAny(secrets, start, stop)) {
+        if (generic < 0) generic = highestRedaction(code, 'CREDENTIAL')
+        written = redactions.get(span) ?? `__REDACTED_CREDENTIAL_${++generic}__`
+        redactions.set(span, written)
+      } else if (IDENTIFIER.test(span)) {
         inside.add(span)
         written = span
-      } else if (credentials.has(span)) written = span
-      else if (written === undefined) {
+      } else if (written === undefined) {
         written = mint(MANUAL_BASE)
         map[written] = span
         reverseExisting[span] = written
@@ -1535,6 +1545,10 @@ function spreadRedactions(
 
 /** A character of an identifier, for whole-word matching. */
 const IDENT_CHAR = /[A-Za-z0-9_$]/
+/** A character a name or a word runs through, in any script: what the code
+ *  matcher and the comment matcher (`COMMENT_WORD`) both stop at. Half of a
+ *  pair (a letter outside the basic plane) counts, the safe side. */
+const NAME_RUN = /[\p{L}\p{N}_$\uD800-\uDFFF]/u
 
 /** The highest n of the `__REDACTED_<base>_n__` tokens in `text`, so a new
  *  token never repeats one already there. */
@@ -1845,6 +1859,8 @@ export function anonymize(
   // re-applied so a mark made in an earlier pass survives the round trip.
   const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)))
   const inside = new Set<string>()
+  const kind = valueKind(code, opts)
+  const net = guessedCode(opts)
   const marked = applyManualMasks(
     redacted,
     opts.manual ?? [],
@@ -1858,6 +1874,12 @@ export function anonymize(
     reverseExisting,
     mint,
     language,
+    // Found by a rule, or by the credential words (a value under `password`).
+    () =>
+      [
+        ...credentialSpans(redacted, where),
+        ...credentialsAmong(valuesIn(redacted, language, kind, net)),
+      ].map((s) => [s.start, s.end] as const),
     inside
   )
 
@@ -1894,8 +1916,6 @@ export function anonymize(
   // `off` too - such a value is found by the credential words, not reported
   // by a rule - except where a rule found it, which those modes leave as
   // written by the user's choice.
-  const kind = valueKind(code, opts)
-  const net = guessedCode(opts)
   const policy = opts.secrets ?? 'redact'
   const reported =
     policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end] as const)
@@ -1999,7 +2019,9 @@ export function anonymize(
   // Names a manual mark stands inside, where they still stand whole (a later
   // pass may have redacted one): always masked, whatever a whitelist, the
   // ordinary words or a keyword list would leave readable (spec 093).
-  const standing = inside.size === 0 ? null : new Set(source.match(/[A-Za-z0-9_$]+/g))
+  // Outside a credential only, so no part of one is minted.
+  const standing =
+    inside.size === 0 ? null : new Set(blankSpans(source, secretSpans).match(/[A-Za-z0-9_$]+/g))
   const holdsMark = new Set([...inside].filter((n) => standing?.has(n)))
   const identifiers =
     missed.length === 0 && commentOnly.size === 0 && holdsMark.size === 0

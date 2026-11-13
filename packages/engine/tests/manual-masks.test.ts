@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { detectSecrets, hasBlockingSecrets } from '../src/secrets.js'
 import {
   anonymize,
   restore,
@@ -329,6 +330,8 @@ describe('manual masks', () => {
   /** Mask with the marks, restore, and return all three for the assertions. */
   const roundTrip = (code: string, manual: string[]) => {
     const masked = anonymize(code, { manual })
+    // No marked term is readable in what goes out, in any of these cases.
+    for (const term of manual) expect(masked.anonymized).not.toContain(term)
     return { ...masked, back: restore(masked.anonymized, masked.map, { strip: 'none' }) }
   }
 
@@ -444,5 +447,63 @@ describe('manual masks', () => {
     const code = 'const u = ACME_API_URL + new AcmeClient() // total'
     expect(anonymize(code, { manual: [] })).toEqual(anonymize(code))
     expect(anonymize(code).anonymized).toBe('const u = ACME_API_URL + new __CLS__1() // total')
+  })
+
+  // ─── spec 093 review · a mark inside a credential, and beside other scripts ─
+
+  // Provider-shaped values are built here, never written whole.
+  const KEY = 'sk_' + 'live_' + '4eC39HqLyjWDAcmetT1zdp7dc'
+  const PASSWORD = 'AcmeHunter7Zq9'
+  const DSN = 'postgres://svc:' + PASSWORD + '@db.internal:5432/app'
+  const MODES = ['redact', 'warn', 'off'] as const
+
+  describe.each([
+    ['a key that holds the mark', `const stripeKey = "${KEY}"`, [KEY]],
+    ['a key standing bare', `STRIPE=${KEY}\nconst total = 1`, [KEY]],
+    ['a connection string whose password holds the mark', `const dsn = "${DSN}"`, [PASSWORD]],
+    ['a value under a credential key', `const password = "${PASSWORD}"`, [PASSWORD]],
+    ['a value under a credential key that is no name', `password: "9${PASSWORD}"`, [PASSWORD]],
+    ['two words, the second inside a key', `// see Acme ${KEY}`, [KEY]],
+    ['a value the credential words find, a name', 'password sunshineAcme\n', ['sunshineAcme']],
+    ['a value the credential words find, no name', 'password 9sunshineAcme7\n', ['9sunshineAcme7']],
+  ])('a mark inside %s', (_name, code, secrets) => {
+    const path = code.startsWith('password ') ? 'app.properties' : 'a.ts'
+
+    it.each(MODES)('puts no credential, whole or in part, in the map (%s)', (mode) => {
+      const { anonymized, map } = anonymize(code, {
+        path,
+        manual: ['Acme', 'see Acme sk'],
+        secrets: mode,
+      })
+
+      expect(anonymized).not.toContain('Acme')
+      for (const value of Object.values(map)) {
+        expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
+        // The mark itself is the user's word; nothing longer cut from the secret is kept.
+        if (value !== 'Acme') for (const secret of secrets) expect(secret).not.toContain(value)
+        for (const secret of secrets) expect(value).not.toContain(secret)
+      }
+    })
+
+    it('destroys the credential exactly as it does without the mark', () => {
+      const plain = anonymize(code, { path })
+      const marked = anonymize(code, { path, manual: ['Acme'] })
+      if (!plain.anonymized.includes('Acme')) expect(marked.anonymized).toBe(plain.anonymized)
+      expect(marked.secrets).toEqual(plain.secrets)
+    })
+  })
+
+  it.each([
+    ['const firma = "AcmeŻółć"', 'Acme'],
+    ['const firma = "ŻAcmeClient" // ŻAcmeClient i AcmeŻółć', 'Acme'],
+    ['// ΑcmeΔ, ŁAcmeClient, AcmeClientÖ und Acme9', 'cme'],
+    ['const s = "ΑcmeΔ" + ŁAcmeClient', 'cme'],
+    ['// Kowalskiego i Żółćiński', 'ółć'],
+  ])('hides and restores a mark beside a letter of another script: %s', (code, term) => {
+    const { map, back } = roundTrip(code, [term])
+
+    expect(back.restored).toBe(code)
+    expect(back.report.unresolved).toEqual([])
+    expect(Object.values(map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
   })
 })
