@@ -42,6 +42,7 @@ import { resolveMapPath } from '@veilio-inc/cli/store'
 import {
   localDroppedNote,
   outOfRangeNote,
+  printable,
   unvouchedNote,
   reservationRefusedSentence,
 } from '@veilio-inc/cli/reservations'
@@ -109,7 +110,9 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         const lines = maps.map((m) => {
           const count = m.count === null ? '?' : String(m.count)
           const whose = m.scope === 'team' && !m.mine ? '  (a teammate’s)' : ''
-          return `${m.id}  ${m.scope.padEnd(8)} ${count.padStart(5)} symbols  ${m.name}${whose}`
+          // Spec 093 item 9: a teammate's words must not start a line of
+          // their own in what the model reads.
+          return `${printable(m.id)}  ${m.scope.padEnd(8)} ${count.padStart(5)} symbols  ${printable(m.name)}${whose}`
         })
         return [
           ...lines,

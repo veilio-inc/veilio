@@ -584,8 +584,9 @@ export async function runMapsList(io: Io): Promise<number> {
   for (const map of maps) {
     const count = map.count === null ? '?' : String(map.count)
     const whose = map.scope === 'team' && !map.mine ? '  (a teammate’s)' : ''
+    // Spec 093 item 9: the id and the name are Cloud's words (a teammate's).
     io.stdout(
-      `${map.id}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${map.name}${whose}\n`
+      `${printable(map.id)}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${printable(map.name)}${whose}\n`
     )
   }
   // Said on stderr so the listing itself stays parseable: which project's team
@@ -647,12 +648,12 @@ export async function runMapsPush(
   const c = created.value
   notes(c.notes, io)
   if (c.scope === 'personal') {
-    io.stdout(`Pushed ${c.count} symbols to Cloud as ${c.id}\n`)
+    io.stdout(`Pushed ${c.count} symbols to Cloud as ${printable(c.id)}\n`)
     return EXIT_OK
   }
   const disputed = c.disputed ?? 0
   io.stdout(
-    `Published "${c.name}" (${c.count} symbols) to the team as ${c.id}\n` +
+    `Published "${printable(c.name)}" (${c.count} symbols) to the team as ${printable(c.id)}\n` +
       `The team's shared set now holds ${c.teamTotal} identifiers` +
       (disputed > 0
         ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
@@ -676,7 +677,7 @@ export async function runMapsUpdate(
   const u = updated.value
   notes(u.notes, io)
   io.stdout(
-    `Updated "${u.name}" (${u.id}) in place: ${u.count} symbols` +
+    `Updated "${printable(u.name)}" (${printable(u.id)}) in place: ${u.count} symbols` +
       (u.dropped > 0 ? `, ${u.dropped} dropped as asked` : '') +
       `${u.scope === 'team' ? ', sealed with the team key' : ''}\n`
   )
@@ -1393,7 +1394,9 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
     io.stderr(
       `veilio: ${u.failed.length} personal map${u.failed.length === 1 ? '' : 's'} could not be re-sealed and ` +
         `${u.failed.length === 1 ? 'is' : 'are'} still under the vault key, which the MCP server cannot open:\n` +
-        u.failed.map((f) => `  "${f.name}" (${f.id}): ${f.reason}\n`).join('') +
+        u.failed
+          .map((f) => `  "${printable(f.name)}" (${printable(f.id)}): ${printable(f.reason)}\n`)
+          .join('') +
         'Run `veilio vault unlock` again to retry them; the key itself is unlocked.\n'
     )
     return EXIT_ERROR
