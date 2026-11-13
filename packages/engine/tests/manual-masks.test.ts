@@ -319,4 +319,130 @@ describe('manual masks', () => {
     expect(next.anonymized).toContain('def ')
     expect(next.anonymized).not.toContain('Kowalska')
   })
+
+  // ─── spec 093 · a mark inside a longer name ────────────────────────────────
+  //
+  // A term used to be replaced where it stood, inside a name too. The rest of
+  // the name was then minted with the placeholder in it (`__MANUAL__1_API_URL`),
+  // and restore, one pass, gave that back in place of the name.
+
+  /** Mask with the marks, restore, and return all three for the assertions. */
+  const roundTrip = (code: string, manual: string[]) => {
+    const masked = anonymize(code, { manual })
+    return { ...masked, back: restore(masked.anonymized, masked.map, { strip: 'none' }) }
+  }
+
+  it.each([
+    ['const u = ACME_API_URL + 1;', 'ACME'],
+    ['new AcmeClient()', 'Acme'],
+  ])('restores %s exactly when %s is marked', (code, term) => {
+    const { anonymized, map, back } = roundTrip(code, [term])
+
+    expect(back.restored).toBe(code)
+    expect(back.report.altered).toEqual([])
+    expect(back.report.unresolved).toEqual([])
+    // Only the mark itself: it is kept in the map so it persists, and stands
+    // nowhere alone in this text (as for any mark the text does not hold).
+    expect(back.report.missing).toEqual(['__MANUAL__1'])
+    expect(anonymized).not.toContain(term)
+    // No name in the map holds a placeholder.
+    expect(Object.values(map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
+  })
+
+  it('masks the whole name as a name of its role, and keeps the mark for the term alone', () => {
+    const code = 'new AcmeClient() // Acme said so'
+    const { anonymized, map, back } = roundTrip(code, ['Acme'])
+
+    expect(anonymized).toBe('new __CLS__1() // __MANUAL__1 said so')
+    expect(map).toEqual({ __MANUAL__1: 'Acme', __CLS__1: 'AcmeClient' })
+    expect(back.restored).toBe(code)
+    expect(back.report).toMatchObject({ missing: [], altered: [], unresolved: [] })
+  })
+
+  it('masks a name holding a mark where another name would be left readable', () => {
+    // An ordinary word, a keyword, a whitelisted name and a lowercase word of a
+    // comment are all left as written - not when they hold a marked term.
+    const code = 'const total = "acmecorp" // acmecorp settles the total\nreturn total'
+    const masked = anonymize(code, {
+      manual: ['acme', 'ota', 'etur'],
+      rules: [
+        {
+          id: 'r1',
+          scope: 'personal',
+          team_id: null,
+          name: 'Rule 1',
+          type: 'whitelist',
+          pattern: '^acmecorp$',
+          enabled: true,
+          sort_order: 0,
+        },
+      ],
+    })
+
+    for (const shown of ['acme', 'total', 'return']) expect(masked.anonymized).not.toContain(shown)
+    expect(restore(masked.anonymized, masked.map, { strip: 'none' }).restored).toBe(code)
+  })
+
+  it('takes the longer mark where one mark is part of another', () => {
+    const code = 'const a = AcmeClient.make(AcmeClientFactory, Acme)'
+    const { anonymized, map, back } = roundTrip(code, ['Acme', 'AcmeClient'])
+
+    expect(anonymized).not.toContain('Acme')
+    expect(Object.entries(map)).toContainEqual(['__MANUAL__2', 'AcmeClient'])
+    expect(Object.values(map)).toContain('AcmeClientFactory')
+    expect(back.restored).toBe(code)
+    expect(back.report.missing).toEqual([])
+  })
+
+  it('reaches a name holding a mark inside a string and inside a comment', () => {
+    const code = 'log("PaymentGateway down") // ask the PaymentGatewayTeam'
+    const { anonymized, back } = roundTrip(code, ['Gateway'])
+
+    expect(anonymized).not.toContain('Gateway')
+    expect(back.restored).toBe(code)
+    expect(back.report.altered).toEqual([])
+  })
+
+  it('takes a run that is no name, and a term of two words, whole', () => {
+    // `88412037` starts with a digit and `Contoso Healthy` has a space: neither
+    // is a name the code could hold, so each becomes a mark of its own.
+    const code = '// acct 88412037, Contoso Healthy\nwire(88412037)'
+    const { anonymized, map, back } = roundTrip(code, ['8841', 'Contoso Health'])
+
+    expect(anonymized).not.toContain('8841')
+    expect(anonymized).not.toContain('Contoso')
+    expect(Object.values(map)).toEqual(expect.arrayContaining(['88412037', 'Contoso Healthy']))
+    expect(back.restored).toBe(code)
+  })
+
+  it('masks a name holding a mark in a line of a stack trace left as written', () => {
+    const code = "TypeError: Cannot read properties of undefined (reading 'charge')"
+    const { anonymized, back } = roundTrip(code, ['roper'])
+
+    expect(anonymized).not.toContain('roper')
+    expect(back.restored).toBe(code)
+  })
+
+  it('never writes a credential value to the map for the mark inside it', () => {
+    const secret = 'Acme' + 'Winter' + 'Pass' + '2026'
+    const { map } = roundTrip(`const password = "${secret}"`, ['Acme'])
+
+    expect(Object.values(map).filter((v) => v.includes(secret))).toEqual([])
+  })
+
+  it('leaves placeholders untouched when masked text is masked again', () => {
+    const first = anonymize('const u = ACME_API_URL + new AcmeClient()', { manual: ['ACME'] })
+    const again = anonymize(first.anonymized, {
+      existingMap: first.map,
+      manual: ['ACME', 'API', 'CLS'],
+    })
+
+    expect(again.anonymized).toBe(first.anonymized)
+  })
+
+  it('gives the same output as before for text with no marks', () => {
+    const code = 'const u = ACME_API_URL + new AcmeClient() // total'
+    expect(anonymize(code, { manual: [] })).toEqual(anonymize(code))
+    expect(anonymize(code).anonymized).toBe('const u = ACME_API_URL + new __CLS__1() // total')
+  })
 })
