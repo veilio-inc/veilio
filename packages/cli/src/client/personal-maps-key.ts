@@ -26,9 +26,10 @@
 // with an expiry, and every read tolerates everything - missing, corrupt,
 // expired and somebody else's all read as "not unlocked".
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { writeSecretJson } from '../secret-file.js'
 import {
   STORE_DIR,
   fromBase64,
@@ -189,23 +190,14 @@ export function personalMapsKeyExpiry(
   }
 }
 
-/** Write it, readable only by this user. `chmod` after, as `writeCredential`
- *  does, because `mode` applies only to a file being created. */
+/** Write it, readable only by this user. */
 export function writePersonalMapsKey(
   stored: StoredPersonalMapsKey,
   home: string = homedir()
 ): void {
-  const path = personalMapsKeyPath(home)
-  mkdirSync(dirname(path), { recursive: true })
-  // Tightened BEFORE the key is written, too: a file left world-readable by
-  // some earlier mistake must not hold the key even for a moment.
-  try {
-    chmodSync(path, 0o600)
-  } catch {
-    // Not there yet: `mode` below covers a new file.
-  }
-  writeFileSync(path, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  // A new 0600 file renamed over the old one: a file left world-readable by
+  // some earlier mistake never holds the key, even for a moment.
+  writeSecretJson(personalMapsKeyPath(home), stored)
 }
 
 /** Remove it. Whether there was one. A failure to delete throws: reporting

@@ -10,6 +10,7 @@
 import { readCredential } from '@veilio-inc/cli/credential'
 import { CloudError, listRules } from '@veilio-inc/cli/cloud'
 import {
+  RulesUnreadable,
   mergeRules,
   newTeamWhitelists,
   readRules,
@@ -35,6 +36,9 @@ export interface ResolvedRules {
   /** Team rules held back until a key is confirmed (spec 092). Only for
    *  'cloud': the cache keeps the count alone. */
   waiting?: RulesWaiting[]
+  /** Cloud did not answer and the cache is there but cannot be read (spec 093
+   *  item 5): what to tell the person. Nothing is masked while it is set. */
+  unreadable?: string
 }
 
 const NONE: ResolvedRules = { source: 'none', rules: [], skipped: NO_RULES_SKIPPED }
@@ -82,7 +86,13 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
       }
       return NONE
     }
-    const cached = readRules(credential, home)
+    let cached: ReturnType<typeof readRules>
+    try {
+      cached = readRules(credential, home)
+    } catch (unreadable) {
+      if (!(unreadable instanceof RulesUnreadable)) throw unreadable
+      return { ...NONE, unreadable: unreadable.message }
+    }
     const skipped = cached?.skipped ?? NO_RULES_SKIPPED
     if (cached && (cached.rules.length > 0 || rulesSkippedAny(skipped))) {
       return { source: 'cached', rules: cached.rules, pulledAt: cached.pulledAt, skipped }

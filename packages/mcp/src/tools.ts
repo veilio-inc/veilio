@@ -406,6 +406,10 @@ function runAnonymize(
   // e85: Cloud rate-limited the team read - refused, never the local namespace.
   if (resolved.found.status === 'unavailable' && resolved.found.refusal)
     return refusalResult(resolved.found.refusal)
+  // Spec 093 item 5: the rules the account set cannot be read, so nothing is
+  // masked without them. The CLI's sentence, with its prefix.
+  const rules = getRules()
+  if (rules.unreadable) return { text: `veilio: ${rules.unreadable}`, isError: true }
   const { namespace, highest, conflicts } = resolved
   // A file is masked in its extension's language - the model's `language`
   // only for inline text or an extension Veilio does not know, since a
@@ -431,7 +435,6 @@ function runAnonymize(
         return found.get(input) ?? new Set()
       })()
     : new Set<string>()
-  const rules = getRules()
   // Spec 066 R3: in a team, inside this checkout's block, else its local
   // family - read from reserved.json, never written, never reserved here.
   const owner = resolved.owner
