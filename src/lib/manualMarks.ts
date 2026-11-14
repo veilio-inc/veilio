@@ -44,15 +44,24 @@ export function unmaskTerm(state: MarkState, placeholder: string): MarkState {
   const term = state.map[placeholder]
   if (term === undefined) return state
 
-  const map = { ...state.map }
-  delete map[placeholder]
-
   const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const pattern = new RegExp(`${escaped}(?!\\d)`, 'g')
+  // A function, not the term itself: `$&` or `$1` in a term is text, not a
+  // replacement pattern.
+  const putBack = (text: string): string => text.replace(pattern, () => term)
+
+  // A later mark can cover text that already held this placeholder, so its
+  // value names it. Without the rewrite that value points at an entry that is
+  // gone and the name never restores.
+  const map: SymbolMap = {}
+  for (const [key, value] of Object.entries(state.map)) {
+    if (key !== placeholder) map[key] = putBack(value)
+  }
+
   // Unmasking puts prose back into the text, so the exposure moves the other
   // way. This path deliberately does not re-anonymize, so it is the one place
   // that has to measure for itself.
-  const output = state.output.replace(pattern, term)
+  const output = putBack(state.output)
   return { output, map, comments: measureCommentExposure(output) }
 }
 
