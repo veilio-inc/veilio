@@ -359,14 +359,17 @@ const LOCK_STALE_MS = 10_000
  *
  * shortcut: two waiting runs that find a dead run's lock stale in the same
  * instant can both take it, and the guard plugin writes the map without it
- * (COVERAGE.md); name the holder in the lock if either is ever seen.
+ * (COVERAGE.md); a lock the host's file system can hold for a process, once
+ * Node has one, closes the first.
  */
 function withStoreLock(path: string, work: () => void): void {
   const lock = `${path}.lock`
+  // What this run wrote into it: a lock taken over meanwhile is not ours.
+  const token = randomBytes(8).toString('hex')
   const pause = new Int32Array(new SharedArrayBuffer(4))
   for (;;) {
     try {
-      closeSync(openSync(lock, 'wx', 0o600))
+      writeFileSync(lock, token, { mode: 0o600, flag: 'wx' })
       break
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
@@ -384,7 +387,13 @@ function withStoreLock(path: string, work: () => void): void {
   try {
     work()
   } finally {
-    rmSync(lock, { force: true })
+    let ours = false
+    try {
+      ours = readFileSync(lock, 'utf8') === token
+    } catch {
+      // gone already
+    }
+    if (ours) rmSync(lock, { force: true })
   }
 }
 

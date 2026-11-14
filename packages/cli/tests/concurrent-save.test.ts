@@ -22,7 +22,11 @@ import { tmpdir } from 'node:os'
 
 // Lets a test run a second writer inside the first one's save: after its
 // check of what is on disk, before its write.
-const between = vi.hoisted(() => ({ run: null as null | (() => void) }))
+const between = vi.hoisted(() => ({
+  run: null as null | (() => void),
+  /** Runs once, as the map is renamed into place: inside the lock. */
+  locked: null as null | (() => void),
+}))
 vi.mock('node:fs', async (original) => {
   const actual = await original<typeof import('node:fs')>()
   const mkdirSync = ((...args: Parameters<typeof actual.mkdirSync>) => {
@@ -31,7 +35,13 @@ vi.mock('node:fs', async (original) => {
     run?.()
     return actual.mkdirSync(...args)
   }) as typeof actual.mkdirSync
-  return { ...actual, mkdirSync }
+  const renameSync = ((...args: Parameters<typeof actual.renameSync>) => {
+    const run = between.locked
+    between.locked = null
+    run?.()
+    return actual.renameSync(...args)
+  }) as typeof actual.renameSync
+  return { ...actual, mkdirSync, renameSync }
 })
 
 const { MapOverwriteError, STORE_DIR, STORE_FILE, loadMap, saveMap } =
@@ -141,6 +151,23 @@ describe('a write that is cut short', () => {
     utimesSync(lock, longAgo, longAgo)
     saveMap(path, { ...ALPHA, ...OTHER })
     expect(loadMap(path)).toEqual({ ...ALPHA, ...OTHER })
+    expect(readdirSync(join(cwd, STORE_DIR)).sort()).toEqual(['.gitignore', STORE_FILE])
+  })
+})
+
+// Review round 1: a run whose lock was taken over (it looked dead) must not
+// remove the lock of the run that took it.
+describe('the lock is released only by the run that holds it', () => {
+  it('a lock another run took over meanwhile is left in place', () => {
+    const lock = `${path}.lock`
+    between.locked = () => writeFileSync(lock, 'another run')
+    saveMap(path, ALPHA)
+    expect(readFileSync(lock, 'utf8')).toBe('another run')
+    rmSync(lock)
+  })
+
+  it('its own lock is removed', () => {
+    saveMap(path, ALPHA)
     expect(readdirSync(join(cwd, STORE_DIR)).sort()).toEqual(['.gitignore', STORE_FILE])
   })
 })
