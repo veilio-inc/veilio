@@ -2419,6 +2419,10 @@ function stripNoise(
   }
 }
 
+/** How deep, and how long, `restore` reads a map value that holds placeholders. */
+const NESTED_ROUNDS = 5
+const NESTED_LENGTH = 64 * 1024
+
 /**
  * Restore an AI response: strip AI-generated noise, then swap placeholders back.
  *
@@ -2453,9 +2457,36 @@ export function restore(
   const seen = new Set<string>()
   if (placeholders.length > 0) {
     const pattern = new RegExp(`(?:${placeholders.map(escapeRegex).join('|')})(?!\\d)`, 'g')
+    // A value may hold a placeholder of this map: a mark inside a longer name
+    // is masked as `__MANUAL__1_API_URL`, which is then minted as a name. Such
+    // a value is read through first, or one pass gave back the placeholder in
+    // place of the name (spec 093). A value not plain after NESTED_ROUNDS (one
+    // that holds itself, at any depth, never is) or longer than NESTED_LENGTH
+    // stays as it is.
+    const nested = new Map<string, { value: string; through: Set<string> }>()
+    for (const key of placeholders) {
+      const through = new Set<string>()
+      let value = map[key]!
+      let plain = false
+      for (let round = 0; round < NESTED_ROUNDS && value.includes('__'); round++) {
+        let held = false
+        value = value.replace(pattern, (match) => {
+          held = true
+          through.add(match)
+          return map[match]!
+        })
+        plain = !held
+        if (plain || value.length > NESTED_LENGTH) break
+      }
+      plain = (plain || !value.includes('__')) && value.length <= NESTED_LENGTH
+      if (through.size > 0 && plain) nested.set(key, { value, through })
+    }
     result = result.replace(pattern, (match) => {
       seen.add(match)
-      return map[match] ?? match
+      const read = nested.get(match)
+      if (read === undefined) return map[match] ?? match
+      for (const key of read.through) seen.add(key)
+      return read.value
     })
   }
 
