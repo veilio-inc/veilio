@@ -178,8 +178,7 @@ Signed in, the assistant also gets `maps_list`, `maps_pull`, `maps_create`,
 `maps_update`, `maps_remove`, `team_status`, `projects_list` and `projects_use`:
 the CLI's own commands, refusing in the same words. Removing a map, an update
 that drops entries and a pull with `force` are **off** unless you start the server
-with `VEILIO_MCP_DESTRUCTIVE=1` in its environment (add it under `env` in the
-client's MCP config), and a removal must repeat the map's exact name. Run
+with `VEILIO_MCP_DESTRUCTIVE=1` in its environment (set it in your own environment or in your user-level MCP configuration; the server ignores it in a project's own configuration files), and a removal must repeat the map's exact name. Run
 `veilio vault unlock` once for personal maps, and `veilio team unlock` for team
 maps. No result ever contains a passphrase, a key or an encrypted map.
 
