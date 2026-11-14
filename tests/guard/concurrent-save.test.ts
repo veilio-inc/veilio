@@ -97,3 +97,49 @@ it('another session saves between this one’s read of the map and its write: bo
   expect(a.state).toBe('on')
   expect(b.state).toBe('on')
 })
+
+// Review round 1: with the retries used up, the save wrote a merge made from
+// a read that was already stale.
+it('a map that changes at every read is never overwritten from a stale read', async () => {
+  const files = disk()
+  const io = session(files).io
+  const guard = await start(io)
+  // Another program adds an entry each time this session has read the map.
+  let n = 0
+  const read = io.read
+  io.read = async (p) => {
+    const text = await read(p)
+    if (p === MAP) {
+      const map = saved(files)
+      map[`__VAR__${900 + ++n}`] = `otherProgramFake${n}`
+      files[MAP] = `${JSON.stringify({ version: 1, map }, null, 2)}\n`
+    }
+    return text
+  }
+  const path = `${ROOT}/src/a.ts`
+  const out = await guard
+    .afterTool(
+      'Read',
+      { tool: 'Read', file_path: path },
+      {
+        result: {
+          type: 'text',
+          file: {
+            filePath: path,
+            content: 'export class QuasarLedgerFake {}\n',
+            numLines: 1,
+            startLine: 1,
+            totalLines: 1,
+          },
+        },
+      },
+      Date.now() + 5000
+    )
+    .catch((err: unknown) => ({ failed: String(err) }))
+  io.read = read
+  expect(n).toBeGreaterThan(3)
+  // Nothing the other program wrote was dropped, and the name did not go out.
+  const map = saved(files)
+  for (let i = 1; i <= n; i++) expect(map[`__VAR__${900 + i}`]).toBe(`otherProgramFake${i}`)
+  expect(JSON.stringify(out)).not.toContain('QuasarLedgerFake')
+})

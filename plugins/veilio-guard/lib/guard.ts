@@ -3093,7 +3093,12 @@ export class Guard {
       // that lands between this read and the write below is still lost
       // (COVERAGE.md); write beside and rename when the host offers one.
       const now = (await this.io.exists(this.mapPath)) ? await this.io.read(this.mapPath) : ''
-      if (now !== mapText && retries > 0) return attempt(retries - 1)
+      if (now !== mapText) {
+        if (retries > 0) return attempt(retries - 1)
+        // Still changing: nothing is written from a stale read. A conflict is
+        // what every caller already reports (re-mask, withhold or fail).
+        return { status: 'conflict' as const, quarantined }
+      }
       if (!existed)
         await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       const written = serialiseMapFile(next)
