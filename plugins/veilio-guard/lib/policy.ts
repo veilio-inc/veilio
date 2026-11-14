@@ -98,14 +98,14 @@ export const OWN_COMMAND_REFUSED =
 
 /**
  * Whether a tool call names the guard's own command (spec 093 item 10): the
- * Skill tool's `skill`, or a slash-command line, as `veilio` or with a
- * plugin's name before it. /veilio is the person's switch; a tool call is the
+ * Skill tool's `skill`, or a slash-command line, as `veilio` in any letter
+ * case, with any number of `name:` prefixes before it. /veilio is the person's switch; a tool call is the
  * model's, so one that names it is refused whatever it asks. A shell command
  * that runs the `veilio` CLI is not one.
  */
 export function callsOwnCommand(e: Record<string, unknown>): boolean {
   const own = (v: unknown) =>
-    typeof v === 'string' && /^\/?(?:[\w.-]+:)?veilio(?:\s|$)/.test(v.trim())
+    typeof v === 'string' && /^\/?(?:[\w.-]+:)*veilio(?:\s|$)/i.test(v.trim())
   return own(e.skill) || (e.tool === 'SlashCommand' && own(e.command))
 }
 

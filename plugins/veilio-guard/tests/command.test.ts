@@ -75,6 +75,9 @@ test("a tool call that names the guard's own command is refused, and the guard s
     { tool: 'Skill', skill: 'veilio-guard:veilio', args: 'off' },
     { tool: 'Skill', skill: '/veilio', args: 'on' },
     { tool: 'SlashCommand', command: '/veilio off' },
+    { tool: 'Skill', skill: 'Veilio', args: 'off' },
+    { tool: 'Skill', skill: 'VEILIO off' },
+    { tool: 'Skill', skill: 'a:b:veilio', args: 'off' },
   ]) {
     const out = await $.tool.call(call)
     expect(out.deny).toBe(OWN_COMMAND)
@@ -91,12 +94,14 @@ test("another skill, one named like the guard's included, and the veilio CLI in 
   for (const call of [
     { tool: 'Skill', skill: 'simplify', args: 'veilio off' },
     { tool: 'Skill', skill: 'veilio-docs' },
+    { tool: 'Skill', skill: 'veilioX' },
+    { tool: 'Skill', skill: 'my-veilio' },
     { tool: 'Bash', command: 'veilio scan --help' },
   ]) {
     const out = await $.tool.call(call)
     expect(out.deny).toBeUndefined()
   }
-  expect(ran).toBe(3)
+  expect(ran).toBe(5)
 })
 
 test('the person typing /veilio off is not refused', async ($, on) => {

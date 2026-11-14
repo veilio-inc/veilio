@@ -190,6 +190,12 @@ describe('callsOwnCommand', () => {
     [{ tool: 'SlashCommand', command: '/veilio off' }],
     [{ tool: 'SlashCommand', command: '/veilio-guard:veilio' }],
     [{ tool: 'SomeLaterTool', skill: 'veilio' }],
+    // Review round 1: any letter case, any number of prefixes.
+    [{ tool: 'Skill', skill: 'Veilio' }],
+    [{ tool: 'Skill', skill: 'VEILIO off' }],
+    [{ tool: 'Skill', skill: 'a:b:veilio' }],
+    [{ tool: 'Skill', skill: '/Veilio-Guard:Veilio', args: 'off' }],
+    [{ tool: 'SlashCommand', command: '/a:b:VEILIO off' }],
   ])('%j names it', (e) => {
     expect(callsOwnCommand(e)).toBe(true)
   })
@@ -198,6 +204,9 @@ describe('callsOwnCommand', () => {
     [{ tool: 'Skill', skill: 'simplify', args: 'veilio off' }],
     [{ tool: 'Skill', skill: 'veilio-docs' }],
     [{ tool: 'Skill', skill: 'myveilio' }],
+    [{ tool: 'Skill', skill: 'veilioX' }],
+    [{ tool: 'Skill', skill: 'my-veilio' }],
+    [{ tool: 'Skill', skill: 'a:b:my-veilio' }],
     [{ tool: 'Skill', skill: 'veilio:setup' }],
     [{ tool: 'Skill', skill: 7 }],
     [{ tool: 'SlashCommand', command: '/review veilio off' }],
