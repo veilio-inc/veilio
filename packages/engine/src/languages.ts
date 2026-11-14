@@ -1857,7 +1857,7 @@ const MARKERS: Record<Language, Marker[]> = {
     { re: /\bnamespace\s+[\w\\]+;/g, weight: 2 },
   ],
   c: [
-    { re: /^\s*#include\s*[<"]/gm, weight: 3 },
+    { re: /^[ \t]*#include\s*[<"]/gm, weight: 3 },
     { re: /\bint\s+main\s*\(/g, weight: 3 },
     { re: /\bprintf\s*\(|\bfprintf\s*\(/g, weight: 3 },
     { re: /\bstd::\w+/g, weight: 3 },
@@ -1865,7 +1865,7 @@ const MARKERS: Record<Language, Marker[]> = {
     { re: /\btypedef\s+struct\b/g, weight: 3 },
     { re: /\bvoid\s*\*|\bchar\s*\*/g, weight: 2 },
     { re: /\b(?:size_t|uint\d+_t|int\d+_t)\b/g, weight: 2 },
-    { re: /^\s*#(?:define|ifndef|pragma)\b/gm, weight: 3 },
+    { re: /^[ \t]*#(?:define|ifndef|pragma)\b/gm, weight: 3 },
     { re: /\bcout\s*<<|\bstd::endl\b/g, weight: 3 },
   ],
   sql: [
