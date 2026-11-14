@@ -418,9 +418,9 @@ function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: Litera
 
 /** The offset just past the template literal that opens at `at`, following
  *  its `${ }`: a template or a quoted string inside one ends nothing outside
- *  it. -1 when it never closes (spec 093).
- *  shortcut: a comment or regex literal inside `${ }` is read as code, so a
- *  quote, brace or backtick in one miscounts; a lexer with state fixes it. */
+ *  it, and neither does a comment there. -1 when it never closes (spec 093).
+ *  shortcut: a regex literal inside `${ }` is read as code, so a quote, brace
+ *  or backtick in one miscounts; a lexer with state fixes it. */
 function templateEnd(code: string, at: number): number {
   // One entry per open `${`: the `{` still open inside it.
   const open: number[] = []
@@ -444,6 +444,12 @@ function templateEnd(code: string, at: number): number {
         open.pop()
         inText = true
       } else open[open.length - 1]--
+    } else if (c === '/' && code[i + 1] === '*') {
+      const close = code.indexOf('*/', i + 2)
+      if (close === -1) return -1
+      i = close + 1
+    } else if (c === '/' && code[i + 1] === '/') {
+      while (i + 1 < code.length && code[i + 1] !== '\n') i++
     } else if (c === '"' || c === "'") {
       // '…' and "…" end at their quote or, unterminated, at the line break.
       for (i++; i < code.length && code[i] !== c && code[i] !== '\n'; i++) if (code[i] === '\\') i++
@@ -488,7 +494,7 @@ function tokenizeForMasking(
 
   let i = 0
   let noRegexBefore = -1
-  let noTemplateEnd = false
+  let templateWork = 0
   const literalMemo: LiteralMemo = { terminators: new Map(), unclosed: new Set() }
   // A quote character opens nothing before this offset (see `forRestore`).
   const proseBefore = new Map<string, number>()
@@ -614,11 +620,13 @@ function tokenizeForMasking(
       flush(false)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
       // A JavaScript template literal runs to its own closing backtick, past
-      // the templates inside its `${ }` (spec 093). Once one never closes, the
-      // rest reads as before, or a file of them is quadratic. Masking only:
-      // restore's reading of a markdown answer is unchanged.
+      // the templates inside its `${ }` (spec 093). One that never closes
+      // reads as before, and costs a scan to the end: past a few such scans'
+      // worth of work the rest reads as before too, or a file of them is
+      // quadratic. Masking only: restore's reading of a markdown answer is
+      // unchanged.
       const nested =
-        c === '`' && language === 'typescript' && !forRestore && !noTemplateEnd
+        c === '`' && language === 'typescript' && !forRestore && templateWork <= 8 * n
           ? templateEnd(code, i)
           : -1
       if (nested !== -1) {
@@ -631,7 +639,7 @@ function tokenizeForMasking(
         i = nested
         continue
       }
-      noTemplateEnd ||= c === '`'
+      if (c === '`') templateWork += n - i
       const opened = i
       let closed = false
       let str = c
