@@ -18,8 +18,13 @@ describe('anonymize leaves comment prose as written', () => {
   })
 
   it('does not mask words inside a block comment', () => {
-    const { anonymized } = anonymize('/* returns the orderRecord */\nconst valueHolder = compute()')
-    expect(anonymized).toContain('/* returns the orderRecord */')
+    // The language is named: where it is only detected, `/*` opens no comment
+    // and the name in it is masked.
+    const code = '/* returns the orderRecord */\nconst valueHolder = compute()'
+    expect(anonymize(code, { language: 'typescript' }).anonymized).toContain(
+      '/* returns the orderRecord */'
+    )
+    expect(anonymize(code).anonymized).not.toContain('orderRecord')
   })
 
   it('still masks the code around a comment', () => {

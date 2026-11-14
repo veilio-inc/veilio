@@ -66,3 +66,33 @@ describe('scan_secrets: the file kind reaches the engine', () => {
     expect(out).toMatch(/credential/i)
   })
 })
+
+// Spec 094: a glob (`build/*`, `src/**`) in a script, a Dockerfile, a workflow
+// or a Makefile opens no comment, so the names after it are masked.
+describe('the file tools: a glob in a file that is not source code opens no comment', () => {
+  const GLOBS: Record<string, string> = {
+    'd.sh': 'set -e\nrm -rf build/*\ncustomerTotal=1\nsettleInvoice "$acme_corp" //AcmePay\n',
+    Dockerfile: 'COPY packages/*/package.json ./\nRUN ./acme_refunds --AcmePay settleInvoice\n',
+    'ci.yml': 'paths:\n  - src/**\njobs:\n  acme_refunds:\n    name: AcmePay settleInvoice\n',
+    Makefile: 'SOURCES := src/*.c\n\nacme_refunds: $(SOURCES)\n\t./settleInvoice --AcmePay\n',
+  }
+  const NAMES = /customerTotal|settleInvoice|acme_corp|acme_refunds|AcmePay/
+  beforeEach(() => {
+    for (const [name, text] of Object.entries(GLOBS)) writeFileSync(join(ctx.cwd, name), text)
+  })
+
+  it.each(Object.keys(GLOBS))('anonymize_file %s: every name is masked and in the map', (file) => {
+    const out = callTool('anonymize_file', { path: file }, ctx).text
+    expect(out).not.toMatch(NAMES)
+    const map = JSON.parse(readFileSync(mapPath, 'utf8')).map as Record<string, string>
+    // A shell variable is held with its `$`.
+    const held = Object.values(map).map((value) => value.replace(/^\$/, ''))
+    for (const planted of GLOBS[file]!.match(new RegExp(NAMES, 'g'))!)
+      expect(held).toContain(planted)
+  })
+
+  it('anonymize_file: a named language does not bring the comment back', () => {
+    const out = callTool('anonymize_file', { path: 'd.sh', language: 'typescript' }, ctx).text
+    expect(out).not.toMatch(NAMES)
+  })
+})
