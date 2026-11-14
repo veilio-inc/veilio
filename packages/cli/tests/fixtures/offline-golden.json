@@ -56,8 +56,8 @@
     },
     {
       "code": 0,
-      "out": "import { Injectable } from '@nestjs/common'\nimport { readFileSync } from 'node:fs'\nimport { ledgerTotals } from '@acme/ledger-core'\n\nexport class LedgerService {\n  private readonly apiKey = '__REDACTED_AWS_KEY_1__'\n\n  settleInvoice(customerAccount: string, total: number): number {\n    const balance = ledgerTotals(customerAccount)\n    return balance + total\n  }\n}\n",
-      "err": "veilio: left as is: __REDACTED_AWS_KEY_1__. It was redacted one-way (a credential or personal data) and cannot be restored, so this text is not the original: do not write it over the file. Make the change in the file itself instead.\nveilio: restored 8 of 8 placeholders, stripped 1 AI artifact\n"
+      "out": "import { Injectable } from '@nestjs/common'\nimport { readFileSync } from 'node:fs'\nimport { ledgerTotals } from '@acme/ledger-core'\n\n// Settles a customer's ledger. Ticket ACME-42.\nexport class LedgerService {\n  private readonly apiKey = '__REDACTED_AWS_KEY_1__'\n\n  settleInvoice(customerAccount: string, total: number): number {\n    const balance = ledgerTotals(customerAccount)\n    return balance + total\n  }\n}\n",
+      "err": "veilio: left as is: __REDACTED_AWS_KEY_1__. It was redacted one-way (a credential or personal data) and cannot be restored, so this text is not the original: do not write it over the file. Make the change in the file itself instead.\nveilio: restored 8 of 8 placeholders, stripped 0 AI artifacts\n"
     }
   ],
   "restore an invented placeholder": [
