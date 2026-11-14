@@ -42,7 +42,7 @@ import { resolveMapPath } from '@veilio-inc/cli/store'
 import {
   localDroppedNote,
   outOfRangeNote,
-  printable,
+  printableAll,
   unvouchedNote,
   reservationRefusedSentence,
 } from '@veilio-inc/cli/reservations'
@@ -90,7 +90,9 @@ function flag(args: Record<string, unknown>, key: string): boolean {
 }
 
 function answered<T>(outcome: Outcome<T>, render: (value: T) => string): ToolResult {
-  return outcome.ok ? { text: render(outcome.value) } : refusalResult(outcome.refusal)
+  // Spec 093 item 9: every tool's result is put together here, from a value
+  // that holds Cloud's words: none reaches the model as served.
+  return outcome.ok ? { text: render(printableAll(outcome.value)) } : refusalResult(outcome.refusal)
 }
 
 const ID = { type: 'string', description: 'The map id, from maps_list.' }
@@ -110,9 +112,7 @@ export const CLOUD_TOOLS: CloudToolDefinition[] = [
         const lines = maps.map((m) => {
           const count = m.count === null ? '?' : String(m.count)
           const whose = m.scope === 'team' && !m.mine ? '  (a teammate’s)' : ''
-          // Spec 093 item 9: a teammate's words must not start a line of
-          // their own in what the model reads.
-          return `${printable(m.id)}  ${m.scope.padEnd(8)} ${count.padStart(5)} symbols  ${printable(m.name)}${whose}`
+          return `${m.id}  ${m.scope.padEnd(8)} ${count.padStart(5)} symbols  ${m.name}${whose}`
         })
         return [
           ...lines,

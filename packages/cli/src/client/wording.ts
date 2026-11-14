@@ -21,6 +21,7 @@
 // must stay out of (spec 052, founder decision 2026-10-25).
 
 import { CloudError } from '../cloud.js'
+import { printableAll } from '../reservations.js'
 
 export const REFUSAL_CODES = [
   'not_signed_in',
@@ -439,8 +440,12 @@ export function refusal(
   params: WordingParams = {},
   details?: string[]
 ): Refusal {
-  const words = WORDING[code](params)
-  return details && details.length > 0 ? { code, ...words, details } : { code, ...words }
+  // Spec 093 item 9: a refusal names a map, a team or a project in Cloud's
+  // words, and quotes the server's own message. None is shown as served.
+  const words = WORDING[code](printableAll(params))
+  return details && details.length > 0
+    ? { code, ...words, details: printableAll(details) }
+    : { code, ...words }
 }
 
 /** How the terminal prints one. The MCP server has its own (no details). */

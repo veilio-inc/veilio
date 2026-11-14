@@ -29,6 +29,7 @@ import {
   localDroppedNote,
   outOfRangeNote,
   printable,
+  printableAll,
   reservationRefusedSentence,
   unvouchedNote,
 } from './reservations.js'
@@ -156,8 +157,8 @@ export async function runDeviceLogin(base: string, io: Io): Promise<number> {
   // for the person, not for whatever is reading stdout.
   io.stderr(
     `\nOpen this page in a browser where you are signed in:\n\n` +
-      `  ${start.verification_uri_complete}\n\n` +
-      `and confirm the code  ${start.user_code}\n\n` +
+      `  ${printable(start.verification_uri_complete)}\n\n` +
+      `and confirm the code  ${printable(start.user_code)}\n\n` +
       `Waiting for approval. Ctrl-C cancels, and nothing is signed in if you do.\n`
   )
 
@@ -477,9 +478,9 @@ export function runWhoami(io: Io): number {
   io.stdout(
     `${credential.account} on ${credential.instance}` +
       (override
-        ? `, project ${override} (from ${PROJECT_ENV})`
+        ? `, project ${printable(override)} (from ${PROJECT_ENV})`
         : credential.project
-          ? `, project ${credential.project}`
+          ? `, project ${printable(credential.project)}`
           : '') +
       '\n'
   )
@@ -576,7 +577,7 @@ function notes(lines: readonly string[], io: Io): void {
 export async function runMapsList(io: Io): Promise<number> {
   const listed = await listCloudMaps(clientContext(io))
   if (!listed.ok) return refused(listed.refusal, io)
-  const { maps, project, projectFromEnv } = listed.value
+  const { maps, project, projectFromEnv } = printableAll(listed.value)
   if (maps.length === 0) {
     io.stdout('No maps in Cloud yet. `veilio maps push <name>` uploads the local one.\n')
     return EXIT_OK
@@ -584,9 +585,8 @@ export async function runMapsList(io: Io): Promise<number> {
   for (const map of maps) {
     const count = map.count === null ? '?' : String(map.count)
     const whose = map.scope === 'team' && !map.mine ? '  (a teammate’s)' : ''
-    // Spec 093 item 9: the id and the name are Cloud's words (a teammate's).
     io.stdout(
-      `${printable(map.id)}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${printable(map.name)}${whose}\n`
+      `${map.id}  ${map.scope.padEnd(8)} ${count.padStart(5)} symbols  ${map.name}${whose}\n`
     )
   }
   // Said on stderr so the listing itself stays parseable: which project's team
@@ -613,7 +613,9 @@ export async function runMapsPull(
 ): Promise<number> {
   const pulled = await pullCloudMap(clientContext(io), id, { mapPath, force: options.force })
   if (!pulled.ok) return refused(pulled.refusal, io)
-  const { name, count, path, blocks, localDropped, outOfRange, unvouched } = pulled.value
+  const { name, count, path, blocks, localDropped, outOfRange, unvouched } = printableAll(
+    pulled.value
+  )
   io.stdout(`Pulled "${name}" (${count} symbols) into ${path}\n`)
   if (localDropped) io.stdout(`veilio: ${localDroppedNote(localDropped)}\n`)
   if (outOfRange) io.stdout(`veilio: ${outOfRangeNote(outOfRange)}\n`)
@@ -645,15 +647,15 @@ export async function runMapsPush(
     mapPath,
   })
   if (!created.ok) return refused(created.refusal, io)
-  const c = created.value
+  const c = printableAll(created.value)
   notes(c.notes, io)
   if (c.scope === 'personal') {
-    io.stdout(`Pushed ${c.count} symbols to Cloud as ${printable(c.id)}\n`)
+    io.stdout(`Pushed ${c.count} symbols to Cloud as ${c.id}\n`)
     return EXIT_OK
   }
   const disputed = c.disputed ?? 0
   io.stdout(
-    `Published "${printable(c.name)}" (${c.count} symbols) to the team as ${printable(c.id)}\n` +
+    `Published "${c.name}" (${c.count} symbols) to the team as ${c.id}\n` +
       `The team's shared set now holds ${c.teamTotal} identifiers` +
       (disputed > 0
         ? `, ${disputed} of which ${disputed === 1 ? 'is' : 'are'} disputed and will not restore\n`
@@ -674,10 +676,10 @@ export async function runMapsUpdate(
     allowDrop: options.allowDrop,
   })
   if (!updated.ok) return refused(updated.refusal, io)
-  const u = updated.value
+  const u = printableAll(updated.value)
   notes(u.notes, io)
   io.stdout(
-    `Updated "${printable(u.name)}" (${printable(u.id)}) in place: ${u.count} symbols` +
+    `Updated "${u.name}" (${u.id}) in place: ${u.count} symbols` +
       (u.dropped > 0 ? `, ${u.dropped} dropped as asked` : '') +
       `${u.scope === 'team' ? ', sealed with the team key' : ''}\n`
   )
@@ -691,8 +693,8 @@ export async function runMapsUpdate(
 export async function runMapsRm(id: string | null, io: Io): Promise<number> {
   const removed = await removeCloudMap(clientContext(io), id)
   if (!removed.ok) return refused(removed.refusal, io)
-  const { name } = removed.value
-  io.stdout(name ? `Removed "${name}" (${removed.value.id})\n` : `Removed ${removed.value.id}\n`)
+  const { id: gone, name } = printableAll(removed.value)
+  io.stdout(name ? `Removed "${name}" (${gone})\n` : `Removed ${gone}\n`)
   return EXIT_OK
 }
 
@@ -1355,7 +1357,7 @@ function purgeLockedRules(scope: 'personal' | 'team', io: Io): number {
 export async function runProjectsList(io: Io): Promise<number> {
   const listed = await listTeamProjects(clientContext(io))
   if (!listed.ok) return refused(listed.refusal, io)
-  const { lines, note } = formatProjectsList(listed.value, { surface: 'cli' })
+  const { lines, note } = formatProjectsList(printableAll(listed.value), { surface: 'cli' })
   for (const line of lines) io.stdout(`${line}\n`)
   if (note) io.stderr(`veilio: ${note}\n`)
   return EXIT_OK
@@ -1365,9 +1367,9 @@ export async function runProjectsList(io: Io): Promise<number> {
 export async function runProjectsUse(ref: string | null, io: Io): Promise<number> {
   const used = await useProject(clientContext(io), ref)
   if (!used.ok) return refused(used.refusal, io)
-  io.stdout(`${usedSentence(used.value, { surface: 'cli' })}\n`)
-  if (used.value.overriddenBy !== null)
-    io.stderr(`veilio: ${overriddenSentence(used.value, 'shell')}\n`)
+  const shown = printableAll(used.value)
+  io.stdout(`${usedSentence(shown, { surface: 'cli' })}\n`)
+  if (shown.overriddenBy !== null) io.stderr(`veilio: ${overriddenSentence(shown, 'shell')}\n`)
   return EXIT_OK
 }
 
@@ -1381,7 +1383,7 @@ export async function runProjectsUse(ref: string | null, io: Io): Promise<number
 export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
   const unlocked = await vaultUnlock(clientContext(io), { days })
   if (!unlocked.ok) return refused(unlocked.refusal, io)
-  const u = unlocked.value
+  const u = printableAll(unlocked.value)
   io.stdout(
     `${u.created ? 'Created and unlocked' : 'Unlocked'} the personal-maps key until ${u.expiresAt}.\n` +
       `Stored in ${u.path}, readable only by you. It opens your personal maps and nothing else; ` +
@@ -1394,9 +1396,7 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
     io.stderr(
       `veilio: ${u.failed.length} personal map${u.failed.length === 1 ? '' : 's'} could not be re-sealed and ` +
         `${u.failed.length === 1 ? 'is' : 'are'} still under the vault key, which the MCP server cannot open:\n` +
-        u.failed
-          .map((f) => `  "${printable(f.name)}" (${printable(f.id)}): ${printable(f.reason)}\n`)
-          .join('') +
+        u.failed.map((f) => `  "${f.name}" (${f.id}): ${f.reason}\n`).join('') +
         'Run `veilio vault unlock` again to retry them; the key itself is unlocked.\n'
     )
     return EXIT_ERROR
