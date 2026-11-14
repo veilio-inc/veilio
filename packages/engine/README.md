@@ -449,6 +449,8 @@ given it. Marks are stored in the map under `__MANUAL__n`, which means
 import and sync without a second store. Pass `manualTermsIn(previousMap)` back
 in, or just reuse the map as `existingMap`, and prior marks re-apply.
 
+A mark that sits inside a longer name masks the whole name. A name that touches a credential, already holds a placeholder, or stands beside a non-ASCII letter is handled as before.
+
 Three kinds of term are refused with a `ManualMaskError`:
 
 - **A credential.** A manual mask is reversible and is written to the map, so
