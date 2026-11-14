@@ -458,6 +458,12 @@ function templateEnd(code: string, at: number): number {
   return -1
 }
 
+/** A line terminator other than `\n` at `at`: a `\r` no `\n` follows, U+2028, U+2029. */
+function endsLine(code: string, at: number): boolean {
+  const c = code[at]
+  return c === '\u2028' || c === '\u2029' || (c === '\r' && code[at + 1] !== '\n')
+}
+
 // The first word of a Python `def` or `class` header.
 const HEADER_START = /(?:async[ \t]+def|def|class)(?![\w$])/y
 // A text that begins with a triple-quoted literal: read as a module's
@@ -602,7 +608,10 @@ function tokenizeForMasking(
     }
     if (lineOpener !== undefined) {
       flush(true)
-      while (i < n && code[i] !== '\n') buf += code[i++]
+      // To the end of the line, whichever character ends it: a line feed, a
+      // carriage return standing alone, U+2028, U+2029. The `\r` of a CRLF
+      // stays in the comment, and restore reads as before.
+      while (i < n && code[i] !== '\n' && (forRestore || !endsLine(code, i))) buf += code[i++]
       flush(false)
       continue
     }
