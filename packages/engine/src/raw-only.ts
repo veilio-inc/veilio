@@ -149,10 +149,16 @@ export function isRawOnly(path: string, extra: readonly string[]): boolean {
  * caller reports (#61) and still applies as written, as before.
  */
 export function normaliseRawOnlyPattern(pattern: string): string | null {
+  // Past the matcher's cap a pattern matches every path (`matches`); said
+  // here, before the pattern is read at all, so its length costs nothing.
+  if (pattern.length > MAX_GLOB) return '**'
   const p = pattern.replace(/\\/g, '/')
   if (/^[A-Za-z]:/.test(p) || p.startsWith('~')) return null
   // A bare `/`, `./` or `.` names no folder: reported, not read as `**`.
-  const bare = p.replace(/^(\.?\/)+/, '').replace(/\/+$/, '')
+  // Trailing slashes by a loop: `/+$` tries every run of slashes in turn.
+  let end = p.length
+  while (end > 0 && p[end - 1] === '/') end--
+  const bare = p.slice(0, end).replace(/^(\.?\/)+/, '')
   if (bare === '' || bare === '.') return null
   const parts: string[] = []
   for (const part of (p.endsWith('/') ? `${bare}/**` : bare).split('/')) {

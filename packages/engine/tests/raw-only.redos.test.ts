@@ -112,4 +112,27 @@ describe('rawOnly globs are matched in linear time (spec 093)', () => {
     expect(isRawOnly('src/a.ts', ['a'.repeat(1024)])).toBe(false)
     expect(isRawOnly('src/a.ts', ['*b'.repeat(64)])).toBe(false)
   })
+
+  // Spec 094: the pattern is read before it is matched, and that reading
+  // must not cost the square of its length either.
+  it.each([
+    ['slashes inside the pattern', (n: number) => 'a' + '/'.repeat(n) + 'x'],
+    ['trailing slashes', (n: number) => 'a' + '/'.repeat(n)],
+    ['leading slashes', (n: number) => '/'.repeat(n) + 'a'],
+    ['backslashes', (n: number) => 'a' + '\\'.repeat(n) + 'x'],
+  ])('reads a pattern of 80,000 %s in under 100 ms, as matching every path', (_, pattern) => {
+    const long = pattern(80_000)
+    const t0 = performance.now()
+    const answers = ['src/a.ts', 'README.md', 'deep/er/x.py'].map((path) => isRawOnly(path, [long]))
+    expect(performance.now() - t0).toBeLessThan(100)
+    expect(answers).toEqual([true, true, true])
+  })
+
+  it('reads trailing slashes of a pattern within the cap as before', () => {
+    expect(normaliseRawOnlyPattern('secrets///')).toBe('secrets/**')
+    expect(normaliseRawOnlyPattern('./secrets/')).toBe('secrets/**')
+    expect(normaliseRawOnlyPattern('///')).toBeNull()
+    expect(normaliseRawOnlyPattern('a' + '/'.repeat(1023))).toBe('a/**')
+    expect(normaliseRawOnlyPattern('a' + '/'.repeat(1024))).toBe('**')
+  })
 })
