@@ -26,6 +26,7 @@
 import { isEngineBase, isSaneBlock } from '@veilio-inc/engine'
 import type { Credential } from './credential.js'
 import { wireBase } from './hashed-bases.js'
+import { printable } from './reservations.js'
 import { VERSION } from './version.js'
 import { refusal } from './client/wording.js'
 
@@ -101,7 +102,8 @@ export class CloudError extends Error {
      *  version it lost to needs it (spec 052). */
     readonly body?: Record<string, unknown>
   ) {
-    super(message)
+    // Spec 093 item 9: the message is often the server's own words.
+    super(printable(message))
     this.name = 'CloudError'
   }
 }

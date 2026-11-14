@@ -42,6 +42,7 @@ import { resolveMapPath } from '@veilio-inc/cli/store'
 import {
   localDroppedNote,
   outOfRangeNote,
+  printableAll,
   unvouchedNote,
   reservationRefusedSentence,
 } from '@veilio-inc/cli/reservations'
@@ -89,7 +90,9 @@ function flag(args: Record<string, unknown>, key: string): boolean {
 }
 
 function answered<T>(outcome: Outcome<T>, render: (value: T) => string): ToolResult {
-  return outcome.ok ? { text: render(outcome.value) } : refusalResult(outcome.refusal)
+  // Spec 093 item 9: every tool's result is put together here, from a value
+  // that holds Cloud's words: none reaches the model as served.
+  return outcome.ok ? { text: render(printableAll(outcome.value)) } : refusalResult(outcome.refusal)
 }
 
 const ID = { type: 'string', description: 'The map id, from maps_list.' }

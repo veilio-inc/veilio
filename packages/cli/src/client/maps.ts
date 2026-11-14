@@ -160,9 +160,11 @@ export async function listCloudMaps(ctx: ClientContext): Promise<
   } catch (err) {
     return cloudRefusal(err, credential)
   }
+  // Spec 093 item 9: an id or a name that is not text is not shown as sent.
+  const text = (v: unknown): string => (typeof v === 'string' ? v : '?')
   const shape = (mine: boolean) => (m: CloudMapList['personalMaps'][number]) => ({
-    id: m.id,
-    name: m.name,
+    id: text(m.id),
+    name: text(m.name),
     scope: m.scope,
     count: m.identifier_count,
     mine,

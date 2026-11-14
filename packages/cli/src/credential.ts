@@ -17,10 +17,11 @@
 // one of them means the same thing to the caller and none of them is worth
 // stopping a local command over.
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { STORE_DIR } from '@veilio-inc/engine'
+import { writeSecretJson } from './secret-file.js'
 
 export const CREDENTIAL_FILE = 'credential.json'
 
@@ -119,20 +120,16 @@ export function readCredential(home: string = homedir()): Credential | null {
  * (Constitution IV). A file written before the check leaves a credential behind
  * for an attempt that failed.
  *
- * `chmodSync` after the write because `mode` on `writeFileSync` applies only
- * when the file is created; without it, re-signing in over a world-readable file
- * left from some earlier mistake would leave it world-readable.
+ * A new file each time (`writeSecretJson`), so re-signing in over a
+ * world-readable file left from some earlier mistake does not keep it so.
  */
 export function writeCredential(credential: Credential, home: string = homedir()): void {
-  const path = credentialPath(home)
-  mkdirSync(dirname(path), { recursive: true })
   // The known fields only. A command's in-memory credential carries the
   // project VEILIO_PROJECT chose (spec 052 FR-012a); spread back into a write,
   // its markers must not become a stored choice nobody made.
   const { token, account, instance, project } = credential
   const stored: Credential = { token, account, instance, ...(project ? { project } : {}) }
-  writeFileSync(path, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeSecretJson(credentialPath(home), stored)
 }
 
 /**
@@ -198,12 +195,8 @@ export function writeTeamRecord(
   try {
     const path = teamRecordPath(home)
     if (readTeamRecord(record, home) === record.teamId) return
-    mkdirSync(dirname(path), { recursive: true })
     const { instance, account, teamId } = record
-    writeFileSync(path, `${JSON.stringify({ instance, account, teamId }, null, 2)}\n`, {
-      mode: 0o600,
-    })
-    chmodSync(path, 0o600)
+    writeSecretJson(path, { instance, account, teamId })
   } catch {
     // unwritable: the next run asks Cloud again
   }

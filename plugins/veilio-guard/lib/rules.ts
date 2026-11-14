@@ -2,8 +2,9 @@
 // (spec 065 R10). The guard stays offline: it never fetches, it reads the CLI's
 // cache, `~/.veilio/rules.json`, and only when the cache belongs to the account
 // `~/.veilio/credential.json` is signed in as. It does not import the CLI, so
-// both files are read here with the CLI's tolerance: absent or damaged reads
-// as no rules, never as a failed load.
+// both files are read here: absent or damaged reads as no rules, never as a
+// failed load, and a damaged cache is told apart for the band (the CLI stops
+// on one; the guard goes on masking without the rules and says so).
 import { isEngineBase, isSafeRegex, ruleRefusal, STORE_DIR } from '../vendor/engine/index.js'
 import type { CustomRule } from '../vendor/engine/index.js'
 
@@ -20,7 +21,8 @@ export type GuardRules = {
   /** In the CLI's order, the ones this guard may apply. */
   rules: CustomRule[]
   skipped: RulesSkipped
-  state: 'applied' | 'none-pulled' | 'other-account'
+  /** 'unreadable': rules.json is there and is not one the guard can apply. */
+  state: 'applied' | 'none-pulled' | 'other-account' | 'unreadable'
 }
 
 const zero = (): RulesSkipped => ({
@@ -132,14 +134,23 @@ export async function readGuardRules(
   if (!home) return NO_RULES
   const dir = `${home.replace(/[\\/]+$/, '')}/${STORE_DIR}`
   const cache = await readJson(read, `${dir}/rules.json`)
+  const credential = await readJson(read, `${dir}/credential.json`)
   if (
     !cache ||
     typeof cache.pulledAt !== 'string' ||
     !Array.isArray(cache.rules) ||
     !cache.rules.every(isRule)
-  )
-    return NO_RULES
-  const credential = await readJson(read, `${dir}/credential.json`)
+  ) {
+    // Spec 093 (review round 1): no rule is applied either way, but a cache
+    // that is there and damaged is said apart from none pulled, to someone
+    // signed in. A read that fails is taken as no file: the host's read does
+    // not say why it failed.
+    const there = await read(`${dir}/rules.json`).then(
+      () => true,
+      () => false
+    )
+    return there && credential ? { ...NO_RULES, state: 'unreadable' } : NO_RULES
+  }
   const owner = (k: string) =>
     typeof credential?.[k] === 'string' && credential[k] !== '' && credential[k] === cache[k]
   if (!owner('instance') || !owner('account')) return { ...NO_RULES, state: 'other-account' }

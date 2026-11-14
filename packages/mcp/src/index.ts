@@ -5,7 +5,9 @@
 // here corrupts the protocol and the client drops the connection. Diagnostics
 // go to stderr, which MCP clients surface as server logs.
 
-import { realpathSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { guardHint } from '@veilio-inc/cli/guard-hint'
 import { pathToFileURL } from 'node:url'
 import { FrameReader, type JsonRpcResponse } from './server.js'
@@ -24,22 +26,84 @@ export { TOOLS, CLOUD_TOOLS, callTool, callToolAsync, listTools } from './tools.
  * only an exact "1" turns it on: it is the person's decision, made where they
  * configure the server, and nothing a tool call carries can change it
  * (spec 052 FR-010).
+ *
+ * Nor can the project (spec 093 item 8): a repository's own configuration
+ * files set the environment of the servers they declare, so when one of them
+ * (`projectSetsSwitch`) - from the folder the server was started in, or from
+ * its `--root` - names either switch, both are off and `switchesIgnored` says
+ * so.
  */
 export function contextFromArgv(
   argv: readonly string[],
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  startedIn: string = process.cwd()
 ): ToolContext {
+  const cli = parseCliContext(argv, startedIn)
+  const ignored = [startedIn, cli.cwd].some(projectSetsSwitch)
   return {
-    ...parseCliContext(argv),
-    destructive: env.VEILIO_MCP_DESTRUCTIVE === '1',
+    ...cli,
+    destructive: !ignored && env.VEILIO_MCP_DESTRUCTIVE === '1',
     // Spec 078 FR-018: the same pattern, read once here.
-    restoreText: env.VEILIO_MCP_RESTORE === '1',
+    restoreText: !ignored && env.VEILIO_MCP_RESTORE === '1',
     env,
+    ...(ignored ? { switchesIgnored: SWITCHES_IGNORED } : {}),
   }
 }
 
-function parseCliContext(argv: readonly string[]): ToolContext {
-  let cwd = process.cwd()
+/** strings.md #4 (spec 093, approved 2026-11-13). */
+const SWITCHES_IGNORED =
+  "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
+
+// The files in a project that can start this server or set its environment:
+// Claude Code's, Cursor's and VS Code's.
+const PROJECT_FILES = [
+  '.mcp.json',
+  '.cursor/mcp.json',
+  '.vscode/mcp.json',
+  '.claude/settings.json',
+  '.claude/settings.local.json',
+]
+const SWITCH_NAMED = /VEILIO_MCP_(?:RESTORE|DESTRUCTIVE)/i
+const READ_CAP = 1024 * 1024
+
+/**
+ * Whether a project file names either switch: in `dir` or a folder above it,
+ * up to the one that holds `.git` (the project's root). Read as text, not as
+ * JSON, so an `env` key, the arguments of a wrapper command (`env NAME=1 ...`)
+ * and another letter case all count. The home folder and above are not read:
+ * the files there are the person's own, where the switch is theirs to set.
+ * A file that is missing or unreadable names none; one too large to read
+ * whole counts as naming one, since what follows the cap was not seen.
+ */
+function projectSetsSwitch(dir: string): boolean {
+  const home = resolve(homedir())
+  for (let at = resolve(dir); at !== home; at = dirname(at)) {
+    if (PROJECT_FILES.some((name) => namesSwitch(join(at, name)))) return true
+    if (existsSync(join(at, '.git')) || dirname(at) === at) break
+  }
+  return false
+}
+
+function namesSwitch(file: string): boolean {
+  let fd: number
+  try {
+    fd = openSync(file, 'r')
+  } catch {
+    return false
+  }
+  try {
+    const text = Buffer.alloc(READ_CAP + 1)
+    const read = readSync(fd, text, 0, text.length, 0)
+    return read > READ_CAP || SWITCH_NAMED.test(text.toString('latin1', 0, read))
+  } catch {
+    return false
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function parseCliContext(argv: readonly string[], startedIn: string): ToolContext {
+  let cwd = startedIn
   let mapPath: string | null = null
   for (let i = 0; i < argv.length; i++) {
     if ((argv[i] === '--root' || argv[i] === '-r') && argv[i + 1] !== undefined) {
@@ -55,6 +119,7 @@ async function start(): Promise<void> {
   const ctx = contextFromArgv(process.argv.slice(2))
   ctx.guardHint = guardHint('mcp', process.env)
   if (ctx.guardHint) process.stderr.write(`${ctx.guardHint}\n`)
+  if (ctx.switchesIgnored) process.stderr.write(`${ctx.switchesIgnored}\n`)
   if (ctx.restoreText)
     process.stderr.write(
       "veilio: restore_text is on (VEILIO_MCP_RESTORE=1). Its answers put the real names into the agent's context.\n"

@@ -8,17 +8,20 @@
 //
 // `veilio scrub` must stay offline (see offline.test.ts), so it cannot ask Cloud
 // for them. `veilio rules pull` fetches them and writes this cache; `scrub`
-// applies what the cache holds and says how old it is. Reads tolerate absence
-// and damage the way credential.ts does: a broken cache reads as "no rules",
-// never as a failed scrub.
+// applies what the cache holds and says how old it is. No cache reads as "no
+// rules". A cache that is there and cannot be read stops the caller (spec 093
+// item 5): masking without the rules the account set leaves a name the rules
+// would have replaced under an ordinary placeholder, or masks a name the team
+// keeps readable, and nothing said so.
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { STORE_DIR, fromBase64, ruleRefusal, type CustomRule } from '@veilio-inc/engine'
 import type { RulesSkipped } from './client/rules-skipped.js'
 import { readPersonalMapsKey } from './client/personal-maps-key.js'
 import { readTeamUnlock } from './team-unlock.js'
+import { writeSecretJson } from './secret-file.js'
 
 export const RULES_FILE = 'rules.json'
 
@@ -121,8 +124,25 @@ function keysHeld(
   }
 }
 
+/** rules.json is there and is not one this CLI can apply: damaged, or holding
+ *  an entry of a kind this version does not know (spec 093 item 5). The message
+ *  is the one a person reads, after `veilio: `. */
+export class RulesUnreadable extends Error {
+  constructor(readonly path: string) {
+    super(
+      // "fetch" is written in two parts: offline.test.ts lets only cloud.ts
+      // hold the word outside a comment.
+      `the saved rules at ${path} cannot be read, so nothing was masked. ` +
+        'Run `veilio rules pull` to fe' +
+        'tch them again, or `veilio logout` if you no longer use Veilio Cloud.'
+    )
+  }
+}
+
 /**
- * The cached rules for this account, or null. Null for every kind of failure.
+ * The cached rules for this account, or null when there is no cache or it is
+ * another account's. Throws `RulesUnreadable` when there is one and it cannot
+ * be read: the caller masks nothing.
  *
  * Only the rules whose key is still held are returned: a rule opened while the
  * vault or team key was unlocked must not outlive that key - a lock, an expiry,
@@ -133,17 +153,19 @@ export function readRules(
   home: string = homedir(),
   now: Date = new Date()
 ): CachedRules | null {
+  const path = rulesPath(home)
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(rulesPath(home), 'utf8'))
-  } catch {
-    return null
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw new RulesUnreadable(path)
   }
-  if (typeof parsed !== 'object' || parsed === null) return null
+  if (typeof parsed !== 'object' || parsed === null) throw new RulesUnreadable(path)
   const c = parsed as Record<string, unknown>
   if (c.instance !== owner.instance || c.account !== owner.account) return null
   if (typeof c.pulledAt !== 'string' || !Array.isArray(c.rules) || !c.rules.every(isRule)) {
-    return null
+    throw new RulesUnreadable(path)
   }
   const skipped = readSkipped(c.skipped)
   const held = keysHeld(owner, home, now)
@@ -230,10 +252,7 @@ const printable = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/g
 
 /** 0600: the patterns name what a team considers sensitive. */
 export function writeRules(cached: CachedRules, home: string = homedir()): void {
-  const path = rulesPath(home)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(cached, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeSecretJson(rulesPath(home), cached)
 }
 
 /** Remove the cache. Missing is not an error; failing to delete is. */

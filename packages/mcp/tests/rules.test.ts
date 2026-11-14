@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeCredential } from '@veilio-inc/cli/credential'
@@ -153,6 +153,56 @@ describe('rules at startup', () => {
       'Custom rules: 1 custom rule cached, pulled just now - Cloud did not answer'
     )
     expect(text).toContain('return customerId')
+  })
+
+  // Spec 093 item 5: the fallback read a damaged cache as "none" and masked
+  // without the account's rules.
+  it('Cloud unreachable and a cache that cannot be read: nothing is masked, and it says why', async () => {
+    signIn()
+    writeFileSync(rulesPath(home), '{"instance":')
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    await primeRules(home)
+    const r = callTool('anonymize_text', { text: SOURCE }, { cwd, mapPath: null })
+    expect(r).toEqual({
+      isError: true,
+      text:
+        `veilio: the saved rules at ${rulesPath(home)} cannot be read, so nothing was masked. ` +
+        'Run `veilio rules pull` to fetch them again, or `veilio logout` if you no longer use Veilio Cloud.',
+    })
+    expect(existsSync(join(cwd, '.veilio'))).toBe(false)
+  })
+
+  // The sentence tells the person to pull the rules again or to log out: doing
+  // either must be enough, without restarting the server.
+  it('once the cache can be read again, the same server masks with it', async () => {
+    signIn()
+    writeFileSync(rulesPath(home), '{"instance":')
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    await primeRules(home)
+    expect(callTool('anonymize_text', { text: SOURCE }, { cwd, mapPath: null }).isError).toBe(true)
+    writeRules(
+      {
+        instance: INSTANCE,
+        account: ACCOUNT,
+        pulledAt: new Date().toISOString(),
+        rules: [WHITELIST],
+      },
+      home
+    )
+    const text = anonymize()
+    expect(text).toContain('Custom rules: 1 custom rule cached')
+    expect(text).toContain('return customerId')
+  })
+
+  it('once the cache is gone (a logout), the same server masks without rules', async () => {
+    signIn()
+    writeFileSync(rulesPath(home), '{"instance":')
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    await primeRules(home)
+    rmSync(rulesPath(home))
+    const text = anonymize()
+    expect(text).toContain('Custom rules: none')
+    expect(text).not.toContain('return customerId')
   })
 
   it('Cloud unreachable and no cache: none', async () => {

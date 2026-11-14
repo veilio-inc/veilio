@@ -11,10 +11,11 @@
 // Unlike the web app's, every pin here is confirmed: the CLI never records a
 // first sighting, so there is no `auto` kind to tell apart.
 
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { STORE_DIR } from '@veilio-inc/engine'
+import { writeSecretJson } from './secret-file.js'
 
 export const KEY_PINS_FILE = 'key-pins.json'
 
@@ -208,12 +209,7 @@ function update(binding: Binding, home: string, change: (scope: Scope) => void):
   scope.blocked = Object.assign(Object.create(null) as Record<string, number>, scope.blocked)
   change(scope)
 
-  const path = keyPinsPath(home)
-  mkdirSync(dirname(path), { recursive: true })
   // Written beside, then renamed over: a crash mid-write must not leave a
   // half file that reads as "no pins" and silently drops every confirmation.
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(tmp, 0o600)
-  renameSync(tmp, path)
+  writeSecretJson(keyPinsPath(home), file)
 }

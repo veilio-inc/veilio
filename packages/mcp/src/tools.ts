@@ -113,6 +113,9 @@ export interface ToolContext {
    * for them.
    */
   restoreText?: boolean
+  /** Spec 093 item 8: the line said on stderr at start when the project's
+   *  `.mcp.json` named either switch above, and both were left off for it. */
+  switchesIgnored?: string
   /**
    * The server's environment, for VEILIO_PROJECT (spec 052 FR-012a): set in a
    * repository's `.mcp.json` `env`, it pins that repository's project for
@@ -406,6 +409,10 @@ function runAnonymize(
   // e85: Cloud rate-limited the team read - refused, never the local namespace.
   if (resolved.found.status === 'unavailable' && resolved.found.refusal)
     return refusalResult(resolved.found.refusal)
+  // Spec 093 item 5: the rules the account set cannot be read, so nothing is
+  // masked without them. The CLI's sentence, with its prefix.
+  const rules = getRules()
+  if (rules.unreadable) return { text: `veilio: ${rules.unreadable}`, isError: true }
   const { namespace, highest, conflicts } = resolved
   // A file is masked in its extension's language - the model's `language`
   // only for inline text or an extension Veilio does not know, since a
@@ -431,7 +438,6 @@ function runAnonymize(
         return found.get(input) ?? new Set()
       })()
     : new Set<string>()
-  const rules = getRules()
   // Spec 066 R3: in a team, inside this checkout's block, else its local
   // family - read from reserved.json, never written, never reserved here.
   const owner = resolved.owner
@@ -818,9 +824,10 @@ export function callTool(
 /**
  * The tools this server offers right now (spec 052 FR-023).
  *
- * Signed out - always, in the Community Edition - exactly the five offline
- * tools, as before: an agent shown map tools it can never use would keep
- * reaching for them. Signed in, the map, team and project tools too. Asked on
+ * Signed out - always, in the Community Edition - exactly the offline tools
+ * (four, and `restore_text` when it is switched on: `offered` below), as
+ * before: an agent shown map tools it can never use would keep reaching for
+ * them. Signed in, the map, team and project tools too. Asked on
  * every `tools/list`, from the credential file, so signing in or out while the
  * server runs is picked up without a restart.
  */
@@ -836,7 +843,7 @@ function offered(name: string, ctx: ToolContext): boolean {
 
 /**
  * Run any tool, the Cloud ones included, which need the network and so answer
- * asynchronously. The offline five run exactly as `callTool` runs them.
+ * asynchronously. The offline ones run exactly as `callTool` runs them.
  *
  * A Cloud tool called with nobody signed in - listed by an older client, or
  * named from memory - answers with the sign-in sentence and sends nothing.

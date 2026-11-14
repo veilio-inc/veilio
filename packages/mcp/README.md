@@ -18,7 +18,7 @@ A naive MCP anonymizer takes source code as a tool argument. That is self-defeat
 
 The primary tools here take a **file path**. The server reads the file in its own process and returns only the masked text. From that call the agent learns `__CLS__1.__FN__2()`, not `PaymentGateway.chargeCard()`.
 
-That holds on the way in. On the way back, `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in its configuration. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
+That holds on the way in. On the way back, `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in your own environment. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
 
 `anonymize_file` and `scan_secrets` never read a file on the guard's raw-only list (.env, private keys, credential stores, .veilio/), or on the project's own list in `.veilio/guard.json` (`rawOnly`): they refuse it, as written or through a link.
 
@@ -71,8 +71,8 @@ masked, and a value whose key contains a credential word (`password: sunshine`,
 ### Map, team and project tools (signed in to Veilio Cloud)
 
 Listed only once `veilio login` has signed this machine in; with no sign-in -
-always, in the Community Edition - the server offers the five tools above and
-nothing else. Each is the `veilio` CLI's own command, through the same code, so
+always, in the Community Edition - the server offers the tools above (four, and
+`restore_text` when it is switched on) and nothing else. Each is the `veilio` CLI's own command, through the same code, so
 it refuses in the same words for the same reasons.
 
 | Tool            | Purpose                                                                                                                                                                                                              |
@@ -101,8 +101,11 @@ the server's variable overrides it.
 - **Destructive tools are off by default.** `maps_remove`, a `maps_update`
   that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
   that would overwrite local entries, are refused unless you start the
-  server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting the agent
-  cannot reach. Removal is allowed only when the server was started with
+  server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting only you
+  can make: the server ignores it when the project's own `.mcp.json` sets it, so
+  a repository cannot turn it on for you. An agent that can change your shell
+  environment or your user-level MCP configuration can still set it. Removal is
+  allowed only when the server was started with
   `VEILIO_MCP_DESTRUCTIVE=1`. `confirmName` catches a wrong id; it is not proof
   that the person agreed (the model can read names from `maps_list`). Creating,
   pulling, listing and updates that drop nothing always work.

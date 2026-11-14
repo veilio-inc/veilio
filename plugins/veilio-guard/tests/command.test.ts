@@ -60,6 +60,57 @@ test("/veilio off and on leave the project's own lists in guard.json", async ($,
   expect(out.deny).toContain('away from the model')
 })
 
+// Spec 093 item 10 (strings.md #6): /veilio is the person's command. A tool
+// call that names it comes from the model, and is refused whatever it asks.
+const OWN_COMMAND = 'Veilio: only the person at the keyboard can run the veilio command.'
+
+test("a tool call that names the guard's own command is refused, and the guard stays on", async ($, on) => {
+  const read = recorded('Read')
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: '/home/dev' })
+  let ran = 0
+  on('tool.call', (_, e) => (e.tool === 'Read' ? read.r : (ran++, { result: 'x' })))
+  for (const call of [
+    { tool: 'Skill', skill: 'veilio', args: 'off' },
+    { tool: 'Skill', skill: 'veilio' },
+    { tool: 'Skill', skill: 'veilio-guard:veilio', args: 'off' },
+    { tool: 'Skill', skill: '/veilio', args: 'on' },
+    { tool: 'SlashCommand', command: '/veilio off' },
+    { tool: 'Skill', skill: 'Veilio', args: 'off' },
+    { tool: 'Skill', skill: 'VEILIO off' },
+    { tool: 'Skill', skill: 'a:b:veilio', args: 'off' },
+  ]) {
+    const out = await $.tool.call(call)
+    expect(out.deny).toBe(OWN_COMMAND)
+  }
+  expect(ran).toBe(0)
+  const r = await $.tool.call(eventOf(read))
+  expect(JSON.stringify(r)).not.toContain(CANARY)
+})
+
+test("another skill, one named like the guard's included, and the veilio CLI in a shell still run", async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: '/home/dev' })
+  let ran = 0
+  on('tool.call', () => (ran++, { result: 'x' }))
+  for (const call of [
+    { tool: 'Skill', skill: 'simplify', args: 'veilio off' },
+    { tool: 'Skill', skill: 'veilio-docs' },
+    { tool: 'Skill', skill: 'veilioX' },
+    { tool: 'Skill', skill: 'my-veilio' },
+    { tool: 'Bash', command: 'veilio scan --help' },
+  ]) {
+    const out = await $.tool.call(call)
+    expect(out.deny).toBeUndefined()
+  }
+  expect(ran).toBe(5)
+})
+
+test('the person typing /veilio off is not refused', async ($, on) => {
+  project(on, { [`${ROOT}/.veilio/map.json`]: mapFile({}) }, { home: '/home/dev' })
+  const out = await $.command.run({ command: 'veilio', args: 'off' })
+  expect(out.text).toContain('OFF until this session ends')
+  expect(out.text).not.toContain(OWN_COMMAND)
+})
+
 // Spec 078 US4 (A#5, research R5): nothing the agent can write decides what
 // leaves the machine. guard.json adds raw-only paths only; /veilio off is
 // recorded under ~/.veilio (raw-only); the band names the MCP servers that get

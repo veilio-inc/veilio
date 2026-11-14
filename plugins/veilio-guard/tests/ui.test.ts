@@ -286,6 +286,13 @@ test('the band says when no custom rules are pulled, and how to pull them', asyn
   expect(await band($, on, {})).toContain(' · custom rules: none pulled - run `veilio rules pull`')
 })
 
+test('the band says when the rules on this machine cannot be read, apart from none pulled', async ($, on) => {
+  const damaged = { [`${HOME}/.veilio/rules.json`]: '{"instance":' }
+  expect(await band($, on, damaged)).toContain(
+    ' · custom rules: cannot be read - run veilio rules pull · '
+  )
+})
+
 test('the band says when the rules on this machine are for another account', async ($, on) => {
   const other = {
     [`${HOME}/.veilio/rules.json`]: JSON.stringify({
