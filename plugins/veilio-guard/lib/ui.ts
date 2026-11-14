@@ -33,6 +33,8 @@ export function bandText(g: Guard): string {
 function customRules(g: Guard): string {
   const { state, rules, skipped } = g.rules
   if (state === 'none-pulled') return 'custom rules: none pulled - run `veilio rules pull`'
+  // Spec 093 (review round 1): the text as given in the review, 2026-11-14.
+  if (state === 'unreadable') return 'custom rules: cannot be read - run veilio rules pull'
   if (state === 'other-account')
     return 'custom rules: none for this account - run `veilio rules pull`'
   const not = [
