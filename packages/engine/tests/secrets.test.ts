@@ -1048,3 +1048,79 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     expect(read("'Secret'")).toContain('db: __REDACTED_CREDENTIAL_1__,')
   })
 })
+
+// Spec 094: a provider key written as adjacent string literals on one
+// statement is read as the one string it becomes.
+describe('a provider key joined from adjacent literals', () => {
+  const BODY = ['a1B2c3D4e5', 'F6g7H8i9J0', 'k1L2m3N4o5', 'P6q7R8'].join('')
+  // Each key is put together here, piece by piece.
+  const KEYS: [string, string[]][] = [
+    ['GitHub', ['gh', 'p_', BODY]],
+    ['Stripe', ['sk_', 'live_', BODY.slice(0, 24)]],
+    ['Slack', ['xo', 'xb-', '120045007890-', BODY.slice(0, 24)]],
+  ]
+  const cut = (parts: string[], count: number): string[] => {
+    const text = parts.join('')
+    const size = Math.floor(text.length / count)
+    return Array.from({ length: count }, (_, i) =>
+      text.slice(i * size, i === count - 1 ? text.length : (i + 1) * size)
+    )
+  }
+  const written = (parts: string[], by: string, quote = '"'): string =>
+    parts.map((p) => quote + p + quote).join(by)
+  const gone = (code: string, key: string, language: 'typescript' | 'python' | 'c') => {
+    const result = anonymize(code, { language })
+    const seen = result.anonymized + '\n' + Object.values(result.map).join('\n')
+    // The provider's prefix alone (`gh`, `sk_`) tells nothing; the rest must be gone.
+    for (let i = 8; i + 8 <= key.length; i += 2)
+      expect(seen.includes(key.slice(i, i + 8)), key.slice(i, i + 8)).toBe(false)
+    expect(result.anonymized).toContain('__REDACTED_')
+    return result
+  }
+
+  for (const [provider, parts] of KEYS)
+    for (const count of [2, 3, 8])
+      it(`a ${provider} key in ${count} literals joined by +`, () => {
+        gone(`const t = ${written(cut(parts, count), ' + ')};\n`, parts.join(''), 'typescript')
+      })
+
+  it('joined by + across lines, in single quotes', () => {
+    const [, parts] = KEYS[0]!
+    gone(`const t =\n  ${written(parts, ' +\n  ', "'")}\n`, parts.join(''), 'typescript')
+  })
+
+  it.each(KEYS)('a %s key as adjacent literals in Python', (_, parts) => {
+    gone(`token = (${written(cut(parts, 3), ' ')})\n`, parts.join(''), 'python')
+  })
+
+  it.each(KEYS)('a %s key as adjacent literals in C', (_, parts) => {
+    gone(`const char *t = ${written(cut(parts, 3), '\n    ')};\n`, parts.join(''), 'c')
+  })
+
+  it('leaves the text around the key in its literals', () => {
+    const [, parts] = KEYS[0]!
+    const code = `const t = "token " + ${written(parts, ' + ')} + " end";\n`
+    expect(gone(code, parts.join(''), 'typescript').anonymized).toMatch(/^const t = "\S+ " \+ "/)
+  })
+
+  it('adjacent literals that join to no key are masked as before', () => {
+    const code = 'const t = "invoice " + "ledger" + " total";\n'
+    const { anonymized, map } = anonymize(code, { language: 'typescript' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  // The stated limit: no text transform can follow a value through variables.
+  it('pieces held in variables are not joined', () => {
+    const [, parts] = KEYS[0]!
+    const code = `const a = "${parts[0]}";\nconst b = "${parts[1]}";\nconst c = a + b + rest;\n`
+    expect(anonymize(code, { language: 'typescript' }).anonymized).not.toContain('__REDACTED_')
+  })
+
+  it('a piece that is redacted does not redact the same letters elsewhere', () => {
+    const [, parts] = KEYS[1]!
+    const code = `const t = ${written(parts, ' + ')};\nconst is_live_mode = true;\n`
+    const { anonymized } = gone(code, parts.join(''), 'typescript')
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(3)
+  })
+})

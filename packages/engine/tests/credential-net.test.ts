@@ -279,9 +279,10 @@ it('a command or placeholder under a credential word is redacted to its close', 
     expect(anonymize(text, { path: 'notes.txt' }).anonymized, text).not.toContain(word)
 })
 
-// Spec 094: the walks over key material and over a Secret manifest read each
-// character once, however many BEGIN lines, mappings or documents a text holds.
-describe('key material and Secret manifests are read in linear time', () => {
+// Spec 094: the walks over key material, over a Secret manifest and over
+// adjacent literals read each character once, however many BEGIN lines,
+// mappings, documents or literals a text holds.
+describe('key material, Secret manifests and joined literals are read in linear time', () => {
   const time = (text: string): number => {
     let best = Infinity
     for (let i = 0; i < 5; i++) {
@@ -308,6 +309,12 @@ describe('key material and Secret manifests are read in linear time', () => {
     'kind: Secret\ndata:\n' + '  a: "\n'.repeat(n),
     'kind: Secret\ndata: {\n' + '  a: "\n'.repeat(n),
     'kind: Secret\n' + 'data: {} '.repeat(n) + '\n',
+    // Adjacent literals, read as one string.
+    '"ab" + '.repeat(n) + '"c"\n',
+    '"ab" '.repeat(n) + '\n',
+    '"'.repeat(n) + '\n',
+    '"a\\'.repeat(n) + '\n',
+    '"a\n'.repeat(n),
   ]
   it('20,000 and 160,000 lines', () => {
     const [a, b] = [20_000, 160_000].map((n) => texts(n).map(time))

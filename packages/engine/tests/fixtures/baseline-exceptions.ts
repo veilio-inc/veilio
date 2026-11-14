@@ -326,4 +326,58 @@ export const EXCEPTIONS: BaselineException[] = [
     finding: 'M4',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
   },
+  {
+    row: 'joined key: three literals',
+    options: { language: 'typescript' },
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: three literals',
+    options: {},
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: two literals',
+    options: { language: 'typescript' },
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: two literals',
+    options: {},
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: eight literals',
+    options: { language: 'typescript' },
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: eight literals',
+    options: {},
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: adjacent literals in Python',
+    options: { language: 'python' },
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: adjacent literals in C',
+    options: { language: 'c' },
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
+  {
+    row: 'joined key: adjacent literals in C',
+    options: {},
+    finding: 'L4',
+    why: 'a provider key written as adjacent string literals is redacted',
+  },
 ]

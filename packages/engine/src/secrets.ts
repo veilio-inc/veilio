@@ -1403,8 +1403,9 @@ interface RawMatch {
    *  verdict for the same span. The value is destroyed instead of masked: see
    *  the comment there. */
   forceDestroy?: boolean
-  /** A value whose other occurrences are not redacted with it: a short
-   *  value of a Secret manifest is ordinary text anywhere else. */
+  /** A value whose other occurrences are not redacted with it: one literal's
+   *  part of a key joined from several (`joinedKeys`: `live_`, `gh`), or a
+   *  short value of a Secret manifest - ordinary text anywhere else. */
   piece?: true
   /** A value that is a credential as a whole (a Secret manifest's): it is
    *  redacted whole, and never gives way to a narrower match inside it, which
@@ -1498,7 +1499,101 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
     }
     pattern.re.lastIndex = 0
   }
-  found.push(...keyMaterial(code), ...secretManifestValues(code))
+  found.push(...keyMaterial(code), ...secretManifestValues(code), ...joinedKeys(code))
+  return found
+}
+
+/** The provider-format rules that match a key by its own shape alone. */
+let shapeRules: Pattern[] | null = null
+
+/**
+ * A provider key written as adjacent string literals (`"gh" + "p_" + "..."`,
+ * or side by side, which C and Python join): the literals of a run are read
+ * as the one string they become, and the part of each literal a provider rule
+ * matches is redacted. Literals of one line each, without escapes; between
+ * two, white space and at most one `+`. Each character is read once.
+ * The language is not known here, so side-by-side literals are joined in
+ * every language: reading two strings as one can only redact more.
+ */
+function joinedKeys(code: string): RawMatch[] {
+  const found: RawMatch[] = []
+  shapeRules ??= PATTERNS.filter(
+    (p) =>
+      p.disposition === 'destroy' &&
+      p.position !== true &&
+      !GENERIC_MATCHERS.has(p.type) &&
+      p.group === undefined &&
+      p.groups === undefined &&
+      p.validate === undefined &&
+      p.only === undefined
+  )
+  const n = code.length
+  const space = (c: string | undefined): boolean =>
+    c === ' ' || c === '\t' || c === '\n' || c === '\r'
+  // The contents of the literals of the run being read.
+  let run: [start: number, end: number][] = []
+  const judge = (): void => {
+    const literals = run
+    run = []
+    if (literals.length < 2) return
+    const joined = literals.map(([s, e]) => code.slice(s, e)).join('')
+    for (const rule of shapeRules!) {
+      rule.re.lastIndex = 0
+      let m: RegExpExecArray | null
+      while ((m = rule.re.exec(joined)) !== null) {
+        if (rule.re.lastIndex <= m.index) rule.re.lastIndex = m.index + 1
+        if (classifyValue(m[0], false) === 'placeholder') continue
+        const from = m.index
+        const to = m.index + m[0].length
+        const pieces: RawMatch[] = []
+        let at = 0
+        for (const [s, e] of literals) {
+          const start = Math.max(from, at)
+          const end = Math.min(to, at + e - s)
+          if (start < end)
+            pieces.push({
+              type: rule.type,
+              severity: rule.severity,
+              label: `${rule.label} (joined from adjacent strings)`,
+              start: s + start - at,
+              end: s + end - at,
+              value: joined.slice(start, end),
+              piece: true,
+            })
+          at += e - s
+        }
+        // Within one literal the rule itself has found it.
+        if (pieces.length > 1) found.push(...pieces)
+      }
+      rule.re.lastIndex = 0
+    }
+  }
+  let i = 0
+  while (i < n) {
+    const quote = code[i]!
+    if (quote !== '"' && quote !== "'" && quote !== '`') {
+      i++
+      continue
+    }
+    let j = i + 1
+    while (j < n && code[j] !== quote && code[j] !== '\n' && code[j] !== '\\') j++
+    if (j >= n || code[j] !== quote) {
+      // An escape, or no closing quote on the line: not a piece. Past the
+      // literal's own end, so its closing quote opens nothing.
+      judge()
+      while (j < n && code[j] !== quote && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1
+      i = j + 1
+      continue
+    }
+    run.push([i + 1, j])
+    let k = j + 1
+    while (space(code[k])) k++
+    if (code[k] === '+') for (k++; space(code[k]);) k++
+    const next = code[k]
+    if (next !== '"' && next !== "'" && next !== '`') judge()
+    i = next === undefined ? n : k
+  }
+  judge()
   return found
 }
 
