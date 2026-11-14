@@ -390,8 +390,12 @@ describe('comment syntax per language', () => {
   })
 
   it('handles an unterminated docstring without hanging', () => {
-    const { anonymized } = anonymize('"""dangling prose about ledgers', { language: 'python' })
-    expect(anonymized).toContain('dangling prose about ledgers')
+    // Spec 094: a triple-quoted literal that never closes is a string to the
+    // end of the text, masked like one. It was left as written before.
+    const code = '"""dangling prose about ledgerTotals'
+    const { anonymized, map } = anonymize(code, { language: 'python' })
+    expect(anonymized).not.toContain('ledgerTotals')
+    expect(restore(anonymized, map).restored).toBe(code)
   })
 
   it('leaves Ruby # comments as prose', () => {

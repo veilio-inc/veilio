@@ -458,6 +458,13 @@ function templateEnd(code: string, at: number): number {
   return -1
 }
 
+// The first word of a Python `def` or `class` header.
+const HEADER_START = /(?:async[ \t]+def|def|class)(?![\w$])/y
+// A text that begins with a triple-quoted literal: read as a module's
+// docstring. A fragment cut out of a file cannot tell an opening quote from a
+// closing one; set this to false to read it as a string instead.
+const TEXT_MAY_START_WITH_DOCSTRING = true
+
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
 
@@ -504,6 +511,41 @@ function tokenizeForMasking(
     return FENCE_LINE.test(code) ? FENCE_LINE.lastIndex : -1
   }
   const n = code.length
+  // Where a docstring may stand: at the start of the text, and after the `:`
+  // that closes a `def` or `class` header - until anything but white space
+  // and comments is read. A prefix letter (`f"""`, `r"""`) is such a thing.
+  let docstringPosition = TEXT_MAY_START_WITH_DOCSTRING
+  // Inside a `def` or `class` header, and how many of its brackets are open.
+  let header = false
+  let depth = 0
+  let lineStart = true
+  /** One character of code, for `docstringPosition`. */
+  const readCode = (c: string, at: number): void => {
+    if (c === '\n') lineStart = true
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n' || c === '\f') return
+    if (lineStart) {
+      lineStart = false
+      // A header goes on over its lines only inside its brackets.
+      if (!header || depth <= 0) {
+        HEADER_START.lastIndex = at
+        header = HEADER_START.test(code)
+        depth = 0
+      }
+    }
+    docstringPosition = false
+    if (!header) return
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if (c === ')' || c === ']' || c === '}') depth--
+    else if (c === ':' && depth === 0) {
+      header = false
+      docstringPosition = true
+    }
+  }
+  /** Only white space or a `#` comment stands between `at` and its line's end. */
+  const lineEndsAfter = (at: number): boolean => {
+    while (at < n && (code[at] === ' ' || code[at] === '\t' || code[at] === '\r')) at++
+    return at >= n || code[at] === '\n' || code[at] === '#'
+  }
   while (i < n) {
     const c = code[i]
 
@@ -515,18 +557,22 @@ function tokenizeForMasking(
     }
 
     // Triple-quoted prose (Python docstrings) is documentation, not data —
-    // treat it as a comment so its sentences survive intact.
+    // treat it as a comment so its sentences survive intact. Only where a
+    // docstring stands (`docstringPosition`): any other triple-quoted literal
+    // is a string, masked like one - an assigned query, an f-string, an
+    // argument - and so is one that never closes. Restore reads as before.
     const doc = syntax.docstring.find((d) => startsWithAt(d, i))
     if (doc !== undefined) {
-      flush(true)
-      buf += doc
-      i += doc.length
-      while (i < n && !startsWithAt(doc, i)) buf += code[i++]
-      if (i < n) {
-        buf += doc
-        i += doc.length
-      }
+      const close = code.indexOf(doc, i + doc.length)
+      const end = close === -1 ? n : close + doc.length
+      const documentation = forRestore || (docstringPosition && close !== -1 && lineEndsAfter(end))
+      flush(documentation)
+      if (documentation) buf = code.slice(i, end)
+      else segments.push({ text: code.slice(i, end), isComment: false, isString: true })
       flush(false)
+      docstringPosition = false
+      lineStart = false
+      i = end
       continue
     }
 
@@ -618,6 +664,8 @@ function tokenizeForMasking(
       // role classification can tell string words and module specifiers apart.
       // Still maskable (isComment: false); escape handling unchanged.
       flush(false)
+      docstringPosition = false
+      lineStart = false
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
       // A JavaScript template literal runs to its own closing backtick, past
       // the templates inside its `${ }` (spec 093). One that never closes
@@ -673,6 +721,7 @@ function tokenizeForMasking(
       continue
     }
 
+    if (syntax.docstring.length > 0) readCode(c, i)
     buf += c
     i++
   }
@@ -1607,12 +1656,19 @@ function valuesIn(
   net = false
 ): ValueSpan[] {
   const strings: { start: number; end: number; module?: boolean }[] = []
+  const triple = commentSyntaxFor(language).docstring
   let at = 0
   for (const s of tokenizeForMasking(text, language)) {
     if (s.isString) {
-      const closed = s.text.length > 1 && s.text.endsWith(s.text[0]!)
-      const end = at + s.text.length - (closed ? 1 : 0)
-      strings.push({ start: at + 1, end, ...(s.isModuleSpecifier ? { module: true } : {}) })
+      // A triple-quoted string's contents start after all three quotes.
+      const quote = triple.find((q) => s.text.startsWith(q)) ?? s.text[0]!
+      const closed = s.text.length >= 2 * quote.length && s.text.endsWith(quote)
+      const end = at + s.text.length - (closed ? quote.length : 0)
+      strings.push({
+        start: at + quote.length,
+        end,
+        ...(s.isModuleSpecifier ? { module: true } : {}),
+      })
     }
     at += s.text.length
   }

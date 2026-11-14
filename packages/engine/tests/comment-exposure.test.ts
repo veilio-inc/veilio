@@ -115,7 +115,9 @@ describe('comment exposure — every supported language', () => {
   })
 
   it.each(SAMPLES)('counts a block comment in $language', ({ language, code, block }) => {
-    const { comments } = anonymize(`${code}\n${block}`, { language })
+    // The block first: a Python triple-quoted text is documentation only where
+    // a docstring stands, and a string after code (spec 094).
+    const { comments } = anonymize(`${block}\n${code}`, { language })
     expect(comments.total).toBe(1)
   })
 
