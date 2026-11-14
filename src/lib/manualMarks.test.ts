@@ -136,6 +136,35 @@ describe('unmaskTerm', () => {
   })
 })
 
+describe('unmaskTerm, when another entry refers to the mark', () => {
+  // A later mark can cover text that already holds a placeholder, so its map
+  // value names the earlier mark. Dropping the earlier entry without rewriting
+  // that value left a name that never came back on restore.
+  const state = {
+    output: 'call __MANUAL__2 and __MANUAL__1',
+    map: { __MANUAL__1: 'Kowalska', __MANUAL__2: '__MANUAL__1Client', __MANUAL__10: 'Nowak' },
+    comments: { total: 0, masked: 0 },
+  } as unknown as Parameters<typeof unmaskTerm>[0]
+
+  it('writes the real text into every map value that named the removed mark', () => {
+    const next = unmaskTerm(state, '__MANUAL__1')
+    expect(next.map).toEqual({ __MANUAL__2: 'KowalskaClient', __MANUAL__10: 'Nowak' })
+    expect(restore(next.output, next.map).restored).toBe('call KowalskaClient and Kowalska')
+  })
+
+  it('leaves a value that only shares the prefix alone', () => {
+    const longer = { ...state, map: { ...state.map, __MANUAL__3: 'x__MANUAL__10y' } }
+    expect(unmaskTerm(longer, '__MANUAL__1').map.__MANUAL__3).toBe('x__MANUAL__10y')
+  })
+
+  it('puts back a term holding a dollar sign as written', () => {
+    const priced = { ...state, map: { ...state.map, __MANUAL__1: 'price$&$1' } }
+    const next = unmaskTerm(priced, '__MANUAL__1')
+    expect(next.output).toBe('call __MANUAL__2 and price$&$1')
+    expect(next.map.__MANUAL__2).toBe('price$&$1Client')
+  })
+})
+
 describe('stripOption', () => {
   it('strips everything by default', () => {
     expect(stripOption(false)).toBe('all')
