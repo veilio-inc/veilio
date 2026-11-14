@@ -446,6 +446,57 @@ describe('restore reads a map value that holds a placeholder (spec 093)', () => 
     expect(restore('__VAR__3', map, { strip: 'none' }).restored).toBe('x'.repeat(3600))
   })
 
+  it('does no more work than the map is long for a map built to grow', () => {
+    // A map may be someone else's (a team map, an imported file). Thirty keys,
+    // each holding the next six times over, and a long last value: read
+    // through, the first would be 6^29 times 10,000 characters.
+    const keys = 30
+    const map: Record<string, string> = { [`__VAR__${keys}`]: 'x'.repeat(10_000) }
+    for (let i = 1; i < keys; i++) map[`__VAR__${i}`] = `__VAR__${i + 1} `.repeat(6)
+    const text = Array.from({ length: keys }, (_, i) => `__VAR__${i + 1}`).join('\n')
+    const t0 = performance.now()
+    const { restored } = restore(text, map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(500)
+    // Even the last level (60,000 characters) is more than the call may build,
+    // four times the map's own length: every value comes back as written.
+    expect(restored.length).toBeLessThan(200_000)
+    expect(restored.startsWith('__VAR__2 __VAR__2 ')).toBe(true)
+    expect(restored.endsWith('x'.repeat(10_000))).toBe(true)
+  })
+
+  it('reads a value many others share once, within one budget for the call', () => {
+    // 2,000 values each holding the same 40,000-character one: each fits the
+    // length a value may reach, all of them together do not fit the call.
+    const map: Record<string, string> = { __CLS__1: 'y'.repeat(40_000) }
+    for (let i = 1; i <= 2000; i++) map[`__VAR__${i}`] = `a__CLS__1`
+    const text = Object.keys(map).join(' ')
+    const t0 = performance.now()
+    const { restored } = restore(text, map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(1000)
+    expect(restored.length).toBeLessThan(1_000_000)
+    expect(restored).toContain('a__CLS__1')
+  })
+
+  it('counts the placeholders read through, not only the characters, as work', () => {
+    // Values that come to nothing, three levels of 300: no length ever grows,
+    // yet reading the top one through means 27 million placeholders.
+    const level = (base: string, holds: string): string[] => {
+      const keys = Array.from({ length: 300 }, (_, i) => `__${base}__${i + 1}`)
+      for (const key of keys) map[key] = holds
+      return keys
+    }
+    const map: Record<string, string> = {}
+    const classes = level('CLS', level('VAR', level('STR', '').join('')).join(''))
+    map.__FN__1 = classes.join('')
+    const t0 = performance.now()
+    const { restored } = restore('__FN__1 __VAR__1.', map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(2000)
+    expect(restored).toBe(`${map.__FN__1} .`)
+  })
+
   it('leaves a placeholder-shaped token in a value alone when the map has no such key', () => {
     const map = { __VAR__1: '__GNUC__ and __CLS__7 stay', __CLS__70: 'Other' }
     expect(restore('__VAR__1', map, { strip: 'none' }).restored).toBe('__GNUC__ and __CLS__7 stay')

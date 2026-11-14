@@ -2427,9 +2427,11 @@ function stripNoise(
   }
 }
 
-/** How deep, and how long, `restore` reads a map value that holds placeholders. */
-const NESTED_ROUNDS = 5
+/** How deep `restore` reads a map value that holds placeholders, how long one
+ *  may become, and how many times the map's own length one call may build. */
+const NESTED_DEPTH = 5
 const NESTED_LENGTH = 64 * 1024
+const NESTED_ALLOWANCE = 4
 
 /**
  * Restore an AI response: strip AI-generated noise, then swap placeholders back.
@@ -2468,31 +2470,81 @@ export function restore(
     // A value may hold a placeholder of this map: a mark inside a longer name
     // is masked as `__MANUAL__1_API_URL`, which is then minted as a name. Such
     // a value is read through first, or one pass gave back the placeholder in
-    // place of the name (spec 093). A value not plain after NESTED_ROUNDS (one
-    // that holds itself, at any depth, never is) or longer than NESTED_LENGTH
-    // stays as it is.
-    const nested = new Map<string, { value: string; through: Set<string> }>()
-    for (const key of placeholders) {
-      const through = new Set<string>()
-      let value = map[key]!
-      let plain = false
-      for (let round = 0; round < NESTED_ROUNDS && value.includes('__'); round++) {
-        let held = false
-        value = value.replace(pattern, (match) => {
-          held = true
-          through.add(match)
-          return map[match]!
-        })
-        plain = !held
-        if (plain || value.length > NESTED_LENGTH) break
+    // place of the name (spec 093). Only for a placeholder the text holds, each
+    // value once. A map may be someone else's, so the work is bounded before
+    // anything is built: a value that holds itself at any depth, nests deeper
+    // than NESTED_DEPTH, would pass NESTED_LENGTH, or comes after the call's
+    // allowance is spent, is written as it is - whole, never partly read.
+    type Read = { value: string; through: string[]; depth: number }
+    const reads = new Map<string, Read | null>()
+    let allowance: number | undefined
+    const readThrough = (first: string): Read | null => {
+      // An explicit stack: a chain of values as long as the map must not
+      // become a chain of calls.
+      const stack = [first]
+      const open = new Set<string>()
+      while (stack.length > 0) {
+        const key = stack[stack.length - 1]!
+        if (reads.has(key)) {
+          stack.pop()
+          continue
+        }
+        const own = map[key]!
+        const held = own.includes('__') ? [...own.matchAll(pattern)] : []
+        if (!open.has(key)) {
+          // First the values it holds; then, back here, this one.
+          open.add(key)
+          const below = stack.length
+          for (const m of held) if (!reads.has(m[0]) && !open.has(m[0])) stack.push(m[0])
+          if (stack.length > below) continue
+        }
+        let read: Read | null = { value: own, through: [], depth: 0 }
+        if (held.length > 0) {
+          if (allowance === undefined) {
+            allowance = aiResponse.length
+            for (const k of placeholders) allowance += NESTED_ALLOWANCE * map[k]!.length
+          }
+          // What it would come to and cost, before any of it is built. A
+          // value held here and not read by now is this value holding itself.
+          let length = own.length
+          let work = 0
+          let depth = 0
+          let whole = true
+          for (const m of held) {
+            const part = reads.get(m[0])
+            if (part == null) {
+              whole = false
+              break
+            }
+            length += part.value.length - m[0].length
+            work += 1 + part.through.length
+            depth = Math.max(depth, part.depth + 1)
+          }
+          if (!whole || depth > NESTED_DEPTH || length > NESTED_LENGTH || length + work > allowance)
+            read = null
+          else {
+            allowance -= length + work
+            const through = new Set<string>()
+            for (const m of held) {
+              through.add(m[0])
+              for (const k of reads.get(m[0])!.through) through.add(k)
+            }
+            read = {
+              value: own.replace(pattern, (m) => reads.get(m)!.value),
+              through: [...through],
+              depth,
+            }
+          }
+        }
+        reads.set(key, read)
+        stack.pop()
       }
-      plain = (plain || !value.includes('__')) && value.length <= NESTED_LENGTH
-      if (through.size > 0 && plain) nested.set(key, { value, through })
+      return reads.get(first)!
     }
     result = result.replace(pattern, (match) => {
       seen.add(match)
-      const read = nested.get(match)
-      if (read === undefined) return map[match] ?? match
+      const read = readThrough(match)
+      if (read === null) return map[match] ?? match
       for (const key of read.through) seen.add(key)
       return read.value
     })
