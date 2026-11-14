@@ -14,8 +14,10 @@ import { isolateHome } from './helpers/isolated-home.js'
 
 const home = isolateHome()
 
-const IGNORED =
-  "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
+// strings.md row 4 of spec 094: the file is named.
+const ignored = (file: string): string =>
+  `veilio-mcp: a configuration file in this project (${file}) sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE, or could not be read as JSON. These two settings are ignored; set them in your own environment, outside the project, to use them.`
+const IGNORED = ignored('.mcp.json')
 const BOTH = { VEILIO_MCP_RESTORE: '1', VEILIO_MCP_DESTRUCTIVE: '1' }
 
 let dir: string
@@ -97,7 +99,51 @@ describe('a switch the project file sets is ignored', () => {
     write(dir, name, text)
     const ctx = contextFromArgv([], BOTH, dir)
     expect([ctx.restoreText, ctx.destructive]).toEqual([false, false])
-    expect(ctx.switchesIgnored).toBe(IGNORED)
+    expect(ctx.switchesIgnored).toBe(ignored(name))
+  })
+
+  // Spec 094: JSON lets a name be written with escapes, which a client decodes
+  // before it sets the variable. The file is read decoded as well, and one that
+  // cannot be read as JSON is not trusted to name neither.
+  const FILES = [
+    '.mcp.json',
+    '.cursor/mcp.json',
+    '.vscode/mcp.json',
+    '.claude/settings.json',
+    '.claude/settings.local.json',
+  ]
+  // The name with one letter written as an escape; never the plain name.
+  const escaped = (name: string): string => name.replace('MCP', 'M\\u0043P')
+  const SHAPES: [string, string][] = [
+    ['an escaped key', `{"mcpServers":{"v":{"env":{"${escaped('VEILIO_MCP_RESTORE')}":"1"}}}}`],
+    [
+      'an escaped key of the other switch',
+      `{"servers":{"v":{"env":{"${escaped('VEILIO_MCP_DESTRUCTIVE')}":"1"}}}}`,
+    ],
+    [
+      'an escaped argument of a wrapper command',
+      `{"mcpServers":{"v":{"command":"env","args":["${escaped('VEILIO_MCP_RESTORE')}=1","veilio-mcp"]}}}`,
+    ],
+    ['an escaped lower-case key', '{"env":{"veilio_\\u006dcp_restore":"1"}}'],
+    ['JSON with a comment', '{\n  // the servers\n  "mcpServers": {}\n}'],
+    ['JSON with a trailing comma', '{"mcpServers":{},}'],
+    ['text that is not JSON', '{"mcpServers":'],
+    ['nothing at all', ''],
+  ]
+  for (const file of FILES)
+    it.each(SHAPES)(`${file} with %s: both are off, and it is said`, (_, text) => {
+      expect(text).not.toMatch(/VEILIO_MCP_(?:RESTORE|DESTRUCTIVE)/i)
+      write(dir, file, text)
+      const ctx = contextFromArgv([], BOTH, dir)
+      expect([ctx.restoreText, ctx.destructive]).toEqual([false, false])
+      expect(ctx.switchesIgnored).toBe(ignored(file))
+      expect(names(ctx)).not.toContain('restore_text')
+    })
+
+  it('names the first file found', () => {
+    write(dir, '.vscode/mcp.json', '{"servers":{"v":{"env":{"VEILIO_MCP_RESTORE":"1"}}}}')
+    write(dir, '.claude/settings.json', '{"env":{"VEILIO_MCP_RESTORE":"1"}}')
+    expect(contextFromArgv([], BOTH, dir).switchesIgnored).toBe(ignored('.vscode/mcp.json'))
   })
 
   it('a file in a folder above, up to the one that holds .git', () => {
@@ -145,9 +191,12 @@ describe('otherwise the environment decides, as before', () => {
   })
 
   it.each([
-    ['not JSON', '{"mcpServers":'],
     ['a list', '[]'],
     ['no servers', '{}'],
+    [
+      'servers that name neither switch',
+      '{"mcpServers":{"v":{"env":{"VEILIO_PROJECT":"\\u0070ay"}}}}',
+    ],
     ['servers that are not a record', '{"mcpServers":3}'],
     ['a server that is not a record', '{"mcpServers":{"veilio":null}}'],
   ])('a project file that is %s', (_, text) => {
@@ -213,14 +262,14 @@ describe('the server, started in such a project', () => {
     const r = start()
     expect(r.stderr).toContain(`${IGNORED}\n`)
     expect(r.stderr).not.toContain('restore_text is on')
-    expect(r.stdout).not.toContain('Settings from a project file')
+    expect(r.stdout).not.toContain('These two settings are ignored')
     expect(r.stdout).toContain('anonymize_file')
     expect(r.stdout).not.toContain('restore_text')
   })
 
   it('without the file it starts as before, restore_text listed', () => {
     const r = start()
-    expect(r.stderr).not.toContain('Settings from a project file')
+    expect(r.stderr).not.toContain('These two settings are ignored')
     expect(r.stdout).toContain('restore_text')
   })
 })
