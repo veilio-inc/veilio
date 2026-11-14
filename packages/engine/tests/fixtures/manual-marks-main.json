@@ -1,6 +1,12 @@
 {
   "inside a name": {
-    "unmarked": "const u = ACME_API_URL + new __CLS__2()",
+    "unmarked": {
+      "anonymized": "const u = ACME_API_URL + new __CLS__2()",
+      "map": {
+        "__CLS__1": "Client",
+        "__CLS__2": "AcmeClient"
+      }
+    },
     "redact": {
       "anonymized": "const u = __VAR__1 + new __CLS__2()",
       "map": {
@@ -36,7 +42,13 @@
     }
   },
   "alone in a string": {
-    "unmarked": "log(\"__STR__1\")",
+    "unmarked": {
+      "anonymized": "log(\"__STR__1\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "Acme"
+      }
+    },
     "redact": {
       "anonymized": "log(\"__MANUAL__1\")",
       "map": {
@@ -66,7 +78,14 @@
     }
   },
   "inside a name in a string": {
-    "unmarked": "log(\"__STR__1 __STR__2\")",
+    "unmarked": {
+      "anonymized": "log(\"__STR__1 __STR__2\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "PaymentAcmeGateway",
+        "__STR__2": "down"
+      }
+    },
     "redact": {
       "anonymized": "log(\"__STR__1 __STR__2\")",
       "map": {
@@ -102,7 +121,12 @@
     }
   },
   "in a comment": {
-    "unmarked": "const total = 1 // ask Acme and the AcmeTeam",
+    "unmarked": {
+      "anonymized": "const total = 1 // ask Acme and the AcmeTeam",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const total = 1 // ask __MANUAL__1 and the __MANUAL__1Team",
       "map": {
@@ -132,7 +156,14 @@
     }
   },
   "beside Polish letters": {
-    "unmarked": "const __VAR__1 = \"Ż__STR__1\" // AcmeŻółć",
+    "unmarked": {
+      "anonymized": "const __VAR__1 = \"Ż__STR__1\" // AcmeŻółć",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "AcmeClient",
+        "__VAR__1": "firma"
+      }
+    },
     "redact": {
       "anonymized": "const __VAR__1 = \"Ż__STR__1\" // __MANUAL__1Żółć",
       "map": {
@@ -168,7 +199,12 @@
     }
   },
   "beside Greek letters": {
-    "unmarked": "// ΑAcmeΔ und AcmeClientΩ",
+    "unmarked": {
+      "anonymized": "// ΑAcmeΔ und AcmeClientΩ",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "// Α__MANUAL__1Δ und __MANUAL__1ClientΩ",
       "map": {
@@ -198,7 +234,12 @@
     }
   },
   "inside a number": {
-    "unmarked": "// acct 88412037\nwire(88412037)",
+    "unmarked": {
+      "anonymized": "// acct 88412037\nwire(88412037)",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "// acct __MANUAL__32037\nwire(__MANUAL__32037)",
       "map": {
@@ -228,7 +269,12 @@
     }
   },
   "beside a placeholder": {
-    "unmarked": "// AcmeŻ__CLS__1 and Acme__CLS__1x here",
+    "unmarked": {
+      "anonymized": "// AcmeŻ__CLS__1 and Acme__CLS__1x here",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "// __MANUAL__1Ż__CLS__1 and __MANUAL__1__CLS__1x here",
       "map": {
@@ -258,7 +304,12 @@
     }
   },
   "inside a key": {
-    "unmarked": "const k = \"__REDACTED_STRIPE_KEY_1__\"",
+    "unmarked": {
+      "anonymized": "const k = \"__REDACTED_STRIPE_KEY_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const k = \"__REDACTED_STRIPE_KEY_1__\"",
       "map": {
@@ -290,7 +341,16 @@
     }
   },
   "inside a password of a connection string": {
-    "unmarked": "const __VAR__1 = \"__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app\"",
+    "unmarked": {
+      "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "postgres",
+        "__STR__2": "internal",
+        "__VAR__1": "dsn",
+        "__STR__3": "svc"
+      }
+    },
     "redact": {
       "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app\"",
       "map": {
@@ -332,7 +392,12 @@
     }
   },
   "inside a value under a credential key": {
-    "unmarked": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
       "map": {
@@ -362,7 +427,12 @@
     }
   },
   "a whole part of a credential": {
-    "unmarked": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
       "map": {
@@ -392,7 +462,12 @@
     }
   },
   "inside a credential that holds a placeholder": {
-    "unmarked": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
       "map": {
@@ -422,7 +497,12 @@
     }
   },
   "in a name that is a credential elsewhere": {
-    "unmarked": "const password = \"__REDACTED_CREDENTIAL_1__\"\nlog(__REDACTED_CREDENTIAL_1__)",
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"\nlog(__REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
     "redact": {
       "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"\nlog(__REDACTED_CREDENTIAL_1__)",
       "map": {
@@ -450,6 +530,134 @@
         "__MANUAL__2": "ACME",
         "__MANUAL__3": "8841",
         "__VAR__1": "__MANUAL__1Hunter7Zq9"
+      }
+    }
+  },
+  "in a name that is a credential in a later call": {
+    "unmarked": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__FN__1": "login"
+      }
+    },
+    "redact": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    },
+    "warn": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    },
+    "off": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    }
+  },
+  "in a name that is a credential in a later YAML key": {
+    "unmarked": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    },
+    "warn": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    },
+    "off": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    }
+  },
+  "two marks side by side in a comment": {
+    "unmarked": {
+      "anonymized": "// invoice for AcmeCorp Ltd",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "warn": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "off": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    }
+  },
+  "two marks side by side in a string": {
+    "unmarked": {
+      "anonymized": "const who = '__STR__1 __STR__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "AcmeCorp",
+        "__STR__2": "Ltd"
+      }
+    },
+    "redact": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "warn": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "off": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
       }
     }
   }

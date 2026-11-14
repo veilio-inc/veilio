@@ -185,8 +185,6 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
  *  placeholders already in source (anonymize) and to scope a legend to the
  *  placeholders actually present in a snippet (withAiPreamble). */
 const PLACEHOLDER_SCAN = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
-/** Anything shaped like one, wherever it stands in a run of name characters. */
-const PLACEHOLDER_SHAPE = /__[A-Z][A-Z0-9_]*__\d*/
 
 /** Prepend the downstream-AI preamble (and, when a map is given, a placeholder
  *  legend) to anonymized code, ready to paste. The legend is scoped to the
@@ -859,12 +857,7 @@ function applyManualMasks(
   map: SymbolMap,
   reverseExisting: Record<string, string>,
   mint: Mint,
-  language: Language,
-  /** Whether code[start, stop) is clear of every credential, by where one
-   *  stands and by what its value is. */
-  clear: (start: number, stop: number) => boolean,
-  /** Out: the names a term stands inside, for `anonymize` to mask whole. */
-  inside: Set<string>
+  language: Language
 ): string {
   // Replayed means "came from the map and was not asked for again". Deduping the
   // two lists into one and testing membership in the map would exempt a term the
@@ -933,43 +926,7 @@ function applyManualMasks(
     `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
     'g'
   )
-  // One rule on top of the replacement below (spec 093): a term inside a longer
-  // name (`ACME` in `ACME_API_URL`) is not replaced. `__MANUAL__1_API_URL` was
-  // then minted as a name, and restore, one pass, never brought it back. The
-  // name is left for `anonymize` to mask whole, like any name (`inside`).
-  // shortcut: only a plain name clear of every credential, placeholder and
-  // letter of another script; any other run keeps the old replacement and its
-  // round-trip defect. Widen when a lexer can say what the run is.
-  // The run last looked at, and whether it is such a name.
-  let runStart = 0
-  let runStop = 0
-  let whole = false
-  return code.replace(pattern, (match, at: number) => {
-    if (PLACEHOLDER_TOKEN.test(match)) return reverseExisting[match] ?? match
-    const end = at + match.length
-    if (end > runStop) {
-      let start = at
-      let stop = end
-      if (IDENT_CHAR.test(code[at]!))
-        while (start > runStop && IDENT_CHAR.test(code[start - 1]!)) start--
-      if (IDENT_CHAR.test(code[end - 1]!))
-        while (stop < code.length && IDENT_CHAR.test(code[stop]!)) stop++
-      const run = code.slice(start, stop)
-      whole =
-        run.length > match.length &&
-        IDENTIFIER.test(run) &&
-        !NAME_RUN.test(code[start - 1] ?? '') &&
-        !NAME_RUN.test(code[stop] ?? '') &&
-        !PLACEHOLDER_SHAPE.test(run) &&
-        clear(start, stop) &&
-        !hasBlockingSecrets(detectSecrets(run))
-      runStart = start
-      runStop = stop
-    }
-    if (!whole) return reverseExisting[match] ?? match
-    inside.add(code.slice(runStart, runStop))
-    return match
-  })
+  return code.replace(pattern, (match) => reverseExisting[match] ?? match)
 }
 
 /** Placeholder base per regulated format.
@@ -1542,10 +1499,6 @@ function spreadRedactions(
 
 /** A character of an identifier, for whole-word matching. */
 const IDENT_CHAR = /[A-Za-z0-9_$]/
-/** A character a name or a word runs through, in any script: what the code
- *  matcher and the comment matcher (`COMMENT_WORD`) both stop at. Half of a
- *  pair (a letter outside the basic plane) counts, the safe side. */
-const NAME_RUN = /[\p{L}\p{N}_$\uD800-\uDFFF]/u
 
 /** The highest n of the `__REDACTED_<base>_n__` tokens in `text`, so a new
  *  token never repeats one already there. */
@@ -1855,10 +1808,6 @@ export function anonymize(
   // classifier would have given the same token. Terms already in the map are
   // re-applied so a mark made in an earlier pass survives the round trip.
   const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)))
-  const inside = new Set<string>()
-  let secretsLeft: (readonly [number, number])[] | undefined
-  const kind = valueKind(code, opts)
-  const net = guessedCode(opts)
   const marked = applyManualMasks(
     redacted,
     opts.manual ?? [],
@@ -1871,20 +1820,7 @@ export function anonymize(
     map,
     reverseExisting,
     mint,
-    language,
-    (start, stop) => {
-      // Found by a rule, or by the credential words (a value under `password`).
-      secretsLeft ??= [
-        ...credentialSpans(redacted, where),
-        ...credentialsAmong(valuesIn(redacted, language, kind, net)),
-      ].map((s) => [s.start, s.end] as const)
-      const run = redacted.slice(start, stop)
-      return (
-        !overlapsAny(secretsLeft, start, stop) &&
-        ![...credentialValues].some((value) => run.includes(value))
-      )
-    },
-    inside
+    language
   )
 
   // AFTER manual marks, on purpose — a value the author marked by hand is
@@ -1920,6 +1856,8 @@ export function anonymize(
   // `off` too - such a value is found by the credential words, not reported
   // by a rule - except where a rule found it, which those modes leave as
   // written by the user's choice.
+  const kind = valueKind(code, opts)
+  const net = guessedCode(opts)
   const policy = opts.secrets ?? 'redact'
   const reported =
     policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end] as const)
@@ -2020,17 +1958,10 @@ export function anonymize(
         if (reverseExisting[w] && !inCode.has(w) && isNameShaped(w, language)) commentOnly.add(w)
     segmentStart += s.text.length
   }
-  // Names a manual mark stands inside, where they still stand whole (a later
-  // pass may have redacted one): always masked, whatever a whitelist, the
-  // ordinary words or a keyword list would leave readable (spec 093).
-  // Outside a credential only, so no part of one is minted.
-  const standing =
-    inside.size === 0 ? null : new Set(blankSpans(source, secretSpans).match(/[A-Za-z0-9_$]+/g))
-  const holdsMark = new Set([...inside].filter((n) => standing?.has(n)))
   const identifiers =
-    missed.length === 0 && commentOnly.size === 0 && holdsMark.size === 0
+    missed.length === 0 && commentOnly.size === 0
       ? extractedNames
-      : [...new Set([...extractedNames, ...missed, ...commentOnly, ...holdsMark])].sort(
+      : [...new Set([...extractedNames, ...missed, ...commentOnly])].sort(
           (a, b) => b.length - a.length
         )
   const roleOf = classifyIdentifiers(scannable, language)
@@ -2064,7 +1995,7 @@ export function anonymize(
     // still used (1.12.1 review: fail closed for what is new).
     if (secretValues.has(name) && !alreadyMapped.has(name)) continue
 
-    if (!holdsMark.has(name) && whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
+    if (whitelist.some((r) => safeMatch(r.pattern, name, budget))) {
       whitelisted.add(name)
       continue
     }
@@ -2078,7 +2009,6 @@ export function anonymize(
     // With the budget spent, a replace rule can no longer say a word is not
     // its codename: the word is masked rather than shown.
     if (
-      !holdsMark.has(name) &&
       isOrdinaryWord(name) &&
       !replacers.some((r) => safeMatch(r.pattern, name, budget)) &&
       !(hadReplacers && budget.spent)
@@ -2184,7 +2114,7 @@ export function anonymize(
   // What is written for the substitutable name `m` standing at `at` in
   // `source`: the one decision for code and comments.
   const placeholderAt = (m: string, at: number): string =>
-    (inSpan(verbatim, at) && !holdsMark.has(m)) ||
+    inSpan(verbatim, at) ||
     (!alreadyMapped.has(m) && overlapsAny(secretSpans, at, at + m.length)) ||
     (ordinary.has(m) && isFree(at, at + m.length))
       ? m
@@ -2218,7 +2148,6 @@ export function anonymize(
             if (!held.has(m)) return m
             const at = start + offset
             return STRING_ROLE.test(reverseExisting[m] as string) &&
-              !holdsMark.has(m) &&
               /^[a-z]+$/.test(m) &&
               isFree(at, at + m.length)
               ? m
