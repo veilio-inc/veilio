@@ -313,7 +313,7 @@ Veilio is a standard **stdio** MCP server: command `npx`, arguments
 3. Restore the answer in a terminal: `pbpaste | veilio restore`. Anything it
    could not restore is listed, never guessed. Use `--strict` when the answer is
    going straight into a file.
-   `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in its configuration. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
+   `restore_text` is off unless you start the server with `VEILIO_MCP_RESTORE=1` in your own environment. When the agent calls it, the restored text - the real names - is in the agent's context from then on, and an instruction hidden in a file the agent reads could ask for it. To restore an answer without that, run `veilio restore` in a terminal.
 
 Tell your assistant once, for example in `CLAUDE.md` or your client's rules file:
 *"Before reading source files, use the veilio `anonymize_file` tool."*
