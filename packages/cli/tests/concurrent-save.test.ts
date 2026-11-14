@@ -66,14 +66,26 @@ const BETA = { __CLS__1: 'NebulaRouterFake' }
 const OTHER = { __FN__1: 'settleNebulaFake' }
 
 describe('both read the map before either wrote', () => {
-  it.each([
-    ['the same placeholder for another name', BETA],
-    ['another placeholder', OTHER],
-  ])('%s: the second writer is refused and the first one’s map is whole', (_, second) => {
+  it('the same placeholder for another name: the second writer is refused and the first one’s map is whole', () => {
     const a = loadMap(path)
     const b = loadMap(path)
     saveMap(path, { ...a, ...ALPHA })
-    expect(() => saveMap(path, { ...b, ...second })).toThrow(MapOverwriteError)
+    expect(() => saveMap(path, { ...b, ...BETA })).toThrow(MapOverwriteError)
+    expect(loadMap(path)).toEqual(ALPHA)
+  })
+
+  // Review round 1 (US5 scenario 1): nothing clashes, so both are saved.
+  it('another placeholder: both writers’ names are in the file', () => {
+    const a = loadMap(path)
+    const b = loadMap(path)
+    saveMap(path, { ...a, ...ALPHA })
+    saveMap(path, { ...b, ...OTHER })
+    expect(loadMap(path)).toEqual({ ...ALPHA, ...OTHER })
+  })
+
+  it('the same name under another placeholder: refused, one name keeps one placeholder', () => {
+    saveMap(path, ALPHA)
+    expect(() => saveMap(path, { __CLS__2: ALPHA.__CLS__1 })).toThrow(MapOverwriteError)
     expect(loadMap(path)).toEqual(ALPHA)
   })
 })
@@ -101,6 +113,8 @@ describe('the second writer saves between the first one’s check and its write'
     if (outcome.first === 'saved') expect(file).toMatchObject(ALPHA)
     if (outcome.second === 'saved') expect(file).toMatchObject(second)
     expect([outcome.first, outcome.second]).toContain('saved')
+    // Nothing clashes between ALPHA and OTHER: neither writer is refused.
+    if (second === OTHER) expect(outcome).toEqual({ first: 'saved', second: 'saved' })
   })
 })
 

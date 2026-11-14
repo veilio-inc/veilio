@@ -682,23 +682,44 @@ describe('the map is not overwritten silently (005-c1 FR-005)', () => {
     }
   })
 
-  it('refuses a write that would drop an existing placeholder', () => {
+  // Spec 093 item 6 (review round 1): an entry the file has and the write
+  // does not mention is another run's, saved since this one read the map. It
+  // is kept, not lost, so there is nothing to refuse.
+  it('keeps an existing placeholder the write does not mention', () => {
     const path = join(cwd, 'map.json')
     saveMap(path, { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' })
-    expect(() => saveMap(path, { __FN__1: 'chargeCard' })).toThrow(MapOverwriteError)
+    saveMap(path, { __FN__1: 'chargeCard', __VAR__1: 'ledgerTotal' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).map).toEqual({
+      __CLS__1: 'PaymentGateway',
+      __FN__1: 'chargeCard',
+      __VAR__1: 'ledgerTotal',
+    })
   })
 
   it('names what would be lost, and how to proceed anyway', () => {
     const path = join(cwd, 'map.json')
     saveMap(path, { __CLS__1: 'PaymentGateway' })
     try {
-      saveMap(path, {})
+      saveMap(path, { __CLS__1: 'SomethingElse' })
       expect.unreachable('should have thrown')
     } catch (e) {
       expect(e).toBeInstanceOf(MapOverwriteError)
       expect((e as Error).message).toContain('__CLS__1')
       expect((e as Error).message).toContain('--force')
     }
+  })
+
+  it('refuses a write that would give a name the file has a second placeholder', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway' })
+    expect(() => saveMap(path, { __CLS__2: 'PaymentGateway' })).toThrow(MapOverwriteError)
+  })
+
+  it('--force writes the map as given, dropping what it does not mention', () => {
+    const path = join(cwd, 'map.json')
+    saveMap(path, { __CLS__1: 'PaymentGateway', __FN__1: 'chargeCard' })
+    saveMap(path, { __CLS__1: 'SomethingElse' }, { force: true })
+    expect(JSON.parse(readFileSync(path, 'utf8')).map).toEqual({ __CLS__1: 'SomethingElse' })
   })
 
   it('refuses a write that would repoint a placeholder at a different name', () => {

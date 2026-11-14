@@ -398,7 +398,9 @@ function withStoreLock(path: string, work: () => void): void {
  * stops being read.
  *
  * What it refuses is the write that actually destroys something: one whose map
- * no longer explains a placeholder the file already had. That map is the only
+ * gives a placeholder the file already had to another name, or a name the file
+ * has to a second placeholder. An entry the file has and the map does not
+ * mention is kept (spec 093 item 6): it is another run's, saved meanwhile. That map is the only
  * means of restoring output produced with it, and once the entry is gone the
  * text that used it can never be read back. Reachable by pointing `--map` at
  * another session's store, or by a future caller that forgets to load first.
@@ -411,10 +413,16 @@ export function saveMap(
   refuseNonNames('the map', map)
   // Judged before anything is written (spec 085 R2-3 review).
   const ours = storeIsOurs(path)
-  const refuseLoss = (): void => {
-    if (options.force || !existsSync(path)) return
-    const dropped = Object.entries(loadMap(path)).filter(
-      ([placeholder, real]) => map[placeholder] !== real
+  // What is written: the map as given, with the entries the file has and the
+  // map does not mention (spec 093 item 6: another run saved them since this
+  // one read the file, and they clash with nothing). Refused when the file
+  // gives a placeholder another name, or a name another placeholder.
+  const merged = (): SymbolMap => {
+    if (options.force || !existsSync(path)) return map
+    const onDisk = loadMap(path)
+    const mine = new Map(Object.entries(map).map(([placeholder, real]) => [real, placeholder]))
+    const dropped = Object.entries(onDisk).filter(([placeholder, real]) =>
+      placeholder in map ? map[placeholder] !== real : mine.has(real)
     )
     if (dropped.length > 0) {
       const shown = dropped
@@ -427,18 +435,19 @@ export function saveMap(
           `could never be restored. Pass --force to overwrite anyway.`
       )
     }
+    return { ...onDisk, ...map }
   }
-  refuseLoss()
+  merged()
   prepareStoreWrite('the map', path)
   // Spec 093 item 6: checked again and written as one step. Two runs that both
   // passed the check above each wrote, and the one that wrote first had
   // printed placeholders the file then gave to the other's names.
   withStoreLock(path, () => {
-    refuseLoss()
+    const all = merged()
     // Carried forward when the caller does not supply one, so an ordinary `scrub`
     // does not quietly erase the provenance a `pull` recorded.
     const remote = options.remote ?? loadRemote(path)
-    const payload: StoredMap = { version: 1, map, ...(remote ? { remote } : {}) }
+    const payload: StoredMap = { version: 1, map: all, ...(remote ? { remote } : {}) }
     // A new 0600 file each time, so a world-readable map already there is replaced too.
     writeStoreFile('the map', path, `${JSON.stringify(payload, null, 2)}\n`)
   })
