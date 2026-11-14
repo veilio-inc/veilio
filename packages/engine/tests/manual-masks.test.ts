@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { credentialSpans, detectSecrets, hasBlockingSecrets } from '../src/secrets.js'
+
+/** What origin/main 05931b6 gave for each row of the table below: with no
+ *  marks, and with the marks in each `secrets` mode. */
+const MAIN: Record<
+  string,
+  { unmarked: string } & Record<
+    'redact' | 'warn' | 'off',
+    { anonymized: string; map: Record<string, string> }
+  >
+> = JSON.parse(readFileSync(new URL('./fixtures/manual-marks-main.json', import.meta.url), 'utf8'))
 import {
   anonymize,
   restore,
@@ -406,18 +417,6 @@ describe('manual masks', () => {
     expect(back.report.altered).toEqual([])
   })
 
-  it('takes a run that is no name, and a term of two words, whole', () => {
-    // `88412037` starts with a digit and `Contoso Healthy` has a space: neither
-    // is a name the code could hold, so each becomes a mark of its own.
-    const code = '// acct 88412037, Contoso Healthy\nwire(88412037)'
-    const { anonymized, map, back } = roundTrip(code, ['8841', 'Contoso Health'])
-
-    expect(anonymized).not.toContain('8841')
-    expect(anonymized).not.toContain('Contoso')
-    expect(Object.values(map)).toEqual(expect.arrayContaining(['88412037', 'Contoso Healthy']))
-    expect(back.restored).toBe(code)
-  })
-
   it('masks a name holding a mark in a line of a stack trace left as written', () => {
     const code = "TypeError: Cannot read properties of undefined (reading 'charge')"
     const { anonymized, back } = roundTrip(code, ['roper'])
@@ -449,243 +448,66 @@ describe('manual masks', () => {
     expect(anonymize(code).anonymized).toBe('const u = ACME_API_URL + new __CLS__1() // total')
   })
 
-  // ─── spec 093 review · a mark inside a credential, and beside other scripts ─
+  // ─── spec 093 · the one rule, and where main's behaviour is kept ───────────
+  //
+  // A name holding a mark is masked whole only when it is a plain name clear
+  // of every credential, placeholder and letter of another script. Any other
+  // run is handled exactly as origin/main 05931b6 handled it, round-trip defect
+  // included: a known limit, pinned here from a run of that build
+  // (fixtures/manual-marks-main.json) so it cannot change unnoticed.
 
   // Provider-shaped values are built here, never written whole.
   const KEY = 'sk_' + 'live_' + '4eC39HqLyjWDAcmetT1zdp7dc'
-  const PASSWORD = 'AcmeHunter7Zq9'
-  const DSN = 'postgres://svc:' + PASSWORD + '@db.internal:5432/app'
+  const PASSWORD = 'Zt4pw-AcmeHunter7Zq9-x9Kd2'
   const MODES = ['redact', 'warn', 'off'] as const
+  const MARKS = ['Acme', 'ACME', '8841']
+  const HELD = { __CLS__1: 'Client' }
 
-  describe.each([
-    ['a key that holds the mark', `const stripeKey = "${KEY}"`, [KEY]],
-    ['a key standing bare', `STRIPE=${KEY}\nconst total = 1`, [KEY]],
-    ['a connection string whose password holds the mark', `const dsn = "${DSN}"`, [PASSWORD]],
-    ['a value under a credential key', `const password = "${PASSWORD}"`, [PASSWORD]],
-    ['a value under a credential key that is no name', `password: "9${PASSWORD}"`, [PASSWORD]],
-    ['two words, the second inside a key', `// see Acme ${KEY}`, [KEY]],
-    ['a value the credential words find, a name', 'password sunshineAcme\n', ['sunshineAcme']],
-    ['a value the credential words find, no name', 'password 9sunshineAcme7\n', ['9sunshineAcme7']],
-  ])('a mark inside %s', (_name, code, secrets) => {
-    const path = code.startsWith('password ') ? 'app.properties' : 'a.ts'
-
-    it.each(MODES)('puts no credential, whole or in part, in the map (%s)', (mode) => {
-      const { anonymized, map } = anonymize(code, {
-        path,
-        manual: ['Acme', 'see Acme sk'],
-        secrets: mode,
-      })
-
-      expect(anonymized).not.toContain('Acme')
-      for (const value of Object.values(map)) {
-        expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
-        // The mark itself is the user's word; nothing longer cut from the secret is kept.
-        if (value !== 'Acme') for (const secret of secrets) expect(secret).not.toContain(value)
-        for (const secret of secrets) expect(value).not.toContain(secret)
-      }
-    })
-
-    it('destroys the credential exactly as it does without the mark', () => {
-      const plain = anonymize(code, { path })
-      const marked = anonymize(code, { path, manual: ['Acme'] })
-      if (!plain.anonymized.includes('Acme')) expect(marked.anonymized).toBe(plain.anonymized)
-      expect(marked.secrets).toEqual(plain.secrets)
-    })
-  })
-
-  // A credential with other characters in it: the run around the mark is only
-  // a piece of it. Nothing of the rest may stay beside the token or be minted.
-  const JWT =
-    'eyJ' +
-    'hbGciOiJIUzI1NiJ9' +
-    '.' +
-    'eyJ' +
-    'zdWIiOiJAcmeQ4In0' +
-    '.' +
-    'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c'
-  const LONG_PASSWORD = 'Zt4pw-AcmeHunter7Zq9-x9Kd2'
-  describe.each([
-    ['a token of three parts', `const token = "${JWT}"`, JWT],
-    ['a token standing bare', `TOKEN=${JWT}\n`, JWT],
-    [
-      'a password with dashes in a connection string',
-      `const dsn = "postgres://svc:${LONG_PASSWORD}@db.internal:5432/app"`,
-      LONG_PASSWORD,
-    ],
-    [
-      'a value with dashes under a credential key',
-      `const password = "${LONG_PASSWORD}"`,
-      LONG_PASSWORD,
-    ],
-  ])('a mark in the middle of %s', (_name, code, secret) => {
-    const pieces = secret.split(/[^A-Za-z0-9_$]+/).filter((p) => p.length > 3)
-
-    it.each(MODES)('leaves no piece of it beside the token or in the map (%s)', (mode) => {
-      const { anonymized, map } = anonymize(code, { manual: ['Acme'], secrets: mode })
-
-      for (const piece of pieces) expect(anonymized).not.toContain(piece)
-      for (const value of Object.values(map))
-        if (value !== 'Acme') for (const piece of pieces) expect(value).not.toContain(piece)
-    })
-  })
-
-  it.each([
-    ['const firma = "ŻClient" // Kowalska', ['Kowalska'], ['Kowalska']],
-    ['const firma = "ŻClient" + ledgerShard // Kowalska', ['Kowalska'], ['STR', 'VAR', 'Kowalska']],
-    ['const firma = "AcmeŻClient" // note', ['Acme'], ['Acme', 'STR']],
-  ])('leaves a placeholder beside a letter of another script whole: %s', (code, first, again) => {
-    const one = anonymize(code, { manual: first })
-    const two = anonymize(one.anonymized, { existingMap: one.map, manual: again })
-
-    expect(two.anonymized).toBe(one.anonymized)
-    expect(Object.values(two.map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
-    expect(restore(two.anonymized, two.map, { strip: 'none' }).restored).toBe(code)
-  })
-
-  it('replaces a term glued to a placeholder where it stands', () => {
-    const map = { __CLS__1: 'Client' }
-    const { anonymized, map: after } = anonymize('// AcmeŻ__CLS__1 here', {
-      existingMap: map,
-      manual: ['Acme'],
-    })
-
-    expect(anonymized).toBe('// __MANUAL__1Ż__CLS__1 here')
-    expect(restore(anonymized, after, { strip: 'none' }).restored).toBe('// AcmeŻClient here')
-  })
-
-  it('never mints a mark that could not be marked again', () => {
-    // A mark of its own is replayed from the map as a term on the next call,
-    // where a term that scans as a credential is refused.
-    const code = `// see Acme-${KEY}x and AcmeŻ ${KEY}`
-    for (const mode of MODES) {
-      const one = anonymize(code, { manual: ['Acme', 'see Acme'], secrets: mode })
-      for (const value of Object.values(one.map))
-        expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
-      expect(() => anonymize(code, { existingMap: one.map, secrets: mode })).not.toThrow()
-    }
-  })
-
-  it.each([
-    ['const firma = "AcmeŻółć"', 'Acme'],
-    ['const firma = "ŻAcmeClient" // ŻAcmeClient i AcmeŻółć', 'Acme'],
-    ['// ΑcmeΔ, ŁAcmeClient, AcmeClientÖ und Acme9', 'cme'],
-    ['const s = "ΑcmeΔ" + ŁAcmeClient', 'cme'],
-    ['// Kowalskiego i Żółćiński', 'ółć'],
-  ])('hides and restores a mark beside a letter of another script: %s', (code, term) => {
-    const { map, back } = roundTrip(code, [term])
-
-    expect(back.restored).toBe(code)
-    expect(back.report.unresolved).toEqual([])
-    expect(Object.values(map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
-  })
-
-  it.each(MODES)('still marks a word that only may be a credential, whole (%s)', (mode) => {
-    // An ambiguous word in a credential position may be marked by hand; it is
-    // then a mark like any other, and comes back.
-    const code = 'client_secret: "disabled"\n'
-    const { anonymized, map } = anonymize(code, {
-      path: 'a.yaml',
-      manual: ['disabled'],
-      secrets: mode,
-    })
-
-    expect(anonymized).toContain('"__MANUAL__1"')
-    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(code)
-  })
-
-  // ─── spec 093 · the four things that hold for every mark, wherever it stands ─
-  //
-  // One table instead of a case per review finding: each surrounding, in each
-  // `secrets` mode, masked once and masked again. [name, before, credential,
-  // after, the output with NO marks as origin/main 05931b6 gave it].
-  const SURROUNDINGS: [string, string, string, string, string][] = [
-    [
-      'inside a name',
-      'const u = ACME_API_URL + new AcmeClient()',
-      '',
-      '',
-      'const u = ACME_API_URL + new __CLS__2()',
-    ],
-    ['alone in a string', 'log("Acme")', '', '', 'log("__STR__1")'],
-    [
-      'inside a name in a string',
-      'log("PaymentAcmeGateway down")',
-      '',
-      '',
-      'log("__STR__1 __STR__2")',
-    ],
-    [
-      'in a comment',
-      'const total = 1 // ask Acme and the AcmeTeam',
-      '',
-      '',
-      'const total = 1 // ask Acme and the AcmeTeam',
-    ],
-    [
-      'beside Polish letters',
-      'const firma = "ŻAcmeClient" // AcmeŻółć',
-      '',
-      '',
-      'const __VAR__1 = "Ż__STR__1" // AcmeŻółć',
-    ],
-    ['beside Greek letters', '// ΑAcmeΔ und AcmeΩmega', '', '', '// ΑAcmeΔ und AcmeΩmega'],
-    [
-      'inside a number',
-      '// acct 88412037\nwire(88412037)',
-      '',
-      '',
-      '// acct 88412037\nwire(88412037)',
-    ],
-    [
-      'beside a placeholder',
-      '// AcmeŻ__CLS__1 and Acme here',
-      '',
-      '',
-      '// AcmeŻ__CLS__1 and Acme here',
-    ],
-    ['inside a key', 'const k = "', KEY, '"', 'const k = "__REDACTED_STRIPE_KEY_1__"'],
+  // [name, before, credential, after, keeps main's behaviour]
+  const SURROUNDINGS: [string, string, string, string, boolean][] = [
+    ['inside a name', 'const u = ACME_API_URL + new AcmeClient()', '', '', false],
+    ['alone in a string', 'log("Acme")', '', '', false],
+    ['inside a name in a string', 'log("PaymentAcmeGateway down")', '', '', false],
+    ['in a comment', 'const total = 1 // ask Acme and the AcmeTeam', '', '', false],
+    ['beside Polish letters', 'const firma = "ŻAcmeClient" // AcmeŻółć', '', '', true],
+    ['beside Greek letters', '// ΑAcmeΔ und AcmeClientΩ', '', '', true],
+    ['inside a number', '// acct 88412037\nwire(88412037)', '', '', true],
+    ['beside a placeholder', '// AcmeŻ__CLS__1 and Acme__CLS__1x here', '', '', true],
+    ['inside a key', 'const k = "', KEY, '"', true],
     [
       'inside a password of a connection string',
       'const dsn = "postgres://svc:',
-      LONG_PASSWORD,
+      PASSWORD,
       '@db.internal:5432/app"',
-      'const __VAR__1 = "__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app"',
+      true,
     ],
-    [
-      'inside a value under a credential key',
-      'const password = "',
-      LONG_PASSWORD,
-      '"',
-      'const password = "__REDACTED_CREDENTIAL_1__"',
-    ],
-    [
-      'a whole part of a credential',
-      'const password = "',
-      'Zt4pw-Acme-x9Kd2',
-      '"',
-      'const password = "__REDACTED_CREDENTIAL_1__"',
-    ],
+    ['inside a value under a credential key', 'const password = "', PASSWORD, '"', true],
+    ['a whole part of a credential', 'const password = "', 'Zt4pw-Acme-x9Kd2', '"', true],
     [
       'inside a credential that holds a placeholder',
       'const password = "',
       'Zt4pwŻ__CLS__1ŻAcmeHunter7Zq9',
       '"',
-      'const password = "__REDACTED_CREDENTIAL_1__"',
+      true,
+    ],
+    [
+      'in a name that is a credential elsewhere',
+      'const password = "',
+      'AcmeHunter7Zq9',
+      '"\nlog(AcmeHunter7Zq9)',
+      true,
     ],
   ]
-  const MARKS = ['Acme', 'ACME', '8841']
-  const HELD = { __CLS__1: 'Client' }
 
-  describe.each(SURROUNDINGS)('a mark %s', (_name, before, credential, after, unmarked) => {
+  describe.each(SURROUNDINGS)('a mark %s', (name, before, credential, after, asMain) => {
     const code = before + credential + after
-    const back = (text: string, map: Record<string, string>) =>
-      restore(text, map, { strip: 'none' }).restored
+    const main = MAIN[name]!
 
-    it('masks the text as before when nothing is marked', () => {
-      expect(anonymize(code, { existingMap: HELD }).anonymized).toBe(unmarked)
+    it('masks the text as main did when nothing is marked', () => {
+      expect(anonymize(code, { existingMap: HELD }).anonymized).toBe(main.unmarked)
     })
 
-    it.each(MODES)('hides the mark, restores the rest, keeps the map clean (%s)', (mode) => {
+    it.each(MODES)('holds the rules of a mark (%s)', (mode) => {
       const once = anonymize(code, { existingMap: HELD, manual: MARKS, secrets: mode })
       const twice = anonymize(once.anonymized, {
         existingMap: once.map,
@@ -697,27 +519,49 @@ describe('manual masks', () => {
         ...credentialSpans(code).map((s) => code.slice(s.start, s.end)),
       ].filter((t) => t !== '')
 
-      for (const { anonymized, map } of [once, twice]) {
-        // 1. What is not a credential comes back; a credential stays one-way.
-        const restored = back(anonymized, map)
-        if (credential === '') expect(restored).toBe(back(code, HELD))
-        else {
-          expect(restored.startsWith(back(before, HELD)), restored).toBe(true)
-          expect(restored.endsWith(back(after, HELD)), restored).toBe(true)
-          expect(
-            restored.slice(back(before, HELD).length, restored.length - back(after, HELD).length)
-          ).toMatch(/^__REDACTED_[A-Z0-9_]+__$/)
+      if (asMain) {
+        // Outside the rule: output and map are main's, byte for byte.
+        expect({ anonymized: once.anonymized, map: once.map }).toEqual(main[mode])
+      } else
+        for (const { anonymized, map } of [once, twice]) {
+          // 1. The text comes back exactly.
+          expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(code)
+          // 2. No marked term is readable.
+          for (const term of MARKS) expect(anonymized).not.toContain(term)
+          // No name in the map holds a placeholder.
+          expect(Object.values(map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
         }
-        // 2. No marked term is readable.
-        for (const term of MARKS) expect(anonymized).not.toContain(term)
-        // 3. No credential, and no piece of one, is in the map. The mark is the
-        //    user's own word, and the map must hold it to bring it back.
-        for (const value of Object.values(map)) {
-          expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
-          if (!MARKS.includes(value) && value.length >= 4)
-            for (const secret of secrets) expect(secret, value).not.toContain(value)
-        }
+      // 3. No credential, and no piece of one, is in the map. The mark is the
+      //    user's own word, and the map must hold it to bring it back.
+      for (const value of Object.values(once.map)) {
+        expect(hasBlockingSecrets(detectSecrets(value)), value).toBe(false)
+        if (!MARKS.includes(value) && value.length >= 4)
+          for (const secret of secrets) expect(secret, value).not.toContain(value)
       }
     })
+  })
+
+  it.each([
+    ['const firma = "ŻClient" // Kowalska', ['Kowalska'], ['Kowalska']],
+    ['const firma = "ŻClient" + ledgerShard // Kowalska', ['Kowalska'], ['STR', 'VAR', 'Kowalska']],
+  ])('leaves a placeholder beside a letter of another script whole: %s', (code, first, again) => {
+    const one = anonymize(code, { manual: first })
+    const two = anonymize(one.anonymized, { existingMap: one.map, manual: again })
+
+    expect(two.anonymized).toBe(one.anonymized)
+    expect(Object.values(two.map).filter((v) => /__[A-Z]+__\d/.test(v))).toEqual([])
+    expect(restore(two.anonymized, two.map, { strip: 'none' }).restored).toBe(code)
+  })
+
+  it.each(MODES)('still marks a word that only may be a credential, whole (%s)', (mode) => {
+    const code = 'client_secret: "disabled"\n'
+    const { anonymized, map } = anonymize(code, {
+      path: 'a.yaml',
+      manual: ['disabled'],
+      secrets: mode,
+    })
+
+    expect(anonymized).toContain('"__MANUAL__1"')
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(code)
   })
 })

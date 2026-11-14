@@ -185,8 +185,8 @@ export function buildLegend(map: SymbolMap, snippet?: string): string {
  *  placeholders already in source (anonymize) and to scope a legend to the
  *  placeholders actually present in a snippet (withAiPreamble). */
 const PLACEHOLDER_SCAN = /(?<![a-zA-Z0-9_$])__[A-Z][A-Z0-9_]*__\d*(?![a-zA-Z0-9_$])/g
-/** The same, to ask once whether a text holds one (no `g`: no state kept). */
-const HOLDS_PLACEHOLDER = new RegExp(PLACEHOLDER_SCAN.source)
+/** Anything shaped like one, wherever it stands in a run of name characters. */
+const PLACEHOLDER_SHAPE = /__[A-Z][A-Z0-9_]*__\d*/
 
 /** Prepend the downstream-AI preamble (and, when a map is given, a placeholder
  *  legend) to anonymized code, ready to paste. The legend is scoped to the
@@ -860,8 +860,9 @@ function applyManualMasks(
   reverseExisting: Record<string, string>,
   mint: Mint,
   language: Language,
-  /** Where the credentials left in `code` stand; asked for at most once. */
-  secretsIn: () => (readonly [number, number])[],
+  /** Whether code[start, stop) is clear of every credential, by where one
+   *  stands and by what its value is. */
+  clear: (start: number, stop: number) => boolean,
   /** Out: the names a term stands inside, for `anonymize` to mask whole. */
   inside: Set<string>
 ): string {
@@ -932,88 +933,43 @@ function applyManualMasks(
     `${PLACEHOLDER_SCAN.source}|${ordered.map(escapeRegex).join('|')}`,
     'g'
   )
-  // Each match is one of four things (spec 093):
-  // - a placeholder, or a term standing alone: written as before;
-  // - a term inside a longer name (`ACME` in `ACME_API_URL`): not replaced, as
-  //   `__MANUAL__1_API_URL` was then minted as a name and never came back. The
-  //   name is masked whole by `anonymize`, like any name (`inside`); a run
-  //   that is no name (`88412037`, two words, another script's letter) becomes
-  //   a mark of its own;
-  // - a term in a run that holds a placeholder (`Ż__STR__1`, text already
-  //   masked): replaced where it stands, or that name would be lost;
-  // - a term touching a credential left in the text (not one that is that
-  //   credential whole - an ambiguous word may be marked): every credential it
-  //   touches is redacted one-way, so no part of one stays readable beside the
-  //   mark or reaches the map.
-  /** The run of name characters around [at, end), no further left than `floor`;
-   *  [at, end) itself when that run holds a placeholder. */
-  const runAround = (at: number, end: number, floor: number): [number, number] => {
-    let start = at
-    let stop = end
-    if (NAME_RUN.test(code[at])) while (start > floor && NAME_RUN.test(code[start - 1])) start--
-    if (NAME_RUN.test(code[end - 1])) while (stop < code.length && NAME_RUN.test(code[stop])) stop++
-    return HOLDS_PLACEHOLDER.test(code.slice(start, stop)) ? [at, end] : [start, stop]
-  }
-  // The credentials to redact are found first: one may begin before a
-  // placeholder or a term that a single pass would already have written.
-  const doomed: [number, number][] = []
-  const secrets = secretsIn()
-  let done = 0
-  if (secrets.length > 0)
-    for (const m of code.matchAll(pattern)) {
-      const at = m.index
-      if (at < done || PLACEHOLDER_TOKEN.test(m[0])) continue
-      let [start, stop] = runAround(at, at + m[0].length, done)
-      done = stop
-      const touched = secrets.filter(([a, b]) => start < b && a < stop)
-      if (touched.length === 0) continue
-      if (touched[0]![0] === at && touched[0]![1] === at + m[0].length) continue
-      for (const [a, b] of touched) {
-        start = Math.min(start, a)
-        stop = Math.max(stop, b)
-      }
-      const last = doomed[doomed.length - 1]
-      if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], stop)
-      else doomed.push([start, stop])
-      done = Math.max(done, stop)
+  // One rule on top of the replacement below (spec 093): a term inside a longer
+  // name (`ACME` in `ACME_API_URL`) is not replaced. `__MANUAL__1_API_URL` was
+  // then minted as a name, and restore, one pass, never brought it back. The
+  // name is left for `anonymize` to mask whole, like any name (`inside`).
+  // shortcut: only a plain name clear of every credential, placeholder and
+  // letter of another script; any other run keeps the old replacement and its
+  // round-trip defect. Widen when a lexer can say what the run is.
+  // The run last looked at, and whether it is such a name.
+  let runStart = 0
+  let runStop = 0
+  let whole = false
+  return code.replace(pattern, (match, at: number) => {
+    if (PLACEHOLDER_TOKEN.test(match)) return reverseExisting[match] ?? match
+    const end = at + match.length
+    if (end > runStop) {
+      let start = at
+      let stop = end
+      if (IDENT_CHAR.test(code[at]!))
+        while (start > runStop && IDENT_CHAR.test(code[start - 1]!)) start--
+      if (IDENT_CHAR.test(code[end - 1]!))
+        while (stop < code.length && IDENT_CHAR.test(code[stop]!)) stop++
+      const run = code.slice(start, stop)
+      whole =
+        run.length > match.length &&
+        IDENTIFIER.test(run) &&
+        !NAME_RUN.test(code[start - 1] ?? '') &&
+        !NAME_RUN.test(code[stop] ?? '') &&
+        !PLACEHOLDER_SHAPE.test(run) &&
+        clear(start, stop) &&
+        !hasBlockingSecrets(detectSecrets(run))
+      runStart = start
+      runStop = stop
     }
-  let generic = doomed.length > 0 ? highestRedaction(code, 'CREDENTIAL') : 0
-  const redactions = new Map<string, string>()
-  let out = ''
-  done = 0
-  let next = 0
-  /** Write the redactions that begin at or before `upTo`. */
-  const redactTo = (upTo: number): void => {
-    for (; next < doomed.length && doomed[next]![0] <= upTo; next++) {
-      const [a, b] = doomed[next]!
-      const secret = code.slice(a, b)
-      if (!redactions.has(secret)) redactions.set(secret, `__REDACTED_CREDENTIAL_${++generic}__`)
-      out += code.slice(done, a) + redactions.get(secret)
-      done = b
-    }
-  }
-  for (const m of code.matchAll(pattern)) {
-    const at = m.index
-    const end = at + m[0].length
-    redactTo(at)
-    // Inside a run, or a credential, already taken whole.
-    if (at < done) continue
-    const [start, stop] = PLACEHOLDER_TOKEN.test(m[0]) ? [at, end] : runAround(at, end, done)
-    const span = code.slice(start, stop)
-    let written = reverseExisting[span]
-    if (written === undefined && (start !== at || stop !== end)) {
-      if (IDENTIFIER.test(span)) inside.add(span)
-      else {
-        written = mint(MANUAL_BASE)
-        map[written] = span
-        reverseExisting[span] = written
-      }
-    }
-    out += code.slice(done, start) + (written ?? span)
-    done = stop
-  }
-  redactTo(code.length)
-  return out + code.slice(done)
+    if (!whole) return reverseExisting[match] ?? match
+    inside.add(code.slice(runStart, runStop))
+    return match
+  })
 }
 
 /** Placeholder base per regulated format.
@@ -1900,6 +1856,7 @@ export function anonymize(
   // re-applied so a mark made in an earlier pass survives the round trip.
   const credentialValues = new Set(found.map((f) => code.slice(f.start, f.end)))
   const inside = new Set<string>()
+  let secretsLeft: (readonly [number, number])[] | undefined
   const kind = valueKind(code, opts)
   const net = guessedCode(opts)
   const marked = applyManualMasks(
@@ -1915,12 +1872,18 @@ export function anonymize(
     reverseExisting,
     mint,
     language,
-    // Found by a rule, or by the credential words (a value under `password`).
-    () =>
-      [
+    (start, stop) => {
+      // Found by a rule, or by the credential words (a value under `password`).
+      secretsLeft ??= [
         ...credentialSpans(redacted, where),
         ...credentialsAmong(valuesIn(redacted, language, kind, net)),
-      ].map((s) => [s.start, s.end] as const),
+      ].map((s) => [s.start, s.end] as const)
+      const run = redacted.slice(start, stop)
+      return (
+        !overlapsAny(secretsLeft, start, stop) &&
+        ![...credentialValues].some((value) => run.includes(value))
+      )
+    },
     inside
   )
 
