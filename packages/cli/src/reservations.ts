@@ -267,6 +267,22 @@ export function printable(text: string): string {
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu, '?')
 }
 
+/**
+ * A value about to be shown, every string in it made `printable` (spec 093
+ * item 9): what a Cloud call answered holds a teammate's words - a map's name,
+ * an id, a project's or a team's name. Applied where an answer is turned into
+ * text - the CLI's commands, the MCP server's results, a refusal's wording -
+ * never to the value a caller goes on working with.
+ */
+export function printableAll<T>(value: T): T {
+  if (typeof value === 'string') return printable(value) as T
+  if (Array.isArray(value)) return value.map(printableAll) as T
+  // Only plain records: a key, a date or a byte array is handed back as it is.
+  if (typeof value !== 'object' || value === null) return value
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, printableAll(v)])) as T
+}
+
 /** HH:MM on this machine's clock. */
 function localTime(iso: string): string {
   const d = new Date(iso)

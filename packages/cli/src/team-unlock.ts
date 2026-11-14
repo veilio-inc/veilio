@@ -33,10 +33,11 @@
 // a corrupt one, an expired one and one belonging to another account all mean
 // the same thing to every caller — not unlocked, resolve locally.
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { STORE_DIR } from '@veilio-inc/engine'
+import { writeSecretJson } from './secret-file.js'
 
 export const TEAM_UNLOCK_FILE = 'team-keys.json'
 
@@ -175,13 +176,7 @@ function withWritable(k: StoredTeamKey): StoredTeamKey {
 
 /** Write the unlocked keys, readable only by this user. */
 export function writeTeamUnlock(unlock: TeamUnlock, home: string = homedir()): void {
-  const path = teamUnlockPath(home)
-  mkdirSync(dirname(path), { recursive: true })
-  // `chmodSync` after the write for the same reason `writeCredential` does it:
-  // `mode` applies only when the file is created, so re-unlocking over a
-  // world-readable file left from an earlier mistake would keep it that way.
-  writeFileSync(path, `${JSON.stringify(unlock, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeSecretJson(teamUnlockPath(home), unlock)
 }
 
 /**

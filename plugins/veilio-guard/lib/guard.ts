@@ -85,6 +85,8 @@ import {
 import { bounded, LATE, ProjectIndex } from './index.ts'
 import {
   argumentPolicy,
+  callsOwnCommand,
+  OWN_COMMAND_REFUSED,
   isSourcePath,
   isMcpTool,
   mcpServersOf,
@@ -1943,6 +1945,8 @@ export class Guard {
     e: ToolEvent,
     budget: RuleBudget
   ): Promise<{ deny: string } | { args: ToolEvent }> {
+    // Spec 093 item 10: /veilio is typed by the person, never called by the model.
+    if (callsOwnCommand(e)) return { deny: OWN_COMMAND_REFUSED }
     let policy = argumentPolicy(e.tool, this.mcpRestore)
     const servers = mcpServersOf(e.tool)
     // Spec 085 R2-9: a listed server the project's .mcp.json declares too may
@@ -3013,7 +3017,9 @@ export class Guard {
       }
       additions = kept
     }
-    const run = this.writes.then(async () => {
+    const attempt = async (
+      retries: number
+    ): Promise<{ status: 'saved' | 'conflict'; quarantined: number }> => {
       await this.refuseLinks()
       let onDisk: StoredMap = { version: 1, map: {} }
       const existed = await this.io.exists(this.mapPath)
@@ -3079,6 +3085,20 @@ export class Guard {
         this.mapReadable = false
       }
       await this.ensureIgnored()
+      // Spec 093 item 6: read again right before the write. Another session
+      // that saved since this one read the file had its entries dropped, and
+      // a placeholder both had minted then meant two names. A changed file is
+      // read, checked and merged again from the start.
+      // shortcut: the file API a mod gets has no rename and no lock, so a write
+      // that lands between this read and the write below is still lost
+      // (COVERAGE.md); write beside and rename when the host offers one.
+      const now = (await this.io.exists(this.mapPath)) ? await this.io.read(this.mapPath) : ''
+      if (now !== mapText) {
+        if (retries > 0) return attempt(retries - 1)
+        // Still changing: nothing is written from a stale read. A conflict is
+        // what every caller already reports (re-mask, withhold or fail).
+        return { status: 'conflict' as const, quarantined }
+      }
       if (!existed)
         await this.createOwnerOnly(this.mapPath, serialiseMapFile({ version: 1, map: {} }))
       const written = serialiseMapFile(next)
@@ -3088,7 +3108,8 @@ export class Guard {
       this.stored = next
       if (wasRecorded) await this.recordWrite(written)
       return { status: 'saved' as const, quarantined }
-    })
+    }
+    const run = this.writes.then(() => attempt(MAX_RETRIES))
     // A failed write must not wedge every later one.
     this.writes = run.catch(() => undefined)
     return run

@@ -109,12 +109,17 @@ test("rules load only when the cache's instance and account match the credential
 test('none are loaded when the cache is missing, damaged or from another account', async () => {
   const cred = { [CREDENTIAL]: JSON.stringify({ token: 't', ...ME }) }
   expect((await readGuardRules(files(cred), HOME)).state).toBe('none-pulled')
-  expect((await readGuardRules(files({ ...cred, [RULES]: '{"inst' }), HOME)).state).toBe(
-    'none-pulled'
+  // Spec 093, review round 1: a cache that is there and cannot be read is said
+  // apart from no cache. No rule is applied either way.
+  const truncated = await readGuardRules(files({ ...cred, [RULES]: '{"inst' }), HOME)
+  expect(truncated).toMatchObject({ state: 'unreadable', rules: [] })
+  const unknownKind = await readGuardRules(
+    files({ ...cred, [RULES]: cache([{ type: 'replace' }]) }),
+    HOME
   )
-  expect(
-    (await readGuardRules(files({ ...cred, [RULES]: cache([{ type: 'replace' }]) }), HOME)).state
-  ).toBe('none-pulled')
+  expect(unknownKind).toMatchObject({ state: 'unreadable', rules: [] })
+  // Signed out, a damaged cache is nobody's: nothing to pull again.
+  expect((await readGuardRules(files({ [RULES]: '{"inst' }), HOME)).state).toBe('none-pulled')
   const other = await readGuardRules(
     files(signedIn([PHOENIX], { ...ME, account: 'someone@else.com' })),
     HOME

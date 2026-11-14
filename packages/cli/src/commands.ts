@@ -49,7 +49,7 @@ import {
   readAliases,
 } from './reservations.js'
 import { readCredential } from './credential.js'
-import { describeAge, readRules } from './rules.js'
+import { RulesUnreadable, describeAge, readRules } from './rules.js'
 import { NO_RULES_SKIPPED, rulesSkippedSentences } from './client/rules-skipped.js'
 import {
   anonymizeOverTeam,
@@ -134,7 +134,17 @@ export async function runScrub(
   // The account's custom rules, as last pulled. Read from disk, never fetched.
   // Signed out means no rules, whatever the cache holds.
   const credential = readCredential(io.home)
-  const cached = credential ? readRules(credential, io.home) : null
+  let read: ReturnType<typeof readRules>
+  try {
+    read = credential ? readRules(credential, io.home) : null
+  } catch (err) {
+    // Spec 093 item 5: a cache that cannot be read stops the run, before
+    // anything is masked, printed or stored.
+    if (!(err instanceof RulesUnreadable)) throw err
+    io.stderr(`${BIN_NAME}: ${err.message}\n`)
+    return EXIT_ERROR
+  }
+  const cached = read
 
   // Signed in to a team: the team's namespace, as the web app and the MCP server
   // number (spec 030, F11). Signed out: no request - scrub stays offline.

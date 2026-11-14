@@ -1,5 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { CustomRule } from '@veilio-inc/engine'
@@ -225,6 +236,7 @@ describe('scrub with cached rules', () => {
   ): void {
     writeRules({ ...owner, pulledAt, rules }, home)
   }
+  const WHITELIST = rule('w', 'whitelist', 'team', 0, '^customerId$')
 
   it('applies a whitelist and a replace rule, and says so', async () => {
     signIn()
@@ -274,13 +286,65 @@ describe('scrub with cached rules', () => {
     expect(res.out).not.toContain('customerId')
   })
 
-  it('a damaged cache reads as no rules, not as a failed scrub', async () => {
+  // Spec 093 item 5: a cache that could not be read meant no rules, silently,
+  // and scrub exited 0. An entry of a kind this version does not know is the
+  // same: a rule the account set is not left out without a word.
+  const mine = (rules: unknown[]) =>
+    JSON.stringify({ instance: INSTANCE, account: ACCOUNT, pulledAt: 'now', rules })
+  it.each([
+    ['truncated', '{"instance":'],
+    ['not a record', '3'],
+    [
+      'without its rules',
+      JSON.stringify({ instance: INSTANCE, account: ACCOUNT, pulledAt: 'now' }),
+    ],
+    ['with an entry of an unknown kind', mine([{ ...WHITELIST, type: 'keep-prefix' }])],
+    ['with one known rule and one unknown', mine([WHITELIST, { pattern: 'x', sort_order: 1 }])],
+  ])('a cache %s stops scrub: nothing is masked, and it says what to do', async (_, text) => {
     signIn()
+    mkdirSync(dirname(rulesPath(home)), { recursive: true })
+    writeFileSync(rulesPath(home), text)
+    const res = await run(['scrub'], SOURCE)
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.out).toBe('')
+    expect(res.err).toBe(
+      `veilio: the saved rules at ${rulesPath(home)} cannot be read, so nothing was masked. ` +
+        'Run `veilio rules pull` to fetch them again, or `veilio logout` if you no longer use Veilio Cloud.\n'
+    )
+    expect(existsSync(join(cwd, '.veilio'))).toBe(false)
+  })
+
+  it('a folder where the cache should be stops scrub too', async () => {
+    signIn()
+    mkdirSync(rulesPath(home), { recursive: true })
+    const res = await run(['scrub'], SOURCE)
+    expect(res.code).toBe(EXIT_ERROR)
+    expect(res.out).toBe('')
+    expect(res.err).toContain('cannot be read, so nothing was masked')
+  })
+
+  it('signed out, a cache that cannot be read is never opened', async () => {
     mkdirSync(dirname(rulesPath(home)), { recursive: true })
     writeFileSync(rulesPath(home), '{"instance":')
     const res = await run(['scrub'], SOURCE)
     expect(res.code).toBe(EXIT_OK)
     expect(res.out).not.toContain('customerId')
+  })
+
+  it('a reader during a rewrite sees the old cache whole, and the next one the new', () => {
+    signIn()
+    cache([WHITELIST])
+    const before = readFileSync(rulesPath(home), 'utf8')
+    const reader = openSync(rulesPath(home), 'r')
+    try {
+      cache([])
+      expect(readFileSync(reader, 'utf8')).toBe(before)
+    } finally {
+      closeSync(reader)
+    }
+    expect(readRules({ instance: INSTANCE, account: ACCOUNT }, home)?.rules).toEqual([])
+    expect((statSync(rulesPath(home)).mode & 0o777).toString(8)).toBe('600')
+    expect(readdirSync(dirname(rulesPath(home))).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 
   it('a replaced name restores', async () => {

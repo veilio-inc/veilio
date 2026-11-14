@@ -102,4 +102,6 @@ bash plugins/veilio-guard/tests/live/run-live.sh   # one real session (spends a 
 bash plugins/veilio-guard/tests/live/run-scale.sh  # three sessions on this whole repository
 ```
 
+`VEILIO_GUARD_TIMING=<file>` (benchmarks only): the guard writes its time per tool call to that file. Leave it unset in normal use.
+
 A mod can only import files inside its plugin directory, so `vendor/engine` holds a copy of `packages/engine/dist`. CI fails when the copy differs from the build.

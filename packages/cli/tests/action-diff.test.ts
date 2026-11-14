@@ -184,8 +184,32 @@ describe('the Action scans the pull request, and only on events it knows (R2-20)
     const r = action('', base, { name: 'workflow_dispatch' })
     expect(r.status).toBe(1)
     expect(r.log).toContain(
-      'veilio action: the `workflow_dispatch` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Use `mode: paths` to scan named files on other events.'
+      'veilio action: the `workflow_dispatch` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Set the `paths` input to scan named files on other events.'
     )
+  })
+})
+
+// Spec 093 item 2: the message and the README told users to set `mode: paths`,
+// an input the Action does not have.
+describe('the Action names only inputs it declares (spec 093)', () => {
+  const declared = Object.keys(
+    (parse(readFileSync(ACTION, 'utf8')) as { inputs: Record<string, unknown> }).inputs
+  )
+  // `name: value`, `name:` and "the `name` input", in inline code.
+  const named = (text: string) =>
+    [...text.matchAll(/`([a-z_-]+):[^`\n]*`|`([a-z_-]+)` input/g)].map((m) => m[1] ?? m[2])
+  const readme = readFileSync(resolve(import.meta.dirname, '..', 'README.md'), 'utf8')
+  const section = readme.slice(
+    readme.indexOf('### GitHub Action'),
+    readme.indexOf('### Pre-commit')
+  )
+
+  it.each([
+    ['the failure message', script('Resolve scan targets').replace(/\\`/g, '`')],
+    ['the README', section.replace(/```[^]*?```/g, '')],
+  ])('%s', (_, text) => {
+    expect(named(text)).toContain('paths')
+    expect(named(text).filter((n) => !declared.includes(n))).toEqual([])
   })
 })
 

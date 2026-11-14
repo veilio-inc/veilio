@@ -74,7 +74,7 @@ runs:
             head="${{ github.sha }}"
             ;;
           *)
-            echo "veilio action: the \`$event\` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Use \`mode: paths\` to scan named files on other events." >&2
+            echo "veilio action: the \`$event\` event is not supported (push, pull_request, pull_request_target). Nothing was scanned, so this step fails. Set the \`paths\` input to scan named files on other events." >&2
             exit 1
             ;;
         esac
