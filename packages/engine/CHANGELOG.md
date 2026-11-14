@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.19.1](https://github.com/veilio-inc/veilio/compare/engine-v1.19.0...engine-v1.19.1) (2026-11-14)
+
+### Fixes
+
+* **engine:** a manual mark inside a credential or beside another script's letter ([44760bc](https://github.com/veilio-inc/veilio/commit/44760bcdcf7d08f6e3b544e277e9e2bf81f8a1e9))
+* **engine:** a manual mark inside a credential redacts the whole credential ([b51e06c](https://github.com/veilio-inc/veilio/commit/b51e06ccbd47498f3d31ab8d911a4ba3af355095))
+* **engine:** a manual mark inside a longer name masks the whole name ([6adfe2f](https://github.com/veilio-inc/veilio/commit/6adfe2f254260e605eeb91bcfa1b9dbc5ab70ec5))
+* **engine:** a manual mark never takes a run that holds a placeholder ([117a9e9](https://github.com/veilio-inc/veilio/commit/117a9e9eb34a78bbb7498bfe73d9131083e95dbc))
+* **engine:** a manual mark touching a credential redacts it whole, found before anything is written ([e196b4b](https://github.com/veilio-inc/veilio/commit/e196b4bbb1f798527ecf4f2c3d03d87dfcb53d19))
+* **engine:** a template literal inside a template literal no longer ends the outer one ([0ae51b6](https://github.com/veilio-inc/veilio/commit/0ae51b6c8a3886dbe08ee19688d501ecd6642ebf))
+* **engine:** manual marks inside names - the simple rule, main's credential handling restored ([47906fd](https://github.com/veilio-inc/veilio/commit/47906fde7eca10a4bb09108c221a1fca9c0f8dad))
+* **engine:** rawOnly globs are matched in linear time ([eb6a445](https://github.com/veilio-inc/veilio/commit/eb6a4450a08ffe093ca3480dbdeec59da490bc7d))
+* **engine:** restore bounds the reading of nested map values before building them ([cbb8c0c](https://github.com/veilio-inc/veilio/commit/cbb8c0cadd4af59ca43bbce279216e934ddbe4ff))
+* **engine:** restore expands a map value that holds a placeholder ([178739a](https://github.com/veilio-inc/veilio/commit/178739a2ea5a5a9a0e2c186d6753c60e79874d03))
+* **engine:** restore keeps a comment that only begins like narration ([100efd0](https://github.com/veilio-inc/veilio/commit/100efd0cfe638eacb5121128d79e10903b8aa920))
+* **engine:** the narration filter ends its verb at a letter of any script ([b2f8a37](https://github.com/veilio-inc/veilio/commit/b2f8a3768adf892d07aa62d70ef034748f341071))
+* **engine:** the template scan skips comments in an interpolation and survives a miscount ([7171b3b](https://github.com/veilio-inc/veilio/commit/7171b3be8bcbfdcefe7837fa2f89f8b2ccd132d6))
+
+### Reverts
+
+* **engine:** manual marks are masked as on main again ([14f9208](https://github.com/veilio-inc/veilio/commit/14f9208871f9700c196f0fce1e57c00a773b3d5b))
+
 ## [1.19.0](https://github.com/veilio-inc/veilio/compare/engine-v1.18.0...engine-v1.19.0) (2026-11-12)
 
 ### Features
