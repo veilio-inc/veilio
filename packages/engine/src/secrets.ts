@@ -1403,6 +1403,13 @@ interface RawMatch {
    *  verdict for the same span. The value is destroyed instead of masked: see
    *  the comment there. */
   forceDestroy?: boolean
+  /** A value whose other occurrences are not redacted with it: a short
+   *  value of a Secret manifest is ordinary text anywhere else. */
+  piece?: true
+  /** A value that is a credential as a whole (a Secret manifest's): it is
+   *  redacted whole, and never gives way to a narrower match inside it, which
+   *  would leave the rest of it readable. */
+  whole?: true
 }
 
 function collectMatches(code: string, scan: ScanContext): RawMatch[] {
@@ -1491,6 +1498,312 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
     }
     pattern.re.lastIndex = 0
   }
+  found.push(...keyMaterial(code), ...secretManifestValues(code))
+  return found
+}
+
+const KEY_BEGIN =
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----[ \t]*\r?$/gm
+const KEY_END = /-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/
+const BASE64_LINE = /^[A-Za-z0-9+/=]+$/
+const PEM_HEADER = /^[A-Za-z][A-Za-z0-9-]*: \S/
+
+/**
+ * Key material the block rule above does not take: after a BEGIN line, every
+ * line that is empty, a header (`Proc-Type: ...`, before the body only) or
+ * made of base64 characters, up to an END line or the first other line. No
+ * END line is needed (a paste cut short, a file read in part) and no length
+ * is too long. A short base64-only line right after the body counts as part
+ * of it: a key's tail in the map is the worse error. One walk over the lines,
+ * and the next BEGIN line is looked for after it.
+ */
+function keyMaterial(code: string): RawMatch[] {
+  const found: RawMatch[] = []
+  KEY_BEGIN.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = KEY_BEGIN.exec(code)) !== null) {
+    let at = code.indexOf('\n', m.index) + 1
+    let end = -1
+    let body = false
+    // What stands before BEGIN on its line stands before every line of a key
+    // shown in a diff, a quotation or a comment (`+`, `> `, `# `).
+    const prefix = code.slice(code.lastIndexOf('\n', m.index) + 1, m.index)
+    const bare = prefix.trimEnd()
+    while (at > 0 && at < code.length) {
+      const nl = code.indexOf('\n', at)
+      const raw = code.slice(at, nl === -1 ? code.length : nl)
+      const line = (
+        bare === ''
+          ? raw
+          : raw.startsWith(prefix)
+            ? raw.slice(prefix.length)
+            : raw.startsWith(bare)
+              ? raw.slice(bare.length)
+              : raw
+      ).trim()
+      if (line !== '') {
+        if (BASE64_LINE.test(line)) body = true
+        else if (body || !PEM_HEADER.test(line)) {
+          const close = KEY_END.exec(raw)
+          if (close) end = at + close.index + close[0].length
+          break
+        }
+        end = at + raw.trimEnd().length
+      }
+      at = nl + 1
+    }
+    if (at > KEY_BEGIN.lastIndex) KEY_BEGIN.lastIndex = at
+    if (!body) continue
+    found.push({
+      type: 'private-key',
+      severity: 'critical',
+      label: 'Private key block',
+      start: m.index,
+      end,
+      value: code.slice(m.index, end),
+    })
+  }
+  KEY_BEGIN.lastIndex = 0
+  return found
+}
+
+// `kind: Secret`, in YAML or JSON, whatever the quoting - also the escaped
+// quotes of a manifest held in a string.
+const NAMES_SECRET = /(?<![\w$.-])\\?["']?kind\\?["']?[ \t]*:[ \t]*\\?["']?Secret(?![\w$-])/
+const DATA_KEY = /(?<![\w$.-])\\?["']?(?:data|stringData)\\?["']?[ \t]*:[ \t]*/g
+const BLOCK_SCALAR = /^[|>][-+0-9]*$/
+
+/**
+ * Every value under `data` and `stringData` of a Kubernetes manifest of
+ * `kind: Secret`: a credential whatever its key is called. One rule, toward
+ * redacting: in a document (the text between `---` lines) that names the kind
+ * anywhere, in any quoting, each `data` and `stringData` key (first on its
+ * line, or after `{` or `,`) opens a region -
+ * a `{ ... }` to its closing brace, or the lines indented deeper than the key
+ * - and every scalar value in it is redacted, block scalars whole. So a List
+ * that holds a Secret has the values of its other items redacted too, and so
+ * has an object in code that names the kind. A value whose quote never closes
+ * runs to the closing brace or the end of its line. In any file: a manifest
+ * pasted without a path is the same text. A Secret a template builds (Helm)
+ * is not recognised. One pass over each document.
+ */
+function secretManifestValues(code: string): RawMatch[] {
+  if (!code.includes('Secret')) return []
+  type Span = [start: number, end: number]
+  const found: RawMatch[] = []
+  const emit = (start: number, end: number): void => {
+    const value = code.slice(start, end)
+    if (start >= end || classifyValue(value, false) === 'placeholder') return
+    found.push({
+      type: 'password-assignment',
+      severity: 'high',
+      label: 'Value of a Kubernetes Secret',
+      start,
+      end,
+      value,
+      whole: true,
+      // A short value (`true`, a port) is ordinary text anywhere else.
+      ...(value.length < 8 ? { piece: true as const } : {}),
+    })
+  }
+  const blank = (c: string | undefined): boolean => c === ' ' || c === '\t' || c === '\r'
+  // The line end last found, kept: a line of many values asks for it once.
+  let lineFrom = -1
+  let lineTo = -1
+  const lineEnd = (at: number, limit: number): number => {
+    if (at < lineFrom || at > lineTo) {
+      const nl = code.indexOf('\n', at)
+      lineFrom = at
+      lineTo = nl === -1 ? code.length : nl
+    }
+    return Math.min(lineTo, limit)
+  }
+  /** The quoted text that opens at `at` (`"`, `'` or an escaped `\"`): where
+   *  its contents start and end, and where reading goes on. `''` is the quote
+   *  inside single quotes, a backslash escapes inside double ones. Never closed on
+   *  its line, it runs to the line's end - `inBraces`, to the line's last
+   *  closing brace if it has one; what the next line carries on with is read
+   *  there as a value. */
+  const quoted = (
+    at: number,
+    limit: number,
+    inBraces = false
+  ): { start: number; end: number; next: number; closed: boolean } => {
+    const escaped = code[at] === '\\'
+    const quote = code[escaped ? at + 1 : at]!
+    const start = at + (escaped ? 2 : 1)
+    const stop = lineEnd(start, limit)
+    let brace = -1
+    for (let j = start; j < stop; j++) {
+      if (escaped) {
+        if (code[j] === '\\' && code[j + 1] === quote)
+          return { start, end: j, next: j + 2, closed: true }
+      } else if (code[j] === quote) {
+        if (quote === "'" && code[j + 1] === "'") j++
+        else return { start, end: j, next: j + 1, closed: true }
+      } else if (code[j] === '\\' && quote === '"') j++
+      if (inBraces && code[j] === '}') brace = j
+    }
+    const end = brace === -1 ? stop : brace
+    return { start, end, next: end, closed: false }
+  }
+  const opensQuote = (at: number): boolean =>
+    code[at] === '"' || code[at] === "'" || (code[at] === '\\' && code[at + 1] === '"')
+  /** Whether the `:` at `at` ends a key: white space, a line end, a quote or
+   *  an opening bracket follows (`http://host` holds a colon that does not). */
+  const endsKey = (at: number, limit: number): boolean =>
+    at + 1 >= limit ||
+    blank(code[at + 1]) ||
+    code[at + 1] === '\n' ||
+    code[at + 1] === '{' ||
+    code[at + 1] === '[' ||
+    opensQuote(at + 1)
+  /** The mapping in braces that opens at `open`, over as many lines as it
+   *  has: every scalar in it that is not a key - quoted or plain, after a
+   *  colon, in a sequence, or carried on from the line before. Answers where
+   *  it closes, or `limit`. */
+  const flow = (open: number, limit: number): number => {
+    let depth = 0
+    for (let i = open; i < limit; i++) {
+      const c = code[i]!
+      if (c === '{' || c === '[') depth++
+      else if (c === '}' || c === ']') {
+        if (--depth <= 0) return i + 1
+      } else if (c === ',' || c === ':' || c === '\n' || blank(c)) continue
+      else if (opensQuote(i)) {
+        const q = quoted(i, limit, true)
+        let after = q.next
+        while (blank(code[after])) after++
+        // A key is closed and has its colon; anything else quoted is a value.
+        if (!q.closed || code[after] !== ':') emit(q.start, q.end)
+        i = q.next - 1
+      } else {
+        let j = i
+        let key = false
+        for (; j < limit && !',}]\n'.includes(code[j]!); j++)
+          if (code[j] === ':' && endsKey(j, limit)) {
+            key = true
+            break
+          }
+        if (!key) {
+          let end = j
+          while (end > i && blank(code[end - 1])) end--
+          emit(i, end)
+        }
+        i = key ? j : j - 1
+      }
+    }
+    return limit
+  }
+  /** The lines indented deeper than `column` from `at` on: the value of each,
+   *  or the line itself when it holds no key; a block scalar as one value.
+   *  Answers where the region ends. */
+  const block = (at: number, limit: number, column: number): number => {
+    let scalar = -1
+    let body: Span | null = null
+    const close = (): void => {
+      if (body) emit(body[0], body[1])
+      body = null
+      scalar = -1
+    }
+    while (at < limit) {
+      const stop = lineEnd(at, limit)
+      let to = stop
+      while (to > at && blank(code[to - 1])) to--
+      let first = at
+      while (first < to && code[first] === ' ') first++
+      if (first < to) {
+        const indent = first - at
+        if (indent <= column) break
+        if (scalar !== -1 && indent > scalar) {
+          if (body === null) body = [first, to]
+          else body[1] = to
+        } else if (code[first] !== '#') {
+          close()
+          // After a list dash, and after the first `: ` if there is one.
+          let start =
+            code[first] === '-' && (first + 1 === to || blank(code[first + 1])) ? first + 1 : first
+          for (let i = start; i < to; i++)
+            if (code[i] === ':' && (i + 1 === to || blank(code[i + 1]))) {
+              start = i + 1
+              break
+            }
+          while (start < to && blank(code[start])) start++
+          if (BLOCK_SCALAR.test(code.slice(start, to))) scalar = indent
+          else if (code[start] === '{') flow(start, to)
+          else if (opensQuote(start)) {
+            const q = quoted(start, to)
+            // What follows the closing quote (a comma) is not the value.
+            emit(q.start, q.end)
+          } else if (!/^[{}[\],]+$/.test(code.slice(start, to))) emit(start, to)
+        }
+      }
+      at = stop + 1
+    }
+    close()
+    return Math.min(at, limit)
+  }
+  // The document being read: where it starts and ends, and whether it names
+  // the kind. Found once per document, as the keys are met.
+  let from = 0
+  let limit = -1
+  let secret = false
+  DATA_KEY.lastIndex = 0
+  for (let m; (m = DATA_KEY.exec(code)) !== null;) {
+    while (limit === -1 || m.index >= limit) {
+      if (limit !== -1) from = limit + 3
+      const separator = code.indexOf('\n---', from)
+      limit = separator === -1 ? code.length : separator + 1
+      secret = m.index < limit && NAMES_SECRET.test(code.slice(from, limit))
+    }
+    if (!secret) continue
+    // A key stands first on its line (after a list dash), or after `{` or
+    // `,`: `if data:` and `(data: Buffer)` in code open nothing.
+    let before = m.index - 1
+    while (before >= 0 && blank(code[before])) before--
+    if (code[before] === '-') for (before--; before >= 0 && blank(code[before]);) before--
+    if (before >= 0 && !'\n{,'.includes(code[before]!)) continue
+    // After a comma, only inside braces: `(data: Buffer, stringData: string)`
+    // is a list of parameters. Looked for on the line, 200 characters back at
+    // most; not found, it is read as a key.
+    if (code[before] === ',') {
+      let depth = 0
+      let opener = ''
+      for (let i = before - 1; i >= 0 && i > before - 200 && code[i] !== '\n'; i--) {
+        const c = code[i]!
+        if (c === ')' || c === ']' || c === '}') depth++
+        else if (c === '(' || c === '[' || c === '{') {
+          if (depth === 0) {
+            opener = c
+            break
+          }
+          depth--
+        }
+      }
+      if (opener === '(' || opener === '[') continue
+    }
+    const at = DATA_KEY.lastIndex
+    const stop = lineEnd(at, limit)
+    // Asked for at most once a line: the reading goes on at the next line.
+    const column = (): number => m.index - (code.lastIndexOf('\n', m.index) + 1)
+    let next: number
+    if (code[at] === '{') next = flow(at, limit)
+    else if (at >= stop || code[at] === '#' || code[at] === '\r')
+      next = block(stop + 1, limit, column())
+    else {
+      let to = stop
+      while (to > at && blank(code[to - 1])) to--
+      if (opensQuote(at)) {
+        const q = quoted(at, to)
+        emit(q.start, q.end)
+      } else emit(at, to)
+      // What stands after the key may be an anchor or a tag, with the
+      // mapping on the lines below.
+      next = block(stop + 1, limit, column())
+    }
+    DATA_KEY.lastIndex = Math.max(next, at)
+  }
+  DATA_KEY.lastIndex = 0
   return found
 }
 
@@ -1546,7 +1859,7 @@ function dispositionRank(type: SecretType): number {
  *  the card match and the password was written into the SymbolMap, and stopped
  *  blocking the paste. A value any rule reads as a credential is never masked:
  *  within the same disposition the old specificity order still decides. */
-function dropOverlaps(all: RawMatch[]): RawMatch[] {
+function dropOverlaps(all: RawMatch[], code: string): RawMatch[] {
   // The context verdict first: a generic assignment match over a downgraded
   // fixture is the same value read without its context, and must not turn a
   // report back into a redaction. Only one that lies within the fixture: one
@@ -1562,6 +1875,8 @@ function dropOverlaps(all: RawMatch[]): RawMatch[] {
   const sorted = [...matches].sort((a, b) => {
     const byDisposition = dispositionRank(b.type) - dispositionRank(a.type)
     if (byDisposition !== 0) return byDisposition
+    const byWhole = Number(b.whole === true) - Number(a.whole === true)
+    if (byWhole !== 0) return byWhole
     const byPriority = priorityOf(b) - priorityOf(a)
     if (byPriority !== 0) return byPriority
     const byLength = b.end - b.start - (a.end - a.start)
@@ -1569,6 +1884,7 @@ function dropOverlaps(all: RawMatch[]): RawMatch[] {
     return a.start - b.start
   })
   const kept: RawMatch[] = []
+  let grown = false
   for (const m of sorted) {
     const winner = kept.find((k) => m.start < k.end && k.start < m.end)
     if (!winner) {
@@ -1583,8 +1899,26 @@ function dropOverlaps(all: RawMatch[]): RawMatch[] {
     if (m.type === 'possible-credential' && SECRET_DISPOSITIONS[winner.type] === 'mask') {
       winner.forceDestroy = true
     }
+    // A whole value wins over what it contains. A credential that runs past
+    // it (a key block that starts in it) is not dropped with its tail left
+    // readable: the two are redacted as one span.
+    if (winner.whole === true && dispositionRank(m.type) === 2) {
+      if (m.start < winner.start || m.end > winner.end) grown = true
+      winner.start = Math.min(winner.start, m.start)
+      winner.end = Math.max(winner.end, m.end)
+    }
   }
-  return kept.sort((a, b) => a.start - b.start)
+  kept.sort((a, b) => a.start - b.start)
+  if (!grown) return kept
+  // A span that grew may now reach its neighbours: those join it.
+  const joined: RawMatch[] = []
+  for (const m of kept) {
+    const last = joined[joined.length - 1]
+    if (last !== undefined && m.start < last.end) last.end = Math.max(last.end, m.end)
+    else joined.push(m)
+  }
+  for (const m of joined) if (m.whole === true) m.value = code.slice(m.start, m.end)
+  return joined
 }
 
 /** A `mask`-disposition value, handed to the masking pass to replace. */
@@ -1829,7 +2163,7 @@ function scanContext(options: ScanOptions): ScanContext {
  */
 export function credentialSpans(code: string, options: ScanOptions = {}): CredentialSpan[] {
   assertKnownOptions('credentialSpans', options, SCAN_OPTIONS)
-  return dropOverlaps(collectMatches(code, scanContext(options)))
+  return dropOverlaps(collectMatches(code, scanContext(options)), code)
     .filter((m) => m.type === 'possible-credential' || SECRET_DISPOSITIONS[m.type] === 'destroy')
     .map((m) => ({
       start: m.start,
@@ -1876,7 +2210,7 @@ export function scanSecrets(
 function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretScan {
   if (policy === 'off') return { findings: [], code, regulated: [] }
 
-  const matches = dropOverlaps(collectMatches(code, scanContext(options)))
+  const matches = dropOverlaps(collectMatches(code, scanContext(options)), code)
   if (matches.length === 0) return { findings: [], code, regulated: [] }
 
   const starts = lineIndex(code)
@@ -1921,7 +2255,7 @@ function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretS
       counters[base] = n
       const token = `__REDACTED_${base}_${n}__`
       replacements.push({ start: m.start, end: m.end, token })
-      if (!tokens.has(m.value)) tokens.set(m.value, token)
+      if (m.piece !== true && !tokens.has(m.value)) tokens.set(m.value, token)
     }
   }
 

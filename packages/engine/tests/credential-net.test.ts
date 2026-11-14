@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, restore, valuePositions } from '../src/index.js'
+import { anonymize, restore, scanSecrets, valuePositions } from '../src/index.js'
 import type { AnonymizeOptions } from '../src/index.js'
 
 // Security review, round 4 (B): a credential keyword net, fail closed, on
@@ -277,4 +277,43 @@ it('a command or placeholder under a credential word is redacted to its close', 
     ['password: ${{ secrets.PG }}\n', 'secrets'],
   ])
     expect(anonymize(text, { path: 'notes.txt' }).anonymized, text).not.toContain(word)
+})
+
+// Spec 094: the walks over key material and over a Secret manifest read each
+// character once, however many BEGIN lines, mappings or documents a text holds.
+describe('key material and Secret manifests are read in linear time', () => {
+  const time = (text: string): number => {
+    let best = Infinity
+    for (let i = 0; i < 5; i++) {
+      const t = performance.now()
+      scanSecrets(text)
+      best = Math.min(best, performance.now() - t)
+    }
+    return best
+  }
+  const BEGIN = '-----BEGIN PRIVATE KEY-----\n'
+  // One BEGIN line each: the older block rule looks 8,000 characters ahead from
+  // every BEGIN line, which is its own, bounded, cost.
+  const texts = (n: number): string[] => [
+    BEGIN + 'QUJD\n'.repeat(n),
+    'kind: Secret\n'.repeat(n),
+    // References, so the walk is timed and not the list of findings after it.
+    'kind: Secret\ndata:\n' + '  a: ${B}\n'.repeat(n),
+    Array.from({ length: n }, (_, i) => ' '.repeat(i % 40) + '- kind: Secret\n').join(''),
+    'kind: Secret\n---\n'.repeat(n),
+    'kind: Secret\ndata:\n  a: |\n' + '    x\n'.repeat(n),
+    'kind: Secret\n' + 'data: {\n'.repeat(n),
+    'data:\n'.repeat(n) + 'kind: Secret\n',
+    'kind: Secret\ndata: {' + 'a: "", '.repeat(n) + '}\n',
+    'kind: Secret\ndata:\n' + '  a: "\n'.repeat(n),
+    'kind: Secret\ndata: {\n' + '  a: "\n'.repeat(n),
+    'kind: Secret\n' + 'data: {} '.repeat(n) + '\n',
+  ]
+  it('20,000 and 160,000 lines', () => {
+    const [a, b] = [20_000, 160_000].map((n) => texts(n).map(time))
+    // Eight times the text: linear is 8x, quadratic 64x. A wide gap on both
+    // sides, so a busy machine is not read as growth.
+    for (let i = 0; i < a!.length; i++)
+      expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
+  }, 120_000)
 })
