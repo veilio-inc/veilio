@@ -11,8 +11,8 @@
         "source": "git-subdir",
         "url": "https://github.com/veilio-inc/veilio.git",
         "path": "plugins/veilio-guard",
-        "ref": "veilio-guard@0.11.0",
-        "sha": "16799e3e2518cd6a6557efb63af1d5207d47a1ef"
+        "ref": "veilio-guard@0.11.1",
+        "sha": "bf9a89a877689022a0b24f52bbce71389f9d0172"
       },
       "description": "Keeps your real identifiers and secrets away from the model in Claude Code."
     }
