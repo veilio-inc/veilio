@@ -5,8 +5,9 @@
 // here corrupts the protocol and the client drops the connection. Diagnostics
 // go to stderr, which MCP clients surface as server logs.
 
-import { readFileSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { closeSync, existsSync, openSync, readSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { guardHint } from '@veilio-inc/cli/guard-hint'
 import { pathToFileURL } from 'node:url'
 import { FrameReader, type JsonRpcResponse } from './server.js'
@@ -26,10 +27,11 @@ export { TOOLS, CLOUD_TOOLS, callTool, callToolAsync, listTools } from './tools.
  * configure the server, and nothing a tool call carries can change it
  * (spec 052 FR-010).
  *
- * Nor can the project (spec 093 item 8): a repository's `.mcp.json` sets the
- * environment of the servers it declares, so when that file - in the folder
- * the server was started in, or in its `--root` - names either switch for any
- * server, both are off and `switchesIgnored` says so.
+ * Nor can the project (spec 093 item 8): a repository's own configuration
+ * files set the environment of the servers they declare, so when one of them
+ * (`projectSetsSwitch`) - from the folder the server was started in, or from
+ * its `--root` - names either switch, both are off and `switchesIgnored` says
+ * so.
  */
 export function contextFromArgv(
   argv: readonly string[],
@@ -48,24 +50,55 @@ export function contextFromArgv(
   }
 }
 
-const SWITCHES = ['VEILIO_MCP_RESTORE', 'VEILIO_MCP_DESTRUCTIVE']
 /** strings.md #4 (spec 093, approved 2026-11-13). */
 const SWITCHES_IGNORED =
   "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
 
-/** Whether `<dir>/.mcp.json` names either switch in any server's `env`,
- *  whatever its value. A file that is missing, unreadable or not the shape
- *  Claude Code reads sets none: the person's environment decides. */
+// The files in a project that can start this server or set its environment:
+// Claude Code's, Cursor's and VS Code's.
+const PROJECT_FILES = [
+  '.mcp.json',
+  '.cursor/mcp.json',
+  '.vscode/mcp.json',
+  '.claude/settings.json',
+  '.claude/settings.local.json',
+]
+const SWITCH_NAMED = /VEILIO_MCP_(?:RESTORE|DESTRUCTIVE)/i
+const READ_CAP = 1024 * 1024
+
+/**
+ * Whether a project file names either switch: in `dir` or a folder above it,
+ * up to the one that holds `.git` (the project's root). Read as text, not as
+ * JSON, so an `env` key, the arguments of a wrapper command (`env NAME=1 ...`)
+ * and another letter case all count. The home folder and above are not read:
+ * the files there are the person's own, where the switch is theirs to set.
+ * A file that is missing or unreadable names none; one too large to read
+ * whole counts as naming one, since what follows the cap was not seen.
+ */
 function projectSetsSwitch(dir: string): boolean {
-  const record = (v: unknown): Record<string, unknown> =>
-    typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}
+  const home = resolve(homedir())
+  for (let at = resolve(dir); at !== home; at = dirname(at)) {
+    if (PROJECT_FILES.some((name) => namesSwitch(join(at, name)))) return true
+    if (existsSync(join(at, '.git')) || dirname(at) === at) break
+  }
+  return false
+}
+
+function namesSwitch(file: string): boolean {
+  let fd: number
   try {
-    const file = record(JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8')))
-    return Object.values(record(file.mcpServers)).some((server) =>
-      SWITCHES.some((name) => Object.hasOwn(record(record(server).env), name))
-    )
+    fd = openSync(file, 'r')
   } catch {
     return false
+  }
+  try {
+    const text = Buffer.alloc(READ_CAP + 1)
+    const read = readSync(fd, text, 0, text.length, 0)
+    return read > READ_CAP || SWITCH_NAMED.test(text.toString('latin1', 0, read))
+  } catch {
+    return false
+  } finally {
+    closeSync(fd)
   }
 }
 

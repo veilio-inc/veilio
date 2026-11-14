@@ -12,7 +12,7 @@ import { contextFromArgv } from '../src/index.js'
 import { handleMessage } from '../src/server.js'
 import { isolateHome } from './helpers/isolated-home.js'
 
-isolateHome()
+const home = isolateHome()
 
 const IGNORED =
   "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
@@ -59,6 +59,61 @@ describe('a switch the project file sets is ignored', () => {
     expect(names(ctx)).toContain('anonymize_file')
   })
 
+  // Review round 1: the name anywhere in any project configuration file a
+  // client reads, in this folder or one above it.
+  const write = (where: string, name: string, text: string): void => {
+    mkdirSync(join(where, name, '..'), { recursive: true })
+    writeFileSync(join(where, name), text)
+  }
+  it.each([
+    [
+      'an env wrapper command',
+      '.mcp.json',
+      '{"mcpServers":{"veilio":{"command":"env","args":["VEILIO_MCP_RESTORE=1","npx","-y","@veilio-inc/mcp"]}}}',
+    ],
+    [
+      'Cursor’s file',
+      '.cursor/mcp.json',
+      '{"mcpServers":{"v":{"env":{"VEILIO_MCP_RESTORE":"1"}}}}',
+    ],
+    [
+      'VS Code’s file, under `servers`',
+      '.vscode/mcp.json',
+      '{"servers":{"v":{"env":{"VEILIO_MCP_DESTRUCTIVE":"1"}}}}',
+    ],
+    [
+      'Claude Code’s project settings',
+      '.claude/settings.json',
+      '{"env":{"VEILIO_MCP_RESTORE":"1"}}',
+    ],
+    [
+      'Claude Code’s local project settings',
+      '.claude/settings.local.json',
+      '{"env":{"VEILIO_MCP_DESTRUCTIVE":"1"}}',
+    ],
+    ['a lower-case key', '.mcp.json', '{"mcpServers":{"v":{"env":{"veilio_mcp_restore":"1"}}}}'],
+    ['a file that is not JSON', '.mcp.json', 'VEILIO_MCP_DESTRUCTIVE=1 {'],
+  ])('%s: both are off, and it is said', (_, name, text) => {
+    write(dir, name, text)
+    const ctx = contextFromArgv([], BOTH, dir)
+    expect([ctx.restoreText, ctx.destructive]).toEqual([false, false])
+    expect(ctx.switchesIgnored).toBe(IGNORED)
+  })
+
+  it('a file in a folder above, up to the one that holds .git', () => {
+    write(dir, '.mcp.json', '{"mcpServers":{"v":{"env":{"VEILIO_MCP_RESTORE":"1"}}}}')
+    mkdirSync(join(dir, '.git'))
+    mkdirSync(join(dir, 'packages', 'api'), { recursive: true })
+    const ctx = contextFromArgv([], BOTH, join(dir, 'packages', 'api'))
+    expect([ctx.restoreText, ctx.destructive]).toEqual([false, false])
+    expect(ctx.switchesIgnored).toBe(IGNORED)
+  })
+
+  it('a file too large to read whole counts as setting them', () => {
+    write(dir, '.mcp.json', ' '.repeat(1024 * 1024 + 1))
+    expect(contextFromArgv([], BOTH, dir).switchesIgnored).toBe(IGNORED)
+  })
+
   it('the file is found in the --root folder too', () => {
     projectFile({ veilio: server({ VEILIO_MCP_RESTORE: '1' }) })
     const ctx = contextFromArgv(['--root', dir], BOTH, elsewhere)
@@ -95,7 +150,6 @@ describe('otherwise the environment decides, as before', () => {
     ['no servers', '{}'],
     ['servers that are not a record', '{"mcpServers":3}'],
     ['a server that is not a record', '{"mcpServers":{"veilio":null}}'],
-    ['an env that is not a record', '{"mcpServers":{"veilio":{"env":"VEILIO_MCP_RESTORE"}}}'],
   ])('a project file that is %s', (_, text) => {
     writeFileSync(join(dir, '.mcp.json'), text)
     decided()
@@ -104,6 +158,26 @@ describe('otherwise the environment decides, as before', () => {
   it('a project file that cannot be read', () => {
     mkdirSync(join(dir, '.mcp.json'))
     decided()
+  })
+
+  it('a file above the folder that holds .git is another project’s, and is not read', () => {
+    writeFileSync(join(dir, '.mcp.json'), '{"mcpServers":{"v":{"env":{"VEILIO_MCP_RESTORE":"1"}}}}')
+    mkdirSync(join(dir, 'repo', '.git'), { recursive: true })
+    mkdirSync(join(dir, 'repo', 'api'))
+    const ctx = contextFromArgv([], BOTH, join(dir, 'repo', 'api'))
+    expect([ctx.restoreText, ctx.destructive]).toEqual([true, true])
+  })
+
+  it('your own user-level files in the home folder are yours: the walk stops below it', () => {
+    mkdirSync(join(home(), '.cursor'), { recursive: true })
+    writeFileSync(
+      join(home(), '.cursor', 'mcp.json'),
+      '{"mcpServers":{"v":{"env":{"VEILIO_MCP_RESTORE":"1"}}}}'
+    )
+    mkdirSync(join(home(), 'work'), { recursive: true })
+    const ctx = contextFromArgv([], BOTH, join(home(), 'work'))
+    expect([ctx.restoreText, ctx.destructive]).toEqual([true, true])
+    expect(ctx.switchesIgnored).toBeUndefined()
   })
 
   it('with the switches unset, nothing is said about a file that sets none', () => {
