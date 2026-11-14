@@ -29,7 +29,7 @@ inputs:
       Defaults to the CLI version released with this action; set `latest` to
       run the newest published CLI instead.
     required: false
-    default: '0.13.0'
+    default: '0.13.1'
 
 outputs:
   findings:
