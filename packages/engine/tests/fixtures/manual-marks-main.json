@@ -1,0 +1,664 @@
+{
+  "inside a name": {
+    "unmarked": {
+      "anonymized": "const u = ACME_API_URL + new __CLS__2()",
+      "map": {
+        "__CLS__1": "Client",
+        "__CLS__2": "AcmeClient"
+      }
+    },
+    "redact": {
+      "anonymized": "const u = __VAR__1 + new __CLS__2()",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__VAR__1": "__MANUAL__2_API_URL",
+        "__CLS__2": "__MANUAL__1Client"
+      }
+    },
+    "warn": {
+      "anonymized": "const u = __VAR__1 + new __CLS__2()",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__VAR__1": "__MANUAL__2_API_URL",
+        "__CLS__2": "__MANUAL__1Client"
+      }
+    },
+    "off": {
+      "anonymized": "const u = __VAR__1 + new __CLS__2()",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__VAR__1": "__MANUAL__2_API_URL",
+        "__CLS__2": "__MANUAL__1Client"
+      }
+    }
+  },
+  "alone in a string": {
+    "unmarked": {
+      "anonymized": "log(\"__STR__1\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "Acme"
+      }
+    },
+    "redact": {
+      "anonymized": "log(\"__MANUAL__1\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "log(\"__MANUAL__1\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "log(\"__MANUAL__1\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "inside a name in a string": {
+    "unmarked": {
+      "anonymized": "log(\"__STR__1 __STR__2\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "PaymentAcmeGateway",
+        "__STR__2": "down"
+      }
+    },
+    "redact": {
+      "anonymized": "log(\"__STR__1 __STR__2\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "Payment__MANUAL__1Gateway",
+        "__STR__2": "down"
+      }
+    },
+    "warn": {
+      "anonymized": "log(\"__STR__1 __STR__2\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "Payment__MANUAL__1Gateway",
+        "__STR__2": "down"
+      }
+    },
+    "off": {
+      "anonymized": "log(\"__STR__1 __STR__2\")",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "Payment__MANUAL__1Gateway",
+        "__STR__2": "down"
+      }
+    }
+  },
+  "in a comment": {
+    "unmarked": {
+      "anonymized": "const total = 1 // ask Acme and the AcmeTeam",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const total = 1 // ask __MANUAL__1 and the __MANUAL__1Team",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const total = 1 // ask __MANUAL__1 and the __MANUAL__1Team",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "const total = 1 // ask __MANUAL__1 and the __MANUAL__1Team",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "beside Polish letters": {
+    "unmarked": {
+      "anonymized": "const __VAR__1 = \"Ż__STR__1\" // AcmeŻółć",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "AcmeClient",
+        "__VAR__1": "firma"
+      }
+    },
+    "redact": {
+      "anonymized": "const __VAR__1 = \"Ż__STR__1\" // __MANUAL__1Żółć",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "__MANUAL__1Client",
+        "__VAR__1": "firma"
+      }
+    },
+    "warn": {
+      "anonymized": "const __VAR__1 = \"Ż__STR__1\" // __MANUAL__1Żółć",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "__MANUAL__1Client",
+        "__VAR__1": "firma"
+      }
+    },
+    "off": {
+      "anonymized": "const __VAR__1 = \"Ż__STR__1\" // __MANUAL__1Żółć",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "__MANUAL__1Client",
+        "__VAR__1": "firma"
+      }
+    }
+  },
+  "beside Greek letters": {
+    "unmarked": {
+      "anonymized": "// ΑAcmeΔ und AcmeClientΩ",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "// Α__MANUAL__1Δ und __MANUAL__1ClientΩ",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "// Α__MANUAL__1Δ und __MANUAL__1ClientΩ",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "// Α__MANUAL__1Δ und __MANUAL__1ClientΩ",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "inside a number": {
+    "unmarked": {
+      "anonymized": "// acct 88412037\nwire(88412037)",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "// acct __MANUAL__32037\nwire(__MANUAL__32037)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "// acct __MANUAL__32037\nwire(__MANUAL__32037)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "// acct __MANUAL__32037\nwire(__MANUAL__32037)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "beside a placeholder": {
+    "unmarked": {
+      "anonymized": "// AcmeŻ__CLS__1 and Acme__CLS__1x here",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "// __MANUAL__1Ż__CLS__1 and __MANUAL__1__CLS__1x here",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "// __MANUAL__1Ż__CLS__1 and __MANUAL__1__CLS__1x here",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "// __MANUAL__1Ż__CLS__1 and __MANUAL__1__CLS__1x here",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "inside a key": {
+    "unmarked": {
+      "anonymized": "const k = \"__REDACTED_STRIPE_KEY_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const k = \"__REDACTED_STRIPE_KEY_1__\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const k = \"__STR__1\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "sk_live_4eC39HqLyjWD__MANUAL__1tT1zdp7dc"
+      }
+    },
+    "off": {
+      "anonymized": "const k = \"__STR__1\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "sk_live_4eC39HqLyjWD__MANUAL__1tT1zdp7dc"
+      }
+    }
+  },
+  "inside a password of a connection string": {
+    "unmarked": {
+      "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "postgres",
+        "__STR__2": "internal",
+        "__VAR__1": "dsn",
+        "__STR__3": "svc"
+      }
+    },
+    "redact": {
+      "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:__REDACTED_DB_PASSWORD_1__@db.__STR__2:5432/app\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "postgres",
+        "__STR__2": "internal",
+        "__VAR__1": "dsn",
+        "__STR__3": "svc"
+      }
+    },
+    "warn": {
+      "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:Zt4pw-__MANUAL__1Hunter7Zq9-x9Kd2@db.__STR__2:5432/app\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "postgres",
+        "__STR__2": "internal",
+        "__VAR__1": "dsn",
+        "__STR__3": "svc"
+      }
+    },
+    "off": {
+      "anonymized": "const __VAR__1 = \"__STR__1://__STR__3:Zt4pw-__MANUAL__1Hunter7Zq9-x9Kd2@db.__STR__2:5432/app\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__STR__1": "postgres",
+        "__STR__2": "internal",
+        "__VAR__1": "dsn",
+        "__STR__3": "svc"
+      }
+    }
+  },
+  "inside a value under a credential key": {
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const password = \"Zt4pw-__MANUAL__1Hunter7Zq9-x9Kd2\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "const password = \"Zt4pw-__MANUAL__1Hunter7Zq9-x9Kd2\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "a whole part of a credential": {
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const password = \"Zt4pw-__MANUAL__1-x9Kd2\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "const password = \"Zt4pw-__MANUAL__1-x9Kd2\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "inside a credential that holds a placeholder": {
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const password = \"Zt4pwŻ__CLS__1Ż__MANUAL__1Hunter7Zq9\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "off": {
+      "anonymized": "const password = \"Zt4pwŻ__CLS__1Ż__MANUAL__1Hunter7Zq9\"",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    }
+  },
+  "in a name that is a credential elsewhere": {
+    "unmarked": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"\nlog(__REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "const password = \"__REDACTED_CREDENTIAL_1__\"\nlog(__REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841"
+      }
+    },
+    "warn": {
+      "anonymized": "const password = \"__MANUAL__1Hunter7Zq9\"\nlog(__VAR__1)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__VAR__1": "__MANUAL__1Hunter7Zq9"
+      }
+    },
+    "off": {
+      "anonymized": "const password = \"__MANUAL__1Hunter7Zq9\"\nlog(__VAR__1)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "ACME",
+        "__MANUAL__3": "8841",
+        "__VAR__1": "__MANUAL__1Hunter7Zq9"
+      }
+    }
+  },
+  "in a name that is a credential in a later call": {
+    "unmarked": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__FN__1": "login"
+      }
+    },
+    "redact": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    },
+    "warn": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    },
+    "off": {
+      "anonymized": "log(__REDACTED_CREDENTIAL_1__)\n__FN__1(user, password = __REDACTED_CREDENTIAL_1__)",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__FN__1": "login"
+      }
+    }
+  },
+  "in a name that is a credential in a later YAML key": {
+    "unmarked": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    },
+    "warn": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    },
+    "off": {
+      "anonymized": "user: __REDACTED_CREDENTIAL_1__\npassword: __REDACTED_CREDENTIAL_1__\n",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme"
+      }
+    }
+  },
+  "two marks side by side in a comment": {
+    "unmarked": {
+      "anonymized": "// invoice for AcmeCorp Ltd",
+      "map": {
+        "__CLS__1": "Client"
+      }
+    },
+    "redact": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "warn": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "off": {
+      "anonymized": "// invoice for __MANUAL__1__MANUAL__2",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    }
+  },
+  "two marks side by side in a string": {
+    "unmarked": {
+      "anonymized": "const who = '__STR__1 __STR__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__STR__1": "AcmeCorp",
+        "__STR__2": "Ltd"
+      }
+    },
+    "redact": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "warn": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    },
+    "off": {
+      "anonymized": "const who = '__MANUAL__1__MANUAL__2'",
+      "map": {
+        "__CLS__1": "Client",
+        "__MANUAL__1": "Acme",
+        "__MANUAL__2": "Corp Ltd"
+      }
+    }
+  }
+}

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import type { AnonymizeOptions } from '../src/types.js'
+import { HELD, MODES, ROWS } from './fixtures/manual-marks.js'
 import {
   anonymize,
   restore,
@@ -318,5 +321,207 @@ describe('manual masks', () => {
     const next = anonymize('def settle():\n    return "Kowalska"', { existingMap: marked.map })
     expect(next.anonymized).toContain('def ')
     expect(next.anonymized).not.toContain('Kowalska')
+  })
+})
+
+// ─── spec 093 · a mark inside a longer name comes back ───────────────────────
+//
+// Masking replaces a term where it stands, inside a name too: ACME in
+// ACME_API_URL leaves `__MANUAL__1_API_URL`, which is then minted as a name, so
+// the map holds a value with a placeholder in it. Restore, one pass, gave that
+// value back as written. Masking is unchanged; restore now reads such a value
+// through.
+
+type Answer = { anonymized: string; map: Record<string, string> }
+/** What origin/main 05931b6 answered for each row (fixtures/manual-marks.ts). */
+const MAIN: Record<string, Record<'unmarked' | (typeof MODES)[number], Answer>> = JSON.parse(
+  readFileSync(new URL('./fixtures/manual-marks-main.json', import.meta.url), 'utf8')
+)
+
+describe('masking with marks is what origin/main gave (spec 093)', () => {
+  it('has an answer of main for every row, and no stale one', () => {
+    expect(Object.keys(MAIN)).toEqual(ROWS.map((r) => r.name))
+  })
+
+  describe.each(ROWS)('a mark $name', ({ name, code, manual, path }) => {
+    const answer = (options: AnonymizeOptions): Answer => {
+      const { anonymized, map } = anonymize(code, { existingMap: HELD, path, ...options })
+      return { anonymized, map }
+    }
+
+    it('with nothing marked', () => {
+      expect(answer({})).toEqual(MAIN[name]!.unmarked)
+    })
+
+    it.each(MODES)('with the marks (%s)', (mode) => {
+      expect(answer({ manual, secrets: mode })).toEqual(MAIN[name]![mode])
+    })
+  })
+})
+
+describe('restore reads a map value that holds a placeholder (spec 093)', () => {
+  it.each([
+    ['const u = ACME_API_URL + 1;', 'ACME'],
+    ['new AcmeClient()', 'Acme'],
+    ['log("PaymentAcmeGateway down") // ask the AcmeTeam', 'Acme'],
+  ])('restores %s exactly when %s is marked', (code, term) => {
+    const { anonymized, map } = anonymize(code, { manual: [term] })
+    const { restored, report } = restore(anonymized, map, { strip: 'none' })
+
+    expect(anonymized).not.toContain(term)
+    expect(restored).toBe(code)
+    expect(report.missing).toEqual([])
+    expect(report.altered).toEqual([])
+    expect(report.unresolved).toEqual([])
+  })
+
+  it('restores a mark standing alone as before', () => {
+    const code = '// escalated by Kowalska'
+    const { anonymized, map } = anonymize(code, { manual: ['Kowalska'] })
+
+    expect(restore(anonymized, map, { strip: 'none' })).toMatchObject({
+      restored: code,
+      report: { resolved: ['__MANUAL__1'], missing: [], unresolved: [], altered: [] },
+    })
+  })
+
+  it('reads a value through two levels', () => {
+    const map = { __CLS__1: '__VAR__1Client', __VAR__1: '__MANUAL__1_API', __MANUAL__1: 'ACME' }
+    const { restored, report } = restore('new __CLS__1()', map, { strip: 'none' })
+
+    expect(restored).toBe('new ACME_APIClient()')
+    expect(report.missing).toEqual([])
+    expect(report.resolved).toEqual(['__CLS__1', '__VAR__1', '__MANUAL__1'])
+  })
+
+  it('counts a placeholder only read through a value that was not used as missing', () => {
+    const map = { __CLS__1: '__MANUAL__1Client', __MANUAL__1: 'Acme', __FN__1: 'settle' }
+    expect(restore('__FN__1()', map, { strip: 'none' }).report.missing).toEqual([
+      '__CLS__1',
+      '__MANUAL__1',
+    ])
+  })
+
+  it('stops on a cycle and leaves those values as they are', () => {
+    const map = { __VAR__1: '__VAR__2x', __VAR__2: '__VAR__1y', __FN__1: 'settle' }
+    const { restored } = restore('__FN__1(__VAR__1, __VAR__2)', map, { strip: 'none' })
+
+    expect(restored).toBe('settle(__VAR__2x, __VAR__1y)')
+  })
+
+  it('leaves a value that holds itself as it is', () => {
+    expect(restore('__VAR__1', { __VAR__1: 'a__VAR__1' }, { strip: 'none' }).restored).toBe(
+      'a__VAR__1'
+    )
+  })
+
+  it('leaves a value that would not stop growing as it is', () => {
+    // Each level doubles: read through, the first would be 2^20 names long.
+    const map: Record<string, string> = { __VAR__21: 'x' }
+    for (let i = 1; i <= 20; i++) map[`__VAR__${i}`] = `__VAR__${i + 1}__VAR__${i + 1}`
+    const t0 = performance.now()
+    const { restored } = restore('__VAR__1', map, { strip: 'none' })
+
+    expect(restored).toBe('__VAR__2__VAR__2')
+    expect(performance.now() - t0).toBeLessThan(1000)
+  })
+
+  it('leaves a value nested deeper than it reads as it is', () => {
+    // Masking nests one level per mark; eight is no map the engine wrote.
+    const map: Record<string, string> = { __VAR__9: 'x' }
+    for (let i = 1; i <= 8; i++) map[`__VAR__${i}`] = `a__VAR__${i + 1}`
+    expect(restore('__VAR__1 __VAR__6', map, { strip: 'none' }).restored).toBe('a__VAR__2 aaax')
+  })
+
+  it('leaves a value that would grow past the length allowed as it is', () => {
+    // Four levels of sixty each: read through, 13 million characters.
+    const sixty = (key: string): string => key.repeat(60)
+    const map = {
+      __VAR__1: sixty('__VAR__2'),
+      __VAR__2: sixty('__VAR__3'),
+      __VAR__3: sixty('__VAR__4'),
+      __VAR__4: sixty('x'),
+    }
+    expect(restore('__VAR__1', map, { strip: 'none' }).restored).toBe(sixty('__VAR__2'))
+    expect(restore('__VAR__3', map, { strip: 'none' }).restored).toBe('x'.repeat(3600))
+  })
+
+  it('does no more work than the map is long for a map built to grow', () => {
+    // A map may be someone else's (a team map, an imported file). Thirty keys,
+    // each holding the next six times over, and a long last value: read
+    // through, the first would be 6^29 times 10,000 characters.
+    const keys = 30
+    const map: Record<string, string> = { [`__VAR__${keys}`]: 'x'.repeat(10_000) }
+    for (let i = 1; i < keys; i++) map[`__VAR__${i}`] = `__VAR__${i + 1} `.repeat(6)
+    const text = Array.from({ length: keys }, (_, i) => `__VAR__${i + 1}`).join('\n')
+    const t0 = performance.now()
+    const { restored } = restore(text, map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(500)
+    // Even the last level (60,000 characters) is more than the call may build,
+    // four times the map's own length: every value comes back as written.
+    expect(restored.length).toBeLessThan(200_000)
+    expect(restored.startsWith('__VAR__2 __VAR__2 ')).toBe(true)
+    expect(restored.endsWith('x'.repeat(10_000))).toBe(true)
+  })
+
+  it('reads a value many others share once, within one budget for the call', () => {
+    // 2,000 values each holding the same 40,000-character one: each fits the
+    // length a value may reach, all of them together do not fit the call.
+    const map: Record<string, string> = { __CLS__1: 'y'.repeat(40_000) }
+    for (let i = 1; i <= 2000; i++) map[`__VAR__${i}`] = `a__CLS__1`
+    const text = Object.keys(map).join(' ')
+    const t0 = performance.now()
+    const { restored } = restore(text, map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(1000)
+    expect(restored.length).toBeLessThan(1_000_000)
+    expect(restored).toContain('a__CLS__1')
+  })
+
+  it('counts the placeholders read through, not only the characters, as work', () => {
+    // Values that come to nothing, three levels of 300: no length ever grows,
+    // yet reading the top one through means 27 million placeholders.
+    const level = (base: string, holds: string): string[] => {
+      const keys = Array.from({ length: 300 }, (_, i) => `__${base}__${i + 1}`)
+      for (const key of keys) map[key] = holds
+      return keys
+    }
+    const map: Record<string, string> = {}
+    const classes = level('CLS', level('VAR', level('STR', '').join('')).join(''))
+    map.__FN__1 = classes.join('')
+    const t0 = performance.now()
+    const { restored } = restore('__FN__1 __VAR__1.', map, { strip: 'none' })
+
+    expect(performance.now() - t0).toBeLessThan(2000)
+    expect(restored).toBe(`${map.__FN__1} .`)
+  })
+
+  it('leaves a placeholder-shaped token in a value alone when the map has no such key', () => {
+    const map = { __VAR__1: '__GNUC__ and __CLS__7 stay', __CLS__70: 'Other' }
+    expect(restore('__VAR__1', map, { strip: 'none' }).restored).toBe('__GNUC__ and __CLS__7 stay')
+  })
+
+  it('does not read a key followed by a digit as that key', () => {
+    const map = { __VAR__1: '__CLS__10', __CLS__1: 'Invoice' }
+    expect(restore('__VAR__1', map, { strip: 'none' }).restored).toBe('__CLS__10')
+  })
+
+  it('restores text whose map has no such value exactly as before', () => {
+    const code = 'function settleBerthQuota(quayRate) { return quayRate } // Kowalska'
+    const { anonymized, map } = anonymize(code, { manual: ['Kowalska'] })
+
+    expect(Object.values(map).some((v) => v.includes('__'))).toBe(false)
+    expect(restore(anonymized, map, { strip: 'none' })).toEqual({
+      restored: code,
+      strippedCount: 0,
+      strippedItems: [],
+      report: {
+        resolved: Object.keys(map),
+        missing: [],
+        unresolved: [],
+        altered: [],
+      },
+    })
   })
 })

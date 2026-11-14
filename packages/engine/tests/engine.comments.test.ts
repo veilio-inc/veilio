@@ -332,3 +332,91 @@ describe('Ruby % as an operator or a literal, as the lexer reads it (R2-11 revie
     expect(ruby(code)).not.toContain('PaymentGateway')
   })
 })
+
+// Spec 093: the string scan ended a template literal at the first backtick, the
+// one that opens a template inside its `${ }`. The `//` after it was then read
+// as a comment, and a name used only there went out as written.
+describe('a template literal inside a template literal (spec 093)', () => {
+  const T = '`'
+  /** Masked and restored, with the names that must not be readable. */
+  const check = (code: string, hidden: string[]) => {
+    const { anonymized, map, comments } = anonymize(code, { language: 'typescript' })
+    for (const name of hidden) expect(anonymized).not.toContain(name)
+    expect(restore(anonymized, map, { strip: 'none' }).restored).toBe(code)
+    return { anonymized, comments }
+  }
+
+  it('masks a name used only in the inner template, and reads the rest of the line as code', () => {
+    const code = `const src = ${T}\${cdn ? ${T}//\${cfg.cdnHost}/x${T} : ''}${T}; send(src, tenantLedger)`
+    const { comments } = check(code, ['cdnHost', 'tenantLedger'])
+    expect(comments.total).toBe(0)
+  })
+
+  it('follows templates nested three deep', () => {
+    const code = `const s = ${T}a\${${T}//\${${T}c\${vaultRegion}${T}}${T}}${T} + ledgerShard // a note`
+    const { anonymized, comments } = check(code, ['vaultRegion', 'ledgerShard'])
+    expect(anonymized).toContain('// a note')
+    expect(comments.total).toBe(1)
+  })
+
+  it('does not end the interpolation at a } or a backtick inside a string', () => {
+    const code = `const s = ${T}\${pad("}", '${T}')} \${${T}//\${vaultRegion}${T}}${T}; use(ledgerShard)`
+    const { comments } = check(code, ['vaultRegion', 'ledgerShard'])
+    expect(comments.total).toBe(0)
+  })
+
+  it('reads a { } block inside the interpolation as part of it', () => {
+    const code = `const s = ${T}\${rows.map((r) => { return ${T}//\${r.vaultRegion}${T} })}${T}; use(ledgerShard)`
+    expect(check(code, ['vaultRegion', 'ledgerShard']).comments.total).toBe(0)
+  })
+
+  it('reads a template that never closes as before', () => {
+    const open = `const s = ${T}\${cdn ? ${T}//\${cfg.cdnHost}/x : ''}; send(src)\n// a note on tenantLedger`
+    const { anonymized } = anonymize(open, { language: 'typescript' })
+    expect(anonymized).toBe(
+      "const s = `${__STR__1 ? `//${cfg.cdnHost}/x : ''}; send(src)\n// a note on tenantLedger"
+    )
+  })
+
+  it('reads a Go raw string, which has no interpolation, as before', () => {
+    const code = 'x := `${` + ledgerShard + `}` // a note'
+    const { anonymized } = anonymize(code, { language: 'go' })
+    expect(anonymized).not.toContain('ledgerShard')
+    expect(anonymized).toContain('// a note')
+  })
+
+  // Review of spec 093: an apostrophe in a comment inside `${ }` was read as a
+  // string to the end of the line; the template then never closed, and the
+  // nested reading was switched off for the rest of the file.
+  const NESTED = `const src = ${T}\${cdn ? ${T}//\${cfg.cdnHost}/x${T} : ''}${T}; send(src, tenantLedger)`
+
+  it.each([
+    ['a block comment with an apostrophe', "x /* don't */"],
+    ['a line comment with a backtick', `x // a ${T} here\n`],
+    ['a line comment with a } and a quote', 'x // } and "\n'],
+    ['a string with } and a backtick', `pad("}${T}", '}')`],
+  ])('skips %s inside the interpolation', (_name, start) => {
+    const code = `const src = ${T}\${${start} ? ${T}//\${cfg.cdnHost}/x${T} : ''}${T}; send(src, tenantLedger)`
+    expect(check(code, ['cdnHost', 'tenantLedger']).comments.total).toBe(0)
+  })
+
+  it('keeps reading nested templates after one it could not close', () => {
+    // A regex literal holding a quote is not followed (see templateEnd): this
+    // template reads as before, the next one is read whole all the same.
+    const lost = `const a = ${T}\${ /'/.test(x) }${T}`
+    const { anonymized } = anonymize(`${lost}\n${NESTED}`, { language: 'typescript' })
+    expect(anonymized).not.toContain('cdnHost')
+    expect(anonymized).not.toContain('tenantLedger')
+  })
+
+  it('stays linear on many templates whose interpolation never closes', () => {
+    const run = (n: number): number => {
+      const code = ('`${ `' + ' x ').repeat(n)
+      const t0 = performance.now()
+      anonymize(code, { language: 'typescript' })
+      return performance.now() - t0
+    }
+    run(2000)
+    expect(run(40000)).toBeLessThan(2000)
+  })
+})

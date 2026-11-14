@@ -416,6 +416,48 @@ function literalEnd(code: string, at: number, kind: 'ruby' | 'php', memo: Litera
   return -1
 }
 
+/** The offset just past the template literal that opens at `at`, following
+ *  its `${ }`: a template or a quoted string inside one ends nothing outside
+ *  it, and neither does a comment there. -1 when it never closes (spec 093).
+ *  shortcut: a regex literal inside `${ }` is read as code, so a quote, brace
+ *  or backtick in one miscounts; a lexer with state fixes it. */
+function templateEnd(code: string, at: number): number {
+  // One entry per open `${`: the `{` still open inside it.
+  const open: number[] = []
+  let inText = true
+  for (let i = at + 1; i < code.length; i++) {
+    const c = code[i]
+    if (c === '\\') i++
+    else if (inText) {
+      if (c === '`') {
+        if (open.length === 0) return i + 1
+        inText = false
+      } else if (c === '$' && code[i + 1] === '{') {
+        open.push(0)
+        inText = false
+        i++
+      }
+    } else if (c === '`') inText = true
+    else if (c === '{') open[open.length - 1]++
+    else if (c === '}') {
+      if (open[open.length - 1] === 0) {
+        open.pop()
+        inText = true
+      } else open[open.length - 1]--
+    } else if (c === '/' && code[i + 1] === '*') {
+      const close = code.indexOf('*/', i + 2)
+      if (close === -1) return -1
+      i = close + 1
+    } else if (c === '/' && code[i + 1] === '/') {
+      while (i + 1 < code.length && code[i + 1] !== '\n') i++
+    } else if (c === '"' || c === "'") {
+      // '…' and "…" end at their quote or, unterminated, at the line break.
+      for (i++; i < code.length && code[i] !== c && code[i] !== '\n'; i++) if (code[i] === '\\') i++
+    }
+  }
+  return -1
+}
+
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y
 
@@ -452,6 +494,7 @@ function tokenizeForMasking(
 
   let i = 0
   let noRegexBefore = -1
+  let templateWork = 0
   const literalMemo: LiteralMemo = { terminators: new Map(), unclosed: new Set() }
   // A quote character opens nothing before this offset (see `forRestore`).
   const proseBefore = new Map<string, number>()
@@ -576,6 +619,27 @@ function tokenizeForMasking(
       // Still maskable (isComment: false); escape handling unchanged.
       flush(false)
       const isModuleSpecifier = isModuleSpecifierContext(code, i)
+      // A JavaScript template literal runs to its own closing backtick, past
+      // the templates inside its `${ }` (spec 093). One that never closes
+      // reads as before, and costs a scan to the end: past a few such scans'
+      // worth of work the rest reads as before too, or a file of them is
+      // quadratic. Masking only: restore's reading of a markdown answer is
+      // unchanged.
+      const nested =
+        c === '`' && language === 'typescript' && !forRestore && templateWork <= 8 * n
+          ? templateEnd(code, i)
+          : -1
+      if (nested !== -1) {
+        segments.push({
+          text: code.slice(i, nested),
+          isComment: false,
+          isString: true,
+          isModuleSpecifier,
+        })
+        i = nested
+        continue
+      }
+      if (c === '`') templateWork += n - i
       const opened = i
       let closed = false
       let str = c
@@ -2152,7 +2216,7 @@ const STRIP_PATTERNS: ReadonlyArray<
   ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize).*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)(?![\p{L}\p{N}_]).*/gmu,
   ],
   ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],
@@ -2204,6 +2268,22 @@ function stripNoise(
   /** Where each item's own text begins: its first character no earlier item took. */
   const itemStart: number[] = []
   let view = text
+  // Where the string and template literals are, read once and only when a line
+  // pattern matches: a line inside one is the program's text, not a comment
+  // (spec 093). shortcut: restore's reading, which ends a template at the first
+  // backtick; one nested in `${ }` flips the reading until the next backtick.
+  let literals: Array<[number, number]> | undefined
+  const inLiteral = (offset: number): boolean => {
+    if (literals === undefined) {
+      literals = []
+      let at = 0
+      for (const s of tokenizeForMasking(text, 'typescript', true)) {
+        if (s.isString) literals.push([at, at + s.text.length])
+        at += s.text.length
+      }
+    }
+    return inSpan(literals, offset)
+  }
   for (const [type, pattern] of STRIP_PATTERNS) {
     if (!wanted.has(type)) continue
     const found: Array<[number, number]> = []
@@ -2215,7 +2295,7 @@ function stripNoise(
             m.index! + m[0].length,
           ])
     for (const [start, end] of spans) {
-      if (start === end) continue
+      if (start === end || (typeof pattern !== 'function' && inLiteral(start))) continue
       let own = start
       while (own < end && isSpace(view[own])) own++
       found.push([start, end])
@@ -2347,6 +2427,12 @@ function stripNoise(
   }
 }
 
+/** How deep `restore` reads a map value that holds placeholders, how long one
+ *  may become, and how many times the map's own length one call may build. */
+const NESTED_DEPTH = 5
+const NESTED_LENGTH = 64 * 1024
+const NESTED_ALLOWANCE = 4
+
 /**
  * Restore an AI response: strip AI-generated noise, then swap placeholders back.
  *
@@ -2381,9 +2467,86 @@ export function restore(
   const seen = new Set<string>()
   if (placeholders.length > 0) {
     const pattern = new RegExp(`(?:${placeholders.map(escapeRegex).join('|')})(?!\\d)`, 'g')
+    // A value may hold a placeholder of this map: a mark inside a longer name
+    // is masked as `__MANUAL__1_API_URL`, which is then minted as a name. Such
+    // a value is read through first, or one pass gave back the placeholder in
+    // place of the name (spec 093). Only for a placeholder the text holds, each
+    // value once. A map may be someone else's, so the work is bounded before
+    // anything is built: a value that holds itself at any depth, nests deeper
+    // than NESTED_DEPTH, would pass NESTED_LENGTH, or comes after the call's
+    // allowance is spent, is written as it is - whole, never partly read.
+    type Read = { value: string; through: string[]; depth: number }
+    const reads = new Map<string, Read | null>()
+    let allowance: number | undefined
+    const readThrough = (first: string): Read | null => {
+      // An explicit stack: a chain of values as long as the map must not
+      // become a chain of calls.
+      const stack = [first]
+      const open = new Set<string>()
+      while (stack.length > 0) {
+        const key = stack[stack.length - 1]!
+        if (reads.has(key)) {
+          stack.pop()
+          continue
+        }
+        const own = map[key]!
+        const held = own.includes('__') ? [...own.matchAll(pattern)] : []
+        if (!open.has(key)) {
+          // First the values it holds; then, back here, this one.
+          open.add(key)
+          const below = stack.length
+          for (const m of held) if (!reads.has(m[0]) && !open.has(m[0])) stack.push(m[0])
+          if (stack.length > below) continue
+        }
+        let read: Read | null = { value: own, through: [], depth: 0 }
+        if (held.length > 0) {
+          if (allowance === undefined) {
+            allowance = aiResponse.length
+            for (const k of placeholders) allowance += NESTED_ALLOWANCE * map[k]!.length
+          }
+          // What it would come to and cost, before any of it is built. A
+          // value held here and not read by now is this value holding itself.
+          let length = own.length
+          let work = 0
+          let depth = 0
+          let whole = true
+          for (const m of held) {
+            const part = reads.get(m[0])
+            if (part == null) {
+              whole = false
+              break
+            }
+            length += part.value.length - m[0].length
+            work += 1 + part.through.length
+            depth = Math.max(depth, part.depth + 1)
+          }
+          if (!whole || depth > NESTED_DEPTH || length > NESTED_LENGTH || length + work > allowance)
+            read = null
+          else {
+            allowance -= length + work
+            const through = new Set<string>()
+            for (const m of held) {
+              through.add(m[0])
+              for (const k of reads.get(m[0])!.through) through.add(k)
+            }
+            read = {
+              value: own.replace(pattern, (m) => reads.get(m)!.value),
+              through: [...through],
+              depth,
+            }
+          }
+        }
+        reads.set(key, read)
+        stack.pop()
+      }
+      return reads.get(first)!
+    }
     result = result.replace(pattern, (match) => {
       seen.add(match)
-      return map[match] ?? match
+      const read = readThrough(match)
+      if (read === null) return map[match] ?? match
+      for (const key of read.through) seen.add(key)
+      return read.value
     })
   }
 
