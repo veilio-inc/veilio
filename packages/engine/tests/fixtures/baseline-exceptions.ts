@@ -13,4 +13,185 @@ export interface BaselineException {
   why: string
 }
 
-export const EXCEPTIONS: BaselineException[] = []
+export const EXCEPTIONS: BaselineException[] = [
+  {
+    row: 'url: api_key as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: api_key as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: api_key in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: api_key in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: access_token as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: access_token as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: access_token in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: access_token in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: token as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: token as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: token in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: token in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: secret as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: secret as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: secret in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: secret in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: password as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: password as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: password in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: password in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: key as the first parameter',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: key as the first parameter',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: key in the fragment',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: key in the fragment',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: api_key first, in a template literal',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: api_key first, in a template literal',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: key first, in Python',
+    options: { language: 'python' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: access_token in the fragment, in Python',
+    options: { language: 'python' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: a credential after a nested question mark',
+    options: { language: 'typescript' },
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+  {
+    row: 'url: a credential after a nested question mark',
+    options: {},
+    finding: 'H1',
+    why: 'a credential in the first query parameter or the fragment of a URL is redacted',
+  },
+]

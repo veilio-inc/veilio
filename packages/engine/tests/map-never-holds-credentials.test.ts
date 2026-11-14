@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, restore } from '../src/engine.js'
+import { anonymize, restore, valuePositions } from '../src/engine.js'
 import { scanSecrets } from '../src/secrets.js'
 import type { SymbolMap } from '../src/types.js'
 import type { SecretPolicy } from '../src/secrets.js'
@@ -440,4 +440,83 @@ describe('the URL host is the part after the last @ of the authority', () => {
     const out = anonymize('PGPASSWORD=postgres psql\nURL=https://u:pw@postgres:5432/a\n').anonymized
     expect(out).toContain('@postgres:5432/a')
   })
+})
+
+// Spec 094: a value under a credential word is redacted wherever the
+// parameter stands in a URL - first in the query, later in it, or in the
+// fragment - and is never a map value.
+describe('a credential in any parameter of a URL', () => {
+  // Built here, never written whole.
+  const VALUE = ['Qz7mK2vL9', 'pR4wZ8tXc1', 'Yb6Nd3Hs5'].join('')
+  const slices = Array.from({ length: VALUE.length - 7 }, (_, i) => VALUE.slice(i, i + 8))
+  const WORDS = ['api_key', 'access_token', 'token', 'secret', 'password', 'key']
+  const FORMS = [
+    ['a plain string', 'typescript', (url: string) => `const u = "${url}";\n`],
+    ['a template literal', 'typescript', (url: string) => `const u = \`${url}\`;\n`],
+    ['Python', 'python', (url: string) => `requests.get("${url}")\n`],
+  ] as const
+  const PLACES = [
+    ['the first parameter', (word: string) => `https://api.example.com/v1?${word}=${VALUE}&x=1`],
+    ['the second parameter', (word: string) => `https://api.example.com/v1?x=1&${word}=${VALUE}`],
+    ['the fragment', (word: string) => `https://api.example.com/cb#${word}=${VALUE}`],
+    [
+      'a nested query',
+      (word: string) => `https://app.example.com/go?next=/cb?page=2#${word}=${VALUE}`,
+    ],
+    // After a pair that is no credential: `&` ends that pair's value, so the
+    // next one is read on its own.
+    [
+      'a later parameter of the fragment',
+      (word: string) => `https://api.example.com/cb#a=1&${word}=${VALUE}`,
+    ],
+    [
+      'a later parameter after a query and a fragment',
+      (word: string) => `https://api.example.com/v1?x=1#y=2&${word}=${VALUE}`,
+    ],
+  ] as const
+
+  for (const word of WORDS)
+    for (const [form, language, write] of FORMS)
+      for (const [place, url] of PLACES)
+        it(`${word} as ${place}, in ${form}`, () => {
+          const { anonymized, map } = anonymize(write(url(word)), { language })
+          expect(anonymized).toContain('__REDACTED_')
+          const held = Object.values(map).join('\n')
+          for (const slice of slices) {
+            expect(anonymized.includes(slice)).toBe(false)
+            expect(held.includes(slice)).toBe(false)
+          }
+        })
+
+  it('a URL with no credential word is masked as before, and comes back', () => {
+    const code = 'const u = "https://api.example.com/v1?page=2&sort=customerTotal#top";\n'
+    const { anonymized, map } = anonymize(code, { language: 'typescript' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(anonymized).not.toContain('customerTotal')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  it('a password holding ? and # is redacted whole', () => {
+    const password = ['Zq7kW', '?', '9xLm2', '#', 'vT4bN'].join('')
+    const code = `const dsn = "Server=db.example.com;Database=ledger;Password=${password};";\n`
+    const { anonymized, map } = anonymize(code, { language: 'typescript' })
+    expect(anonymized).toContain('=__REDACTED_CREDENTIAL_1__;"')
+    expect(anonymized + JSON.stringify(map)).not.toMatch(/Zq7kW|9xLm2|vT4bN/)
+  })
+
+  it('reads a value of many question marks in linear time', () => {
+    const time = (n: number): number => {
+      const code = `const u = "https://h.example.com/p?${'a=?'.repeat(n)}";\n`
+      let best = Infinity
+      for (let i = 0; i < 5; i++) {
+        const t = performance.now()
+        valuePositions(code, { language: 'typescript' })
+        best = Math.min(best, performance.now() - t)
+      }
+      return best
+    }
+    const [a, b] = [10_000, 80_000].map(time)
+    // Eight times the text: linear is 8x, quadratic 64x.
+    expect(b! / Math.max(a!, 2)).toBeLessThan(24)
+  }, 60_000)
 })
