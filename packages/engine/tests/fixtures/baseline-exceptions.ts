@@ -944,4 +944,10 @@ export const EXCEPTIONS: BaselineException[] = [
     finding: 'C2',
     why: '`//` opens no comment in a `.env` file: the rest of a URL is no longer counted as a comment',
   },
+  {
+    row: 'typescript: a block opener in JSX text',
+    options: { language: 'typescript' },
+    finding: 'C2',
+    why: 'a block opener with no closer after it opens no comment',
+  },
 ]

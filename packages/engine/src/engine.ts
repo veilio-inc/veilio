@@ -534,6 +534,8 @@ function tokenizeForMasking(
   let noRegexBefore = -1
   let templateWork = 0
   const literalMemo: LiteralMemo = { terminators: new Map(), unclosed: new Set() }
+  // Block closers that do not occur again before the end of the text.
+  const neverClosed = new Set<string>()
   // A quote character opens nothing before this offset (see `forRestore`).
   const proseBefore = new Map<string, number>()
   /** The end of the fence line starting at `at`, or -1 when none does. */
@@ -649,20 +651,25 @@ function tokenizeForMasking(
     const delimiterAt = (token: string, at: number): boolean =>
       startsWithAt(token, at) && (!syntax.blockAtLineStart || at === 0 || code[at - 1] === '\n')
     const blockPair = syntax.block.find(([open]) => delimiterAt(open, i))
-    if (blockPair !== undefined) {
+    if (blockPair !== undefined && !neverClosed.has(blockPair[1])) {
       const [open, close] = blockPair
-      // As for a line opener: one that opens nothing here is code, whole.
-      const isCode = plain.includes(open)
-      if (!isCode) flush(true)
-      buf += open
-      i += open.length
-      while (i < n && !delimiterAt(close, i)) buf += code[i++]
-      if (i < n) {
-        buf += close
-        i += close.length
+      let end = i + open.length
+      while (end < n && !delimiterAt(close, end)) end++
+      // An opener with no closer after it opens nothing (`build/*`, a `/*` in
+      // JSX text): what follows is code, and is masked. No later opener of
+      // this pair has a closer either, so none is looked for again (linear).
+      // Restore reads as before.
+      if (end >= n && !forRestore) neverClosed.add(close)
+      else {
+        end = Math.min(n, end + close.length)
+        // As for a line opener: one that opens nothing here is code, whole.
+        const isCode = plain.includes(open)
+        if (!isCode) flush(true)
+        buf += code.slice(i, end)
+        if (!isCode) flush(false)
+        i = end
+        continue
       }
-      if (!isCode) flush(false)
-      continue
     }
 
     if ((forRestore || syntax.regexLiterals) && c === '/' && i >= noRegexBefore) {

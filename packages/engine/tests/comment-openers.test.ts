@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, measureCommentExposure, restore } from '../src/index.js'
+import {
+  anonymize,
+  detectCredentials,
+  measureCommentExposure,
+  restore,
+  valuePositions,
+} from '../src/index.js'
 import type { AnonymizeOptions } from '../src/types.js'
 
 // Spec 094: `//` and `/*` are comment openers of some languages only.
@@ -132,6 +138,64 @@ describe('a block opener where the language is only detected', () => {
   })
 })
 
+describe('a block opener that is never closed', () => {
+  const JSX =
+    'export const Docs = () => <p>docs at /* not a comment</p>; const AcmePay = settleInvoice(acme_refunds);\n'
+  const names = ['AcmePay', 'settleInvoice', 'acme_refunds']
+
+  it('opens nothing in JSX text', () => {
+    masksAll(JSX, { language: 'typescript' }, names)
+    masksAll(JSX, { path: 'Docs.tsx' }, names)
+    masksAll(JSX, {}, names)
+    expect(anonymize(JSX, { language: 'typescript' }).comments.total).toBe(0)
+  })
+
+  it.each(['c', 'java', 'go', 'rust', 'csharp', 'php', 'sql', 'typescript'] as const)(
+    'opens nothing in %s, on the lines after it either',
+    (language) =>
+      masksAll('total = 1; /* note\nAcmePay = settleInvoice(acme_refunds);\n', { language }, names)
+  )
+
+  it('opens nothing in Ruby', () =>
+    masksAll(
+      '=begin\nclass AcmePay\n  def settleInvoice(acme_refunds)\n  end\nend\n',
+      { language: 'ruby' },
+      names
+    ))
+
+  it('leaves the closed comment before it a comment', () => {
+    const code = '/* kept as written */ const customerTotal = 1 /* AcmePay\nsettleInvoice()\n'
+    const { anonymized, map, comments } = anonymize(code, { language: 'typescript' })
+    expect(anonymized.startsWith('/* kept as written */ const ')).toBe(true)
+    expect(comments.total).toBe(1)
+    for (const name of ['customerTotal', 'AcmePay', 'settleInvoice']) {
+      expect(anonymized).not.toContain(name)
+      expect(Object.values(map)).toContain(name)
+    }
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  it('costs no more for 200,000 of them than their length', () => {
+    // Eight times the text: linear is 8, quadratic 64. The fastest of three.
+    for (const [opener, language] of [
+      ['a /* b\n', 'typescript'],
+      ['=begin\nb\n', 'ruby'],
+    ] as const) {
+      const fastest = (code: string): number => {
+        let best = Infinity
+        for (let run = 0; run < 3; run++) {
+          const start = performance.now()
+          expect(measureCommentExposure(code, language).total).toBe(0)
+          best = Math.min(best, performance.now() - start)
+        }
+        return best
+      }
+      const small = fastest(opener.repeat(25_000))
+      expect(fastest(opener.repeat(200_000))).toBeLessThan(Math.max(small, 1) * 24)
+    }
+  }, 30_000)
+})
+
 describe('in a named language, what was read before is read the same', () => {
   it('a closed block comment and a line comment stay as written', () => {
     const code =
@@ -162,6 +226,22 @@ describe('in a named language, what was read before is read the same', () => {
 describe('every reader of the text reads it as `anonymize` does', () => {
   const guessed = 'const total = base /* c\nconst note = "paymentGateway fails"\n'
   const shell = 'rm -rf build/*\necho "paymentGateway fails" // "AcmePay settles"\n'
+
+  it('valuePositions finds the values after a glob', () => {
+    expect(valuePositions(guessed).map((v) => v.value)).toEqual(['paymentGateway fails'])
+    expect(valuePositions(guessed, { language: 'typescript' }).map((v) => v.value)).toEqual([
+      'paymentGateway fails',
+    ])
+    for (const options of [{ fileKind: 'shell' }, { path: 'd.sh' }] as const)
+      // The run after `//` is code, not a string: its names are masked as names.
+      expect(valuePositions(shell, options).map((v) => v.value)).toEqual(['paymentGateway fails'])
+  })
+
+  it('detectCredentials reports a credential-named value after a glob', () => {
+    const code = 'const total = base /* c\nconst settings = { passphrase: `Tr0ub4dor zebra91` }\n'
+    for (const options of [{}, { language: 'typescript' }] as const)
+      expect(detectCredentials(code, options).map((f) => f.line)).toEqual([2])
+  })
 
   it('the comment summary counts what `anonymize` left as written', () => {
     const closed = 'const customerTotal = 1 /* AcmePay */ + 2 // later\n'
