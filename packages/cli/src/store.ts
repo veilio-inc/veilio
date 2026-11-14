@@ -354,7 +354,8 @@ const LOCK_STALE_MS = 10_000
 /**
  * Run `work` while holding `<path>.lock` (spec 093 item 6). The lock is a
  * file made with an exclusive create, so only one process has it; another
- * waits for it. Every writer of the map in this package saves through here.
+ * waits for it. `saveMap` is the only writer of the map in this package;
+ * `clearMap` removes the file without the lock.
  *
  * shortcut: two waiting runs that find a dead run's lock stale in the same
  * instant can both take it, and the guard plugin writes the map without it
