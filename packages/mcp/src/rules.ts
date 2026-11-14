@@ -45,6 +45,8 @@ const NONE: ResolvedRules = { source: 'none', rules: [], skipped: NO_RULES_SKIPP
 
 let current: ResolvedRules = NONE
 let priming: Promise<ResolvedRules> | null = null
+// Set while the cache is unreadable (spec 093 item 5): how to read it again.
+let again: (() => ResolvedRules) | null = null
 
 async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
   const credential = readCredential(home)
@@ -86,19 +88,30 @@ async function fetchRules(home: string | undefined): Promise<ResolvedRules> {
       }
       return NONE
     }
-    let cached: ReturnType<typeof readRules>
-    try {
-      cached = readRules(credential, home)
-    } catch (unreadable) {
-      if (!(unreadable instanceof RulesUnreadable)) throw unreadable
-      return { ...NONE, unreadable: unreadable.message }
-    }
-    const skipped = cached?.skipped ?? NO_RULES_SKIPPED
-    if (cached && (cached.rules.length > 0 || rulesSkippedAny(skipped))) {
-      return { source: 'cached', rules: cached.rules, pulledAt: cached.pulledAt, skipped }
-    }
-    return NONE
+    return fromCache(credential, home)
   }
+}
+
+/** What the last pull left on this machine, when Cloud did not answer. */
+function fromCache(
+  credential: { instance: string; account: string },
+  home: string | undefined
+): ResolvedRules {
+  let cached: ReturnType<typeof readRules>
+  try {
+    cached = readRules(credential, home)
+  } catch (err) {
+    if (!(err instanceof RulesUnreadable)) throw err
+    // Read again at the next call (getRules): the sentence tells the person to
+    // pull the rules or log out, and either must do without a restart.
+    again = () => fromCache(credential, home)
+    return { ...NONE, unreadable: err.message }
+  }
+  const skipped = cached?.skipped ?? NO_RULES_SKIPPED
+  if (cached && (cached.rules.length > 0 || rulesSkippedAny(skipped))) {
+    return { source: 'cached', rules: cached.rules, pulledAt: cached.pulledAt, skipped }
+  }
+  return NONE
 }
 
 function rulesSkippedAny(s: RulesSkipped): boolean {
@@ -118,6 +131,11 @@ export function primeRules(home?: string): Promise<ResolvedRules> {
 
 /** The resolved rules. 'none' until primed - the safe default for offline tests. */
 export function getRules(): ResolvedRules {
+  if (current.unreadable && again) {
+    const read = again
+    again = null
+    current = read()
+  }
   return current
 }
 
@@ -125,4 +143,5 @@ export function getRules(): ResolvedRules {
 export function resetRulesCache(): void {
   current = NONE
   priming = null
+  again = null
 }
