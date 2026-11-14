@@ -20,19 +20,8 @@ environment reads, zero runtime dependencies.** These are enforced in CI
 (`packages/engine/tests/purity.test.ts`). A change that violates them should be
 treated as a security regression.
 
-### Known limitation — ReDoS via custom-rule patterns
-Custom rules compile **user-supplied** regular expressions
-(`new RegExp(rule.pattern)`). A pathological pattern can cause catastrophic
-backtracking (ReDoS) and hang the thread that runs it. Today the engine guards
-patterns for *validity* (try/catch) but **not** for *complexity*.
-
-- In the first-party apps the pattern author is the authenticated user editing
-  their own rules, so the blast radius is self-inflicted.
-- If you embed `@veilio-inc/engine` somewhere that compiles **untrusted** rule
-  patterns, treat them as hostile input (length-cap them, run on a worker with a
-  timeout, or pre-validate with a non-backtracking matcher such as RE2).
-
-A hardening follow-up (bounded execution for rule patterns) is tracked separately.
+### Custom-rule patterns
+Custom rule patterns run on a linear-time matcher, not on the platform's regular expressions, so a pattern cannot make matching take more than time proportional to the text.
 
 ### Imported symbol maps are authenticated, not trusted
 A `.veilio` file is encrypted with AES-256-GCM, so decrypting one proves the

@@ -37,6 +37,11 @@ import type { Io } from '../src/commands.js'
  * says what is masked in comments. That sentence was replaced by hand in the 13
  * lines that hold it - the fixture was not regenerated.
  *
+ * Spec 093 (2026-11-13): `restore` keeps a comment that only begins like
+ * narration - "Settles" is not "Set". In "scrub then restore" the comment line
+ * is back in the output and the count is 0; two lines changed by hand - the
+ * fixture was not regenerated.
+ *
  * The one thing normalised is the temp directory's path, which `map` prints.
  */
 
