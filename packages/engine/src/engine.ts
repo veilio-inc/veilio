@@ -2216,7 +2216,7 @@ const STRIP_PATTERNS: ReadonlyArray<
   ['step-marker', /^[ \t]*\/\/[ \t]*Step\s+\d+[:.].*/gm],
   [
     'narration',
-    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)\b.*/gm,
+    /^[ \t]*\/\/[ \t]*(Handle|Validate|Initialize|Process|Check|Update|Create|Delete|Get|Set|Return|Log|Send|Fetch|Load|Save|Build|Parse|Format|Convert|Calculate|Generate|Execute|Run|Start|Stop|Connect|Disconnect|Register|Authenticate|Authorize)(?![\p{L}\p{N}_]).*/gmu,
   ],
   ['separator', /^[ \t]*\/\/[ \t]*[-=*]{3,}.*/gm],
   ['section-header', /^[ \t]*\/\/[ \t]*\*{2}.*\*{2}[ \t]*$/gm],

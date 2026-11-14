@@ -103,6 +103,11 @@ describe('restore — the line filters take whole words, outside literals (spec 
     '// Logic below is order-dependent',
     '// Runtime: node 20',
     '// Checksum of the header',
+    // A word going on in a letter outside ASCII is one word too.
+    '// Logów z produkcji nie kasujemy',
+    '// Formatów jest pięć',
+    '// Startübersicht der Dienste',
+    '// Set_point of the valve',
   ])('keeps the real comment %s', (comment) => {
     const input = `const a = 1\n  ${comment}\nconst b = 2`
     expect(restore(input, {}).restored).toBe(input)
