@@ -502,7 +502,8 @@ In a shell script, a Dockerfile, YAML, `.env`, INI and plain-text files `//` and
 `/*` open no comment, so the names after them are masked. In a Kubernetes
 manifest of `kind: Secret`, every value under `data` and `stringData` is
 redacted: in a YAML file, and on stdin when `kind:` and `data:` or `stringData:`
-start their lines.
+start their lines. A line that goes on after the word (`kind: Secret,`), or a
+`data:` line whose value ends in a comma, is read as code.
 
 ## The symbol map
 

@@ -180,6 +180,8 @@ recognised. The manifest is read in a YAML file (`options.path` or
 whole), and in text given with no `path`, no `fileKind` and no `language` when
 one line starts with an unquoted `kind:` that names Secret and another with an
 unquoted `data:` or `stringData:`; only those unindented keys are read there.
+A line that goes on after the word (`kind: Secret,`), or a `data:` line whose
+value ends in a comma, is read as code.
 In a file, a `List` that holds a Secret has the `data` values of its other
 items redacted too: a ConfigMap inside it is redacted like the Secret's
 values. An object in code that names the kind is code: its names are masked
