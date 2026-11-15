@@ -92,11 +92,11 @@ Open `http://localhost:8080`.
 Images are built for `linux/amd64` and `linux/arm64` and pushed on every merge to
 `main`:
 
-| Tag            | Points at                          |
-| -------------- | ---------------------------------- |
-| `latest`       | the current `main` build           |
-| `sha-<short>`  | one exact commit — use this to pin |
-| `1.2.3`, `1.2` | a tagged release, once one is cut  |
+| Tag            | Points at                                                                      |
+| -------------- | ------------------------------------------------------------------------------ |
+| `latest`       | the current `main` build; never moved by a tag or by a run from another branch |
+| `sha-<short>`  | one exact commit — use this to pin                                             |
+| `1.2.3`, `1.2` | a tagged release, once one is cut                                              |
 
 > **Tags beginning `sha256-` are not images.** The package listing also shows
 > tags like `sha256-f4788394…`, which are the provenance attestations and SBOMs
