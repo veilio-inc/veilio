@@ -335,6 +335,28 @@ function isHighEntropyToken(value: string): boolean {
   return /^[A-Za-z0-9+/_-]{24,200}={0,2}$/.test(value) && shannonEntropy(value) >= ENTROPY_FLOOR
 }
 
+/** One part of a path or of a compound name: a word in lower, camel or upper
+ *  case with at most four digits after a word, or a short number (`auth`,
+ *  `personalMaps`, `v2`, `sha256Digest`, `MAX`, `2026`). Each character is
+ *  read once: the alternatives start on different characters. */
+const WORDY_PART =
+  /^(?:[A-Za-z]?[a-z]+(?:[0-9]{1,4}(?=[A-Z]|$)|[A-Z][a-z]+)*|[A-Z]{2,}[0-9]{0,4}|[0-9]{1,4})$/
+
+/** A high-entropy token that nothing reads as ordinary text: it holds a
+ *  digit, and it is not words joined by `/`, `-` or `_` (a route, a path, a
+ *  compound name). Anything else of the shape is left to masking: hidden from
+ *  the model, and restorable. */
+function isTokenValue(value: string): boolean {
+  return (
+    isHighEntropyToken(value) &&
+    /[0-9]/.test(value) &&
+    !value
+      .split(/[/_+=-]+/)
+      .filter(Boolean)
+      .every((part) => WORDY_PART.test(part))
+  )
+}
+
 /** A user half that is a token rather than a name: a high-entropy token.
  *  Never `isStrong`: `Build-Agent01` is a name. A provider-format key as the
  *  user is the other half of the ruling, and needs no test here: in a URL or
@@ -1177,6 +1199,17 @@ const PATTERNS: Pattern[] = [
     group: 1,
   },
   {
+    // A password flag on a command no list above names: for most programs
+    // `-p` is a port or a path, and neither is a high-entropy token.
+    type: 'high-entropy-string',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'High-entropy credential',
+    re: /(?<![\w-])-p[ \t]+(?:"([A-Za-z0-9+/_-]{24,200}={0,2})"|'([A-Za-z0-9+/_-]{24,200}={0,2})'|([A-Za-z0-9+/_-]{24,200}={0,2})(?=[\s;&|]|$))/gm,
+    groups: [1, 2, 3],
+    validate: isTokenValue,
+  },
+  {
     type: 'private-ip',
     disposition: 'report',
     severity: 'low',
@@ -1650,7 +1683,55 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
     }
     return values
   }
-  return found.concat(keyMaterial(code), manifest(), joinedKeys(code))
+  return found.concat(keyMaterial(code), manifest(), joinedKeys(code), tokensInContext(code))
+}
+
+const QUOTED_TOKEN = /(["'`])([A-Za-z0-9+/_-]{24,200}={0,2})\1/g
+/** A credential word standing as a word of its own: `token`, `authToken`,
+ *  `API_KEY`, never `author`, `tokenizer` or `keyboard`. Read after a space is
+ *  put at each camel-case joint. */
+const CREDENTIAL_NEARBY =
+  /(?<![A-Za-z])(?:keys?|tokens?|secrets?|credentials?|auth|authorization|pass|passwd|passwords?|passphrase|pwd|login|bearer)(?![A-Za-z])/i
+/** How far on its line a credential word is looked for, either side. */
+const NEARBY = 400
+
+/**
+ * A quoted high-entropy token with a credential word elsewhere on its line:
+ * the catch-all above asks for the word in the name directly before the
+ * value; here it may stand anywhere beside it (another argument, a property
+ * after it, a comment). The word must be outside the value, and outside any
+ * placeholder or redaction token already in the text. Without one the value
+ * is left to masking: a hash and a commit id have the same shape. Each
+ * candidate reads at most its own length and 800 characters around it.
+ */
+function tokensInContext(code: string): RawMatch[] {
+  const found: RawMatch[] = []
+  QUOTED_TOKEN.lastIndex = 0
+  for (let m; (m = QUOTED_TOKEN.exec(code)) !== null;) {
+    const value = m[2]!
+    if (!isTokenValue(value) || classifyValue(value, false) === 'placeholder') continue
+    const start = m.index + 1
+    const end = start + value.length
+    const before = code.slice(Math.max(0, m.index - NEARBY), m.index)
+    const after = code.slice(end + 1, end + 1 + NEARBY)
+    const stop = after.indexOf('\n')
+    const beside =
+      `${before.slice(before.lastIndexOf('\n') + 1)} ${stop === -1 ? after : after.slice(0, stop)}`
+        .replace(/__[A-Z][A-Z0-9_]*__\d*/g, ' ')
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    if (!CREDENTIAL_NEARBY.test(beside)) continue
+    found.push({
+      type: 'high-entropy-string',
+      severity: 'medium',
+      label: 'High-entropy credential',
+      start,
+      end,
+      value,
+      generic: true,
+    })
+  }
+  QUOTED_TOKEN.lastIndex = 0
+  return found
 }
 
 /** The provider-format rules that match a key by its own shape alone. */

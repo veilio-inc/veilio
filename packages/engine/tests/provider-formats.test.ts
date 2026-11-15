@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize } from '../src/index.js'
 import type { AnonymizeOptions } from '../src/types.js'
-import { PROVIDER_KEYS, UNLISTED_KEYS } from './fixtures/baseline-corpus.js'
+import { COMMIT_ID, OPAQUE, PROVIDER_KEYS, UNLISTED_KEYS } from './fixtures/baseline-corpus.js'
 import { expectKept, expectRedacted } from './fixtures/credential-checks.js'
 
 // A key in a provider's own format is a credential wherever it stands,
@@ -62,5 +62,52 @@ describe('an ordinary name that starts like a key is read as before', () => {
 describe('a format no vendor document states is read as before', () => {
   it.each(UNLISTED_KEYS)('$provider', ({ key }) => {
     expect(anonymize(`const note = "${key}"\n`, TS).anonymized).not.toContain('__REDACTED_')
+  })
+})
+
+// A token of no listed format is a credential when the text beside it says
+// so: a credential word on its line, outside the value, or a password flag
+// before it. With no such word it is read as before - a hash, an identifier
+// and a commit id have the same shape, and a redaction cannot be undone.
+describe('a high-entropy value beside a credential word', () => {
+  it.each<[string, string, AnonymizeOptions]>([
+    ['a credential word after the value', `send("${OPAQUE}", { token: true })\n`, TS],
+    ['a credential word in another argument', `log("api key", "${OPAQUE}")\n`, TS],
+    ['a credential word in a comment', `const note = "${OPAQUE}" // the API key\n`, TS],
+    ['a credential word in a camel-case name', `use("${OPAQUE}", authToken)\n`, TS],
+    [
+      'after -p on a command the engine has no list for',
+      `acmectl sync -p ${OPAQUE} --all\n`,
+      SHELL,
+    ],
+    ['after -p, quoted', `acmectl sync -p "${OPAQUE}" --all\n`, SHELL],
+  ])('is redacted: %s', (_, code, options) => {
+    expectRedacted(code, options, [OPAQUE])
+  })
+
+  it.each<[string, string, AnonymizeOptions]>([
+    ['no credential word', `const note = "${OPAQUE}"\n`, TS],
+    ['the word only inside the value', `const note = "token_${OPAQUE}"\n`, TS],
+    ['a word that only starts like one', `const author = pick("${COMMIT_ID}")\n`, TS],
+    ['a word that only holds one', `tokenizer.feed("${OPAQUE}", keyboard)\n`, TS],
+    ['the word on another line', `// the API key\nconst note = "${OPAQUE}"\n`, TS],
+    ['a port after -p', 'acmectl sync -p 8080 --all\n', SHELL],
+    [
+      'a route beside a credential',
+      "request('/api/auth/keys/personal-maps', { credential })\n",
+      TS,
+    ],
+    ['a versioned route', "request('/api/v2/auth/keys/personal-maps', { credential })\n", TS],
+    ['a compound name', 'use("base64UrlEncodeSha256Digest", authToken)\n', TS],
+    ['a dated slug', 'use("feature-flag-2026-rollout-auth", authToken)\n', TS],
+  ])('is read as before: %s', (_, code, options) => {
+    expectKept(code, options)
+  })
+
+  it('a value of lower-case letters only stays masked, not readable', () => {
+    const word = 'abcdefghijklmnopqrstuvwxyzabcd'
+    const { anonymized, map } = anonymize(`send("${word}", { token: true })\n`, TS)
+    expect(anonymized).not.toContain(word)
+    expect(Object.values(map)).toContain(word)
   })
 })

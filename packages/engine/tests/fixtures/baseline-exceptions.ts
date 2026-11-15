@@ -410,6 +410,36 @@ export const EXCEPTIONS: BaselineException[] = [
     reason: 'provider-format',
     why: "a key in a provider's documented format is redacted wherever it stands",
   },
+  {
+    row: 'context: a credential word after the value',
+    options: { language: 'typescript' },
+    reason: 'credential-context',
+    why: 'a high-entropy token beside a credential word, or after a password flag, is redacted',
+  },
+  {
+    row: 'context: a credential word after the value',
+    options: {},
+    reason: 'credential-context',
+    why: 'a high-entropy token beside a credential word, or after a password flag, is redacted',
+  },
+  {
+    row: 'context: a credential word in a comment',
+    options: { language: 'typescript' },
+    reason: 'credential-context',
+    why: 'a high-entropy token beside a credential word, or after a password flag, is redacted',
+  },
+  {
+    row: 'context: a credential word in a comment',
+    options: {},
+    reason: 'credential-context',
+    why: 'a high-entropy token beside a credential word, or after a password flag, is redacted',
+  },
+  {
+    row: 'context: after -p on any command',
+    options: { fileKind: 'shell' },
+    reason: 'credential-context',
+    why: 'a high-entropy token beside a credential word, or after a password flag, is redacted',
+  },
 ]
 
 /** Tracked files of this repository that hold more redaction tokens than the
@@ -418,4 +448,7 @@ export const EXCEPTIONS: BaselineException[] = [
 export const REPOSITORY_EXCEPTIONS: Record<
   string,
   { more: number; reason: (typeof REASONS)[number] }
-> = {}
+> = {
+  'plugins/veilio-guard/tests/live/run-live.sh': { more: 1, reason: 'credential-context' },
+  'tests/guard/fixtures/search-corpus.ts': { more: 1, reason: 'credential-context' },
+}

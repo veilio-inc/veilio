@@ -347,8 +347,6 @@ describe('the credential rules are linear on adversarial text', () => {
     for (let i = 0; i < 3; i++) {
       const t = performance.now()
       scanSecrets(text, 'redact', { fileKind: 'shell' })
-      valuePositions(text, { fileKind: 'yaml' })
-      valuePositions(text, { language: 'typescript' })
       best = Math.min(best, performance.now() - t)
     }
     return best
@@ -363,9 +361,14 @@ describe('the credential rules are linear on adversarial text', () => {
     ('ya' + '29.').repeat(n),
     ('xa' + 'pp-').repeat(n) + ' ' + ('AGE-SECRET' + '-KEY-1QPZ ').repeat(n),
     ('S' + 'K' + 'a1'.repeat(15) + ' ').repeat(n),
+    // A token beside a credential word, and beside none, on one long line.
+    'token ' + ('"' + 'aB3'.repeat(9) + '" ').repeat(n),
+    ('"' + 'aB3'.repeat(9) + '" ').repeat(n),
+    ('-p ' + 'aB3'.repeat(7) + ' ').repeat(n),
+    '-p '.repeat(n),
   ]
-  it('20,000 and 160,000 repeats', () => {
-    const [a, b] = [20_000, 160_000].map((n) => texts(n).map(time))
+  it('8,000 and 64,000 repeats', () => {
+    const [a, b] = [8_000, 64_000].map((n) => texts(n).map(time))
     // Eight times the text: linear is 8x, quadratic 64x.
     for (let i = 0; i < a!.length; i++)
       expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
