@@ -102,8 +102,14 @@ the server's variable overrides it.
   that would drop entries (`allowDrop: true`), and a `maps_pull` with `force`
   that would overwrite local entries, are refused unless you start the
   server with `VEILIO_MCP_DESTRUCTIVE=1` in its environment - a setting only you
-  can make: the server ignores it when the project's own `.mcp.json` sets it, so
-  a repository cannot turn it on for you. An agent that can change your shell
+  can make: the server ignores it when a configuration file in the project
+  (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.claude/settings.json`,
+  `.claude/settings.local.json`) names it in any spelling, or cannot be read as
+  JSON, so a repository cannot turn it on for you by naming it. A project file
+  with JSON comments or a trailing comma cannot be read as JSON and counts as
+  naming both switches, so they stay off. A project entry that starts the server
+  through a command which builds the variable's name cannot be detected; approve
+  a project's server entry only if you would run its command yourself. An agent that can change your shell
   environment or your user-level MCP configuration can still set it. Removal is
   allowed only when the server was started with
   `VEILIO_MCP_DESTRUCTIVE=1`. `confirmName` catches a wrong id; it is not proof

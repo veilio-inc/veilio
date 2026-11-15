@@ -72,3 +72,40 @@ would be data loss.
 The engine reduces, but cannot guarantee elimination of, identifying information
 (e.g. identifiers embedded in unusual string formats). Always review anonymized
 output before sharing it.
+
+Known limits of the comment and credential rules:
+
+- Text between tags in JSX is read as code, not as text: a `/*` there followed
+  later in the file by `*/` is read as a comment, and names between the two go
+  out as written.
+- A `/*` whose `*/` stands inside a later string (`"s */"`) is closed there in
+  the reading that looks for it, and the text after it stays a comment. In a
+  Python triple-quoted text an escaped `\"""` is not read as an escape.
+- A provider key written as adjacent string literals on one statement is found
+  and redacted. A key assembled from variables, across statements, with escape
+  sequences or with invisible characters between its parts is not: no text
+  transform can follow that. Nor is one joined in another way: Python
+  `"..." f"..."`, PHP `.`, `+=`, `[...].join("")`, a comment or a bracket after
+  the `+`, a template `${""}`, Rust `concat!`.
+- A private key is redacted from its BEGIN line on, also when the END line is
+  missing. In a Kubernetes manifest of `kind: Secret`, every value under `data`
+  and `stringData` is redacted. A Secret produced by a template (Helm) is not
+  recognised.
+- A private key is not read as one when it stands in a single string with `\n`
+  escapes and no END line, is split over several string literals or the quoted
+  lines of a YAML list, goes on after a line that is not key text (a `# note`),
+  is written in base64url letters (`-`, `_`), or has a header that is not PEM's
+  (`----- BEGIN PRIVATE KEY -----`).
+- A Kubernetes Secret is read in a YAML or JSON document. Text given with no
+  file name, kind or language (pasted text, a pipe, inline text) is read only
+  when `kind:` and `data:` or `stringData:` start their lines, so a Secret
+  inside a `List` is not read there. Not read anywhere: a manifest built as
+  an object in code or held in a string of a file whose language is known, a
+  value brought in by a YAML alias or
+  merge key (`<<: *base`; the alias is redacted, the anchored value is not), a
+  sequence under `data` at the key's own indent, and a part of a `.json`
+  manifest read without the rest of it. Those values are masked like names and
+  are held in the map.
+- In a URL, a credential is not found when its parameter's name is
+  percent-encoded or bracketed (`%3Ftoken=`, `?data[token]=`) or follows a `;`
+  (`;jsessionid=`).

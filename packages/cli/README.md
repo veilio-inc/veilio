@@ -498,6 +498,12 @@ masked. A value whose key contains a credential word (`password: sunshine`,
 whole, under the default `--secrets redact`, so the map never holds it. Credentials
 are redacted whatever they are called.
 
+In a shell script, a Dockerfile, YAML, `.env`, INI and plain-text files `//` and
+`/*` open no comment, so the names after them are masked. In a Kubernetes
+manifest of `kind: Secret`, every value under `data` and `stringData` is
+redacted: in a YAML file, and on stdin when `kind:` and `data:` or `stringData:`
+start their lines.
+
 ## The symbol map
 
 `scrub` writes `.veilio/map.json` at the project root and `restore` reads it, so placeholders stay stable across runs and across a whole session. The store is created `0600` with its own `.gitignore` — it holds the real identifier names, so committing it would undo the anonymization for anyone reading the repo.

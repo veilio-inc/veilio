@@ -132,10 +132,23 @@ what makes a downstream model refuse to help — with one exception: a name the
 map holds is replaced by its placeholder wherever it stands as a whole word in
 a comment, so a comment cannot say what the placeholder beside it means. That
 covers `#` comments, Python docstrings, SQL `--`, and Ruby `=begin` blocks, not
-just `//`. A name the map does not hold yet, a person, a customer or a ticket
-number in a comment goes out as typed; mark those by hand (below). Single
-ordinary words and lowercase one-word string literals stay readable in
-comments.
+just `//`. A Python docstring is a triple-quoted text standing alone as the
+first statement of a module, class or function; any other triple-quoted text
+(an assigned query, an f-string, an argument) is a string and is masked like
+one. Where the position cannot be told, it is read as a string. A name the map
+does not hold yet, a person, a customer or a ticket number in a comment goes
+out as typed; mark those by hand (below). Single ordinary words and lowercase
+one-word string literals stay readable in comments.
+
+`/*` opens a comment only when the language is known (named with `language`, or by the caller from the file's extension); in a shell script, Dockerfile, YAML, `.env`, INI or plain-text file neither `//` nor `/*` opens one, and a `/*` that is never closed opens none. What is
+not a comment is code, so the names in it are masked and it is not counted in
+`comments`. A plain-text file is any file with no code extension: `.css`,
+`.scss`, `.tf`, `.proto`, `.gradle` and `.npmrc` files are read as plain text,
+their `//` and `/* */` comments included. In text whose language is only
+detected (pasted text, a pipe) `//` still opens a comment and `/*` does not: a
+word between `/*` and `*/` there, an ordinary one such as `the` or `one`
+included, can be given a placeholder like a name, and is then replaced in the
+comments of that text as well.
 
 ## Credential guard
 
@@ -158,6 +171,24 @@ Stripe, GitHub, Slack, OpenAI, Anthropic, Google and npm keys, JWTs, bearer
 tokens, PEM private keys and connection-string passwords are redacted; emails
 and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
+
+A private key is redacted from its BEGIN line on, also when the END line is
+missing. In a Kubernetes manifest of `kind: Secret`, every value under `data`
+and `stringData` is redacted. A Secret produced by a template (Helm) is not
+recognised. The manifest is read in a YAML file (`options.path` or
+`options.fileKind`), in JSON (a `.json` `path`, or text that is JSON as a
+whole), and in text given with no `path`, no `fileKind` and no `language` when
+one line starts with an unquoted `kind:` that names Secret and another with an
+unquoted `data:` or `stringData:`; only those unindented keys are read there.
+In a file, a `List` that holds a Secret has the `data` values of its other
+items redacted too: a ConfigMap inside it is redacted like the Secret's
+values. An object in code that names the kind is code: its names are masked
+and restored.
+
+A provider key written as adjacent string literals on one statement is found
+and redacted. A value under a credential-named parameter of a URL is redacted
+wherever the parameter stands: first in the query, later in it, or in the
+fragment.
 
 Every finding also says what the scan did with the value, in `disposition`:
 `'destroy'` (redacted, unrecoverable), `'mask'` (masked reversibly — see below),
@@ -466,14 +497,15 @@ map outlives the file it was made against — `def` is an ordinary word in a
 TypeScript comment and is Python's grammar — so a stale mark is skipped, not
 thrown on. It stays in the map and applies again where it is valid.
 
-- `measureCommentExposure(code, language?)` → `CommentExposure` — the same
+- `measureCommentExposure(code, language?, where?)` → `CommentExposure` — the same
   measurement `anonymize` returns, for text it did not produce (after a manual
-  mark is undone, say). It reads the text as given, with no map, so it counts a
+  mark is undone, say). `where` is `{ fileKind?, path? }`: with it a shell,
+  YAML or plain-text file is read as `anonymize` reads it. It reads the text as given, with no map, so it counts a
   name `anonymize` would replace in a comment; the `comments` of an `anonymize`
   result is the figure for what was sent.
 - `detectSecrets(code, options?)` → `SecretFinding[]` — scan without modifying
 - `scanSecrets(code, policy?, options?)` → `{ findings, code, regulated }` —
-  `options.path`, `options.root` and `options.fileKind` as for `anonymize`; `regulated`
+  `options.path`, `options.root`, `options.fileKind` and `options.language` as for `anonymize` (the language only says whether one was stated); `regulated`
   holds the values handed to the masking pass; `anonymize` calls this first and
   masks them itself, so a caller doing its own masking is the only one that needs
   the field
