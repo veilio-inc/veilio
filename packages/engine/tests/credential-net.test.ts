@@ -374,3 +374,29 @@ describe('the credential rules are linear on adversarial text', () => {
       expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
   }, 240_000)
 })
+
+// The value positions are read in linear time too: names with letters
+// outside A-Z, repeated and run together.
+describe('the value positions are linear on adversarial text', () => {
+  const time = (text: string): number => {
+    let best = Infinity
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now()
+      valuePositions(text, { fileKind: 'yaml' })
+      valuePositions(text, { language: 'typescript' })
+      best = Math.min(best, performance.now() - t)
+    }
+    return best
+  }
+  const texts = (n: number): string[] => [
+    'hasło '.repeat(n),
+    'ł'.repeat(n),
+    'hasło="x" '.repeat(n),
+    ('a'.repeat(99) + 'ł ').repeat(n / 10),
+  ]
+  it('2,000 and 16,000 repeats', () => {
+    const [a, b] = [2_000, 16_000].map((n) => texts(n).map(time))
+    for (let i = 0; i < a!.length; i++)
+      expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
+  }, 240_000)
+})

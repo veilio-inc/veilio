@@ -199,9 +199,44 @@ export function isOrdinaryWord(name: string): boolean {
  *  a short one - `dbPw`, `userPW`, `DBPW`, `--db-password`, `DB_PIN`. */
 const CREDENTIAL_WORD = /pass|pwd|secret|token|key|auth|cred|private|salt|jwt|bearer|mnemonic/i
 const CREDENTIAL_SEGMENT = /^(?:pw|otp|pin|seed|cert)|(?:pw|otp|pin|seed|cert)$/
+/** The words for a password and a secret in Polish, German, Spanish, French,
+ *  Portuguese, Dutch and Greek, with and without diacritics, and the word for
+ *  a key only joined to "api" (alone it is an ordinary word, as `key` is not
+ *  for these names). A closed list: another word is added on request. */
+const LOCAL_WORD =
+  /(?:has[lł]o|sekret|klucz[_-]?api|kennwort|geheimnis|api[_-]?schl(?:ue|ü)ssel|contrase[nñ]a|clave[_-]?api|mdp|senha|segredo|wachtwoord|kodikos|synthimatiko|κωδικ[οό]ς|συνθηματικ[οό])[0-9]{0,3}$/u
+
+const QUALIFIER =
+  /^(?:db|database|sql|mysql|pg|postgres|redis|mongo|user|admin|root|api|app|smtp|mail|ftp|ssh|ldap|login|account|master|service|svc|client|server|wifi|my|new|old|default)[_.-]?$/
+
+/** A name that is one of the words above, or ends in one as a word of its
+ *  own: after `_`, `-` or `.`, or at a camel-case joint (`db_haslo`,
+ *  `dbHaslo`, `DB_HASLO`). A longer word that only holds one is not
+ *  (`geheimnisvoll`, `mdpath`, `senhaForte`). */
+function localCredential(name: string): boolean {
+  const lower = name.toLowerCase()
+  const m = lower.length === name.length ? LOCAL_WORD.exec(lower) : null
+  if (!m) return false
+  if (m.index === 0) return true
+  // The Greek word is the word for any code too (a postal code): after
+  // another word it is one; only a credential's usual qualifier may stand
+  // before it.
+  if (/^(?:kodikos|κωδικ)/u.test(m[0]) && !QUALIFIER.test(lower.slice(0, m.index))) return false
+  const before = name[m.index - 1]!
+  if (!/[\p{L}\p{N}]/u.test(before)) return true
+  const first = name[m.index]!
+  return first !== first.toLowerCase() && before === before.toLowerCase()
+}
+/** A name with a letter outside A-Z, which the key patterns below do not
+ *  read: found apart, and only for the words above. */
+const LOCAL_TOKEN = /[\p{L}_$][\p{L}\p{N}_$]*/gu
+const LOCAL_KEY_STRING = /["'`]([\p{L}\p{N}_.$-]{1,100})["'`]/gu
+const NET_KEY_LOCAL =
+  /(?<![\p{L}\p{N}_$.-])-{0,2}((?=[\w$.-]{0,100}[\u{80}-\u{10ffff}])[\p{L}_$][\p{L}\p{N}_$.-]{0,100})/gu
+
 const CREDENTIAL = {
   test(name: string): boolean {
-    if (CREDENTIAL_WORD.test(name)) return true
+    if (CREDENTIAL_WORD.test(name) || localCredential(name)) return true
     for (const segment of name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/))
       if (CREDENTIAL_SEGMENT.test(segment.toLowerCase())) return true
     return false
@@ -314,6 +349,11 @@ function credentialBefore(text: string, at: number, language: Language | undefin
   for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return m[1]!
   for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
     if (CREDENTIAL.test(t) && !keyword(t, language)) return t
+  // Only where a letter outside A-Z stands: every other name was read above.
+  if (!/[\u0080-\uffff]/.test(prefix)) return null
+  for (const m of prefix.matchAll(LOCAL_KEY_STRING)) if (localCredential(m[1]!)) return m[1]!
+  for (const [t] of prefix.replace(STRING, ' ').matchAll(LOCAL_TOKEN))
+    if (localCredential(t)) return t
   return null
 }
 const STRING = /(["'`])[^"'`]*\1/g
@@ -641,30 +681,39 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     // Makefile, a pasted .env); a name's type (`DB_PASSWORD: Optional[str]`)
     // and a statement (`const monkey = ledger`) are code's.
     const guessed = kind === 'code'
-    let covered = 0
-    for (const k of text.matchAll(NET_KEY)) {
-      const at = k.index!
-      const keyEnd = at + k[0].length
-      // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
-      if (at < covered || /__[A-Z]/.test(k[1]!) || !CREDENTIAL.test(k[1]!)) continue
-      if (guessed && !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at)))
-        continue
-      NET_TAIL.lastIndex = keyEnd
-      const m = NET_TAIL.exec(text)
-      if (!m) continue
-      const s = keyEnd + m[0].length
-      const sep = m[0]
-      if (guessed && !sep.includes('=')) continue
-      const e = netValueEnd(text, at, s, sep)
-      const value = text.slice(s, e)
-      covered = e
-      if (netExempt(value, calls, scan.language)) continue
-      const quoted = /["'`]$/.test(sep)
-      const span: ValueSpan = { start: s, end: e, value, credential: true, path: false }
-      // `KEY=value` written tight is a pair (a URL's query, a connection
-      // string); with spaces around it, perhaps an assignment in code.
-      const grammar = /^[=:]$/.test(sep) ? ('pair' as const) : ('net' as const)
-      out.push(Object.assign(span, { key: k[1]!, quoted, grammar }))
+    // Names in A-Z, then the names of the other-language list that are not.
+    for (const [keys, names] of [
+      [NET_KEY, (name: string) => CREDENTIAL.test(name)],
+      [NET_KEY_LOCAL, localCredential],
+    ] as const) {
+      let covered = 0
+      for (const k of text.matchAll(keys)) {
+        const at = k.index!
+        const keyEnd = at + k[0].length
+        // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
+        if (at < covered || /__[A-Z]/.test(k[1]!) || !names(k[1]!)) continue
+        if (
+          guessed &&
+          !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at))
+        )
+          continue
+        NET_TAIL.lastIndex = keyEnd
+        const m = NET_TAIL.exec(text)
+        if (!m) continue
+        const s = keyEnd + m[0].length
+        const sep = m[0]
+        if (guessed && !sep.includes('=')) continue
+        const e = netValueEnd(text, at, s, sep)
+        const value = text.slice(s, e)
+        covered = e
+        if (netExempt(value, calls, scan.language)) continue
+        const quoted = /["'`]$/.test(sep)
+        const span: ValueSpan = { start: s, end: e, value, credential: true, path: false }
+        // `KEY=value` written tight is a pair (a URL's query, a connection
+        // string); with spaces around it, perhaps an assignment in code.
+        const grammar = /^[=:]$/.test(sep) ? ('pair' as const) : ('net' as const)
+        out.push(Object.assign(span, { key: k[1]!, quoted, grammar }))
+      }
     }
   }
   // `host:port:db:user:password` in text of no kind: a .pgpass line.
