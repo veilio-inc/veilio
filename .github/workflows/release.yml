@@ -86,10 +86,16 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # Only from main and version tags: a manual run, or a push, from any other
+  # ref publishes nothing. The `image` environment allows the same two refs in
+  # the repository's settings, so the limit does not rest on this file alone.
   release:
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: >-
+      needs.changes.outputs.build == 'true' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    environment: image
     permissions:
       contents: write
       packages: write
@@ -118,15 +124,16 @@ jobs:
       # metadata-action lowercases the image name itself, which is what the old
       # hand-rolled ${GITHUB_REPOSITORY,,} step existed to do.
       #
-      # `latest` is applied unconditionally so the README's pull command works
-      # off main; semver tags are added only on a `v*` tag push.
+      # `latest` is applied only to a build of main, so the README's pull
+      # command works off main and a tag never moves it; semver tags are added
+      # only on a `v*` tag push.
       - name: Derive image tags
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short
