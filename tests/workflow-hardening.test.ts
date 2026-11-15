@@ -31,3 +31,29 @@ describe.each(workflows)('%s', (f) => {
     }
   })
 })
+
+// The public image is built only from reviewed code: the job that publishes
+// it runs for main and version tags alone, in an environment whose allowed
+// refs are the same two (set in the repository's settings), and `latest`
+// moves only with main - never with a tag or a manual run from another ref.
+describe('release.yml publishes the image only from main and version tags', () => {
+  const text = readFileSync(join(WF, 'release.yml'), 'utf8')
+  const job = text.slice(text.indexOf('\n  release:\n'))
+
+  it('the publishing job runs only for main and v* tags', () => {
+    const condition = /^ {4}if:\s*(.+(?:\n {6}.+)*)/m.exec(job)?.[1] ?? ''
+    expect(condition).toContain("needs.changes.outputs.build == 'true'")
+    expect(condition).toContain("github.ref == 'refs/heads/main'")
+    expect(condition).toContain("startsWith(github.ref, 'refs/tags/v')")
+  })
+
+  it('the publishing job names the image environment', () => {
+    expect(job).toMatch(/^ {4}environment: image$/m)
+  })
+
+  it('latest is applied only on the default branch', () => {
+    const latest = job.split('\n').filter((line) => /type=raw,value=latest/.test(line))
+    expect(latest).toHaveLength(1)
+    expect(latest[0]).toContain('enable={{is_default_branch}}')
+  })
+})
