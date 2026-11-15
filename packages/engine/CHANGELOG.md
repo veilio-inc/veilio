@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.19.3](https://github.com/veilio-inc/veilio/compare/engine-v1.19.2...engine-v1.19.3) (2026-11-15)
+
+### Fixes
+
+* **engine:** recognise credential names in more languages ([f9b94fe](https://github.com/veilio-inc/veilio/commit/f9b94fe759f73ddda5dd2263a5a39d40ca875f95))
+* **engine:** redact a credential value over all of its lines ([753925b](https://github.com/veilio-inc/veilio/commit/753925bfcd22fefffac9412239470067729bb9c3))
+* **engine:** redact a high-entropy value beside a credential word ([51e83ad](https://github.com/veilio-inc/veilio/commit/51e83adab508102825e401d43de9fd01a7cf8eac))
+* **engine:** redact more provider key formats ([1ad623f](https://github.com/veilio-inc/veilio/commit/1ad623fe4c09beebbfd525c3eaa4602fa1b7afec))
+* **engine:** redact the password of a login command and any Authorization value ([fcd1239](https://github.com/veilio-inc/veilio/commit/fcd1239c9c17026a806458e84ef115430e86971a))
+
 ## [1.19.2](https://github.com/veilio-inc/veilio/compare/engine-v1.19.1...engine-v1.19.2) (2026-11-15)
 
 ### Fixes
