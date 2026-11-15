@@ -357,6 +357,12 @@ function isTokenValue(value: string): boolean {
   )
 }
 
+/** A value that reads as a token, not as the next word of a sentence: it
+ *  holds a digit, or is 20 characters or longer. */
+function isLikelyToken(value: string): boolean {
+  return /[0-9]/.test(value) || value.length >= 20
+}
+
 /** A user half that is a token rather than a name: a high-entropy token.
  *  Never `isStrong`: `Build-Agent01` is a name. A provider-format key as the
  *  user is the other half of the ruling, and needs no test here: in a URL or
@@ -429,6 +435,12 @@ const attachedFlag = (flag: string) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`
 const shortFlag = (flag: string) =>
   `${flag}(?:${PH}|${DQ}|${SQ}|${BARE}|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`
 
+/** A program's own options before its subcommand: at most four, each with
+ *  its value after `=` or as the next word (`docker --config /tmp/c login`). */
+const GLOBAL_OPTIONS =
+  '(?:[ \\t]+--?[\\w-]{1,40}(?:=[^\\s;&|]{0,200}|[ \\t]+[^\\s;&|-][^\\s;&|]{0,200})?){0,4}'
+/** To the next word of a command line, or the next element of an argv array. */
+const NEXT_WORD = '(?:[ \\t]+|["\']\\s{0,20},\\s{0,20}["\'])'
 // research R1. `-p` is the password only for these clients; for psql, ssh,
 // redis-cli and docker it is a port. For mysql and mariadb only the attached
 // form is: `-p shop` prompts for the password and opens database `shop`.
@@ -1003,6 +1015,23 @@ const PATTERNS: Pattern[] = [
     keep: basicKept,
   },
   {
+    // Any other scheme word (`token`, `ApiKey`, `Digest`, a vendor's own): the
+    // value after it, in the header position only - a colon, an equals sign
+    // or the comma of a call after the name. A plain word after the scheme
+    // word is prose (`Authorization: Token authentication`); a variable has a
+    // `$` or a brace and is not matched. Redacted in a test file too, as the
+    // login commands below.
+    type: 'bearer-token',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Bearer / Authorization token',
+    re: /(?<![\w-])(?:Proxy-)?Authorization["']?[ \t]{0,3}[:=,][ \t]{0,3}["']?(?!Bearer[ \t]|Basic[ \t])[A-Za-z][A-Za-z0-9_-]{1,30}[ \t]+([A-Za-z0-9._~+/-]{8,500}=*)/gi,
+    group: 1,
+    position: true,
+    keep: () => true,
+    validate: isLikelyToken,
+  },
+  {
     // A raw header line or a curl -H argument takes a bare value; an entry in
     // a header map only a quoted literal, because a bare value there is a
     // variable. From 4 characters: no issued key is shorter, and a shorter
@@ -1068,6 +1097,94 @@ const PATTERNS: Pattern[] = [
     ),
     groups: [...FLAG_GROUPS, ...ARGV_GROUPS],
     position: true,
+  },
+  // ─── Login commands ───────────────────────────────────────────────────────
+  //
+  // `-p` is a port for docker run, ssh and psql, so it is a password only
+  // after the subcommand that logs in - the first word after the program and
+  // its own options. Each position is the one the command's manual states
+  // (docs.docker.com/reference/cli/docker/login, podman-login(1), nerdctl's
+  // command reference, helm.sh/docs/helm/helm_registry_login, `az login` in
+  // the Azure CLI reference, smbclient(1), developer.hashicorp.com/vault/docs/
+  // commands/login, httpd.apache.org/docs/current/programs/htpasswd.html).
+  // The value is redacted in a test or example file too: these rules are new,
+  // and what they find was masked before, never shown.
+  {
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Password on a command line',
+    re: new RegExp(
+      `(?:${command('docker|podman|nerdctl|az')}${GLOBAL_OPTIONS}${NEXT_WORD}|${command('helm')}${GLOBAL_OPTIONS}${NEXT_WORD}registry${NEXT_WORD})login(?=[\\s"'])(?:${SAME_LINE}${shortFlag('-p')}|${argvFlag('-p', true)})`,
+      'g'
+    ),
+    groups: [...FLAG_GROUPS, ...ARGV_GROUPS],
+    position: true,
+    keep: () => true,
+    // A bare word after the flag may be the next word of a sentence.
+    validate: (value, group) => group !== 6 || !proseValue(value),
+  },
+  {
+    // A password written out and piped to a login that reads it from standard
+    // input (`echo <password> | docker login --password-stdin`). A variable
+    // in its place is kept.
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Password on a command line',
+    re: new RegExp(
+      `(?<![\\w.-])(?:echo|printf)(?:[ \\t]+-[neE]{1,3})?(?:[ \\t]+["']%s(?:\\\\n)?["'])?[ \\t]+(?:${DQ}|${SQ}|${BARE})[ \\t]*\\|[^\\n|;&]{0,300}?[ \\t]--password-stdin(?![\\w-])`,
+      'dg'
+    ),
+    groups: [1, 2, 3],
+    position: true,
+    keep: () => true,
+  },
+  {
+    // smbclient -U [DOMAIN\]USERNAME[%PASSWORD]. The user is kept.
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Password on a command line',
+    re: new RegExp(
+      `${command('smbclient')}${SAME_LINE}(?:-U[ \\t]*|--user(?:[ \\t]+|=))(?:"[^"%\\n]{1,128}%([^"\\n]{1,256})"|'[^'%\\n]{1,128}%([^'\\n]{1,256})'|[^\\s"'%]{1,128}%([^\\s"'\`;&|]{1,256}))`,
+      'g'
+    ),
+    groups: [1, 2, 3],
+    position: true,
+    keep: () => true,
+  },
+  {
+    // vault login [options] <token>. Options come first, a value after `=` or
+    // after the option; `key=value` arguments belong to another method, and a
+    // short plain word is the next word of a sentence.
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Token on a command line',
+    re: new RegExp(
+      `${command('vault')}[ \\t]+login(?:[ \\t]+-(?:method|path|format|field|address|namespace|ns)[ \\t]+[^\\s-][^\\s;&|]{0,200}|[ \\t]+-[\\w-]{1,40}=[^\\s;&|]{0,200}|[ \\t]+-(?!(?:method|path|format|field|address|namespace|ns)(?![\\w-]))[\\w-]{1,40}(?![\\w=-])){0,8}[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG})(?=[\\s;&|]|$)`,
+      'g'
+    ),
+    groups: [1, 2, 3],
+    position: true,
+    keep: () => true,
+    validate: (value) => !value.includes('=') && isLikelyToken(value),
+  },
+  {
+    // htpasswd -b [options] passwdfile username password, and -nb username
+    // password: with `b` among its flags, the last of two or three words.
+    type: 'password-assignment',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Password on a command line',
+    re: new RegExp(
+      `${command('htpasswd')}(?=(?:[ \\t]+-[A-Za-ac-z0-9]{1,12}(?:[ \\t]+[0-9]{1,6})?){0,6}[ \\t]+-[A-Za-z0-9]{0,12}b)(?:[ \\t]+-[A-Za-z0-9]{1,12}(?:[ \\t]+[0-9]{1,6})?){1,8}(?:[ \\t]+[^\\s"';&|-][^\\s"';&|]{0,256}){1,2}[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG})(?=[ \\t]*(?:[;&|#]|$))`,
+      'gm'
+    ),
+    groups: [1, 2, 3],
+    position: true,
+    keep: () => true,
   },
   {
     // Any command, but only on a command line (finding 5). The name must end
