@@ -78,8 +78,8 @@ Known limits of the comment and credential rules:
 - Text between tags in JSX is read as code, not as text: a `/*` there followed
   later in the file by `*/` is read as a comment, and names between the two go
   out as written.
-- A `/*` whose `*/` stands inside a later string (`"s */"`) is closed there in
-  the reading that looks for it, and the text after it stays a comment. In a
+- A `/*` whose `*/` stands inside a later string (`"s */"`) is closed there, so
+  the text between the `/*` and that string stays readable as a comment. In a
   Python triple-quoted text an escaped `\"""` is not read as an escape.
 - A provider key written as adjacent string literals on one statement is found
   and redacted. A key assembled from variables, across statements, with escape
