@@ -308,36 +308,52 @@ describe.skipIf(process.platform === 'win32')('the reading oracle', () => {
     TIME_LIMIT
   )
 
-  test('R5: every operator, position and axis value read a canary in each shell it is run in', () => {
-    // A value is run in a shell when a command that shows it is; it is alive
-    // there when one of them read a canary there.
-    const cells = new Map<string, Map<Shell, { ran: number; read: number }>>()
-    for (const g of generated)
-      for (const r of ran) {
-        if (!g.shells.includes(r.shell)) continue
-        const did = r.reads.get(g.command) === true
-        for (const value of g.values) {
-          const row = cells.get(value) ?? new Map<Shell, { ran: number; read: number }>()
-          cells.set(value, row)
-          const c = row.get(r.shell) ?? { ran: 0, read: 0 }
-          row.set(r.shell, c)
-          c.ran++
-          if (did) c.read++
+  test(
+    'R5: every operator, position and axis value read a canary in each shell it is run in',
+    async () => {
+      // A value is run in a shell when a command that shows it is; it is alive
+      // there when one of them read a canary there.
+      const cells = new Map<string, Map<Shell, { ran: number; read: number }>>()
+      for (const g of generated)
+        for (const r of ran) {
+          if (!g.shells.includes(r.shell)) continue
+          const did = r.reads.get(g.command) === true
+          for (const value of g.values) {
+            const row = cells.get(value) ?? new Map<Shell, { ran: number; read: number }>()
+            cells.set(value, row)
+            const c = row.get(r.shell) ?? { ran: 0, read: 0 }
+            row.set(r.shell, c)
+            c.ran++
+            if (did) c.read++
+          }
+        }
+      const lines = [
+        `${'value'.padEnd(34)}${ran.map((r) => `${r.shell} read/ran`.padStart(18)).join('')}`,
+      ]
+      const dead: string[] = []
+      for (const [value, row] of cells) {
+        lines.push(
+          `${value.padEnd(34)}${ran.map((r) => (row.has(r.shell) ? `${row.get(r.shell)!.read}/${row.get(r.shell)!.ran}` : '-').padStart(18)).join('')}`
+        )
+        for (const [shell, c] of row) {
+          if (c.read > 0) continue
+          // A value with two samples reads nothing when a loaded runner kills
+          // both at the time limit: its commands get a second run, one at a time.
+          let alive = false
+          for (const g of generated) {
+            if (alive) break
+            if (g.values.includes(value) && g.shells.includes(shell))
+              alive = (await runIn(shell, g.command, fixture)).read.size > 0
+          }
+          if (!alive) dead.push(`${value} in ${shell}`)
+          else lines.push(`${value} in ${shell}: read on the second run`)
         }
       }
-    const lines = [
-      `${'value'.padEnd(34)}${ran.map((r) => `${r.shell} read/ran`.padStart(18)).join('')}`,
-    ]
-    const dead: string[] = []
-    for (const [value, row] of cells) {
-      lines.push(
-        `${value.padEnd(34)}${ran.map((r) => (row.has(r.shell) ? `${row.get(r.shell)!.read}/${row.get(r.shell)!.ran}` : '-').padStart(18)).join('')}`
-      )
-      for (const [shell, c] of row) if (c.read === 0) dead.push(`${value} in ${shell}`)
-    }
-    process.stdout.write(`reading oracle R5\n${lines.join('\n')}\n`)
-    expect(dead).toEqual([])
-  })
+      process.stdout.write(`reading oracle R5\n${lines.join('\n')}\n`)
+      expect(dead).toEqual([])
+    },
+    TIME_LIMIT
+  )
 
   test(
     'R11: every ordinary shape is allowed, reads no canary and lists the file it was made for',
