@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.19.2](https://github.com/veilio-inc/veilio/compare/engine-v1.19.1...engine-v1.19.2) (2026-11-15)
+
+### Fixes
+
+* **engine:** detect the language in linear time ([62f44ab](https://github.com/veilio-inc/veilio/commit/62f44aba2a0098751007323e75ff0d86db064287))
+* **engine:** end a line comment at every line terminator ([7549181](https://github.com/veilio-inc/veilio/commit/7549181980372e162e7ca8ec835413b89caa4f5c))
+* **engine:** keyword arguments that name a Secret are not read as a manifest ([b8dc8ca](https://github.com/veilio-inc/veilio/commit/b8dc8ca42590951a4ac16c8b54a73afa52f89bc9))
+* **engine:** normalise raw-only patterns in linear time ([a3792b6](https://github.com/veilio-inc/veilio/commit/a3792b622743895b6098f7050ef83c21ab1914c7))
+* **engine:** open no block comment that is never closed ([d6276c2](https://github.com/veilio-inc/veilio/commit/d6276c2387563749b224b611b75ad3b1f3da2def))
+* **engine:** read a Kubernetes Secret only in a YAML or JSON document ([df5b4b4](https://github.com/veilio-inc/veilio/commit/df5b4b45c5d2aad9cfc69b9fdf6645537be83497))
+* **engine:** read a Kubernetes Secret that follows a byte-order mark ([409f2a5](https://github.com/veilio-inc/veilio/commit/409f2a595554c1407618137db10e4e481541a7b0))
+* **engine:** read a pasted Kubernetes Secret from its unindented kind and data keys ([8ffe175](https://github.com/veilio-inc/veilio/commit/8ffe175664d950b701f804f576a568dd5b631741))
+* **engine:** read a Python triple-quoted literal as a string outside docstring position ([3a8eb2b](https://github.com/veilio-inc/veilio/commit/3a8eb2bc1cdc6a82ce5dbc1ee8b0e34f0e9771bc))
+* **engine:** read a Secret's kind behind a tag or an anchor and a tab-indented block ([853fd8a](https://github.com/veilio-inc/veilio/commit/853fd8ad96e7d45b3988373c2a0e54252fdf6dad))
+* **engine:** read no C-style comment in shell, YAML, env, INI and text files or in a detected language ([52ece9d](https://github.com/veilio-inc/veilio/commit/52ece9d7f3cb45ee3329e9a5cb8da136925a08f0))
+* **engine:** redact a credential in any URL parameter ([0fd74f5](https://github.com/veilio-inc/veilio/commit/0fd74f588ba93fa0f41483149c49984f506bea15))
+* **engine:** redact a provider key joined from adjacent literals ([f9ebc99](https://github.com/veilio-inc/veilio/commit/f9ebc993b4b57975b29574568a2da08a6a8b79a8))
+* **engine:** redact an encrypted private key and key lines that end in CR ([b12b980](https://github.com/veilio-inc/veilio/commit/b12b980f314b673bdbcfff39e8ee912017fe14f9)), closes [PKCS#8](https://github.com/veilio-inc/PKCS/issues/8)
+* **engine:** redact private-key lines without an END line and Kubernetes Secret values ([92b8682](https://github.com/veilio-inc/veilio/commit/92b8682dab9368fa6d78665484c6b14dc95a72c4))
+* **engine:** resolve overlapping findings and replace them in linear time ([417943b](https://github.com/veilio-inc/veilio/commit/417943bc20079a342e9bd30b244d4b57681f69cb))
+* **engine:** scanSecrets refuses a language it does not know ([91d47b5](https://github.com/veilio-inc/veilio/commit/91d47b54df8492890f93bb019bd1a0052c00ae51))
+
 ## [1.19.1](https://github.com/veilio-inc/veilio/compare/engine-v1.19.0...engine-v1.19.1) (2026-11-14)
 
 ### Fixes
