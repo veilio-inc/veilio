@@ -263,6 +263,12 @@ export const EXCEPTIONS: BaselineException[] = [
   },
   {
     row: 'secret manifest: data',
+    options: {},
+    reason: 'key-material-and-secret-manifest',
+    why: 'a Secret manifest given with no path, kind or language is read from its unindented kind and data keys',
+  },
+  {
+    row: 'secret manifest: data',
     options: { fileKind: 'yaml' },
     reason: 'key-material-and-secret-manifest',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
@@ -275,6 +281,12 @@ export const EXCEPTIONS: BaselineException[] = [
   },
   {
     row: 'secret manifest: stringData with a block scalar',
+    options: {},
+    reason: 'key-material-and-secret-manifest',
+    why: 'a Secret manifest given with no path, kind or language is read from its unindented kind and data keys',
+  },
+  {
+    row: 'secret manifest: stringData with a block scalar',
     options: { fileKind: 'yaml' },
     reason: 'key-material-and-secret-manifest',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
@@ -284,6 +296,12 @@ export const EXCEPTIONS: BaselineException[] = [
     options: { path: 'secret.yaml' },
     reason: 'key-material-and-secret-manifest',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
+  },
+  {
+    row: 'secret manifest: one of three documents',
+    options: {},
+    reason: 'key-material-and-secret-manifest',
+    why: 'a Secret manifest given with no path, kind or language is read from its unindented kind and data keys',
   },
   {
     row: 'secret manifest: one of three documents',

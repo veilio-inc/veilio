@@ -9,7 +9,7 @@ import {
   SECRET_DISPOSITIONS,
   type SecretType,
 } from '../src/secrets.js'
-import { anonymize, restore } from '../src/engine.js'
+import { anonymize, detectCredentials, restore } from '../src/engine.js'
 import { CREDENTIAL as LIVE_STRIPE_KEY } from './fixtures/regulated.js'
 
 // One live-shaped sample per pattern. Values are synthetic but structurally
@@ -1139,14 +1139,85 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     expect(scanSecrets(code, 'redact', 'path' in options ? options : {}).findings).toEqual([])
   })
 
-  // With no path and no kind nothing says the text is a document, unless it
-  // is JSON as a whole, which no code is.
-  it('YAML with no path and no kind is masked as it always was', () => {
-    const code = manifest('Secret', `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`)
-    const { anonymized, map } = anonymize(code)
+  // With no path, no kind and no language nothing says the text is a
+  // document, unless it is JSON as a whole, which no code is, or it reads as
+  // a Secret from the first column: an unquoted `kind:` that names Secret
+  // and an unquoted `data:` or `stringData:`, both unindented, in one
+  // document. Only those unindented keys are read then.
+  const PASTED = `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`
+  it.each([
+    ['data', manifest('Secret', PASTED)],
+    [
+      'stringData and a block scalar',
+      manifest('Secret', `stringData:\n  db: ${VALUE}\n  pem: |\n    ${TEXT}\n    ${TEXT}\n`),
+    ],
+    ['the kind quoted', manifest('"Secret"', PASTED)],
+    ['the kind behind a tag', manifest('!!str Secret', PASTED)],
+    ['the kind behind an anchor', manifest('&k Secret', PASTED)],
+    ['the kind on the next line', manifest('\n  Secret', PASTED)],
+    ['lines that end in CR and LF', manifest('Secret', PASTED).replace(/\n/g, '\r\n')],
+    [
+      'the second of two documents',
+      `kind: ConfigMap\ndata:\n  level: verbose\n---\n${manifest('Secret', PASTED)}`,
+    ],
+  ] as const)('a pasted Secret is read: %s', (_, code) => {
+    for (const options of [{}, { language: 'auto' }] as const) {
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized.match(/__REDACTED_/g)).toHaveLength(2)
+    }
+    expect(scanSecrets(code).findings).toHaveLength(2)
+    expect(
+      detectCredentials(code).filter((f) => f.label === 'Value of a Kubernetes Secret')
+    ).toHaveLength(2)
+  })
+
+  const NESTED = `  data:\n    db: ${VALUE}\n`
+  it.each([
+    ['a language is stated', manifest('Secret', PASTED), { language: 'python' }],
+    ['another kind that starts the same', manifest('SecretStore', PASTED), {}],
+    ['the kind is indented, in a List', `kind: List\nitems:\n  - kind: Secret\n  ${NESTED}`, {}],
+    ['the kind key is quoted', `"kind": Secret\n${PASTED}`, {}],
+    ['only an indented kind names Secret', `metadata:\n  kind: Secret\n${PASTED}`, {}],
+    ['data is indented only', `kind: Secret\nspec:\n${NESTED}`, {}],
+    ['data is quoted', `kind: Secret\n"data":\n  db: ${VALUE}\n`, {}],
+    ['the kind and data stand in two documents', `kind: Secret\n---\n${PASTED}`, {}],
+  ] as const)('pasted text is no Secret when %s', (_, code, options) => {
+    const { anonymized, map } = anonymize(code, options)
     expect(anonymized).not.toContain('__REDACTED_')
     expect(restore(anonymized, map).restored).toBe(code)
+    expect(scanSecrets(code, 'redact', options).findings).toEqual([])
   })
+
+  // Code that carries a manifest in a literal: the manifest's own values are
+  // a Secret's, and the object named `data` below it stays code.
+  it('a manifest in a pasted literal opens no indented data key', () => {
+    const code =
+      'const doc = `\nkind: Secret\ndata:\n  db: ' +
+      VALUE +
+      '\n`\nfunction send(ledgerUser: string) {\n  return post(url, {\n    data: { ledgerUser, retries: maxRetries },\n  })\n}\n'
+    const { anonymized, map } = gone(code, [VALUE])
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(1)
+    expect(Object.values(map)).toEqual(expect.arrayContaining(['ledgerUser', 'maxRetries']))
+  })
+
+  // The text of the first rows above, to the byte: what it gave before a
+  // pasted manifest was read, with its path and without one.
+  it.each([[{ path: 'api.ts' }], [{}]] as const)(
+    'code that names the kind is unchanged (%j)',
+    (options) => {
+      const { anonymized, map } = anonymize(API, options)
+      expect(anonymized).toBe(
+        "type Kind = { kind: '__STR__1' | '__REDACTED_CREDENTIAL_1__' }\nfunction __FN__1(__VAR__2: string, __VAR__3: number) {\n  return post(url, {\n    data: { __VAR__2, __VAR__3, retries: __VAR__1 },\n  })\n}\nconst __VAR__1 = 3\nlog(__VAR__2, __VAR__1)\n"
+      )
+      expect(map).toEqual({
+        __VAR__1: 'maxRetries',
+        __FN__1: 'loadUsers',
+        __VAR__2: 'username',
+        __VAR__3: 'pageSize',
+        __STR__1: 'Secret',
+      })
+    }
+  )
 
   it.each([[{}], [{ path: 'deploy/secret.json' }], [{ fileKind: 'yaml' }]] as const)(
     'a JSON Secret is read with %j',

@@ -157,10 +157,10 @@ describe('scanSecrets and detectSecrets refuse an option they do not know', () =
   it('throws on a misspelt path', () => {
     const bad = { file: 'tests/x.test.ts' } as unknown as { path?: string }
     expect(() => scanSecrets('x', 'redact', bad)).toThrow(
-      "scanSecrets: unknown option 'file'. Valid options: path, root, fileKind."
+      "scanSecrets: unknown option 'file'. Valid options: path, root, fileKind, language."
     )
     expect(() => detectSecrets('x', bad)).toThrow(
-      "detectSecrets: unknown option 'file'. Valid options: path, root, fileKind."
+      "detectSecrets: unknown option 'file'. Valid options: path, root, fileKind, language."
     )
   })
   it('accepts { path } and {}', () => {

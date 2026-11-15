@@ -1690,12 +1690,11 @@ export function detectCredentials(
   code: string,
   options: ScanOptions & Pick<AnonymizeOptions, 'language'> = {}
 ): SecretFinding[] {
-  const { language, ...scan } = options
-  const found = detectSecrets(code, scan)
-  const spans = credentialSpans(code, scan)
+  const found = detectSecrets(code, options)
+  const spans = credentialSpans(code, options)
   const starts = [0]
   for (let i = 0; i < code.length; i++) if (code[i] === '\n') starts.push(i + 1)
-  for (const v of credentialsAmong(valuePositions(code, { ...scan, language }))) {
+  for (const v of credentialsAmong(valuePositions(code, options))) {
     if (spans.some((s) => s.start < v.end && v.start < s.end)) continue
     let line = 0
     while (line + 1 < starts.length && starts[line + 1]! <= v.start) line++
@@ -1826,7 +1825,12 @@ export function anonymize(
     throw new TypeError(
       `anonymize: team.tag names the checkout, six of A-Z0-9 - got ${JSON.stringify(opts.team?.tag)}`
     )
-  const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind }
+  const where = {
+    path: opts.path,
+    root: opts.root,
+    fileKind: opts.fileKind,
+    language: opts.language,
+  }
   // Every credential in the text as given, whatever the policy.
   const found = credentialSpans(code, where)
   // A credential never goes into the map, in any `secrets` mode (founder

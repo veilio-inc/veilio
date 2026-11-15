@@ -459,6 +459,9 @@ interface ScanContext {
   /** A YAML or JSON file by its kind or path: a Kubernetes Secret manifest
    *  is read in it, and never in code. */
   document: boolean
+  /** No path, no kind and no language from the caller (pasted text, a pipe):
+   *  a Secret manifest is read in it only from its unindented keys. */
+  guessed: boolean
   /** A shell script or a Dockerfile: `NAME=v` after `export`, `ENV` and the
    *  like, in shell grammar. */
   shell: boolean
@@ -1504,11 +1507,12 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
   }
   // Joined, not pushed as arguments: a manifest of 150,000 values is more
   // arguments than a call may take.
-  return found.concat(
-    keyMaterial(code),
-    code.includes('Secret') && (scan.document || wholeJson(code)) ? secretManifestValues(code) : [],
-    joinedKeys(code)
-  )
+  const manifest = (): RawMatch[] => {
+    if (!code.includes('Secret')) return []
+    if (scan.document || wholeJson(code)) return secretManifestValues(code, false)
+    return scan.guessed ? secretManifestValues(code, true) : []
+  }
+  return found.concat(keyMaterial(code), manifest(), joinedKeys(code))
 }
 
 /** The provider-format rules that match a key by its own shape alone. */
@@ -1684,8 +1688,13 @@ function keyMaterial(code: string): RawMatch[] {
 // YAML allows there: a tag and an anchor (`!!str`, `&k`), a comment, and one
 // line break with the value indented below. Each piece has a length limit, so
 // a line of many `kind: !` is not read again from each of them.
-const NAMES_SECRET =
-  /(?<![\w$.-])\\?["']?kind\\?["']?[ \t]*:[ \t]*(?:[!&]\S{0,100}[ \t]*){0,2}(?:#[^\r\n]{0,200})?(?:\r?\n[ \t]+)?\\?["']?Secret(?![\w$-])/
+const SECRET_AFTER_KIND =
+  /[ \t]*:[ \t]*(?:[!&]\S{0,100}[ \t]*){0,2}(?:#[^\r\n]{0,200})?(?:\r?\n[ \t]+)?\\?["']?Secret(?![\w$-])/
+    .source
+const NAMES_SECRET = new RegExp(`(?<![\\w$.-])\\\\?["']?kind\\\\?["']?${SECRET_AFTER_KIND}`)
+// The same, as text of no stated kind must have it: the key unquoted and
+// first on its line.
+const NAMES_SECRET_UNINDENTED = new RegExp(`^kind${SECRET_AFTER_KIND}`, 'm')
 const DATA_KEY = /(?<![\w$.-])\\?["']?(?:data|stringData)\\?["']?[ \t]*:[ \t]*/g
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/
 
@@ -1713,11 +1722,13 @@ function wholeJson(code: string): boolean {
  * whose quote never closes runs to the closing brace or the end of its line.
  * Only in a YAML or JSON document (`ScanContext.document`, or text that is
  * JSON as a whole): an object in code that names the kind holds names, which
- * are masked and restored. So a YAML manifest pasted with no path and no kind
- * is not read. A Secret a template builds (Helm) is not recognised. One pass
- * over each document.
+ * are masked and restored. Text with no path, kind or language (`unindented`)
+ * is read more narrowly, since it may be code: a document must name the kind
+ * with an unquoted `kind:` first on a line, and only an unquoted `data` or
+ * `stringData` first on a line opens a region. A Secret a template builds
+ * (Helm) is not recognised. One pass over each document.
  */
-function secretManifestValues(code: string): RawMatch[] {
+function secretManifestValues(code: string, unindented: boolean): RawMatch[] {
   type Span = [start: number, end: number]
   const found: RawMatch[] = []
   const emit = (start: number, end: number): void => {
@@ -1884,9 +1895,13 @@ function secretManifestValues(code: string): RawMatch[] {
       if (limit !== -1) from = limit + 3
       const separator = code.indexOf('\n---', from)
       limit = separator === -1 ? code.length : separator + 1
-      secret = m.index < limit && NAMES_SECRET.test(code.slice(from, limit))
+      secret =
+        m.index < limit &&
+        (unindented ? NAMES_SECRET_UNINDENTED : NAMES_SECRET).test(code.slice(from, limit))
     }
     if (!secret) continue
+    if (unindented && !(/^[ds]/.test(m[0]) && (m.index === 0 || /[\n\r]/.test(code[m.index - 1]!))))
+      continue
     // A key stands first on its line (after a list dash), or after `{` or
     // `,`: `if data:` and `(data: Buffer)` in code open nothing.
     let before = m.index - 1
@@ -2278,9 +2293,18 @@ export interface ScanOptions {
    *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
    *  else. Adds to the kind a `path` implies; it never replaces it. */
   fileKind?: FileKind
+  /** The language the caller stated for the text, if any. Text with no
+   *  `path`, no `fileKind` and no language but `auto` may be anything: a
+   *  Kubernetes Secret is read in it only from its unindented keys. */
+  language?: string
 }
 
-const SCAN_OPTIONS = optionKeys<ScanOptions>({ path: true, root: true, fileKind: true })
+const SCAN_OPTIONS = optionKeys<ScanOptions>({
+  path: true,
+  root: true,
+  fileKind: true,
+  language: true,
+})
 
 const FILE_KINDS: ReadonlySet<string> = new Set([
   'dotenv',
@@ -2306,6 +2330,10 @@ function scanContext(options: ScanOptions): ScanContext {
     dotenv: kinds.has('dotenv'),
     yaml: kinds.has('yaml'),
     document: kinds.has('yaml') || (path !== undefined && /\.json$/i.test(path)),
+    guessed:
+      path === undefined &&
+      options.fileKind === undefined &&
+      (options.language ?? 'auto') === 'auto',
     shell: kinds.has('shell'),
   }
 }
