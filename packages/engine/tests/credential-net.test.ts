@@ -310,6 +310,10 @@ describe('key material, Secret manifests and joined literals are read in linear 
     'kind: Secret\ndata:\n' + '  a: "\n'.repeat(n),
     'kind: Secret\ndata: {\n' + '  a: "\n'.repeat(n),
     'kind: Secret\n' + 'data: {} '.repeat(n) + '\n',
+    // Real values, one finding each: the findings are sorted, checked for
+    // overlaps and replaced in time linear in their number too.
+    'kind: Secret\ndata:\n' + '  a: bcdefghij\n'.repeat(n),
+    'kind: Secret\n' + 'x, data: 1\n'.repeat(n),
     // Adjacent literals, read as one string.
     '"ab" + '.repeat(n) + '"c"\n',
     '"ab" '.repeat(n) + '\n',

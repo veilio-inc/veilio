@@ -1502,11 +1502,13 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
     }
     pattern.re.lastIndex = 0
   }
-  found.push(...keyMaterial(code))
-  if (code.includes('Secret') && (scan.document || wholeJson(code)))
-    found.push(...secretManifestValues(code))
-  found.push(...joinedKeys(code))
-  return found
+  // Joined, not pushed as arguments: a manifest of 150,000 values is more
+  // arguments than a call may take.
+  return found.concat(
+    keyMaterial(code),
+    code.includes('Secret') && (scan.document || wholeJson(code)) ? secretManifestValues(code) : [],
+    joinedKeys(code)
+  )
 }
 
 /** The provider-format rules that match a key by its own shape alone. */
@@ -1998,13 +2000,36 @@ function dropOverlaps(all: RawMatch[], code: string): RawMatch[] {
     return a.start - b.start
   })
   const kept: RawMatch[] = []
+  // Which kept matches reach into each stretch of 64 characters, by their
+  // place in `kept`: an overlap is looked for there, not in all of `kept`.
+  const near = new Map<number, number[]>()
+  const note = (at: number): void => {
+    const k = kept[at]!
+    for (let b = k.start >> 6; b <= (k.end - 1) >> 6; b++) {
+      const list = near.get(b)
+      if (list) list.push(at)
+      else near.set(b, [at])
+    }
+  }
+  /** The first kept match, in rank order, that overlaps `m`. */
+  const winnerOf = (m: RawMatch): number => {
+    let first = -1
+    for (let b = m.start >> 6; b <= (m.end - 1) >> 6; b++)
+      for (const at of near.get(b) ?? []) {
+        const k = kept[at]!
+        if ((first === -1 || at < first) && m.start < k.end && k.start < m.end) first = at
+      }
+    return first
+  }
   let grown = false
   for (const m of sorted) {
-    const winner = kept.find((k) => m.start < k.end && k.start < m.end)
-    if (!winner) {
+    const at = winnerOf(m)
+    if (at === -1) {
       kept.push(m)
+      note(kept.length - 1)
       continue
     }
+    const winner = kept[at]!
     // An AMBIGUOUS credential verdict ("might be a live secret, might be a
     // word") loses to a mask match on rank - it is only reported. Letting the
     // mask stand would write a possible live credential into the map, and
@@ -2020,6 +2045,7 @@ function dropOverlaps(all: RawMatch[], code: string): RawMatch[] {
       if (m.start < winner.start || m.end > winner.end) grown = true
       winner.start = Math.min(winner.start, m.start)
       winner.end = Math.max(winner.end, m.end)
+      note(at)
     }
   }
   kept.sort((a, b) => a.start - b.start)
@@ -2331,7 +2357,7 @@ function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretS
   const starts = lineIndex(code)
   const findings: SecretFinding[] = []
   const counters: Record<string, number> = {}
-  // Replace back-to-front so earlier offsets stay valid.
+  // In source order, as `dropOverlaps` hands the matches over, none over another.
   const replacements: { start: number; end: number; token: string }[] = []
   const regulated: RegulatedSpan[] = []
   const tokens = new Map<string, string>()
@@ -2374,16 +2400,18 @@ function scan(code: string, policy: SecretPolicy, options: ScanOptions): SecretS
     }
   }
 
-  let redacted = code
-  for (let i = replacements.length - 1; i >= 0; i--) {
-    const r = replacements[i]
-    redacted = redacted.slice(0, r.start) + r.token + redacted.slice(r.end)
+  // In source order, each piece of the text copied once.
+  const pieces: string[] = []
+  let copied = 0
+  for (const r of replacements) {
+    pieces.push(code.slice(copied, r.start), r.token)
+    copied = r.end
   }
+  const redacted = pieces.join('') + code.slice(copied)
 
   // FR-001: ordered by what the reader should act on first, not by the order
   // the rule table happens to be written in. `replacements` is deliberately not
-  // reordered — it is applied back-to-front by offset and must stay in source
-  // order.
+  // reordered — it is applied by offset and must stay in source order.
   findings.sort((a, b) => {
     const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]
     if (bySeverity !== 0) return bySeverity
