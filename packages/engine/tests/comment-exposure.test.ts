@@ -115,7 +115,9 @@ describe('comment exposure — every supported language', () => {
   })
 
   it.each(SAMPLES)('counts a block comment in $language', ({ language, code, block }) => {
-    const { comments } = anonymize(`${code}\n${block}`, { language })
+    // The block first: a Python triple-quoted text is documentation only where
+    // a docstring stands, and a string after code (spec 094).
+    const { comments } = anonymize(`${block}\n${code}`, { language })
     expect(comments.total).toBe(1)
   })
 
@@ -224,13 +226,17 @@ describe('comment exposure — one block, not one per line', () => {
     expect(anonymize(withShebang).comments.severity).toBe('low')
   })
 
+  const TYPESCRIPT = { language: 'typescript' } as const
+
   it('agrees with itself across comment styles', () => {
     // A five-line `//` header and the equivalent block comment are the same
     // thing to a reader. If the two disagree, the number is about syntax rather
     // than about exposure.
-    const asLines = anonymize(`${LICENCE}\nconst orderTotal = 1`).comments
+    // The language is named: where it is only detected, `/*` opens no comment.
+    const asLines = anonymize(`${LICENCE}\nconst orderTotal = 1`, TYPESCRIPT).comments
     const asBlock = anonymize(
-      `/*\n * Copyright 2026 Veilio\n * Licensed under the Veilio Community Licence 1.0.\n */\nconst orderTotal = 1`
+      `/*\n * Copyright 2026 Veilio\n * Licensed under the Veilio Community Licence 1.0.\n */\nconst orderTotal = 1`,
+      TYPESCRIPT
     ).comments
     expect(asLines.total).toBe(asBlock.total)
     expect(asLines.severity).toBe(asBlock.severity)
@@ -240,9 +246,14 @@ describe('comment exposure — one block, not one per line', () => {
     // Counting a block segment whole includes its newlines and ` * ` gutter,
     // which the equivalent `//` lines never had — the same sentence then reads
     // ~30% larger as a block, and the number is about syntax, not exposure.
-    const asLines = anonymize('const a = 1\n// Settles an invoice.\n// Contoso Health only.')
+    // The language is named: where it is only detected, `/*` opens no comment.
+    const asLines = anonymize(
+      'const a = 1\n// Settles an invoice.\n// Contoso Health only.',
+      TYPESCRIPT
+    )
     const asBlock = anonymize(
-      'const a = 1\n/*\n * Settles an invoice.\n * Contoso Health only.\n */'
+      'const a = 1\n/*\n * Settles an invoice.\n * Contoso Health only.\n */',
+      TYPESCRIPT
     )
     expect(asLines.comments.characters).toBeGreaterThan(0)
     expect(Math.abs(asLines.comments.characters - asBlock.comments.characters)).toBeLessThanOrEqual(

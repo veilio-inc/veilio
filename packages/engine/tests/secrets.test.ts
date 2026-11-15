@@ -9,7 +9,7 @@ import {
   SECRET_DISPOSITIONS,
   type SecretType,
 } from '../src/secrets.js'
-import { anonymize, restore } from '../src/engine.js'
+import { anonymize, detectCredentials, restore } from '../src/engine.js'
 import { CREDENTIAL as LIVE_STRIPE_KEY } from './fixtures/regulated.js'
 
 // One live-shaped sample per pattern. Values are synthetic but structurally
@@ -733,5 +733,666 @@ describe('blocking is about credentials, not about how alarming something looks 
     const findings = detectSecrets(`const acct = "${IBAN}"`)
     expect(findings[0].severity).toBe('high')
     expect(hasBlockingSecrets(findings)).toBe(false)
+  })
+})
+
+// Spec 094: key material is redacted from its BEGIN line on, with or without
+// an END line and whatever its length; and every value of a Kubernetes Secret
+// manifest. None of it is ever a map value.
+describe('private-key lines and Secret manifests never reach the map', () => {
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  // Made-up text, the same for the same seed: nothing key-shaped is written here.
+  const made = (seed: number, length: number): string => {
+    let s = seed * 2654435761 + 1
+    let out = ''
+    for (let i = 0; i < length; i++) {
+      s ^= s << 13
+      s ^= s >>> 17
+      s ^= s << 5
+      out += ALPHABET[(s >>> 0) % ALPHABET.length]
+    }
+    return out
+  }
+  const lines = (count: number, seed = 500): string[] =>
+    Array.from({ length: count }, (_, i) => made(seed + i, 64))
+  const BEGIN = '-----BEGIN PRIVATE KEY-----'
+  const END = '-----END PRIVATE KEY-----'
+  const BEGIN_SSH = '-----BEGIN OPENSSH PRIVATE KEY-----'
+
+  /** No run of eight characters of any of `secrets` is in the output or the map. */
+  const gone = (code: string, secrets: string[], options = {}) => {
+    const result = anonymize(code, options)
+    const seen = result.anonymized + '\n' + Object.values(result.map).join('\n')
+    for (const secret of secrets)
+      for (let i = 0; i + 8 <= secret.length || i === 0; i += 4)
+        expect(seen.includes(secret.slice(i, i + 8)), secret.slice(i, i + 8)).toBe(false)
+    return result
+  }
+
+  it('a BEGIN line and two body lines, no END line', () => {
+    const body = [made(1, 52), made(2, 64).toLowerCase()]
+    const { anonymized, map } = gone(`${BEGIN_SSH}\n${body.join('\n')}\n`, body)
+    expect(anonymized).toBe('__REDACTED_PRIVATE_KEY_1__\n')
+    expect(map).toEqual({})
+  })
+
+  it('a BEGIN line with nothing after it is no key', () => {
+    expect(scanSecrets(`${BEGIN_SSH}\n`).findings.map((f) => f.type)).not.toContain('private-key')
+  })
+
+  it.each([
+    ['with its END line', `\n${END}\n`],
+    ['without one', '\n'],
+  ])('a body of 12,000 characters %s', (_, tail) => {
+    const body = lines(190)
+    const { anonymized } = gone(`${BEGIN}\n${body.join('\n')}${tail}`, body)
+    expect(anonymized).toBe('__REDACTED_PRIVATE_KEY_1__\n')
+  })
+
+  it('a complete block is redacted as it always was', () => {
+    const body = lines(4)
+    const code = `${BEGIN}\n${body.join('\n')}\n${END}\nexport LEDGER_MODE=production\n`
+    const scan = scanSecrets(code)
+    expect(scan.code).toBe('__REDACTED_PRIVATE_KEY_1__\nexport LEDGER_MODE=production\n')
+    expect(scan.findings.map((f) => f.type)).toEqual(['private-key'])
+  })
+
+  it('a short line after the body is key material too', () => {
+    const body = [...lines(3), made(9, 12)]
+    const { anonymized } = gone(`${BEGIN}\n${body.join('\n')}\n\nexport LEDGER_MODE=on\n`, body)
+    expect(anonymized).toMatch(/^__REDACTED_PRIVATE_KEY_1__\n\nexport /)
+  })
+
+  it('indented body lines, CRLF and PEM headers are key material', () => {
+    const body = lines(3)
+    const code = `key: |\r\n  -----BEGIN RSA PRIVATE KEY-----\r\n  Proc-Type: 4,ENCRYPTED\r\n\r\n  ${body.join('\r\n  ')}\r\nnext: value\r\n`
+    const { anonymized } = gone(code, body, { fileKind: 'yaml' })
+    expect(anonymized).toContain('__REDACTED_PRIVATE_KEY_1__\r\n')
+    expect(anonymized).toMatch(/\r\nnext: \S+\r\n$/)
+  })
+
+  it.each([
+    ['CR', '\r'],
+    ['U+2028', '\u2028'],
+    ['CR and LF mixed', '\r', '\n'],
+  ])('lines that end in %s only, no END line', (_, eol, second = eol) => {
+    const body = lines(3)
+    const code = `mode=on${eol}${BEGIN}${eol}${body[0]}${second}${body[1]}${eol}${body[2]}${eol}`
+    const { anonymized, map } = gone(code, body)
+    expect(anonymized).toBe(`mode=on${eol}__REDACTED_PRIVATE_KEY_1__${eol}`)
+    expect(Object.values(map).join(' ')).not.toMatch(/[A-Za-z0-9]{12}/)
+  })
+
+  it('CR line ends behind a prefix, with a line after the key', () => {
+    const body = [...lines(3), made(9, 12)]
+    const code = `# ${BEGIN}\r${body.map((l) => '# ' + l).join('\r')}\r#\rnext line\r`
+    const { anonymized } = gone(code, body)
+    expect(anonymized).toContain('# __REDACTED_PRIVATE_KEY_1__\r')
+    expect(anonymized).toMatch(/\rnext line\r$/)
+  })
+
+  it.each([
+    ['without an END line', ''],
+    ['with its END line', '-----END ENCRYPTED PRIVATE KEY-----\n'],
+  ])('an encrypted key (PKCS#8) %s', (_, tail) => {
+    const body = lines(3)
+    const code = `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${body.join('\n')}\n${tail}`
+    const { anonymized, map } = gone(code, body)
+    expect(anonymized).toBe('__REDACTED_PRIVATE_KEY_1__\n')
+    expect(map).toEqual({})
+  })
+
+  it('a complete encrypted key in one string, its line ends written as escapes', () => {
+    const body = lines(3)
+    const code = `const pem = "-----BEGIN ENCRYPTED PRIVATE KEY-----\\n${body.join('\\n')}\\n-----END ENCRYPTED PRIVATE KEY-----"\n`
+    const { anonymized } = gone(code, body, { language: 'typescript' })
+    expect(anonymized).toMatch(/= "__REDACTED_PRIVATE_KEY_1__"\n$/)
+  })
+
+  it('a BEGIN line inside a line of code starts no key', () => {
+    const code = `if (pem.startsWith("${BEGIN}")) {\n  return true\n}\n`
+    expect(scanSecrets(code).findings).toEqual([])
+  })
+
+  const VALUE = made(40, 52) + '=='
+  const TEXT = made(41, 20)
+  // What makes a text a document: the YAML kind, or a YAML or JSON path.
+  const DOCUMENT = [{ fileKind: 'yaml' }, { path: 'deploy/secret.yaml' }] as const
+  const manifest = (kind: string, section: string): string =>
+    `apiVersion: v1\nkind: ${kind}\nmetadata:\n  name: ledger\n${section}`
+
+  it.each([[{ fileKind: 'yaml' }], [{ path: 'deploy/secret.yaml' }]] as const)(
+    'every value under data of a Secret is redacted (%j)',
+    (options) => {
+      const code = manifest('Secret', `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`)
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized).toMatch(/db: __REDACTED_CREDENTIAL_\d+__\n/)
+      expect(anonymized).toMatch(/note: __REDACTED_CREDENTIAL_\d+__\n/)
+    }
+  )
+
+  it('stringData, a quoted value and a block scalar', () => {
+    const body = lines(2, 700)
+    const code = manifest(
+      'Secret',
+      `stringData:\n  note: "${TEXT}"\n  id_ledger: |-\n    ${body.join('\n    ')}\ntype: Opaque\n`
+    )
+    const { anonymized } = gone(code, [TEXT, ...body], { fileKind: 'yaml' })
+    expect(anonymized).toMatch(/type: \S+\n$/)
+  })
+
+  it('only the Secret among three documents', () => {
+    const code = [
+      manifest('ConfigMap', 'data:\n  ledgerMode: production\n'),
+      manifest('Secret', `data:\n  db: ${VALUE}\n`),
+      manifest('Service', 'spec:\n  data: none\n'),
+    ].join('---\n')
+    const { anonymized, map } = gone(code, [VALUE], { fileKind: 'yaml' })
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(1)
+    expect(Object.values(map)).toContain('production')
+  })
+
+  // One rule for a document that names a Secret: every `data` value in it,
+  // the other items' too. Redacting more is the safe side.
+  it('a Secret inside a List: every data value of the document', () => {
+    const code = `apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    data:\n      ledgerMode: production\n  - apiVersion: v1\n    data:\n      db: ${VALUE}\n    kind: Secret\n`
+    const { anonymized, map } = gone(code, [VALUE], { fileKind: 'yaml' })
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(2)
+    expect(Object.values(map)).not.toContain('production')
+  })
+
+  it('a ConfigMap is masked as it always was', () => {
+    const code = manifest('ConfigMap', 'data:\n  ledgerMode: production\n  gateway: AcmeLedger\n')
+    const { anonymized, map } = anonymize(code, { fileKind: 'yaml' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  it.each([
+    [
+      'a quoted key',
+      (v: string) =>
+        manifest('Secret', `data:\n  db: ${v}\n  note: ${TEXT}\n`).replace('kind:', '"kind":'),
+    ],
+    [
+      'JSON over several lines',
+      (v: string) =>
+        `{\n  "apiVersion": "v1",\n  "kind": "Secret",\n  "data": {\n    "db": "${v}",\n    "note": "${TEXT}"\n  },\n  "type": "Opaque"\n}\n`,
+    ],
+    [
+      'JSON on one line',
+      (v: string) => `{"apiVersion":"v1","kind":"Secret","data":{"db":"${v}","note":"${TEXT}"}}\n`,
+    ],
+    ['a flow mapping', (v: string) => `{kind: Secret, stringData: {db: ${v}, note: '${TEXT}'}}\n`],
+    ['data in flow form', (v: string) => manifest('Secret', `data: {db: ${v}, note: ${TEXT}}\n`)],
+  ])('a Secret written with %s', (_, write) => {
+    const code = write(VALUE)
+    for (const options of DOCUMENT) {
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      // (A key that follows a redacted value on one line is redacted too, as before.)
+      expect(anonymized).toContain('__REDACTED_CREDENTIAL_2__')
+    }
+  })
+
+  it.each([
+    [
+      "a single-quoted value holding ''",
+      (v: string) => `{kind: Secret, stringData: {db: 'it''s ${v}', note: '${TEXT}'}}\n`,
+    ],
+    [
+      'a single-quoted value ending in a backslash',
+      (v: string) => `{kind: Secret, stringData: {db: '${v}\\', note: '${TEXT}'}}\n`,
+    ],
+    [
+      'a quote that never closes',
+      (v: string) => `{kind: Secret, stringData: {db: "${v}, note: ${TEXT}}}\n`,
+    ],
+    [
+      'JSON without spaces, data on a later line',
+      (v: string) => `{"kind":"Secret",\n"data":{\n"db":"${v}",\n"note":"${TEXT}"}}\n`,
+    ],
+    [
+      'JSON with spaces around the colon',
+      (v: string) =>
+        `{\n  "kind" : "Secret" ,\n  "data" : {\n    "db" : "${v}" ,\n    "note" : "${TEXT}"\n  }\n}\n`,
+    ],
+    [
+      'JSON inside a string, its quotes escaped',
+      (v: string) =>
+        `const m = "{\\"kind\\":\\"Secret\\",\\"data\\":{\\"db\\":\\"${v}\\",\\"note\\":\\"${TEXT}\\"}}";\n`,
+    ],
+    [
+      'kind after data',
+      (v: string) => `data:\n  db: ${v}\n  note: ${TEXT}\napiVersion: v1\nkind: Secret\n`,
+    ],
+  ])('a Secret written with %s', (_, write) => {
+    const code = write(VALUE)
+    for (const options of DOCUMENT) gone(code, [VALUE, TEXT], options)
+  })
+
+  it.each([
+    [
+      'an anchor after the key',
+      (v: string) => manifest('Secret', `data: &values\n  db: ${v}\n  note: ${TEXT}\n`),
+    ],
+    [
+      'a tag and a comment after the key',
+      (v: string) =>
+        manifest('Secret', `stringData: !!map # values\n  db: ${v}\n  note: ${TEXT}\n`),
+    ],
+    [
+      'a quoted flow value over two lines',
+      (v: string) => `{kind: Secret, stringData: {db: "${v}\n  ${TEXT}", mode: plain}}\n`,
+    ],
+    [
+      'a flow value continued on the next line',
+      (v: string) => `{kind: Secret, stringData: {db: ${v}\n  ${TEXT}, mode: plain}}\n`,
+    ],
+    [
+      'a quote that never closes where a key stands',
+      (v: string) => `{kind: Secret, stringData: {"db: ${v}, note: ${TEXT}}}\n`,
+    ],
+    [
+      'values in a flow sequence',
+      (v: string) => `{kind: Secret, data: {all: [${v}, "${TEXT}"]}}\n`,
+    ],
+  ])('a Secret written with %s', (_, write) => {
+    const code = write(VALUE)
+    for (const options of DOCUMENT) gone(code, [VALUE, TEXT], options)
+  })
+
+  const BLOCK = (v: string): string => `data:\n  db: ${v}\n  note: ${TEXT}\n`
+  it.each([
+    ['a tag before the kind', (v: string) => `kind: !!str Secret\n${BLOCK(v)}`],
+    ['an anchor before the kind', (v: string) => `kind: &k Secret\n${BLOCK(v)}`],
+    ['an anchor and a tag', (v: string) => `kind: &k !!str "Secret"\n${BLOCK(v)}`],
+    ['the kind on the next line', (v: string) => `kind:\n  Secret\n${BLOCK(v)}`],
+    ['a tag, a comment, the kind below', (v: string) => `kind: !!str # c\r\n  Secret\n${BLOCK(v)}`],
+    [
+      'a block indented by a tab',
+      (v: string) => `kind: Secret\ndata:\n\tdb: ${v}\n\tnote: ${TEXT}\n`,
+    ],
+    [
+      'tabs before the key and its block',
+      (v: string) =>
+        `kind: Secret\nitem:\n\tstringData:\n\t\tdb: |\n\t\t\t${v}\n\t\tnote: ${TEXT}\n`,
+    ],
+  ])('a Secret written with %s', (_, write) => {
+    const code = write(VALUE)
+    for (const options of DOCUMENT) {
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized.match(/__REDACTED_CREDENTIAL_/g)).toHaveLength(2)
+    }
+  })
+
+  it.each([
+    ['a tagged ConfigMap', `kind: !!str ConfigMap\ndata:\n  ledgerMode: production\n`],
+    ['an anchored SecretStore', `kind: &k SecretStore\ndata:\n  ledgerMode: production\n`],
+    ['a word on the line below another kind', `kind: List\nSecret:\n  data:\n    a: production\n`],
+  ])('no manifest: %s', (_, code) => {
+    const { anonymized, map } = anonymize(code, { fileKind: 'yaml' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  it('a quote that never closes on a line of a block runs to the end of the line', () => {
+    const tail = made(63, 16)
+    const code = manifest('Secret', `stringData:\n  db: "${VALUE} {${TEXT}} ${tail}\n`)
+    gone(code, [VALUE, TEXT, tail], { fileKind: 'yaml' })
+  })
+
+  it('the keys of a flow mapping stay readable', () => {
+    const code = `{"kind":"Secret","data":{"db":"${VALUE}","note":"${TEXT}"}}\n`
+    expect(scanSecrets(code).code).toBe(
+      '{"kind":"Secret","data":{"db":"__REDACTED_CREDENTIAL_1__","note":"__REDACTED_CREDENTIAL_2__"}}\n'
+    )
+  })
+
+  it('a key that starts in a Secret value and runs past it is redacted to its end', () => {
+    const body = lines(3)
+    const code = manifest(
+      'Secret',
+      `stringData:\n  id_ledger: ${BEGIN}\n${body.join('\n')}\n${END}\n`
+    )
+    gone(code, body, { fileKind: 'yaml' })
+  })
+
+  it('a Secret value is redacted whole, whatever else is found inside it', () => {
+    const key = ['gh', 'p_', made(60, 36)].join('')
+    const [before, after] = [made(61, 14), made(62, 14)]
+    const code = manifest('Secret', `stringData:\n  note: ${before} ${key} ${after}\n`)
+    const { anonymized } = gone(code, [before, key, after], { fileKind: 'yaml' })
+    expect(anonymized).toMatch(/note: __REDACTED_CREDENTIAL_1__\n$/)
+  })
+
+  it.each([['-'], ['+'], ['> '], ['# '], ['// '], ['    + ']])(
+    'key lines behind the prefix %j of their BEGIN line',
+    (prefix) => {
+      const body = [...lines(3), made(9, 12)]
+      const code = `${prefix}${BEGIN}\n${body.map((l) => prefix + l).join('\n')}\n${prefix.trimEnd()}\nnext line\n`
+      const { anonymized } = gone(code, body)
+      expect(anonymized).toContain(`${prefix}__REDACTED_PRIVATE_KEY_1__\n`)
+      expect(anonymized).toMatch(/\nnext line\n$/)
+    }
+  )
+
+  it('a complete block behind a prefix is redacted as it always was', () => {
+    const body = lines(3)
+    const code = `> ${BEGIN}\n${body.map((l) => '> ' + l).join('\n')}\n> ${END}\n> done\n`
+    expect(scanSecrets(code).code).toBe('> __REDACTED_PRIVATE_KEY_1__\n> done\n')
+  })
+
+  // A key of a mapping stands at the start of its line, or after `{` or `,`.
+  it.each([
+    [
+      'python',
+      'SPEC = {"kind": "Secret"}\n\ndef handle(data):\n    if data:\n        ledgerTotal = computeTotal(data)\n        return ledgerTotal\n',
+    ],
+    [
+      'typescript',
+      'const spec = { kind: "Secret" }\nstream.on("data", (data: Buffer) => {\n  ledgerTotal += data.length\n})\nfunction read(data: Buffer, stringData: string) {\n  return ledgerTotal\n}\n',
+    ],
+  ] as const)('the word data elsewhere in %s code opens nothing', (language, code) => {
+    // Also where the text is read as a document (a script kept in a YAML file).
+    for (const options of [{ language }, { language, fileKind: 'yaml' }] as const) {
+      const { anonymized, map } = anonymize(code, options)
+      expect(anonymized).not.toContain('__REDACTED_')
+      expect(restore(anonymized, map).restored).toBe(code)
+    }
+  })
+
+  it('a short Secret value is not redacted where the same letters stand elsewhere', () => {
+    const code =
+      'kind: Secret\nstringData:\n  enabled: "true"\n  port: "5432"\n---\nkind: ConfigMap\ndata:\n  verbose: "true"\n  dbPort: "5432"\n  note: untrue story 15432\n'
+    const { anonymized } = anonymize(code, { fileKind: 'yaml' })
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(2)
+    expect(anonymized).toContain('verbose: "true"')
+    expect(anonymized).toContain(': "5432"')
+  })
+
+  it('a long Secret value is redacted wherever it stands again', () => {
+    const code = manifest('Secret', `data:\n  db: ${VALUE}\n`) + `---\nnote: copy of ${VALUE}\n`
+    gone(code, [VALUE], { fileKind: 'yaml' })
+  })
+
+  // The reader is for YAML and JSON documents. Code that names the kind is
+  // code: its names are masked and come back.
+  const API =
+    "type Kind = { kind: 'Secret' | 'ConfigMap' }\nfunction loadUsers(username: string, pageSize: number) {\n  return post(url, {\n    data: { username, pageSize, retries: maxRetries },\n  })\n}\nconst maxRetries = 3\nlog(username, maxRetries)\n"
+  const OBJECT = "const item = {\n  kind: 'Secret',\n  data: {\n    db: ledgerName,\n  },\n}\n"
+  it.each([
+    ['a type and an object named data', API, { path: 'src/api.ts' }, ['loadUsers', 'maxRetries']],
+    ['the same, its language stated', API, { language: 'typescript' }, ['loadUsers', 'maxRetries']],
+    ['the same, pasted', API, {}, ['loadUsers', 'maxRetries']],
+    ['an object that names the kind', OBJECT, { language: 'typescript' }, ['ledgerName']],
+    ['the same, pasted', OBJECT, {}, ['ledgerName']],
+  ] as const)('code is no manifest: %s', (_, code, options, names) => {
+    const { anonymized, map } = anonymize(code, options)
+    for (const name of names) {
+      expect(anonymized).not.toContain(name)
+      expect(Object.values(map)).toContain(name)
+    }
+    // (The quoted word beside 'Secret' is redacted by an older rule, as before.)
+    expect(restore(anonymized, map).restored).toBe(
+      code.replace("'ConfigMap'", "'__REDACTED_CREDENTIAL_1__'")
+    )
+    expect(scanSecrets(code, 'redact', 'path' in options ? options : {}).findings).toEqual([])
+  })
+
+  // With no path, no kind and no language nothing says the text is a
+  // document, unless it is JSON as a whole, which no code is, or it reads as
+  // a Secret from the first column: an unquoted `kind:` that names Secret
+  // and an unquoted `data:` or `stringData:`, both unindented, in one
+  // document. Only those unindented keys are read then.
+  const PASTED = `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`
+  it.each([
+    ['data', manifest('Secret', PASTED)],
+    [
+      'stringData and a block scalar',
+      manifest('Secret', `stringData:\n  db: ${VALUE}\n  pem: |\n    ${TEXT}\n    ${TEXT}\n`),
+    ],
+    ['the kind quoted', manifest('"Secret"', PASTED)],
+    ['the kind behind a tag', manifest('!!str Secret', PASTED)],
+    ['the kind behind an anchor', manifest('&k Secret', PASTED)],
+    ['the kind on the next line', manifest('\n  Secret', PASTED)],
+    ['lines that end in CR and LF', manifest('Secret', PASTED).replace(/\n/g, '\r\n')],
+    [
+      'the second of two documents',
+      `kind: ConfigMap\ndata:\n  level: verbose\n---\n${manifest('Secret', PASTED)}`,
+    ],
+    ['spaces after the kind', manifest('Secret  ', PASTED)],
+    ['a comment after the kind', manifest('Secret # the ledger', PASTED)],
+    ['a comment after the quoted kind', manifest('"Secret" # the ledger', PASTED)],
+    [
+      'a comment after data that ends in a comma',
+      manifest('Secret', PASTED.replace('data:', 'data: # db, note,')),
+    ],
+  ] as const)('a pasted Secret is read: %s', (_, code) => {
+    for (const options of [{}, { language: 'auto' }] as const) {
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized.match(/__REDACTED_/g)).toHaveLength(2)
+    }
+    expect(scanSecrets(code).findings).toHaveLength(2)
+    expect(
+      detectCredentials(code).filter((f) => f.label === 'Value of a Kubernetes Secret')
+    ).toHaveLength(2)
+  })
+
+  const NESTED = `  data:\n    db: ${VALUE}\n`
+  // Keyword arguments written from the first column: code, not a manifest.
+  const KEYWORDS =
+    'def make\n  create_thing(\nkind: Secret,\nname: userName,\ndata: payloadValue,\nretries: maxRetries\n  )\nend\n'
+  it.each([
+    ['a language is stated', manifest('Secret', PASTED), { language: 'python' }],
+    ['another kind that starts the same', manifest('SecretStore', PASTED), {}],
+    ['the kind is indented, in a List', `kind: List\nitems:\n  - kind: Secret\n  ${NESTED}`, {}],
+    ['the kind key is quoted', `"kind": Secret\n${PASTED}`, {}],
+    ['only an indented kind names Secret', `metadata:\n  kind: Secret\n${PASTED}`, {}],
+    ['data is indented only', `kind: Secret\nspec:\n${NESTED}`, {}],
+    ['data is quoted', `kind: Secret\n"data":\n  db: ${VALUE}\n`, {}],
+    ['the kind and data stand in two documents', `kind: Secret\n---\n${PASTED}`, {}],
+    ['the kind line goes on after the word', `kind: Secret, name: ledger\n${PASTED}`, {}],
+    ['more stands after the kind', `kind: Secret/v1\n${PASTED}`, {}],
+    ['the kind line ends in a comma', KEYWORDS, {}],
+    [
+      'the data line holds a value that ends in a comma',
+      'kind: Secret\ndata: payloadValue,\nretries: maxRetries\n',
+      {},
+    ],
+    [
+      'the data line holds braces that end in a comma',
+      'kind: Secret\nstringData: { db: payloadValue },\nretries: maxRetries\n',
+      {},
+    ],
+  ] as const)('pasted text is no Secret when %s', (_, code, options) => {
+    const { anonymized, map } = anonymize(code, options)
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+    expect(scanSecrets(code, 'redact', options).findings).toEqual([])
+  })
+
+  // To the byte what it gave before a pasted manifest was read.
+  it('keyword arguments that name the kind are unchanged', () => {
+    const { anonymized, map } = anonymize(KEYWORDS)
+    expect(anonymized).toBe(
+      'def make\n  __FN__1(\nkind: Secret,\nname: __VAR__3,\ndata: __VAR__1,\nretries: __VAR__2\n  )\nend\n'
+    )
+    expect(map).toEqual({
+      __FN__1: 'create_thing',
+      __VAR__1: 'payloadValue',
+      __VAR__2: 'maxRetries',
+      __VAR__3: 'userName',
+    })
+  })
+
+  // Code that carries a manifest in a literal: the manifest's own values are
+  // a Secret's, and the object named `data` below it stays code.
+  it('a manifest in a pasted literal opens no indented data key', () => {
+    const code =
+      'const doc = `\nkind: Secret\ndata:\n  db: ' +
+      VALUE +
+      '\n`\nfunction send(ledgerUser: string) {\n  return post(url, {\n    data: { ledgerUser, retries: maxRetries },\n  })\n}\n'
+    const { anonymized, map } = gone(code, [VALUE])
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(1)
+    expect(Object.values(map)).toEqual(expect.arrayContaining(['ledgerUser', 'maxRetries']))
+  })
+
+  // The text of the first rows above, to the byte: what it gave before a
+  // pasted manifest was read, with its path and without one.
+  it.each([[{ path: 'api.ts' }], [{}]] as const)(
+    'code that names the kind is unchanged (%j)',
+    (options) => {
+      const { anonymized, map } = anonymize(API, options)
+      expect(anonymized).toBe(
+        "type Kind = { kind: '__STR__1' | '__REDACTED_CREDENTIAL_1__' }\nfunction __FN__1(__VAR__2: string, __VAR__3: number) {\n  return post(url, {\n    data: { __VAR__2, __VAR__3, retries: __VAR__1 },\n  })\n}\nconst __VAR__1 = 3\nlog(__VAR__2, __VAR__1)\n"
+      )
+      expect(map).toEqual({
+        __VAR__1: 'maxRetries',
+        __FN__1: 'loadUsers',
+        __VAR__2: 'username',
+        __VAR__3: 'pageSize',
+        __STR__1: 'Secret',
+      })
+    }
+  )
+
+  it.each([[{}], [{ path: 'deploy/secret.json' }], [{ fileKind: 'yaml' }]] as const)(
+    'a JSON Secret is read with %j',
+    (options) => {
+      const code = `{\n  "kind": "Secret",\n  "data": {\n    "db": "${VALUE}",\n    "note": "${TEXT}"\n  }\n}\n`
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized).toContain('"db": "__REDACTED_CREDENTIAL_1__"')
+      expect(anonymized).toContain('": "__REDACTED_CREDENTIAL_2__"')
+    }
+  )
+
+  it('a JSON path makes a document of JSON with a comment in it', () => {
+    const code = `// staging\n{"kind": "Secret", "data": {"db": "${VALUE}"}}\n`
+    gone(code, [VALUE], { path: 'deploy/secret.json' })
+  })
+
+  // A byte-order mark before the first key is not part of the key: the
+  // manifest is read as without it, and the mark stays where it was.
+  const BOM = '﻿'
+  it.each([
+    ['pasted, kind first', `kind: Secret\ndata:\n  db: ${VALUE}\n`, {}],
+    ['pasted, data first', `data:\n  db: ${VALUE}\nkind: Secret\n`, {}],
+    ['pasted, data first, one space deep', `data:\n db: ${VALUE}\nkind: Secret\n`, {}],
+    ['a YAML path, kind first', `kind: Secret\ndata:\n  db: ${VALUE}\n`, { path: 'a.yaml' }],
+    ['a YAML path, data first', `data:\n db: ${VALUE}\nkind: Secret\n`, { path: 'a.yaml' }],
+    ['JSON, pasted', `{"kind": "Secret", "data": {"db": "${VALUE}"}}`, {}],
+    ['JSON, by its path', `{"kind": "Secret", "data": {"db": "${VALUE}"}}`, { path: 'a.json' }],
+  ] as const)('a Secret after a byte-order mark is read: %s', (_, code, options) => {
+    const { anonymized } = gone(BOM + code, [VALUE], options)
+    expect(anonymized.startsWith(BOM)).toBe(true)
+    expect(anonymized).toMatch(/db"?: "?__REDACTED_CREDENTIAL_\d+__/)
+    // The scan reads the same with the mark as without it.
+    const plain = scanSecrets(code, 'redact', options)
+    const marked = scanSecrets(BOM + code, 'redact', options)
+    expect(marked.code).toBe(BOM + plain.code)
+    expect(marked.findings.map((f) => f.label)).toEqual(plain.findings.map((f) => f.label))
+    expect(plain.findings.map((f) => f.label)).toContain('Value of a Kubernetes Secret')
+  })
+
+  it.each([[{}], [{ path: 'a.yaml' }]] as const)(
+    'text after a byte-order mark that is no Secret comes back whole (%j)',
+    (options) => {
+      const code = `${BOM}kind: ConfigMap\ndata:\n  db: ledgerName\n`
+      const { anonymized, map } = anonymize(code, options)
+      expect(anonymized.startsWith(BOM)).toBe(true)
+      expect(anonymized).not.toContain('__REDACTED_')
+      expect(restore(anonymized, map).restored).toBe(code)
+    }
+  )
+
+  it.each([
+    [
+      'a compose file with a comment that says Secret',
+      '# deploys the Secret\nservices:\n  web:\n    environment:\n      data:\n        region: eu-central-1\n        replicas: 3\n',
+    ],
+    [
+      'a ConfigMap whose annotation says Secret',
+      'kind: ConfigMap\nmetadata:\n  annotations:\n    note: replaces the old Secret\ndata:\n  LOG_LEVEL: debug\n  FEATURE_FLAGS: billing,reports\n',
+    ],
+  ])('no manifest: %s', (_, code) => {
+    const { anonymized, map } = anonymize(code, { path: 'deploy/app.yaml' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+})
+
+// Spec 094: a provider key written as adjacent string literals on one
+// statement is read as the one string it becomes.
+describe('a provider key joined from adjacent literals', () => {
+  const BODY = ['a1B2c3D4e5', 'F6g7H8i9J0', 'k1L2m3N4o5', 'P6q7R8'].join('')
+  // Each key is put together here, piece by piece.
+  const KEYS: [string, string[]][] = [
+    ['GitHub', ['gh', 'p_', BODY]],
+    ['Stripe', ['sk_', 'live_', BODY.slice(0, 24)]],
+    ['Slack', ['xo', 'xb-', '120045007890-', BODY.slice(0, 24)]],
+  ]
+  const cut = (parts: string[], count: number): string[] => {
+    const text = parts.join('')
+    const size = Math.floor(text.length / count)
+    return Array.from({ length: count }, (_, i) =>
+      text.slice(i * size, i === count - 1 ? text.length : (i + 1) * size)
+    )
+  }
+  const written = (parts: string[], by: string, quote = '"'): string =>
+    parts.map((p) => quote + p + quote).join(by)
+  const gone = (code: string, key: string, language: 'typescript' | 'python' | 'c') => {
+    const result = anonymize(code, { language })
+    const seen = result.anonymized + '\n' + Object.values(result.map).join('\n')
+    // The provider's prefix alone (`gh`, `sk_`) tells nothing; the rest must be gone.
+    for (let i = 8; i + 8 <= key.length; i += 2)
+      expect(seen.includes(key.slice(i, i + 8)), key.slice(i, i + 8)).toBe(false)
+    expect(result.anonymized).toContain('__REDACTED_')
+    return result
+  }
+
+  for (const [provider, parts] of KEYS)
+    for (const count of [2, 3, 8])
+      it(`a ${provider} key in ${count} literals joined by +`, () => {
+        gone(`const t = ${written(cut(parts, count), ' + ')};\n`, parts.join(''), 'typescript')
+      })
+
+  it('joined by + across lines, in single quotes', () => {
+    const [, parts] = KEYS[0]!
+    gone(`const t =\n  ${written(parts, ' +\n  ', "'")}\n`, parts.join(''), 'typescript')
+  })
+
+  it.each(KEYS)('a %s key as adjacent literals in Python', (_, parts) => {
+    gone(`token = (${written(cut(parts, 3), ' ')})\n`, parts.join(''), 'python')
+  })
+
+  it.each(KEYS)('a %s key as adjacent literals in C', (_, parts) => {
+    gone(`const char *t = ${written(cut(parts, 3), '\n    ')};\n`, parts.join(''), 'c')
+  })
+
+  it('leaves the text around the key in its literals', () => {
+    const [, parts] = KEYS[0]!
+    const code = `const t = "token " + ${written(parts, ' + ')} + " end";\n`
+    expect(gone(code, parts.join(''), 'typescript').anonymized).toMatch(/^const t = "\S+ " \+ "/)
+  })
+
+  it('adjacent literals that join to no key are masked as before', () => {
+    const code = 'const t = "invoice " + "ledger" + " total";\n'
+    const { anonymized, map } = anonymize(code, { language: 'typescript' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  // The stated limit: no text transform can follow a value through variables.
+  it('pieces held in variables are not joined', () => {
+    const [, parts] = KEYS[0]!
+    const code = `const a = "${parts[0]}";\nconst b = "${parts[1]}";\nconst c = a + b + rest;\n`
+    expect(anonymize(code, { language: 'typescript' }).anonymized).not.toContain('__REDACTED_')
+  })
+
+  it('a piece that is redacted does not redact the same letters elsewhere', () => {
+    const [, parts] = KEYS[1]!
+    const code = `const t = ${written(parts, ' + ')};\nconst is_live_mode = true;\n`
+    const { anonymized } = gone(code, parts.join(''), 'typescript')
+    expect(anonymized.match(/__REDACTED_/g)).toHaveLength(3)
   })
 })

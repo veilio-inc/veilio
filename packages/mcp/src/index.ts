@@ -39,20 +39,22 @@ export function contextFromArgv(
   startedIn: string = process.cwd()
 ): ToolContext {
   const cli = parseCliContext(argv, startedIn)
-  const ignored = [startedIn, cli.cwd].some(projectSetsSwitch)
+  const naming = projectSetsSwitch(startedIn) ?? projectSetsSwitch(cli.cwd)
+  const ignored = naming !== null
   return {
     ...cli,
     destructive: !ignored && env.VEILIO_MCP_DESTRUCTIVE === '1',
     // Spec 078 FR-018: the same pattern, read once here.
     restoreText: !ignored && env.VEILIO_MCP_RESTORE === '1',
     env,
-    ...(ignored ? { switchesIgnored: SWITCHES_IGNORED } : {}),
+    ...(naming !== null ? { switchesIgnored: switchesIgnored(naming) } : {}),
   }
 }
 
-/** strings.md #4 (spec 093, approved 2026-11-13). */
-const SWITCHES_IGNORED =
-  "veilio-mcp: this project's .mcp.json sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE. Settings from a project file are ignored; set them in your own environment to use them."
+/** Said on stderr when the two switches are ignored. `file`: one of
+ *  PROJECT_FILES, never text from the project. */
+const switchesIgnored = (file: string): string =>
+  `veilio-mcp: a configuration file in this project (${file}) sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE, or could not be read as JSON. These two settings are ignored; set them in your own environment, outside the project, to use them.`
 
 // The files in a project that can start this server or set its environment:
 // Claude Code's, Cursor's and VS Code's.
@@ -67,21 +69,26 @@ const SWITCH_NAMED = /VEILIO_MCP_(?:RESTORE|DESTRUCTIVE)/i
 const READ_CAP = 1024 * 1024
 
 /**
- * Whether a project file names either switch: in `dir` or a folder above it,
- * up to the one that holds `.git` (the project's root). Read as text, not as
- * JSON, so an `env` key, the arguments of a wrapper command (`env NAME=1 ...`)
- * and another letter case all count. The home folder and above are not read:
- * the files there are the person's own, where the switch is theirs to set.
- * A file that is missing or unreadable names none; one too large to read
- * whole counts as naming one, since what follows the cap was not seen.
+ * The project file that names either switch, or null: in `dir` or a folder
+ * above it, up to the one that holds `.git` (the project's root). Read as
+ * text, so an `env` key, the arguments of a wrapper command (`env NAME=1 ...`)
+ * and another letter case all count - and read again as the JSON a client
+ * decodes, where a name may be written with escapes (`\u0052`). A file that
+ * is not JSON (comments, a trailing comma, a broken file) cannot be read the
+ * way its client reads it, and counts as naming one. The home folder and
+ * above are not read: the files there are the person's own, where the switch
+ * is theirs to set. A file that is missing or unreadable names none; one too
+ * large to read whole counts as naming one, since what follows the cap was
+ * not seen. A wrapper command that builds the name at run time is not found.
  */
-function projectSetsSwitch(dir: string): boolean {
+function projectSetsSwitch(dir: string): string | null {
   const home = resolve(homedir())
   for (let at = resolve(dir); at !== home; at = dirname(at)) {
-    if (PROJECT_FILES.some((name) => namesSwitch(join(at, name)))) return true
+    const file = PROJECT_FILES.find((name) => namesSwitch(join(at, name)))
+    if (file !== undefined) return file
     if (existsSync(join(at, '.git')) || dirname(at) === at) break
   }
-  return false
+  return null
 }
 
 function namesSwitch(file: string): boolean {
@@ -94,11 +101,22 @@ function namesSwitch(file: string): boolean {
   try {
     const text = Buffer.alloc(READ_CAP + 1)
     const read = readSync(fd, text, 0, text.length, 0)
-    return read > READ_CAP || SWITCH_NAMED.test(text.toString('latin1', 0, read))
+    if (read > READ_CAP || SWITCH_NAMED.test(text.toString('latin1', 0, read))) return true
+    return namedDecoded(text.toString('utf8', 0, read))
   } catch {
     return false
   } finally {
     closeSync(fd)
+  }
+}
+
+/** Whether the JSON `text` names a switch once its escapes are decoded; text
+ *  that is not JSON is taken to. */
+function namedDecoded(text: string): boolean {
+  try {
+    return SWITCH_NAMED.test(JSON.stringify(JSON.parse(text)))
+  } catch {
+    return true
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { anonymize, restore } from '../src/engine.js'
 import { detectSecrets, scanSecrets } from '../src/secrets.js'
+import { LANGUAGES } from '../src/languages.js'
 import type { AnonymizeOptions, RestoreOptions, SymbolMap } from '../src/types.js'
 
 // An options object and a positional symbol map were told apart by a guess:
@@ -157,16 +158,33 @@ describe('scanSecrets and detectSecrets refuse an option they do not know', () =
   it('throws on a misspelt path', () => {
     const bad = { file: 'tests/x.test.ts' } as unknown as { path?: string }
     expect(() => scanSecrets('x', 'redact', bad)).toThrow(
-      "scanSecrets: unknown option 'file'. Valid options: path, root, fileKind."
+      "scanSecrets: unknown option 'file'. Valid options: path, root, fileKind, language."
     )
     expect(() => detectSecrets('x', bad)).toThrow(
-      "detectSecrets: unknown option 'file'. Valid options: path, root, fileKind."
+      "detectSecrets: unknown option 'file'. Valid options: path, root, fileKind, language."
     )
   })
   it('accepts { path } and {}', () => {
     expect(() => scanSecrets('x', 'redact', { path: 'a.ts' })).not.toThrow()
     expect(() => detectSecrets('x', {})).not.toThrow()
   })
+  it.each([['bogus'], [''], ['TypeScript'], [5]])(
+    'scanSecrets refuses the language %j, naming the valid ones',
+    (language) => {
+      for (const policy of ['redact', 'warn', 'off'] as const)
+        expect(() => scanSecrets('x', policy, { language: language as never })).toThrow(
+          new TypeError(
+            `unknown language '${String(language)}'. Valid: auto, typescript, python, go, java, csharp, rust, ruby, php, c, sql.`
+          )
+        )
+    }
+  )
+  it.each<[string | undefined]>([[undefined], ['auto'], ...LANGUAGES.map((l): [string] => [l])])(
+    'scanSecrets accepts the language %j',
+    (language) => {
+      expect(() => scanSecrets('x', 'redact', { language })).not.toThrow()
+    }
+  )
 })
 
 describe('options that are not an object', () => {

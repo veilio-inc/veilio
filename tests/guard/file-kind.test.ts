@@ -22,7 +22,10 @@ const FILES: Record<string, string> = {
   // No other file named: the guard withholds a result naming a file it cannot find.
   'deploy.sh': 'export STRIPE_SECRET_KEY=Tr0ub4dorZebra91\necho deployed\n',
   'config/app.env': 'DB_PASSWORD=Tr0ub4dor zebra91\n',
+  // Spec 094: a glob opens no comment in a script.
+  'clean.sh': 'set -e\nrm -rf build/*\ncustomerTotal=1\nsettleInvoice "$acme_corp" //AcmePay\n',
 }
+const SECRETS = Object.keys(FILES).filter((name) => name !== 'clean.sh')
 
 let root: string
 beforeEach(() => {
@@ -55,7 +58,7 @@ const io: GuardIO = {
 }
 
 describe("the guard's Read: the file kind reaches the engine", () => {
-  for (const name of Object.keys(FILES)) {
+  for (const name of SECRETS) {
     it(`${name}: the value never reaches the model, whole or in pieces`, async () => {
       const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
       await guard.load(root)
@@ -72,6 +75,28 @@ describe("the guard's Read: the file kind reaches the engine", () => {
       expect(out).toContain('__REDACTED_')
     })
   }
+})
+
+describe("the guard's Read: a glob in a script opens no comment", () => {
+  // The guard reads with its own copy of the engine (vendor/engine).
+  it('clean.sh: every name after the glob is masked and saved to the map', async () => {
+    const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
+    await guard.load(root)
+    const path = join(root, 'clean.sh')
+    const content = FILES['clean.sh']
+    const result = {
+      type: 'text',
+      file: { filePath: path, content, numLines: 4, startLine: 1, totalLines: 4 },
+    }
+    const out = JSON.stringify(
+      await guard.afterTool('Read', { tool: 'Read', file_path: path }, { result })
+    )
+    const names = ['customerTotal', 'settleInvoice', 'acme_corp', 'AcmePay']
+    for (const name of names) expect(out).not.toContain(name)
+    const saved = readFileSync(join(root, '.veilio', 'map.json'), 'utf8')
+    // A shell variable is held with its `$`.
+    for (const name of names) expect(saved).toMatch(new RegExp(`"\\$?${name}"`))
+  })
 })
 
 describe("the guard's Edit: patch lines are read as the lines they hold", () => {

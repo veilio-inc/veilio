@@ -74,6 +74,35 @@ describe('veilio scrub: the file kind reaches the engine', () => {
   })
 })
 
+// A Kubernetes Secret is read in a YAML or JSON file, and never in code.
+describe('veilio scrub: a Secret manifest is a YAML or JSON document', () => {
+  const VALUE = 'bGVkZ2VyIHN0YWdpbmcgZGF0YWJhc2UgcGFzc3dvcmQ'
+  const mapOf = (): string =>
+    Object.values(
+      JSON.parse(readFileSync(join(cwd, 'm.json'), 'utf8')).map as Record<string, string>
+    ).join(' ')
+
+  it.each([
+    ['secret.yaml', `apiVersion: v1\nkind: Secret\ndata:\n  db: ${VALUE}\n`],
+    ['secret.json', `{\n  "kind": "Secret",\n  "data": {\n    "db": "${VALUE}"\n  }\n}\n`],
+  ])('%s: the value is redacted and not in the map', async (file, text) => {
+    writeFileSync(join(cwd, file), text)
+    const r = await run(['scrub', '--map', 'm.json', file])
+    expect(r.out).toMatch(/__REDACTED_CREDENTIAL_1__/)
+    expect(r.out + mapOf()).not.toContain(VALUE.slice(0, 12))
+  })
+
+  it('src/kinds.ts: an object named data keeps its names, in the map', async () => {
+    const code =
+      "const item = { kind: 'Secret' }\nfunction loadUsers(username: string, pageSize: number) {\n  return post(url, {\n    data: { username, pageSize, retries: maxRetries },\n  })\n}\n"
+    writeFileSync(join(cwd, 'src/kinds.ts'), code)
+    const r = await run(['scrub', '--map', 'm.json', 'src/kinds.ts'])
+    expect(r.out).not.toContain('__REDACTED_')
+    expect(r.out).not.toMatch(/username|pageSize|maxRetries/)
+    for (const name of ['username', 'pageSize', 'maxRetries']) expect(mapOf()).toContain(name)
+  })
+})
+
 describe('veilio scan: the file kind reaches the engine', () => {
   it('reports the credential in a .env file', async () => {
     const r = await run(['scan', '--json', '.env'])
@@ -124,5 +153,55 @@ describe('veilio scan --name: stdin scanned as the file it names (L1)', () => {
 
   it('--name belongs to scan only', async () => {
     expect((await run(['scrub', '--name', '.env'], ENV)).code).toBe(EXIT_ERROR)
+  })
+})
+
+// Spec 094: a glob (`build/*`, `src/**`) in a script, a Dockerfile, a workflow
+// or a Makefile opens no comment, so the names after it are masked.
+describe('veilio scrub: a glob in a file that is not source code opens no comment', () => {
+  const GLOBS: Record<string, string> = {
+    'd.sh': 'set -e\nrm -rf build/*\ncustomerTotal=1\nsettleInvoice "$acme_corp" //AcmePay\n',
+    Dockerfile: 'COPY packages/*/package.json ./\nRUN ./acme_refunds --AcmePay settleInvoice\n',
+    'ci.yml': 'paths:\n  - src/**\njobs:\n  acme_refunds:\n    name: AcmePay settleInvoice\n',
+    Makefile: 'SOURCES := src/*.c\n\nacme_refunds: $(SOURCES)\n\t./settleInvoice --AcmePay\n',
+  }
+  const NAMES = /customerTotal|settleInvoice|acme_corp|acme_refunds|AcmePay/
+  const WARNING = (file: string, language: string) =>
+    `veilio: ${file}: no language marker matched — masked as ${language}, which may be wrong. Pass --language to be sure.\n`
+  beforeEach(() => {
+    for (const [name, text] of Object.entries(GLOBS)) writeFileSync(join(cwd, name), text)
+  })
+
+  it('every name after the glob is masked and in the map', async () => {
+    const r = await run(['scrub', '--map', 'm.json', ...Object.keys(GLOBS)])
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.out).not.toMatch(NAMES)
+    const map = JSON.parse(readFileSync(join(cwd, 'm.json'), 'utf8')).map as Record<string, string>
+    // A shell variable is held with its `$`.
+    const held = Object.values(map).map((value) => value.replace(/^\$/, ''))
+    for (const planted of Object.values(GLOBS).join('').match(new RegExp(NAMES, 'g'))!)
+      expect(held).toContain(planted)
+  })
+
+  it.each(Object.keys(GLOBS))('%s comes back exactly', async (file) => {
+    const masked = await run(['scrub', '--map', 'm.json', file])
+    expect(masked.out).not.toMatch(NAMES)
+    const back = await run(['restore', '--map', 'm.json'], masked.out)
+    expect(back.out).toBe(GLOBS[file])
+  })
+
+  it('a named language does not bring the comment back', async () => {
+    const r = await run(['scrub', '--map', 'm.json', '--language', 'typescript', 'd.sh'])
+    expect(r.code).toBe(EXIT_OK)
+    expect(r.out).not.toMatch(NAMES)
+  })
+
+  it('the warning about a language no marker matched is as it was', async () => {
+    const r = await run(['scrub', '--map', 'm.json', '--quiet', ...Object.keys(GLOBS)])
+    expect(r.err).toBe(
+      ['d.sh', 'Dockerfile', 'ci.yml']
+        .map((file) => WARNING(file, 'TypeScript / JavaScript'))
+        .join('')
+    )
   })
 })
