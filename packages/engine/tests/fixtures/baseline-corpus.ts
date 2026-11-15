@@ -1,12 +1,12 @@
-// The frozen corpus behind baseline-1.19.1.json: what the published engine
-// 1.19.1 answered for each row and option set is recorded there, once, and
-// baseline-1.19.1.test.ts holds every later build to it, row by row. A row
+// The frozen corpus behind baseline-1.19.2.json: what the published engine
+// 1.19.2 answered for each row and option set is recorded there, once, and
+// baseline-1.19.2.test.ts holds every later build to it, row by row. A row
 // that may differ is listed in baseline-exceptions.ts with the reason.
 //
 // Never edit a row: its recorded answer would no longer be the published
-// engine's. A new row needs its own record, taken from 1.19.1 again.
+// engine's. A new row needs its own record, taken from 1.19.2 again.
 //
-// No imports that run: baseline-1.19.1.gen.mjs loads this file with Node
+// No imports that run: baseline-1.19.2.gen.mjs loads this file with Node
 // alone, and hands in the rows of the other fixtures.
 import type { AnonymizeOptions } from '../../src/types.js'
 import type { SyntaxCase } from './syntax-corpus.js'
@@ -791,7 +791,7 @@ const urlParameters: BaselineRow[] = [
       `const u = "https://api.example.com/cb#${word}=${URL_KEY}";\n`,
       'typescript'
     ),
-    // As 1.19.1 already reads them.
+    // As 1.19.2 already reads them.
     urlRow(
       `url: ${word} as the second parameter`,
       `const u = "https://api.example.com/v1?x=1&${word}=${URL_KEY}";\n`,
@@ -818,7 +818,7 @@ const urlParameters: BaselineRow[] = [
     `const u = "https://app.example.com/go?next=/cb?token=${URL_KEY}";\n`,
     'typescript'
   ),
-  // As 1.19.1 already reads them.
+  // As 1.19.2 already reads them.
   urlRow(
     'url: the second parameter, with a fragment after it',
     `const u = "https://api.example.com/v1?x=1&api_key=${URL_KEY}#section";\n`,
@@ -875,7 +875,7 @@ const keyMaterial: BaselineRow[] = [
     `${BEGIN.replace('PRIVATE', 'RSA PRIVATE')}\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,${HEX_LINE.slice(0, 32)}\n\n${KEY_LINES.join('\n')}\n`,
     [...KEY_LINES, HEX_LINE.slice(0, 32)]
   ),
-  // As 1.19.1 already reads it.
+  // As 1.19.2 already reads it.
   keyRow('key: a complete block', `${PEM}\nexport LEDGER_MODE=production\n`, KEY_LINES),
   keyRow(
     'key: a complete OpenSSH block in a heredoc',
@@ -898,7 +898,7 @@ const keyMaterial: BaselineRow[] = [
     'secret manifest: inside a List',
     `apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    data:\n      ledgerMode: production\n  - apiVersion: v1\n    kind: Secret\n    data:\n      db: ${SECRET_VALUE}\n`
   ),
-  // As 1.19.1 already reads it.
+  // As 1.19.2 already reads it.
   secretRow(
     'manifest: a ConfigMap',
     'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ledger-config\ndata:\n  ledgerMode: production\n  gatewayName: AcmeLedger\n'
@@ -951,7 +951,7 @@ const joinedKeys: BaselineRow[] = [
     'c',
     [STRIPE_BODY]
   ),
-  // The stated limit: as 1.19.1 reads it.
+  // The stated limit: as 1.19.2 reads it.
   splitRow(
     'joined key: pieces in variables',
     `const a = "gh";\nconst b = "p_";\nconst c = "${GH_BODY}";\nconst t = a + b + c;\n`,
@@ -973,6 +973,481 @@ const rawStrings: BaselineRow[] = [
   ],
 ].map(([name, code]) => ({ name: name!, code: code!, options: [{ language: 'c' as const }, {}] }))
 
+// ─── Credentials by format, by name, over lines and on a command line ───────
+//
+// The values below are shared with the tests of each rule, so a row here and
+// its test read the same text.
+
+const HEX = '0123456789abcdef'
+const BECH32 = 'QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L'
+const BASE64 = BASE62 + '+/'
+
+/** The pieces of a value a record may hold apart: masking splits a value at
+ *  punctuation and leaves leading digits where they stand. */
+export const piecesOf = (value: string): string[] => [
+  value,
+  ...value
+    .split(/[^A-Za-z0-9_]+/)
+    .flatMap((p) => [p, p.replace(/^\d+/, '')])
+    .filter((p) => p.length >= 6),
+]
+
+export interface ProviderKey {
+  provider: string
+  /** A made-up key of the format, never written whole in a file. */
+  key: string
+  /** The same, one character short of what the format's rule takes. */
+  short: string
+}
+const provider = (
+  provider: string,
+  prefix: string[],
+  body: string,
+  least: number
+): ProviderKey => ({
+  provider,
+  key: prefix.join('') + body,
+  short: prefix.join('') + body.slice(0, least - 1),
+})
+
+/** One key per provider format 1.19.2 has no rule for. */
+export const PROVIDER_KEYS: ProviderKey[] = [
+  provider(
+    'GitHub fine-grained token',
+    ['github', '_pat_'],
+    made(201, 22) + '_' + made(202, 59),
+    36
+  ),
+  provider('DigitalOcean token', ['dop', '_v1_'], made(203, 64, HEX), 32),
+  provider('DigitalOcean OAuth token', ['doo', '_v1_'], made(204, 64, HEX), 32),
+  provider('Twilio API key', ['S', 'K'], made(205, 32, HEX), 32),
+  provider('Stripe webhook secret', ['whsec', '_'], made(206, 32), 24),
+  provider('Google OAuth access token', ['ya', '29.'], made(207, 40) + '-' + made(208, 30), 20),
+  provider('Sentry personal token', ['sntryu', '_'], made(209, 64, HEX), 64),
+  {
+    provider: 'Sentry organisation token',
+    key: 'sntrys' + '_' + made(210, 60, BASE64) + '_' + made(211, 43, BASE64),
+    short: 'sntrys' + '_' + made(210, 60, BASE64) + '_' + made(211, 42, BASE64),
+  },
+  provider('Linear API key', ['lin', '_api_'], made(212, 40), 32),
+  provider('Vault token', ['hv', 's.'], made(213, 90), 24),
+  provider('age secret key', ['AGE-SECRET', '-KEY-1'], made(214, 58, BECH32), 58),
+  provider('Heroku token', ['HR', 'KU-'], made(215, 60), 36),
+  provider(
+    'Slack app-level token',
+    ['xa', 'pp-'],
+    '1-A' + made(216, 10) + '-' + made(217, 40, HEX),
+    10
+  ),
+]
+
+/** Formats no vendor document states (or states too loosely to anchor on):
+ *  read as 1.19.2 read them. */
+export const UNLISTED_KEYS: { provider: string; key: string }[] = [
+  { provider: 'Google OAuth client secret', key: 'GOC' + 'SPX-' + made(220, 28) },
+  { provider: 'Google refresh token', key: '1' + '//0g' + made(221, 60) },
+  {
+    provider: 'HubSpot private app token',
+    key: 'pat' + '-na1-' + made(222, 8, HEX) + '-' + made(223, 12, HEX),
+  },
+  { provider: 'Mailchimp key', key: made(224, 32, HEX) + '-us' + '12' },
+  { provider: 'Telegram bot token', key: made(225, 9, '123456789') + ':' + 'AA' + made(226, 33) },
+  { provider: 'Vault token before 1.10', key: 's' + '.' + made(227, 24) },
+]
+
+/** A token of no listed format: 40 characters of letters and digits. */
+export const OPAQUE = made(230, 40)
+/** Ordinary text of the same shape as a key. */
+export const COMMIT_ID = made(231, 40, HEX)
+export const UUID = [8, 4, 4, 4, 12].map((n, i) => made(232 + i, n, HEX)).join('-')
+export const INTEGRITY = 'sha512-' + made(240, 86, BASE64) + '=='
+
+const code = (name: string, text: string, secrets: string[] = []): BaselineRow => ({
+  name,
+  code: text,
+  options: [{ language: 'typescript' }, {}],
+  secrets: secrets.flatMap(piecesOf),
+})
+const filed = (
+  name: string,
+  text: string,
+  fileKind: NonNullable<AnonymizeOptions['fileKind']>,
+  secrets: string[] = []
+): BaselineRow => ({
+  name,
+  code: text,
+  options: [{ fileKind }],
+  secrets: secrets.flatMap(piecesOf),
+})
+
+const providerKeys: BaselineRow[] = [
+  ...PROVIDER_KEYS.flatMap(({ provider, key, short }) => [
+    code(`format: ${provider}, assigned`, `const note = "${key}"\n`, [key]),
+    code(`format: ${provider}, an argument`, `send("${key}")\n`, [key]),
+    filed(`format: ${provider}, a shell word`, `echo ${key}\n`, 'shell', [key]),
+    code(`format: ${provider}, one character short`, `const note = "${short}"\n`, [short]),
+  ]),
+  ...UNLISTED_KEYS.map(({ provider, key }) =>
+    code(`format: ${provider}, not listed`, `const note = "${key}"\n`, [key])
+  ),
+]
+
+const context: BaselineRow[] = [
+  code('context: a credential word after the value', `send("${OPAQUE}", { token: true })\n`, [
+    OPAQUE,
+  ]),
+  code('context: a credential word in a comment', `const note = "${OPAQUE}" // the API key\n`, [
+    OPAQUE,
+  ]),
+  filed('context: after -p on any command', `acmectl sync -p ${OPAQUE} --all\n`, 'shell', [OPAQUE]),
+  code('context: none', `const note = "${OPAQUE}"\n`, [OPAQUE]),
+  code('context: a commit id beside an author', `const author = pick("${COMMIT_ID}")\n`),
+  code('context: a commit id', `const commit = "${COMMIT_ID}"\n`),
+  code('context: a UUID', `const tenantId = "${UUID}"\n`),
+  {
+    name: 'context: a lockfile integrity string',
+    code: `{ "integrity": "${INTEGRITY}" }\n`,
+    options: [{ path: 'package-lock.json' }, {}],
+    // Not a credential: veiled so the record holds no long base64 run.
+    secrets: piecesOf(INTEGRITY),
+  },
+  code(
+    'context: a file that names the kind Secret',
+    "type Kind = { kind: 'Secret' }\nexport function describeCustomer(customerName: string) {\n  const node = { kind: 'Secret', label: customerName }\n  return node\n}\n"
+  ),
+]
+
+/** The credential names read beside the English ones. */
+export const LOCAL_NAMES = [
+  'haslo',
+  'hasło',
+  'sekret',
+  'klucz_api',
+  'kennwort',
+  'geheimnis',
+  'api_schluessel',
+  'api_schlüssel',
+  'contrasena',
+  'contraseña',
+  'clave_api',
+  'mdp',
+  'senha',
+  'segredo',
+  'wachtwoord',
+  'kodikos',
+  'synthimatiko',
+  'κωδικός',
+  'συνθηματικό',
+]
+/** Names 1.19.2 reads already, and names that only look like one. */
+export const PINNED_NAMES = ['passwort', 'motdepasse', 'mot_de_passe', 'secreto']
+export const ORDINARY_NAMES = [
+  'geheimnisvoll',
+  'senhaForte',
+  'mdpath',
+  'klucz',
+  'schluessel',
+  'clave',
+  'sleutel',
+  'tajne',
+  'geheim',
+  'parola',
+]
+export const LOCAL_VALUE = made(250, 7) + '!' + made(251, 6)
+export const SENTENCE = 'zielona papuga na dachu'
+
+const localNames: BaselineRow[] = [
+  ...[...LOCAL_NAMES, ...PINNED_NAMES].flatMap((name) => [
+    code(`name: ${name}, in code`, `const ${name} = "${LOCAL_VALUE}"\n`, [LOCAL_VALUE]),
+    filed(`name: ${name}, in YAML`, `${name}: ${LOCAL_VALUE}\nport: 8080\n`, 'yaml', [LOCAL_VALUE]),
+    filed(`name: ${name}, in an env file`, `${name.toUpperCase()}=${LOCAL_VALUE}\n`, 'dotenv', [
+      LOCAL_VALUE,
+    ]),
+  ]),
+  code('name: a prefix in camel case', `const dbHaslo = "${LOCAL_VALUE}"\n`, [LOCAL_VALUE]),
+  code('name: a prefix in snake case', `const user_kennwort = "${LOCAL_VALUE}"\n`, [LOCAL_VALUE]),
+  ...ORDINARY_NAMES.map((name) =>
+    code(`name: ${name}, an ordinary name`, `const ${name} = "${SENTENCE}"\n`)
+  ),
+]
+
+export const LINES = [made(260, 12), made(261, 12), made(262, 12)] as const
+const [L1, L2, L3] = LINES
+
+/** A credential value over several lines, or on the line after its name. */
+export const MULTI_LINE: { name: string; path: string; text: string; lines: string[] }[] = [
+  {
+    name: 'YAML folded, stripped',
+    path: 'a.yml',
+    text: `token: >-\n  ${L1}\n  ${L2}\n  ${L3}\nname: x\n`,
+    lines: [L1, L2, L3],
+  },
+  {
+    name: 'YAML folded',
+    path: 'a.yml',
+    text: `token: >\n  ${L1}\n  ${L2}\nname: x\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'YAML literal',
+    path: 'a.yml',
+    text: `password: |\n  ${L1}\n  ${L2}\nname: x\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'YAML literal, stripped',
+    path: 'a.yml',
+    text: `password: |-\n  ${L1}\n\n  ${L2}\n# next\nname: x\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'YAML literal, indented by two',
+    path: 'a.yml',
+    text: `db:\n  password: |2\n    ${L1}\n    ${L2}\n  name: x\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'YAML literal, at the end of the file',
+    path: 'a.yml',
+    text: `password: |\n  ${L1}\n  ${L2}`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'YAML double-quoted over two lines',
+    path: 'a.yml',
+    text: `api_key: "${L1}\n  ${L2}"\nname: x\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'TypeScript joined over a line break',
+    path: 'a.ts',
+    text: `const password = "${L1}" +\n  "${L2}";\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'TypeScript typed, value on the next line',
+    path: 'a.ts',
+    text: `const password: string =\n  "${L1}";\n`,
+    lines: [L1],
+  },
+  {
+    name: 'TypeScript property, value on the next line',
+    path: 'a.ts',
+    text: `const o = {\n  password:\n    "${L1}"\n}\n`,
+    lines: [L1],
+  },
+  {
+    name: 'Python in parentheses',
+    path: 'a.py',
+    text: `password = (\n  "${L1}"\n  "${L2}"\n)\n`,
+    lines: [L1, L2],
+  },
+  {
+    name: 'Python backslash continuation',
+    path: 'a.py',
+    text: `secret = "${L1}" \\\n  "${L2}"\n`,
+    lines: [L1, L2],
+  },
+]
+/** Shapes 1.19.2 redacts whole already. */
+export const MULTI_LINE_PINNED: typeof MULTI_LINE = [
+  {
+    name: 'YAML value alone on the next line',
+    path: 'a.yml',
+    text: `secret:\n  ${L1}\nname: x\n`,
+    lines: [L1],
+  },
+  {
+    name: 'TypeScript value after a bare =',
+    path: 'a.ts',
+    text: `const password =\n  "${L1}";\n`,
+    lines: [L1],
+  },
+  {
+    name: 'env value quoted over three lines',
+    path: '.env',
+    text: `API_SECRET="${L1}\n${L2}\n${L3}"\nNAME=x\n`,
+    lines: [L1, L2, L3],
+  },
+]
+/** What follows a credential name is not its value, or cannot be told to be:
+ *  as 1.19.2 reads it. */
+export const MULTI_LINE_KEPT: { name: string; path: string; text: string }[] = [
+  {
+    name: 'YAML block under an ordinary key',
+    path: 'a.yml',
+    text: `notes: |\n  ${L1}\n  ${L2}\nname: x\n`,
+  },
+  { name: 'a call on the next line', path: 'a.ts', text: `const password =\n  load("${L1}");\n` },
+  {
+    name: 'a name on the next line',
+    path: 'a.ts',
+    text: `const password =\n  fallback;\nconst label = "${L1}";\n`,
+  },
+  {
+    name: 'a new statement on the next line',
+    path: 'a.ts',
+    text: `let password\nconst label = "${L1}";\n`,
+  },
+  {
+    name: 'a literal wrapped in a call',
+    path: 'a.java',
+    text: `private final String password = new String("${L1}");\n`,
+  },
+  { name: 'a name looked up', path: 'a.py', text: `password = os.getenv(\n  "DB_PASSWORD"\n)\n` },
+  {
+    name: 'an arrow function that returns a literal',
+    path: 'a.ts',
+    text: `const tokenLabel = () =>\n  "${L1}";\n`,
+  },
+  {
+    name: 'a docstring under a function',
+    path: 'a.py',
+    text: `def read_token():\n    """Reads ${L1} from disk."""\n    return 1\n`,
+  },
+]
+/** The options a row of the three lists above is masked with. */
+export const pathLanguage = (path: string): AnonymizeOptions =>
+  path.endsWith('.ts')
+    ? { language: 'typescript' }
+    : path.endsWith('.py')
+      ? { language: 'python' }
+      : path.endsWith('.java')
+        ? { language: 'java' }
+        : path.endsWith('.yml')
+          ? { fileKind: 'yaml' }
+          : { fileKind: 'dotenv' }
+const multiLine: BaselineRow[] = [
+  ...[...MULTI_LINE, ...MULTI_LINE_PINNED].map(({ name, path, text, lines }) => ({
+    name: `lines: ${name}`,
+    code: text,
+    options: [pathLanguage(path)],
+    secrets: lines.flatMap(piecesOf),
+  })),
+  ...MULTI_LINE_KEPT.map(({ name, path, text }) => ({
+    name: `lines: ${name}`,
+    code: text,
+    options: [pathLanguage(path)],
+    secrets: [L1],
+  })),
+]
+
+export const PW = made(270, 12)
+export const TOKEN = made(271, 40)
+
+/** A password on a login command line, by the command's own manual. */
+export const LOGINS: { name: string; line: string; secret: string }[] = [
+  { name: 'docker login -p', line: `docker login -u a -p ${PW} reg.example`, secret: PW },
+  { name: 'docker login -p, attached', line: `docker login -u a -p${PW} reg.example`, secret: PW },
+  { name: 'podman login -p', line: `podman login -u a -p ${PW} reg.example`, secret: PW },
+  { name: 'nerdctl login -p', line: `nerdctl login -u a -p "${PW}" reg.example`, secret: PW },
+  {
+    name: 'helm registry login -p',
+    line: `helm registry login reg.example -u a -p ${PW}`,
+    secret: PW,
+  },
+  { name: 'az login -p', line: `az login -u a@b.example -p ${PW}`, secret: PW },
+  { name: 'smbclient -U', line: `smbclient //h/s -U u%${PW}`, secret: PW },
+  { name: 'vault login', line: `vault login ${TOKEN}`, secret: TOKEN },
+  { name: 'htpasswd -b', line: `htpasswd -b f u ${PW}`, secret: PW },
+  { name: 'htpasswd -nb', line: `htpasswd -nbB u ${PW}`, secret: PW },
+  {
+    name: 'Authorization: token',
+    line: `curl -H "Authorization: token ${TOKEN}" https://api.example.com/x`,
+    secret: TOKEN,
+  },
+  {
+    name: 'Authorization: ApiKey',
+    line: `curl -H "Authorization: ApiKey ${TOKEN}" https://api.example.com/x`,
+    secret: TOKEN,
+  },
+  {
+    name: 'Proxy-Authorization: Digest',
+    line: `curl -H "Proxy-Authorization: Digest ${TOKEN}" https://api.example.com/x`,
+    secret: TOKEN,
+  },
+]
+/** Forms 1.19.2 redacts already. */
+export const LOGINS_PINNED: typeof LOGINS = [
+  {
+    name: 'docker login --password',
+    line: `docker login --username a --password ${PW} reg.example`,
+    secret: PW,
+  },
+  {
+    name: 'docker login --password=',
+    line: `docker login --username a --password=${PW} reg.example`,
+    secret: PW,
+  },
+  {
+    name: 'an X-API-Key header',
+    line: `curl -H "X-API-Key: ${TOKEN}" https://api.example.com/x`,
+    secret: TOKEN,
+  },
+  {
+    name: 'Authorization: Bearer',
+    line: `curl -H "Authorization: Bearer ${TOKEN}" https://api.example.com/x`,
+    secret: TOKEN,
+  },
+]
+/** The same flag where it is no password, and what the text cannot tell. */
+export const LOGINS_KEPT: { name: string; line: string }[] = [
+  { name: 'docker run -p', line: 'docker run -p 8080:80 -d nginx' },
+  { name: 'docker run --name login -p', line: 'docker run --name login -p 8080:80 nginx' },
+  { name: 'ssh -p', line: 'ssh -p 2222 deploy@host.example' },
+  { name: 'psql -p', line: 'psql -h db -p 5432 -U app shop' },
+  {
+    name: 'docker login -p with a variable',
+    line: 'docker login -u a -p "$REGISTRY_PW" reg.example',
+  },
+  { name: 'vault login by another method', line: 'vault login -method=userpass username=deploy' },
+  { name: 'htpasswd that prompts', line: 'htpasswd -c /etc/acme/users deploy' },
+  { name: 'a here-string', line: `ftp -n h <<< "user u ${PW}"` },
+  {
+    name: 'authorization in a sentence',
+    line: 'The authorization server metadata lists every endpoint.',
+  },
+]
+/** Each line as a shell script, as text of no kind, as a workflow step and as
+ *  an indented block of a document. */
+export const PLACES: {
+  place: string
+  options: AnonymizeOptions
+  wrap: (line: string) => string
+}[] = [
+  { place: 'a shell script', options: { fileKind: 'shell' }, wrap: (line) => `${line}\n` },
+  { place: 'text of no kind', options: {}, wrap: (line) => `${line}\n` },
+  {
+    place: 'a workflow step',
+    options: { fileKind: 'yaml' },
+    wrap: (line) => `steps:\n  - run: ${line}\n`,
+  },
+  { place: 'a document', options: { fileKind: 'text' }, wrap: (line) => `Run:\n\n    ${line}\n` },
+]
+const logins: BaselineRow[] = [
+  ...[...LOGINS, ...LOGINS_PINNED].flatMap(({ name, line, secret }) =>
+    PLACES.map(({ place, options, wrap }) => ({
+      name: `login: ${name}, in ${place}`,
+      code: wrap(line),
+      options: [options],
+      secrets: piecesOf(secret),
+    }))
+  ),
+  ...LOGINS_KEPT.flatMap(({ name, line }) =>
+    PLACES.map(({ place, options, wrap }) => ({
+      name: `login: ${name}, in ${place}`,
+      code: wrap(line),
+      options: [options],
+      secrets: piecesOf(PW),
+    }))
+  ),
+  code(
+    'login: an Authorization header in code',
+    `const h = { "Authorization": "token ${TOKEN}" }\n`,
+    [TOKEN]
+  ),
+]
+
 export const OWN_ROWS: BaselineRow[] = [
   ...samples,
   ...tripleQuoted,
@@ -982,7 +1457,32 @@ export const OWN_ROWS: BaselineRow[] = [
   ...keyMaterial,
   ...joinedKeys,
   ...rawStrings,
+  ...providerKeys,
+  ...context,
+  ...localNames,
+  ...multiLine,
+  ...logins,
 ]
+
+/** Tracked files past this size are not part of the repository check. */
+export const REPOSITORY_LIMIT = 400_000
+
+/** How many redaction tokens an engine leaves in a file, called as the CLI
+ *  calls it: the language and the kind from the path. */
+export function redactionCount(
+  engine: {
+    anonymize: (code: string, options: AnonymizeOptions) => { anonymized: string }
+    fileKindOf: (path: string) => AnonymizeOptions['fileKind']
+    languageOfPath: (path: string) => AnonymizeOptions['language'] | null
+  },
+  path: string,
+  text: string
+): number {
+  const fileKind = engine.fileKindOf(path)
+  const language = engine.languageOfPath(path) ?? 'auto'
+  const { anonymized } = engine.anonymize(text, { language, ...(fileKind ? { fileKind } : {}) })
+  return anonymized.match(/__REDACTED_[A-Z_]+_\d+__/g)?.length ?? 0
+}
 
 /** Every row: this file's, and those of the fixtures that already exist as
  *  frozen arrays (syntax-corpus.ts, manual-marks.ts). */

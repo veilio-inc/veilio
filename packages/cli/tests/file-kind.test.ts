@@ -14,6 +14,9 @@ const FILES: Record<string, string> = {
   '.env': 'DB_PASSWORD=Tr0ub4dor zebra91\nAPP_ENV=production\n',
   'compose.yml': 'services:\n  db:\n    environment:\n      API_TOKEN: Tr0ub4dor zebra91\n',
   'deploy.sh': 'export STRIPE_SECRET_KEY=Tr0ub4dorZebra91\nnode server.js\n',
+  // A password on a login command line, and a token that is a block scalar.
+  'login.sh': 'docker login -u ci -p Tr0ub4dorZebra91 reg.example\n',
+  'ci.yml': 'token: >-\n  Tr0ub4dorZebra91\n  Zebra91Tr0ub4dor\nname: x\n',
   'src/config.ts': 'export const DB_PASSWORD_NAME = "DB_PASSWORD"\n',
   // A test file stays strict: a weak fixed-name value is redacted there too.
   'tests/fixtures/.env': 'PGPASSWORD=postgres\n',
@@ -47,7 +50,7 @@ async function run(args: string[], stdin = '') {
 }
 
 describe('veilio scrub: the file kind reaches the engine', () => {
-  for (const file of ['.env', 'compose.yml', 'deploy.sh']) {
+  for (const file of ['.env', 'compose.yml', 'deploy.sh', 'login.sh', 'ci.yml']) {
     it(`${file}: the value is redacted and no piece of it is in the map`, async () => {
       const r = await run(['scrub', '--map', 'm.json', file])
       expect(r.code).toBe(EXIT_OK)

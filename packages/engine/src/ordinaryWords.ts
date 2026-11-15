@@ -199,9 +199,44 @@ export function isOrdinaryWord(name: string): boolean {
  *  a short one - `dbPw`, `userPW`, `DBPW`, `--db-password`, `DB_PIN`. */
 const CREDENTIAL_WORD = /pass|pwd|secret|token|key|auth|cred|private|salt|jwt|bearer|mnemonic/i
 const CREDENTIAL_SEGMENT = /^(?:pw|otp|pin|seed|cert)|(?:pw|otp|pin|seed|cert)$/
+/** The words for a password and a secret in Polish, German, Spanish, French,
+ *  Portuguese, Dutch and Greek, with and without diacritics, and the word for
+ *  a key only joined to "api" (alone it is an ordinary word, as `key` is not
+ *  for these names). A closed list: another word is added on request. */
+const LOCAL_WORD =
+  /(?:has[lł]o|sekret|klucz[_-]?api|kennwort|geheimnis|api[_-]?schl(?:ue|ü)ssel|contrase[nñ]a|clave[_-]?api|mdp|senha|segredo|wachtwoord|kodikos|synthimatiko|κωδικ[οό]ς|συνθηματικ[οό])[0-9]{0,3}$/u
+
+const QUALIFIER =
+  /^(?:db|database|sql|mysql|pg|postgres|redis|mongo|user|admin|root|api|app|smtp|mail|ftp|ssh|ldap|login|account|master|service|svc|client|server|wifi|my|new|old|default)[_.-]?$/
+
+/** A name that is one of the words above, or ends in one as a word of its
+ *  own: after `_`, `-` or `.`, or at a camel-case joint (`db_haslo`,
+ *  `dbHaslo`, `DB_HASLO`). A longer word that only holds one is not
+ *  (`geheimnisvoll`, `mdpath`, `senhaForte`). */
+function localCredential(name: string): boolean {
+  const lower = name.toLowerCase()
+  const m = lower.length === name.length ? LOCAL_WORD.exec(lower) : null
+  if (!m) return false
+  if (m.index === 0) return true
+  // The Greek word is the word for any code too (a postal code): after
+  // another word it is one; only a credential's usual qualifier may stand
+  // before it.
+  if (/^(?:kodikos|κωδικ)/u.test(m[0]) && !QUALIFIER.test(lower.slice(0, m.index))) return false
+  const before = name[m.index - 1]!
+  if (!/[\p{L}\p{N}]/u.test(before)) return true
+  const first = name[m.index]!
+  return first !== first.toLowerCase() && before === before.toLowerCase()
+}
+/** A name with a letter outside A-Z, which the key patterns below do not
+ *  read: found apart, and only for the words above. */
+const LOCAL_TOKEN = /[\p{L}_$][\p{L}\p{N}_$]*/gu
+const LOCAL_KEY_STRING = /["'`]([\p{L}\p{N}_.$-]{1,100})["'`]/gu
+const NET_KEY_LOCAL =
+  /(?<![\p{L}\p{N}_$.-])-{0,2}((?=[\w$.-]{0,100}[\u{80}-\u{10ffff}])[\p{L}_$][\p{L}\p{N}_$.-]{0,100})/gu
+
 const CREDENTIAL = {
   test(name: string): boolean {
-    if (CREDENTIAL_WORD.test(name)) return true
+    if (CREDENTIAL_WORD.test(name) || localCredential(name)) return true
     for (const segment of name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/))
       if (CREDENTIAL_SEGMENT.test(segment.toLowerCase())) return true
     return false
@@ -290,9 +325,17 @@ function keyword(word: string, language: Language | undefined): boolean {
  *  most 256 characters back on its line (`password: Optional[str] = `,
  *  `define('DB_PASSWORD', `, `secrets = Map.of("k", `). A comma ends the
  *  search only where a new pair starts after it (`"pass": "x", "color": `). */
-function credentialBefore(text: string, at: number, language: Language | undefined): string | null {
+function credentialBefore(
+  text: string,
+  at: number,
+  language: Language | undefined,
+  code = false
+): string | null {
+  let prefix = lineBefore(text, at)
+  // In code, a literal first on its line is the value the line above asks for.
+  if (code && prefix.trim() === '') prefix = lineAbove(text, at - prefix.length) ?? prefix
   // A C# property's accessors stand between its name and its value.
-  let prefix = lineBefore(text, at).replace(ACCESSORS, ' ')
+  prefix = prefix.replace(ACCESSORS, ' ')
   const statement = Math.max(
     prefix.lastIndexOf(';'),
     prefix.lastIndexOf('{'),
@@ -314,10 +357,53 @@ function credentialBefore(text: string, at: number, language: Language | undefin
   for (const m of prefix.matchAll(KEY_STRING)) if (CREDENTIAL.test(m[1]!)) return m[1]!
   for (const [t] of prefix.replace(STRING, ' ').matchAll(KEY_TOKEN))
     if (CREDENTIAL.test(t) && !keyword(t, language)) return t
+  // Only where a letter outside A-Z stands: every other name was read above.
+  if (!/[\u0080-\uffff]/.test(prefix)) return null
+  for (const m of prefix.matchAll(LOCAL_KEY_STRING)) if (localCredential(m[1]!)) return m[1]!
+  for (const [t] of prefix.replace(STRING, ' ').matchAll(LOCAL_TOKEN))
+    if (localCredential(t)) return t
   return null
 }
 const STRING = /(["'`])[^"'`]*\1/g
 const ACCESSORS = /\{\s*(?:get|set|init)\b[^{}]*\}/g
+
+/** The line above the one that starts at `lineStart`, when it leaves its
+ *  value for the next line: it ends in `=` or `= (`, or is a property's name
+ *  and colon. Any other line above is a statement of its own (a comparison,
+ *  an arrow, a block's header, a case label) or a call, whose argument on the
+ *  next line may be a message or a name. */
+function lineAbove(text: string, lineStart: number): string | null {
+  if (lineStart === 0 || text[lineStart - 1] !== '\n') return null
+  const above = lineBefore(text, lineStart - 1).trimEnd()
+  return /(?<![=!<>])=(?:[ \t]*\()?$/.test(above) ||
+    /^[\s{,[(]*["'`]?[^\s:"'`]+["'`]?[ \t]*:$/.test(above)
+    ? above
+    : null
+}
+
+const CALL_ARGUMENT = /[A-Za-z_$][\w$]*[ \t]*\([ \t]*["'`]{0,2}$/
+/** Where adjacent string literals are one string without a `+`. */
+const JOINS_ADJACENT: ReadonlySet<Language> = new Set<Language>(['python', 'ruby', 'c', 'sql'])
+const BETWEEN_LITERALS =
+  /^["'`]{1,3}[ \t]*(\+?)[ \t]*(\\?)\r?\n[ \t]*(\+?)[ \t]*[A-Za-z]{0,2}["'`]{1,3}$/
+
+/** Whether the literal that starts at `start` carries on, over a line break,
+ *  the literal that ended at `end`: joined by `+`, by a backslash at the line
+ *  end, or side by side where the language joins those. Never a literal that
+ *  is a key (`"label": ...`). On one line the key search has read both. */
+function continuesLiteral(
+  text: string,
+  end: number,
+  start: number,
+  after: number,
+  language: Language | undefined
+): boolean {
+  if (start - end > 200) return false
+  const m = BETWEEN_LITERALS.exec(text.slice(end, start))
+  if (!m) return false
+  if (!m[1] && !m[2] && !m[3] && !(language && JOINS_ADJACENT.has(language))) return false
+  return !/^["'`]{0,3}[ \t]*:/.test(text.slice(after, after + 8))
+}
 
 /** The text before `at` on its line, at most 256 characters: bounded, so
  *  many values on one long line stay linear. */
@@ -392,6 +478,7 @@ function pairAfterMark(value: string): { key: string; at: number } | null {
 // ends at the line's end, and no quantified group nests another: linear.
 const ENV_LINE = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]{0,200})[ \t]*=([^\n]*)$/dgm
 const INI_LINE = /^[ \t]*["']?([A-Za-z_$][\w.$-]{0,200})["']?[ \t]*(?:[:?+]?=|:)([^\n]*)$/dgm
+const INI_KEY = /^[ \t]*["']?[A-Za-z_$][\w.$-]{0,200}["']?[ \t]*(?:[:?+]?=|:)/
 const YAML_LINE =
   /^([ \t]*)(?:-[ \t]+)?["']?([^\s:"'#-][^:"'\n]{0,200}?)["']?[ \t]*:((?:[ \t][^\n]*)?)$/dgm
 const YAML_SCALAR = /^[ \t]*(?!-[ \t]|-$|#|---|\.\.\.)([^\n]+)$/dgm
@@ -400,6 +487,12 @@ const SHELL_PAIR =
   /(?<![^\s;&|(])(?:export[ \t]+)?([A-Za-z_]\w{0,200})=("[^"\n]*"|'[^'\n]*'|[^\s;&|]*)/dg
 const DOCKER_ENV = /^[ \t]*ENV[ \t]+([A-Za-z_]\w{0,200})[ \t]+([^\n=]+)$/dgm
 const XML_TEXT = /<([A-Za-z_][\w.:-]{0,100})([^<>]{0,2000})>([^<]+)<\//dg
+// A block scalar's header as the whole of a key's value: `|`, `>-`, `|2`,
+// behind a tag or an anchor, before a comment.
+const BLOCK_HEADER = /^[ \t]*(?:[&!]\S*[ \t]+)*[|>][-+0-9]{0,2}[ \t]*(?:#[^\n]*)?\r?$/
+// A line that starts a key of its own: the one grammar YAML keys are read
+// by, so a quote never runs past a line the reading above takes for a key.
+const STARTS_KEY = new RegExp(YAML_LINE.source)
 // A comment starts after a space; a glued `#` is part of the value.
 const HASH = /[ \t]#/
 const HASH_OR_SEMICOLON = /[ \t][#;]/
@@ -541,11 +634,25 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       start: m.index! + 1,
       end: m.index! + 1 + m[2]!.length,
     }))
+  let joined: { end: number; key: string } | null = null
   for (const s of strings) {
     // A module is a path; a shell's backticks run a command.
     const shell = kind === 'shell' || kind === 'dotenv'
     const command = shell && (text[s.start - 1] === '`' || inCommand(text, s.start))
-    const key = s.module || command ? null : credentialBefore(text, s.start - 1, scan.language)
+    let key = s.module || command ? null : credentialBefore(text, s.start - 1, scan.language, calls)
+    // A credential's literal carried on over a line break is the same value.
+    if (
+      key === null &&
+      joined !== null &&
+      calls &&
+      !s.module &&
+      continuesLiteral(text, joined.end, s.start, s.end, scan.language)
+    )
+      key = joined.key
+    // Not a call's argument: joined literals there are a message as often
+    // as a value (`throw new KeyError('...' + '...')`).
+    joined =
+      key === null || CALL_ARGUMENT.test(lineBefore(text, s.start - 1)) ? null : { end: s.end, key }
     add(s.start, s.end, key, true, 'string', s.module)
   }
 
@@ -571,6 +678,30 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
   // `key: value` in a dotenv file, a `KEY=value` in YAML.
   if (any || kind === 'dotenv' || kind === 'yaml') line(ENV_LINE, 1, 2, HASH, 'env')
   if (any || kind === 'ini' || kind === 'dotenv') line(INI_LINE, 1, 2, HASH_OR_SEMICOLON, 'ini')
+  // An INI or properties value that ends in a backslash carries on over the
+  // next line: under a credential key those lines are the value too, up to a
+  // line that starts a key of its own. Each line is read once.
+  if (kind === 'ini') {
+    let done = 0
+    for (const m of text.matchAll(INI_LINE)) {
+      const key = named(m[1])
+      if (key === null || m.index! < done || !/(?<!\\)(?:\\\\)*\\[ \t\r]*$/.test(m[2]!)) continue
+      let at = m.index! + m[0].length + 1
+      while (at < text.length) {
+        const nl = text.indexOf('\n', at)
+        const next = text.slice(at, nl === -1 ? text.length : nl)
+        if (INI_KEY.test(next)) break
+        const more = /\\[ \t\r]*$/.test(next)
+        const lead = next.length - next.trimStart().length
+        // With its backslash, as the first line's value is read.
+        const end = next.trimEnd().length
+        if (end > lead) add(at + lead, at + end, key, false, 'ini')
+        at += next.length + 1
+        if (!more) break
+      }
+      done = at
+    }
+  }
   if (any || kind === 'shell') {
     line(SHELL_PAIR, 1, 2, null, 'shell')
     line(DOCKER_ENV, 1, 2, HASH, 'shell')
@@ -582,6 +713,92 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     // k8s env entry's `value:` belongs to the `name:` above it.
     let previous: { indent: number; key: string; value: string } | null = null
     const keys = new Set<number>()
+    let scalarEnd = 0
+    /** The lines of a block scalar under `key`: every line from `from` on
+     *  that is indented deeper than its key, blank lines passed over. Each
+     *  line is its own value. Answers where the block ends. */
+    const blockLines = (
+      from: number,
+      indent: number,
+      key: string,
+      grammar: ValueSpanGrammar
+    ): number => {
+      let at = from
+      while (at < text.length) {
+        const nl = text.indexOf('\n', at)
+        const line = text.slice(at, nl === -1 ? text.length : nl)
+        const lead = line.length - line.trimStart().length
+        if (lead < line.length) {
+          if (lead <= indent) break
+          add(at + lead, at + line.trimEnd().length, key, false, grammar)
+        }
+        at += line.length + 1
+      }
+      return at
+    }
+    /** The lines a plain scalar under `key` carries on over: each line from
+     *  `from` on that is indented deeper than the key and is neither a key, a
+     *  list item nor a comment. Answers where they end. */
+    const plainLines = (
+      from: number,
+      indent: number,
+      key: string,
+      grammar: ValueSpanGrammar
+    ): number => {
+      let at = from
+      while (at < text.length) {
+        const nl = text.indexOf('\n', at)
+        const line = text.slice(at, nl === -1 ? text.length : nl)
+        const lead = line.length - line.trimStart().length
+        if (lead < line.length) {
+          if (lead <= indent || /^[-#]/.test(line.slice(lead)) || STARTS_KEY.test(line)) break
+          add(at + lead, at + line.trimEnd().length, key, false, grammar)
+        }
+        at += line.length + 1
+      }
+      return at
+    }
+    /** A quoted scalar that opens at `start` and closes on a later line: its
+     *  contents, line by line, under `key`. Answers where it closes, or 0 when
+     *  it closes on its own line, never closes within 16 KB, or a line that
+     *  starts a key comes first - a stray quote, read as before. */
+    const quotedLines = (start: number, key: string, grammar: ValueSpanGrammar): number => {
+      const quote = text[start]
+      if (quote !== '"' && quote !== "'") return 0
+      /** Where the quote closes in `line`, from `from` on, or -1. */
+      const closing = (line: string, from: number): number => {
+        for (let i = from; i < line.length; i++) {
+          if (quote === '"' && line[i] === '\\') i++
+          else if (line[i] === quote) {
+            if (quote === "'" && line[i + 1] === "'") i++
+            else return i
+          }
+        }
+        return -1
+      }
+      let nl = text.indexOf('\n', start)
+      if (nl === -1 || closing(text.slice(start, nl), 1) !== -1) return 0
+      const lines: [number, number][] = [
+        [start + 1, start + text.slice(start, nl).trimEnd().length],
+      ]
+      const limit = Math.min(text.length, start + 16384)
+      for (let at = nl + 1; at < limit; at = nl + 1) {
+        nl = text.indexOf('\n', at)
+        if (nl === -1) nl = text.length
+        const line = text.slice(at, nl)
+        if (STARTS_KEY.test(line)) return 0
+        const lead = line.length - line.trimStart().length
+        const close = closing(line, 0)
+        if (close === -1) {
+          lines.push([at + lead, at + line.trimEnd().length])
+          continue
+        }
+        lines.push([at + lead, at + close])
+        for (const [s, e] of lines) if (e > s) add(s, e, key, false, grammar)
+        return at + close
+      }
+      return 0
+    }
     for (const m of text.matchAll(YAML_LINE)) {
       keys.add(m.index!)
       const indent = m[1]!.length
@@ -592,8 +809,23 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
       const grammar = k8s === null ? 'yaml' : 'k8s'
       const raw = m[3] ?? ''
       const v = trimmed(raw, m.indices![3]?.[0] ?? m.index! + m[0].length, HASH, true, end)
-      if (v) add(v.start, v.end, credential, v.quoted, grammar)
-      else {
+      // Under a credential key the whole value is the credential: a quoted
+      // scalar to its closing quote on a later line, a block scalar to its
+      // last line. A line inside one opens no other.
+      const inside = m.index! < scalarEnd
+      const closes =
+        v && credential !== null && !v.quoted && !inside
+          ? quotedLines(v.start, credential, grammar)
+          : 0
+      if (closes > 0) scalarEnd = closes
+      else if (v) {
+        add(v.start, v.end, credential, v.quoted, grammar)
+        // A plain scalar carries on over the lines indented deeper than its key.
+        if (credential !== null && kind === 'yaml' && !v.quoted && !inside)
+          scalarEnd = plainLines(m.index! + m[0].length + 1, indent, credential, grammar)
+      } else if (credential !== null && BLOCK_HEADER.test(raw)) {
+        if (!inside) scalarEnd = blockLines(m.index! + m[0].length + 1, indent, credential, grammar)
+      } else {
         const next = m.index! + m[0].length + 1
         const nl = text.indexOf('\n', next)
         const below = text.slice(next, nl === -1 ? text.length : nl)
@@ -601,6 +833,9 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
         if (lead > indent && !/^[ \t]*(?:-|#|[^\s:]+:(?:\s|$))/.test(below)) {
           const w = trimmed(below, next, HASH, true)
           if (w) add(w.start, w.end, credential, w.quoted, grammar)
+          // A plain scalar that starts below its key carries on the same way.
+          if (w && credential !== null && kind === 'yaml' && !w.quoted && !inside)
+            scalarEnd = plainLines(next + below.length + 1, indent, credential, grammar)
         }
       }
       previous = { indent, key, value: v ? text.slice(v.start, v.end) : '' }
@@ -641,30 +876,39 @@ export function valueSpans(text: string, scan: ValueScan = {}): ValueSpan[] {
     // Makefile, a pasted .env); a name's type (`DB_PASSWORD: Optional[str]`)
     // and a statement (`const monkey = ledger`) are code's.
     const guessed = kind === 'code'
-    let covered = 0
-    for (const k of text.matchAll(NET_KEY)) {
-      const at = k.index!
-      const keyEnd = at + k[0].length
-      // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
-      if (at < covered || /__[A-Z]/.test(k[1]!) || !CREDENTIAL.test(k[1]!)) continue
-      if (guessed && !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at)))
-        continue
-      NET_TAIL.lastIndex = keyEnd
-      const m = NET_TAIL.exec(text)
-      if (!m) continue
-      const s = keyEnd + m[0].length
-      const sep = m[0]
-      if (guessed && !sep.includes('=')) continue
-      const e = netValueEnd(text, at, s, sep)
-      const value = text.slice(s, e)
-      covered = e
-      if (netExempt(value, calls, scan.language)) continue
-      const quoted = /["'`]$/.test(sep)
-      const span: ValueSpan = { start: s, end: e, value, credential: true, path: false }
-      // `KEY=value` written tight is a pair (a URL's query, a connection
-      // string); with spaces around it, perhaps an assignment in code.
-      const grammar = /^[=:]$/.test(sep) ? ('pair' as const) : ('net' as const)
-      out.push(Object.assign(span, { key: k[1]!, quoted, grammar }))
+    // Names in A-Z, then the names of the other-language list that are not.
+    for (const [keys, names] of [
+      [NET_KEY, (name: string) => CREDENTIAL.test(name)],
+      [NET_KEY_LOCAL, localCredential],
+    ] as const) {
+      let covered = 0
+      for (const k of text.matchAll(keys)) {
+        const at = k.index!
+        const keyEnd = at + k[0].length
+        // A placeholder already in the text (`__REDACTED_CREDENTIAL_1__`) names nothing.
+        if (at < covered || /__[A-Z]/.test(k[1]!) || !names(k[1]!)) continue
+        if (
+          guessed &&
+          !(at > 64 ? CODE_LINE : CODE_START).test(text.slice(Math.max(0, at - 64), at))
+        )
+          continue
+        NET_TAIL.lastIndex = keyEnd
+        const m = NET_TAIL.exec(text)
+        if (!m) continue
+        const s = keyEnd + m[0].length
+        const sep = m[0]
+        if (guessed && !sep.includes('=')) continue
+        const e = netValueEnd(text, at, s, sep)
+        const value = text.slice(s, e)
+        covered = e
+        if (netExempt(value, calls, scan.language)) continue
+        const quoted = /["'`]$/.test(sep)
+        const span: ValueSpan = { start: s, end: e, value, credential: true, path: false }
+        // `KEY=value` written tight is a pair (a URL's query, a connection
+        // string); with spaces around it, perhaps an assignment in code.
+        const grammar = /^[=:]$/.test(sep) ? ('pair' as const) : ('net' as const)
+        out.push(Object.assign(span, { key: k[1]!, quoted, grammar }))
+      }
     }
   }
   // `host:port:db:user:password` in text of no kind: a .pgpass line.

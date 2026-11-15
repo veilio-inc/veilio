@@ -1299,3 +1299,353 @@ test('R2-14: a Grep of a plain folder keeps its lines', async ($, on) => {
   const out = await $.tool.call({ tool: 'Grep', path: 'docs', pattern: 'docs' })
   expect(JSON.stringify(out)).toContain('readme.md')
 })
+
+// A search or a git patch run in a shell prints lines of raw-only files with
+// their path beside them, like the Grep tool's result: those lines and patch
+// blocks are dropped from any shell output, whatever the command was, and
+// the lines of other files are passed on as before.
+const HOST = 'billing.internal.example'
+const ENV_HIT = `BILLING_HOST=${HOST}`
+const KEPT = 'if (host) check()'
+const PROJECT = { [`${ROOT}/.env`]: `${ENV_HIT}\n`, [`${ROOT}/src/a.ts`]: `${KEPT}\n` }
+const patch = (from: string, to: string, lines: string, extra = ''): string =>
+  `diff --git a/${from} b/${to}\n${extra}index 0000000..1111111 100644\n--- a/${from}\n+++ b/${to}\n@@ -0,0 +1 @@\n+${lines}\n`
+const COMMIT =
+  'commit 4f0c1d2e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d\nAuthor: Dev <dev@acme.example>\nDate:   Mon Nov 2 10:00:00 2026 +0100\n\n    add the check\n\n'
+const PATCHES = patch('.env', '.env', ENV_HIT) + patch('src/a.ts', 'src/a.ts', KEPT)
+
+const SHELL_OUTPUT: [command: string, stdout: string][] = [
+  ['grep -rn HOST .', `./.env:1:${ENV_HIT}\n./src/a.ts:1:${KEPT}\n`],
+  ['grep -rn "" . --exclude-dir=.git', `./.env:1:${ENV_HIT}\n./.env-2-\n./src/a.ts:1:${KEPT}\n`],
+  ['rg HOST', `.env:1:${ENV_HIT}\nsrc/a.ts:1:${KEPT}\n`],
+  ['rg HOST --no-line-number', `.env:${ENV_HIT}\nsrc/a.ts:${KEPT}\n`],
+  ['git grep -n HOST', `.env:1:${ENV_HIT}\nsrc/a.ts:1:${KEPT}\n`],
+  ['git grep -n HOST HEAD', `HEAD:.env:1:${ENV_HIT}\nHEAD:src/a.ts:1:${KEPT}\n`],
+  ['git log -p -G HOST', COMMIT + PATCHES],
+  ['git show --format= HEAD', PATCHES],
+  ['git show HEAD -- .', COMMIT + PATCHES],
+  ['git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD', PATCHES],
+  [
+    'git format-patch -1 --stdout',
+    `From 4f0c1d2e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d Mon Sep 17 00:00:00 2001\nFrom: Dev <dev@acme.example>\nSubject: [PATCH] add the check\n\n---\n 2 files changed, 2 insertions(+)\n\n${PATCHES}-- \n2.47.0\n`,
+  ],
+  ['git stash show -p', PATCHES],
+  ['grep -rn HOST . | sort', `./.env:1:${ENV_HIT}\n./src/a.ts:1:${KEPT}\n`],
+  ['cd . && grep -rn HOST .', `./.env:1:${ENV_HIT}\n./src/a.ts:1:${KEPT}\n`],
+  [
+    'grep -rn HOST backups',
+    `backups/2026-10-31/.env:1:${ENV_HIT}\nbackups/2026-10-31/a.ts:1:${KEPT}\n`,
+  ],
+  ['grep -rn HOST C:/proj', `C:/proj/.env:1:${ENV_HIT}\nC:/proj/src/a.ts:1:${KEPT}\n`],
+  [
+    'git log -p -- "sp ace"',
+    patch('"sp ace/.env"', '"sp ace/.env"', ENV_HIT).replace(/ ([ab])\/"/g, ' "$1/') +
+      patch('src/a.ts', 'src/a.ts', KEPT),
+  ],
+  [
+    'git log -p -M',
+    patch(
+      'settings.txt',
+      '.env',
+      ENV_HIT,
+      'similarity index 90%\nrename from settings.txt\nrename to .env\n'
+    ) + patch('src/a.ts', 'src/a.ts', KEPT),
+  ],
+  [
+    'git log -p -M --reverse',
+    patch(
+      '.env',
+      'settings.txt',
+      ENV_HIT,
+      'similarity index 90%\nrename from .env\nrename to settings.txt\n'
+    ) + patch('src/a.ts', 'src/a.ts', KEPT),
+  ],
+  [
+    'git show HEAD~1',
+    COMMIT + patch('src/a.ts', 'src/a.ts', KEPT) + patch('.env', '.env', ENV_HIT),
+  ],
+  [
+    'diff -ru old new',
+    `diff -ru old/.env new/.env\n--- old/.env\t2026-11-02\n+++ new/.env\t2026-11-03\n@@ -1 +1 @@\n-X\n+${ENV_HIT}\ndiff -ru old/a.ts new/a.ts\n--- old/a.ts\t2026-11-02\n+++ new/a.ts\t2026-11-03\n@@ -1 +1 @@\n-x\n+${KEPT}\n`,
+  ],
+]
+async function shellOutput(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  command: string,
+  stdout: string,
+  files: Record<string, string> = PROJECT
+): Promise<string> {
+  project(on, files)
+  on('tool.call', () => ({ result: { stdout, stderr: '', interrupted: false } }))
+  const out = await $.tool.call({ tool: 'Bash', command, description: 'x' })
+  expect(out.deny).toBeUndefined()
+  return res(out).stdout as string
+}
+for (const [command, stdout] of SHELL_OUTPUT)
+  test(`shell output drops the lines of a raw-only file: ${command}`, async ($, on) => {
+    const sent = await shellOutput($, on, command, stdout)
+    expect(sent).not.toContain(HOST)
+    expect(sent).not.toContain('BILLING_HOST=')
+    expect(sent).toContain(KEPT)
+  })
+
+test('a patch block is dropped whole: its header, its hunks, and nothing of the next block', async ($, on) => {
+  const sent = await shellOutput($, on, 'git show --format= HEAD', PATCHES)
+  expect(sent).toBe(patch('src/a.ts', 'src/a.ts', KEPT))
+})
+
+for (const [what, stdout] of [
+  ['a search', `./src/a.ts:1:${KEPT}\n`],
+  ['a patch', patch('src/a.ts', 'src/a.ts', KEPT)],
+  ['a listing', 'total 2\n-rw-r--r-- 1 dev dev 12 Nov  2 10:00 a.ts\n'],
+] as const)
+  test(`shell output with no line of a raw-only file is passed on unchanged: ${what}`, async ($, on) => {
+    expect(await shellOutput($, on, 'git show HEAD', stdout)).toBe(stdout)
+  })
+
+test('a line of any output that begins with a raw-only path and a colon is dropped', async ($, on) => {
+  // The cost of reading the output and not the command: an error that names
+  // the file first goes with the file's lines.
+  const sent = await shellOutput(
+    $,
+    on,
+    'wc -l src/a.ts',
+    `.env: No such file or directory\n1 src/a.ts\n`
+  )
+  expect(sent).toBe('1 src/a.ts\n')
+})
+
+test('a failed command: the lines of a raw-only file are dropped from its text too', async ($, on) => {
+  project(on, PROJECT)
+  const text = `Exit code 1\n${PATCHES}`
+  on('tool.call', () => ({ result: `Error: ${text}`, text, isError: true }))
+  const out = await $.tool.call({
+    tool: 'Bash',
+    command: 'git diff --exit-code HEAD~1',
+    description: 'x',
+  })
+  expect(JSON.stringify(out)).not.toContain(HOST)
+  expect(JSON.stringify(out)).toContain(KEPT)
+})
+
+for (const tool of ['BashOutput', 'TaskOutput'])
+  test(`a background shell's output, read later: ${tool}`, async ($, on) => {
+    project(on, PROJECT)
+    on('tool.call', () => ({
+      result: {
+        shellId: 'bash_1',
+        status: 'running',
+        stdout: PATCHES,
+        stderr: '',
+        stdoutLines: 12,
+      },
+    }))
+    const out = await $.tool.call({ tool, bash_id: 'bash_1', task_id: 'bash_1' })
+    expect(JSON.stringify(out)).not.toContain(HOST)
+    expect(JSON.stringify(out)).toContain(KEPT)
+  })
+
+test('the refusals of a command that names the file stay: git show HEAD:.env', async ($, on) => {
+  project(on, PROJECT)
+  let ran = false
+  on('tool.call', () => {
+    ran = true
+    return { result: { stdout: ENV_HIT, stderr: '', interrupted: false } }
+  })
+  const out = await $.tool.call({ tool: 'Bash', command: 'git show HEAD:.env', description: 'x' })
+  expect(ran).toBe(false)
+  expect(out.deny).toContain('.env')
+})
+
+// Not covered (COVERAGE.md, "Programs that open files themselves"): output
+// that does not name the file of a line cannot be attributed, so it is passed
+// on with its credentials removed, as any output is.
+test('output another command reshaped is not filtered: rg --json | jq .', async ($, on) => {
+  // Not covered: a record spread over lines no longer has its path on the
+  // line of its text.
+  const pretty = JSON.stringify(
+    { type: 'match', data: { path: { text: '.env' }, lines: { text: `${ENV_HIT}\n` } } },
+    null,
+    2
+  )
+  const sent = await shellOutput($, on, 'rg --json HOST | jq .', `${pretty}\n`)
+  expect(sent).toContain('BILLING_HOST=')
+})
+
+for (const command of ['grep -rh HOST .', 'git grep -h HOST', 'git cat-file -p 8f3a2b1'])
+  test(`output that names no file is not filtered: ${command}`, async ($, on) => {
+    const sent = await shellOutput($, on, command, `${ENV_HIT}\n`)
+    expect(sent).toContain('BILLING_HOST=')
+  })
+
+test(
+  '40,000 lines of shell output are filtered in time that grows with the text',
+  { timeoutMs: 120_000 },
+  async ($, on) => {
+    const lines = (n: number): string => `src/a-b:c-d/e.ts:1:${KEPT}\n`.repeat(n)
+    project(on, PROJECT)
+    let stdout = ''
+    on('tool.call', () => ({ result: { stdout, stderr: '', interrupted: false } }))
+    const time = async (n: number): Promise<number> => {
+      stdout = lines(n)
+      const t = performance.now()
+      await $.tool.call({ tool: 'Bash', command: 'git grep -n host', description: 'x' })
+      return performance.now() - t
+    }
+    await time(1000)
+    const [small, large] = [await time(5_000), await time(40_000)]
+    // Eight times the text: linear is 8x, quadratic 64x.
+    expect(large / Math.max(small, 5)).toBeLessThan(24)
+  }
+)
+
+// A line of the file itself may read as the end of a patch (`-- ` is a removed
+// line `- `): inside a hunk nothing ends the block, by the hunk's own count.
+test('a removed line that reads as a mail signature does not end the block', async ($, on) => {
+  const env = `diff --git a/.env b/.env\nindex 0000000..1111111 100644\n--- a/.env\n+++ b/.env\n@@ -1,2 +1,1 @@\n-- \n-OLD=1\n+${ENV_HIT}\n`
+  const sent = await shellOutput(
+    $,
+    on,
+    'git log -p',
+    COMMIT + env + patch('src/a.ts', 'src/a.ts', KEPT)
+  )
+  expect(sent).not.toContain(HOST)
+  expect(sent).toContain(KEPT)
+})
+
+test('a combined diff of a raw-only file is dropped to the next commit', async ($, on) => {
+  const merge = `diff --cc .env\nindex 0000000,1111111..2222222\n--- a/.env\n+++ b/.env\n@@@ -1,1 -1,1 +1,2 @@@\n -- \n++${ENV_HIT}\n`
+  const sent = await shellOutput(
+    $,
+    on,
+    'git log -p --cc',
+    COMMIT + merge + COMMIT + patch('src/a.ts', 'src/a.ts', KEPT)
+  )
+  expect(sent).not.toContain(HOST)
+  expect(sent).toContain(KEPT)
+})
+
+// Colour codes around the path, and a path with many dashes, do not hide
+// whose line it is.
+const ESC = '\u001b'
+const COLOURED: [command: string, stdout: string][] = [
+  [
+    'grep -rn --color=always HOST .',
+    `${ESC}[35m${ESC}[K./.env${ESC}[m${ESC}[K${ESC}[36m${ESC}[K:${ESC}[m${ESC}[K${ESC}[32m${ESC}[K1${ESC}[m${ESC}[K${ESC}[36m${ESC}[K:${ESC}[m${ESC}[K${ENV_HIT}\n./src/a.ts:1:${KEPT}\n`,
+  ],
+  [
+    'git -c color.ui=always show HEAD',
+    `${ESC}[1mdiff --git a/.env b/.env${ESC}[m\n${ESC}[1m--- a/.env${ESC}[m\n${ESC}[1m+++ b/.env${ESC}[m\n${ESC}[36m@@ -0,0 +1 @@${ESC}[m\n${ESC}[32m+${ESC}[m${ESC}[32m${ENV_HIT}${ESC}[m\n${patch('src/a.ts', 'src/a.ts', KEPT)}`,
+  ],
+  ['grep -rn HOST a-b', `${'a-'.repeat(100)}b/.env:1:${ENV_HIT}\nsrc/a.ts:1:${KEPT}\n`],
+]
+for (const [command, stdout] of COLOURED)
+  test(`shell output drops the lines of a raw-only file: ${command}`, async ($, on) => {
+    const sent = await shellOutput($, on, command, stdout)
+    expect(sent).not.toContain(HOST)
+    expect(sent).toContain(KEPT)
+  })
+
+test('a patch with lines filtered out: a hunk short of its count does not take in the next block', async ($, on) => {
+  // `git log -p | grep -v "^ "`: the first hunk announces context lines that
+  // are no longer there.
+  const short = `diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,6 +1,7 @@\n+${KEPT}\n`
+  const sent = await shellOutput(
+    $,
+    on,
+    'git log -p | grep -v "^ "',
+    short + patch('.env', '.env', ENV_HIT)
+  )
+  expect(sent).not.toContain(HOST)
+  expect(sent).toContain(KEPT)
+})
+
+test('a credential in a dropped line is still remembered: a later bare copy is masked', async ($, on) => {
+  const value = 'Tr0ub4dor' + 'Zebra91xQ7'
+  project(on, { ...PROJECT, [`${ROOT}/.env`]: `DB_PASSWORD=${value}\n` })
+  let call = 0
+  on('tool.call', () => ({
+    result: {
+      stdout:
+        call++ === 0
+          ? `./.env:1:DB_PASSWORD=${value}\n./src/a.ts:1:${KEPT}\n`
+          : `started with ${value}\n`,
+      stderr: '',
+      interrupted: false,
+    },
+  }))
+  const one = await $.tool.call({ tool: 'Bash', command: 'grep -rn PASSWORD .', description: 'x' })
+  const two = await $.tool.call({ tool: 'Bash', command: 'npm start', description: 'x' })
+  expect(JSON.stringify(one)).not.toContain(value)
+  expect(JSON.stringify(two)).not.toContain(value)
+  // Removed one-way, as before the lines were dropped: never minted into the map.
+  expect(res(two).stdout).toContain('__REDACTED_')
+})
+
+// Other shapes a search prints: JSON records, a heading per file, a NUL
+// after the path, and `=` before the lines of a function's header.
+const json = (path: string, text: string): string =>
+  `${JSON.stringify({ type: 'begin', data: { path: { text: path } } })}\n${JSON.stringify({ type: 'match', data: { path: { text: path }, lines: { text: `${text}\n` }, line_number: 1 } })}\n${JSON.stringify({ type: 'end', data: { path: { text: path } } })}\n`
+const SHAPES: [command: string, stdout: string][] = [
+  ['rg --json HOST', json('.env', ENV_HIT) + json('src/a.ts', KEPT)],
+  ['rg --heading -n HOST', `.env\n1:${ENV_HIT}\n2-OTHER=${HOST}\n\nsrc/a.ts\n1:${KEPT}\n`],
+  ['git grep --heading -n HOST', `.env\n1:${ENV_HIT}\nsrc/a.ts\n1:${KEPT}\n`],
+  ['git grep --heading -n HOST HEAD', `HEAD:.env\n1:${ENV_HIT}\nHEAD:src/a.ts\n1:${KEPT}\n`],
+  ['rg --heading --no-line-number HOST', `.env\n${ENV_HIT}\n\nsrc/a.ts\n${KEPT}\n`],
+  ['rg -0 HOST', `.env\u0000${ENV_HIT}\nsrc/a.ts\u0000${KEPT}\n`],
+  ['git grep -z -n HOST', `.env\u00001\u0000${ENV_HIT}\nsrc/a.ts\u00001\u0000${KEPT}\n`],
+  ['git grep -n -p HOST', `.env=1=${ENV_HIT}\n.env:2:${ENV_HIT}\nsrc/a.ts=1=${KEPT}\n`],
+  ['git grep -n -W HOST HEAD', `HEAD:.env=1=${ENV_HIT}\nHEAD:src/a.ts=1=${KEPT}\n`],
+]
+for (const [command, stdout] of SHAPES)
+  test(`shell output drops the lines of a raw-only file: ${command}`, async ($, on) => {
+    const sent = await shellOutput($, on, command, stdout)
+    expect(sent).not.toContain(HOST)
+    expect(sent).toContain(KEPT)
+  })
+
+test('headings without line numbers and without a blank line: everything under a raw-only heading is dropped', async ($, on) => {
+  // The text cannot say where the next file starts, so nothing after the
+  // heading is passed on.
+  const sent = await shellOutput(
+    $,
+    on,
+    'git grep --heading HOST',
+    `src/a.ts\n${KEPT}\n.env\n${ENV_HIT}\nsrc/b.ts\nconst b = 1\n`
+  )
+  expect(sent).not.toContain(HOST)
+  expect(sent).toContain(KEPT)
+})
+
+for (const [command, stdout] of [
+  ['ls -a', '.\n..\n.env\n.git\nREADME.md\nsrc\n'],
+  ['git ls-files', '.env\nsrc/a.ts\n'],
+  ['find . -maxdepth 1', '.\n./.env\n./src\n'],
+] as const)
+  test(`a listing that names a raw-only file is passed on unchanged: ${command}`, async ($, on) => {
+    expect(await shellOutput($, on, command, stdout)).toBe(stdout)
+  })
+
+test(
+  'lines dense with separators are attributed in bounded time',
+  { timeoutMs: 120_000 },
+  async ($, on) => {
+    // 300 characters a line, a `:`, `-` or `=` every sixth: few of them can end
+    // a path, and only those are tried.
+    const line = `${'ab:cd-ef=gh'.repeat(27)}\n`
+    project(on, PROJECT)
+    let stdout = ''
+    on('tool.call', () => ({ result: { stdout, stderr: '', interrupted: false } }))
+    const time = async (n: number): Promise<number> => {
+      stdout = line.repeat(n)
+      const t = performance.now()
+      await $.tool.call({ tool: 'Bash', command: 'cat build.log', description: 'x' })
+      return performance.now() - t
+    }
+    await time(200)
+    const [small, large] = [await time(2_000), await time(16_000)]
+    expect(large / Math.max(small, 5)).toBeLessThan(24)
+    expect(large).toBeLessThan(15_000)
+  }
+)

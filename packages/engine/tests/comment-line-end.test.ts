@@ -74,7 +74,7 @@ describe('a line comment ends at every line terminator', () => {
     const b = anonymize(crlf, { language: 'typescript' })
     expect(b.anonymized).toBe(a.anonymized.replace(/\n/g, '\r\n'))
     expect(b.map).toEqual(a.map)
-    // The exact count of a CRLF file is held by the 1.19.1 baseline rows.
+    // The exact count of a CRLF file is held by the 1.19.2 baseline rows.
     expect(b.comments.total).toBe(a.comments.total)
     expect(b.anonymized).toContain('// The PaymentGateway client.\r\n')
   })

@@ -1,16 +1,17 @@
 import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { anonymize, restore } from '../src/index.js'
+import { anonymize, fileKindOf, languageOfPath, restore } from '../src/index.js'
 import type { AnonymizeOptions } from '../src/types.js'
-import { baselineRows, veiled } from './fixtures/baseline-corpus.js'
-import { EXCEPTIONS, REASONS } from './fixtures/baseline-exceptions.js'
+import { baselineRows, redactionCount, veiled } from './fixtures/baseline-corpus.js'
+import { EXCEPTIONS, REASONS, REPOSITORY_EXCEPTIONS } from './fixtures/baseline-exceptions.js'
 import { SYNTAXES, VALUES } from './fixtures/syntax-corpus.js'
 import { HELD, ROWS as MARKS } from './fixtures/manual-marks.js'
 
 // What a masking change may alter is listed, row by row, in
 // fixtures/baseline-exceptions.ts. Everything else in the corpus must come out
-// exactly as the published 1.19.1 gave it (fixtures/baseline-1.19.1.json,
-// recorded once from the registry package by baseline-1.19.1.gen.mjs).
+// exactly as the published 1.19.2 gave it (fixtures/baseline-1.19.2.json,
+// recorded once from the registry package by baseline-1.19.2.gen.mjs).
 
 interface Answer {
   options: AnonymizeOptions
@@ -23,7 +24,7 @@ interface Answer {
 }
 
 const BASE: { engine: { version: string; shasum: string }; rows: Record<string, Answer[]> } =
-  JSON.parse(readFileSync(new URL('./fixtures/baseline-1.19.1.json', import.meta.url), 'utf8'))
+  JSON.parse(readFileSync(new URL('./fixtures/baseline-1.19.2.json', import.meta.url), 'utf8'))
 
 const rows = baselineRows({ syntaxes: SYNTAXES, values: VALUES, marks: MARKS, held: HELD })
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -36,9 +37,9 @@ const slices = (secret: string): string[] =>
     ? [secret]
     : Array.from({ length: secret.length - 7 }, (_, i) => secret.slice(i, i + 8))
 
-describe('masking is what the published 1.19.1 gave, but for the listed rows', () => {
+describe('masking is what the published 1.19.2 gave, but for the listed rows', () => {
   it('is a record of the published package', () => {
-    expect(BASE.engine.version).toBe('1.19.1')
+    expect(BASE.engine.version).toBe('1.19.2')
     expect(BASE.engine.shasum).toMatch(/^[0-9a-f]{40}$/)
   })
 
@@ -78,7 +79,59 @@ describe('masking is what the published 1.19.1 gave, but for the listed rows', (
       const held = Object.values(map).join('\n')
       for (const secret of secrets)
         for (const slice of slices(secret)) expect(held.includes(slice)).toBe(false)
-      if (!anonymized.includes('__REDACTED_')) expect(restored).toBe(code)
+      // A token glued to a flag (`-p<token>`) is masked with it as one word:
+      // the token then shows only once restored.
+      if (!`${anonymized}${restored}`.includes('__REDACTED_')) expect(restored).toBe(code)
     })
   })
+})
+
+// A new rule must not redact ordinary text one-way: every tracked file of this
+// repository still as the published 1.19.2 saw it (baseline-1.19.2.repo.json,
+// by its digest) holds as many redaction tokens as that package left in it,
+// but for the files listed in baseline-exceptions.ts. A file edited since is
+// not held to its old count.
+describe('the repository itself gains no redaction but in the listed files', () => {
+  const REPO: { engine: { version: string }; files: Record<string, [string, number]> } = JSON.parse(
+    readFileSync(new URL('./fixtures/baseline-1.19.2.repo.json', import.meta.url), 'utf8')
+  )
+  const root = new URL('../../../', import.meta.url)
+  const read = (path: string): string | null => {
+    try {
+      return readFileSync(new URL(path, root), 'utf8')
+    } catch {
+      return null
+    }
+  }
+  const digest = (text: string): string =>
+    createHash('sha256').update(text).digest('hex').slice(0, 16)
+
+  it('is a record of the published package', () => {
+    expect(REPO.engine.version).toBe('1.19.2')
+    expect(Object.keys(REPO.files).length).toBeGreaterThan(500)
+  })
+
+  it('lists only recorded files, each with a reason and a count', () => {
+    for (const [path, { more, reason }] of Object.entries(REPOSITORY_EXCEPTIONS)) {
+      expect(REPO.files[path], path).toBeDefined()
+      expect(REASONS).toContain(reason)
+      expect(more).toBeGreaterThan(0)
+    }
+  })
+
+  it('every unchanged file holds the recorded count, a listed one its stated count more', () => {
+    const differing: string[] = []
+    let unchanged = 0
+    for (const [path, [recorded, count]] of Object.entries(REPO.files)) {
+      const text = read(path)
+      if (text === null || digest(text) !== recorded) continue
+      unchanged++
+      const now = redactionCount({ anonymize, fileKindOf, languageOfPath }, path, text)
+      const expected = count + (REPOSITORY_EXCEPTIONS[path]?.more ?? 0)
+      if (now !== expected) differing.push(`${path}: ${now}, not ${expected}`)
+    }
+    expect(differing).toEqual([])
+    // The check has not gone hollow: most recorded files are still as they were.
+    expect(unchanged).toBeGreaterThan(300)
+  }, 120_000)
 })

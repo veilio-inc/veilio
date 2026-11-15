@@ -1,0 +1,2420 @@
+{
+ "engine": {
+  "version": "1.19.2",
+  "shasum": "9eed3f281cc9fb216d1090ed5b57a04cc42e9346"
+ },
+ "files": {
+  ".actrc": [
+   "61bedbce7f91bfb6",
+   0
+  ],
+  ".changeset/README.md": [
+   "c9330a3584c819d6",
+   78
+  ],
+  ".changeset/config.json": [
+   "b28575f4ad653d03",
+   0
+  ],
+  ".claude-plugin/marketplace.json": [
+   "d705d536faa1bbd8",
+   1
+  ],
+  ".dockerignore": [
+   "a624980b03e3a227",
+   0
+  ],
+  ".env.example": [
+   "34eb04dddfd644ad",
+   0
+  ],
+  ".github/CODEOWNERS": [
+   "1d70a8dc2a570323",
+   0
+  ],
+  ".github/ISSUE_TEMPLATE/bug-report.yml": [
+   "5bde5f0846f76fd2",
+   0
+  ],
+  ".github/ISSUE_TEMPLATE/config.yml": [
+   "cb355b2307619d0b",
+   1
+  ],
+  ".github/ISSUE_TEMPLATE/failing-test-case.yml": [
+   "1a338ac802979f30",
+   5
+  ],
+  ".github/PULL_REQUEST_TEMPLATE.md": [
+   "9ba8dcacbc099fbc",
+   1
+  ],
+  ".github/assets/avatar.svg": [
+   "59c2df9e8dfbd3bd",
+   0
+  ],
+  ".github/dependabot.yml": [
+   "45cbb7ec4f8dcc7f",
+   7
+  ],
+  ".github/secret_scanning.yml": [
+   "f66309642299f1ca",
+   6
+  ],
+  ".github/workflows/ci.yml": [
+   "7c25f19acefb9cc0",
+   6
+  ],
+  ".github/workflows/publish-engine.yml": [
+   "2d99add88b583a20",
+   7
+  ],
+  ".github/workflows/publish-tools.yml": [
+   "a8072f7cad18b16e",
+   20
+  ],
+  ".github/workflows/release.yml": [
+   "d8c26f68f07c86d1",
+   9
+  ],
+  ".gitignore": [
+   "0af6ca9afd38b2a1",
+   4
+  ],
+  ".husky/pre-push": [
+   "849c0e1d30c30ed5",
+   0
+  ],
+  ".prettierignore": [
+   "715cc45c43a890c3",
+   0
+  ],
+  ".prettierrc": [
+   "55a10cf55c8a8033",
+   0
+  ],
+  ".releaserc.js": [
+   "8014e5fd7cdd9d76",
+   0
+  ],
+  "CLA.md": [
+   "4bfb08d4160c1bbe",
+   0
+  ],
+  "CONTRIBUTING.md": [
+   "9a11e73c203e3c30",
+   16
+  ],
+  "LICENSE": [
+   "af2317bad47545a8",
+   1
+  ],
+  "README.md": [
+   "667c7c710800e6bc",
+   22
+  ],
+  "ROADMAP.md": [
+   "380ac4728dcd9fa7",
+   91
+  ],
+  "SECURITY.md": [
+   "6bee7914dfe9e28c",
+   36
+  ],
+  "TRADEMARKS.md": [
+   "531e4e27bf9708a9",
+   0
+  ],
+  "docker/Dockerfile": [
+   "ea211ec7bf095190",
+   2
+  ],
+  "docker/nginx.conf": [
+   "57d2b03c5caacf8c",
+   0
+  ],
+  "docker/serve.go": [
+   "920288861fd5424c",
+   0
+  ],
+  "docs/PUBLISHING.md": [
+   "46c49bea045d0ca5",
+   12
+  ],
+  "docs/USING-THE-CLI-AND-MCP.md": [
+   "cfb2c3bacde9519b",
+   95
+  ],
+  "docs/specs/manual-masking.md": [
+   "7675372ed340e63f",
+   13
+  ],
+  "e2e/comment-notice.spec.ts": [
+   "5dd16de526db6ad8",
+   0
+  ],
+  "e2e/derive-worker.spec.ts": [
+   "d0bda06c29eb04e9",
+   1
+  ],
+  "e2e/helpers-veilio-file.ts": [
+   "9f4914e6906ad962",
+   0
+  ],
+  "e2e/legacy-local-maps.spec.ts": [
+   "071a8ee87e8cb954",
+   0
+  ],
+  "e2e/manual-masking.spec.ts": [
+   "3fa989cf008ca277",
+   0
+  ],
+  "e2e/security.spec.ts": [
+   "f986dc553c380879",
+   0
+  ],
+  "e2e/theme-contrast.spec.ts": [
+   "27328cd0282f6566",
+   0
+  ],
+  "eslint.config.js": [
+   "727c1bb9307a1790",
+   0
+  ],
+  "index.html": [
+   "03b0cbae88215f1e",
+   0
+  ],
+  "package-lock.json": [
+   "26f76a2e8a8ff292",
+   429
+  ],
+  "package.json": [
+   "847cacd509cff835",
+   0
+  ],
+  "packages/cli/CHANGELOG.md": [
+   "78e52dc47619aa09",
+   188
+  ],
+  "packages/cli/LICENSE": [
+   "af2317bad47545a8",
+   1
+  ],
+  "packages/cli/README.md": [
+   "3a34126e3e06ab61",
+   454
+  ],
+  "packages/cli/action.yml": [
+   "50e69b55a8e219eb",
+   23
+  ],
+  "packages/cli/hooks/pre-commit": [
+   "23a2d92f83e2ef7b",
+   7
+  ],
+  "packages/cli/package.json": [
+   "3be220a7bd0b4255",
+   1
+  ],
+  "packages/cli/src/args.ts": [
+   "f29e4c3e1049767b",
+   12
+  ],
+  "packages/cli/src/client/blocks.ts": [
+   "8cae4c1f968d0ca9",
+   0
+  ],
+  "packages/cli/src/client/fingerprint.ts": [
+   "b7a768914fd870db",
+   0
+  ],
+  "packages/cli/src/client/index.ts": [
+   "f9843122eeb915e1",
+   0
+  ],
+  "packages/cli/src/client/keys.ts": [
+   "9fc2708e54f1a9ca",
+   2
+  ],
+  "packages/cli/src/client/maps.ts": [
+   "041c125076f4b153",
+   9
+  ],
+  "packages/cli/src/client/personal-maps-key.ts": [
+   "3dc1432a347ffc86",
+   4
+  ],
+  "packages/cli/src/client/project-scope.ts": [
+   "12e0cbaf52224aeb",
+   0
+  ],
+  "packages/cli/src/client/projects.ts": [
+   "ed44e1b8708725de",
+   0
+  ],
+  "packages/cli/src/client/rules-skipped.ts": [
+   "ebcaa1eea3383ca0",
+   0
+  ],
+  "packages/cli/src/client/status.ts": [
+   "2e460cdf9cf89e4b",
+   0
+  ],
+  "packages/cli/src/client/team-key-bootstrap.ts": [
+   "2482e6b72b4e0dad",
+   10
+  ],
+  "packages/cli/src/client/vault-key.ts": [
+   "17851ad008743f76",
+   0
+  ],
+  "packages/cli/src/client/wording.ts": [
+   "8ccae2ebc17b5efc",
+   0
+  ],
+  "packages/cli/src/client/wrap-judge.ts": [
+   "86ddb4fbbf5c8f65",
+   0
+  ],
+  "packages/cli/src/cloud-commands.ts": [
+   "9dc9257644bd0d18",
+   17
+  ],
+  "packages/cli/src/cloud.ts": [
+   "b5d3fb03028ef20f",
+   23
+  ],
+  "packages/cli/src/commands.ts": [
+   "fb640f3e8e9008a5",
+   0
+  ],
+  "packages/cli/src/credential.ts": [
+   "1118b64210372a01",
+   8
+  ],
+  "packages/cli/src/flags.ts": [
+   "ef35bec4de698c96",
+   140
+  ],
+  "packages/cli/src/git-index.ts": [
+   "90e7b61c5ef8d4d5",
+   0
+  ],
+  "packages/cli/src/guard-hint.ts": [
+   "71a82ec0597d58f9",
+   0
+  ],
+  "packages/cli/src/hashed-bases.ts": [
+   "12a4b9fbd79688dc",
+   9
+  ],
+  "packages/cli/src/index.ts": [
+   "b441d737bfe5ceb0",
+   1
+  ],
+  "packages/cli/src/key-pins.ts": [
+   "0effdf000ea03716",
+   6
+  ],
+  "packages/cli/src/reservations.ts": [
+   "c3dbf7cc7df5586e",
+   2
+  ],
+  "packages/cli/src/rules-open.ts": [
+   "b66526712ee29e21",
+   0
+  ],
+  "packages/cli/src/rules.ts": [
+   "b15b0895ca69c4ec",
+   0
+  ],
+  "packages/cli/src/secret-file.ts": [
+   "95ca37b4cae39b5a",
+   0
+  ],
+  "packages/cli/src/secret-input.ts": [
+   "78dd893af8d1ea27",
+   0
+  ],
+  "packages/cli/src/staged-blobs.ts": [
+   "ff25d39928f30a38",
+   0
+  ],
+  "packages/cli/src/store.ts": [
+   "b5a9d50d8d8ba47b",
+   0
+  ],
+  "packages/cli/src/team-anonymize.ts": [
+   "84a8574cc1eee9a9",
+   2
+  ],
+  "packages/cli/src/team-namespace.ts": [
+   "ca297f7deb25b4ed",
+   1
+  ],
+  "packages/cli/src/team-unlock.ts": [
+   "697c8e2e79d41b06",
+   4
+  ],
+  "packages/cli/src/third-party.ts": [
+   "f3caffdbf1d75cb8",
+   0
+  ],
+  "packages/cli/src/version.ts": [
+   "16ee7adc151c1b0c",
+   0
+  ],
+  "packages/cli/tests/action-diff.test.ts": [
+   "32cec0dc856f16d1",
+   3
+  ],
+  "packages/cli/tests/aliases-file.test.ts": [
+   "6334332716e3acaa",
+   0
+  ],
+  "packages/cli/tests/auth.test.ts": [
+   "c3d2f2521e38fcf3",
+   74
+  ],
+  "packages/cli/tests/binary.test.ts": [
+   "fc40e1ad32a0f210",
+   0
+  ],
+  "packages/cli/tests/cli.test.ts": [
+   "24d1ad146baae4c9",
+   15
+  ],
+  "packages/cli/tests/client-identity.test.ts": [
+   "0dfbf7f3edfaae21",
+   0
+  ],
+  "packages/cli/tests/client/one-derivation.test.ts": [
+   "b618b01d316dab10",
+   2
+  ],
+  "packages/cli/tests/client/vault-key.test.ts": [
+   "96892e542a1efc7d",
+   0
+  ],
+  "packages/cli/tests/client/wording.test.ts": [
+   "ab4d5b0108b9007e",
+   0
+  ],
+  "packages/cli/tests/community-edition.test.ts": [
+   "776744a9adfd288a",
+   1
+  ],
+  "packages/cli/tests/concurrent-save.test.ts": [
+   "12b7fa2d5501cfbb",
+   0
+  ],
+  "packages/cli/tests/credential-values-map.test.ts": [
+   "914f6dc20111ccce",
+   0
+  ],
+  "packages/cli/tests/device-login.test.ts": [
+   "4c32a535aa4cefc3",
+   15
+  ],
+  "packages/cli/tests/docs-commands.test.ts": [
+   "b82e46301f828378",
+   0
+  ],
+  "packages/cli/tests/envelope-parity.test.ts": [
+   "e2fe47856d4943e7",
+   1
+  ],
+  "packages/cli/tests/file-kind.test.ts": [
+   "f743277ba28bc745",
+   15
+  ],
+  "packages/cli/tests/fingerprint.test.ts": [
+   "5f6af2ed0a5d2558",
+   0
+  ],
+  "packages/cli/tests/fixtures/big-blob-scan.mjs": [
+   "ad70a758b3221076",
+   0
+  ],
+  "packages/cli/tests/fixtures/browser-sealed.veilio": [
+   "d9d7abd7c73e2ff7",
+   1
+  ],
+  "packages/cli/tests/fixtures/offline-golden.json": [
+   "ea782823551bde05",
+   20
+  ],
+  "packages/cli/tests/foreign-flags.test.ts": [
+   "21088debdbe5e871",
+   1
+  ],
+  "packages/cli/tests/git-index-memo.test.ts": [
+   "01ca3bc25bc05ae7",
+   0
+  ],
+  "packages/cli/tests/git-index.test.ts": [
+   "57dada3a6030ed2d",
+   0
+  ],
+  "packages/cli/tests/golden-offline.test.ts": [
+   "9573e341af7221e4",
+   2
+  ],
+  "packages/cli/tests/guard-hint.test.ts": [
+   "da880c85a5c738b3",
+   2
+  ],
+  "packages/cli/tests/hashed-bases.test.ts": [
+   "5a0ad12929959bba",
+   8
+  ],
+  "packages/cli/tests/helpers/fake-cloud.ts": [
+   "14c60b2f85252602",
+   26
+  ],
+  "packages/cli/tests/helpers/http-fake.ts": [
+   "4780675428d2a1db",
+   1
+  ],
+  "packages/cli/tests/helpers/isolated-home.ts": [
+   "993b9b5ed8ccfade",
+   0
+  ],
+  "packages/cli/tests/helpers/team-scenario.ts": [
+   "12121ea3c4669d8f",
+   4
+  ],
+  "packages/cli/tests/home-is-temporary.test.ts": [
+   "0f3968191f9d458e",
+   0
+  ],
+  "packages/cli/tests/huge-numbers.test.ts": [
+   "332b2a0787b612db",
+   1
+  ],
+  "packages/cli/tests/key-pins.test.ts": [
+   "c3d26a02b37cd19a",
+   9
+  ],
+  "packages/cli/tests/local-family-us1.test.ts": [
+   "6665322783616058",
+   0
+  ],
+  "packages/cli/tests/login-project.test.ts": [
+   "b708e0a9a807ebc5",
+   7
+  ],
+  "packages/cli/tests/maps-update.test.ts": [
+   "3b8ca83e969d218f",
+   1
+  ],
+  "packages/cli/tests/maps.test.ts": [
+   "01385619ceac0715",
+   5
+  ],
+  "packages/cli/tests/no-secrets.test.ts": [
+   "27ad6278fb10fa0f",
+   1
+  ],
+  "packages/cli/tests/offline.test.ts": [
+   "dd93426dac91dec0",
+   8
+  ],
+  "packages/cli/tests/pre-commit-hook.test.ts": [
+   "7bc661b38089fcd9",
+   3
+  ],
+  "packages/cli/tests/printable.test.ts": [
+   "bf52c9b87cf63f8d",
+   0
+  ],
+  "packages/cli/tests/project-env.test.ts": [
+   "53b508c903a80f5d",
+   5
+  ],
+  "packages/cli/tests/projects.test.ts": [
+   "9279e442d4340908",
+   4
+  ],
+  "packages/cli/tests/pull-drops-local.test.ts": [
+   "4e5904c25af6b341",
+   0
+  ],
+  "packages/cli/tests/purity.test.ts": [
+   "559bea10d31174f9",
+   1
+  ],
+  "packages/cli/tests/readme-options.test.ts": [
+   "6147621035a0f7a5",
+   0
+  ],
+  "packages/cli/tests/refusal-visible.test.ts": [
+   "23d71fb85b2bc66c",
+   0
+  ],
+  "packages/cli/tests/renumber-local.test.ts": [
+   "dbfb81dde519f2f3",
+   2
+  ],
+  "packages/cli/tests/request-budget.test.ts": [
+   "4c9f86bfacf7ec4f",
+   0
+  ],
+  "packages/cli/tests/reservations.test.ts": [
+   "3bceae286f6321ec",
+   4
+  ],
+  "packages/cli/tests/reserved-local.test.ts": [
+   "455123fa70d05951",
+   1
+  ],
+  "packages/cli/tests/reserved-numbering.test.ts": [
+   "a4e5fd1443835999",
+   21
+  ],
+  "packages/cli/tests/restore-attribution.test.ts": [
+   "c6afd0a0de75f737",
+   0
+  ],
+  "packages/cli/tests/restore-hostile-keys.test.ts": [
+   "0c6338165f18be01",
+   0
+  ],
+  "packages/cli/tests/restore-local.test.ts": [
+   "010d684b0894f621",
+   0
+  ],
+  "packages/cli/tests/restore-strict.test.ts": [
+   "133288158836a917",
+   12
+  ],
+  "packages/cli/tests/restore-team.test.ts": [
+   "6531b5a2714690d1",
+   2
+  ],
+  "packages/cli/tests/restore-tracked.test.ts": [
+   "ecf7047b5d56a59a",
+   0
+  ],
+  "packages/cli/tests/rules-budget.test.ts": [
+   "ddc9b86f4a06198d",
+   1
+  ],
+  "packages/cli/tests/rules-lock-purge.test.ts": [
+   "02508649810df9c3",
+   5
+  ],
+  "packages/cli/tests/rules-locked-matrix.test.ts": [
+   "07d55ec41f76f9df",
+   0
+  ],
+  "packages/cli/tests/rules-sealed.test.ts": [
+   "caf5edb0be485c7d",
+   16
+  ],
+  "packages/cli/tests/rules.test.ts": [
+   "eaa0aadfe9880d37",
+   26
+  ],
+  "packages/cli/tests/scan-blobs.test.ts": [
+   "df1f42bba9322da8",
+   1
+  ],
+  "packages/cli/tests/scrub-multi.test.ts": [
+   "3cbc72df80e9a184",
+   0
+  ],
+  "packages/cli/tests/scrub-offline-local.test.ts": [
+   "053ecaf3d618ef4d",
+   0
+  ],
+  "packages/cli/tests/scrub-reserve.test.ts": [
+   "64a74a21aa56f6fa",
+   11
+  ],
+  "packages/cli/tests/scrub-team-unknown.test.ts": [
+   "c6c76bcaaf45759a",
+   0
+  ],
+  "packages/cli/tests/scrub-team.test.ts": [
+   "7f13cce638f19791",
+   0
+  ],
+  "packages/cli/tests/secret-file.test.ts": [
+   "04898ea0b5abbff2",
+   0
+  ],
+  "packages/cli/tests/secret-input.test.ts": [
+   "d31835b120bb25c2",
+   0
+  ],
+  "packages/cli/tests/short-flags.test.ts": [
+   "d75e1a18652444fe",
+   0
+  ],
+  "packages/cli/tests/store-symlink.test.ts": [
+   "8fe09430c12c5d32",
+   0
+  ],
+  "packages/cli/tests/team-anonymize-local.test.ts": [
+   "824fbf1fd3befd1a",
+   0
+  ],
+  "packages/cli/tests/team-arg.test.ts": [
+   "29b4fd1691a19093",
+   0
+  ],
+  "packages/cli/tests/team-blocks.test.ts": [
+   "bcc4f54ff9a571fd",
+   0
+  ],
+  "packages/cli/tests/team-bootstrap.test.ts": [
+   "c86948d49e0bc893",
+   9
+  ],
+  "packages/cli/tests/team-commands.test.ts": [
+   "47987b25dd1963a2",
+   134
+  ],
+  "packages/cli/tests/team-keys.test.ts": [
+   "7c6a20b11ed804c3",
+   5
+  ],
+  "packages/cli/tests/team-publish-reserved.test.ts": [
+   "730c5d5eef6e2f87",
+   0
+  ],
+  "packages/cli/tests/team-push.test.ts": [
+   "8b3bb5a3c0a55c99",
+   5
+  ],
+  "packages/cli/tests/team-unlock.test.ts": [
+   "9d0bdddab02af865",
+   2
+  ],
+  "packages/cli/tests/unreadable-team-maps.test.ts": [
+   "cb6c4118a719cf58",
+   2
+  ],
+  "packages/cli/tests/vault-unlock.test.ts": [
+   "d28e7d37e879bdd5",
+   46
+  ],
+  "packages/cli/tests/vouched-floors.test.ts": [
+   "ee9202ccda99ef2e",
+   0
+  ],
+  "packages/cli/tests/wrap-judge.test.ts": [
+   "22d7c1aa024fd0db",
+   38
+  ],
+  "packages/cli/tsconfig.json": [
+   "1a9f0873fec04475",
+   0
+  ],
+  "packages/cli/tsconfig.typecheck.json": [
+   "316b694c0dd61029",
+   0
+  ],
+  "packages/cli/vitest.config.ts": [
+   "df281abc45835ae1",
+   0
+  ],
+  "packages/cli/vitest.setup.ts": [
+   "bd0857a5379c5f55",
+   0
+  ],
+  "packages/engine/CHANGELOG.md": [
+   "36c4653cbeb00bd6",
+   107
+  ],
+  "packages/engine/LICENSE": [
+   "af2317bad47545a8",
+   1
+  ],
+  "packages/engine/README.md": [
+   "fe98068c815cf60d",
+   697
+  ],
+  "packages/engine/package-lock.json": [
+   "c1089789892542df",
+   0
+  ],
+  "packages/engine/package.json": [
+   "b1bedadc50ce6ee9",
+   1
+  ],
+  "packages/engine/src/engine.ts": [
+   "91b483360ff38f10",
+   16
+  ],
+  "packages/engine/src/envelope.ts": [
+   "6850366ad938efb1",
+   3
+  ],
+  "packages/engine/src/imports.ts": [
+   "7e83a9d09365fbb3",
+   1
+  ],
+  "packages/engine/src/index.ts": [
+   "d9a6c1154635ae7e",
+   0
+  ],
+  "packages/engine/src/languages.ts": [
+   "1bf5697dea198513",
+   54
+  ],
+  "packages/engine/src/lines.ts": [
+   "893933f1732f5a2a",
+   0
+  ],
+  "packages/engine/src/localFamily.ts": [
+   "fe89ecf95d82faa5",
+   0
+  ],
+  "packages/engine/src/options.ts": [
+   "455f71064b4ecae3",
+   1
+  ],
+  "packages/engine/src/ordinaryWords.ts": [
+   "76ce33249417795e",
+   33
+  ],
+  "packages/engine/src/product.ts": [
+   "e5a927943907224e",
+   0
+  ],
+  "packages/engine/src/raw-only.ts": [
+   "f9f25e8b0b2d484d",
+   0
+  ],
+  "packages/engine/src/restoreLayers.ts": [
+   "d7d6f3d5ead79694",
+   0
+  ],
+  "packages/engine/src/rule-checks.ts": [
+   "8946bca1902b11c3",
+   0
+  ],
+  "packages/engine/src/rule-envelope.ts": [
+   "5b4a011d66c959aa",
+   0
+  ],
+  "packages/engine/src/rule-pattern.ts": [
+   "59a9cf4f6fca67d7",
+   0
+  ],
+  "packages/engine/src/secrets.ts": [
+   "7785aaf879c42f86",
+   202
+  ],
+  "packages/engine/src/teamKeys.ts": [
+   "872750894ede5bf6",
+   25
+  ],
+  "packages/engine/src/teamNamespace.ts": [
+   "1ae3b1715708aa65",
+   0
+  ],
+  "packages/engine/src/traces.ts": [
+   "0e0e13ab6e27cd91",
+   0
+  ],
+  "packages/engine/src/types.ts": [
+   "0f52f3359f5b15d9",
+   3
+  ],
+  "packages/engine/src/vault.ts": [
+   "6f2c7c3ca185d9e0",
+   0
+  ],
+  "packages/engine/src/words.NOTICE": [
+   "283326a422e29c51",
+   1
+  ],
+  "packages/engine/src/words.ts": [
+   "79ac19a84701cdc0",
+   0
+  ],
+  "packages/engine/src/written-record.ts": [
+   "a1a79f2276a444ef",
+   0
+  ],
+  "packages/engine/tests/altered.test.ts": [
+   "c9046b6103dfc257",
+   1
+  ],
+  "packages/engine/tests/analyzeTeamNamespace.test.ts": [
+   "b7cbc1822975496b",
+   0
+  ],
+  "packages/engine/tests/baseline-1.19.2.test.ts": [
+   "a736c7f6bb252fae",
+   0
+  ],
+  "packages/engine/tests/comment-exposure.test.ts": [
+   "537bd21352dd4b49",
+   1
+  ],
+  "packages/engine/tests/comment-line-end.test.ts": [
+   "b6c3c76e4b4a843f",
+   0
+  ],
+  "packages/engine/tests/comment-names.languages.test.ts": [
+   "cc52f6813dca4aad",
+   1
+  ],
+  "packages/engine/tests/comment-names.test.ts": [
+   "b13e513af2f4e037",
+   2
+  ],
+  "packages/engine/tests/comment-openers.test.ts": [
+   "052062cacf1d30d6",
+   2
+  ],
+  "packages/engine/tests/credential-corpus.test.ts": [
+   "3fbef96b6fd9f564",
+   2
+  ],
+  "packages/engine/tests/credential-net.test.ts": [
+   "826e8b53ad7fafad",
+   76
+  ],
+  "packages/engine/tests/credential-values.test.ts": [
+   "c7b75e2f5672ccef",
+   230
+  ],
+  "packages/engine/tests/detection-cost.test.ts": [
+   "1abdaf15aed53b47",
+   0
+  ],
+  "packages/engine/tests/engine.builtins.test.ts": [
+   "2c5e258de2b41c63",
+   4
+  ],
+  "packages/engine/tests/engine.comments.test.ts": [
+   "a6a0903216ac47df",
+   1
+  ],
+  "packages/engine/tests/engine.edge.test.ts": [
+   "479fa475d2d39437",
+   0
+  ],
+  "packages/engine/tests/engine.languages.test.ts": [
+   "37d6503bfb64d4bc",
+   49
+  ],
+  "packages/engine/tests/engine.legend.test.ts": [
+   "abd6ca860c0cd69b",
+   1
+  ],
+  "packages/engine/tests/engine.roles.test.ts": [
+   "ee97d62b93133490",
+   0
+  ],
+  "packages/engine/tests/engine.test.ts": [
+   "1b8cb5fc6788930e",
+   0
+  ],
+  "packages/engine/tests/env-style-credentials.test.ts": [
+   "5569da54397f5457",
+   416
+  ],
+  "packages/engine/tests/envelope.test.ts": [
+   "bdccb5ebc00d3e4a",
+   3
+  ],
+  "packages/engine/tests/existing-map-keys.test.ts": [
+   "69ee6180afd54952",
+   0
+  ],
+  "packages/engine/tests/fixtures/baseline-1.19.2.gen.mjs": [
+   "7e9865385f12bf4b",
+   0
+  ],
+  "packages/engine/tests/fixtures/baseline-corpus.ts": [
+   "55e294bba2b8355a",
+   189
+  ],
+  "packages/engine/tests/fixtures/baseline-exceptions.ts": [
+   "dd05caa50c67244e",
+   0
+  ],
+  "packages/engine/tests/fixtures/browser-sealed.veilio": [
+   "d9d7abd7c73e2ff7",
+   1
+  ],
+  "packages/engine/tests/fixtures/browser-vault.json": [
+   "44c767a394371d89",
+   2
+  ],
+  "packages/engine/tests/fixtures/manual-marks-main.gen.mjs": [
+   "9dfe17911e46e16a",
+   0
+  ],
+  "packages/engine/tests/fixtures/manual-marks-main.json": [
+   "ad6f27fd5cc17ef1",
+   30
+  ],
+  "packages/engine/tests/fixtures/manual-marks.ts": [
+   "b8ae67369481265c",
+   12
+  ],
+  "packages/engine/tests/fixtures/numbering-corpus.065.json": [
+   "b84dd99aa7b40eeb",
+   0
+  ],
+  "packages/engine/tests/fixtures/numbering-corpus.ts": [
+   "fedd023065c5f18a",
+   0
+  ],
+  "packages/engine/tests/fixtures/public-docs.ts": [
+   "68805e54b24f0022",
+   0
+  ],
+  "packages/engine/tests/fixtures/regulated.ts": [
+   "dd04ccb55462f473",
+   3
+  ],
+  "packages/engine/tests/fixtures/restore-cases.ts": [
+   "cddbb05d37c35e97",
+   0
+  ],
+  "packages/engine/tests/fixtures/syntax-corpus.ts": [
+   "6b7a4f40c596ec64",
+   32
+  ],
+  "packages/engine/tests/fixtures/value-differential.out.json": [
+   "fb94e4b235b3a9b6",
+   0
+  ],
+  "packages/engine/tests/fixtures/value-lexer.ts": [
+   "fe6a5b437a2ddc44",
+   0
+  ],
+  "packages/engine/tests/guard-json.test.ts": [
+   "5eef1868e73c7b04",
+   0
+  ],
+  "packages/engine/tests/huge-numbers.test.ts": [
+   "f88f74072eadea25",
+   0
+  ],
+  "packages/engine/tests/imports.test.ts": [
+   "82739415638c876d",
+   7
+  ],
+  "packages/engine/tests/integration.test.ts": [
+   "e68cb5a0d2292334",
+   0
+  ],
+  "packages/engine/tests/is-placeholder.test.ts": [
+   "680e1b558ab2c57e",
+   14
+  ],
+  "packages/engine/tests/language-honesty.test.ts": [
+   "8323650af796b7c2",
+   0
+  ],
+  "packages/engine/tests/licence-parity.test.ts": [
+   "b227951d1055b471",
+   0
+  ],
+  "packages/engine/tests/local-family-restore.test.ts": [
+   "3f58ab6e44ca3289",
+   0
+  ],
+  "packages/engine/tests/local-family-views.test.ts": [
+   "e05f88f1da59c38b",
+   0
+  ],
+  "packages/engine/tests/local-family.test.ts": [
+   "422a11101ebc174b",
+   4
+  ],
+  "packages/engine/tests/manual-masks.test.ts": [
+   "bed5595d570dbc68",
+   7
+  ],
+  "packages/engine/tests/map-never-holds-credentials.test.ts": [
+   "f42f92992be27ae6",
+   274
+  ],
+  "packages/engine/tests/object-key-names.test.ts": [
+   "b9cb0e5a52467b76",
+   0
+  ],
+  "packages/engine/tests/options.test.ts": [
+   "d9d91f72ba2bed73",
+   46
+  ],
+  "packages/engine/tests/ordinary-words.test.ts": [
+   "a764ddaad1b34d11",
+   1
+  ],
+  "packages/engine/tests/placeholder-values.test.ts": [
+   "896251e9a2e875e5",
+   0
+  ],
+  "packages/engine/tests/preamble.test.ts": [
+   "b2e43fd83cf16e00",
+   0
+  ],
+  "packages/engine/tests/purity.test.ts": [
+   "beb1eb5622b3ce47",
+   4
+  ],
+  "packages/engine/tests/python-triple-quoted.test.ts": [
+   "e85657e7274657f2",
+   2
+  ],
+  "packages/engine/tests/raw-only.redos.test.ts": [
+   "bd0808f9f9525fbf",
+   0
+  ],
+  "packages/engine/tests/readme-api.test.ts": [
+   "6cbad57c0fd01c7a",
+   7
+  ],
+  "packages/engine/tests/readme-examples.test.ts": [
+   "35d8a6c9f3c8f87e",
+   0
+  ],
+  "packages/engine/tests/readme-masking.test.ts": [
+   "967ae4219e8ec3e4",
+   0
+  ],
+  "packages/engine/tests/regulated-roundtrip.test.ts": [
+   "50a421ab68d5a2cb",
+   12
+  ],
+  "packages/engine/tests/regulated.test.ts": [
+   "70b4eefa830b5cf3",
+   17
+  ],
+  "packages/engine/tests/restore-jsdoc-lexical.test.ts": [
+   "409676928a3fb554",
+   0
+  ],
+  "packages/engine/tests/restore-options.test.ts": [
+   "2e502d54e30810f3",
+   0
+  ],
+  "packages/engine/tests/restore-report.test.ts": [
+   "9e5b923d71475e7d",
+   1
+  ],
+  "packages/engine/tests/restoreLayers.test.ts": [
+   "5083a378491ef66c",
+   0
+  ],
+  "packages/engine/tests/review-1-12-1.test.ts": [
+   "d3ce9483a38b0d1f",
+   46
+  ],
+  "packages/engine/tests/rule-budget.test.ts": [
+   "e5fd89ed5a1fcd61",
+   0
+  ],
+  "packages/engine/tests/rule-checks.test.ts": [
+   "1a82e1d990d5889e",
+   0
+  ],
+  "packages/engine/tests/rule-compile-count.test.ts": [
+   "32c358eb146198e3",
+   0
+  ],
+  "packages/engine/tests/rule-envelope.test.ts": [
+   "6b09324f734806e8",
+   0
+  ],
+  "packages/engine/tests/rule-pattern.test.ts": [
+   "8a9eda90dba68903",
+   0
+  ],
+  "packages/engine/tests/rules-unsafe.test.ts": [
+   "44c905c62686cbb9",
+   0
+  ],
+  "packages/engine/tests/secrets.context.test.ts": [
+   "38acb8ea5ed6ad53",
+   318
+  ],
+  "packages/engine/tests/secrets.grading.test.ts": [
+   "0bf8099c70a4d634",
+   20
+  ],
+  "packages/engine/tests/secrets.review.test.ts": [
+   "e770ef1a0870122a",
+   212
+  ],
+  "packages/engine/tests/secrets.test.ts": [
+   "ebbd560bf9345932",
+   198
+  ],
+  "packages/engine/tests/secrets.tokens.test.ts": [
+   "4260b2d522802715",
+   36
+  ],
+  "packages/engine/tests/stack-trace.test.ts": [
+   "c16f567d455dcb8a",
+   0
+  ],
+  "packages/engine/tests/team-namespace-type.test.ts": [
+   "ae03e5c1dccbfb7f",
+   0
+  ],
+  "packages/engine/tests/team-numbering.test.ts": [
+   "682b4d62d9265c99",
+   8
+  ],
+  "packages/engine/tests/team-retired.test.ts": [
+   "a35893153be2ee93",
+   0
+  ],
+  "packages/engine/tests/teamKeys.test.ts": [
+   "bfd9147f6663718f",
+   28
+  ],
+  "packages/engine/tests/teamNamespace.test.ts": [
+   "0eab969337c0613d",
+   0
+  ],
+  "packages/engine/tests/test-framework-names.test.ts": [
+   "d2e908f5289cf79f",
+   0
+  ],
+  "packages/engine/tests/trace-verbatim.test.ts": [
+   "897cad5914cf2b68",
+   0
+  ],
+  "packages/engine/tests/url-not-comment.test.ts": [
+   "6fa1133c2290d7b2",
+   2
+  ],
+  "packages/engine/tests/value-positions.test.ts": [
+   "3943707018cd1e28",
+   75
+  ],
+  "packages/engine/tests/vault-parity.test.ts": [
+   "cb5dd23997652fe8",
+   8
+  ],
+  "packages/engine/tests/written-record.test.ts": [
+   "23d8b7fb7083dcbe",
+   0
+  ],
+  "packages/engine/tsconfig.json": [
+   "c66824a167a3f05d",
+   0
+  ],
+  "packages/engine/tsconfig.typecheck.json": [
+   "0782fccc276421ff",
+   0
+  ],
+  "packages/engine/vitest.config.ts": [
+   "c09483a417e1235d",
+   0
+  ],
+  "packages/mcp/CHANGELOG.md": [
+   "9b581cb9107f1b8f",
+   177
+  ],
+  "packages/mcp/LICENSE": [
+   "af2317bad47545a8",
+   1
+  ],
+  "packages/mcp/README.md": [
+   "6fe511973ec65faf",
+   318
+  ],
+  "packages/mcp/package.json": [
+   "79ddb586b7962b03",
+   0
+  ],
+  "packages/mcp/src/cloud-tools.ts": [
+   "9553a2a212a425a3",
+   4
+  ],
+  "packages/mcp/src/identity.ts": [
+   "a88eb5fa39774acd",
+   0
+  ],
+  "packages/mcp/src/index.ts": [
+   "1658de19d73900a1",
+   0
+  ],
+  "packages/mcp/src/namespace.ts": [
+   "bac42375dc5362f9",
+   9
+  ],
+  "packages/mcp/src/rules.ts": [
+   "c4e29f19a6e01b9c",
+   0
+  ],
+  "packages/mcp/src/server.ts": [
+   "5a4b3f2ebf038432",
+   0
+  ],
+  "packages/mcp/src/sign-in-watch.ts": [
+   "482b11d3dd129745",
+   0
+  ],
+  "packages/mcp/src/tools.ts": [
+   "a6eed1730bdf5ba6",
+   2
+  ],
+  "packages/mcp/tests/agent-claims.test.ts": [
+   "faa31b124a0bfd89",
+   0
+  ],
+  "packages/mcp/tests/binary.test.ts": [
+   "9bd270e314c8b6a3",
+   0
+  ],
+  "packages/mcp/tests/client-identity.test.ts": [
+   "f5454553adfe91be",
+   0
+  ],
+  "packages/mcp/tests/cloud-tools.test.ts": [
+   "18b4d9342983b59a",
+   9
+  ],
+  "packages/mcp/tests/community-edition.test.ts": [
+   "c2b70cc7e6031497",
+   0
+  ],
+  "packages/mcp/tests/destructive-gate.test.ts": [
+   "a7bceed3e8c27036",
+   0
+  ],
+  "packages/mcp/tests/docs-tools.test.ts": [
+   "d47ad27d5a5a9fc6",
+   0
+  ],
+  "packages/mcp/tests/e2e-team-namespace.test.ts": [
+   "78c8bb41ac7a38b9",
+   2
+  ],
+  "packages/mcp/tests/env-switches.test.ts": [
+   "cfbe58ec0a6870f5",
+   0
+  ],
+  "packages/mcp/tests/file-kind.test.ts": [
+   "bea6972ae00ad798",
+   19
+  ],
+  "packages/mcp/tests/fixtures/offline-golden.json": [
+   "b9bfe090abe1a0e9",
+   6
+  ],
+  "packages/mcp/tests/golden-offline.test.ts": [
+   "96f5529b6ae82575",
+   1
+  ],
+  "packages/mcp/tests/guard-hint.test.ts": [
+   "1c1b035976c9b2c3",
+   0
+  ],
+  "packages/mcp/tests/guard-json-shared.test.ts": [
+   "e7bd22cf412ad277",
+   0
+  ],
+  "packages/mcp/tests/helpers/isolated-home.ts": [
+   "8c5f9a97aec95f02",
+   0
+  ],
+  "packages/mcp/tests/home-is-temporary.test.ts": [
+   "0f3968191f9d458e",
+   0
+  ],
+  "packages/mcp/tests/list-changed.test.ts": [
+   "fef62087f32b54dc",
+   0
+  ],
+  "packages/mcp/tests/local-family.test.ts": [
+   "f36a26919926dd70",
+   0
+  ],
+  "packages/mcp/tests/maps-list-injection.test.ts": [
+   "c24e8f525c7fb278",
+   0
+  ],
+  "packages/mcp/tests/mcp.test.ts": [
+   "7e18d0d663ed5993",
+   25
+  ],
+  "packages/mcp/tests/namespace-client-merge.test.ts": [
+   "4856fae713daf6cb",
+   1
+  ],
+  "packages/mcp/tests/namespace.test.ts": [
+   "d0cf48f25a05b6f5",
+   0
+  ],
+  "packages/mcp/tests/no-kind-values.test.ts": [
+   "f8482a35ed090e9f",
+   12
+  ],
+  "packages/mcp/tests/no-secrets.test.ts": [
+   "7447d65c5892fcfc",
+   1
+  ],
+  "packages/mcp/tests/offline-local.test.ts": [
+   "b802ebcc1db8585a",
+   0
+  ],
+  "packages/mcp/tests/project-env.test.ts": [
+   "434069a67f540501",
+   2
+  ],
+  "packages/mcp/tests/purity.test.ts": [
+   "5f3b659a4dd9f56d",
+   2
+  ],
+  "packages/mcp/tests/raw-only.test.ts": [
+   "07f610575b7c5b83",
+   13
+  ],
+  "packages/mcp/tests/refusal-visible.test.ts": [
+   "c3c6746de57bfba2",
+   0
+  ],
+  "packages/mcp/tests/request-budget.test.ts": [
+   "43a50558500ed558",
+   0
+  ],
+  "packages/mcp/tests/restore-hostile-keys.test.ts": [
+   "3e1fb8f2e55024b4",
+   0
+  ],
+  "packages/mcp/tests/restore-local.test.ts": [
+   "a7363957e508fffc",
+   4
+  ],
+  "packages/mcp/tests/restore-opt-in.test.ts": [
+   "53a2bab056335990",
+   0
+  ],
+  "packages/mcp/tests/restore-team.test.ts": [
+   "0a89acf6cb0988c2",
+   8
+  ],
+  "packages/mcp/tests/restore-warning.test.ts": [
+   "cfc46214ad096653",
+   0
+  ],
+  "packages/mcp/tests/rules-budget.test.ts": [
+   "86d02c71421aca7c",
+   1
+  ],
+  "packages/mcp/tests/rules-sealed.test.ts": [
+   "4cf3f285ca0f8f67",
+   16
+  ],
+  "packages/mcp/tests/rules.test.ts": [
+   "a414ae1d068619c7",
+   1
+  ],
+  "packages/mcp/tests/scrub-parity.test.ts": [
+   "d4c2bf817ed995b8",
+   0
+  ],
+  "packages/mcp/tests/strict-test-files.test.ts": [
+   "d603ee24c19de4f5",
+   0
+  ],
+  "packages/mcp/tests/team-unknown-local.test.ts": [
+   "8aa5f7b84c5d43ec",
+   0
+  ],
+  "packages/mcp/tsconfig.json": [
+   "1a9f0873fec04475",
+   0
+  ],
+  "packages/mcp/tsconfig.typecheck.json": [
+   "a3c73f122e5cc2de",
+   0
+  ],
+  "packages/mcp/vitest.config.ts": [
+   "df281abc45835ae1",
+   0
+  ],
+  "packages/mcp/vitest.setup.ts": [
+   "bd0857a5379c5f55",
+   0
+  ],
+  "playwright.config.ts": [
+   "080517377145cef7",
+   0
+  ],
+  "plugins/veilio-guard/.claude-plugin/plugin.json": [
+   "0ee8853bbc4485a4",
+   9
+  ],
+  "plugins/veilio-guard/README.md": [
+   "093d88518f855d5d",
+   32
+  ],
+  "plugins/veilio-guard/hooks/hooks.json": [
+   "c835c92d8e1159d2",
+   0
+  ],
+  "plugins/veilio-guard/hooks/register.ts": [
+   "969eb9c5c266740f",
+   0
+  ],
+  "plugins/veilio-guard/lib/fields.ts": [
+   "1c01b34c7fe48352",
+   2
+  ],
+  "plugins/veilio-guard/lib/frontmatter.ts": [
+   "4d4d7225ae7d4688",
+   0
+  ],
+  "plugins/veilio-guard/lib/guard.ts": [
+   "0e9b71c6f58c3bca",
+   90
+  ],
+  "plugins/veilio-guard/lib/host.ts": [
+   "f59d63fe3488ac40",
+   0
+  ],
+  "plugins/veilio-guard/lib/index.ts": [
+   "1d5dc39c2a11d20d",
+   0
+  ],
+  "plugins/veilio-guard/lib/listings.ts": [
+   "70a6812dd9e756ff",
+   0
+  ],
+  "plugins/veilio-guard/lib/mapfile.ts": [
+   "69e8292a316ce133",
+   0
+  ],
+  "plugins/veilio-guard/lib/paths.ts": [
+   "9593216cc063d19f",
+   94
+  ],
+  "plugins/veilio-guard/lib/policy.ts": [
+   "0027a6e80cb47d4e",
+   1
+  ],
+  "plugins/veilio-guard/lib/prompt-fields.ts": [
+   "e82ab052fc04b338",
+   0
+  ],
+  "plugins/veilio-guard/lib/reading.ts": [
+   "945c9a58262a66a1",
+   0
+  ],
+  "plugins/veilio-guard/lib/rules.ts": [
+   "e35d4e3e50daa0b5",
+   8
+  ],
+  "plugins/veilio-guard/lib/scrub.ts": [
+   "265ca16d45fd0dcd",
+   44
+  ],
+  "plugins/veilio-guard/lib/search.ts": [
+   "0519dcf0e054eaf0",
+   0
+  ],
+  "plugins/veilio-guard/lib/shell.ts": [
+   "0107e69f4ea4e30e",
+   11
+  ],
+  "plugins/veilio-guard/lib/ui.ts": [
+   "5a204502c9dc8e73",
+   0
+  ],
+  "plugins/veilio-guard/tests/arguments.test.ts": [
+   "e1c7bc1e3170141b",
+   8
+  ],
+  "plugins/veilio-guard/tests/bench/.gitignore": [
+   "f370ad043ec0c98a",
+   0
+  ],
+  "plugins/veilio-guard/tests/bench/bench-lib.mjs": [
+   "88ee61c075c8d316",
+   0
+  ],
+  "plugins/veilio-guard/tests/bench/bench-lib.test.mjs": [
+   "e1aa8f8bee141b4e",
+   26
+  ],
+  "plugins/veilio-guard/tests/bench/run-bench.mjs": [
+   "d1959650f64fb37d",
+   11
+  ],
+  "plugins/veilio-guard/tests/bench/score-bench.mjs": [
+   "85b1ee65c552b1bb",
+   4
+  ],
+  "plugins/veilio-guard/tests/bench/tasks/veilio-oss.json": [
+   "bb555ea592588762",
+   0
+  ],
+  "plugins/veilio-guard/tests/cold-map.test.ts": [
+   "9b8c5c3d6d06cd2c",
+   27
+  ],
+  "plugins/veilio-guard/tests/command.test.ts": [
+   "e8da04307e078701",
+   2
+  ],
+  "plugins/veilio-guard/tests/custom-rules.test.ts": [
+   "8187cef3be5296a4",
+   4
+  ],
+  "plugins/veilio-guard/tests/fail-closed.test.ts": [
+   "37aa844fa23f0db3",
+   0
+  ],
+  "plugins/veilio-guard/tests/fixtures/cold.ts": [
+   "8717de489a6e724a",
+   3
+  ],
+  "plugins/veilio-guard/tests/fixtures/generate.ts": [
+   "e683d697c745e7e5",
+   1
+  ],
+  "plugins/veilio-guard/tests/fixtures/grep-formats.ts": [
+   "68d1c7b96f746c88",
+   1
+  ],
+  "plugins/veilio-guard/tests/fixtures/oracle.ts": [
+   "0d54bd8c633234c2",
+   1
+  ],
+  "plugins/veilio-guard/tests/fixtures/recorded.ts": [
+   "b9f195dc610fc4d4",
+   0
+  ],
+  "plugins/veilio-guard/tests/helpers.ts": [
+   "1037e642991ce91b",
+   2
+  ],
+  "plugins/veilio-guard/tests/interpreter-refusal.test.ts": [
+   "178548e2d9218c60",
+   0
+  ],
+  "plugins/veilio-guard/tests/kit.ts": [
+   "4b63a5ece0234a4b",
+   0
+  ],
+  "plugins/veilio-guard/tests/listings.test.ts": [
+   "7996946f46871b69",
+   0
+  ],
+  "plugins/veilio-guard/tests/live/check-live.mjs": [
+   "be5f1c41770c3e41",
+   1
+  ],
+  "plugins/veilio-guard/tests/live/check-scale.mjs": [
+   "6759c2a3ee98c8b1",
+   0
+  ],
+  "plugins/veilio-guard/tests/live/project/notes.md": [
+   "298cba53ec52e300",
+   0
+  ],
+  "plugins/veilio-guard/tests/live/project/src/ledger.ts": [
+   "1648651d05e1ab77",
+   0
+  ],
+  "plugins/veilio-guard/tests/live/run-live.sh": [
+   "b3ee304e787a4ee2",
+   1
+  ],
+  "plugins/veilio-guard/tests/live/run-scale.sh": [
+   "c3b9f7db50d70114",
+   0
+  ],
+  "plugins/veilio-guard/tests/local-family.test.ts": [
+   "8ecd94394f6f2f35",
+   0
+  ],
+  "plugins/veilio-guard/tests/off-record.test.ts": [
+   "c3e3fb55c1be4b68",
+   0
+  ],
+  "plugins/veilio-guard/tests/ordinary-code.test.ts": [
+   "52ca5aa9193f6600",
+   0
+  ],
+  "plugins/veilio-guard/tests/ordinary-words.test.ts": [
+   "030ed4348168977a",
+   0
+  ],
+  "plugins/veilio-guard/tests/planted-map.test.ts": [
+   "7ac200eedf533180",
+   0
+  ],
+  "plugins/veilio-guard/tests/powershell.test.ts": [
+   "2dd3b16890134ade",
+   5
+  ],
+  "plugins/veilio-guard/tests/prompt-fields.test.ts": [
+   "f8a5a4cbcc0851d9",
+   0
+  ],
+  "plugins/veilio-guard/tests/prompts.test.ts": [
+   "b7300ba75977e6e0",
+   44
+  ],
+  "plugins/veilio-guard/tests/property.test.ts": [
+   "72db8290257c29fa",
+   1
+  ],
+  "plugins/veilio-guard/tests/raw-only.test.ts": [
+   "9775c98e7624855d",
+   10
+  ],
+  "plugins/veilio-guard/tests/results.test.ts": [
+   "6757d81cf1986ab4",
+   179
+  ],
+  "plugins/veilio-guard/tests/search-output.test.ts": [
+   "181a2cf705006d3d",
+   68
+  ],
+  "plugins/veilio-guard/tests/shell-restore.test.ts": [
+   "b048102844099783",
+   0
+  ],
+  "plugins/veilio-guard/tests/shell-spellings.test.ts": [
+   "8da61290ddbc25e9",
+   34
+  ],
+  "plugins/veilio-guard/tests/team-numbers.test.ts": [
+   "30038197dd232131",
+   0
+  ],
+  "plugins/veilio-guard/tests/team.test.ts": [
+   "43ce322087b2a8c1",
+   0
+  ],
+  "plugins/veilio-guard/tests/ui.test.ts": [
+   "7e96031757a81a7a",
+   0
+  ],
+  "plugins/veilio-guard/tsconfig.json": [
+   "498ca0c6b6c1dbe2",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/engine.d.ts": [
+   "2a2fdfeeb43d2503",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/engine.js": [
+   "891aab9191925763",
+   15
+  ],
+  "plugins/veilio-guard/vendor/engine/envelope.d.ts": [
+   "3aec91c1e3555149",
+   3
+  ],
+  "plugins/veilio-guard/vendor/engine/envelope.js": [
+   "008a52e6707f13cd",
+   14
+  ],
+  "plugins/veilio-guard/vendor/engine/imports.d.ts": [
+   "b7c857d0f00ee692",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/imports.js": [
+   "6d2d72552c4da0aa",
+   1
+  ],
+  "plugins/veilio-guard/vendor/engine/index.d.ts": [
+   "4044dc5d373a0561",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/index.js": [
+   "4044dc5d373a0561",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/languages.d.ts": [
+   "39c69b4a3340d3ca",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/languages.js": [
+   "813b3762eb1ebec7",
+   54
+  ],
+  "plugins/veilio-guard/vendor/engine/lines.d.ts": [
+   "ca3bde1f63523d3d",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/lines.js": [
+   "56cd8ce9724f3afe",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/localFamily.d.ts": [
+   "47811ddece831df0",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/localFamily.js": [
+   "2c1a2d6eeed8fb73",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/options.d.ts": [
+   "1130c6c1bf8e086e",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/options.js": [
+   "ea47dc32bc13ca01",
+   1
+  ],
+  "plugins/veilio-guard/vendor/engine/ordinaryWords.d.ts": [
+   "3addc7416eea76f2",
+   4
+  ],
+  "plugins/veilio-guard/vendor/engine/ordinaryWords.js": [
+   "27e8ba2f6a183c71",
+   10
+  ],
+  "plugins/veilio-guard/vendor/engine/product.d.ts": [
+   "3165f123a39d6d47",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/product.js": [
+   "c064f9b0942b590c",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/raw-only.d.ts": [
+   "31bad3bb713e41ed",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/raw-only.js": [
+   "a6ae95c515ce9f48",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/restoreLayers.d.ts": [
+   "920a0d939ec7d1bc",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/restoreLayers.js": [
+   "37de6363ade635f1",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-checks.d.ts": [
+   "f270a5e53b416726",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-checks.js": [
+   "bf458bb96de564f6",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-envelope.d.ts": [
+   "e4eaf2af4139e507",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-envelope.js": [
+   "12b0b0becfede5f6",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-pattern.d.ts": [
+   "088c89b2f374a200",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/rule-pattern.js": [
+   "34e7b6dec1468ce8",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/secrets.d.ts": [
+   "690544b99caec3ef",
+   46
+  ],
+  "plugins/veilio-guard/vendor/engine/secrets.js": [
+   "671b5301f5711b07",
+   125
+  ],
+  "plugins/veilio-guard/vendor/engine/teamKeys.d.ts": [
+   "896aa0c0af2008ca",
+   1
+  ],
+  "plugins/veilio-guard/vendor/engine/teamKeys.js": [
+   "3dac1f36569993c3",
+   30
+  ],
+  "plugins/veilio-guard/vendor/engine/teamNamespace.d.ts": [
+   "741aae1339dbcaeb",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/teamNamespace.js": [
+   "7a362fa975cb936e",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/traces.d.ts": [
+   "7dbce12a2dec1dc6",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/traces.js": [
+   "f30e4f546dbad9be",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/types.d.ts": [
+   "c474b31abaa64208",
+   3
+  ],
+  "plugins/veilio-guard/vendor/engine/types.js": [
+   "d3f1c86084eeee20",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/vault.d.ts": [
+   "076b202725e87357",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/vault.js": [
+   "93928071bf0c5097",
+   8
+  ],
+  "plugins/veilio-guard/vendor/engine/words.d.ts": [
+   "41bbda46bda1a227",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/words.js": [
+   "8508dab2834d5714",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/written-record.d.ts": [
+   "82e47069d137ee66",
+   0
+  ],
+  "plugins/veilio-guard/vendor/engine/written-record.js": [
+   "617229dd459eb1eb",
+   0
+  ],
+  "public/fonts/OFL-CrimsonPro.txt": [
+   "1820869bd5baa1c2",
+   2
+  ],
+  "public/fonts/OFL-Inter.txt": [
+   "5b9321a4298cfeb6",
+   2
+  ],
+  "public/fonts/OFL-JetBrainsMono.txt": [
+   "b2fe5e8987594e9f",
+   2
+  ],
+  "public/fonts/README.txt": [
+   "b0c1d76046b50bee",
+   0
+  ],
+  "public/icon.svg": [
+   "54d5af68cac697c3",
+   0
+  ],
+  "public/legal/privacy.md": [
+   "f18f6de69fb7dc4c",
+   3
+  ],
+  "public/legal/terms.md": [
+   "b5cdaf6dbf3009cf",
+   3
+  ],
+  "scripts/build-word-list.mjs": [
+   "32a6b44c4eadbfe4",
+   0
+  ],
+  "scripts/cd-differential.mts": [
+   "f95e7b65fea0a3c4",
+   0
+  ],
+  "scripts/check-engine-exports.mjs": [
+   "3eb8936ab4104b2b",
+   0
+  ],
+  "scripts/pin-guard.mjs": [
+   "aba59af5efeeebdb",
+   1
+  ],
+  "scripts/sync-action-version.mjs": [
+   "01acfc26b448400d",
+   0
+  ],
+  "scripts/sync-guard-engine.mjs": [
+   "b5d88bf8534facd0",
+   0
+  ],
+  "scripts/value-differential.mts": [
+   "839c557c198dcd82",
+   3
+  ],
+  "src/App.tsx": [
+   "de85a85c331d9756",
+   0
+  ],
+  "src/components/CodePanel.tsx": [
+   "302307bcffe0f07f",
+   4
+  ],
+  "src/components/CommentNotice.test.tsx": [
+   "e98543dd51325776",
+   0
+  ],
+  "src/components/CommentNotice.tsx": [
+   "c8a15cd2647c3835",
+   0
+  ],
+  "src/components/Footer.tsx": [
+   "a36da02fd9b41ff0",
+   0
+  ],
+  "src/components/LanguageFallbackNotice.test.tsx": [
+   "18d6d0ecb6b668ab",
+   0
+  ],
+  "src/components/LanguageFallbackNotice.tsx": [
+   "b65209404253b43f",
+   0
+  ],
+  "src/components/LocalKeyModal.test.tsx": [
+   "a705810c3dd7c1f5",
+   1
+  ],
+  "src/components/LocalKeyModal.tsx": [
+   "9b3b600c6e69dbae",
+   17
+  ],
+  "src/components/ManualMarksPanel.test.tsx": [
+   "872500263d7b8b59",
+   0
+  ],
+  "src/components/ManualMarksPanel.tsx": [
+   "ac66fe4c57eb59a6",
+   0
+  ],
+  "src/components/MapOverlay.tsx": [
+   "f98a2346959cba79",
+   0
+  ],
+  "src/components/Navbar.tsx": [
+   "9069a26f3b484581",
+   0
+  ],
+  "src/components/RestoreReportPanel.test.tsx": [
+   "7ca56467036d7d28",
+   0
+  ],
+  "src/components/RestoreReportPanel.tsx": [
+   "5a6e742b50f966a4",
+   0
+  ],
+  "src/components/SaveMapModal.tsx": [
+   "51e461de76afecef",
+   0
+  ],
+  "src/components/SecretPanel.test.tsx": [
+   "4bc3d1bcca9957e6",
+   14
+  ],
+  "src/components/SecretPanel.tsx": [
+   "cadcfe4c414149c4",
+   11
+  ],
+  "src/components/StrippedPanel.tsx": [
+   "91425370f4f4022a",
+   0
+  ],
+  "src/components/ThemeToggle.test.tsx": [
+   "5f3cf9d2ccdb71ce",
+   3
+  ],
+  "src/components/ThemeToggle.tsx": [
+   "4748ad57d5554bcb",
+   0
+  ],
+  "src/designTokens.test.ts": [
+   "fd2e07f38e2ebaeb",
+   5
+  ],
+  "src/global.css": [
+   "a519d0df3d6e32ee",
+   35
+  ],
+  "src/hooks/useDeriveController.test.ts": [
+   "419e570da9935106",
+   0
+  ],
+  "src/hooks/useDeriveController.ts": [
+   "aa6330fc928b29ec",
+   0
+  ],
+  "src/hooks/useLocalMaps.ts": [
+   "af9f15ae76eca0dc",
+   0
+  ],
+  "src/lib/importedMap.test.ts": [
+   "c7d12d3efbd8473c",
+   0
+  ],
+  "src/lib/importedMap.ts": [
+   "0b1a195e2d8ee7ed",
+   0
+  ],
+  "src/lib/kdf.test.ts": [
+   "10561448bc0a94ad",
+   0
+  ],
+  "src/lib/kdf.ts": [
+   "037a92716fb200d4",
+   0
+  ],
+  "src/lib/kdf.worker.ts": [
+   "6873dd489c244c02",
+   0
+  ],
+  "src/lib/kdfTransport.test.ts": [
+   "7c43f263f80b629a",
+   1
+  ],
+  "src/lib/kdfTransport.ts": [
+   "58b66b2fa1573fcd",
+   0
+  ],
+  "src/lib/localCrypto.test.ts": [
+   "1ebc158240317291",
+   4
+  ],
+  "src/lib/localCrypto.ts": [
+   "5f89ceee5b64cc0f",
+   1
+  ],
+  "src/lib/localMapStore.test.ts": [
+   "446ebd39f80aa61c",
+   4
+  ],
+  "src/lib/localMapStore.ts": [
+   "40fa01eab777713b",
+   9
+  ],
+  "src/lib/manualMarks.test.ts": [
+   "253d2fd8d36e1dae",
+   1
+  ],
+  "src/lib/manualMarks.ts": [
+   "65eb1d0244d5d9e4",
+   0
+  ],
+  "src/lib/passphrase.test.ts": [
+   "4e974e2410100e49",
+   17
+  ],
+  "src/lib/passphrase.ts": [
+   "36740d8b9e8c3c13",
+   6
+  ],
+  "src/lib/safeHref.test.ts": [
+   "4f0de68151a78996",
+   0
+  ],
+  "src/lib/safeHref.ts": [
+   "70a3b90621e4678e",
+   0
+  ],
+  "src/lib/severityStyle.ts": [
+   "f90ccd188c498d20",
+   0
+  ],
+  "src/lib/theme.test.ts": [
+   "08fd0573690ddf0e",
+   2
+  ],
+  "src/lib/theme.ts": [
+   "5dbe4eaa573ed912",
+   1
+  ],
+  "src/main.tsx": [
+   "920646a85ae27c3d",
+   0
+  ],
+  "src/pages/DashboardPage.tsx": [
+   "60b17fa0577a2f81",
+   0
+  ],
+  "src/pages/LegalPage.test.tsx": [
+   "f82f9d1a7e04c75a",
+   0
+  ],
+  "src/pages/LegalPage.tsx": [
+   "bf458d4ff244adf1",
+   8
+  ],
+  "src/pages/PricingPage.tsx": [
+   "89332a7cc67c25cf",
+   0
+  ],
+  "src/pages/ScrubPage.test.tsx": [
+   "4e07131e0d982a14",
+   0
+  ],
+  "src/pages/ScrubPage.tsx": [
+   "ca0a4d0b71255342",
+   1
+  ],
+  "src/pages/localMaps.test.tsx": [
+   "4662c02f24435ba6",
+   1
+  ],
+  "src/test-setup.ts": [
+   "5ee28cd2adfe9036",
+   0
+  ],
+  "src/vite-env.d.ts": [
+   "65996936fbb04291",
+   0
+  ],
+  "tests/action-version-pin.test.ts": [
+   "fef2bb7d0318b5ad",
+   0
+  ],
+  "tests/cloud-cross-references.test.ts": [
+   "fec4d0a1c127eae3",
+   0
+  ],
+  "tests/dependabot-ignores.test.ts": [
+   "8792d1652b18bf49",
+   0
+  ],
+  "tests/engine-changelog.test.ts": [
+   "330f7c421e006d5f",
+   0
+  ],
+  "tests/engine-exports.test.ts": [
+   "191119068b8614e6",
+   12
+  ],
+  "tests/guard/__snapshots__/cd-differential.test.ts.snap": [
+   "139cfd72c608ea66",
+   147
+  ],
+  "tests/guard/__snapshots__/search-differential.test.ts.snap": [
+   "8982d974d599ea08",
+   51
+  ],
+  "tests/guard/band.test.ts": [
+   "276b4a58c2ff6e06",
+   0
+  ],
+  "tests/guard/cd-corpus.test.ts": [
+   "c1e1aa6de7dbc89c",
+   0
+  ],
+  "tests/guard/cd-differential.test.ts": [
+   "203d9027a3ce0d2e",
+   0
+  ],
+  "tests/guard/cd-host.test.ts": [
+   "d1c170c15468aabf",
+   0
+  ],
+  "tests/guard/clients-strict.test.ts": [
+   "fdeb3b5cf90ef5f2",
+   0
+  ],
+  "tests/guard/comment-names.test.ts": [
+   "db0d5fcf73057c6d",
+   0
+  ],
+  "tests/guard/concurrent-save.test.ts": [
+   "04609e821de78030",
+   0
+  ],
+  "tests/guard/coverage.test.ts": [
+   "2f048a5cb97684bf",
+   0
+  ],
+  "tests/guard/credential-values.test.ts": [
+   "e35b44de58272cca",
+   135
+  ],
+  "tests/guard/docs.test.ts": [
+   "e20a1e52fc4c0073",
+   0
+  ],
+  "tests/guard/exempt.test.ts": [
+   "13e4a0a20870967c",
+   0
+  ],
+  "tests/guard/fields.test.ts": [
+   "65c5d0a475a64cd8",
+   0
+  ],
+  "tests/guard/file-kind.test.ts": [
+   "9edf24ac80e7402a",
+   11
+  ],
+  "tests/guard/fixtures/cd-corpus.ts": [
+   "85cbfaf7b5c6754e",
+   1
+  ],
+  "tests/guard/fixtures/cd-project.ts": [
+   "9e419ddccff7643f",
+   5
+  ],
+  "tests/guard/fixtures/reading-corpora.ts": [
+   "2048e7f01e37ab7e",
+   2
+  ],
+  "tests/guard/fixtures/reading-grammar.ts": [
+   "2f98cdd3f0dd8645",
+   20
+  ],
+  "tests/guard/fixtures/reading-shell.ts": [
+   "1b35fdec4396a202",
+   6
+  ],
+  "tests/guard/fixtures/search-corpus.ts": [
+   "2847f2478fc2087a",
+   316
+  ],
+  "tests/guard/frontmatter.test.ts": [
+   "3a21407421890acc",
+   0
+  ],
+  "tests/guard/guard-json-shared.test.ts": [
+   "cf4469e68dae80bb",
+   0
+  ],
+  "tests/guard/host-windows.test.ts": [
+   "cc58267e75eeeffd",
+   0
+  ],
+  "tests/guard/huge-numbers.test.ts": [
+   "d01212d6a661ab91",
+   0
+  ],
+  "tests/guard/index.test.ts": [
+   "5b29e9fd64db14e5",
+   0
+  ],
+  "tests/guard/keywords.test.ts": [
+   "b528c500ba047bc8",
+   0
+  ],
+  "tests/guard/language.test.ts": [
+   "d4fa89ce91241da4",
+   0
+  ],
+  "tests/guard/mapfile.test.ts": [
+   "3149ceea5275c503",
+   0
+  ],
+  "tests/guard/marketplace-pin.test.ts": [
+   "0aa24d3c1caf8379",
+   17
+  ],
+  "tests/guard/off-session.test.ts": [
+   "f9c18572e0c398c8",
+   0
+  ],
+  "tests/guard/paths.test.ts": [
+   "53c016289c1ba254",
+   0
+  ],
+  "tests/guard/policy.test.ts": [
+   "45d140ba2afe5fad",
+   0
+  ],
+  "tests/guard/property.test.ts": [
+   "8d37447eec3dc825",
+   0
+  ],
+  "tests/guard/reading-corpora.test.ts": [
+   "1d56012a76385a04",
+   0
+  ],
+  "tests/guard/reading-cost.test.ts": [
+   "a81124783b62030d",
+   0
+  ],
+  "tests/guard/reading-oracle.test.ts": [
+   "b56caf6e5c11e81b",
+   0
+  ],
+  "tests/guard/reading-words.test.ts": [
+   "996cbcf161c3c2a1",
+   15
+  ],
+  "tests/guard/rules-budget.test.ts": [
+   "e91e6acf60c1ccf1",
+   0
+  ],
+  "tests/guard/scrub.test.ts": [
+   "ed9ef70b1cce38c5",
+   322
+  ],
+  "tests/guard/search-differential.test.ts": [
+   "0b094a7c6cd96d7b",
+   0
+  ],
+  "tests/guard/search.test.ts": [
+   "9a741902618bb139",
+   6
+  ],
+  "tests/guard/shaped.test.ts": [
+   "08b0576e7c29bf7a",
+   0
+  ],
+  "tests/guard/shell-parse.test.ts": [
+   "df29af7e2291b817",
+   0
+  ],
+  "tests/guard/shell.test.ts": [
+   "05efb9129e4182f1",
+   0
+  ],
+  "tests/guard/sync-engine.test.ts": [
+   "d89ee88834c49909",
+   0
+  ],
+  "tests/guard/tracked-check.test.ts": [
+   "3249f0408908789e",
+   0
+  ],
+  "tests/guard/vitest-scope.test.ts": [
+   "c345a8b2fbbbc746",
+   0
+  ],
+  "tests/lockfile-manifest-sync.test.ts": [
+   "418c60079277206d",
+   0
+  ],
+  "tests/npm-scope-in-shipped-files.test.ts": [
+   "a22467df87013517",
+   0
+  ],
+  "tests/package-graph.test.ts": [
+   "a789e5f8e194f289",
+   0
+  ],
+  "tests/pricing-is-not-mirrored.test.ts": [
+   "201c19519875f402",
+   0
+  ],
+  "tests/release-config.test.ts": [
+   "6619ec902368c78f",
+   0
+  ],
+  "tests/workflow-hardening.test.ts": [
+   "99b49e91c457de61",
+   0
+  ],
+  "tsconfig.base.json": [
+   "ed23232119e7f74e",
+   0
+  ],
+  "tsconfig.json": [
+   "9aa7e62ecf009811",
+   0
+  ],
+  "vite.config.ts": [
+   "410ff189df247f46",
+   0
+  ]
+ }
+}

@@ -16,6 +16,9 @@ const FILES: Record<string, string> = {
   'app.env': 'DB_PASSWORD=Tr0ub4dor zebra91\nAPP_ENV=production\n',
   'compose.yml': 'services:\n  db:\n    environment:\n      API_TOKEN: Tr0ub4dor zebra91\n',
   'deploy.sh': 'export STRIPE_SECRET_KEY=Tr0ub4dorZebra91\nnode server.js\n',
+  // A password on a login command line, and a token that is a block scalar.
+  'login.sh': 'docker login -u ci -p Tr0ub4dorZebra91 reg.example\n',
+  'ci.yml': 'token: >-\n  Tr0ub4dorZebra91\n  Zebra91Tr0ub4dor\nname: x\n',
   'tests/fixtures/app.env': 'PGPASSWORD=postgres\n',
 }
 
@@ -36,7 +39,7 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 describe('anonymize_file: the file kind reaches the engine', () => {
-  for (const file of ['app.env', 'compose.yml', 'deploy.sh']) {
+  for (const file of ['app.env', 'compose.yml', 'deploy.sh', 'login.sh', 'ci.yml']) {
     it(`${file}: the value is redacted and no piece of it is in the map`, () => {
       const out = callTool('anonymize_file', { path: file }, ctx).text
       expect(out).toMatch(/__REDACTED_[A-Z_]+_\d+__/)
