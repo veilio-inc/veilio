@@ -1,5 +1,11 @@
 # @veilio-inc/cli
 
+## 0.13.2
+
+### Patch Changes
+
+- [#255](https://github.com/veilio-inc/veilio/pull/255) [`1157c67`](https://github.com/veilio-inc/veilio/commit/1157c674482176624b7f773670117cd1be9a6efb) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Shell scripts, Dockerfiles, YAML, `.env`, INI and text files are masked without reading `//` or `/*` as comments. The values of a Kubernetes Secret are redacted, in a YAML file and on stdin. These take effect with engine 1.19.2.
+
 ## 0.13.1
 
 ### Patch Changes

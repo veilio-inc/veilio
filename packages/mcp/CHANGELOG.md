@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.11.2
+
+### Patch Changes
+
+- [#255](https://github.com/veilio-inc/veilio/pull/255) [`1157c67`](https://github.com/veilio-inc/veilio/commit/1157c674482176624b7f773670117cd1be9a6efb) Thanks [@DlgSHi](https://github.com/DlgSHi)! - The restore and destructive switches are ignored when a project file names them in any JSON spelling or cannot be parsed. Shell scripts, Dockerfiles, YAML, `.env`, INI and text files are masked without reading `//` or `/*` as comments, and the values of a Kubernetes Secret are redacted, with engine 1.19.2.
+- Updated dependencies [[`1157c67`](https://github.com/veilio-inc/veilio/commit/1157c674482176624b7f773670117cd1be9a6efb)]:
+  - @veilio-inc/cli@0.13.2
+
 ## 0.11.1
 
 ### Patch Changes
