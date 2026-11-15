@@ -1308,7 +1308,10 @@ export const EXCEPTIONS: BaselineException[] = [
 
 /** Tracked files of this repository that hold more redaction tokens than the
  *  published 1.19.2 left in them (baseline-1.19.2.repo.json), by path: how
- *  many more, and the fix that adds them. */
+ *  many more, and the fix that adds them. Two more files gained redactions and
+ *  were then edited, so they are no longer held to the record: the guard's
+ *  lib/guard.ts (1) and its vendored secrets.js (3), both a constant under a
+ *  credential name whose text starts on the next line. */
 export const REPOSITORY_EXCEPTIONS: Record<
   string,
   { more: number; reason: (typeof REASONS)[number] }
@@ -1316,6 +1319,4 @@ export const REPOSITORY_EXCEPTIONS: Record<
   'plugins/veilio-guard/tests/live/run-live.sh': { more: 1, reason: 'credential-context' },
   'tests/guard/fixtures/search-corpus.ts': { more: 1, reason: 'credential-context' },
   'packages/engine/tests/secrets.test.ts': { more: 1, reason: 'multi-line-credential' },
-  'plugins/veilio-guard/lib/guard.ts': { more: 1, reason: 'multi-line-credential' },
-  'plugins/veilio-guard/vendor/engine/secrets.js': { more: 3, reason: 'multi-line-credential' },
 }
