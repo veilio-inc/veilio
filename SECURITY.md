@@ -73,6 +73,33 @@ The engine reduces, but cannot guarantee elimination of, identifying information
 (e.g. identifiers embedded in unusual string formats). Always review anonymized
 output before sharing it.
 
+Keys of these providers are redacted wherever they stand, by their format:
+
+- AWS: access key IDs, and a secret access key under its name
+- Stripe: secret and restricted keys (`sk_`, `rk_`), webhook secrets (`whsec_`)
+- GitHub: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_` tokens
+- GitLab: `glpat-` tokens
+- Slack: `xox…`, `xapp-` and `xwfp-` tokens, webhook URLs
+- Discord: bot tokens
+- OpenAI and Anthropic: `sk-` keys
+- Google: API keys (`AIza`), OAuth access tokens (`ya29.`), a service-account
+  key's ID
+- Azure: a storage account key under `AccountKey`
+- npm (`npm_`) and PyPI (`pypi-`) tokens
+- SendGrid (`SG.`) and Mailgun (`key-`) keys
+- Twilio: account SIDs (`AC`) and API key SIDs (`SK`)
+- Datadog and Cloudflare: a key under its name
+- Hugging Face (`hf_`), Supabase (`sbp_`), Square and Shopify tokens
+- DigitalOcean: `dop_v1_`, `doo_v1_` and `dor_v1_` tokens
+- Sentry: `sntryu_` and `sntrys_` tokens
+- Linear: `lin_api_` and `lin_oauth_` keys
+- HashiCorp Vault: `hvs.`, `hvb.` and `hvr.` tokens
+- age: `AGE-SECRET-KEY-1` keys
+- Heroku: `HRKU-` tokens
+
+Credential names are recognised in English, Polish, German, Spanish, French,
+Portuguese, Dutch and Greek.
+
 Known limits of the comment and credential rules:
 
 - Text between tags in JSX is read as code, not as text: a `/*` there followed
@@ -87,6 +114,11 @@ Known limits of the comment and credential rules:
   transform can follow that. Nor is one joined in another way: Python
   `"..." f"..."`, PHP `.`, `+=`, `[...].join("")`, a comment or a bracket after
   the `+`, a template `${""}`, Rust `concat!`.
+- A key of a provider not listed, with no credential word near it, is masked
+  like a string and held in the map. So is a secret wrapped in a call or read
+  from standard input.
+- A list under a credential-named key (`secrets:` followed by `- item` lines)
+  is read as a list of names: its items are masked and held in the map.
 - A private key is redacted from its BEGIN line on, also when the END line is
   missing. In a Kubernetes manifest of `kind: Secret`, every value under `data`
   and `stringData` is redacted. A Secret produced by a template (Helm) is not

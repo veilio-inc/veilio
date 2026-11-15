@@ -166,10 +166,11 @@ const { anonymized, secrets } = anonymize(code)
 //                 preview: 'sk_l…MNOP (31 chars)', redacted: true }]
 ```
 
-The replacement never enters the map, so `restore()` cannot bring it back. AWS,
-Stripe, GitHub, Slack, OpenAI, Anthropic, Google and npm keys, JWTs, bearer
-tokens, PEM private keys and connection-string passwords are redacted; emails
-and private IPs are reported but left in place. Findings carry a truncated
+The replacement never enters the map, so `restore()` cannot bring it back. Keys
+of the providers listed in `SECURITY.md`, JWTs, bearer tokens, PEM private keys
+and connection-string passwords are redacted wherever they stand; so is a
+high-entropy value next to a credential word, a login flag or an `Authorization`
+header. Emails and private IPs are reported but left in place. Findings carry a truncated
 preview, never the full value — they are rendered in UIs and may be logged.
 
 A private key is redacted from its BEGIN line on, also when the END line is
