@@ -13,6 +13,7 @@
 
 import { assertKnownOptions, optionKeys } from './options.js'
 import { lineIndex, positionOf } from './lines.js'
+import { LANGUAGES } from './languages.js'
 
 export type SecretSeverity = 'critical' | 'high' | 'medium' | 'low'
 
@@ -2404,6 +2405,11 @@ export function scanSecrets(
   options: ScanOptions = {}
 ): SecretScan {
   assertKnownOptions('scanSecrets', options, SCAN_OPTIONS)
+  const language = options.language ?? 'auto'
+  if (language !== 'auto' && !(LANGUAGES as readonly unknown[]).includes(language))
+    throw new TypeError(
+      `unknown language '${String(language)}'. Valid: auto, ${LANGUAGES.join(', ')}.`
+    )
   return scan(code, policy, options)
 }
 
