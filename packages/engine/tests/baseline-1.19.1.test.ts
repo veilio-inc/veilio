@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { anonymize, restore } from '../src/index.js'
 import type { AnonymizeOptions } from '../src/types.js'
 import { baselineRows, veiled } from './fixtures/baseline-corpus.js'
-import { EXCEPTIONS, FINDINGS } from './fixtures/baseline-exceptions.js'
+import { EXCEPTIONS, REASONS } from './fixtures/baseline-exceptions.js'
 import { SYNTAXES, VALUES } from './fixtures/syntax-corpus.js'
 import { HELD, ROWS as MARKS } from './fixtures/manual-marks.js'
 
@@ -48,12 +48,12 @@ describe('masking is what the published 1.19.1 gave, but for the listed rows', (
       expect(BASE.rows[name]!.map((a) => a.options)).toEqual(plain(options))
   })
 
-  it('lists only rows and option sets of the corpus, each once, under a finding', () => {
+  it('lists only rows and option sets of the corpus, each once, with a reason', () => {
     const known = new Set(rows.flatMap((r) => r.options.map((o) => id(r.name, o))))
     expect(EXCEPTIONS.map((e) => id(e.row, e.options)).filter((e) => !known.has(e))).toEqual([])
     expect(excepted.size).toBe(EXCEPTIONS.length)
     for (const e of EXCEPTIONS) {
-      expect(FINDINGS).toContain(e.finding)
+      expect(REASONS).toContain(e.reason)
       expect(e.why).not.toBe('')
     }
   })

@@ -14,7 +14,7 @@ import { isolateHome } from './helpers/isolated-home.js'
 
 const home = isolateHome()
 
-// strings.md row 4 of spec 094: the file is named.
+// The diagnostic names the file.
 const ignored = (file: string): string =>
   `veilio-mcp: a configuration file in this project (${file}) sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE, or could not be read as JSON. These two settings are ignored; set them in your own environment, outside the project, to use them.`
 const IGNORED = ignored('.mcp.json')

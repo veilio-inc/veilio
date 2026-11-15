@@ -51,8 +51,8 @@ export function contextFromArgv(
   }
 }
 
-/** strings.md row 4 of spec 094. `file`: one of PROJECT_FILES, never text
- *  from the project. */
+/** Said on stderr when the two switches are ignored. `file`: one of
+ *  PROJECT_FILES, never text from the project. */
 const switchesIgnored = (file: string): string =>
   `veilio-mcp: a configuration file in this project (${file}) sets VEILIO_MCP_RESTORE / VEILIO_MCP_DESTRUCTIVE, or could not be read as JSON. These two settings are ignored; set them in your own environment, outside the project, to use them.`
 
