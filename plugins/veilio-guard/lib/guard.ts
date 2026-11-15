@@ -2571,11 +2571,19 @@ export class Guard {
     const strip = (s: string) => redactKnown(s, this.destroyed)
     // A shell's stdout, read now or later from a background shell (review round 1 item 5).
     const shell = SHELL_OUTPUT.has(tool)
+    // The command asked for a heading per file: a heading then tells whose
+    // lines follow even where they carry no line number.
+    const headed = typeof args.command === 'string' && /--heading|--pretty/.test(args.command)
     // An error's text never fits the tool's output schema, which Claude Code
     // checks a hook's `{ result }` against: it goes back as the error text the
     // model reads, masked.
     if (outcome.isError) {
-      const raw = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      const text = typeof outcome.text === 'string' ? outcome.text : String(outcome.result ?? '')
+      // A failed command's output names its files as a successful one's does.
+      const raw = shell ? this.dropRawOnlyText(text, headed) : text
+      // What the dropped lines held is remembered all the same: a later copy
+      // of a credential in them is removed, never minted into the map.
+      if (raw !== text) this.destroyed.learn(destroyedValues([text], this.map))
       // A failed command's text reaches the model too (security review of
       // the encoded-name check).
       const runs = new DecodedOnce()
@@ -2593,8 +2601,14 @@ export class Guard {
     const fileKind = filePath ? fileKindOf(filePath) : undefined
     outcome = {
       ...outcome,
-      result: this.dropRawOnly(tool, outcome.result, await this.searchedThrough(tool, args)),
+      result: shell
+        ? this.dropRawOnlyShell(outcome.result, headed)
+        : this.dropRawOnly(tool, outcome.result, await this.searchedThrough(tool, args)),
     }
+    // A shell result's dropped lines teach what they held, as the whole
+    // result did before they were dropped.
+    if (shell && outcome.result !== received.result)
+      this.destroyed.learn(destroyedValues(texts, this.map))
     const policy = resultPolicy(tool, outcome.result, filePath)
     if (policy.kind === 'withhold') return this.withhold(policy.reason)
     const sent: string[] = []
@@ -2928,6 +2942,193 @@ export class Guard {
     return shown.every((l) => l.body!.replace(/\s+$/, '') === value) ? name : null
   }
 
+  /** A shell result: every string of its record (stdout, stderr) without
+   *  the lines and patch blocks of raw-only files. A result that holds none is
+   *  handed back as it came. */
+  private dropRawOnlyShell(result: unknown, headed: boolean): unknown {
+    if (typeof result === 'string') return this.dropRawOnlyText(result, headed)
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return result
+    let out: Record<string, unknown> | null = null
+    for (const [field, value] of Object.entries(result)) {
+      if (typeof value !== 'string') continue
+      const kept = this.dropRawOnlyText(value, headed)
+      if (kept !== value) (out ??= { ...(result as Record<string, unknown>) })[field] = kept
+    }
+    return out ?? result
+  }
+
+  /**
+   * Shell output that names the file of each line or block, whatever command
+   * printed it (a pipeline and `cd x && ...` included): a search line that
+   * starts with a raw-only path (`path:12:text`, `path-12-text`, `path:text`,
+   * and after a revision, `HEAD:path:12:text`) is dropped, and so is a patch
+   * block whose old or new path is raw-only, from its `diff` line to the next
+   * block or commit. Output that does not name its files (`grep -h`, a blob
+   * printed by git) cannot be attributed and is passed on.
+   * A raw-only path alone on a line is a heading when numbered lines follow
+   * it or the command asked for headings: the lines under it go too. A JSON
+   * record of a search goes by its path.
+   * Linear: each line is read once, and a bounded number of path ends is
+   * tried in it (rawOnlyLine).
+   */
+  private dropRawOnlyText(text: string, headed = false): string {
+    if (text === '') return text
+    const raw = (path: string): boolean => path !== '' && this.rawOnlyPath(path)
+    const lines = text.split('\n')
+    const kept: string[] = []
+    // The patch block being read: its lines, and whether a path of it is raw-only.
+    let block: string[] | null = null
+    let blockRaw = false
+    let header = false
+    let dropped = false
+    const close = (): void => {
+      if (block === null) return
+      if (blockRaw) dropped = true
+      else for (const line of block) kept.push(line)
+      block = null
+      blockRaw = false
+    }
+    // Lines of the hunk being read that are still to come, old side and new:
+    // while any is, a line is the file's own text, whatever it reads as.
+    let oldLeft = 0
+    let newLeft = 0
+    // A hunk whose header gives no count this reading follows (a combined diff).
+    let uncounted = false
+    // Lines under a heading that named a raw-only file: `numbered` while they
+    // start with a line number, `all` up to the next blank line.
+    let under: 'numbered' | 'all' | null = null
+    const strip = (line: string): string => {
+      const ended = line.endsWith('\r') ? line.slice(0, -1) : line
+      // Colour codes say nothing about whose line it is.
+      return ended.includes('\u001b') ? ended.replace(CSI, '') : ended
+    }
+    for (let n = 0; n < lines.length; n++) {
+      const line = lines[n]!
+      const bare = strip(line)
+      // Only a line a hunk can hold: output with lines filtered out of it
+      // (`| grep -v`) falls short of its count, and the next header is one.
+      if (block !== null && (oldLeft > 0 || newLeft > 0) && !/^(?:[-+ \\]|$)/.test(bare)) {
+        oldLeft = 0
+        newLeft = 0
+      }
+      if (block !== null && (oldLeft > 0 || newLeft > 0)) {
+        const side = bare[0]
+        if (side !== '+' && side !== '\\') oldLeft--
+        if (side !== '-' && side !== '\\') newLeft--
+        block.push(line)
+        continue
+      }
+      if (bare.startsWith('diff ')) {
+        close()
+        block = [line]
+        header = true
+        uncounted = false
+        blockRaw = patchPaths(bare).some(raw)
+        continue
+      }
+      if (block !== null) {
+        // A commit's header or a mail's first line ends a block; a mail's
+        // signature does too, where every hunk before it was counted out.
+        if (
+          /^(?:commit [0-9a-f]{7,64}\b|From [0-9a-f]{7,64} )/.test(bare) ||
+          (!uncounted && bare === '-- ')
+        )
+          close()
+        else {
+          const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(bare)
+          if (hunk) {
+            header = false
+            oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1])
+            newLeft = hunk[2] === undefined ? 1 : Number(hunk[2])
+          } else if (bare.startsWith('@@')) {
+            header = false
+            uncounted = true
+          } else if (header && !blockRaw) blockRaw = patchPaths(bare).some(raw)
+          block.push(line)
+          continue
+        }
+      }
+      if (under === 'numbered' && !/^(?:\d+[:=-]|--$)/.test(bare)) under = null
+      if (under === 'all' && bare === '') under = null
+      if (under !== null) {
+        dropped = true
+        continue
+      }
+      // A heading: a raw-only path alone on its line, with numbered lines
+      // under it, or where the command asked for headings. Anything else that
+      // is only a path is a listing, and stays.
+      if (bare !== '' && bare.length <= 4096 && this.rawOnlyAt(bare, bare.length)) {
+        const numbered = /^\d+[:=-]/.test(strip(lines[n + 1] ?? ''))
+        if (numbered || headed) {
+          under = numbered ? 'numbered' : 'all'
+          dropped = true
+          continue
+        }
+      }
+      if (this.rawOnlyRecord(bare) || this.rawOnlyLine(bare)) dropped = true
+      else kept.push(line)
+    }
+    close()
+    return dropped ? kept.join('\n') : text
+  }
+
+  /** Whether a line of output starts with a raw-only path, as a search
+   *  prints one: before a NUL (`-0`, `-z`), before a line number between two
+   *  of `:`, `-`, `=` (a match, a context line, a function's header), or,
+   *  printed without line numbers, before one of the line's first separators. */
+  private rawOnlyLine(line: string): boolean {
+    // shortcut: a path is at most PATH_MAX (4096); 16 line numbers and the
+    // first 8 separators are tried, so a line of many separators costs no
+    // more than a short one. Upgrade if a real path past that is shown.
+    const head = line.length > 4097 ? line.slice(0, 4097) : line
+    const nul = head.indexOf('\0')
+    if (nul > 0 && this.rawOnlyAt(head, nul)) return true
+    let at = 0
+    for (let tried = 0; tried < 16; tried++) {
+      NUMBERED.lastIndex = at
+      const m = NUMBERED.exec(head)
+      if (!m) break
+      if (m.index > 0 && this.rawOnlyAt(head, m.index)) return true
+      at = m.index + 1
+    }
+    const separates = (c: string | undefined): boolean => c === ':' || c === '-' || c === '='
+    for (let i = 1, tried = 0; i < head.length && tried < 8; i++) {
+      // A run of them (a rule of dashes) is tried once, at its start.
+      if (!separates(head[i]) || separates(head[i - 1])) continue
+      tried++
+      if (this.rawOnlyAt(head, i)) return true
+    }
+    return false
+  }
+
+  /** Whether the first `end` characters of a line are a raw-only path, also
+   *  read without a leading `rev:` (`HEAD:.env`). */
+  private rawOnlyAt(line: string, end: number): boolean {
+    const path = line.slice(0, end)
+    if (this.rawOnlyPath(path)) return true
+    const colon = path.indexOf(':')
+    return colon > 0 && colon < end - 1 && this.rawOnlyPath(path.slice(colon + 1))
+  }
+
+  /** Whether a line is a JSON record of a search (`rg --json`) whose path is
+   *  raw-only: its text, or its bytes where the path is not UTF-8. */
+  private rawOnlyRecord(line: string): boolean {
+    if (!line.startsWith('{') || !line.includes('"path"')) return false
+    try {
+      const path = (JSON.parse(line) as { data?: { path?: { text?: unknown; bytes?: unknown } } })
+        .data?.path
+      if (typeof path?.text === 'string') return this.rawOnlyAt(path.text, path.text.length)
+      // A path that cannot be read is dropped with its line.
+      if (typeof path?.bytes === 'string') {
+        const text = atob(path.bytes)
+        return this.rawOnlyAt(text, text.length)
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
   /** A search over a directory or a glob can reach raw-only files the call
    *  never named: their lines and names are dropped from the result. */
   private dropRawOnly(
@@ -3239,4 +3440,57 @@ function grepFormat(
     context: ['-A', '-B', '-C', 'context'].some((k) => Number(args[k]) > 0),
     ...(typeof args.path === 'string' ? { oneFile: args.path } : {}),
   }
+}
+
+/** A line number between two of a search's separators. */
+const NUMBERED = /[:=-]\d+[:=-]/g
+
+/** A terminal's colour and cursor codes. */
+// eslint-disable-next-line no-control-regex
+const CSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+
+/** The paths a line of a patch header names: both sides of a `diff` line
+ *  (`diff --git a/x b/y`, `diff -ru old/x new/y`, `diff --cc x`), and those
+ *  of `--- a/x`, `+++ b/y`, `rename from x`, `rename to y`, `copy from x`,
+ *  `copy to y`. Where the line does not say which reading is right (a path
+ *  with a space, the `a/` and `b/` prefixes), every reading is given: a patch
+ *  is dropped when any of them is raw-only. Paths git quoted are unquoted. */
+function patchPaths(line: string): string[] {
+  const m =
+    /^(?:diff (?:--git|--cc|--combined|-\S+)|---|\+\+\+|rename (?:from|to)|copy (?:from|to)) (.*)$/.exec(
+      line
+    )
+  if (!m) return []
+  const rest = m[1]!.replace(/\t.*$/, '')
+  const words: string[] = [rest]
+  // Quoted words whole, and every split at a space.
+  for (const q of rest.matchAll(/"((?:[^"\\]|\\.)*)"/g)) words.push(unquoteGitPath(q[1]!))
+  for (let at = rest.indexOf(' '), n = 0; at !== -1 && n < 64; at = rest.indexOf(' ', at + 1), n++)
+    words.push(rest.slice(0, at), rest.slice(at + 1))
+  const out: string[] = []
+  for (const word of words) {
+    const path =
+      word.startsWith('"') && word.endsWith('"') ? unquoteGitPath(word.slice(1, -1)) : word
+    out.push(path)
+    // Without git's side prefix, or the first folder of a plain diff.
+    const slash = path.indexOf('/')
+    if (slash !== -1) out.push(path.slice(slash + 1))
+  }
+  return out
+}
+
+/** A path as git quotes it (core.quotePath): `\\"`, `\\\\`, `\\t`, `\\n` and octal bytes. */
+function unquoteGitPath(quoted: string): string {
+  const bytes: number[] = []
+  const simple: Record<string, number> = { n: 10, t: 9, r: 13, '"': 34, '\\': 92 }
+  for (let i = 0; i < quoted.length; i++) {
+    const octal = /^\\([0-7]{3})/.exec(quoted.slice(i, i + 4))
+    if (octal) {
+      bytes.push(parseInt(octal[1]!, 8))
+      i += 3
+    } else if (quoted[i] === '\\' && simple[quoted[i + 1] ?? ''] !== undefined) {
+      bytes.push(simple[quoted[++i]!]!)
+    } else for (const b of new TextEncoder().encode(quoted[i]!)) bytes.push(b)
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes))
 }
