@@ -1234,6 +1234,40 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     gone(code, [VALUE], { path: 'deploy/secret.json' })
   })
 
+  // A byte-order mark before the first key is not part of the key: the
+  // manifest is read as without it, and the mark stays where it was.
+  const BOM = '﻿'
+  it.each([
+    ['pasted, kind first', `kind: Secret\ndata:\n  db: ${VALUE}\n`, {}],
+    ['pasted, data first', `data:\n  db: ${VALUE}\nkind: Secret\n`, {}],
+    ['pasted, data first, one space deep', `data:\n db: ${VALUE}\nkind: Secret\n`, {}],
+    ['a YAML path, kind first', `kind: Secret\ndata:\n  db: ${VALUE}\n`, { path: 'a.yaml' }],
+    ['a YAML path, data first', `data:\n db: ${VALUE}\nkind: Secret\n`, { path: 'a.yaml' }],
+    ['JSON, pasted', `{"kind": "Secret", "data": {"db": "${VALUE}"}}`, {}],
+    ['JSON, by its path', `{"kind": "Secret", "data": {"db": "${VALUE}"}}`, { path: 'a.json' }],
+  ] as const)('a Secret after a byte-order mark is read: %s', (_, code, options) => {
+    const { anonymized } = gone(BOM + code, [VALUE], options)
+    expect(anonymized.startsWith(BOM)).toBe(true)
+    expect(anonymized).toMatch(/db"?: "?__REDACTED_CREDENTIAL_\d+__/)
+    // The scan reads the same with the mark as without it.
+    const plain = scanSecrets(code, 'redact', options)
+    const marked = scanSecrets(BOM + code, 'redact', options)
+    expect(marked.code).toBe(BOM + plain.code)
+    expect(marked.findings.map((f) => f.label)).toEqual(plain.findings.map((f) => f.label))
+    expect(plain.findings.map((f) => f.label)).toContain('Value of a Kubernetes Secret')
+  })
+
+  it.each([[{}], [{ path: 'a.yaml' }]] as const)(
+    'text after a byte-order mark that is no Secret comes back whole (%j)',
+    (options) => {
+      const code = `${BOM}kind: ConfigMap\ndata:\n  db: ledgerName\n`
+      const { anonymized, map } = anonymize(code, options)
+      expect(anonymized.startsWith(BOM)).toBe(true)
+      expect(anonymized).not.toContain('__REDACTED_')
+      expect(restore(anonymized, map).restored).toBe(code)
+    }
+  )
+
   it.each([
     [
       'a compose file with a comment that says Secret',

@@ -1509,8 +1509,18 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
   // arguments than a call may take.
   const manifest = (): RawMatch[] => {
     if (!code.includes('Secret')) return []
-    if (scan.document || wholeJson(code)) return secretManifestValues(code, false)
-    return scan.guessed ? secretManifestValues(code, true) : []
+    // A byte-order mark is not part of the first key: the text is read
+    // without it, and what is found is counted from the text as given.
+    const bom = code.charCodeAt(0) === 0xfeff ? 1 : 0
+    const text = bom ? code.slice(1) : code
+    const unindented = !(scan.document || wholeJson(text))
+    if (unindented && !scan.guessed) return []
+    const values = secretManifestValues(text, unindented)
+    for (const m of values) {
+      m.start += bom
+      m.end += bom
+    }
+    return values
   }
   return found.concat(keyMaterial(code), manifest(), joinedKeys(code))
 }
