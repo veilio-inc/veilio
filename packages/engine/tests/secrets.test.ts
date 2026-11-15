@@ -1160,6 +1160,13 @@ describe('private-key lines and Secret manifests never reach the map', () => {
       'the second of two documents',
       `kind: ConfigMap\ndata:\n  level: verbose\n---\n${manifest('Secret', PASTED)}`,
     ],
+    ['spaces after the kind', manifest('Secret  ', PASTED)],
+    ['a comment after the kind', manifest('Secret # the ledger', PASTED)],
+    ['a comment after the quoted kind', manifest('"Secret" # the ledger', PASTED)],
+    [
+      'a comment after data that ends in a comma',
+      manifest('Secret', PASTED.replace('data:', 'data: # db, note,')),
+    ],
   ] as const)('a pasted Secret is read: %s', (_, code) => {
     for (const options of [{}, { language: 'auto' }] as const) {
       const { anonymized } = gone(code, [VALUE, TEXT], options)
@@ -1172,6 +1179,9 @@ describe('private-key lines and Secret manifests never reach the map', () => {
   })
 
   const NESTED = `  data:\n    db: ${VALUE}\n`
+  // Keyword arguments written from the first column: code, not a manifest.
+  const KEYWORDS =
+    'def make\n  create_thing(\nkind: Secret,\nname: userName,\ndata: payloadValue,\nretries: maxRetries\n  )\nend\n'
   it.each([
     ['a language is stated', manifest('Secret', PASTED), { language: 'python' }],
     ['another kind that starts the same', manifest('SecretStore', PASTED), {}],
@@ -1181,11 +1191,38 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     ['data is indented only', `kind: Secret\nspec:\n${NESTED}`, {}],
     ['data is quoted', `kind: Secret\n"data":\n  db: ${VALUE}\n`, {}],
     ['the kind and data stand in two documents', `kind: Secret\n---\n${PASTED}`, {}],
+    ['the kind line goes on after the word', `kind: Secret, name: ledger\n${PASTED}`, {}],
+    ['more stands after the kind', `kind: Secret/v1\n${PASTED}`, {}],
+    ['the kind line ends in a comma', KEYWORDS, {}],
+    [
+      'the data line holds a value that ends in a comma',
+      'kind: Secret\ndata: payloadValue,\nretries: maxRetries\n',
+      {},
+    ],
+    [
+      'the data line holds braces that end in a comma',
+      'kind: Secret\nstringData: { db: payloadValue },\nretries: maxRetries\n',
+      {},
+    ],
   ] as const)('pasted text is no Secret when %s', (_, code, options) => {
     const { anonymized, map } = anonymize(code, options)
     expect(anonymized).not.toContain('__REDACTED_')
     expect(restore(anonymized, map).restored).toBe(code)
     expect(scanSecrets(code, 'redact', options).findings).toEqual([])
+  })
+
+  // To the byte what it gave before a pasted manifest was read.
+  it('keyword arguments that name the kind are unchanged', () => {
+    const { anonymized, map } = anonymize(KEYWORDS)
+    expect(anonymized).toBe(
+      'def make\n  __FN__1(\nkind: Secret,\nname: __VAR__3,\ndata: __VAR__1,\nretries: __VAR__2\n  )\nend\n'
+    )
+    expect(map).toEqual({
+      __FN__1: 'create_thing',
+      __VAR__1: 'payloadValue',
+      __VAR__2: 'maxRetries',
+      __VAR__3: 'userName',
+    })
   })
 
   // Code that carries a manifest in a literal: the manifest's own values are

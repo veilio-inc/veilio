@@ -1703,8 +1703,12 @@ const SECRET_AFTER_KIND =
     .source
 const NAMES_SECRET = new RegExp(`(?<![\\w$.-])\\\\?["']?kind\\\\?["']?${SECRET_AFTER_KIND}`)
 // The same, as text of no stated kind must have it: the key unquoted and
-// first on its line.
-const NAMES_SECRET_UNINDENTED = new RegExp(`^kind${SECRET_AFTER_KIND}`, 'm')
+// first on its line, and nothing after the word but white space or a comment
+// (`kind: Secret,` is an argument in code).
+const NAMES_SECRET_UNINDENTED = new RegExp(
+  `^kind${SECRET_AFTER_KIND}\\\\?["']?[ \\t]*(?:#.*)?\\r?$`,
+  'm'
+)
 const DATA_KEY = /(?<![\w$.-])\\?["']?(?:data|stringData)\\?["']?[ \t]*:[ \t]*/g
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/
 
@@ -1734,8 +1738,9 @@ function wholeJson(code: string): boolean {
  * JSON as a whole): an object in code that names the kind holds names, which
  * are masked and restored. Text with no path, kind or language (`unindented`)
  * is read more narrowly, since it may be code: a document must name the kind
- * with an unquoted `kind:` first on a line, and only an unquoted `data` or
- * `stringData` first on a line opens a region. A Secret a template builds
+ * with an unquoted `kind:` first on a line that ends after the word (white
+ * space and a comment aside), and only an unquoted `data` or `stringData`
+ * first on a line opens a region, unless a value on that line ends in a comma. A Secret a template builds
  * (Helm) is not recognised. One pass over each document.
  */
 function secretManifestValues(code: string, unindented: boolean): RawMatch[] {
@@ -1939,6 +1944,11 @@ function secretManifestValues(code: string, unindented: boolean): RawMatch[] {
     }
     const at = DATA_KEY.lastIndex
     const stop = lineEnd(at, limit)
+    let to = stop
+    while (to > at && blank(code[to - 1])) to--
+    // In text of no stated kind, a value on the key's line that ends in a
+    // comma is an argument in code, not a manifest's key.
+    if (unindented && to > at && code[at] !== '#' && code[to - 1] === ',') continue
     // Asked for at most once a line: the reading goes on at the next line.
     const column = (): number => m.index - (code.lastIndexOf('\n', m.index) + 1)
     let next: number
@@ -1946,8 +1956,6 @@ function secretManifestValues(code: string, unindented: boolean): RawMatch[] {
     else if (at >= stop || code[at] === '#' || code[at] === '\r')
       next = block(stop + 1, limit, column())
     else {
-      let to = stop
-      while (to > at && blank(code[to - 1])) to--
       if (opensQuote(at)) {
         const q = quoted(at, to)
         emit(q.start, q.end)
