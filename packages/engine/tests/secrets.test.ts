@@ -811,6 +811,44 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     expect(anonymized).toMatch(/\r\nnext: \S+\r\n$/)
   })
 
+  it.each([
+    ['CR', '\r'],
+    ['U+2028', '\u2028'],
+    ['CR and LF mixed', '\r', '\n'],
+  ])('lines that end in %s only, no END line', (_, eol, second = eol) => {
+    const body = lines(3)
+    const code = `mode=on${eol}${BEGIN}${eol}${body[0]}${second}${body[1]}${eol}${body[2]}${eol}`
+    const { anonymized, map } = gone(code, body)
+    expect(anonymized).toBe(`mode=on${eol}__REDACTED_PRIVATE_KEY_1__${eol}`)
+    expect(Object.values(map).join(' ')).not.toMatch(/[A-Za-z0-9]{12}/)
+  })
+
+  it('CR line ends behind a prefix, with a line after the key', () => {
+    const body = [...lines(3), made(9, 12)]
+    const code = `# ${BEGIN}\r${body.map((l) => '# ' + l).join('\r')}\r#\rnext line\r`
+    const { anonymized } = gone(code, body)
+    expect(anonymized).toContain('# __REDACTED_PRIVATE_KEY_1__\r')
+    expect(anonymized).toMatch(/\rnext line\r$/)
+  })
+
+  it.each([
+    ['without an END line', ''],
+    ['with its END line', '-----END ENCRYPTED PRIVATE KEY-----\n'],
+  ])('an encrypted key (PKCS#8) %s', (_, tail) => {
+    const body = lines(3)
+    const code = `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${body.join('\n')}\n${tail}`
+    const { anonymized, map } = gone(code, body)
+    expect(anonymized).toBe('__REDACTED_PRIVATE_KEY_1__\n')
+    expect(map).toEqual({})
+  })
+
+  it('a complete encrypted key in one string, its line ends written as escapes', () => {
+    const body = lines(3)
+    const code = `const pem = "-----BEGIN ENCRYPTED PRIVATE KEY-----\\n${body.join('\\n')}\\n-----END ENCRYPTED PRIVATE KEY-----"\n`
+    const { anonymized } = gone(code, body, { language: 'typescript' })
+    expect(anonymized).toMatch(/= "__REDACTED_PRIVATE_KEY_1__"\n$/)
+  })
+
   it('a BEGIN line inside a line of code starts no key', () => {
     const code = `if (pem.startsWith("${BEGIN}")) {\n  return true\n}\n`
     expect(scanSecrets(code).findings).toEqual([])

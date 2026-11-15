@@ -615,7 +615,7 @@ const PATTERNS: Pattern[] = [
     disposition: 'destroy',
     severity: 'critical',
     label: 'Private key block',
-    re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/g,
+    re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
   },
   {
     type: 'aws-access-key',
@@ -1606,8 +1606,12 @@ function joinedKeys(code: string): RawMatch[] {
 }
 
 const KEY_BEGIN =
-  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----[ \t]*\r?$/gm
-const KEY_END = /-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[ \t]*$/gm
+const KEY_END = /-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/
+// What `$` ends a line at: a key copied from an old Mac file or a web page
+// has its lines all the same.
+const ENDS_LINE = (c: string | undefined): boolean =>
+  c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029'
 const BASE64_LINE = /^[A-Za-z0-9+/=]+$/
 const PEM_HEADER = /^[A-Za-z][A-Za-z0-9-]*: \S/
 
@@ -1625,16 +1629,21 @@ function keyMaterial(code: string): RawMatch[] {
   KEY_BEGIN.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = KEY_BEGIN.exec(code)) !== null) {
-    let at = code.indexOf('\n', m.index) + 1
+    // The line after the one that ends at `i`: CRLF is one line end.
+    const next = (i: number): number => i + (code[i] === '\r' && code[i + 1] === '\n' ? 2 : 1)
+    let at = next(m.index + m[0].length)
     let end = -1
     let body = false
     // What stands before BEGIN on its line stands before every line of a key
     // shown in a diff, a quotation or a comment (`+`, `> `, `# `).
-    const prefix = code.slice(code.lastIndexOf('\n', m.index) + 1, m.index)
+    let line0 = m.index
+    while (line0 > 0 && !ENDS_LINE(code[line0 - 1])) line0--
+    const prefix = code.slice(line0, m.index)
     const bare = prefix.trimEnd()
-    while (at > 0 && at < code.length) {
-      const nl = code.indexOf('\n', at)
-      const raw = code.slice(at, nl === -1 ? code.length : nl)
+    while (at < code.length) {
+      let nl = at
+      while (nl < code.length && !ENDS_LINE(code[nl])) nl++
+      const raw = code.slice(at, nl)
       const line = (
         bare === ''
           ? raw
@@ -1653,7 +1662,7 @@ function keyMaterial(code: string): RawMatch[] {
         }
         end = at + raw.trimEnd().length
       }
-      at = nl + 1
+      at = next(nl)
     }
     if (at > KEY_BEGIN.lastIndex) KEY_BEGIN.lastIndex = at
     if (!body) continue

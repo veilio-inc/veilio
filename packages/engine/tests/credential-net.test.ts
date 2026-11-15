@@ -298,6 +298,7 @@ describe('key material, Secret manifests and joined literals are read in linear 
   // every BEGIN line, which is its own, bounded, cost.
   const texts = (n: number): string[] => [
     BEGIN + 'QUJD\n'.repeat(n),
+    BEGIN.trimEnd() + '\rQUJD'.repeat(n),
     'kind: Secret\n'.repeat(n),
     // References, so the walk is timed and not the list of findings after it.
     'kind: Secret\ndata:\n' + '  a: ${B}\n'.repeat(n),
