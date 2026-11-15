@@ -920,6 +920,78 @@ export const EXCEPTIONS: BaselineException[] = [
     reason: 'credential-name-language',
     why: 'a value under a credential name in Polish, German, Spanish, French, Portuguese, Dutch or Greek is redacted',
   },
+  {
+    row: 'lines: YAML folded, stripped',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML folded',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML literal',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML literal, stripped',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML literal, indented by two',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML literal, at the end of the file',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: YAML double-quoted over two lines',
+    options: { fileKind: 'yaml' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: TypeScript joined over a line break',
+    options: { language: 'typescript' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: TypeScript typed, value on the next line',
+    options: { language: 'typescript' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: TypeScript property, value on the next line',
+    options: { language: 'typescript' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: Python in parentheses',
+    options: { language: 'python' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
+  {
+    row: 'lines: Python backslash continuation',
+    options: { language: 'python' },
+    reason: 'multi-line-credential',
+    why: 'a credential value that runs over lines, or starts on the line after its name, is redacted whole',
+  },
 ]
 
 /** Tracked files of this repository that hold more redaction tokens than the
@@ -931,4 +1003,7 @@ export const REPOSITORY_EXCEPTIONS: Record<
 > = {
   'plugins/veilio-guard/tests/live/run-live.sh': { more: 1, reason: 'credential-context' },
   'tests/guard/fixtures/search-corpus.ts': { more: 1, reason: 'credential-context' },
+  'packages/engine/tests/secrets.test.ts': { more: 1, reason: 'multi-line-credential' },
+  'plugins/veilio-guard/lib/guard.ts': { more: 1, reason: 'multi-line-credential' },
+  'plugins/veilio-guard/vendor/engine/secrets.js': { more: 3, reason: 'multi-line-credential' },
 }

@@ -393,6 +393,23 @@ describe('the value positions are linear on adversarial text', () => {
     'ł'.repeat(n),
     'hasło="x" '.repeat(n),
     ('a'.repeat(99) + 'ł ').repeat(n / 10),
+    // Block scalars under a credential key: one after another, one inside
+    // another, one long body; quoted scalars that never close.
+    'token: |\n  a1\n'.repeat(n),
+    Array.from({ length: n / 10 }, (_, i) => ' '.repeat(i % 60) + 'token: |\n').join(''),
+    'token: |\n' + '  a1b2c3\n'.repeat(n),
+    'token: "a1\n'.repeat(n),
+    // Quotes that never close, under keys of every spelling: a failed
+    // reading is not made again from each line.
+    'my token: "a1\n'.repeat(n),
+    ('my token: "a1\n' + "my token: 'b2\n").repeat(n / 2),
+    'my token: "a1\n' + "my token: 'b2\n".repeat(n),
+    ('my token: "a1\n' + 'zz\n'.repeat(9)).repeat(n / 10),
+    'token: "a1\n' + '  b2\n'.repeat(n),
+    // Literals first on their lines, and joined over line breaks.
+    'const secret =\n  "a1" +\n'.repeat(n),
+    '"a1"\n'.repeat(n),
+    'const secret = "a1"' + ' +\n  "b2"'.repeat(n) + '\n',
   ]
   it('2,000 and 16,000 repeats', () => {
     const [a, b] = [2_000, 16_000].map((n) => texts(n).map(time))

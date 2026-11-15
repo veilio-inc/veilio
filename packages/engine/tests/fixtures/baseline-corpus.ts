@@ -1306,7 +1306,8 @@ export const MULTI_LINE_KEPT: { name: string; path: string; text: string }[] = [
     text: `def read_token():\n    """Reads ${L1} from disk."""\n    return 1\n`,
   },
 ]
-const pathLanguage = (path: string): AnonymizeOptions =>
+/** The options a row of the three lists above is masked with. */
+export const pathLanguage = (path: string): AnonymizeOptions =>
   path.endsWith('.ts')
     ? { language: 'typescript' }
     : path.endsWith('.py')
