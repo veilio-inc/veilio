@@ -174,6 +174,10 @@ export interface ScanOptions {
      *  (`fileKindOf`): turns on the assignment rules for that kind and nothing
      *  else. Adds to the kind a `path` implies; it never replaces it. */
     fileKind?: FileKind;
+    /** The language the caller stated for the text, if any. Text with no
+     *  `path`, no `fileKind` and no language but `auto` may be anything: a
+     *  Kubernetes Secret is read in it only from its unindented keys. */
+    language?: string;
 }
 /**
  * Where the credentials in `code` stand, whatever the policy: every value a

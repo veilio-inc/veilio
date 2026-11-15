@@ -78,10 +78,8 @@ describe("the guard's Read: the file kind reaches the engine", () => {
 })
 
 describe("the guard's Read: a glob in a script opens no comment", () => {
-  // The guard reads with its own copy of the engine (vendor/engine): this
-  // passes, and `.fails` goes, once scripts/sync-guard-engine.mjs has copied
-  // the engine that reads a glob as code.
-  it.fails('clean.sh: every name after the glob is masked and saved to the map', async () => {
+  // The guard reads with its own copy of the engine (vendor/engine).
+  it('clean.sh: every name after the glob is masked and saved to the map', async () => {
     const guard = new Guard(io, { rawOnly: [], mcpRestore: [] })
     await guard.load(root)
     const path = join(root, 'clean.sh')

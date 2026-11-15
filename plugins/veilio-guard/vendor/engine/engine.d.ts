@@ -25,7 +25,7 @@ export declare function withAiPreamble(anonymized: string, map?: SymbolMap): str
  * put one back — and the figure on screen would otherwise describe the previous
  * version of the text.
  */
-export declare function measureCommentExposure(code: string, language?: LanguageOption): CommentExposure;
+export declare function measureCommentExposure(code: string, language?: LanguageOption, where?: Pick<AnonymizeOptions, 'fileKind' | 'path'>): CommentExposure;
 /** Base for spans the author marked by hand. Not an IdentifierRole: a manual
  *  mark is frequently not an identifier at all — a surname in a comment, a bare
  *  account number — which is the entire reason the feature exists. */

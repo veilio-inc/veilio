@@ -298,6 +298,30 @@ const PGPASS_SHAPE = /^[^:\s]+:(?:\d{1,5}|\*):[^:\s]+:[^:\s]+:(\S+)$/dgm;
 const PGPASS_LINE = /^(?![ \t]*#)(?:[^:\n]*:){4}([^\n]+)$/dgm;
 // `key=value` pairs inside a value: a connection string, a query string.
 const INNER = /(?<![\w.$-])([A-Za-z_][\w.-]{0,100})[ \t]*[=:][ \t]*([^\s;&,'"<>]+)/dg;
+// A URL read as a pair has its scheme for a key (`https` = the rest), so the
+// pairs of its query and fragment lie inside that value: a pair there starts
+// after a `?` or `#`.
+const INNER_KEY = /(?<![\w.$-])([A-Za-z_][\w.-]{0,100})[=:]/g;
+const QUERY_MARK = /[?#]/g;
+/** The first credential-named pair after a `?` or `#` in the value of a pair
+ *  that is not one: its key, and where its value starts. That value runs to
+ *  the end of `value`, as the enclosing pair's does. Read as INNER would read
+ *  what follows each mark in turn, in one forward walk. */
+function pairAfterMark(value) {
+    let from = 0;
+    for (;;) {
+        QUERY_MARK.lastIndex = from;
+        if (!QUERY_MARK.test(value))
+            return null;
+        INNER_KEY.lastIndex = QUERY_MARK.lastIndex;
+        const m = INNER_KEY.exec(value);
+        if (!m || INNER_KEY.lastIndex >= value.length)
+            return null;
+        if (CREDENTIAL.test(m[1]))
+            return { key: m[1], at: INNER_KEY.lastIndex };
+        from = INNER_KEY.lastIndex;
+    }
+}
 // Configuration lines. Each starts at a line start, every run is bounded or
 // ends at the line's end, and no quantified group nests another: linear.
 const ENV_LINE = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]{0,200})[ \t]*=([^\n]*)$/dgm;
@@ -598,10 +622,14 @@ export function valueSpans(text, scan = {}) {
         if (span.credential)
             continue;
         for (const m of span.value.matchAll(INNER)) {
-            if (!CREDENTIAL.test(m[1]))
-                continue;
             const [s, e] = m.indices[2];
-            add(span.start + s, span.start + e, m[1], false, 'inner');
+            if (CREDENTIAL.test(m[1]))
+                add(span.start + s, span.start + e, m[1], false, 'inner');
+            else {
+                const inside = pairAfterMark(m[2]);
+                if (inside)
+                    add(span.start + s + inside.at, span.start + e, inside.key, false, 'inner');
+            }
         }
     }
     // A value written as one wins over the same text read as a bare name.

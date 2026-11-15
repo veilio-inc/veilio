@@ -4,6 +4,7 @@ import { compileRuleProgram, ruleBudget, } from './rule-pattern.js';
 import { classKeywordsFor, commentSyntaxFor, fnKeywordsFor, isKeyword, describeLanguage, guessLanguage, } from './languages.js';
 import { credentialSpans, detectSecrets, hasBlockingSecrets, previewSecret, redactionTokensOf, scanSecrets, fileKindOf, } from './secrets.js';
 import { lineIndex, positionOf } from './lines.js';
+import { languageOfPath } from './imports.js';
 import { PRODUCT_NAME, REDACTION_PREFIX } from './product.js';
 import { blankSpans, inSpan, traceSpans } from './traces.js';
 import { isLocalTag, isRolePlaceholder, isSaneBlock, localBaseOf, MAX_PLACEHOLDER_NUMBER, teamBaseOf, usedInBlock, } from './localFamily.js';
@@ -383,8 +384,39 @@ function templateEnd(code, at) {
     }
     return -1;
 }
+/** A line terminator other than `\n` at `at`: a `\r` no `\n` follows, U+2028, U+2029. */
+function endsLine(code, at) {
+    const c = code[at];
+    return c === '\u2028' || c === '\u2029' || (c === '\r' && code[at + 1] !== '\n');
+}
+// The first word of a Python `def` or `class` header.
+const HEADER_START = /(?:async[ \t]+def|def|class)(?![\w$])/y;
+// A text that begins with a triple-quoted literal: read as a module's
+// docstring. A fragment cut out of a file cannot tell an opening quote from a
+// closing one; set this to false to read it as a string instead.
+const TEXT_MAY_START_WITH_DOCSTRING = true;
 // A markdown fence line: three or more backticks or tildes at a line start.
 const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
+const READ_EVERY_OPENER = [];
+/** File kinds that are not source code: a glob there (`build/*`, `src/**`) or
+ *  a `//` in a path is text, never a comment. */
+const NOT_SOURCE = new Set(['shell', 'yaml', 'dotenv', 'ini', 'text']);
+/** The comment openers that open nothing in this text. `//` and `/*` are
+ *  comments of some languages only, and reading one where it is none leaves
+ *  the rest of the line, or of the file, as written:
+ *  - in a shell script, a Dockerfile, YAML, `.env`, INI and plain-text files
+ *    neither opens a comment, whatever language is named with the file;
+ *  - where the language is only detected (none named, and no file extension
+ *    that names one) `/*` opens none; `//` ends with its line and still does.
+ *  The tokenizer reads such a run as code of the same extent, so nothing
+ *  after it is read differently. Masking only: restore reads as before. */
+function plainReading(opts) {
+    const kind = opts.fileKind ?? (opts.path ? fileKindOf(opts.path) : undefined);
+    if (kind && NOT_SOURCE.has(kind))
+        return ['//', '/*'];
+    const named = (opts.language ?? 'auto') !== 'auto' || (opts.path && languageOfPath(opts.path));
+    return named ? READ_EVERY_OPENER : ['/*'];
+}
 /** `forRestore`: the reading restore's JSDoc search needs, for code that may sit
  *  in a markdown answer. Masking does not ask for it, and reads as it always did
  *  except for a regex literal holding a comment opener, which is code there too.
@@ -398,7 +430,7 @@ const FENCE_LINE = /[ \t]*(?:`{3,}|~{3,})[^\n]*/y;
  *    template literal ends it, which flips which backticks open and close
  *    until the next fence line; only a parser of the prose around the code
  *    could tell them apart. */
-function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = false) {
+function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = false, plain = READ_EVERY_OPENER) {
     const syntax = commentSyntaxFor(language);
     const segments = [];
     let buf = '';
@@ -414,6 +446,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
     let noRegexBefore = -1;
     let templateWork = 0;
     const literalMemo = { terminators: new Map(), unclosed: new Set() };
+    // Block closers that do not occur again before the end of the text.
+    const neverClosed = new Set();
     // A quote character opens nothing before this offset (see `forRestore`).
     const proseBefore = new Map();
     /** The end of the fence line starting at `at`, or -1 when none does. */
@@ -422,6 +456,47 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
         return FENCE_LINE.test(code) ? FENCE_LINE.lastIndex : -1;
     };
     const n = code.length;
+    // Where a docstring may stand: at the start of the text, and after the `:`
+    // that closes a `def` or `class` header - until anything but white space
+    // and comments is read. A prefix letter (`f"""`, `r"""`) is such a thing.
+    let docstringPosition = TEXT_MAY_START_WITH_DOCSTRING;
+    // Inside a `def` or `class` header, and how many of its brackets are open.
+    let header = false;
+    let depth = 0;
+    let lineStart = true;
+    /** One character of code, for `docstringPosition`. */
+    const readCode = (c, at) => {
+        if (c === '\n')
+            lineStart = true;
+        if (c === ' ' || c === '\t' || c === '\r' || c === '\n' || c === '\f')
+            return;
+        if (lineStart) {
+            lineStart = false;
+            // A header goes on over its lines only inside its brackets.
+            if (!header || depth <= 0) {
+                HEADER_START.lastIndex = at;
+                header = HEADER_START.test(code);
+                depth = 0;
+            }
+        }
+        docstringPosition = false;
+        if (!header)
+            return;
+        if (c === '(' || c === '[' || c === '{')
+            depth++;
+        else if (c === ')' || c === ']' || c === '}')
+            depth--;
+        else if (c === ':' && depth === 0) {
+            header = false;
+            docstringPosition = true;
+        }
+    };
+    /** Only white space or a `#` comment stands between `at` and its line's end. */
+    const lineEndsAfter = (at) => {
+        while (at < n && (code[at] === ' ' || code[at] === '\t' || code[at] === '\r'))
+            at++;
+        return at >= n || code[at] === '\n' || code[at] === '#';
+    };
     while (i < n) {
         const c = code[i];
         const fence = forRestore && (i === 0 || code[i - 1] === '\n') ? fenceEnd(i) : -1;
@@ -431,19 +506,24 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             continue;
         }
         // Triple-quoted prose (Python docstrings) is documentation, not data —
-        // treat it as a comment so its sentences survive intact.
+        // treat it as a comment so its sentences survive intact. Only where a
+        // docstring stands (`docstringPosition`): any other triple-quoted literal
+        // is a string, masked like one - an assigned query, an f-string, an
+        // argument - and so is one that never closes. Restore reads as before.
         const doc = syntax.docstring.find((d) => startsWithAt(d, i));
         if (doc !== undefined) {
-            flush(true);
-            buf += doc;
-            i += doc.length;
-            while (i < n && !startsWithAt(doc, i))
-                buf += code[i++];
-            if (i < n) {
-                buf += doc;
-                i += doc.length;
-            }
+            const close = code.indexOf(doc, i + doc.length);
+            const end = close === -1 ? n : close + doc.length;
+            const documentation = forRestore || (docstringPosition && close !== -1 && lineEndsAfter(end));
+            flush(documentation);
+            if (documentation)
+                buf = code.slice(i, end);
+            else
+                segments.push({ text: code.slice(i, end), isComment: false, isString: true });
             flush(false);
+            docstringPosition = false;
+            lineStart = false;
+            i = end;
             continue;
         }
         if (!forRestore && syntax.heredoc) {
@@ -466,28 +546,47 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             continue;
         }
         if (lineOpener !== undefined) {
-            flush(true);
-            while (i < n && code[i] !== '\n')
+            // An opener that opens nothing here (`plain`): the same run of text,
+            // read as code. It ends where the comment would, and no quote in it
+            // opens a string, so every string after it is the string it was.
+            const isCode = plain.includes(lineOpener);
+            if (!isCode)
+                flush(true);
+            // To the end of the line, whichever character ends it: a line feed, a
+            // carriage return standing alone, U+2028, U+2029. The `\r` of a CRLF
+            // stays in the comment, and restore reads as before.
+            while (i < n && code[i] !== '\n' && (forRestore || !endsLine(code, i)))
                 buf += code[i++];
-            flush(false);
+            if (!isCode)
+                flush(false);
             continue;
         }
         // Ruby's `=begin`/`=end` only at a line start: `state=begin_x(...)` is code.
         const delimiterAt = (token, at) => startsWithAt(token, at) && (!syntax.blockAtLineStart || at === 0 || code[at - 1] === '\n');
         const blockPair = syntax.block.find(([open]) => delimiterAt(open, i));
-        if (blockPair !== undefined) {
+        if (blockPair !== undefined && !neverClosed.has(blockPair[1])) {
             const [open, close] = blockPair;
-            flush(true);
-            buf += open;
-            i += open.length;
-            while (i < n && !delimiterAt(close, i))
-                buf += code[i++];
-            if (i < n) {
-                buf += close;
-                i += close.length;
+            let end = i + open.length;
+            while (end < n && !delimiterAt(close, end))
+                end++;
+            // An opener with no closer after it opens nothing (`build/*`, a `/*` in
+            // JSX text): what follows is code, and is masked. No later opener of
+            // this pair has a closer either, so none is looked for again (linear).
+            // Restore reads as before.
+            if (end >= n && !forRestore)
+                neverClosed.add(close);
+            else {
+                end = Math.min(n, end + close.length);
+                // As for a line opener: one that opens nothing here is code, whole.
+                const isCode = plain.includes(open);
+                if (!isCode)
+                    flush(true);
+                buf += code.slice(i, end);
+                if (!isCode)
+                    flush(false);
+                i = end;
+                continue;
             }
-            flush(false);
-            continue;
         }
         if ((forRestore || syntax.regexLiterals) && c === '/' && i >= noRegexBefore) {
             let [closed, end] = regexLiteralEnd(code, i);
@@ -527,6 +626,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             // role classification can tell string words and module specifiers apart.
             // Still maskable (isComment: false); escape handling unchanged.
             flush(false);
+            docstringPosition = false;
+            lineStart = false;
             const isModuleSpecifier = isModuleSpecifierContext(code, i);
             // A JavaScript template literal runs to its own closing backtick, past
             // the templates inside its `${ }` (spec 093). One that never closes
@@ -584,6 +685,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
             segments.push({ text: str, isComment: false, isString: true, isModuleSpecifier });
             continue;
         }
+        if (syntax.docstring.length > 0)
+            readCode(c, i);
         buf += c;
         i++;
     }
@@ -592,8 +695,8 @@ function tokenizeForMasking(code, language = DEFAULT_LANGUAGE, forRestore = fals
 }
 /** Replace comment characters with spaces (newlines kept) so identifier
  *  extraction skips comments while preserving token boundaries and line counts. */
-function blankComments(code, language = DEFAULT_LANGUAGE) {
-    return tokenizeForMasking(code, language)
+function blankComments(code, language, plain) {
+    return tokenizeForMasking(code, language, false, plain)
         .map((s) => (s.isComment ? s.text.replace(/[^\n]/g, ' ') : s.text))
         .join('');
 }
@@ -698,13 +801,13 @@ function summarizeComments(segments) {
  * put one back — and the figure on screen would otherwise describe the previous
  * version of the text.
  */
-export function measureCommentExposure(code, language = 'auto') {
+export function measureCommentExposure(code, language = 'auto', where = {}) {
     // `describeLanguage`, not `resolveLanguage`: one path decides the language in
     // this file. The fallback flag is dropped here because the caller already has
     // it from the `anonymize` that produced this text — and it qualifies this
     // number too. A Ruby file read as TypeScript has its `#` comments scanned as
     // code, so the count would be honestly derived and wrong about the file.
-    return summarizeComments(tokenizeForMasking(code, describeLanguage(code, language).language));
+    return summarizeComments(tokenizeForMasking(code, describeLanguage(code, language).language, false, plainReading({ ...where, language })));
 }
 // ─── Role classification ─────────────────────────────────────────────────────
 //
@@ -914,6 +1017,9 @@ function isCallParen(text, pos) {
  *  its strongest observed role. `language` selects the keyword and role-hint
  *  sets; it defaults to TypeScript so standalone callers keep prior behavior. */
 export function classifyIdentifiers(code, language = DEFAULT_LANGUAGE) {
+    return rolesIn(code, language, READ_EVERY_OPENER);
+}
+function rolesIn(code, language, plain) {
     // No prototype: keyed by identifier, and `__proto__` is an identifier.
     const roles = Object.create(null);
     const classKeywords = classKeywordsFor(language);
@@ -924,7 +1030,7 @@ export function classifyIdentifiers(code, language = DEFAULT_LANGUAGE) {
             roles[name] = role;
         }
     };
-    for (const seg of tokenizeForMasking(code, language)) {
+    for (const seg of tokenizeForMasking(code, language, false, plain)) {
         if (seg.isComment)
             continue;
         const regex = /(?<![a-zA-Z0-9_$])([a-zA-Z_$][a-zA-Z0-9_$]*)(?![a-zA-Z0-9_$])/g;
@@ -990,10 +1096,13 @@ function isNameShaped(name, language) {
         !PLACEHOLDER_TOKEN.test(name));
 }
 export function extractIdentifiers(code, language = DEFAULT_LANGUAGE) {
+    return identifiersIn(code, language, READ_EVERY_OPENER);
+}
+function identifiersIn(code, language, plain) {
     const seen = new Set();
     // Blank out comments first so their prose words are never extracted; strings
     // are left intact (identifiers in them are masked on purpose).
-    const scannable = blankComments(code, language);
+    const scannable = blankComments(code, language, plain);
     // `\b` doesn't treat `$` as a word char, so use explicit negative look-around
     // to capture identifiers like `$myStore` while avoiding partial matches.
     const regex = /(?<![a-zA-Z0-9_$])([a-zA-Z_$][a-zA-Z0-9_$]*)(?![a-zA-Z0-9_$])/g;
@@ -1387,20 +1496,19 @@ function valueKind(code, opts) {
 export function valuePositions(code, opts = {}) {
     const kind = valueKind(code, opts);
     const language = describeLanguage(code, opts.language).language;
-    return valuesIn(code, language, kind, guessedCode(opts));
+    return valuesIn(code, language, kind, guessedCode(opts), plainReading(opts));
 }
 /** `detectSecrets`, and every credential value `anonymize` would redact that
  *  its rules do not report (security review, round 4): `password:
  *  Summer2024!` in text of no kind is reported, never passed over. */
 export function detectCredentials(code, options = {}) {
-    const { language, ...scan } = options;
-    const found = detectSecrets(code, scan);
-    const spans = credentialSpans(code, scan);
+    const found = detectSecrets(code, options);
+    const spans = credentialSpans(code, options);
     const starts = [0];
     for (let i = 0; i < code.length; i++)
         if (code[i] === '\n')
             starts.push(i + 1);
-    for (const v of credentialsAmong(valuePositions(code, { ...scan, language }))) {
+    for (const v of credentialsAmong(valuePositions(code, options))) {
         if (spans.some((s) => s.start < v.end && v.start < s.end))
             continue;
         let line = 0;
@@ -1422,14 +1530,21 @@ export function detectCredentials(code, options = {}) {
 }
 /** The value positions in `text` (ordinaryWords.ts), with the tokenizer's
  *  string literals: contents only, a module specifier as a path. */
-function valuesIn(text, language, kind, net = false) {
+function valuesIn(text, language, kind, net, plain) {
     const strings = [];
+    const triple = commentSyntaxFor(language).docstring;
     let at = 0;
-    for (const s of tokenizeForMasking(text, language)) {
+    for (const s of tokenizeForMasking(text, language, false, plain)) {
         if (s.isString) {
-            const closed = s.text.length > 1 && s.text.endsWith(s.text[0]);
-            const end = at + s.text.length - (closed ? 1 : 0);
-            strings.push({ start: at + 1, end, ...(s.isModuleSpecifier ? { module: true } : {}) });
+            // A triple-quoted string's contents start after all three quotes.
+            const quote = triple.find((q) => s.text.startsWith(q)) ?? s.text[0];
+            const closed = s.text.length >= 2 * quote.length && s.text.endsWith(quote);
+            const end = at + s.text.length - (closed ? quote.length : 0);
+            strings.push({
+                start: at + quote.length,
+                end,
+                ...(s.isModuleSpecifier ? { module: true } : {}),
+            });
         }
         at += s.text.length;
     }
@@ -1492,7 +1607,12 @@ export function anonymize(code, options = {}) {
     const opts = resolveAnonymizeOptions(options);
     if (opts.team !== undefined && !isLocalTag(opts.team?.tag))
         throw new TypeError(`anonymize: team.tag names the checkout, six of A-Z0-9 - got ${JSON.stringify(opts.team?.tag)}`);
-    const where = { path: opts.path, root: opts.root, fileKind: opts.fileKind };
+    const where = {
+        path: opts.path,
+        root: opts.root,
+        fileKind: opts.fileKind,
+        language: opts.language,
+    };
     // Every credential in the text as given, whatever the policy.
     const found = credentialSpans(code, where);
     // A credential never goes into the map, in any `secrets` mode (founder
@@ -1637,6 +1757,8 @@ export function anonymize(code, options = {}) {
     // written by the user's choice.
     const kind = valueKind(code, opts);
     const net = guessedCode(opts);
+    // One reading of the comment openers for every pass below (`plainReading`).
+    const plain = plainReading(opts);
     const policy = opts.secrets ?? 'redact';
     const reported = policy === 'redact' ? [] : credentialSpans(marked, where).map((s) => [s.start, s.end]);
     let unvalued;
@@ -1645,7 +1767,7 @@ export function anonymize(code, options = {}) {
         const tokens = new Map();
         let out = '';
         let at = 0;
-        for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, net))) {
+        for (const { start, end, value } of credentialsAmong(valuesIn(marked, language, kind, net, plain))) {
             if (mapped.has(value) || destroyed.has(value) || overlapsAny(reported, start, end))
                 continue;
             if (!tokens.has(value))
@@ -1663,7 +1785,7 @@ export function anonymize(code, options = {}) {
         if (words.length > 0) {
             out = '';
             at = 0;
-            for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, net))) {
+            for (const [start, end] of mergedRanges(valuesIn(unvalued, language, kind, net, plain))) {
                 let part = unvalued.slice(start, end);
                 for (const [value, token] of words)
                     part = replaceWholeWord(part, value, token);
@@ -1684,7 +1806,7 @@ export function anonymize(code, options = {}) {
     // in `source`, so the offsets are the ones substitution sees.
     const secretSpans = credentialSpans(source, where).map((s) => [s.start, s.end]);
     // Every value position but a path's: an ordinary word there is masked.
-    const valued = valuesIn(source, language, kind, net).filter((s) => !s.path);
+    const valued = valuesIn(source, language, kind, net, plain).filter((s) => !s.path);
     const values = mergedRanges(valued);
     // A name the existing map already holds may still be substituted inside one:
     // that writes nothing new, and the guard relies on it for a plain word
@@ -1707,7 +1829,7 @@ export function anonymize(code, options = {}) {
     const scannable = blankSpans(blankSpans(source, [...verbatim, ...unextracted]), secretSpans);
     // A credential value the extractor passes over (`PASSWORD=SUNSHINE` reads as
     // a constant) is a name here all the same, where it is still in the text.
-    const extractedNames = extractIdentifiers(scannable, language);
+    const extractedNames = identifiersIn(scannable, language, plain);
     const missed = credentialsAmong(valued)
         .filter((s) => IDENTIFIER.test(s.value) && scannable.slice(s.start, s.end) === s.value)
         .map((s) => s.value)
@@ -1718,7 +1840,7 @@ export function anonymize(code, options = {}) {
             valueWords.add(w);
     // One tokenize pass feeds the comment names, the substitution and the
     // exposure count, so the spans reported are the spans written.
-    const segments = tokenizeForMasking(source, language);
+    const segments = tokenizeForMasking(source, language, false, plain);
     // Names the map already holds that this text uses in comments only. They go
     // through the loop below like a held name of the code - whitelist, ordinary
     // words - and nothing is minted for them: a comment adds nothing to the map.
@@ -1737,7 +1859,7 @@ export function anonymize(code, options = {}) {
     const identifiers = missed.length === 0 && commentOnly.size === 0
         ? extractedNames
         : [...new Set([...extractedNames, ...missed, ...commentOnly])].sort((a, b) => b.length - a.length);
-    const roleOf = classifyIdentifiers(scannable, language);
+    const roleOf = rolesIn(scannable, language, plain);
     // Split rules by type, sort by sort_order ASC (lower = earlier)
     const whitelist = rules
         .filter((r) => r.type === 'whitelist' && r.enabled)
@@ -1834,11 +1956,11 @@ export function anonymize(code, options = {}) {
     // so it adds nothing to the map - but if the map already holds it, it is a
     // user's name and is masked like anywhere else.
     const extracted = new Set(identifiers);
-    const knownInFrames = extractIdentifiers(unextracted.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => reverseExisting[n] &&
+    const knownInFrames = identifiersIn(unextracted.map(([start, end]) => source.slice(start, end)).join('\n'), language, plain).filter((n) => reverseExisting[n] &&
         !extracted.has(n) &&
         !whitelist.some((r) => safeMatch(r.pattern, n, budget)));
     // Likewise inside a credential: only names the existing map already holds.
-    const knownInSecrets = extractIdentifiers(secretSpans.map(([start, end]) => source.slice(start, end)).join('\n'), language).filter((n) => alreadyMapped.has(n) &&
+    const knownInSecrets = identifiersIn(secretSpans.map(([start, end]) => source.slice(start, end)).join('\n'), language, plain).filter((n) => alreadyMapped.has(n) &&
         !extracted.has(n) &&
         !whitelist.some((r) => safeMatch(r.pattern, n, budget)));
     const substitutable = [...new Set([...identifiers, ...knownInFrames, ...knownInSecrets])]
