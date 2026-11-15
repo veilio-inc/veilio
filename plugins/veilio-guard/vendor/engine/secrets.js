@@ -179,6 +179,28 @@ function basicKept(value) {
 function isHighEntropyToken(value) {
     return /^[A-Za-z0-9+/_-]{24,200}={0,2}$/.test(value) && shannonEntropy(value) >= ENTROPY_FLOOR;
 }
+/** One part of a path or of a compound name: a word in lower, camel or upper
+ *  case with at most four digits after a word, or a short number (`auth`,
+ *  `personalMaps`, `v2`, `sha256Digest`, `MAX`, `2026`). Each character is
+ *  read once: the alternatives start on different characters. */
+const WORDY_PART = /^(?:[A-Za-z]?[a-z]+(?:[0-9]{1,4}(?=[A-Z]|$)|[A-Z][a-z]+)*|[A-Z]{2,}[0-9]{0,4}|[0-9]{1,4})$/;
+/** A high-entropy token that nothing reads as ordinary text: it holds a
+ *  digit, and it is not words joined by `/`, `-` or `_` (a route, a path, a
+ *  compound name). Anything else of the shape is left to masking: hidden from
+ *  the model, and restorable. */
+function isTokenValue(value) {
+    return (isHighEntropyToken(value) &&
+        /[0-9]/.test(value) &&
+        !value
+            .split(/[/_+=-]+/)
+            .filter(Boolean)
+            .every((part) => WORDY_PART.test(part)));
+}
+/** A value that reads as a token, not as the next word of a sentence: it
+ *  holds a digit, or is 20 characters or longer. */
+function isLikelyToken(value) {
+    return /[0-9]/.test(value) || value.length >= 20;
+}
 /** A user half that is a token rather than a name: a high-entropy token.
  *  Never `isStrong`: `Build-Agent01` is a name. A provider-format key as the
  *  user is the other half of the ruling, and needs no test here: in a URL or
@@ -244,6 +266,11 @@ const argvFlag = (flag, separated) => `(?:${WINDOW}|${ARGV_WINDOW})["']${flag}(?
 const attachedFlag = (flag) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE})`;
 /** A short flag with its value attached or after spaces. */
 const shortFlag = (flag) => `${flag}(?:${PH}|${DQ}|${SQ}|${BARE}|[ \\t]+(?:${PH}|${DQ}|${SQ}|${BARE_ARG}))`;
+/** A program's own options before its subcommand: at most four, each with
+ *  its value after `=` or as the next word (`docker --config /tmp/c login`). */
+const GLOBAL_OPTIONS = '(?:[ \\t]+--?[\\w-]{1,40}(?:=[^\\s;&|]{0,200}|[ \\t]+[^\\s;&|-][^\\s;&|]{0,200})?){0,4}';
+/** To the next word of a command line, or the next element of an argv array. */
+const NEXT_WORD = '(?:[ \\t]+|["\']\\s{0,20},\\s{0,20}["\'])';
 // research R1. `-p` is the password only for these clients; for psql, ssh,
 // redis-cli and docker it is a port. For mysql and mariadb only the attached
 // form is: `-p shop` prompts for the password and opens database `shop`.
@@ -588,6 +615,127 @@ const PATTERNS = [
         re: /(?:cloudflare|cf)[_-]?api[_-]?(?:token|key)["'\s:=]{1,10}([A-Za-z0-9_-]{37,45})\b/gi,
         group: 1,
     },
+    // ─── Formats checked against each vendor's own documentation ─────────────
+    //
+    // A rule is added only for a format its vendor states, and is anchored on
+    // what the vendor states: where only the prefix is documented, the body is a
+    // run of token characters of a least length chosen here (said at the rule).
+    // A second rule of a type keeps that type's severity: the grades are read
+    // from this table by type.
+    {
+        // docs.github.com, "About authentication to GitHub", token formats: the
+        // prefix of a fine-grained personal access token. No length is stated; a
+        // digit is asked for, so a long name that starts the same way is not one.
+        type: 'github-token',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'GitHub fine-grained token',
+        re: /\bgithub_pat_(?=[A-Za-z_]{0,255}[0-9])[A-Za-z0-9_]{36,255}\b/g,
+    },
+    {
+        // digitalocean.com/blog/updated-api-tokens-new-management-features: a
+        // personal access token, an OAuth token, an OAuth refresh token. No length
+        // is stated.
+        type: 'digitalocean-token',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'DigitalOcean token',
+        re: /\bdo[opr]_v1_[A-Za-z0-9]{32,255}\b/g,
+    },
+    {
+        // twilio.com/docs/glossary/what-is-a-sid: two letters and 32 hexadecimal
+        // digits; SK is an API key. It is the key's name, used with its secret.
+        type: 'twilio-key',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'Twilio API key SID',
+        re: /\bSK[a-f0-9]{32}\b/g,
+    },
+    {
+        // docs.stripe.com/webhooks: an endpoint's signing secret begins with this
+        // prefix. No length is stated.
+        type: 'stripe-key',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'Stripe webhook secret',
+        re: /\bwhsec_[A-Za-z0-9]{24,255}\b/g,
+    },
+    {
+        // developers.google.com/identity/protocols/oauth2: the access tokens in
+        // its examples begin with this prefix. No length is stated.
+        type: 'google-api-key',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'Google OAuth access token',
+        re: /\bya29\.[A-Za-z0-9_.-]{20,2048}\b/g,
+    },
+    {
+        // docs.sentry.io/security-legal-pii/security/token-formats: a personal
+        // token is the prefix and 64 hexadecimal characters.
+        type: 'sentry-token',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'Sentry token',
+        re: /\bsntryu_[a-f0-9]{64}\b/g,
+    },
+    {
+        // The same page: an organisation token is the prefix, a base64 payload,
+        // an underscore and 43 base64 characters.
+        type: 'sentry-token',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'Sentry token',
+        re: /\bsntrys_[A-Za-z0-9+/=]{1,500}_[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/])/g,
+    },
+    {
+        // linear.app/changelog, "API improvements": the prefixes of an API key
+        // and of an OAuth token. No length is stated.
+        type: 'linear-key',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Linear API key',
+        re: /\blin_(?:api|oauth)_[A-Za-z0-9]{32,255}\b/g,
+    },
+    {
+        // developer.hashicorp.com/vault/docs/concepts/tokens: a service, batch or
+        // recovery token is its prefix and 24 or more random characters. A digit
+        // is asked for, so a member of an object called `hvs` is not a token. The
+        // prefixes before Vault 1.10 (`s.`, `b.`, `r.`) are a letter and a dot:
+        // not listed.
+        type: 'vault-token',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'Vault token',
+        re: /\bhv[sbr]\.(?=[A-Za-z_-]{0,500}[0-9])[A-Za-z0-9_-]{24,500}\b/g,
+    },
+    {
+        // github.com/C2SP/C2SP, age.md: an X25519 identity is 32 bytes in Bech32
+        // under this prefix, 58 characters.
+        type: 'age-secret-key',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'age secret key',
+        re: /\bAGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}\b/g,
+    },
+    {
+        // devcenter.heroku.com/changelog-items/2800 and 3176: an OAuth access
+        // token has this prefix; 41 characters in all, 65 since April 2025.
+        type: 'heroku-token',
+        disposition: 'destroy',
+        severity: 'critical',
+        label: 'Heroku token',
+        re: /\bHRKU-[A-Za-z0-9_-]{36,255}\b/g,
+    },
+    {
+        // docs.slack.dev/authentication/tokens: an app-level token and a
+        // workflow token, by their prefixes; with a digit, so a dashed name
+        // (`xapp-production-api`) is not one.
+        type: 'slack-token',
+        disposition: 'destroy',
+        severity: 'high',
+        label: 'Slack app-level token',
+        re: /\bx(?:app|wfp)-(?=[A-Za-z-]{0,250}[0-9])[A-Za-z0-9-]{10,250}\b/g,
+    },
     {
         type: 'basic-auth',
         disposition: 'destroy',
@@ -646,6 +794,23 @@ const PATTERNS = [
         keep: basicKept,
     },
     {
+        // Any other scheme word (`token`, `ApiKey`, `Digest`, a vendor's own): the
+        // value after it, in the header position only - a colon, an equals sign
+        // or the comma of a call after the name. A plain word after the scheme
+        // word is prose (`Authorization: Token authentication`); a variable has a
+        // `$` or a brace and is not matched. Redacted in a test file too, as the
+        // login commands below.
+        type: 'bearer-token',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Bearer / Authorization token',
+        re: /(?<![\w-])(?:Proxy-)?Authorization["']?[ \t]{0,3}[:=,][ \t]{0,3}["']?(?!Bearer[ \t]|Basic[ \t])[A-Za-z][A-Za-z0-9_-]{1,30}[ \t]+([A-Za-z0-9._~+/-]{8,500}=*)/gi,
+        group: 1,
+        position: true,
+        keep: () => true,
+        validate: isLikelyToken,
+    },
+    {
         // A raw header line or a curl -H argument takes a bare value; an entry in
         // a header map only a quoted literal, because a bare value there is a
         // variable. From 4 characters: no issued key is shorter, and a shorter
@@ -696,6 +861,79 @@ const PATTERNS = [
         re: new RegExp(`${command('redis-cli')}(?:${SAME_LINE}${shortFlag('-a')}|${argvFlag('-a', true)})`, 'g'),
         groups: [...FLAG_GROUPS, ...ARGV_GROUPS],
         position: true,
+    },
+    // ─── Login commands ───────────────────────────────────────────────────────
+    //
+    // `-p` is a port for docker run, ssh and psql, so it is a password only
+    // after the subcommand that logs in - the first word after the program and
+    // its own options. Each position is the one the command's manual states
+    // (docs.docker.com/reference/cli/docker/login, podman-login(1), nerdctl's
+    // command reference, helm.sh/docs/helm/helm_registry_login, `az login` in
+    // the Azure CLI reference, smbclient(1), developer.hashicorp.com/vault/docs/
+    // commands/login, httpd.apache.org/docs/current/programs/htpasswd.html).
+    // The value is redacted in a test or example file too: these rules are new,
+    // and what they find was masked before, never shown.
+    {
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`(?:${command('docker|podman|nerdctl|az')}${GLOBAL_OPTIONS}${NEXT_WORD}|${command('helm')}${GLOBAL_OPTIONS}${NEXT_WORD}registry${NEXT_WORD})login(?=[\\s"'])(?:${SAME_LINE}${shortFlag('-p')}|${argvFlag('-p', true)})`, 'g'),
+        groups: [...FLAG_GROUPS, ...ARGV_GROUPS],
+        position: true,
+        keep: () => true,
+        // A bare word after the flag may be the next word of a sentence.
+        validate: (value, group) => group !== 6 || !proseValue(value),
+    },
+    {
+        // A password written out and piped to a login that reads it from standard
+        // input (`echo <password> | docker login --password-stdin`). A variable
+        // in its place is kept.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`(?<![\\w.-])(?:echo|printf)(?:[ \\t]+-[neE]{1,3})?(?:[ \\t]+["']%s(?:\\\\n)?["'])?[ \\t]+(?:${DQ}|${SQ}|${BARE})[ \\t]*\\|[^\\n|;&]{0,300}?[ \\t]--password-stdin(?![\\w-])`, 'dg'),
+        groups: [1, 2, 3],
+        position: true,
+        keep: () => true,
+    },
+    {
+        // smbclient -U [DOMAIN\]USERNAME[%PASSWORD]. The user is kept.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command('smbclient')}${SAME_LINE}(?:-U[ \\t]*|--user(?:[ \\t]+|=))(?:"[^"%\\n]{1,128}%([^"\\n]{1,256})"|'[^'%\\n]{1,128}%([^'\\n]{1,256})'|[^\\s"'%]{1,128}%([^\\s"'\`;&|]{1,256}))`, 'g'),
+        groups: [1, 2, 3],
+        position: true,
+        keep: () => true,
+    },
+    {
+        // vault login [options] <token>. Options come first, a value after `=` or
+        // after the option; `key=value` arguments belong to another method, and a
+        // short plain word is the next word of a sentence.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Token on a command line',
+        re: new RegExp(`${command('vault')}[ \\t]+login(?:[ \\t]+-(?:method|path|format|field|address|namespace|ns)[ \\t]+[^\\s-][^\\s;&|]{0,200}|[ \\t]+-[\\w-]{1,40}=[^\\s;&|]{0,200}|[ \\t]+-(?!(?:method|path|format|field|address|namespace|ns)(?![\\w-]))[\\w-]{1,40}(?![\\w=-])){0,8}[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG})(?=[\\s;&|]|$)`, 'g'),
+        groups: [1, 2, 3],
+        position: true,
+        keep: () => true,
+        validate: (value) => !value.includes('=') && isLikelyToken(value),
+    },
+    {
+        // htpasswd -b [options] passwdfile username password, and -nb username
+        // password: with `b` among its flags, the last of two or three words.
+        type: 'password-assignment',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'Password on a command line',
+        re: new RegExp(`${command('htpasswd')}(?=(?:[ \\t]+-[A-Za-ac-z0-9]{1,12}(?:[ \\t]+[0-9]{1,6})?){0,6}[ \\t]+-[A-Za-z0-9]{0,12}b)(?:[ \\t]+-[A-Za-z0-9]{1,12}(?:[ \\t]+[0-9]{1,6})?){1,8}(?:[ \\t]+[^\\s"';&|-][^\\s"';&|]{0,256}){1,2}[ \\t]+(?:${DQ}|${SQ}|${BARE_ARG})(?=[ \\t]*(?:[;&|#]|$))`, 'gm'),
+        groups: [1, 2, 3],
+        position: true,
+        keep: () => true,
     },
     {
         // Any command, but only on a command line (finding 5). The name must end
@@ -813,6 +1051,17 @@ const PATTERNS = [
         // file of 50,000 redaction tokens took 78 s (guard follow-up review).
         re: /\b(?=[a-z0-9_]*?(?:key|token|secret|credential|auth|pass))[a-z0-9_]+\b["'\s:=]{1,10}["'`]([A-Za-z0-9+/_-]{24,200}={0,2})["'`]/gi,
         group: 1,
+    },
+    {
+        // A password flag on a command no list above names: for most programs
+        // `-p` is a port or a path, and neither is a high-entropy token.
+        type: 'high-entropy-string',
+        disposition: 'destroy',
+        severity: 'medium',
+        label: 'High-entropy credential',
+        re: /(?<![\w-])-p[ \t]+(?:"([A-Za-z0-9+/_-]{24,200}={0,2})"|'([A-Za-z0-9+/_-]{24,200}={0,2})'|([A-Za-z0-9+/_-]{24,200}={0,2})(?=[\s;&|]|$))/gm,
+        groups: [1, 2, 3],
+        validate: isTokenValue,
     },
     {
         type: 'private-ip',
@@ -1232,7 +1481,53 @@ function collectMatches(code, scan) {
         }
         return values;
     };
-    return found.concat(keyMaterial(code), manifest(), joinedKeys(code));
+    return found.concat(keyMaterial(code), manifest(), joinedKeys(code), tokensInContext(code));
+}
+const QUOTED_TOKEN = /(["'`])([A-Za-z0-9+/_-]{24,200}={0,2})\1/g;
+/** A credential word standing as a word of its own: `token`, `authToken`,
+ *  `API_KEY`, never `author`, `tokenizer` or `keyboard`. Read after a space is
+ *  put at each camel-case joint. */
+const CREDENTIAL_NEARBY = /(?<![A-Za-z])(?:keys?|tokens?|secrets?|credentials?|auth|authorization|pass|passwd|passwords?|passphrase|pwd|login|bearer)(?![A-Za-z])/i;
+/** How far on its line a credential word is looked for, either side. */
+const NEARBY = 400;
+/**
+ * A quoted high-entropy token with a credential word elsewhere on its line:
+ * the catch-all above asks for the word in the name directly before the
+ * value; here it may stand anywhere beside it (another argument, a property
+ * after it, a comment). The word must be outside the value, and outside any
+ * placeholder or redaction token already in the text. Without one the value
+ * is left to masking: a hash and a commit id have the same shape. Each
+ * candidate reads at most its own length and 800 characters around it.
+ */
+function tokensInContext(code) {
+    const found = [];
+    QUOTED_TOKEN.lastIndex = 0;
+    for (let m; (m = QUOTED_TOKEN.exec(code)) !== null;) {
+        const value = m[2];
+        if (!isTokenValue(value) || classifyValue(value, false) === 'placeholder')
+            continue;
+        const start = m.index + 1;
+        const end = start + value.length;
+        const before = code.slice(Math.max(0, m.index - NEARBY), m.index);
+        const after = code.slice(end + 1, end + 1 + NEARBY);
+        const stop = after.indexOf('\n');
+        const beside = `${before.slice(before.lastIndexOf('\n') + 1)} ${stop === -1 ? after : after.slice(0, stop)}`
+            .replace(/__[A-Z][A-Z0-9_]*__\d*/g, ' ')
+            .replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+        if (!CREDENTIAL_NEARBY.test(beside))
+            continue;
+        found.push({
+            type: 'high-entropy-string',
+            severity: 'medium',
+            label: 'High-entropy credential',
+            start,
+            end,
+            value,
+            generic: true,
+        });
+    }
+    QUOTED_TOKEN.lastIndex = 0;
+    return found;
 }
 /** The provider-format rules that match a key by its own shape alone. */
 let shapeRules = null;
@@ -1928,6 +2223,12 @@ const TYPE_TOKENS = {
     'square-token': 'SQUARE_TOKEN',
     'shopify-token': 'SHOPIFY_TOKEN',
     'cloudflare-token': 'CLOUDFLARE_TOKEN',
+    'digitalocean-token': 'DIGITALOCEAN_TOKEN',
+    'sentry-token': 'SENTRY_TOKEN',
+    'linear-key': 'LINEAR_KEY',
+    'vault-token': 'VAULT_TOKEN',
+    'age-secret-key': 'AGE_KEY',
+    'heroku-token': 'HEROKU_TOKEN',
     jwt: 'JWT',
     'bearer-token': 'BEARER_TOKEN',
     'basic-auth': 'BASIC_AUTH',

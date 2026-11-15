@@ -70,7 +70,7 @@ visibly.
   A failing test case from your own material is worth more than a feature.
 - **A false positive.** Masking a reserved word breaks the code the model gets
   back, and a tool that mangles working code gets uninstalled by lunchtime.
-- **A credential pattern.** 36 detectors today (AWS, GCP, Azure, Stripe, GitHub,
+- **A credential pattern.** 42 detectors today (AWS, GCP, Azure, Stripe, GitHub,
   Slack, OpenAI, Anthropic, private-key blocks, JWTs…). Note the design: a
   detected credential is **redacted, not masked** — it is replaced by a token that
   never enters the map, so restore cannot bring it back and a synced map can never
