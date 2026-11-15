@@ -1001,6 +1001,40 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     for (const options of DOCUMENT) gone(code, [VALUE, TEXT], options)
   })
 
+  const BLOCK = (v: string): string => `data:\n  db: ${v}\n  note: ${TEXT}\n`
+  it.each([
+    ['a tag before the kind', (v: string) => `kind: !!str Secret\n${BLOCK(v)}`],
+    ['an anchor before the kind', (v: string) => `kind: &k Secret\n${BLOCK(v)}`],
+    ['an anchor and a tag', (v: string) => `kind: &k !!str "Secret"\n${BLOCK(v)}`],
+    ['the kind on the next line', (v: string) => `kind:\n  Secret\n${BLOCK(v)}`],
+    ['a tag, a comment, the kind below', (v: string) => `kind: !!str # c\r\n  Secret\n${BLOCK(v)}`],
+    [
+      'a block indented by a tab',
+      (v: string) => `kind: Secret\ndata:\n\tdb: ${v}\n\tnote: ${TEXT}\n`,
+    ],
+    [
+      'tabs before the key and its block',
+      (v: string) =>
+        `kind: Secret\nitem:\n\tstringData:\n\t\tdb: |\n\t\t\t${v}\n\t\tnote: ${TEXT}\n`,
+    ],
+  ])('a Secret written with %s', (_, write) => {
+    const code = write(VALUE)
+    for (const options of DOCUMENT) {
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized.match(/__REDACTED_CREDENTIAL_/g)).toHaveLength(2)
+    }
+  })
+
+  it.each([
+    ['a tagged ConfigMap', `kind: !!str ConfigMap\ndata:\n  ledgerMode: production\n`],
+    ['an anchored SecretStore', `kind: &k SecretStore\ndata:\n  ledgerMode: production\n`],
+    ['a word on the line below another kind', `kind: List\nSecret:\n  data:\n    a: production\n`],
+  ])('no manifest: %s', (_, code) => {
+    const { anonymized, map } = anonymize(code, { fileKind: 'yaml' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
   it('a quote that never closes on a line of a block runs to the end of the line', () => {
     const tail = made(63, 16)
     const code = manifest('Secret', `stringData:\n  db: "${VALUE} {${TEXT}} ${tail}\n`)

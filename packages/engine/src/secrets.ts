@@ -1680,8 +1680,12 @@ function keyMaterial(code: string): RawMatch[] {
 }
 
 // `kind: Secret`, in YAML or JSON, whatever the quoting - also the escaped
-// quotes of a manifest held in a string.
-const NAMES_SECRET = /(?<![\w$.-])\\?["']?kind\\?["']?[ \t]*:[ \t]*\\?["']?Secret(?![\w$-])/
+// quotes of a manifest held in a string. Between the colon and the word, what
+// YAML allows there: a tag and an anchor (`!!str`, `&k`), a comment, and one
+// line break with the value indented below. Each piece has a length limit, so
+// a line of many `kind: !` is not read again from each of them.
+const NAMES_SECRET =
+  /(?<![\w$.-])\\?["']?kind\\?["']?[ \t]*:[ \t]*(?:[!&]\S{0,100}[ \t]*){0,2}(?:#[^\r\n]{0,200})?(?:\r?\n[ \t]+)?\\?["']?Secret(?![\w$-])/
 const DATA_KEY = /(?<![\w$.-])\\?["']?(?:data|stringData)\\?["']?[ \t]*:[ \t]*/g
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/
 
@@ -1836,7 +1840,8 @@ function secretManifestValues(code: string): RawMatch[] {
       let to = stop
       while (to > at && blank(code[to - 1])) to--
       let first = at
-      while (first < to && code[first] === ' ') first++
+      // A tab indents too: not YAML, and so not a reason to skip the block.
+      while (first < to && (code[first] === ' ' || code[first] === '\t')) first++
       if (first < to) {
         const indent = first - at
         if (indent <= column) break

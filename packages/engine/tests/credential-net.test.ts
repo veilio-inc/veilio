@@ -304,6 +304,11 @@ describe('key material, Secret manifests and joined literals are read in linear 
     'kind: Secret\ndata:\n' + '  a: ${B}\n'.repeat(n),
     Array.from({ length: n }, (_, i) => ' '.repeat(i % 40) + '- kind: Secret\n').join(''),
     'kind: Secret\n---\n'.repeat(n),
+    // The kind is looked for when a `data` key is met.
+    'kind: !'.repeat(n) + '\ndata:\n  a: Secret\n',
+    'kind: #'.repeat(n) + '\ndata:\n  a: Secret\n',
+    'kind:\n '.repeat(n) + '\ndata:\n  a: Secret\n',
+    'kind: Secret\ndata:\n' + '\ta: ${B}\n'.repeat(n),
     'kind: Secret\ndata:\n  a: |\n' + '    x\n'.repeat(n),
     'kind: Secret\n' + 'data: {\n'.repeat(n),
     'data:\n'.repeat(n) + 'kind: Secret\n',
