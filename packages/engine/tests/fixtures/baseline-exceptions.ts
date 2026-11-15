@@ -267,12 +267,6 @@ export const EXCEPTIONS: BaselineException[] = [
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
   },
   {
-    row: 'secret manifest: data',
-    options: {},
-    finding: 'M4',
-    why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
-  },
-  {
     row: 'secret manifest: stringData with a block scalar',
     options: { fileKind: 'yaml' },
     finding: 'M4',
@@ -281,12 +275,6 @@ export const EXCEPTIONS: BaselineException[] = [
   {
     row: 'secret manifest: stringData with a block scalar',
     options: { path: 'secret.yaml' },
-    finding: 'M4',
-    why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
-  },
-  {
-    row: 'secret manifest: stringData with a block scalar',
-    options: {},
     finding: 'M4',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
   },
@@ -303,12 +291,6 @@ export const EXCEPTIONS: BaselineException[] = [
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
   },
   {
-    row: 'secret manifest: one of three documents',
-    options: {},
-    finding: 'M4',
-    why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
-  },
-  {
     row: 'secret manifest: inside a List',
     options: { fileKind: 'yaml' },
     finding: 'M4',
@@ -317,12 +299,6 @@ export const EXCEPTIONS: BaselineException[] = [
   {
     row: 'secret manifest: inside a List',
     options: { path: 'secret.yaml' },
-    finding: 'M4',
-    why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
-  },
-  {
-    row: 'secret manifest: inside a List',
-    options: {},
     finding: 'M4',
     why: 'key material after a BEGIN line and the values of a Secret manifest are redacted',
   },

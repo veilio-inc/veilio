@@ -287,7 +287,8 @@ describe('key material, Secret manifests and joined literals are read in linear 
     let best = Infinity
     for (let i = 0; i < 5; i++) {
       const t = performance.now()
-      scanSecrets(text)
+      // As a YAML document: a Secret manifest is read in no other text.
+      scanSecrets(text, 'redact', { fileKind: 'yaml' })
       best = Math.min(best, performance.now() - t)
     }
     return best

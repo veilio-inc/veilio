@@ -456,6 +456,9 @@ interface ScanContext {
   /** A YAML file: a compose `- NAME=value` item is a plain scalar to the end
    *  of its line. */
   yaml: boolean
+  /** A YAML or JSON file by its kind or path: a Kubernetes Secret manifest
+   *  is read in it, and never in code. */
+  document: boolean
   /** A shell script or a Dockerfile: `NAME=v` after `export`, `ENV` and the
    *  like, in shell grammar. */
   shell: boolean
@@ -1499,7 +1502,10 @@ function collectMatches(code: string, scan: ScanContext): RawMatch[] {
     }
     pattern.re.lastIndex = 0
   }
-  found.push(...keyMaterial(code), ...secretManifestValues(code), ...joinedKeys(code))
+  found.push(...keyMaterial(code))
+  if (code.includes('Secret') && (scan.document || wholeJson(code)))
+    found.push(...secretManifestValues(code))
+  found.push(...joinedKeys(code))
   return found
 }
 
@@ -1668,6 +1674,18 @@ const NAMES_SECRET = /(?<![\w$.-])\\?["']?kind\\?["']?[ \t]*:[ \t]*\\?["']?Secre
 const DATA_KEY = /(?<![\w$.-])\\?["']?(?:data|stringData)\\?["']?[ \t]*:[ \t]*/g
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/
 
+/** Text that is one JSON value as a whole: a document whatever its path, since
+ *  no code parses as JSON. */
+function wholeJson(code: string): boolean {
+  if (!/^\s*[{[]/.test(code)) return false
+  try {
+    JSON.parse(code)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Every value under `data` and `stringData` of a Kubernetes manifest of
  * `kind: Secret`: a credential whatever its key is called. One rule, toward
@@ -1676,14 +1694,15 @@ const BLOCK_SCALAR = /^[|>][-+0-9]*$/
  * line, or after `{` or `,`) opens a region -
  * a `{ ... }` to its closing brace, or the lines indented deeper than the key
  * - and every scalar value in it is redacted, block scalars whole. So a List
- * that holds a Secret has the values of its other items redacted too, and so
- * has an object in code that names the kind. A value whose quote never closes
- * runs to the closing brace or the end of its line. In any file: a manifest
- * pasted without a path is the same text. A Secret a template builds (Helm)
- * is not recognised. One pass over each document.
+ * that holds a Secret has the values of its other items redacted too. A value
+ * whose quote never closes runs to the closing brace or the end of its line.
+ * Only in a YAML or JSON document (`ScanContext.document`, or text that is
+ * JSON as a whole): an object in code that names the kind holds names, which
+ * are masked and restored. So a YAML manifest pasted with no path and no kind
+ * is not read. A Secret a template builds (Helm) is not recognised. One pass
+ * over each document.
  */
 function secretManifestValues(code: string): RawMatch[] {
-  if (!code.includes('Secret')) return []
   type Span = [start: number, end: number]
   const found: RawMatch[] = []
   const emit = (start: number, end: number): void => {
@@ -2246,6 +2265,7 @@ function scanContext(options: ScanOptions): ScanContext {
     example: path !== undefined && isExamplePath(path, options.root),
     dotenv: kinds.has('dotenv'),
     yaml: kinds.has('yaml'),
+    document: kinds.has('yaml') || (path !== undefined && /\.json$/i.test(path)),
     shell: kinds.has('shell'),
   }
 }

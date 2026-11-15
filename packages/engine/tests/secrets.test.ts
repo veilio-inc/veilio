@@ -818,10 +818,12 @@ describe('private-key lines and Secret manifests never reach the map', () => {
 
   const VALUE = made(40, 52) + '=='
   const TEXT = made(41, 20)
+  // What makes a text a document: the YAML kind, or a YAML or JSON path.
+  const DOCUMENT = [{ fileKind: 'yaml' }, { path: 'deploy/secret.yaml' }] as const
   const manifest = (kind: string, section: string): string =>
     `apiVersion: v1\nkind: ${kind}\nmetadata:\n  name: ledger\n${section}`
 
-  it.each([[{ fileKind: 'yaml' }], [{ path: 'deploy/secret.yaml' }], [{}]] as const)(
+  it.each([[{ fileKind: 'yaml' }], [{ path: 'deploy/secret.yaml' }]] as const)(
     'every value under data of a Secret is redacted (%j)',
     (options) => {
       const code = manifest('Secret', `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`)
@@ -887,7 +889,7 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     ['data in flow form', (v: string) => manifest('Secret', `data: {db: ${v}, note: ${TEXT}}\n`)],
   ])('a Secret written with %s', (_, write) => {
     const code = write(VALUE)
-    for (const options of [{ fileKind: 'yaml' }, {}] as const) {
+    for (const options of DOCUMENT) {
       const { anonymized } = gone(code, [VALUE, TEXT], options)
       // (A key that follows a redacted value on one line is redacted too, as before.)
       expect(anonymized).toContain('__REDACTED_CREDENTIAL_2__')
@@ -927,7 +929,7 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     ],
   ])('a Secret written with %s', (_, write) => {
     const code = write(VALUE)
-    for (const options of [{ fileKind: 'yaml' }, {}] as const) gone(code, [VALUE, TEXT], options)
+    for (const options of DOCUMENT) gone(code, [VALUE, TEXT], options)
   })
 
   it.each([
@@ -958,7 +960,7 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     ],
   ])('a Secret written with %s', (_, write) => {
     const code = write(VALUE)
-    for (const options of [{ fileKind: 'yaml' }, {}] as const) gone(code, [VALUE, TEXT], options)
+    for (const options of DOCUMENT) gone(code, [VALUE, TEXT], options)
   })
 
   it('a quote that never closes on a line of a block runs to the end of the line', () => {
@@ -1019,9 +1021,12 @@ describe('private-key lines and Secret manifests never reach the map', () => {
       'const spec = { kind: "Secret" }\nstream.on("data", (data: Buffer) => {\n  ledgerTotal += data.length\n})\nfunction read(data: Buffer, stringData: string) {\n  return ledgerTotal\n}\n',
     ],
   ] as const)('the word data elsewhere in %s code opens nothing', (language, code) => {
-    const { anonymized, map } = anonymize(code, { language })
-    expect(anonymized).not.toContain('__REDACTED_')
-    expect(restore(anonymized, map).restored).toBe(code)
+    // Also where the text is read as a document (a script kept in a YAML file).
+    for (const options of [{ language }, { language, fileKind: 'yaml' }] as const) {
+      const { anonymized, map } = anonymize(code, options)
+      expect(anonymized).not.toContain('__REDACTED_')
+      expect(restore(anonymized, map).restored).toBe(code)
+    }
   })
 
   it('a short Secret value is not redacted where the same letters stand elsewhere', () => {
@@ -1038,14 +1043,67 @@ describe('private-key lines and Secret manifests never reach the map', () => {
     gone(code, [VALUE], { fileKind: 'yaml' })
   })
 
-  it('an object in code is a manifest only when it names the kind', () => {
-    const object = (kind: string) =>
-      `const item = {\n  kind: ${kind},\n  data: {\n    db: ledgerName,\n  },\n}\n`
-    const read = (kind: string) => anonymize(object(kind), { language: 'typescript' }).anonymized
-    expect(read('SecretStore')).not.toContain('__REDACTED_')
-    expect(read('ConfigMap')).not.toContain('__REDACTED_')
-    // Toward redacting: the same text may be a manifest built in code.
-    expect(read("'Secret'")).toContain('db: __REDACTED_CREDENTIAL_1__,')
+  // The reader is for YAML and JSON documents. Code that names the kind is
+  // code: its names are masked and come back.
+  const API =
+    "type Kind = { kind: 'Secret' | 'ConfigMap' }\nfunction loadUsers(username: string, pageSize: number) {\n  return post(url, {\n    data: { username, pageSize, retries: maxRetries },\n  })\n}\nconst maxRetries = 3\nlog(username, maxRetries)\n"
+  const OBJECT = "const item = {\n  kind: 'Secret',\n  data: {\n    db: ledgerName,\n  },\n}\n"
+  it.each([
+    ['a type and an object named data', API, { path: 'src/api.ts' }, ['loadUsers', 'maxRetries']],
+    ['the same, its language stated', API, { language: 'typescript' }, ['loadUsers', 'maxRetries']],
+    ['the same, pasted', API, {}, ['loadUsers', 'maxRetries']],
+    ['an object that names the kind', OBJECT, { language: 'typescript' }, ['ledgerName']],
+    ['the same, pasted', OBJECT, {}, ['ledgerName']],
+  ] as const)('code is no manifest: %s', (_, code, options, names) => {
+    const { anonymized, map } = anonymize(code, options)
+    for (const name of names) {
+      expect(anonymized).not.toContain(name)
+      expect(Object.values(map)).toContain(name)
+    }
+    // (The quoted word beside 'Secret' is redacted by an older rule, as before.)
+    expect(restore(anonymized, map).restored).toBe(
+      code.replace("'ConfigMap'", "'__REDACTED_CREDENTIAL_1__'")
+    )
+    expect(scanSecrets(code, 'redact', 'path' in options ? options : {}).findings).toEqual([])
+  })
+
+  // With no path and no kind nothing says the text is a document, unless it
+  // is JSON as a whole, which no code is.
+  it('YAML with no path and no kind is masked as it always was', () => {
+    const code = manifest('Secret', `data:\n  db: ${VALUE}\n  note: ${TEXT}\ntype: Opaque\n`)
+    const { anonymized, map } = anonymize(code)
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
+  })
+
+  it.each([[{}], [{ path: 'deploy/secret.json' }], [{ fileKind: 'yaml' }]] as const)(
+    'a JSON Secret is read with %j',
+    (options) => {
+      const code = `{\n  "kind": "Secret",\n  "data": {\n    "db": "${VALUE}",\n    "note": "${TEXT}"\n  }\n}\n`
+      const { anonymized } = gone(code, [VALUE, TEXT], options)
+      expect(anonymized).toContain('"db": "__REDACTED_CREDENTIAL_1__"')
+      expect(anonymized).toContain('": "__REDACTED_CREDENTIAL_2__"')
+    }
+  )
+
+  it('a JSON path makes a document of JSON with a comment in it', () => {
+    const code = `// staging\n{"kind": "Secret", "data": {"db": "${VALUE}"}}\n`
+    gone(code, [VALUE], { path: 'deploy/secret.json' })
+  })
+
+  it.each([
+    [
+      'a compose file with a comment that says Secret',
+      '# deploys the Secret\nservices:\n  web:\n    environment:\n      data:\n        region: eu-central-1\n        replicas: 3\n',
+    ],
+    [
+      'a ConfigMap whose annotation says Secret',
+      'kind: ConfigMap\nmetadata:\n  annotations:\n    note: replaces the old Secret\ndata:\n  LOG_LEVEL: debug\n  FEATURE_FLAGS: billing,reports\n',
+    ],
+  ])('no manifest: %s', (_, code) => {
+    const { anonymized, map } = anonymize(code, { path: 'deploy/app.yaml' })
+    expect(anonymized).not.toContain('__REDACTED_')
+    expect(restore(anonymized, map).restored).toBe(code)
   })
 })
 

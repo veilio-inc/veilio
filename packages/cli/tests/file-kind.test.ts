@@ -74,6 +74,35 @@ describe('veilio scrub: the file kind reaches the engine', () => {
   })
 })
 
+// A Kubernetes Secret is read in a YAML or JSON file, and never in code.
+describe('veilio scrub: a Secret manifest is a YAML or JSON document', () => {
+  const VALUE = 'bGVkZ2VyIHN0YWdpbmcgZGF0YWJhc2UgcGFzc3dvcmQ'
+  const mapOf = (): string =>
+    Object.values(
+      JSON.parse(readFileSync(join(cwd, 'm.json'), 'utf8')).map as Record<string, string>
+    ).join(' ')
+
+  it.each([
+    ['secret.yaml', `apiVersion: v1\nkind: Secret\ndata:\n  db: ${VALUE}\n`],
+    ['secret.json', `{\n  "kind": "Secret",\n  "data": {\n    "db": "${VALUE}"\n  }\n}\n`],
+  ])('%s: the value is redacted and not in the map', async (file, text) => {
+    writeFileSync(join(cwd, file), text)
+    const r = await run(['scrub', '--map', 'm.json', file])
+    expect(r.out).toMatch(/__REDACTED_CREDENTIAL_1__/)
+    expect(r.out + mapOf()).not.toContain(VALUE.slice(0, 12))
+  })
+
+  it('src/kinds.ts: an object named data keeps its names, in the map', async () => {
+    const code =
+      "const item = { kind: 'Secret' }\nfunction loadUsers(username: string, pageSize: number) {\n  return post(url, {\n    data: { username, pageSize, retries: maxRetries },\n  })\n}\n"
+    writeFileSync(join(cwd, 'src/kinds.ts'), code)
+    const r = await run(['scrub', '--map', 'm.json', 'src/kinds.ts'])
+    expect(r.out).not.toContain('__REDACTED_')
+    expect(r.out).not.toMatch(/username|pageSize|maxRetries/)
+    for (const name of ['username', 'pageSize', 'maxRetries']) expect(mapOf()).toContain(name)
+  })
+})
+
 describe('veilio scan: the file kind reaches the engine', () => {
   it('reports the credential in a .env file', async () => {
     const r = await run(['scan', '--json', '.env'])
