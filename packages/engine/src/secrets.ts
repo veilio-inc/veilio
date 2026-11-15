@@ -43,6 +43,12 @@ export type SecretType =
   | 'square-token'
   | 'shopify-token'
   | 'cloudflare-token'
+  | 'digitalocean-token'
+  | 'sentry-token'
+  | 'linear-key'
+  | 'vault-token'
+  | 'age-secret-key'
+  | 'heroku-token'
   | 'jwt'
   | 'bearer-token'
   | 'basic-auth'
@@ -795,6 +801,127 @@ const PATTERNS: Pattern[] = [
     label: 'Cloudflare API token',
     re: /(?:cloudflare|cf)[_-]?api[_-]?(?:token|key)["'\s:=]{1,10}([A-Za-z0-9_-]{37,45})\b/gi,
     group: 1,
+  },
+  // ─── Formats checked against each vendor's own documentation ─────────────
+  //
+  // A rule is added only for a format its vendor states, and is anchored on
+  // what the vendor states: where only the prefix is documented, the body is a
+  // run of token characters of a least length chosen here (said at the rule).
+  // A second rule of a type keeps that type's severity: the grades are read
+  // from this table by type.
+  {
+    // docs.github.com, "About authentication to GitHub", token formats: the
+    // prefix of a fine-grained personal access token. No length is stated; a
+    // digit is asked for, so a long name that starts the same way is not one.
+    type: 'github-token',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'GitHub fine-grained token',
+    re: /\bgithub_pat_(?=[A-Za-z_]{0,255}[0-9])[A-Za-z0-9_]{36,255}\b/g,
+  },
+  {
+    // digitalocean.com/blog/updated-api-tokens-new-management-features: a
+    // personal access token, an OAuth token, an OAuth refresh token. No length
+    // is stated.
+    type: 'digitalocean-token',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'DigitalOcean token',
+    re: /\bdo[opr]_v1_[A-Za-z0-9]{32,255}\b/g,
+  },
+  {
+    // twilio.com/docs/glossary/what-is-a-sid: two letters and 32 hexadecimal
+    // digits; SK is an API key. It is the key's name, used with its secret.
+    type: 'twilio-key',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'Twilio API key SID',
+    re: /\bSK[a-f0-9]{32}\b/g,
+  },
+  {
+    // docs.stripe.com/webhooks: an endpoint's signing secret begins with this
+    // prefix. No length is stated.
+    type: 'stripe-key',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'Stripe webhook secret',
+    re: /\bwhsec_[A-Za-z0-9]{24,255}\b/g,
+  },
+  {
+    // developers.google.com/identity/protocols/oauth2: the access tokens in
+    // its examples begin with this prefix. No length is stated.
+    type: 'google-api-key',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'Google OAuth access token',
+    re: /\bya29\.[A-Za-z0-9_.-]{20,2048}\b/g,
+  },
+  {
+    // docs.sentry.io/security-legal-pii/security/token-formats: a personal
+    // token is the prefix and 64 hexadecimal characters.
+    type: 'sentry-token',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'Sentry token',
+    re: /\bsntryu_[a-f0-9]{64}\b/g,
+  },
+  {
+    // The same page: an organisation token is the prefix, a base64 payload,
+    // an underscore and 43 base64 characters.
+    type: 'sentry-token',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'Sentry token',
+    re: /\bsntrys_[A-Za-z0-9+/=]{1,500}_[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/])/g,
+  },
+  {
+    // linear.app/changelog, "API improvements": the prefixes of an API key
+    // and of an OAuth token. No length is stated.
+    type: 'linear-key',
+    disposition: 'destroy',
+    severity: 'medium',
+    label: 'Linear API key',
+    re: /\blin_(?:api|oauth)_[A-Za-z0-9]{32,255}\b/g,
+  },
+  {
+    // developer.hashicorp.com/vault/docs/concepts/tokens: a service, batch or
+    // recovery token is its prefix and 24 or more random characters. A digit
+    // is asked for, so a member of an object called `hvs` is not a token. The
+    // prefixes before Vault 1.10 (`s.`, `b.`, `r.`) are a letter and a dot:
+    // not listed.
+    type: 'vault-token',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'Vault token',
+    re: /\bhv[sbr]\.(?=[A-Za-z_-]{0,500}[0-9])[A-Za-z0-9_-]{24,500}\b/g,
+  },
+  {
+    // github.com/C2SP/C2SP, age.md: an X25519 identity is 32 bytes in Bech32
+    // under this prefix, 58 characters.
+    type: 'age-secret-key',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'age secret key',
+    re: /\bAGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}\b/g,
+  },
+  {
+    // devcenter.heroku.com/changelog-items/2800 and 3176: an OAuth access
+    // token has this prefix; 41 characters in all, 65 since April 2025.
+    type: 'heroku-token',
+    disposition: 'destroy',
+    severity: 'critical',
+    label: 'Heroku token',
+    re: /\bHRKU-[A-Za-z0-9_-]{36,255}\b/g,
+  },
+  {
+    // docs.slack.dev/authentication/tokens: an app-level token and a
+    // workflow token, by their prefixes; with a digit, so a dashed name
+    // (`xapp-production-api`) is not one.
+    type: 'slack-token',
+    disposition: 'destroy',
+    severity: 'high',
+    label: 'Slack app-level token',
+    re: /\bx(?:app|wfp)-(?=[A-Za-z-]{0,250}[0-9])[A-Za-z0-9-]{10,250}\b/g,
   },
   {
     type: 'basic-auth',
@@ -2217,6 +2344,12 @@ const TYPE_TOKENS: Record<SecretType, string> = {
   'square-token': 'SQUARE_TOKEN',
   'shopify-token': 'SHOPIFY_TOKEN',
   'cloudflare-token': 'CLOUDFLARE_TOKEN',
+  'digitalocean-token': 'DIGITALOCEAN_TOKEN',
+  'sentry-token': 'SENTRY_TOKEN',
+  'linear-key': 'LINEAR_KEY',
+  'vault-token': 'VAULT_TOKEN',
+  'age-secret-key': 'AGE_KEY',
+  'heroku-token': 'HEROKU_TOKEN',
   jwt: 'JWT',
   'bearer-token': 'BEARER_TOKEN',
   'basic-auth': 'BASIC_AUTH',

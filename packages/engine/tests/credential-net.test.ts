@@ -337,3 +337,37 @@ describe('key material, Secret manifests and joined literals are read in linear 
       expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
   }, 120_000)
 })
+
+// Every credential rule reads its text in linear time: a prefix repeated, a
+// prefix with a long body that never ends as the format does, a body just
+// short of one. Built from pieces, so no line here is itself a key.
+describe('the credential rules are linear on adversarial text', () => {
+  const time = (text: string): number => {
+    let best = Infinity
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now()
+      scanSecrets(text, 'redact', { fileKind: 'shell' })
+      valuePositions(text, { fileKind: 'yaml' })
+      valuePositions(text, { language: 'typescript' })
+      best = Math.min(best, performance.now() - t)
+    }
+    return best
+  }
+  const texts = (n: number): string[] => [
+    // Provider formats.
+    ('github' + '_pat_').repeat(n),
+    ('sntrys' + '_Ab+/=').repeat(n),
+    'sntrys' + '_' + 'A'.repeat(n) + '_' + 'B'.repeat(42),
+    ('hv' + 's.abcdefghijklmnopqrstuvw ').repeat(n),
+    ('ya' + '29.' + '-'.repeat(15)).repeat(n),
+    ('ya' + '29.').repeat(n),
+    ('xa' + 'pp-').repeat(n) + ' ' + ('AGE-SECRET' + '-KEY-1QPZ ').repeat(n),
+    ('S' + 'K' + 'a1'.repeat(15) + ' ').repeat(n),
+  ]
+  it('20,000 and 160,000 repeats', () => {
+    const [a, b] = [20_000, 160_000].map((n) => texts(n).map(time))
+    // Eight times the text: linear is 8x, quadratic 64x.
+    for (let i = 0; i < a!.length; i++)
+      expect(b![i]! / Math.max(a![i]!, 3), `text ${i}`).toBeLessThan(24)
+  }, 240_000)
+})
