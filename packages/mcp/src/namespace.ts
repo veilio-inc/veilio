@@ -20,6 +20,7 @@
 import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential, readTeamRecord } from '@veilio-inc/cli/credential'
+import { retryWait } from '@veilio-inc/cli/cloud'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
@@ -191,7 +192,7 @@ const UNAVAILABLE_RECHECK_MS = 30_000
  *  review). Null when the team is not rate-limited. */
 const rateLimitedRecheckMs = (): number | null =>
   current.found.status === 'unavailable' && current.found.refusal !== undefined
-    ? (current.found.retryAfter ?? 60) * 1000
+    ? retryWait(current.found.retryAfter).seconds * 1000
     : null
 
 let primedWith: { home?: string; opts: PrimeOptions } = { opts: {} }

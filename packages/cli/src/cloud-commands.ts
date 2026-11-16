@@ -62,7 +62,7 @@ import {
 import { openFetchedRules, rulesWaitingLines } from './rules-open.js'
 import { teamKeyBytes, teamKeyUnconfirmed, teamKeyVersion } from './hashed-bases.js'
 import { EXIT_ERROR, EXIT_OK, type Io, type TeamNamespaceSource } from './commands.js'
-import { DEFAULT_INSTANCE } from './cloud.js'
+import { DEFAULT_INSTANCE, retryWait } from './cloud.js'
 import {
   createCloudMap,
   listCloudMaps,
@@ -1417,7 +1417,7 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
         : `${u.stopped.left} personal maps were not checked`
     io.stderr(
       `veilio: stopped re-sealing: ${sentence(u.stopped.reason)} ${left}. ` +
-        `Run \`veilio vault unlock\` again${u.stopped.wait === undefined ? ' in a minute' : ''}; the key itself is unlocked.\n`
+        `Run \`veilio vault unlock\` again${u.stopped.wait === undefined ? ` in ${retryWait().said}` : ''}; the key itself is unlocked.\n`
     )
   }
   return u.failed.length > 0 || u.stopped ? EXIT_ERROR : EXIT_OK

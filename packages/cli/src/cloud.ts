@@ -102,7 +102,8 @@ export class CloudError extends Error {
      *  version it lost to needs it (spec 052). */
     readonly body?: Record<string, unknown>,
     /** On a 429: the whole seconds the instance asked for, when it named 1 to
-     *  60 of them. Nothing here waits; a caller that may wait does so once. */
+     *  3600 of them. Nothing here waits; a caller that may wait does so once,
+     *  and not for longer than it chooses to. */
     readonly retryAfter?: number
   ) {
     // Spec 093 item 9: the message is often the server's own words.
@@ -237,7 +238,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       const wait = retryAfterSeconds(response.headers.get('retry-after'))
       throw new CloudError(
         'server',
-        `Cloud is limiting requests from this session. Try again in ${wait === undefined ? 'a minute' : wait === 1 ? '1 second' : `${wait} seconds`}.`,
+        `Cloud is limiting requests from this session. Try again in ${retryWait(wait).said}.`,
         429,
         body,
         wait
@@ -901,12 +902,22 @@ function trimSlashes(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
-/** `Retry-After` as whole seconds, 1 to 60. A date, zero, a fraction or
- *  anything longer is no time this client would wait for. */
+/** `Retry-After` as whole seconds, 1 to 3600. A date, zero, a fraction or
+ *  anything longer is no time this client would say. */
 function retryAfterSeconds(header: string | null): number | undefined {
-  if (header === null || !/^\d{1,2}$/.test(header.trim())) return undefined
+  if (header === null || !/^\d{1,4}$/.test(header.trim())) return undefined
   const seconds = Number(header.trim())
-  return seconds >= 1 && seconds <= 60 ? seconds : undefined
+  return seconds >= 1 && seconds <= 3600 ? seconds : undefined
+}
+
+/**
+ * The wait after a rate limit, and how it is said: the seconds the instance
+ * named, or a minute when it named none. The one place for that default, so
+ * the sentence, a closing "in a minute" and a held retry cannot disagree.
+ */
+export function retryWait(seconds?: number): { seconds: number; said: string } {
+  if (seconds === undefined) return { seconds: 60, said: 'a minute' }
+  return { seconds, said: seconds === 1 ? '1 second' : `${seconds} seconds` }
 }
 
 /** A failure response's body, or an empty object when it had none we can read. */

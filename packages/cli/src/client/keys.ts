@@ -196,7 +196,9 @@ async function reseal(
     try {
       return await call()
     } catch (err) {
-      if (waited || !(err instanceof CloudError) || err.retryAfter === undefined) throw err
+      if (!(err instanceof CloudError) || err.retryAfter === undefined) throw err
+      // Longer than a minute is said, not sat through.
+      if (waited || err.retryAfter > 60) throw err
       waited = true
       await sleep(err.retryAfter * 1000)
       return call()

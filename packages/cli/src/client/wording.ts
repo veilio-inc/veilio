@@ -20,7 +20,7 @@
 // prints, because the MCP server's reader is the model whose context the names
 // must stay out of (spec 052, founder decision 2026-10-25).
 
-import { CloudError } from '../cloud.js'
+import { CloudError, retryWait } from '../cloud.js'
 import { printableAll } from '../reservations.js'
 
 export const REFUSAL_CODES = [
@@ -430,7 +430,7 @@ export const WORDING: Record<RefusalCode, Words> = {
   // A rate limit that named its wait has said when: no second, different one here.
   server: (p) => ({
     message: `the instance reported an error — ${sentence(p.detail)}`,
-    resolve: `Run the command again${p.wait === undefined ? ' in a minute' : ''}; if it keeps failing, contact the instance’s support.`,
+    resolve: `Run the command again${p.wait === undefined ? ` in ${retryWait().said}` : ''}; if it keeps failing, contact the instance’s support.`,
   }),
 }
 

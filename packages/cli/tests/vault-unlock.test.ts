@@ -461,7 +461,8 @@ describe('the re-seal pass and the request allowance', () => {
     [
       'a 429 naming ten minutes',
       { 3: () => limited('600') },
-      IN_A_MINUTE,
+      // Said, and not waited for: the one wait is for a minute at most.
+      'Cloud is limiting requests from this session. Try again in 600 seconds.',
       [],
       '3 personal maps were',
       2,

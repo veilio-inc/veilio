@@ -38,6 +38,9 @@ describe('a request answered 429', () => {
     ['60', 60, '60 seconds'],
     ['2', 2, '2 seconds'],
     ['1', 1, '1 second'],
+    ['61', 61, '61 seconds'],
+    ['120', 120, '120 seconds'],
+    ['3600', 3600, '3600 seconds'],
   ])('Retry-After: %s is the time to wait', async (header, seconds, said) => {
     const fetchMock = answer(429, { error: 'Too many requests' }, { 'Retry-After': header })
     const err = await failure(() => listMaps(CREDENTIAL))
@@ -50,8 +53,8 @@ describe('a request answered 429', () => {
   it.each([
     ['no header', {}],
     ['zero', { 'Retry-After': '0' }],
-    ['more than a minute', { 'Retry-After': '600' }],
-    ['one second over', { 'Retry-After': '61' }],
+    ['more than an hour', { 'Retry-After': '3601' }],
+    ['five digits', { 'Retry-After': '36000' }],
     ['an HTTP date', { 'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT' }],
     ['not a number', { 'Retry-After': 'soon' }],
     ['a fraction', { 'Retry-After': '7.5' }],
