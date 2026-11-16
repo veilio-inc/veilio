@@ -237,10 +237,9 @@ export function sealableMap(map) {
  * bytes.
  */
 export function sealedLengthRefusal(length) {
-    return length > MAP_LIMITS.sealedLength
-        ? `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
-        : null;
+    return length > MAP_LIMITS.sealedLength ? `${sealedTooLong(length)} It was not decrypted.` : null;
 }
+const sealedTooLong = (length) => `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}.`;
 /**
  * The bytes a sealer encrypts - or a refusal, before anything is encrypted,
  * when the sealed data would be longer than an opener reads. AES-GCM adds a
@@ -249,9 +248,12 @@ export function sealedLengthRefusal(length) {
  */
 export function sealablePlaintext(body) {
     const plaintext = new TextEncoder().encode(JSON.stringify(body));
-    const why = sealedLengthRefusal(4 * Math.ceil((plaintext.length + 16) / 3));
-    if (why)
+    // Said without the opener's "It was not decrypted.": nothing was sealed yet.
+    const length = 4 * Math.ceil((plaintext.length + 16) / 3);
+    if (length > MAP_LIMITS.sealedLength) {
+        const why = sealedTooLong(length);
         throw new InvalidMapError(notSealable(why), why);
+    }
     return plaintext;
 }
 const notSealable = (why) => `This map cannot be sealed, because it could not be opened again: ${why} Nothing was encrypted.`;
