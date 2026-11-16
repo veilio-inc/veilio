@@ -46,6 +46,46 @@ It needs Claude Code 2.1.287 or later, uses the same map as the CLI, and makes n
 - Export / import encrypted `.veilio` files (AES-256-GCM, passphrase-protected) for durable, portable storage
 - Zero backend. Zero database. Zero secrets to manage.
 
+## Use Veilio with an AI agent
+
+Pick the package that matches the tool your team already uses; all three mask identifiers on your machine.
+
+| Agent or tool                                             | Package                                                 | What it does                                                                        |
+| --------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Claude Code                                               | [`veilio-guard`](plugins/veilio-guard/README.md) plugin | Masks what Claude Code reads and restores what it writes; refuses `.env` and keys   |
+| Cursor, VS Code, Claude Desktop, Xcode, other MCP clients | [`@veilio-inc/mcp`](packages/mcp/README.md)             | Path-based tools: the agent gets masked text and never sees the real names          |
+| Shell agents and CI                                       | [`@veilio-inc/cli`](packages/cli/README.md)             | `veilio scrub`, `restore` and `scan` in a terminal, a pipe, a pre-commit hook or CI |
+
+```text
+/plugin marketplace add veilio-inc/veilio
+/plugin install veilio-guard@veilio
+```
+
+```jsonc
+{
+  "mcpServers": {
+    "veilio": {
+      "command": "npx",
+      "args": ["-y", "@veilio-inc/mcp", "--root", "."],
+    },
+  },
+}
+```
+
+```bash
+npm install -g @veilio-inc/cli     # or run it without installing:
+npx @veilio-inc/cli scrub src/billing.ts
+```
+
+Using it safely:
+
+- Give the agent file paths, not pasted code. The MCP server reads the file itself and returns only the masked text.
+- Restore in a terminal (`veilio restore`), not through the agent: `restore_text` puts the real names back into the agent's context.
+- One session per client, opened from that repository's root. `--root` guards the files, not the conversation, so a session keeps what it has already read.
+- Rotate any secret an agent saw before you installed Veilio.
+
+A Veilio Cloud subscription adds saved maps synced across devices, your team's shared placeholder numbering and custom rules; the CLI and MCP also work offline without an account. Setup for each tool: [docs/USING-THE-CLI-AND-MCP.md](docs/USING-THE-CLI-AND-MCP.md).
+
 ## What is in this repository
 
 | Package                                                  | What it is                                                                                                                                                                                                                                                                                                          |
