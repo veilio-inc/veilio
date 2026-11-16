@@ -100,3 +100,72 @@ describe('restore — report', () => {
     expect(report.unresolved).toEqual([])
   })
 })
+
+// A map may be someone else's. Only what masking could have written is put
+// back: a placeholder key with a text value, never a redaction token.
+describe('restore substitutes only placeholders', () => {
+  const quiet = (text: string, map: unknown) => restore(text, map as SymbolMap, { strip: 'none' })
+
+  it('leaves a word, one letter and an operator alone, and still restores the placeholder', () => {
+    const r = quiet('call fetch(url) with a and __VAR__1', {
+      fetch: 'send',
+      a: 'X',
+      '(': '[',
+      __VAR__1: 'total',
+    })
+    expect(r.restored).toBe('call fetch(url) with a and total')
+    expect(r.report.resolved).toEqual(['__VAR__1'])
+    // An ignored key is not an entry the response failed to use.
+    expect(r.report.missing).toEqual([])
+  })
+
+  it('ignores the empty key', () => {
+    expect(quiet('hello __VAR__1', { '': 'Y', __VAR__1: 'total' }).restored).toBe('hello total')
+    expect(quiet('hello', { '': 'Y' }).restored).toBe('hello')
+  })
+
+  it('never restores a redaction token, whatever the map says', () => {
+    const r = quiet('key = __REDACTED_SECRET__ and __REDACTED_SECRET__1', {
+      __REDACTED_SECRET__: 'opened',
+      __REDACTED_SECRET__1: 'opened',
+    })
+    expect(r.restored).toBe('key = __REDACTED_SECRET__ and __REDACTED_SECRET__1')
+    expect(r.report.missing).toEqual([])
+  })
+
+  it('ignores an entry whose value is not text, and does not throw', () => {
+    for (const value of [5, null, ['x'], { a: 1 }, true]) {
+      const r = quiet('a __VAR__1 and __VAR__2', { __VAR__1: value, __VAR__2: 'total' })
+      expect(r.restored).toBe('a __VAR__1 and total')
+      expect(r.report.unresolved).toEqual(['__VAR__1'])
+    }
+    // The value that used to throw: one that holds no `includes`.
+    expect(() => quiet('__VAR__1', { __VAR__1: 5 })).not.toThrow()
+  })
+
+  it('restores every family of placeholder the tools write, as before', () => {
+    const map = {
+      __CLS__1: 'PaymentGateway',
+      __FN__2: 'chargeCard',
+      __VAR__3: 'amountDue',
+      __PKG__4: 'billing-core',
+      __STR__5: 'ledger',
+      __MANUAL__6: 'Jan Kowalski',
+      __LOCAL_K7Q2XA_VAR__7: 'localTotal',
+      __H_0123456789ABCDEF__8: 'hashedBase',
+      __CODENAME__: 'phoenix',
+      __CODENAME__9: 'griffin',
+      __IBAN__10: 'GB82 WEST 1234 5698 7654 32',
+      __P11__: 'legacyName',
+    }
+    const text = Object.keys(map).join(' | ')
+    const r = quiet(text, map)
+    expect(r.restored).toBe(Object.values(map).join(' | '))
+    expect(r.report.resolved).toEqual(Object.keys(map))
+  })
+
+  it('still reads a value that holds a placeholder through', () => {
+    const r = quiet('use __VAR__2', { __MANUAL__1: 'Acme', __VAR__2: '__MANUAL__1_API_URL' })
+    expect(r.restored).toBe('use Acme_API_URL')
+  })
+})
