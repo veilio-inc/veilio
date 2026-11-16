@@ -10,8 +10,8 @@ import { HELD, ROWS as MARKS } from './fixtures/manual-marks.js'
 
 // What a masking change may alter is listed, row by row, in
 // fixtures/baseline-exceptions.ts. Everything else in the corpus must come out
-// exactly as the published 1.19.2 gave it (fixtures/baseline-1.19.2.json,
-// recorded once from the registry package by baseline-1.19.2.gen.mjs).
+// exactly as the published 1.19.3 gave it (fixtures/baseline-1.19.3.json,
+// recorded once from the registry package by baseline-1.19.3.gen.mjs).
 
 interface Answer {
   options: AnonymizeOptions
@@ -24,7 +24,7 @@ interface Answer {
 }
 
 const BASE: { engine: { version: string; shasum: string }; rows: Record<string, Answer[]> } =
-  JSON.parse(readFileSync(new URL('./fixtures/baseline-1.19.2.json', import.meta.url), 'utf8'))
+  JSON.parse(readFileSync(new URL('./fixtures/baseline-1.19.3.json', import.meta.url), 'utf8'))
 
 const rows = baselineRows({ syntaxes: SYNTAXES, values: VALUES, marks: MARKS, held: HELD })
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -37,9 +37,9 @@ const slices = (secret: string): string[] =>
     ? [secret]
     : Array.from({ length: secret.length - 7 }, (_, i) => secret.slice(i, i + 8))
 
-describe('masking is what the published 1.19.2 gave, but for the listed rows', () => {
+describe('masking is what the published 1.19.3 gave, but for the listed rows', () => {
   it('is a record of the published package', () => {
-    expect(BASE.engine.version).toBe('1.19.2')
+    expect(BASE.engine.version).toBe('1.19.3')
     expect(BASE.engine.shasum).toMatch(/^[0-9a-f]{40}$/)
   })
 
@@ -57,6 +57,14 @@ describe('masking is what the published 1.19.2 gave, but for the listed rows', (
       expect(REASONS).toContain(e.reason)
       expect(e.why).not.toBe('')
     }
+  })
+
+  // The limits on what a map may hold change nothing in masking: the rows
+  // with a long value are in the record, and no row is excepted.
+  it('holds the long-value rows, and nothing is excepted', () => {
+    expect(rows.filter((r) => r.name.startsWith('long: '))).toHaveLength(12)
+    expect(EXCEPTIONS).toEqual([])
+    expect(REPOSITORY_EXCEPTIONS).toEqual({})
   })
 
   describe.each(rows)('$name', ({ name, code, options, names = [], secrets = [] }) => {
@@ -87,13 +95,13 @@ describe('masking is what the published 1.19.2 gave, but for the listed rows', (
 })
 
 // A new rule must not redact ordinary text one-way: every tracked file of this
-// repository still as the published 1.19.2 saw it (baseline-1.19.2.repo.json,
+// repository still as the published 1.19.3 saw it (baseline-1.19.3.repo.json,
 // by its digest) holds as many redaction tokens as that package left in it,
 // but for the files listed in baseline-exceptions.ts. A file edited since is
 // not held to its old count.
 describe('the repository itself gains no redaction but in the listed files', () => {
   const REPO: { engine: { version: string }; files: Record<string, [string, number]> } = JSON.parse(
-    readFileSync(new URL('./fixtures/baseline-1.19.2.repo.json', import.meta.url), 'utf8')
+    readFileSync(new URL('./fixtures/baseline-1.19.3.repo.json', import.meta.url), 'utf8')
   )
   const root = new URL('../../../', import.meta.url)
   const read = (path: string): string | null => {
@@ -107,7 +115,7 @@ describe('the repository itself gains no redaction but in the listed files', () 
     createHash('sha256').update(text).digest('hex').slice(0, 16)
 
   it('is a record of the published package', () => {
-    expect(REPO.engine.version).toBe('1.19.2')
+    expect(REPO.engine.version).toBe('1.19.3')
     expect(Object.keys(REPO.files).length).toBeGreaterThan(500)
   })
 
