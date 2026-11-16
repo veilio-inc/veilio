@@ -1,5 +1,13 @@
 # @veilio-inc/mcp
 
+## 0.11.3
+
+### Patch Changes
+
+- [#259](https://github.com/veilio-inc/veilio/pull/259) [`cd7ea7a`](https://github.com/veilio-inc/veilio/commit/cd7ea7a0c5d4a0e9c2ccca9eab20cfeb090c2824) Thanks [@DlgSHi](https://github.com/DlgSHi)! - Redacts more provider keys, passwords under non-English names, multi-line values and login-command passwords. Update, then rotate any such secret masked with an earlier version.
+- Updated dependencies [[`cd7ea7a`](https://github.com/veilio-inc/veilio/commit/cd7ea7a0c5d4a0e9c2ccca9eab20cfeb090c2824)]:
+  - @veilio-inc/cli@0.13.3
+
 ## 0.11.2
 
 ### Patch Changes
