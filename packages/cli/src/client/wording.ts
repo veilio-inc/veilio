@@ -121,7 +121,7 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; refusal: Refusal 
 
 /** A trailing full stop, unless the text already ends a sentence. Server
  *  messages arrive both ways. */
-function sentence(text: string | undefined): string {
+export function sentence(text: string | undefined): string {
   const t = (text ?? '').trim()
   return /[.!?…]$/.test(t) ? t : `${t}.`
 }

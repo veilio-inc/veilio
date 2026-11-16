@@ -109,6 +109,9 @@ export interface ClientContext {
    * environment. The MCP server passes its own; tests pass theirs.
    */
   env?: Env
+  /** Wait this many milliseconds (the one wait of `vault unlock`). Undefined:
+   *  a timer. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const DEFAULT_NAME = 'from the terminal'

@@ -71,7 +71,13 @@ import {
   updateCloudMap,
   type ClientContext,
 } from './client/maps.js'
-import { refusal, renderRefusal, rulesSkippedSentences, type Refusal } from './client/wording.js'
+import {
+  refusal,
+  renderRefusal,
+  rulesSkippedSentences,
+  sentence,
+  type Refusal,
+} from './client/wording.js'
 import { bootstrapTeamKey, openOwnKeypair } from './client/team-key-bootstrap.js'
 import { vaultLock, vaultUnlock } from './client/keys.js'
 import { vaultKeyFor } from './client/vault-key.js'
@@ -186,7 +192,9 @@ export async function runDeviceLogin(base: string, io: Io): Promise<number> {
       return EXIT_OK
     } catch (err) {
       if (!(err instanceof CloudError)) return reportLoginFailure(err, io)
-      switch (err.message) {
+      // The code, not the message: a 429 is worded as a rate limit by the
+      // client, and `slow_down` arrives as one.
+      switch (typeof err.body?.error === 'string' ? err.body.error : err.message) {
         case 'authorization_pending':
           continue
         case 'slow_down':
@@ -553,6 +561,7 @@ function clientContext(io: Io): ClientContext {
     home: io.home,
     passphrase: io.password ? () => io.password!('Vault passphrase: ') : undefined,
     env: io.env,
+    sleep: io.sleep,
   }
 }
 
@@ -1399,9 +1408,19 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
         u.failed.map((f) => `  "${f.name}" (${f.id}): ${f.reason}\n`).join('') +
         'Run `veilio vault unlock` again to retry them; the key itself is unlocked.\n'
     )
-    return EXIT_ERROR
   }
-  return EXIT_OK
+  // One message for a rate limit or a failing instance, not one per map left.
+  if (u.stopped) {
+    const left =
+      u.stopped.left === 1
+        ? '1 personal map was not checked'
+        : `${u.stopped.left} personal maps were not checked`
+    io.stderr(
+      `veilio: stopped re-sealing: ${sentence(u.stopped.reason)} ${left}. ` +
+        'Run `veilio vault unlock` again in a minute; the key itself is unlocked.\n'
+    )
+  }
+  return u.failed.length > 0 || u.stopped ? EXIT_ERROR : EXIT_OK
 }
 
 /** Remove the personal-maps key from this machine, and the personal rules opened with it. */

@@ -465,6 +465,16 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(cloud.maps).toHaveLength(1)
   })
 
+  it('a rate limit on a tool’s read: said in one sentence, and the request is not repeated', async () => {
+    signIn(home, { pmk: true })
+    cloud.limited.add('/api/maps')
+    const before = cloud.requests.length
+    const r = await callToolAsync('maps_list', {}, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('Cloud is limiting requests from this session. Try again in a minute.')
+    expect(cloud.requests.slice(before).map((x) => x.path)).toEqual(['/api/maps'])
+  })
+
   it('maps_update under a key version not held: the approved words, the MCP prefix', async () => {
     signIn(home, { team: true })
     local({ __CLS__1: 'X', __FN__2: 'y' })

@@ -129,6 +129,13 @@ export class FakeCloud {
   failingBody: unknown = { error: 'Service Unavailable' }
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
+  /** Seen before any route: a test answers a request itself (a 429 with a
+   *  `Retry-After`, a 503), throws for an instance that cannot be reached, or
+   *  returns null to let the request through. */
+  intercept: ((method: string, path: string) => Response | null) | null = null
+  /** The one-request listing of personal envelopes; false is an instance
+   *  from before it, which answers 404. */
+  personalEnvelopes = true
   /** This account's keypair, as the web app makes it; null until made. */
   keypair: { publicKey: string; privateKeyEncrypted: string; privateKey: CryptoKey } | null = null
   /** Every team-key wrap the team holds, anyone's. */
@@ -271,6 +278,8 @@ export class FakeCloud {
       return json(this.reserveFailure.status, this.reserveFailure.body)
     }
     if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
+    const early = this.intercept?.(method, u.pathname)
+    if (early) return early
     return this.answer(method, u.pathname, u.searchParams, body)
   }
 
@@ -326,6 +335,20 @@ export class FakeCloud {
           : null,
         plan: 'team',
         ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
+      })
+    }
+    if (path === '/api/maps/personal-envelopes' && this.personalEnvelopes) {
+      const rows = this.maps.filter((m) => m.owner === ME && m.scope === 'personal')
+      return json(200, {
+        maps: rows
+          .filter((m) => !this.serverUnreadable.has(m.id))
+          .map((m) => ({
+            id: m.id,
+            updated_at: m.updated_at,
+            identifier_count: m.identifier_count,
+            map_data: m.map_data,
+          })),
+        unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
       })
     }
     if (path === '/api/maps/team-envelopes') {
