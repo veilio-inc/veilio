@@ -1,5 +1,14 @@
-import { isPlaceholder, MAP_LIMITS } from '@veilio-inc/engine'
+import {
+  InvalidMapError,
+  isPlaceholder,
+  MAP_LIMITS,
+  sealableMap,
+  sealablePlaintext,
+} from '@veilio-inc/engine'
 import type { SymbolMap } from '@veilio-inc/engine'
+
+// The engine's own error, so a refusal of its reader is shown like one of ours.
+export { InvalidMapError }
 
 /** A decrypted `.veilio` file is authenticated, not trusted (ROADMAP E7).
  *
@@ -15,12 +24,6 @@ import type { SymbolMap } from '@veilio-inc/engine'
  *  The residual risk - that a colleague's map maps `__FN__1` to something you
  *  did not expect - is inherent to the feature and belongs in the docs.
  */
-export class InvalidMapError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'InvalidMapError'
-  }
-}
 
 // The upper bounds for one file are the engine's `MAP_LIMITS`, the same ones
 // its own reader and the CLI use: a file written here opens there, and the
@@ -67,6 +70,23 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     map[key] = value
   }
   return map
+}
+
+/** The bytes an export encrypts, or why this map is not exported.
+ *
+ *  The import's check first, in its own sentences; then the engine's, which
+ *  every other reader of a `.veilio` file runs: it also knows what each kind of
+ *  placeholder is made from, and how long the sealed data may be. A file the
+ *  app writes is then one the CLI opens too. */
+export function exportablePlaintext(map: SymbolMap): Uint8Array {
+  try {
+    return sealablePlaintext(sealableMap(parseSymbolMap(map)))
+  } catch (err) {
+    if (!(err instanceof InvalidMapError)) throw err
+    throw new InvalidMapError(
+      `This map cannot be exported, because it could not be imported again: ${err.reason}`
+    )
+  }
 }
 
 /** Pick what to tell the reader when an import fails.
