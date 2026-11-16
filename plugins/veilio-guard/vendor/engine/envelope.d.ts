@@ -71,10 +71,27 @@ export declare class WeakPassphraseError extends Error {
  */
 export declare function assertUsablePassphrase(passphrase: string): void;
 export declare class InvalidMapError extends Error {
-    constructor(message: string);
+    /** The reader's own sentence. The message is this, or - from a sealing
+     *  function - this inside the sentence that says nothing was encrypted. */
+    readonly reason: string;
+    constructor(message: string, reason?: string);
 }
 /**
- * What a map may restore: 1 to 100000 characters, none of them a control or
+ * What a map may hold, for every writer and every reader: the number of
+ * entries, the characters of one value, and the characters of the sealed data
+ * (base64). One set, so a map that was sealed is a map that opens. Not
+ * security boundaries - a map under all three can still be hostile. They stop
+ * one file exhausting memory; only `sealedLength` is checked before anything
+ * is decrypted.
+ */
+export declare const MAP_LIMITS: {
+    readonly entries: 250000;
+    readonly valueLength: 200000;
+    readonly sealedLength: 32000000;
+};
+/**
+ * What a map may restore: 1 to `MAP_LIMITS.valueLength` characters, none of
+ * them a control or
  * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
  * a team map opened with the team key, and the guard.
  */
@@ -104,6 +121,27 @@ export declare function placeholderValueRefusal(placeholder: string, value: stri
  * deforming the restore.
  */
 export declare function parseSymbolMap(raw: unknown): SymbolMap;
+/**
+ * The same map, or a refusal: the check every sealing function runs first. It
+ * is the reader's own (`parseSymbolMap`), so nothing is encrypted that could
+ * not be opened again.
+ */
+export declare function sealableMap(map: unknown): SymbolMap;
+/**
+ * Why sealed data of this length is not opened, or null. The one limit that is
+ * compared before anything is decoded or decrypted, so it is the one that
+ * bounds what a single envelope can make this process hold: at most
+ * `MAP_LIMITS.sealedLength` characters of base64, three quarters of that in
+ * bytes.
+ */
+export declare function sealedLengthRefusal(length: number): string | null;
+/**
+ * The bytes a sealer encrypts - or a refusal, before anything is encrypted,
+ * when the sealed data would be longer than an opener reads. AES-GCM adds a
+ * 16-byte tag and base64 writes four characters for every three bytes, so the
+ * length is known from the plaintext alone.
+ */
+export declare function sealablePlaintext(body: unknown): Uint8Array;
 declare const ENVELOPE_ALG = "AES-256-GCM-PBKDF2";
 export interface VeilioFile {
     v: 1;

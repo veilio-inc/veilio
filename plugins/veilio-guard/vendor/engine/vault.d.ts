@@ -40,7 +40,15 @@ export declare function deriveVaultKey(passphrase: string, salt: Uint8Array, kdf
 export type CryptoKeyLike = {
     readonly type: string;
 };
+/** Seal a map under a vault key. Refuses, before anything is encrypted, a map
+ *  `decryptMapFromVault` would not open. */
 export declare function encryptMapForVault(key: CryptoKeyLike, map: SymbolMap): Promise<VaultEnvelope>;
+/**
+ * Seal any JSON value into a vault envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed custom rule). The write half
+ * of `openVaultEnvelope`.
+ */
+export declare function sealVaultEnvelope(key: CryptoKeyLike, body: unknown): Promise<VaultEnvelope>;
 /**
  * Open a vault envelope.
  *

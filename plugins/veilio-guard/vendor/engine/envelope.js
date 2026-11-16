@@ -99,18 +99,28 @@ export function assertUsablePassphrase(passphrase) {
 }
 // ─── Map validation ──────────────────────────────────────────────────────────
 export class InvalidMapError extends Error {
-    constructor(message) {
+    /** The reader's own sentence. The message is this, or - from a sealing
+     *  function - this inside the sentence that says nothing was encrypted. */
+    reason;
+    constructor(message, reason = message) {
         super(message);
         this.name = 'InvalidMapError';
+        this.reason = reason;
     }
 }
-/** Upper bounds for one file. Not security boundaries — a map under both can
- *  still be hostile. They stop one file exhausting memory, and sit far above any
- *  real project: the largest maps seen are in the low hundreds of entries. */
-const MAX_ENTRIES = 50_000;
-const MAX_VALUE_LENGTH = 10_000;
-/** The longest real name a store keeps (the CLI's map and aliases.json). */
-const MAX_NAME = 100_000;
+/**
+ * What a map may hold, for every writer and every reader: the number of
+ * entries, the characters of one value, and the characters of the sealed data
+ * (base64). One set, so a map that was sealed is a map that opens. Not
+ * security boundaries - a map under all three can still be hostile. They stop
+ * one file exhausting memory; only `sealedLength` is checked before anything
+ * is decrypted.
+ */
+export const MAP_LIMITS = {
+    entries: 250_000,
+    valueLength: 200_000,
+    sealedLength: 32_000_000,
+};
 // C0 and C1 controls (line feed, tab, NEL, escape, ...) and the Unicode line
 // and paragraph separators. A map value is not always an identifier (a manual
 // mark can be words with spaces, spec 082 adds non-ASCII letters), so no exact
@@ -118,12 +128,16 @@ const MAX_NAME = 100_000;
 // never part of a name.
 const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u;
 /**
- * What a map may restore: 1 to 100000 characters, none of them a control or
+ * What a map may restore: 1 to `MAP_LIMITS.valueLength` characters, none of
+ * them a control or
  * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
  * a team map opened with the team key, and the guard.
  */
 export function isName(v) {
-    return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v);
+    return (typeof v === 'string' &&
+        v.length > 0 &&
+        v.length <= MAP_LIMITS.valueLength &&
+        !NOT_IN_A_NAME.test(v));
 }
 // Numbered, or bare (an older client's local base, a rule's own placeholder).
 const NUMBERED = /^(__[A-Z][A-Z0-9_]*__)\d*$/;
@@ -177,8 +191,8 @@ export function parseSymbolMap(raw) {
         throw new InvalidMapError('Map must be a JSON object of placeholder → name.');
     }
     const entries = Object.entries(raw);
-    if (entries.length > MAX_ENTRIES) {
-        throw new InvalidMapError(`Map has ${entries.length} entries; the limit is ${MAX_ENTRIES}.`);
+    if (entries.length > MAP_LIMITS.entries) {
+        throw new InvalidMapError(`Map has ${entries.length} entries; the limit is ${MAP_LIMITS.entries}.`);
     }
     const out = {};
     for (const [key, value] of entries) {
@@ -188,8 +202,10 @@ export function parseSymbolMap(raw) {
         if (typeof value !== 'string') {
             throw new InvalidMapError(`"${key}" maps to a ${typeof value}, not a string.`);
         }
-        if (value.length > MAX_VALUE_LENGTH) {
-            throw new InvalidMapError(`"${key}" maps to ${value.length} characters; the limit is ${MAX_VALUE_LENGTH}.`);
+        // Ahead of the name rule below, so a value that is only too long is told
+        // its length, not that it holds a control character.
+        if (value.length > MAP_LIMITS.valueLength) {
+            throw new InvalidMapError(`"${key}" maps to ${value.length} characters; the limit is ${MAP_LIMITS.valueLength}.`);
         }
         const why = placeholderValueRefusal(key, value);
         if (why)
@@ -198,6 +214,47 @@ export function parseSymbolMap(raw) {
     }
     return out;
 }
+/**
+ * The same map, or a refusal: the check every sealing function runs first. It
+ * is the reader's own (`parseSymbolMap`), so nothing is encrypted that could
+ * not be opened again.
+ */
+export function sealableMap(map) {
+    try {
+        return parseSymbolMap(map);
+    }
+    catch (err) {
+        if (!(err instanceof InvalidMapError))
+            throw err;
+        throw new InvalidMapError(notSealable(err.message), err.message);
+    }
+}
+/**
+ * Why sealed data of this length is not opened, or null. The one limit that is
+ * compared before anything is decoded or decrypted, so it is the one that
+ * bounds what a single envelope can make this process hold: at most
+ * `MAP_LIMITS.sealedLength` characters of base64, three quarters of that in
+ * bytes.
+ */
+export function sealedLengthRefusal(length) {
+    return length > MAP_LIMITS.sealedLength
+        ? `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+        : null;
+}
+/**
+ * The bytes a sealer encrypts - or a refusal, before anything is encrypted,
+ * when the sealed data would be longer than an opener reads. AES-GCM adds a
+ * 16-byte tag and base64 writes four characters for every three bytes, so the
+ * length is known from the plaintext alone.
+ */
+export function sealablePlaintext(body) {
+    const plaintext = new TextEncoder().encode(JSON.stringify(body));
+    const why = sealedLengthRefusal(4 * Math.ceil((plaintext.length + 16) / 3));
+    if (why)
+        throw new InvalidMapError(notSealable(why), why);
+    return plaintext;
+}
+const notSealable = (why) => `This map cannot be sealed, because it could not be opened again: ${why} Nothing was encrypted.`;
 // ─── The envelope ────────────────────────────────────────────────────────────
 const ALG = 'AES-GCM';
 const ENVELOPE_ALG = 'AES-256-GCM-PBKDF2';
@@ -253,11 +310,12 @@ async function deriveKey(passphrase, salt, kdf) {
 }
 /** Seal a symbol map into the `.veilio` file format. Returns the file's text. */
 export async function sealMap(map, passphrase) {
+    const plaintext = sealablePlaintext(sealableMap(map));
     assertUsablePassphrase(passphrase);
     const salt = randomBytes(16);
     const iv = randomBytes(12);
     const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF);
-    const ciphertext = await subtle().encrypt({ name: ALG, iv }, key, new TextEncoder().encode(JSON.stringify(map)));
+    const ciphertext = await subtle().encrypt({ name: ALG, iv }, key, plaintext);
     const file = {
         v: 1,
         alg: ENVELOPE_ALG,
@@ -275,6 +333,11 @@ export async function openMap(fileContent, passphrase) {
     if (file.v !== 1 || file.alg !== ENVELOPE_ALG) {
         throw new Error('Invalid .veilio file format');
     }
+    // Before the key is derived and anything is decoded: at most
+    // MAP_LIMITS.sealedLength characters of sealed data are ever read.
+    const tooLong = sealedLengthRefusal(String(file.data).length);
+    if (tooLong)
+        throw new InvalidMapError(tooLong);
     const kdf = parseKdfParams(file.kdf, LEGACY_FILE_KDF);
     const key = await deriveKey(passphrase, fromBase64(file.salt), kdf);
     const plaintext = await subtle().decrypt({ name: ALG, iv: fromBase64(file.iv) }, key, fromBase64(file.data));

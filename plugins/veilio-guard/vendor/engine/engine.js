@@ -2275,6 +2275,17 @@ function stripNoise(text, wanted) {
         items,
     };
 }
+/**
+ * The entries of `map` that `restore` puts back: a placeholder key with a text
+ * value, and never a redaction token. A map may be someone else's, and any
+ * other key would be substituted wherever it stands in the text - a word, one
+ * letter, the empty string between every two characters.
+ */
+function restorable(map) {
+    const put = ([key, value]) => isPlaceholder(key) && typeof value === 'string' && !key.startsWith(REDACTION_PREFIX);
+    const entries = Object.entries(map);
+    return entries.every(put) ? map : Object.fromEntries(entries.filter(put));
+}
 /** How deep `restore` reads a map value that holds placeholders, how long one
  *  may become, and how many times the map's own length one call may build. */
 const NESTED_DEPTH = 5;
@@ -2289,6 +2300,7 @@ const NESTED_ALLOWANCE = 4;
  */
 export function restore(aiResponse, map, options = {}) {
     assertKnownOptions('restore', options, RESTORE_OPTIONS);
+    map = restorable(map);
     const strippedItems = [];
     const wanted = resolveStripSet(options.strip);
     const stripped = stripNoise(aiResponse, wanted);

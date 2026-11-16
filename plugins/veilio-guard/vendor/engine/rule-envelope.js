@@ -8,8 +8,8 @@
 // Opening never throws on bad content. A tool opening a teammate's rule must
 // skip one it cannot open or must not apply, say so, and go on masking.
 import { ruleRefusal } from './rule-checks.js';
-import { encryptTeamMap, openTeamEnvelopeWithAny } from './teamKeys.js';
-import { encryptMapForVault, openVaultEnvelope, } from './vault.js';
+import { openTeamEnvelopeWithAny, sealTeamEnvelope } from './teamKeys.js';
+import { openVaultEnvelope, sealVaultEnvelope, } from './vault.js';
 export const RULE_KIND = 'veilio-rule';
 const RULE_V = '1';
 function toRecord(rule, bind) {
@@ -64,7 +64,7 @@ export async function sealRuleForVault(key, rule, bind) {
     const why = ruleRefusal(rule);
     if (why)
         throw new Error(why);
-    return encryptMapForVault(key, toRecord(rule, bind));
+    return sealVaultEnvelope(key, toRecord(rule, bind));
 }
 export async function openRuleFromVault(key, env, bind) {
     let raw;
@@ -81,7 +81,7 @@ export async function sealTeamRule(teamKey, rule, bind) {
     const why = ruleRefusal(rule, 'team');
     if (why)
         throw new Error(why);
-    return encryptTeamMap(teamKey, toRecord(rule, bind));
+    return sealTeamEnvelope(teamKey, toRecord(rule, bind));
 }
 /** Open a team rule with whichever held version fits. */
 export async function openTeamRule(keys, env, bind) {
