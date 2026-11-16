@@ -775,12 +775,16 @@ describe('symbol_map_summary', () => {
     expect(res).toContain('2 placeholders at')
   })
 
-  it('leaves a key that is not a placeholder ungrouped rather than guessing', () => {
+  it('a map file with a key that is not a placeholder is refused, naming the key', () => {
+    // 2026-11-16: it used to be listed ungrouped. A map file holding such a
+    // key is no longer used by any tool, so the summary says so too.
     writeMap({ notAPlaceholder: 'A', __FN__1: 'b' })
-    const res = call('symbol_map_summary').text
+    const res = call('symbol_map_summary')
 
-    expect(res).toContain('notAPlaceholder')
-    expect(res).toContain('__FN__* × 1')
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain(
+      'holds a key that is not a placeholder ("notAPlaceholder"), so the file is not used. Remove that entry from the file.'
+    )
   })
 })
 

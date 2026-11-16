@@ -30,6 +30,7 @@ import {
   STORE_DIR,
   WRITTEN_RECORD_FILE,
   isName,
+  isPlaceholder,
   parseWrittenRecord,
   writtenRecordValue,
   type SymbolMap,
@@ -110,6 +111,10 @@ const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u
 
 export { isName }
 
+/** A key as a message shows it: no control character, 60 characters at most. */
+const shown = (key: string): string =>
+  key.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '').slice(0, 60)
+
 function isSymbolMap(value: unknown): value is SymbolMap {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   return Object.values(value).every(isName)
@@ -124,7 +129,7 @@ export function refuseNonNames(what: string, map: SymbolMap): void {
   const bad = Object.keys(map).find((k) => !isName(map[k]))
   if (bad !== undefined)
     throw new StoreRefusal(
-      `refusing to write ${what}: the value of ${bad.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '').slice(0, 60)} is not a name (1 to ${MAP_LIMITS.valueLength} characters, no control character or line break), so nothing was written.`
+      `refusing to write ${what}: the value of ${shown(bad)} is not a name (1 to ${MAP_LIMITS.valueLength} characters, no control character or line break), so nothing was written.`
     )
 }
 
@@ -342,6 +347,15 @@ export function loadMap(path: string): SymbolMap {
   const map = (parsed as { map?: unknown }).map
   if (!isSymbolMap(map)) {
     throw new Error(`map file at ${path} is malformed`)
+  }
+  // Every key this tool writes is a placeholder. Any other key was put there
+  // by something else, and a map holding one is not restored from, masked
+  // with or pushed: dropping the key would still leave the file to be used.
+  const stray = Object.keys(map).find((key) => !isPlaceholder(key))
+  if (stray !== undefined) {
+    throw new Error(
+      `map file at ${path} holds a key that is not a placeholder ("${shown(stray)}"), so the file is not used. Remove that entry from the file.`
+    )
   }
   return map
 }

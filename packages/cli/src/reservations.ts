@@ -439,9 +439,10 @@ export function ownWithAliases(
   return { own, contested, ignored }
 }
 
-/** Said by restore (CLI and MCP) when map.json or aliases.json held keys that are not placeholders. */
+/** Said by restore (CLI and MCP) when aliases.json held keys that are not
+ *  placeholders. (A map.json holding one is refused whole by the store.) */
 export function ignoredKeysNote(n: number): string {
-  return `ignored ${n} ${n === 1 ? 'entry' : 'entries'} in map.json or ${ALIASES_FILE} whose key is not a placeholder.`
+  return `ignored ${n} ${n === 1 ? 'entry' : 'entries'} in ${ALIASES_FILE} whose key is not a placeholder.`
 }
 
 export function contestedNote(placeholders: readonly string[]): string {
