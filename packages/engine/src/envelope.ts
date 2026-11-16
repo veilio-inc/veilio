@@ -131,9 +131,13 @@ export function assertUsablePassphrase(passphrase: string): void {
 // ─── Map validation ──────────────────────────────────────────────────────────
 
 export class InvalidMapError extends Error {
-  constructor(message: string) {
+  /** The reader's own sentence. The message is this, or - from a sealing
+   *  function - this inside the sentence that says nothing was encrypted. */
+  readonly reason: string
+  constructor(message: string, reason = message) {
     super(message)
     this.name = 'InvalidMapError'
+    this.reason = reason
   }
 }
 
@@ -264,11 +268,38 @@ export function sealableMap(map: unknown): SymbolMap {
     return parseSymbolMap(map)
   } catch (err) {
     if (!(err instanceof InvalidMapError)) throw err
-    throw new InvalidMapError(
-      `This map cannot be sealed, because it could not be opened again: ${err.message} Nothing was encrypted.`
-    )
+    throw new InvalidMapError(notSealable(err.message), err.message)
   }
 }
+
+/**
+ * Why sealed data of this length is not opened, or null. The one limit that is
+ * compared before anything is decoded or decrypted, so it is the one that
+ * bounds what a single envelope can make this process hold: at most
+ * `MAP_LIMITS.sealedLength` characters of base64, three quarters of that in
+ * bytes.
+ */
+export function sealedLengthRefusal(length: number): string | null {
+  return length > MAP_LIMITS.sealedLength
+    ? `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+    : null
+}
+
+/**
+ * The bytes a sealer encrypts - or a refusal, before anything is encrypted,
+ * when the sealed data would be longer than an opener reads. AES-GCM adds a
+ * 16-byte tag and base64 writes four characters for every three bytes, so the
+ * length is known from the plaintext alone.
+ */
+export function sealablePlaintext(body: unknown): Uint8Array {
+  const plaintext = new TextEncoder().encode(JSON.stringify(body))
+  const why = sealedLengthRefusal(4 * Math.ceil((plaintext.length + 16) / 3))
+  if (why) throw new InvalidMapError(notSealable(why), why)
+  return plaintext
+}
+
+const notSealable = (why: string): string =>
+  `This map cannot be sealed, because it could not be opened again: ${why} Nothing was encrypted.`
 
 // ─── The envelope ────────────────────────────────────────────────────────────
 
@@ -431,16 +462,12 @@ async function deriveKey(
 
 /** Seal a symbol map into the `.veilio` file format. Returns the file's text. */
 export async function sealMap(map: SymbolMap, passphrase: string): Promise<string> {
-  sealableMap(map)
+  const plaintext = sealablePlaintext(sealableMap(map))
   assertUsablePassphrase(passphrase)
   const salt = randomBytes(16)
   const iv = randomBytes(12)
   const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF)
-  const ciphertext = await subtle().encrypt(
-    { name: ALG, iv },
-    key,
-    new TextEncoder().encode(JSON.stringify(map))
-  )
+  const ciphertext = await subtle().encrypt({ name: ALG, iv }, key, plaintext)
   const file: VeilioFile = {
     v: 1,
     alg: ENVELOPE_ALG,
@@ -459,6 +486,10 @@ export async function openMap(fileContent: string, passphrase: string): Promise<
   if (file.v !== 1 || file.alg !== ENVELOPE_ALG) {
     throw new Error('Invalid .veilio file format')
   }
+  // Before the key is derived and anything is decoded: at most
+  // MAP_LIMITS.sealedLength characters of sealed data are ever read.
+  const tooLong = sealedLengthRefusal(String(file.data).length)
+  if (tooLong) throw new InvalidMapError(tooLong)
   const kdf = parseKdfParams(file.kdf, LEGACY_FILE_KDF)
   const key = await deriveKey(passphrase, fromBase64(file.salt), kdf)
   const plaintext = await subtle().decrypt(

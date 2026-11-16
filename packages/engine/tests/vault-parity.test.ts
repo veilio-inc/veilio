@@ -150,5 +150,6 @@ sealingRules('a personal envelope', async () => {
   return {
     seal: (map) => encryptMapForVault(key, map),
     open: (sealed) => decryptMapFromVault(key, sealed as VaultEnvelope),
+    withData: (sealed, data) => ({ ...(sealed as VaultEnvelope), data }),
   }
 })

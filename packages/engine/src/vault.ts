@@ -22,6 +22,8 @@ import {
   type KdfParams,
   parseSymbolMap,
   sealableMap,
+  sealablePlaintext,
+  sealedLengthRefusal,
   toBase64,
   fromBase64,
   webCryptoSubtle,
@@ -117,12 +119,11 @@ export async function encryptMapForVault(
  * of `openVaultEnvelope`.
  */
 export async function sealVaultEnvelope(key: CryptoKeyLike, body: unknown): Promise<VaultEnvelope> {
+  // Refused here, before anything is encrypted, when `openVaultEnvelope`
+  // would not read the result (MAP_LIMITS.sealedLength).
+  const plaintext = sealablePlaintext(body)
   const iv = randomBytes(12)
-  const ciphertext = await webCryptoSubtle().encrypt(
-    { name: ALG, iv },
-    key,
-    new TextEncoder().encode(JSON.stringify(body))
-  )
+  const ciphertext = await webCryptoSubtle().encrypt({ name: ALG, iv }, key, plaintext)
   return { v: 1, alg: VAULT_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(ciphertext) }
 }
 
@@ -154,6 +155,10 @@ export async function openVaultEnvelope(
   if (envelope.v !== 1 || envelope.alg !== VAULT_ENVELOPE_ALG) {
     throw new VaultEnvelopeError()
   }
+  // Before anything is decoded: at most MAP_LIMITS.sealedLength characters of
+  // sealed data are ever read.
+  const tooLong = sealedLengthRefusal(String(envelope.data).length)
+  if (tooLong) throw new VaultEnvelopeError(tooLong)
   const plaintext = await webCryptoSubtle().decrypt(
     { name: ALG, iv: fromBase64(envelope.iv) },
     key,

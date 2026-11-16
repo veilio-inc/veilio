@@ -179,6 +179,7 @@ sealingRules('a passphrase file', () =>
   Promise.resolve({
     seal: (map) => sealMap(map, PASS),
     open: (sealed) => openMap(sealed as string, PASS),
+    withData: (sealed, data) => JSON.stringify({ ...JSON.parse(sealed as string), data }),
   })
 )
 

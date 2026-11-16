@@ -17,11 +17,14 @@ type SymbolMap = Record<string, string>
 export interface Sealing {
   seal: (map: SymbolMap) => Promise<unknown>
   open: (sealed: unknown) => Promise<SymbolMap>
+  /** `sealed` with other sealed data in place of its own. */
+  withData: (sealed: unknown, data: string) => unknown
 }
 
 const refusal = (reason: string): InvalidMapError =>
   new InvalidMapError(
-    `This map cannot be sealed, because it could not be opened again: ${reason} Nothing was encrypted.`
+    `This map cannot be sealed, because it could not be opened again: ${reason} Nothing was encrypted.`,
+    reason
   )
 
 /** A map the reader refuses, and the reader's own sentence for it. */
@@ -79,6 +82,51 @@ export function sealingRules(name: string, make: () => Promise<Sealing>): void {
       const encrypt = vi.spyOn(globalThis.crypto.subtle, 'encrypt')
       try {
         await expect(seal(map())).rejects.toThrow(refusal(reason()))
+        expect(encrypt).not.toHaveBeenCalled()
+      } finally {
+        encrypt.mockRestore()
+      }
+    })
+
+    const tooLong = (length: number): string =>
+      `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+
+    // One character over, and four over: the second is well-formed base64, so
+    // only the size check stands between it and the cipher.
+    it.each([1, 4])(
+      'sealed data %i over the limit is refused before it is decrypted',
+      async (more) => {
+        const { seal, open, withData } = await make()
+        const sealed = await seal({ __VAR__1: 'total' })
+        const decrypt = vi.spyOn(globalThis.crypto.subtle, 'decrypt')
+        try {
+          const over = MAP_LIMITS.sealedLength + more
+          await expect(open(withData(sealed, 'A'.repeat(over)))).rejects.toThrow(tooLong(over))
+          expect(decrypt).not.toHaveBeenCalled()
+          // At the limit it is read: the refusal is then the cipher's, not the size's.
+          await expect(
+            open(withData(sealed, 'A'.repeat(MAP_LIMITS.sealedLength)))
+          ).rejects.toThrow()
+          expect(decrypt).toHaveBeenCalledTimes(1)
+        } finally {
+          decrypt.mockRestore()
+        }
+      }
+    )
+
+    it('a map whose sealed data would be over the limit is not sealed', async () => {
+      // Every entry within the limits; together, more than one envelope holds.
+      const value = 'a'.repeat(MAP_LIMITS.valueLength)
+      const map = Object.fromEntries(
+        Array.from({ length: 121 }, (_, i) => [`__STR__${i + 1}`, value])
+      )
+      // AES-GCM adds a 16-byte tag; base64 writes four characters per three bytes.
+      const sealedLength = 4 * Math.ceil((JSON.stringify(map).length + 16) / 3)
+      expect(sealedLength).toBeGreaterThan(MAP_LIMITS.sealedLength)
+      const { seal } = await make()
+      const encrypt = vi.spyOn(globalThis.crypto.subtle, 'encrypt')
+      try {
+        await expect(seal(map)).rejects.toThrow(refusal(tooLong(sealedLength)))
         expect(encrypt).not.toHaveBeenCalled()
       } finally {
         encrypt.mockRestore()

@@ -15,7 +15,7 @@ import {
   type TeamMapEnvelope,
   type WrapContext,
 } from '../src/teamKeys.js'
-import { fromBase64, InvalidMapError, toBase64 } from '../src/envelope.js'
+import { fromBase64, InvalidMapError, MAP_LIMITS, toBase64 } from '../src/envelope.js'
 import { sealingRules } from './fixtures/seal-cases.js'
 import type { CryptoKeyLike } from '../src/vault.js'
 
@@ -717,5 +717,19 @@ sealingRules('a team envelope', async () => {
   return {
     seal: (map) => encryptTeamMap(key, map),
     open: (sealed) => decryptTeamMap(key, sealed as TeamMapEnvelope),
+    withData: (sealed, data) => ({ ...(sealed as TeamMapEnvelope), data }),
   }
+})
+
+describe('oversized sealed data, with several keys held', () => {
+  it('is refused for its size, not reported as no key fitting', async () => {
+    const key = await importTeamKey(toBase64(randomTeamKey()))
+    const env = await encryptTeamMap(key, { __VAR__1: 'total' })
+    const over = MAP_LIMITS.sealedLength + 1
+    await expect(
+      decryptTeamMapWithAny([{ version: 1, key }], { ...env, data: 'A'.repeat(over) })
+    ).rejects.toThrow(
+      `This sealed map is ${over} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+    )
+  })
 })

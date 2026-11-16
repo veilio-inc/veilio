@@ -23,6 +23,8 @@ import {
   parseSymbolMap,
   randomBytes,
   sealableMap,
+  sealablePlaintext,
+  sealedLengthRefusal,
   toBase64,
   webCryptoSubtle,
 } from './envelope.js'
@@ -318,12 +320,11 @@ export async function sealTeamEnvelope(
   teamKey: CryptoKeyLike,
   body: unknown
 ): Promise<TeamMapEnvelope> {
+  // Refused here, before anything is encrypted, when no opener would read
+  // the result (MAP_LIMITS.sealedLength).
+  const plaintext = sealablePlaintext(body)
   const iv = randomBytes(12)
-  const data = await webCryptoSubtle().encrypt(
-    { name: WRAP_ALG, iv },
-    teamKey,
-    new TextEncoder().encode(JSON.stringify(body))
-  )
+  const data = await webCryptoSubtle().encrypt({ name: WRAP_ALG, iv }, teamKey, plaintext)
   return { v: 1, alg: TEAM_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(data) }
 }
 
@@ -355,6 +356,14 @@ function decryptedMap(raw: unknown): Record<string, string> {
   return map
 }
 
+/** The refusal of sealed data over MAP_LIMITS.sealedLength, or null. Asked
+ *  before anything is decoded, and before any key is tried: it is the size
+ *  that is wrong, not the key. */
+function tooLongToOpen(env: TeamMapEnvelope): TeamKeyError | null {
+  const why = sealedLengthRefusal(String(env.data).length)
+  return why ? new TeamKeyError(why) : null
+}
+
 /** The plaintext of a team envelope, parsed but unchecked: for a body that is
  *  not a map (a sealed rule, rule-envelope.ts), which checks its own shape. */
 async function openTeamEnvelope(teamKey: CryptoKeyLike, env: TeamMapEnvelope): Promise<unknown> {
@@ -363,6 +372,8 @@ async function openTeamEnvelope(teamKey: CryptoKeyLike, env: TeamMapEnvelope): P
       `Unsupported team map envelope (v=${String(env.v)}, alg=${String(env.alg)}).`
     )
   }
+  const tooLong = tooLongToOpen(env)
+  if (tooLong) throw tooLong
 
   let plaintext: ArrayBuffer
   try {
@@ -416,6 +427,8 @@ export async function openTeamEnvelopeWithAny(
   if (keys.length === 0) {
     throw new TeamKeyError('No team key is held, so this map cannot be opened.')
   }
+  const tooLong = tooLongToOpen(env)
+  if (tooLong) throw tooLong
 
   const ordered = [...keys].sort((a, b) => b.version - a.version)
   for (const { key } of ordered) {
