@@ -126,7 +126,12 @@ export function sealingRules(name: string, make: () => Promise<Sealing>): void {
       const { seal } = await make()
       const encrypt = vi.spyOn(globalThis.crypto.subtle, 'encrypt')
       try {
-        await expect(seal(map)).rejects.toThrow(refusal(tooLong(sealedLength)))
+        // The opener's sentence without "It was not decrypted.": nothing was sealed.
+        await expect(seal(map)).rejects.toThrow(
+          refusal(
+            `This sealed map is ${sealedLength} characters long; the limit is ${MAP_LIMITS.sealedLength}.`
+          )
+        )
         expect(encrypt).not.toHaveBeenCalled()
       } finally {
         encrypt.mockRestore()

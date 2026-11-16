@@ -280,10 +280,11 @@ export function sealableMap(map: unknown): SymbolMap {
  * bytes.
  */
 export function sealedLengthRefusal(length: number): string | null {
-  return length > MAP_LIMITS.sealedLength
-    ? `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
-    : null
+  return length > MAP_LIMITS.sealedLength ? `${sealedTooLong(length)} It was not decrypted.` : null
 }
+
+const sealedTooLong = (length: number): string =>
+  `This sealed map is ${length} characters long; the limit is ${MAP_LIMITS.sealedLength}.`
 
 /**
  * The bytes a sealer encrypts - or a refusal, before anything is encrypted,
@@ -293,8 +294,12 @@ export function sealedLengthRefusal(length: number): string | null {
  */
 export function sealablePlaintext(body: unknown): Uint8Array {
   const plaintext = new TextEncoder().encode(JSON.stringify(body))
-  const why = sealedLengthRefusal(4 * Math.ceil((plaintext.length + 16) / 3))
-  if (why) throw new InvalidMapError(notSealable(why), why)
+  // Said without the opener's "It was not decrypted.": nothing was sealed yet.
+  const length = 4 * Math.ceil((plaintext.length + 16) / 3)
+  if (length > MAP_LIMITS.sealedLength) {
+    const why = sealedTooLong(length)
+    throw new InvalidMapError(notSealable(why), why)
+  }
   return plaintext
 }
 
