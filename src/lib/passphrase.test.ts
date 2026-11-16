@@ -5,6 +5,7 @@ import {
   WeakPassphraseError,
   MIN_PASSPHRASE_LENGTH,
 } from './passphrase.js'
+import { InvalidMapError } from './importedMap.js'
 
 describe('assertUsablePassphrase - accepts', () => {
   it('accepts an ordinary passphrase at the minimum length', () => {
@@ -97,6 +98,13 @@ describe('exportErrorMessage', () => {
     expect(exportErrorMessage(new WeakPassphraseError('Use at least 12 characters.'))).toBe(
       'Use at least 12 characters.'
     )
+  })
+
+  it('passes a refused map through too: the message names the entry to shorten', () => {
+    const refused = new InvalidMapError(
+      'This map cannot be exported, because it could not be imported again: __STR__1 maps to more than 200,000 characters.'
+    )
+    expect(exportErrorMessage(refused)).toBe(refused.message)
   })
 
   it('falls back to a generic message for anything else', () => {

@@ -1,6 +1,6 @@
 import type { SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
-import { parseSymbolMap } from './importedMap.js'
+import { InvalidMapError, parseSymbolMap } from './importedMap.js'
 import { assertUsablePassphrase } from './passphrase.js'
 import { getKdfTransport } from './kdfTransport.js'
 
@@ -65,6 +65,16 @@ export async function exportMap(
   // Enforced here rather than at the call site so no future caller can write a
   // file that skips the floor (ROADMAP E8).
   assertUsablePassphrase(passphrase)
+  // The import's own check, before anything is encrypted: a file this writes
+  // is a file `importMap` reads.
+  try {
+    parseSymbolMap(map)
+  } catch (err) {
+    if (!(err instanceof InvalidMapError)) throw err
+    throw new InvalidMapError(
+      `This map cannot be exported, because it could not be imported again: ${err.message}`
+    )
+  }
   const enc = new TextEncoder()
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const iv = crypto.getRandomValues(new Uint8Array(12))

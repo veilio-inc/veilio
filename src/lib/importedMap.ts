@@ -1,4 +1,4 @@
-import { isPlaceholder } from '@veilio-inc/engine'
+import { isPlaceholder, MAP_LIMITS } from '@veilio-inc/engine'
 import type { SymbolMap } from '@veilio-inc/engine'
 
 /** A decrypted `.veilio` file is authenticated, not trusted (ROADMAP E7).
@@ -22,14 +22,12 @@ export class InvalidMapError extends Error {
   }
 }
 
-/** Upper bounds for one imported file.
- *
- *  Not security boundaries - a map under both limits can still be hostile. They
- *  stop a single file from exhausting memory in the reader's tab, and they are
- *  set far above any real project: the largest maps we have seen are in the low
- *  hundreds of entries. */
-const MAX_ENTRIES = 50_000
-const MAX_VALUE_LENGTH = 10_000
+// The upper bounds for one file are the engine's `MAP_LIMITS`, the same ones
+// its own reader and the CLI use: a file written here opens there, and the
+// other way round. Not security boundaries - a map under both can still be
+// hostile. They stop a single file from exhausting memory in the reader's tab.
+// The numbers are written the same in every browser.
+const counted = (n: number): string => n.toLocaleString('en-US')
 
 /** Validate a decrypted map before it is allowed near a restore.
  *
@@ -49,8 +47,8 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
   }
 
   const entries = Object.entries(raw as Record<string, unknown>)
-  if (entries.length > MAX_ENTRIES) {
-    throw new InvalidMapError(`This map has more than ${MAX_ENTRIES.toLocaleString()} entries.`)
+  if (entries.length > MAP_LIMITS.entries) {
+    throw new InvalidMapError(`This map has more than ${counted(MAP_LIMITS.entries)} entries.`)
   }
 
   const map: SymbolMap = {}
@@ -61,8 +59,10 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     if (typeof value !== 'string') {
       throw new InvalidMapError(`${key} does not map to text.`)
     }
-    if (value.length > MAX_VALUE_LENGTH) {
-      throw new InvalidMapError(`${key} maps to more than ${MAX_VALUE_LENGTH} characters.`)
+    if (value.length > MAP_LIMITS.valueLength) {
+      throw new InvalidMapError(
+        `${key} maps to more than ${counted(MAP_LIMITS.valueLength)} characters.`
+      )
     }
     map[key] = value
   }

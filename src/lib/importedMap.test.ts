@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, restore } from '@veilio-inc/engine'
+import { anonymize, MAP_LIMITS, restore } from '@veilio-inc/engine'
 import { parseSymbolMap, importErrorMessage, InvalidMapError } from './importedMap.js'
 
 describe('parseSymbolMap - accepts what the engine produces', () => {
@@ -99,20 +99,33 @@ describe('parseSymbolMap - refuses hostile input', () => {
     expect(Object.prototype).not.toHaveProperty('polluted')
   })
 
-  it('refuses a map with too many entries', () => {
+  // The limits are the engine's (`MAP_LIMITS`): a file this app writes is one
+  // the CLI opens, and the other way round.
+  it('refuses a map with one entry too many, saying the limit', () => {
     const huge: Record<string, string> = {}
-    for (let i = 0; i < 50_001; i++) huge[`__FN__${i}`] = 'x'
+    for (let i = 0; i <= MAP_LIMITS.entries; i++) huge[`__FN__${i}`] = 'x'
 
-    expect(() => parseSymbolMap(huge)).toThrow(/entries/)
+    expect(() => parseSymbolMap(huge)).toThrow('This map has more than 250,000 entries.')
   })
 
-  it('refuses an absurdly long value', () => {
-    expect(() => parseSymbolMap({ __FN__1: 'x'.repeat(10_001) })).toThrow(/characters/)
+  it('refuses a value one character too long, saying the limit', () => {
+    expect(() => parseSymbolMap({ __FN__1: 'x'.repeat(MAP_LIMITS.valueLength + 1) })).toThrow(
+      '__FN__1 maps to more than 200,000 characters.'
+    )
   })
 
-  it('allows a value right at the limit', () => {
-    // The bound must not be so tight that a legitimate manual mark trips it.
-    expect(parseSymbolMap({ __FN__1: 'x'.repeat(10_000) })).toEqual({ __FN__1: 'x'.repeat(10_000) })
+  it('allows a value right at the limit, and one of 15,001 characters', () => {
+    for (const length of [15_001, MAP_LIMITS.valueLength]) {
+      const map = { __FN__1: 'x'.repeat(length) }
+      expect(parseSymbolMap(map)).toEqual(map)
+    }
+  })
+
+  it('its limits are the engine’s, not a copy', () => {
+    expect(MAP_LIMITS).toMatchObject({ entries: 250_000, valueLength: 200_000 })
+    const atEntries: Record<string, string> = {}
+    for (let i = 0; i < MAP_LIMITS.entries; i++) atEntries[`__FN__${i}`] = 'x'
+    expect(Object.keys(parseSymbolMap(atEntries))).toHaveLength(MAP_LIMITS.entries)
   })
 
   it('truncates a hostile key in the error message', () => {
