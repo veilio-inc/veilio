@@ -174,11 +174,22 @@ describe('importMap rejects a malformed envelope', () => {
   it('refuses sealed data over the limit before deriving a key or decoding it', async () => {
     const over = MAP_LIMITS.sealedLength + 1
     const file = { ...LEGACY_FILE, data: 'A'.repeat(over) }
-    const started = performance.now()
-    const failure = await importMap(JSON.stringify(file), LEGACY_PASSPHRASE).catch(
-      (err: unknown) => err
-    )
-    expect(performance.now() - started).toBeLessThan(1000)
+    const importKey = vi.spyOn(crypto.subtle, 'importKey')
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt')
+    const decode = vi.spyOn(globalThis, 'atob')
+    let failure: unknown
+    try {
+      failure = await importMap(JSON.stringify(file), LEGACY_PASSPHRASE).catch(
+        (err: unknown) => err
+      )
+      expect(importKey).not.toHaveBeenCalled()
+      expect(decrypt).not.toHaveBeenCalled()
+      expect(decode).not.toHaveBeenCalled()
+    } finally {
+      importKey.mockRestore()
+      decrypt.mockRestore()
+      decode.mockRestore()
+    }
     expect(importedMap.importErrorMessage(failure)).toBe(
       `This sealed map is ${over} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
     )
