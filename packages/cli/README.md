@@ -260,7 +260,7 @@ reserves, except with `--team`.
 - **Rate limited, it refuses.** When Cloud answers 429 to the read of the
   team's maps and this machine knows the account's team (the team unlock, or
   `~/.veilio/team.json`), `scrub` (with or without `--team`) masks nothing,
-  writes nothing, and says to run the command again in a minute.
+  writes nothing, and says when to run the command again.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 

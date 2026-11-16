@@ -475,6 +475,26 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(cloud.requests.slice(before).map((x) => x.path)).toEqual(['/api/maps'])
   })
 
+  it.each([
+    ['7', 'Try again in 7 seconds. Run the command again; if'],
+    ['1', 'Try again in 1 second. Run the command again; if'],
+  ])('a rate limit naming %s: one wait is said, not two', async (seconds, said) => {
+    signIn(home, { pmk: true })
+    cloud.intercept = (_, path) =>
+      path === '/api/maps'
+        ? new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': seconds },
+          })
+        : null
+    const r = await callToolAsync('maps_list', {}, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain(
+      `Cloud is limiting requests from this session. ${said} it keeps failing, contact the instance’s support.`
+    )
+    expect(r.text).not.toContain('in a minute')
+  })
+
   it('maps_update under a key version not held: the approved words, the MCP prefix', async () => {
     signIn(home, { team: true })
     local({ __CLS__1: 'X', __FN__2: 'y' })

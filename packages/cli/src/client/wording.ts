@@ -104,6 +104,8 @@ export interface WordingParams {
   project?: string
   /** The project came from VEILIO_PROJECT rather than the stored choice. */
   override?: boolean
+  /** The seconds a rate limit asked for, when it named them. */
+  wait?: number
 }
 
 export interface Refusal {
@@ -425,10 +427,10 @@ export const WORDING: Record<RefusalCode, Words> = {
     message: sentence(p.detail),
     resolve: 'Check the network and the instance address, then run the command again.',
   }),
+  // A rate limit that named its wait has said when: no second, different one here.
   server: (p) => ({
     message: `the instance reported an error — ${sentence(p.detail)}`,
-    resolve:
-      'Run the command again in a minute; if it keeps failing, contact the instance’s support.',
+    resolve: `Run the command again${p.wait === undefined ? ' in a minute' : ''}; if it keeps failing, contact the instance’s support.`,
   }),
 }
 
@@ -496,7 +498,10 @@ export function refusalFromCloudError(
     case 'unreachable':
       return refusal('unreachable', { detail: err.message })
     case 'server':
-      return refusal('server', { detail: err.message })
+      return refusal('server', {
+        detail: err.message,
+        ...(err.retryAfter === undefined ? {} : { wait: err.retryAfter }),
+      })
   }
 }
 

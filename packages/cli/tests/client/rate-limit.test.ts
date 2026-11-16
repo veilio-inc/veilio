@@ -34,15 +34,14 @@ const IN_A_MINUTE = 'Cloud is limiting requests from this session. Try again in 
 
 describe('a request answered 429', () => {
   it.each([
-    ['7', 7],
-    ['60', 60],
-    ['2', 2],
-  ])('Retry-After: %s is the time to wait', async (header, seconds) => {
+    ['7', 7, '7 seconds'],
+    ['60', 60, '60 seconds'],
+    ['2', 2, '2 seconds'],
+    ['1', 1, '1 second'],
+  ])('Retry-After: %s is the time to wait', async (header, seconds, said) => {
     const fetchMock = answer(429, { error: 'Too many requests' }, { 'Retry-After': header })
     const err = await failure(() => listMaps(CREDENTIAL))
-    expect(err.message).toBe(
-      `Cloud is limiting requests from this session. Try again in ${seconds} seconds.`
-    )
+    expect(err.message).toBe(`Cloud is limiting requests from this session. Try again in ${said}.`)
     expect(err).toMatchObject({ kind: 'server', status: 429, retryAfter: seconds })
     expect(err.body).toEqual({ error: 'Too many requests' })
     expect(fetchMock).toHaveBeenCalledTimes(1)

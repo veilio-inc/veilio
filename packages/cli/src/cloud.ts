@@ -237,7 +237,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       const wait = retryAfterSeconds(response.headers.get('retry-after'))
       throw new CloudError(
         'server',
-        `Cloud is limiting requests from this session. Try again in ${wait === undefined ? 'a minute' : `${wait} seconds`}.`,
+        `Cloud is limiting requests from this session. Try again in ${wait === undefined ? 'a minute' : wait === 1 ? '1 second' : `${wait} seconds`}.`,
         429,
         body,
         wait

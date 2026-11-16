@@ -526,6 +526,44 @@ describe('the re-seal pass and the request allowance', () => {
     ])
   })
 
+  // The first listing has no count of maps yet, so it is said as one line.
+  it.each([
+    ['30', 'Try again in 30 seconds.'],
+    ['1', 'Try again in 1 second.'],
+    [undefined, 'Try again in a minute.'],
+  ])(
+    'the first listing limited (Retry-After: %s): the rate-limit sentence',
+    async (header, when) => {
+      await cloud.withPmkWrap()
+      await under('vault', 2)
+      cloud.intercept = (_, path) => (path === '/api/maps' ? limited(header) : null)
+      const r = await run(['vault', 'unlock'])
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.err).toBe(
+        'veilio: 1 personal map could not be re-sealed and is still under the vault key, which the MCP server cannot open:\n' +
+          `  "the list of maps" (-): Cloud is limiting requests from this session. ${when}\n` +
+          'Run `veilio vault unlock` again to retry them; the key itself is unlocked.\n'
+      )
+      expect(r.err).not.toContain('returned 429')
+      expect(mapRequests()).toEqual(['GET /api/maps'])
+    }
+  )
+
+  // A wait in seconds is said once: the closing sentence names no second wait.
+  it.each([
+    ['7', 'Try again in 7 seconds. Run the command again; if'],
+    ['1', 'Try again in 1 second. Run the command again; if'],
+    [undefined, 'Try again in a minute. Run the command again in a minute; if'],
+  ])('unlock itself limited (Retry-After: %s): one wait is named', async (header, said) => {
+    await cloud.withPmkWrap()
+    cloud.intercept = () => limited(header)
+    const r = await run(['vault', 'unlock'])
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toContain(
+      `the instance reported an error — Cloud is limiting requests from this session. ${said} it keeps failing, contact the instance’s support.`
+    )
+  })
+
   it('a failure that belongs to one map is named, and the pass goes on', async () => {
     await cloud.withPmkWrap()
     const [changed, damaged, fine] = await under('vault', 3)
