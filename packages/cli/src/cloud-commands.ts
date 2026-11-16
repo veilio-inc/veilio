@@ -1417,7 +1417,7 @@ export async function runVaultUnlock(io: Io, days?: number): Promise<number> {
         : `${u.stopped.left} personal maps were not checked`
     io.stderr(
       `veilio: stopped re-sealing: ${sentence(u.stopped.reason)} ${left}. ` +
-        'Run `veilio vault unlock` again in a minute; the key itself is unlocked.\n'
+        `Run \`veilio vault unlock\` again${u.stopped.wait === undefined ? ' in a minute' : ''}; the key itself is unlocked.\n`
     )
   }
   return u.failed.length > 0 || u.stopped ? EXIT_ERROR : EXIT_OK

@@ -391,8 +391,9 @@ describe('the re-seal pass and the request allowance', () => {
       return answers[writes]?.() ?? null
     }
   }
+  // A reason that names its seconds is the one wait said; any other is "in a minute".
   const stopped = (reason: string, left: string): string =>
-    `veilio: stopped re-sealing: ${reason} ${left} not checked. Run \`veilio vault unlock\` again in a minute; the key itself is unlocked.\n`
+    `veilio: stopped re-sealing: ${reason} ${left} not checked. Run \`veilio vault unlock\` again${/in \d+ seconds?\.$/.test(reason) ? '' : ' in a minute'}; the key itself is unlocked.\n`
   const IN_A_MINUTE = 'Cloud is limiting requests from this session. Try again in a minute.'
 
   it.each([1, 100])(

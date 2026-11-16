@@ -56,7 +56,12 @@ export interface VaultUnlocked {
   failed: { id: string; name: string; reason: string }[]
   /** The pass ended early - a rate limit, a failing or unreachable instance -
    *  with this many personal maps not looked at. Running unlock again goes on. */
-  stopped?: { reason: string; left: number }
+  stopped?: {
+    reason: string
+    left: number
+    /** The seconds a rate limit asked for, when the reason names them. */
+    wait?: number
+  }
 }
 
 export async function vaultUnlock(
@@ -261,7 +266,11 @@ function unlisted(err: unknown): VaultUnlocked['failed'][number] {
 }
 
 function stop(err: CloudError, left: number): NonNullable<VaultUnlocked['stopped']> {
-  return { reason: err.message, left }
+  return {
+    reason: err.message,
+    left,
+    ...(err.retryAfter === undefined ? {} : { wait: err.retryAfter }),
+  }
 }
 
 /** Remove the personal-maps key from this machine. Whether there was one. */
