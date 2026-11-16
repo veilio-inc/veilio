@@ -567,21 +567,37 @@ describe('a map no reader would open is not pushed', () => {
     ],
   ]
 
-  it.each(paths)('%s: refused naming the entry, and nothing is sent', async (_, arrange) => {
-    const argv = await arrange()
-    const stored = cloud.maps.map((m) => m.map_data)
-    local(UNOPENABLE)
-    const before = readFileSync(mapPath(), 'utf8')
+  // One entry over the limit. (A value over its limit never gets this far:
+  // the store refuses to save it and to read it.)
+  const TOO_MANY: SymbolMap = Object.fromEntries(
+    Array.from({ length: MAP_LIMITS.entries + 1 }, (_, i) => [`__VAR__${i + 1}`, `name${i}`])
+  )
+  const OVER_THE_LIMIT = refusal(
+    `Map has ${MAP_LIMITS.entries + 1} entries; the limit is ${MAP_LIMITS.entries}.`
+  )
+  const cases = paths.flatMap(([name, arrange]): [string, typeof arrange, SymbolMap, string][] => [
+    [`${name}, a value its kind is never made from`, arrange, UNOPENABLE, NOT_OF_ITS_KIND],
+    [`${name}, one entry over the limit`, arrange, TOO_MANY, OVER_THE_LIMIT],
+  ])
 
-    const r = await run(argv)
-    expect(r.code).toBe(EXIT_ERROR)
-    expect(r.err).toBe(NOT_OF_ITS_KIND)
-    expect(r.out).toBe('')
-    // No reservation, no create, no update.
-    expect(cloud.writes()).toEqual([])
-    expect(cloud.maps.map((m) => m.map_data)).toEqual(stored)
-    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
-  })
+  it.each(cases)(
+    '%s: refused naming the entry, and nothing is sent',
+    async (_, arrange, map, said) => {
+      const argv = await arrange()
+      const stored = cloud.maps.map((m) => m.map_data)
+      local(map)
+      const before = readFileSync(mapPath(), 'utf8')
+
+      const r = await run(argv)
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.err).toBe(said)
+      expect(r.out).toBe('')
+      // No reservation, no create, no update.
+      expect(cloud.writes()).toEqual([])
+      expect(cloud.maps.map((m) => m.map_data)).toEqual(stored)
+      expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+    }
+  )
 
   it('a personal map is counted as it is sealed, with its renumbered old placeholders', async () => {
     signIn(home, { pmk: true })

@@ -198,6 +198,33 @@ describe('login --device', () => {
     expect(code).toBe(EXIT_OK)
   })
 
+  // A 429 that is not `slow_down` (no body, or the limiter's own) is a rate
+  // limit, said as one; it is not read as a code and polling does not go on.
+  it.each([
+    ['no body', new Response(null, { status: 429 }), 'a minute'],
+    ['an empty body', json(429, {}), 'a minute'],
+    [
+      'the seconds to wait',
+      new Response('{}', { status: 429, headers: { 'Retry-After': '120' } }),
+      '120 seconds',
+    ],
+  ])(
+    'a rate limit with %s on the poll: said as one, nothing signed in',
+    async (_, limited, when) => {
+      serve({ expiresIn: 60, tokenResponses: [limited, json(200, { token: 'device-session' })] })
+
+      const { code, err } = await run(['login', '--instance', INSTANCE, '--device'])
+
+      expect(code).toBe(EXIT_ERROR)
+      expect(err).toContain(
+        `veilio: the instance reported an error — Cloud is limiting requests from this session. Try again in ${when}.\n`
+      )
+      expect(existsSync(credentialPath())).toBe(false)
+      const polls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/device/token'))
+      expect(polls).toHaveLength(1)
+    }
+  )
+
   it('stops and explains when the request is declined', async () => {
     serve({ expiresIn: 60, tokenResponses: [json(400, { error: 'access_denied' })] })
 
