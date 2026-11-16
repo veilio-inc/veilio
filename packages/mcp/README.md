@@ -220,7 +220,7 @@ this machine - run \`veilio team unlock\`)`or`local (could not read the team's
 maps: …)` — so a fallback is never read as agreement. A rate limit is not a
 fallback: when Cloud answers 429 to that read and this machine knows the
 account's team, `anonymize_text` and `anonymize_file` refuse, saying when to
-run the command again, and a call a minute later reads the team's maps again.
+run the command again, and a call after that wait reads the team's maps again.
 
 The account's custom rules are fetched at startup the same way and applied to
 every anonymize call. Each result states their source: `from Cloud`, `cached`

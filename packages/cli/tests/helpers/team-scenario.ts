@@ -81,6 +81,8 @@ export async function teamScenario(
     locked?: boolean
     failures?: number
     failStatus?: number
+    /** The `Retry-After` header those failures carry. */
+    retryAfter?: string
     /** An older instance that merges server-side (no conflict detection). */
     legacy?: boolean
     /** /api/maps never answers until the request is aborted. */
@@ -123,7 +125,9 @@ export async function teamScenario(
       return jsonResponse({ personalMaps: [], teamMaps: [], plan: 'individual' })
     if (path === '/api/maps' && failuresLeft > 0) {
       failuresLeft--
-      return jsonResponse({ error: 'try again' }, opts.failStatus ?? 429)
+      const refused = jsonResponse({ error: 'try again' }, opts.failStatus ?? 429)
+      if (opts.retryAfter) refused.headers.set('Retry-After', opts.retryAfter)
+      return refused
     }
     if (path === '/api/maps')
       return jsonResponse({
