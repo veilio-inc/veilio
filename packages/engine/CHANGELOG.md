@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.19.4](https://github.com/veilio-inc/veilio/compare/engine-v1.19.3...engine-v1.19.4) (2026-11-16)
+
+### Fixes
+
+* **engine:** a map is checked when it is sealed by the rule that opens it, and the limits are one set ([d124d1e](https://github.com/veilio-inc/veilio/commit/d124d1e1ece412763eba59a2d7d08e62bf147ffd))
+* **engine:** a map too large to seal is refused without "It was not decrypted." ([f5b9f1a](https://github.com/veilio-inc/veilio/commit/f5b9f1a380a4d2a8e863f5af1560613d86c1b186))
+* **engine:** restore substitutes only placeholders ([9c90ecb](https://github.com/veilio-inc/veilio/commit/9c90ecbfc2f0dc37bc17a1403ee72796c1c8f04a))
+* **engine:** the reader opens maps with values up to 200,000 characters and 250,000 entries, and refuses oversized sealed data before decrypting ([aabb098](https://github.com/veilio-inc/veilio/commit/aabb098e3430649293c54dbeefad729113b57f30))
+
 ## [1.19.3](https://github.com/veilio-inc/veilio/compare/engine-v1.19.2...engine-v1.19.3) (2026-11-15)
 
 ### Fixes

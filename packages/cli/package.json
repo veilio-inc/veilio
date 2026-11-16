@@ -28,7 +28,7 @@
   ],
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
-    "@veilio-inc/engine": "^1.19.3"
+    "@veilio-inc/engine": "^1.19.4"
   },
   "scripts": {
     "build": "tsc",
