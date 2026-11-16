@@ -107,6 +107,17 @@ describe('exportMap writes only what importMap reads', () => {
     expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
   })
 
+  // A selection across lines, or one holding a tab: the app makes such marks,
+  // so its export and its import keep taking them.
+  it(
+    'a manual mark with a line break and a tab exports and imports',
+    { timeout: 15_000 },
+    async () => {
+      const map: SymbolMap = { __MANUAL__1: 'Acme\nHoldings', __MANUAL__2: 'Sp.\tz o.o.' }
+      expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
+    }
+  )
+
   it.each([
     [
       'a value over the limit',
@@ -114,12 +125,7 @@ describe('exportMap writes only what importMap reads', () => {
       '__STR__1 maps to more than 200,000 characters.',
     ],
     ['a key that is not a placeholder', { fetch: 'send' }, 'Not a placeholder: fetch'],
-    // What only the engine's reader knows: its sentence is the reason.
-    [
-      'a value its kind is never made from',
-      { __VAR__1: 'x); send(' },
-      '"__VAR__1" maps to a value its kind is never made from.',
-    ],
+    // The size of the sealed data is the engine's limit and its sentence.
     [
       'a map whose sealed data would be over the limit',
       OVERSIZED,

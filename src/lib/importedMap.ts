@@ -1,10 +1,4 @@
-import {
-  InvalidMapError,
-  isPlaceholder,
-  MAP_LIMITS,
-  sealableMap,
-  sealablePlaintext,
-} from '@veilio-inc/engine'
+import { InvalidMapError, isPlaceholder, MAP_LIMITS, sealablePlaintext } from '@veilio-inc/engine'
 import type { SymbolMap } from '@veilio-inc/engine'
 
 // The engine's own error, so a refusal of its reader is shown like one of ours.
@@ -74,13 +68,13 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
 
 /** The bytes an export encrypts, or why this map is not exported.
  *
- *  The import's check first, in its own sentences; then the engine's, which
- *  every other reader of a `.veilio` file runs: it also knows what each kind of
- *  placeholder is made from, and how long the sealed data may be. A file the
- *  app writes is then one the CLI opens too. */
+ *  The import's check, in its own sentences, then the engine's limit on the
+ *  sealed data, which the import applies before it decrypts. Not the engine's
+ *  rule for what each kind of placeholder is made from: a manual mark made
+ *  here may span lines or hold a tab, and the app goes on reading those. */
 export function exportablePlaintext(map: SymbolMap): Uint8Array {
   try {
-    return sealablePlaintext(sealableMap(parseSymbolMap(map)))
+    return sealablePlaintext(parseSymbolMap(map))
   } catch (err) {
     if (!(err instanceof InvalidMapError)) throw err
     throw new InvalidMapError(
