@@ -21,6 +21,7 @@ import type { SymbolMap } from './types.js'
 import {
   type KdfParams,
   parseSymbolMap,
+  sealableMap,
   toBase64,
   fromBase64,
   webCryptoSubtle,
@@ -101,15 +102,26 @@ export async function deriveVaultKey(
 /** An opaque derived key. The engine declares no DOM types; see envelope.ts. */
 export type CryptoKeyLike = { readonly type: string }
 
+/** Seal a map under a vault key. Refuses, before anything is encrypted, a map
+ *  `decryptMapFromVault` would not open. */
 export async function encryptMapForVault(
   key: CryptoKeyLike,
   map: SymbolMap
 ): Promise<VaultEnvelope> {
+  return sealVaultEnvelope(key, sealableMap(map))
+}
+
+/**
+ * Seal any JSON value into a vault envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed custom rule). The write half
+ * of `openVaultEnvelope`.
+ */
+export async function sealVaultEnvelope(key: CryptoKeyLike, body: unknown): Promise<VaultEnvelope> {
   const iv = randomBytes(12)
   const ciphertext = await webCryptoSubtle().encrypt(
     { name: ALG, iv },
     key,
-    new TextEncoder().encode(JSON.stringify(map))
+    new TextEncoder().encode(JSON.stringify(body))
   )
   return { v: 1, alg: VAULT_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(ciphertext) }
 }

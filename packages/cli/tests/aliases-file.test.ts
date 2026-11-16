@@ -40,7 +40,7 @@ describe('loadAliases never throws (security review of round 1)', () => {
   it.each([
     ['a number as a name', 5],
     ['an empty name', ''],
-    ['a name too long', 'a'.repeat(100_001)],
+    ['a name too long', 'a'.repeat(200_001)],
   ])('%s is dropped and counted, and the rest kept', (_what, bad) => {
     plant(JSON.stringify({ version: 1, aliases: { __VAR__1: bad, __FN__2: 'payout' } }))
     expect(readAliases(mapPath())).toEqual({ aliases: { __FN__2: 'payout' }, ignored: 1 })

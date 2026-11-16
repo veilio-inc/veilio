@@ -18,7 +18,14 @@
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
 
-import { fromBase64, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle } from './envelope.js'
+import {
+  fromBase64,
+  parseSymbolMap,
+  randomBytes,
+  sealableMap,
+  toBase64,
+  webCryptoSubtle,
+} from './envelope.js'
 import type { CryptoKeyLike } from './vault.js'
 
 const WRAP_ALG = 'AES-GCM'
@@ -291,16 +298,31 @@ export async function importTeamKey(rawBase64: string): Promise<CryptoKeyLike> {
  * A fresh 12-byte IV per call, never derived from the map. AES-GCM loses both
  * confidentiality and authenticity if an IV repeats under one key, and two
  * members sealing the same pairs is ordinary rather than unlikely.
+ *
+ * A map `decryptTeamMap` would not open is refused before anything is
+ * encrypted: sealed, it would leave the team with a map no member can read.
  */
 export async function encryptTeamMap(
   teamKey: CryptoKeyLike,
   map: Record<string, string>
 ): Promise<TeamMapEnvelope> {
+  return sealTeamEnvelope(teamKey, sealableMap(map))
+}
+
+/**
+ * Seal any JSON value into a team envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed rule, rule-envelope.ts). The
+ * write half of `openTeamEnvelopeWithAny`. A fresh IV per call, as above.
+ */
+export async function sealTeamEnvelope(
+  teamKey: CryptoKeyLike,
+  body: unknown
+): Promise<TeamMapEnvelope> {
   const iv = randomBytes(12)
   const data = await webCryptoSubtle().encrypt(
     { name: WRAP_ALG, iv },
     teamKey,
-    new TextEncoder().encode(JSON.stringify(map))
+    new TextEncoder().encode(JSON.stringify(body))
   )
   return { v: 1, alg: TEAM_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(data) }
 }

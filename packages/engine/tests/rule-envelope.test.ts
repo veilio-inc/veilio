@@ -7,6 +7,7 @@ import {
   openTeamRule,
   sealRuleForVault,
   sealTeamRule,
+  sealVaultEnvelope,
   type CryptoKeyLike,
   type RuleBody,
 } from '../src/index.js'
@@ -100,7 +101,7 @@ describe('what opening refuses', () => {
   // Bodies a hostile or old client could seal: they open, and are refused.
   const sealRaw = async (body: Record<string, string>) => {
     const key = await aes()
-    return { key, env: await encryptMapForVault(key, body) }
+    return { key, env: await sealVaultEnvelope(key, body) }
   }
   const base = {
     kind: 'veilio-rule',
@@ -176,7 +177,7 @@ describe('a sealed rule is bound to its row', () => {
       pattern: '^x$',
       enabled: 'true',
     }
-    const env = await encryptMapForVault(key, unbound)
+    const env = await sealVaultEnvelope(key, unbound)
     expect(await openRuleFromVault(key, env, BIND)).toMatchObject({ ok: false, reason: 'refused' })
   })
 })

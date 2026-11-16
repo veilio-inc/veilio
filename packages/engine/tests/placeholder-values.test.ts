@@ -3,6 +3,7 @@ import {
   anonymize,
   decryptTeamMap,
   encryptTeamMap,
+  sealTeamEnvelope,
   importTeamKey,
   parseSymbolMap,
   placeholderValueRefusal,
@@ -88,7 +89,7 @@ describe('a placeholder value follows the grammar of its kind', () => {
   it('parseSymbolMap and decryptTeamMap apply it', async () => {
     expect(() => parseSymbolMap({ __FN__1: 'x); evil(' })).toThrow(InvalidMapError)
     const key = await importTeamKey(toBase64(new Uint8Array(32).fill(3)))
-    const env = await encryptTeamMap(key, { __FN__1: 'x); evil(' })
+    const env = await sealTeamEnvelope(key, { __FN__1: 'x); evil(' })
     await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
 

@@ -137,14 +137,19 @@ export class InvalidMapError extends Error {
   }
 }
 
-/** Upper bounds for one file. Not security boundaries — a map under both can
- *  still be hostile. They stop one file exhausting memory, and sit far above any
- *  real project: the largest maps seen are in the low hundreds of entries. */
-const MAX_ENTRIES = 50_000
-const MAX_VALUE_LENGTH = 10_000
-
-/** The longest real name a store keeps (the CLI's map and aliases.json). */
-const MAX_NAME = 100_000
+/**
+ * What a map may hold, for every writer and every reader: the number of
+ * entries, the characters of one value, and the characters of the sealed data
+ * (base64). One set, so a map that was sealed is a map that opens. Not
+ * security boundaries - a map under all three can still be hostile. They stop
+ * one file exhausting memory; only `sealedLength` is checked before anything
+ * is decrypted.
+ */
+export const MAP_LIMITS = {
+  entries: 250_000,
+  valueLength: 200_000,
+  sealedLength: 32_000_000,
+} as const
 
 // C0 and C1 controls (line feed, tab, NEL, escape, ...) and the Unicode line
 // and paragraph separators. A map value is not always an identifier (a manual
@@ -154,12 +159,18 @@ const MAX_NAME = 100_000
 const NOT_IN_A_NAME = /[\p{Cc}\u2028\u2029]/u
 
 /**
- * What a map may restore: 1 to 100000 characters, none of them a control or
+ * What a map may restore: 1 to `MAP_LIMITS.valueLength` characters, none of
+ * them a control or
  * line separator. One rule for every reader (spec 085 R2-6): the CLI's store,
  * a team map opened with the team key, and the guard.
  */
 export function isName(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0 && v.length <= MAX_NAME && !NOT_IN_A_NAME.test(v)
+  return (
+    typeof v === 'string' &&
+    v.length > 0 &&
+    v.length <= MAP_LIMITS.valueLength &&
+    !NOT_IN_A_NAME.test(v)
+  )
 }
 
 // Numbered, or bare (an older client's local base, a rule's own placeholder).
@@ -216,8 +227,10 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     throw new InvalidMapError('Map must be a JSON object of placeholder → name.')
   }
   const entries = Object.entries(raw as Record<string, unknown>)
-  if (entries.length > MAX_ENTRIES) {
-    throw new InvalidMapError(`Map has ${entries.length} entries; the limit is ${MAX_ENTRIES}.`)
+  if (entries.length > MAP_LIMITS.entries) {
+    throw new InvalidMapError(
+      `Map has ${entries.length} entries; the limit is ${MAP_LIMITS.entries}.`
+    )
   }
   const out: SymbolMap = {}
   for (const [key, value] of entries) {
@@ -227,9 +240,11 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     if (typeof value !== 'string') {
       throw new InvalidMapError(`"${key}" maps to a ${typeof value}, not a string.`)
     }
-    if (value.length > MAX_VALUE_LENGTH) {
+    // Ahead of the name rule below, so a value that is only too long is told
+    // its length, not that it holds a control character.
+    if (value.length > MAP_LIMITS.valueLength) {
       throw new InvalidMapError(
-        `"${key}" maps to ${value.length} characters; the limit is ${MAX_VALUE_LENGTH}.`
+        `"${key}" maps to ${value.length} characters; the limit is ${MAP_LIMITS.valueLength}.`
       )
     }
     const why = placeholderValueRefusal(key, value)
@@ -237,6 +252,22 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     out[key] = value
   }
   return out
+}
+
+/**
+ * The same map, or a refusal: the check every sealing function runs first. It
+ * is the reader's own (`parseSymbolMap`), so nothing is encrypted that could
+ * not be opened again.
+ */
+export function sealableMap(map: unknown): SymbolMap {
+  try {
+    return parseSymbolMap(map)
+  } catch (err) {
+    if (!(err instanceof InvalidMapError)) throw err
+    throw new InvalidMapError(
+      `This map cannot be sealed, because it could not be opened again: ${err.message} Nothing was encrypted.`
+    )
+  }
 }
 
 // ─── The envelope ────────────────────────────────────────────────────────────
@@ -400,6 +431,7 @@ async function deriveKey(
 
 /** Seal a symbol map into the `.veilio` file format. Returns the file's text. */
 export async function sealMap(map: SymbolMap, passphrase: string): Promise<string> {
+  sealableMap(map)
   assertUsablePassphrase(passphrase)
   const salt = randomBytes(16)
   const iv = randomBytes(12)
