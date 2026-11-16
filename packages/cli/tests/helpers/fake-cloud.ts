@@ -19,8 +19,8 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   deriveVaultKey,
-  encryptMapForVault,
-  encryptTeamMap,
+  sealVaultEnvelope,
+  sealTeamEnvelope,
   importTeamKey,
   sealRuleForVault,
   sealTeamRule,
@@ -129,6 +129,13 @@ export class FakeCloud {
   failingBody: unknown = { error: 'Service Unavailable' }
   /** Paths that answer 429, as the maps rate limit does. */
   limited = new Set<string>()
+  /** Seen before any route: a test answers a request itself (a 429 with a
+   *  `Retry-After`, a 503), throws for an instance that cannot be reached, or
+   *  returns null to let the request through. */
+  intercept: ((method: string, path: string) => Response | null) | null = null
+  /** The one-request listing of personal envelopes; false is an instance
+   *  from before it, which answers 404. */
+  personalEnvelopes = true
   /** This account's keypair, as the web app makes it; null until made. */
   keypair: { publicKey: string; privateKeyEncrypted: string; privateKey: CryptoKey } | null = null
   /** Every team-key wrap the team holds, anyone's. */
@@ -271,6 +278,8 @@ export class FakeCloud {
       return json(this.reserveFailure.status, this.reserveFailure.body)
     }
     if (this.limited.has(u.pathname)) return json(429, { error: 'Too many requests' })
+    const early = this.intercept?.(method, u.pathname)
+    if (early) return early
     return this.answer(method, u.pathname, u.searchParams, body)
   }
 
@@ -326,6 +335,20 @@ export class FakeCloud {
           : null,
         plan: 'team',
         ...(this.legacyNamespace ? { teamNamespace: this.legacyNamespace } : {}),
+      })
+    }
+    if (path === '/api/maps/personal-envelopes' && this.personalEnvelopes) {
+      const rows = this.maps.filter((m) => m.owner === ME && m.scope === 'personal')
+      return json(200, {
+        maps: rows
+          .filter((m) => !this.serverUnreadable.has(m.id))
+          .map((m) => ({
+            id: m.id,
+            updated_at: m.updated_at,
+            identifier_count: m.identifier_count,
+            map_data: m.map_data,
+          })),
+        unreadable: rows.filter((m) => this.serverUnreadable.has(m.id)).map((m) => m.id),
       })
     }
     if (path === '/api/maps/team-envelopes') {
@@ -587,16 +610,18 @@ export function vaultKey(): Promise<CryptoKeyLike> {
   return deriveVaultKey(PASSPHRASE, SALT, { name: 'PBKDF2-SHA256', iterations: ITERATIONS })
 }
 
+// What the fake instance holds was sealed by whoever sealed it: these helpers
+// use the unchecked halves, so a test can plant a map the tools must refuse.
 export async function sealPersonal(
   map: Record<string, string>,
   under: 'pmk' | 'vault'
 ): Promise<string> {
   const key = under === 'pmk' ? await importPersonalMapsKey(PMK_RAW) : await vaultKey()
-  return JSON.stringify(await encryptMapForVault(key, map))
+  return JSON.stringify(await sealVaultEnvelope(key, map))
 }
 
 export async function sealTeam(map: Record<string, string>, raw = TEAM_RAW): Promise<string> {
-  return JSON.stringify(await encryptTeamMap(await importTeamKey(toBase64(raw)), map))
+  return JSON.stringify(await sealTeamEnvelope(await importTeamKey(toBase64(raw)), map))
 }
 
 /** How a rule row is sealed, for the cases a tool must skip. `key`: the raw
@@ -619,7 +644,7 @@ export async function sealedPersonalRule(
   const key = await importPersonalMapsKey(opts.key ?? PMK_RAW)
   const bind = { id: opts.bindId ?? id, teamId: null }
   const env = opts.record
-    ? await encryptMapForVault(key, opts.record)
+    ? await sealVaultEnvelope(key, opts.record)
     : await sealRuleForVault(key, body, bind)
   return { id, scope: 'personal', team_id: null, sort_order: sortOrder, data: JSON.stringify(env) }
 }
@@ -635,7 +660,7 @@ export async function sealedTeamRule(
   const key = await importTeamKey(toBase64(opts.key ?? TEAM_RAW))
   const bind = { id: opts.bindId ?? id, teamId }
   const env = opts.record
-    ? await encryptTeamMap(key, opts.record)
+    ? await sealTeamEnvelope(key, opts.record)
     : await sealTeamRule(key, body, bind)
   return {
     id,

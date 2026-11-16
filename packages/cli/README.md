@@ -170,6 +170,8 @@ the server cannot read it; it also re-seals older personal maps under it. Then
 `maps pull`, `push` and `update` - and the MCP server - open personal maps
 without a passphrase. Without it, the CLI asks for the passphrase as before.
 
+Unlocking reads your personal maps in one request. If Cloud limits requests, it waits once for the time Cloud names (at most a minute), then stops with one message; run the command again to finish.
+
 Custom rules (whitelist and replace, set in the web app) are applied by
 `scrub` from a local copy that `veilio rules pull` writes to
 `~/.veilio/rules.json` (`0600`). `scrub` never fetches them itself - it stays
@@ -258,7 +260,7 @@ reserves, except with `--team`.
 - **Rate limited, it refuses.** When Cloud answers 429 to the read of the
   team's maps and this machine knows the account's team (the team unlock, or
   `~/.veilio/team.json`), `scrub` (with or without `--team`) masks nothing,
-  writes nothing, and says to run the command again in a minute.
+  writes nothing, and says when to run the command again.
 - **Signed out, it makes no request**, exactly as before. Signed in, it waits at
   most **5 seconds** for Cloud.
 
@@ -585,3 +587,5 @@ commit with a line saying to upgrade. `--no-verify` overrides, as usual.
 ## Known limitations
 
 Names that contain letters outside A–Z are not yet masked whole. A name written only in Greek or Cyrillic letters (for example `παραγγελία`) is not masked at all. A name that mixes A–Z with other letters (for example `wyślijPaczkę` or `größeBerechnen`) is masked only in its A–Z parts, so the other letters reach the model. Names written only in A–Z are not affected. Until this is fixed, rename such names, or leave files that use them out of what you send. Full support is planned for the next release (#224).
+
+A value longer than 200,000 characters stays masked, but its map is not saved and not pushed: the command stops and names the entry. Shorten the value or leave that file out.

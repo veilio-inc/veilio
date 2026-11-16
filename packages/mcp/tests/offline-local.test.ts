@@ -125,6 +125,41 @@ describe('Cloud rate-limits the read of the team maps (429)', () => {
     expect(r.text).toMatch(/Namespace: team/)
   })
 
+  it.each([
+    ['7', 6_000, 8_000],
+    ['120', 119_000, 121_000],
+  ])(
+    'a wait Cloud names (%s s) is the wait kept: asked again after it, not sooner',
+    async (seconds, before, after) => {
+      const { home, calls } = await teamScenario(fetchMock, {
+        maps,
+        failures: 1,
+        failStatus: 429,
+        retryAfter: seconds,
+      })
+      await primeNamespace(home, { retryDelayMs: 0 })
+      const ctx = checkout(true)
+      const text = { text: 'function reverseEntry() {}' }
+      const listings = () => calls.filter((p) => p === '/api/maps').length
+      const refused = callTool('anonymize_text', text, ctx)
+      expect(refused.isError).toBe(true)
+      expect(refused.text).toContain(`Try again in ${seconds} seconds. Run the command again; if`)
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now')
+      clock.mockReturnValue(now + before)
+      expect(callTool('anonymize_text', text, ctx).isError).toBe(true)
+      await namespaceSettled()
+      expect(listings()).toBe(1)
+      clock.mockReturnValue(now + after)
+      callTool('anonymize_text', text, ctx)
+      await namespaceSettled()
+      expect(listings()).toBe(2)
+      const r = callTool('anonymize_text', text, ctx)
+      expect(r.isError ?? false, r.text).toBe(false)
+      expect(r.text).toMatch(/Namespace: team/)
+    }
+  )
+
   it('another project chosen while rate-limited: still refused while its maps load', async () => {
     const { home } = await teamScenario(fetchMock, { maps, failures: 1, failStatus: 429 })
     await primeNamespace(home, { retryDelayMs: 0 })

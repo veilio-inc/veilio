@@ -6,10 +6,11 @@
 // a node-environment run silently skips the very code paths that break in
 // practice. The rest of the suite (the engine) stays on the default env.
 import { describe, it, expect, beforeAll, vi } from 'vitest'
-import type { SymbolMap } from '@veilio-inc/engine'
+import { MAP_LIMITS, type SymbolMap } from '@veilio-inc/engine'
 import { exportMap, importMap } from './localCrypto.js'
+import * as importedMap from './importedMap.js'
 import { InvalidMapError } from './importedMap.js'
-import { WeakPassphraseError, MIN_PASSPHRASE_LENGTH } from './passphrase.js'
+import { WeakPassphraseError, MIN_PASSPHRASE_LENGTH, exportErrorMessage } from './passphrase.js'
 
 // Every export runs a real 600k-iteration PBKDF2 derive, so keep the round-trip
 // count low and give these a longer timeout.
@@ -93,6 +94,60 @@ describe('exportMap / importMap', () => {
 
 // The envelope check is the first thing applied to a file the user picked off
 // disk, and it runs before any key derivation. Untested until now.
+// Every entry within the limits; together, more than one file holds. AES-GCM
+// adds a 16-byte tag; base64 writes four characters per three bytes.
+const OVERSIZED: SymbolMap = Object.fromEntries(
+  Array.from({ length: 121 }, (_, i) => [`__STR__${i + 1}`, 'a'.repeat(MAP_LIMITS.valueLength)])
+)
+const OVERSIZED_SEALED = 4 * Math.ceil((JSON.stringify(OVERSIZED).length + 16) / 3)
+
+describe('exportMap writes only what importMap reads', () => {
+  it('a value of 15,001 characters exports and imports', { timeout: 15_000 }, async () => {
+    const map: SymbolMap = { __STR__1: 'a'.repeat(15_001), __CLS__2: 'Ledger' }
+    expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
+  })
+
+  // A selection across lines, or one holding a tab: the app makes such marks,
+  // so its export and its import keep taking them.
+  it(
+    'a manual mark with a line break and a tab exports and imports',
+    { timeout: 15_000 },
+    async () => {
+      const map: SymbolMap = { __MANUAL__1: 'Acme\nHoldings', __MANUAL__2: 'Sp.\tz o.o.' }
+      expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
+    }
+  )
+
+  it.each([
+    [
+      'a value over the limit',
+      { __STR__1: 'a'.repeat(MAP_LIMITS.valueLength + 1) },
+      '__STR__1 maps to more than 200,000 characters.',
+    ],
+    ['a key that is not a placeholder', { fetch: 'send' }, 'Not a placeholder: fetch'],
+    // The size of the sealed data is the engine's limit and its sentence.
+    [
+      'a map whose sealed data would be over the limit',
+      OVERSIZED,
+      `This sealed map is ${OVERSIZED_SEALED} characters long; the limit is ${MAP_LIMITS.sealedLength}.`,
+    ],
+  ])('%s is refused before anything is encrypted', async (_, map, reason) => {
+    const encrypt = vi.spyOn(crypto.subtle, 'encrypt')
+    try {
+      const failure = await exportMap(map, PASSPHRASE).catch((err: unknown) => err)
+      expect(failure).toBeInstanceOf(InvalidMapError)
+      expect((failure as Error).message).toBe(
+        `This map cannot be exported, because it could not be imported again: ${reason}`
+      )
+      // What the pages show.
+      expect(exportErrorMessage(failure)).toBe((failure as Error).message)
+      expect(encrypt).not.toHaveBeenCalled()
+    } finally {
+      encrypt.mockRestore()
+    }
+  })
+})
+
 describe('importMap rejects a malformed envelope', () => {
   it('refuses a file that is not JSON at all', async () => {
     // Picking the wrong file is the common case, not the hostile one.
@@ -120,6 +175,30 @@ describe('importMap rejects a malformed envelope', () => {
     const started = performance.now()
     await expect(importMap('{}', PASSPHRASE)).rejects.toThrow()
     expect(performance.now() - started).toBeLessThan(50)
+  })
+
+  it('refuses sealed data over the limit before deriving a key or decoding it', async () => {
+    const over = MAP_LIMITS.sealedLength + 1
+    const file = { ...LEGACY_FILE, data: 'A'.repeat(over) }
+    const importKey = vi.spyOn(crypto.subtle, 'importKey')
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt')
+    const decode = vi.spyOn(globalThis, 'atob')
+    let failure: unknown
+    try {
+      failure = await importMap(JSON.stringify(file), LEGACY_PASSPHRASE).catch(
+        (err: unknown) => err
+      )
+      expect(importKey).not.toHaveBeenCalled()
+      expect(decrypt).not.toHaveBeenCalled()
+      expect(decode).not.toHaveBeenCalled()
+    } finally {
+      importKey.mockRestore()
+      decrypt.mockRestore()
+      decode.mockRestore()
+    }
+    expect(importedMap.importErrorMessage(failure)).toBe(
+      `This sealed map is ${over} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+    )
   })
 
   it('refuses an unsupported KDF before deriving anything', async () => {
@@ -166,6 +245,19 @@ describe('exportMap enforces the passphrase floor (ROADMAP E8)', () => {
 // parseSymbolMap has its own suite; these assert it is actually *reached* on the
 // import path. Wiring is the part that silently regresses - the validator can be
 // perfect and unused.
+/** A `.veilio` file holding any JSON value, written with no check on it. The
+ *  one check is switched off for the call, so the format is exportMap's own. */
+async function writtenElsewhere(body: unknown): Promise<string> {
+  const unchecked = vi
+    .spyOn(importedMap, 'exportablePlaintext')
+    .mockImplementation((raw) => new TextEncoder().encode(JSON.stringify(raw)))
+  try {
+    return await exportMap(body as SymbolMap, PASSPHRASE)
+  } finally {
+    unchecked.mockRestore()
+  }
+}
+
 describe('importMap validates what it decrypts', () => {
   // Each case needs a genuine encrypted file, and every derive costs a 600k
   // PBKDF2 round, so the files are built once and shared.
@@ -177,9 +269,11 @@ describe('importMap validates what it decrypts', () => {
     // JSON.parse gives "__proto__" as an own enumerable property, which
     // JSON.stringify then writes back out - an object literal would not.
     const pollution = JSON.parse('{"__proto__": {"polluted": true}}')
-    hostileFile = await exportMap(pollution as SymbolMap, PASSPHRASE)
-    arrayFile = await exportMap(['__FN__1', 'settle'] as unknown as SymbolMap, PASSPHRASE)
-    badValueFile = await exportMap({ __FN__1: 42 } as unknown as SymbolMap, PASSPHRASE)
+    // exportMap refuses each of these, so the files are written as another
+    // tool would write them: a good file's ciphertext replaced by theirs.
+    hostileFile = await writtenElsewhere(pollution)
+    arrayFile = await writtenElsewhere(['__FN__1', 'settle'])
+    badValueFile = await writtenElsewhere({ __FN__1: 42 })
   }, 60_000)
 
   it('refuses a correctly encrypted file carrying a prototype-pollution key', async () => {

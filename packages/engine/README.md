@@ -437,6 +437,7 @@ Custom rule patterns run on a linear-time matcher, not on the platform's regular
     language. Marks replayed from `existingMap` never throw — a mark made in one
     language must not make a file in another language impossible to anonymize.
 - `restore(text, map, options?)` → `{ restored, strippedItems, strippedCount, report }`
+  Only keys of placeholder shape are substituted; any other key, a redaction token, and an entry whose value is not text are ignored.
   - `options.strip` — which AI artifacts to remove: `'all'` (default), `'none'`,
     or an explicit list of `StrippedItemType`. Worth setting: `'all'` deletes
     JSDoc, and when a model was _asked_ to document its output that is
@@ -608,6 +609,8 @@ only, no dependency added.
   server stores ciphertext it cannot read
 - `webCryptoSubtle()`, `randomBytes(n)`, `toBase64` / `fromBase64` — the small
   platform layer the above are built on
+
+A map holds up to 250,000 entries, each value up to 200,000 characters, and up to 32,000,000 characters once sealed (`MAP_LIMITS`). The same check runs when a map is sealed and when it is opened: a map over a limit is refused before it is encrypted, with a message naming the entry, so a map that was sealed can always be opened.
 
 ### Custom rules sealed under your keys
 

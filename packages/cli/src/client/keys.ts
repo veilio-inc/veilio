@@ -26,6 +26,7 @@ import {
   getMap,
   getPersonalMapsKeyWrap,
   listMaps,
+  listPersonalEnvelopes,
   putPersonalMapsKeyWrap,
   updateMapContent,
 } from '../cloud.js'
@@ -53,6 +54,14 @@ export interface VaultUnlocked {
   resealed: number
   /** Ones that could not be, by id and name, with the reason. */
   failed: { id: string; name: string; reason: string }[]
+  /** The pass ended early - a rate limit, a failing or unreachable instance -
+   *  with this many personal maps not looked at. Running unlock again goes on. */
+  stopped?: {
+    reason: string
+    left: number
+    /** The seconds a rate limit asked for, when the reason names them. */
+    wait?: number
+  }
 }
 
 export async function vaultUnlock(
@@ -117,7 +126,7 @@ export async function vaultUnlock(
   )
 
   const pmk = await importPersonalMapsKey(raw)
-  const resealing = await reseal(credential, vaultKey, pmk)
+  const resealing = await reseal(credential, vaultKey, pmk, ctx.sleep ?? timer)
   return {
     ok: true,
     value: {
@@ -126,6 +135,7 @@ export async function vaultUnlock(
       created,
       resealed: resealing.resealed,
       failed: resealing.failed,
+      ...(resealing.stopped ? { stopped: resealing.stopped } : {}),
     },
   }
 }
@@ -138,38 +148,81 @@ async function unwrapped(vaultKey: CryptoKeyLike, wrapped: string): Promise<Uint
   }
 }
 
+const timer = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
+
+/** A failure of the instance as a whole, not of one map: the next request
+ *  would fail the same way, so the pass ends on it. */
+function endsThePass(err: unknown): err is CloudError {
+  return (
+    err instanceof CloudError &&
+    (err.status === 429 || err.kind === 'unreachable' || (err.status ?? 0) >= 500)
+  )
+}
+
 /**
  * Re-seal every personal map still under the vault key, while it is in hand.
  *
- * One at a time, each with the version it read, so a map changed meanwhile is
- * reported rather than overwritten. A failure stops nothing else: each map
- * that did not move is named, and running unlock again picks it up.
+ * Which maps those are is decided here, by a trial decryption, from one
+ * listing of the envelopes: a request per map, on every unlock, used up the
+ * instance's request allowance for an account with many maps. Only a map that
+ * needs re-sealing costs a request, written with the version that was listed,
+ * so a map changed meanwhile is reported rather than overwritten.
+ *
+ * A rate limit that names a wait of up to a minute is waited for - once in
+ * the whole pass. After that, a rate limit, a failing instance or one that
+ * cannot be reached ends the pass with the number of maps left; a failure
+ * that belongs to one map names it and the pass goes on. Running unlock again
+ * picks up whatever did not move.
  */
 async function reseal(
   credential: Credential,
   vaultKey: CryptoKeyLike,
-  pmk: CryptoKeyLike
-): Promise<{ resealed: number; failed: VaultUnlocked['failed'] }> {
+  pmk: CryptoKeyLike,
+  sleep: (ms: number) => Promise<void>
+): Promise<Pick<VaultUnlocked, 'resealed' | 'failed' | 'stopped'>> {
   const failed: VaultUnlocked['failed'] = []
   let resealed = 0
   let personal
   try {
     personal = (await listMaps(credential)).personalMaps.filter((m) => m.scope === 'personal')
   } catch (err) {
-    return {
-      resealed,
-      failed: [
-        {
-          id: '-',
-          name: 'the list of maps',
-          reason: err instanceof Error ? err.message : String(err),
-        },
-      ],
+    return { resealed, failed: [unlisted(err)] }
+  }
+
+  if (personal.length === 0) return { resealed, failed }
+
+  let waited = false
+  const patient = async <T>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call()
+    } catch (err) {
+      if (!(err instanceof CloudError) || err.retryAfter === undefined) throw err
+      // Longer than a minute is said, not sat through.
+      if (waited || err.retryAfter > 60) throw err
+      waited = true
+      await sleep(err.retryAfter * 1000)
+      return call()
     }
   }
-  for (const summary of personal) {
+
+  // An instance from before the listing answers 404: one read per map then,
+  // as it always was, under the same rule for stopping.
+  const listed = new Map<string, { map_data: unknown; updated_at: string }>()
+  try {
+    for (const row of (await patient(() => listPersonalEnvelopes(credential))).maps)
+      listed.set(row.id, row)
+  } catch (err) {
+    if (endsThePass(err)) return { resealed, failed, stopped: stop(err, personal.length) }
+    if (!(err instanceof CloudError && err.status === 404)) {
+      return { resealed, failed: [unlisted(err)] }
+    }
+  }
+
+  for (const [i, summary] of personal.entries()) {
     try {
-      const full = await getMap(credential, summary.id)
+      // Not in the listing (an older instance, or a map it could not serve):
+      // read on its own.
+      const full = listed.get(summary.id) ?? (await patient(() => getMap(credential, summary.id)))
       if (typeof full.map_data !== 'string') throw new Error('not an encrypted envelope')
       const envelope = parseVaultEnvelope(full.map_data)
       try {
@@ -179,13 +232,17 @@ async function reseal(
         // under the vault key, or damaged: the next step says which
       }
       const map = await decryptMapFromVault(vaultKey, envelope)
-      await updateMapContent(credential, summary.id, {
-        map_data: JSON.stringify(await encryptMapForVault(pmk, map)),
-        identifier_count: Object.keys(map).length,
-        if_updated_at: full.updated_at,
-      })
+      const sealed = JSON.stringify(await encryptMapForVault(pmk, map))
+      await patient(() =>
+        updateMapContent(credential, summary.id, {
+          map_data: sealed,
+          identifier_count: Object.keys(map).length,
+          if_updated_at: full.updated_at,
+        })
+      )
       resealed++
     } catch (err) {
+      if (endsThePass(err)) return { resealed, failed, stopped: stop(err, personal.length - i) }
       failed.push({
         id: summary.id,
         name: summary.name,
@@ -199,6 +256,23 @@ async function reseal(
     }
   }
   return { resealed, failed }
+}
+
+/** The maps could not be listed at all: said as one entry, as it always was. */
+function unlisted(err: unknown): VaultUnlocked['failed'][number] {
+  return {
+    id: '-',
+    name: 'the list of maps',
+    reason: err instanceof Error ? err.message : String(err),
+  }
+}
+
+function stop(err: CloudError, left: number): NonNullable<VaultUnlocked['stopped']> {
+  return {
+    reason: err.message,
+    left,
+    ...(err.retryAfter === undefined ? {} : { wait: err.retryAfter }),
+  }
 }
 
 /** Remove the personal-maps key from this machine. Whether there was one. */

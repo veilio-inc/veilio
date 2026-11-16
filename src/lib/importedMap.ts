@@ -1,5 +1,8 @@
-import { isPlaceholder } from '@veilio-inc/engine'
+import { InvalidMapError, isPlaceholder, MAP_LIMITS, sealablePlaintext } from '@veilio-inc/engine'
 import type { SymbolMap } from '@veilio-inc/engine'
+
+// The engine's own error, so a refusal of its reader is shown like one of ours.
+export { InvalidMapError }
 
 /** A decrypted `.veilio` file is authenticated, not trusted (ROADMAP E7).
  *
@@ -15,21 +18,13 @@ import type { SymbolMap } from '@veilio-inc/engine'
  *  The residual risk - that a colleague's map maps `__FN__1` to something you
  *  did not expect - is inherent to the feature and belongs in the docs.
  */
-export class InvalidMapError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'InvalidMapError'
-  }
-}
 
-/** Upper bounds for one imported file.
- *
- *  Not security boundaries - a map under both limits can still be hostile. They
- *  stop a single file from exhausting memory in the reader's tab, and they are
- *  set far above any real project: the largest maps we have seen are in the low
- *  hundreds of entries. */
-const MAX_ENTRIES = 50_000
-const MAX_VALUE_LENGTH = 10_000
+// The upper bounds for one file are the engine's `MAP_LIMITS`, the same ones
+// its own reader and the CLI use: a file written here opens there, and the
+// other way round. Not security boundaries - a map under both can still be
+// hostile. They stop a single file from exhausting memory in the reader's tab.
+// The numbers are written the same in every browser.
+const counted = (n: number): string => n.toLocaleString('en-US')
 
 /** Validate a decrypted map before it is allowed near a restore.
  *
@@ -49,8 +44,8 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
   }
 
   const entries = Object.entries(raw as Record<string, unknown>)
-  if (entries.length > MAX_ENTRIES) {
-    throw new InvalidMapError(`This map has more than ${MAX_ENTRIES.toLocaleString()} entries.`)
+  if (entries.length > MAP_LIMITS.entries) {
+    throw new InvalidMapError(`This map has more than ${counted(MAP_LIMITS.entries)} entries.`)
   }
 
   const map: SymbolMap = {}
@@ -61,12 +56,31 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
     if (typeof value !== 'string') {
       throw new InvalidMapError(`${key} does not map to text.`)
     }
-    if (value.length > MAX_VALUE_LENGTH) {
-      throw new InvalidMapError(`${key} maps to more than ${MAX_VALUE_LENGTH} characters.`)
+    if (value.length > MAP_LIMITS.valueLength) {
+      throw new InvalidMapError(
+        `${key} maps to more than ${counted(MAP_LIMITS.valueLength)} characters.`
+      )
     }
     map[key] = value
   }
   return map
+}
+
+/** The bytes an export encrypts, or why this map is not exported.
+ *
+ *  The import's check, in its own sentences, then the engine's limit on the
+ *  sealed data, which the import applies before it decrypts. Not the engine's
+ *  rule for what each kind of placeholder is made from: a manual mark made
+ *  here may span lines or hold a tab, and the app goes on reading those. */
+export function exportablePlaintext(map: SymbolMap): Uint8Array {
+  try {
+    return sealablePlaintext(parseSymbolMap(map))
+  } catch (err) {
+    if (!(err instanceof InvalidMapError)) throw err
+    throw new InvalidMapError(
+      `This map cannot be exported, because it could not be imported again: ${err.reason}`
+    )
+  }
 }
 
 /** Pick what to tell the reader when an import fails.

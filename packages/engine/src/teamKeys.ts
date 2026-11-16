@@ -18,7 +18,16 @@
 // rather than asking a server to decrypt them on its behalf. The server having
 // that ability was the one reason it held a key that could read team maps.
 
-import { fromBase64, parseSymbolMap, randomBytes, toBase64, webCryptoSubtle } from './envelope.js'
+import {
+  fromBase64,
+  parseSymbolMap,
+  randomBytes,
+  sealableMap,
+  sealablePlaintext,
+  sealedLengthRefusal,
+  toBase64,
+  webCryptoSubtle,
+} from './envelope.js'
 import type { CryptoKeyLike } from './vault.js'
 
 const WRAP_ALG = 'AES-GCM'
@@ -291,17 +300,31 @@ export async function importTeamKey(rawBase64: string): Promise<CryptoKeyLike> {
  * A fresh 12-byte IV per call, never derived from the map. AES-GCM loses both
  * confidentiality and authenticity if an IV repeats under one key, and two
  * members sealing the same pairs is ordinary rather than unlikely.
+ *
+ * A map `decryptTeamMap` would not open is refused before anything is
+ * encrypted: sealed, it would leave the team with a map no member can read.
  */
 export async function encryptTeamMap(
   teamKey: CryptoKeyLike,
   map: Record<string, string>
 ): Promise<TeamMapEnvelope> {
+  return sealTeamEnvelope(teamKey, sealableMap(map))
+}
+
+/**
+ * Seal any JSON value into a team envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed rule, rule-envelope.ts). The
+ * write half of `openTeamEnvelopeWithAny`. A fresh IV per call, as above.
+ */
+export async function sealTeamEnvelope(
+  teamKey: CryptoKeyLike,
+  body: unknown
+): Promise<TeamMapEnvelope> {
+  // Refused here, before anything is encrypted, when no opener would read
+  // the result (MAP_LIMITS.sealedLength).
+  const plaintext = sealablePlaintext(body)
   const iv = randomBytes(12)
-  const data = await webCryptoSubtle().encrypt(
-    { name: WRAP_ALG, iv },
-    teamKey,
-    new TextEncoder().encode(JSON.stringify(map))
-  )
+  const data = await webCryptoSubtle().encrypt({ name: WRAP_ALG, iv }, teamKey, plaintext)
   return { v: 1, alg: TEAM_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(data) }
 }
 
@@ -333,6 +356,14 @@ function decryptedMap(raw: unknown): Record<string, string> {
   return map
 }
 
+/** The refusal of sealed data over MAP_LIMITS.sealedLength, or null. Asked
+ *  before anything is decoded, and before any key is tried: it is the size
+ *  that is wrong, not the key. */
+function tooLongToOpen(env: TeamMapEnvelope): TeamKeyError | null {
+  const why = sealedLengthRefusal(String(env.data).length)
+  return why ? new TeamKeyError(why) : null
+}
+
 /** The plaintext of a team envelope, parsed but unchecked: for a body that is
  *  not a map (a sealed rule, rule-envelope.ts), which checks its own shape. */
 async function openTeamEnvelope(teamKey: CryptoKeyLike, env: TeamMapEnvelope): Promise<unknown> {
@@ -341,6 +372,8 @@ async function openTeamEnvelope(teamKey: CryptoKeyLike, env: TeamMapEnvelope): P
       `Unsupported team map envelope (v=${String(env.v)}, alg=${String(env.alg)}).`
     )
   }
+  const tooLong = tooLongToOpen(env)
+  if (tooLong) throw tooLong
 
   let plaintext: ArrayBuffer
   try {
@@ -394,6 +427,8 @@ export async function openTeamEnvelopeWithAny(
   if (keys.length === 0) {
     throw new TeamKeyError('No team key is held, so this map cannot be opened.')
   }
+  const tooLong = tooLongToOpen(env)
+  if (tooLong) throw tooLong
 
   const ordered = [...keys].sort((a, b) => b.version - a.version)
   for (const { key } of ordered) {

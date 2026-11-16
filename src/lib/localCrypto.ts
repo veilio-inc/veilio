@@ -1,6 +1,6 @@
-import type { SymbolMap } from '@veilio-inc/engine'
+import { sealedLengthRefusal, type SymbolMap } from '@veilio-inc/engine'
 import { CURRENT_FILE_KDF, LEGACY_FILE_KDF, parseKdfParams, type KdfParams } from './kdf.js'
-import { parseSymbolMap } from './importedMap.js'
+import { exportablePlaintext, InvalidMapError, parseSymbolMap } from './importedMap.js'
 import { assertUsablePassphrase } from './passphrase.js'
 import { getKdfTransport } from './kdfTransport.js'
 
@@ -65,15 +65,13 @@ export async function exportMap(
   // Enforced here rather than at the call site so no future caller can write a
   // file that skips the floor (ROADMAP E8).
   assertUsablePassphrase(passphrase)
-  const enc = new TextEncoder()
+  // Checked before anything is encrypted: a file this writes is a file
+  // `importMap`, and every other reader, reads.
+  const plaintext = exportablePlaintext(map) as Uint8Array<ArrayBuffer>
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const key = await deriveKey(passphrase, salt, CURRENT_FILE_KDF, signal)
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: ALG, iv },
-    key,
-    enc.encode(JSON.stringify(map))
-  )
+  const ciphertext = await crypto.subtle.encrypt({ name: ALG, iv }, key, plaintext)
   const file: VeilioFile = {
     v: 1,
     alg: 'AES-256-GCM-PBKDF2',
@@ -93,6 +91,9 @@ export async function importMap(
   const file = JSON.parse(fileContent) as VeilioFile
   if (file.v !== 1 || file.alg !== 'AES-256-GCM-PBKDF2')
     throw new Error('Invalid .veilio file format')
+  // Before anything is decoded or derived: the size is all a hostile file needs.
+  const tooLong = sealedLengthRefusal(String(file.data).length)
+  if (tooLong) throw new InvalidMapError(tooLong)
   const kdf = parseKdfParams(file.kdf, LEGACY_FILE_KDF)
   const salt = fromBase64(file.salt)
   const iv = fromBase64(file.iv)

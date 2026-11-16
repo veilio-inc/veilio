@@ -14,7 +14,10 @@ import {
   InvalidMapError,
   MIN_PASSPHRASE_LENGTH,
   fromBase64,
+  isName,
+  MAP_LIMITS,
 } from '../src/envelope.js'
+import { sealFileUnchecked, sealingRules } from './fixtures/seal-cases.js'
 
 const PASS = 'correct horse battery staple'
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'browser-sealed.veilio')
@@ -145,9 +148,9 @@ describe('a decrypted map is authenticated, not trusted', () => {
 
   it('bounds one file rather than trusting its size', () => {
     const huge: Record<string, string> = {}
-    for (let i = 0; i < 50_001; i++) huge[`__CLS__${i}`] = 'x'
-    expect(() => parseSymbolMap(huge)).toThrow(/50000/)
-    expect(() => parseSymbolMap({ __CLS__1: 'x'.repeat(10_001) })).toThrow(/10000/)
+    for (let i = 0; i < 250_001; i++) huge[`__CLS__${i}`] = 'x'
+    expect(() => parseSymbolMap(huge)).toThrow(/250000/)
+    expect(() => parseSymbolMap({ __CLS__1: 'x'.repeat(200_001) })).toThrow(/200000/)
   })
 
   it('runs on the way OUT of openMap, not only when called directly', async () => {
@@ -156,10 +159,11 @@ describe('a decrypted map is authenticated, not trusted', () => {
     // suite green. The validation has to sit on the path a real file takes, or
     // it is a function nobody calls.
     //
-    // sealMap deliberately does not validate on the way in — it seals what it is
-    // given — so a hostile map can be sealed and must be caught on open. That is
-    // the real shape too: the file was written by someone else's tool.
-    const hostile = await sealMap({ notAPlaceholder: 'rm -rf /' } as never, PASS)
+    // sealMap refuses such a map, so the file is written here as another
+    // tool would write it. That is the real shape too: the file was written
+    // by someone else's tool.
+    await expect(sealMap({ notAPlaceholder: 'rm -rf /' }, PASS)).rejects.toThrow(InvalidMapError)
+    const hostile = await sealFileUnchecked({ notAPlaceholder: 'rm -rf /' }, PASS)
     await expect(openMap(hostile, PASS)).rejects.toThrow(InvalidMapError)
   })
 
@@ -168,5 +172,39 @@ describe('a decrypted map is authenticated, not trusted', () => {
     await expect(openMap(sealed.replace('"v": 1', '"v": 2'), PASS)).rejects.toThrow(
       /Invalid .veilio file format/
     )
+  })
+})
+
+sealingRules('a passphrase file', () =>
+  Promise.resolve({
+    seal: (map) => sealMap(map, PASS),
+    open: (sealed) => openMap(sealed as string, PASS),
+    withData: (sealed, data) => JSON.stringify({ ...JSON.parse(sealed as string), data }),
+  })
+)
+
+describe('the limits of a map are one set', () => {
+  it('states them', () => {
+    expect(MAP_LIMITS).toEqual({ entries: 250_000, valueLength: 200_000, sealedLength: 32_000_000 })
+  })
+
+  it('a name is as long as a value may be, and no longer', () => {
+    expect(isName('a'.repeat(MAP_LIMITS.valueLength))).toBe(true)
+    expect(isName('a'.repeat(MAP_LIMITS.valueLength + 1))).toBe(false)
+  })
+
+  it('the reader says its numbers', () => {
+    expect(() => parseSymbolMap({ __STR__1: 'a'.repeat(MAP_LIMITS.valueLength + 1) })).toThrow(
+      `"__STR__1" maps to ${MAP_LIMITS.valueLength + 1} characters; the limit is ${MAP_LIMITS.valueLength}.`
+    )
+    const many = Object.fromEntries(
+      Array.from({ length: MAP_LIMITS.entries + 1 }, (_, i) => [`__VAR__${i + 1}`, 'name'])
+    )
+    expect(() => parseSymbolMap(many)).toThrow(
+      `Map has ${MAP_LIMITS.entries + 1} entries; the limit is ${MAP_LIMITS.entries}.`
+    )
+    expect(Object.keys(parseSymbolMap({ __STR__1: 'a'.repeat(MAP_LIMITS.valueLength) }))).toEqual([
+      '__STR__1',
+    ])
   })
 })

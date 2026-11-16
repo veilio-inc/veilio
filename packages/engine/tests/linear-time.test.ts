@@ -3,6 +3,7 @@ import {
   anonymize,
   guessLanguage,
   isRawOnly,
+  parseSymbolMap,
   restore,
   scanSecrets,
   valuePositions,
@@ -31,6 +32,8 @@ const SCANNERS = {
   values: (text) => valuePositions(text, { fileKind: 'yaml' }),
   rawOnly: (text) => isRawOnly(text, [text.slice(0, 200), '**/*' + text.slice(0, 50)]),
   restore: (text) => restore(text, { __VAR__1: 'customerTotal' }),
+  // A map somebody else made, as JSON: the reader's check, then a restore with it.
+  map: (text) => restore('__VAR__1 and __VAR__2', parseSymbolMap(JSON.parse(text))),
 } satisfies Record<string, Scanner>
 
 const BEGIN = '-----BEGIN PRIVATE' + ' KEY-----\n'
@@ -67,6 +70,17 @@ const ROWS: [
   ['a path of stars', 'rawOnly', 2000, (n) => '*'.repeat(n)],
   ['placeholders to restore', 'restore', 4000, (n) => '__VAR__1 '.repeat(n)],
   ['underscores to restore', 'restore', 8000, (n) => '_'.repeat(n)],
+  [
+    'a map of long values, checked and restored with',
+    'map',
+    400,
+    (n) =>
+      JSON.stringify(
+        Object.fromEntries(
+          Array.from({ length: n }, (_, i) => [`__VAR__${i + 1}`, 'a'.repeat(2000) + i])
+        )
+      ),
+  ],
   // Many credential lines, each with a value that never closes.
   ['unclosed credential values in YAML', 'yaml', 200, (n) => 'password: "a1\n'.repeat(n)],
   ['the same under keys with a space', 'yaml', 400, (n) => 'my password: "a1\n'.repeat(n)],

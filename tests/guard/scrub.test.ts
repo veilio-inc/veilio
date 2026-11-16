@@ -182,6 +182,15 @@ describe('survivingSecrets', () => {
 })
 
 describe('restoreArgs', () => {
+  it('puts back placeholders only: a stray key in the map is not substituted', () => {
+    // The guard's map reader checks values; its engine copy is what leaves a
+    // word, a letter or a redaction token in the map alone.
+    const stray = { fetch: 'send', a: 'X', __REDACTED_SECRET__: 'opened', __VAR__1: 'total' }
+    expect(restoreArgs('fetch(__VAR__1) with a and __REDACTED_SECRET__', stray).text).toBe(
+      'fetch(total) with a and __REDACTED_SECRET__'
+    )
+  })
+
   const map = { __CLS__1: 'QuasarLedgerReconciler', __VAR__1: 'settledTotal' }
 
   it('puts the real names back', () => {

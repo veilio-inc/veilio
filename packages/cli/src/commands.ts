@@ -84,6 +84,9 @@ export interface Io {
    * process's environment. Injectable so tests never depend on the shell's.
    */
   env?: Readonly<Record<string, string | undefined>>
+  /** Wait this many milliseconds. Undefined: a timer. Only `vault unlock`
+   *  waits, once, for a rate limit; tests pass their own and never sleep. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** Exit codes are the contract for CI and pre-commit hooks:

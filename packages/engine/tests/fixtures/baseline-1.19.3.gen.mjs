@@ -1,11 +1,11 @@
-// Writes baseline-1.19.2.json: what the PUBLISHED engine 1.19.2 answers for
+// Writes baseline-1.19.3.json: what the PUBLISHED engine 1.19.3 answers for
 // every row and option set of baseline-corpus.ts. Run once, against the
 // registry tarball unpacked outside the repository, never against this
 // working tree's build:
-//   npm pack @veilio-inc/engine@1.19.2 && tar -xzf veilio-inc-engine-1.19.2.tgz
-//   node tests/fixtures/baseline-1.19.2.gen.mjs <unpacked>/package/dist/index.js <dist.shasum>
+//   npm pack @veilio-inc/engine@1.19.3 && tar -xzf veilio-inc-engine-1.19.3.tgz
+//   node tests/fixtures/baseline-1.19.3.gen.mjs <unpacked>/package/dist/index.js <dist.shasum>
 // The record is not regenerated: a row that may differ from it is listed in
-// baseline-exceptions.ts. It also writes baseline-1.19.2.repo.json (below).
+// baseline-exceptions.ts. It also writes baseline-1.19.3.repo.json (below).
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,11 +15,11 @@ import { baselineRows, redactionCount, REPOSITORY_LIMIT, veiled } from './baseli
 import { SYNTAXES, VALUES } from './syntax-corpus.ts'
 import { HELD, ROWS } from './manual-marks.ts'
 
-const VERSION = '1.19.2'
+const VERSION = '1.19.3'
 const entry = resolve(process.argv[2] ?? '')
 const shasum = process.argv[3]
 if (!process.argv[2] || !/^[0-9a-f]{40}$/.test(shasum ?? ''))
-  throw new Error('usage: baseline-1.19.2.gen.mjs <package>/dist/index.js <dist.shasum>')
+  throw new Error('usage: baseline-1.19.3.gen.mjs <package>/dist/index.js <dist.shasum>')
 const pkg = JSON.parse(readFileSync(join(dirname(entry), '..', 'package.json'), 'utf8'))
 if (pkg.name !== '@veilio-inc/engine' || pkg.version !== VERSION)
   throw new Error(`this record is of ${VERSION} only - got ${pkg.name}@${pkg.version}`)
@@ -72,9 +72,9 @@ const shaped =
     unmarked
   )
 if (shaped) throw new Error(`a credential-shaped value is left in the record: ${shaped[0]}`)
-writeFileSync(new URL('./baseline-1.19.2.json', import.meta.url), text)
+writeFileSync(new URL('./baseline-1.19.3.json', import.meta.url), text)
 
-// baseline-1.19.2.repo.json: how many redaction tokens the same package leaves
+// baseline-1.19.3.repo.json: how many redaction tokens the same package leaves
 // in each tracked text file of this repository, with a digest of the file as
 // it was, so a file edited since is not held to an old count.
 const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
@@ -96,6 +96,6 @@ for (const path of execFileSync('git', ['-C', root, 'ls-files', '-z'], { encodin
   ]
 }
 writeFileSync(
-  new URL('./baseline-1.19.2.repo.json', import.meta.url),
+  new URL('./baseline-1.19.3.repo.json', import.meta.url),
   JSON.stringify({ engine: { version: VERSION, shasum }, files }, null, 1) + '\n'
 )

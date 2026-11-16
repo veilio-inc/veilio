@@ -10,9 +10,13 @@ import {
   encryptMapForVault,
   parseVaultEnvelope,
   randomVaultSalt,
+  sealVaultEnvelope,
   fromBase64,
+  type CryptoKeyLike,
   type VaultEnvelope,
 } from '../src/index.js'
+import { webcrypto } from 'node:crypto'
+import { sealingRules } from './fixtures/seal-cases.js'
 
 /**
  * The vault envelope, checked against something the browser actually produced.
@@ -117,7 +121,7 @@ describe('round trip and refusals', () => {
     // nothing about them being a symbol map, and a caller handed `["a"]` would
     // discover that somewhere much less convenient.
     const key = await deriveVaultKey('a perfectly good passphrase', randomVaultSalt())
-    const notAMap = await encryptMapForVault(key, ['nope'] as unknown as Record<string, string>)
+    const notAMap = await sealVaultEnvelope(key, ['nope'])
     await expect(decryptMapFromVault(key, notAMap)).rejects.toThrow()
   })
 
@@ -136,4 +140,16 @@ describe('round trip and refusals', () => {
       expect(() => parseVaultEnvelope(bad), bad).toThrow(VaultEnvelopeError)
     }
   })
+})
+
+sealingRules('a personal envelope', async () => {
+  const key = (await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+    'encrypt',
+    'decrypt',
+  ])) as CryptoKeyLike
+  return {
+    seal: (map) => encryptMapForVault(key, map),
+    open: (sealed) => decryptMapFromVault(key, sealed as VaultEnvelope),
+    withData: (sealed, data) => ({ ...(sealed as VaultEnvelope), data }),
+  }
 })

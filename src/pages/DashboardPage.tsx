@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Navbar from '../components/Navbar.js'
 import { useLocalMaps } from '../hooks/useLocalMaps.js'
 import { exportMap } from '../lib/localCrypto.js'
+import { exportErrorMessage } from '../lib/passphrase.js'
 import LocalKeyModal from '../components/LocalKeyModal.js'
 import { LocalKeyLockedError } from '../lib/localMapStore.js'
 import type { SymbolMap } from '@veilio-inc/engine'
@@ -57,8 +58,8 @@ export default function DashboardPage() {
       a.click()
       URL.revokeObjectURL(url)
       showToast('Map exported')
-    } catch {
-      showToast('Export failed', 'error')
+    } catch (err) {
+      showToast(exportErrorMessage(err), 'error')
     } finally {
       setDerivingId(null)
     }

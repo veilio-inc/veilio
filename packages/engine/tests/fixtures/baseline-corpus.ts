@@ -1,12 +1,12 @@
-// The frozen corpus behind baseline-1.19.2.json: what the published engine
-// 1.19.2 answered for each row and option set is recorded there, once, and
-// baseline-1.19.2.test.ts holds every later build to it, row by row. A row
+// The frozen corpus behind baseline-1.19.3.json: what the published engine
+// 1.19.3 answered for each row and option set is recorded there, once, and
+// baseline-1.19.3.test.ts holds every later build to it, row by row. A row
 // that may differ is listed in baseline-exceptions.ts with the reason.
 //
 // Never edit a row: its recorded answer would no longer be the published
-// engine's. A new row needs its own record, taken from 1.19.2 again.
+// engine's. A new row needs its own record, taken from 1.19.3 again.
 //
-// No imports that run: baseline-1.19.2.gen.mjs loads this file with Node
+// No imports that run: baseline-1.19.3.gen.mjs loads this file with Node
 // alone, and hands in the rows of the other fixtures.
 import type { AnonymizeOptions } from '../../src/types.js'
 import type { SyntaxCase } from './syntax-corpus.js'
@@ -1448,6 +1448,41 @@ const logins: BaselineRow[] = [
   ),
 ]
 
+// ─── Long values: the map limits ────────────────────────────────────────────
+
+/** One value of each length, as a string literal and as an identifier. The
+ *  record holds a marker where the value stands (`secrets`), so it stays
+ *  small; masking these is not changed by a limit on what a map may hold. */
+const LONG_OPTIONS: AnonymizeOptions[] = [{ language: 'typescript' }, {}]
+const longRow = (name: string, value: string, text: string): BaselineRow => ({
+  name: `long: ${name}`,
+  code: text,
+  options: LONG_OPTIONS,
+  secrets: [value],
+})
+// 2,250 words of seven letters (18,000 characters with their separators),
+// 300 different ones, so the recorded map stays short.
+const WORDS = Array.from({ length: 2250 }, (_, i) =>
+  made(700 + (i % 300), 7, 'abcdefghijklmnopqrstuvwxyz')
+)
+const HEX_WORD = 'f' + made(40, 15_999, '0123456789abcdef')
+const LONG_WORD = made(41, 15_005, 'abcdefghijklmnopqrstuvwxyz')
+const longValues: BaselineRow[] = [
+  ...[10_000, 10_001, 15_001, 200_000].flatMap((n) => {
+    const value = 'a'.repeat(n)
+    return [
+      longRow(`a literal of ${n} characters`, value, `const logo = "${value}";\n`),
+      longRow(`an identifier of ${n} characters`, value, `const ${value} = 1;\n`),
+    ]
+  }),
+  // A letter first: a literal that starts with a digit is not a name, and is
+  // left as written.
+  longRow('a hex literal of 16000 characters', HEX_WORD, `const digest = "${HEX_WORD}";\n`),
+  longRow('a word of 15005 characters', LONG_WORD, `const word = "${LONG_WORD}";\n`),
+  longRow('18000 characters of words', WORDS.join(' '), `const text = "${WORDS.join(' ')}";\n`),
+  longRow('a dotted path', WORDS.join('.'), `const path = "${WORDS.join('.')}";\n`),
+]
+
 export const OWN_ROWS: BaselineRow[] = [
   ...samples,
   ...tripleQuoted,
@@ -1462,6 +1497,7 @@ export const OWN_ROWS: BaselineRow[] = [
   ...localNames,
   ...multiLine,
   ...logins,
+  ...longValues,
 ]
 
 /** Tracked files past this size are not part of the repository check. */

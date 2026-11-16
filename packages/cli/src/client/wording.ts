@@ -20,7 +20,7 @@
 // prints, because the MCP server's reader is the model whose context the names
 // must stay out of (spec 052, founder decision 2026-10-25).
 
-import { CloudError } from '../cloud.js'
+import { CloudError, retryWait } from '../cloud.js'
 import { printableAll } from '../reservations.js'
 
 export const REFUSAL_CODES = [
@@ -64,6 +64,7 @@ export const REFUSAL_CODES = [
   'rotation_owed',
   'key_version_not_held',
   'recipient_key_changed',
+  'map_unsealable',
   'too_large',
   'abuse_limit',
   'which_project',
@@ -103,6 +104,8 @@ export interface WordingParams {
   project?: string
   /** The project came from VEILIO_PROJECT rather than the stored choice. */
   override?: boolean
+  /** The seconds a rate limit asked for, when it named them. */
+  wait?: number
 }
 
 export interface Refusal {
@@ -120,7 +123,7 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; refusal: Refusal 
 
 /** A trailing full stop, unless the text already ends a sentence. Server
  *  messages arrive both ways. */
-function sentence(text: string | undefined): string {
+export function sentence(text: string | undefined): string {
   const t = (text ?? '').trim()
   return /[.!?…]$/.test(t) ? t : `${t}.`
 }
@@ -337,6 +340,11 @@ export const WORDING: Record<RefusalCode, Words> = {
     message: "That member's key changed since you read it. Nothing was stored.",
     resolve: 'Reload and try again.',
   }),
+  // The reader's own sentence (the entry and the limit), never a value.
+  map_unsealable: (p) => ({
+    message: `not pushed: ${sentence(p.detail)} Nothing was sent.`,
+    resolve: 'Shorten that value in the source, or leave its file out, then mask and push again.',
+  }),
   too_large: () => ({
     message: 'this map is too large for Cloud to accept, so nothing was stored.',
     resolve: 'Split it, or remove entries you no longer need.',
@@ -419,10 +427,10 @@ export const WORDING: Record<RefusalCode, Words> = {
     message: sentence(p.detail),
     resolve: 'Check the network and the instance address, then run the command again.',
   }),
+  // A rate limit that named its wait has said when: no second, different one here.
   server: (p) => ({
     message: `the instance reported an error — ${sentence(p.detail)}`,
-    resolve:
-      'Run the command again in a minute; if it keeps failing, contact the instance’s support.',
+    resolve: `Run the command again${p.wait === undefined ? ` in ${retryWait().said}` : ''}; if it keeps failing, contact the instance’s support.`,
   }),
 }
 
@@ -490,7 +498,10 @@ export function refusalFromCloudError(
     case 'unreachable':
       return refusal('unreachable', { detail: err.message })
     case 'server':
-      return refusal('server', { detail: err.message })
+      return refusal('server', {
+        detail: err.message,
+        ...(err.retryAfter === undefined ? {} : { wait: err.retryAfter }),
+      })
   }
 }
 

@@ -351,7 +351,7 @@ const MAX_ALIASES = 1_000_000
 /**
  * aliases.json, checked like map.json (security audit), and never thrown on
  * (security review of round 1: one bad entry cost teamNumbering every
- * retired placeholder). An entry whose name is not a name (isName: 1 to 100000
+ * retired placeholder). An entry whose name is not a name (isName: 1 to 200000
  * characters, no control or line separator), whose key is not a placeholder, or past the entry bound is
  * dropped and counted in `ignored`; the rest are kept. A file that is not an
  * object of aliases is `unreadable`: no aliases, and never written over. The
@@ -439,9 +439,10 @@ export function ownWithAliases(
   return { own, contested, ignored }
 }
 
-/** Said by restore (CLI and MCP) when map.json or aliases.json held keys that are not placeholders. */
+/** Said by restore (CLI and MCP) when aliases.json held keys that are not
+ *  placeholders. (A map.json holding one is refused whole by the store.) */
 export function ignoredKeysNote(n: number): string {
-  return `ignored ${n} ${n === 1 ? 'entry' : 'entries'} in map.json or ${ALIASES_FILE} whose key is not a placeholder.`
+  return `ignored ${n} ${n === 1 ? 'entry' : 'entries'} in ${ALIASES_FILE} whose key is not a placeholder.`
 }
 
 export function contestedNote(placeholders: readonly string[]): string {

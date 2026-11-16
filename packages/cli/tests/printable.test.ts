@@ -163,7 +163,10 @@ describe('map ids and names from Cloud are printed without control characters (s
     signIn(home)
     await cloud.withPmkWrap()
     cloud.add({ id: ID, name: NAME, map_data: await sealPersonal({ __CLS__1: 'Old' }, 'vault') })
-    cloud.afterGet = (m) => (m.updated_at = '2026-10-25T00:00:00.000Z')
+    cloud.intercept = (method) => {
+      if (method === 'PATCH') cloud.find(ID)!.updated_at = '2026-10-25T00:00:00.000Z'
+      return null
+    }
     const r = await run(['vault', 'unlock'])
     expect(r.code).toBe(EXIT_ERROR)
     expect(r.err).toContain(`  "${SHOWN}" (map?[2J9): `)

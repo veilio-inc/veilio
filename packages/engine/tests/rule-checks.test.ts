@@ -7,7 +7,7 @@ import {
   REDACTION_PREFIX,
   REGULATED_BASES,
   ROLE_BASES,
-  encryptTeamMap,
+  sealTeamEnvelope,
   importTeamKey,
   openTeamRule,
   sealTeamRule,
@@ -173,7 +173,7 @@ describe('a team whitelist names the identifiers it keeps (R2-7)', () => {
   it('a sealed WideOpen team rule opens refused, and is never sealed', async () => {
     const key = await importTeamKey(toBase64(new Uint8Array(32).fill(5)))
     const bind = { id: 'rule-1', teamId: 'team-1' }
-    const env = await encryptTeamMap(key, {
+    const env = await sealTeamEnvelope(key, {
       kind: 'veilio-rule',
       v: '1',
       id: 'rule-1',

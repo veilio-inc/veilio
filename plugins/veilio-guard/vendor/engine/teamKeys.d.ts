@@ -100,8 +100,17 @@ export declare function importTeamKey(rawBase64: string): Promise<CryptoKeyLike>
  * A fresh 12-byte IV per call, never derived from the map. AES-GCM loses both
  * confidentiality and authenticity if an IV repeats under one key, and two
  * members sealing the same pairs is ordinary rather than unlikely.
+ *
+ * A map `decryptTeamMap` would not open is refused before anything is
+ * encrypted: sealed, it would leave the team with a map no member can read.
  */
 export declare function encryptTeamMap(teamKey: CryptoKeyLike, map: Record<string, string>): Promise<TeamMapEnvelope>;
+/**
+ * Seal any JSON value into a team envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed rule, rule-envelope.ts). The
+ * write half of `openTeamEnvelopeWithAny`. A fresh IV per call, as above.
+ */
+export declare function sealTeamEnvelope(teamKey: CryptoKeyLike, body: unknown): Promise<TeamMapEnvelope>;
 /**
  * Open a team map with the team key held: only placeholders to names
  * (spec 085 R2-6). The key proves a teammate - or Cloud, through a key it

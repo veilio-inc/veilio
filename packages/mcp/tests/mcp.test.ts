@@ -278,6 +278,24 @@ describe('anonymize_file — real names never reach the caller', () => {
     expect(res.text).not.toContain(KEY)
   })
 
+  it('a value longer than a map may hold: refused naming the entry, no text returned, no map saved', () => {
+    const word = 'a'.repeat(200_001)
+    write('logo.ts', `const logo = "${word}"\n`)
+    const res = call('anonymize_file', { path: 'logo.ts' })
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain(
+      'refusing to write the map: the value of __STR__1 is not a name (1 to 200000 characters, no control character or line break), so nothing was written.'
+    )
+    expect(res.text).not.toContain('aaaaaaaa')
+    expect(res.text).not.toContain('__STR__1";')
+    expect(existsSync(resolveMapPath(null, cwd))).toBe(false)
+    // At the limit it is masked and saved.
+    write('logo.ts', `const logo = "${'a'.repeat(200_000)}"\n`)
+    const kept = call('anonymize_file', { path: 'logo.ts' })
+    expect(kept.isError ?? false, kept.text.slice(0, 200)).toBe(false)
+    expect(kept.text).toContain('const logo = "__STR__1"')
+  })
+
   it('errors on a missing file', () => {
     const res = call('anonymize_file', { path: 'nope.ts' })
     expect(res.isError).toBe(true)
@@ -757,12 +775,16 @@ describe('symbol_map_summary', () => {
     expect(res).toContain('2 placeholders at')
   })
 
-  it('leaves a key that is not a placeholder ungrouped rather than guessing', () => {
+  it('a map file with a key that is not a placeholder is refused, naming the key', () => {
+    // 2026-11-16: it used to be listed ungrouped. A map file holding such a
+    // key is no longer used by any tool, so the summary says so too.
     writeMap({ notAPlaceholder: 'A', __FN__1: 'b' })
-    const res = call('symbol_map_summary').text
+    const res = call('symbol_map_summary')
 
-    expect(res).toContain('notAPlaceholder')
-    expect(res).toContain('__FN__* × 1')
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain(
+      'holds a key that is not a placeholder ("notAPlaceholder"), so the file is not used. Remove that entry from the file.'
+    )
   })
 })
 

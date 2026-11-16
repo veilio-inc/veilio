@@ -20,6 +20,7 @@
 import './identity.js'
 import { resolveTeamNamespace, type TeamNamespaceResult } from '@veilio-inc/cli/team-namespace'
 import { readCredential, readTeamRecord } from '@veilio-inc/cli/credential'
+import { retryWait } from '@veilio-inc/cli/cloud'
 import { readTeamUnlock } from '@veilio-inc/cli/team-unlock'
 import { projectOverride, resolveOverride, type Env } from '@veilio-inc/cli/client'
 type PrimeOptions = { retryDelayMs?: number; env?: Env }
@@ -186,11 +187,13 @@ let primeGeneration = 0
 const STARTUP_DEADLINE_MS = 10_000
 /** How often an 'unavailable' team is asked again, from a tool call. */
 const UNAVAILABLE_RECHECK_MS = 30_000
-/** A rate-limited one: the refusal says "in a minute", and each recheck
- *  spends the same limit (e85 review). */
-const RATE_LIMITED_RECHECK_MS = 60_000
-const rateLimited = (): boolean =>
+/** A rate-limited one is asked again after the wait its refusal names: the
+ *  seconds Cloud gave, or a minute. Each recheck spends the same limit (e85
+ *  review). Null when the team is not rate-limited. */
+const rateLimitedRecheckMs = (): number | null =>
   current.found.status === 'unavailable' && current.found.refusal !== undefined
+    ? retryWait(current.found.retryAfter).seconds * 1000
+    : null
 
 let primedWith: { home?: string; opts: PrimeOptions } = { opts: {} }
 let lastAttemptAt = 0
@@ -269,7 +272,7 @@ export function refreshNamespaceIfStale(): 'unlocked' | 'retrying' | 'changed' |
           { instance: credential.instance, account: credential.account },
           primedWith.home
         ) !== null
-      : now - lastAttemptAt >= (rateLimited() ? RATE_LIMITED_RECHECK_MS : UNAVAILABLE_RECHECK_MS)
+      : now - lastAttemptAt >= (rateLimitedRecheckMs() ?? UNAVAILABLE_RECHECK_MS)
   if (!due) return null
   priming = null
   void primeNamespace(primedWith.home, primedWith.opts)

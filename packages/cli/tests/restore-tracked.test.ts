@@ -134,18 +134,18 @@ describe('the store reader bounds the values it accepts', () => {
     expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(/malformed/)
   })
 
-  it('a map value longer than 100000 characters is malformed', () => {
+  it('a map value longer than 200000 characters is malformed', () => {
     mkdirSync(join(cwd, '.veilio'))
     writeFileSync(
       join(cwd, '.veilio', 'map.json'),
-      JSON.stringify({ version: 1, map: { __CLS__1: 'P'.repeat(100_001) } })
+      JSON.stringify({ version: 1, map: { __CLS__1: 'P'.repeat(200_001) } })
     )
     expect(() => loadMap(resolveMapPath(null, cwd))).toThrow(/malformed/)
   })
 
-  it('a value of exactly 100000 characters is kept', () => {
+  it('a value of exactly 200000 characters is kept', () => {
     mkdirSync(join(cwd, '.veilio'))
-    const long = 'P'.repeat(100_000)
+    const long = 'P'.repeat(200_000)
     writeFileSync(
       join(cwd, '.veilio', 'map.json'),
       JSON.stringify({ version: 1, map: { __CLS__1: long } })

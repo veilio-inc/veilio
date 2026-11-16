@@ -12,6 +12,8 @@
 // tick on a mediocre passphrase is worse than no tick at all, because it
 // converts the user's own judgement into misplaced confidence.
 
+import { InvalidMapError } from './importedMap.js'
+
 /** NIST SP 800-63B puts the lever on length rather than composition rules:
  *  mandated symbol-and-digit recipes push people toward predictable
  *  substitutions without adding real entropy. Twelve is above the 8-character
@@ -28,7 +30,8 @@ export class WeakPassphraseError extends Error {
 
 /** Pick what to tell the reader when an export fails.
  *
- *  A rejected passphrase is the one export failure the user can act on, so it
+ *  A rejected passphrase, and a map the import would refuse (it names the
+ *  entry), are the export failures the user can act on, so each
  *  must say what was wrong instead of a flat "Export failed" that leaves them
  *  guessing at the map, the browser, or the disk.
  *
@@ -36,7 +39,9 @@ export class WeakPassphraseError extends Error {
  *  counterpart: that handler calls `prompt()` and drives a download, which puts
  *  the branch out of reach of a test. */
 export function exportErrorMessage(err: unknown): string {
-  return err instanceof WeakPassphraseError ? err.message : 'Export failed'
+  return err instanceof WeakPassphraseError || err instanceof InvalidMapError
+    ? err.message
+    : 'Export failed'
 }
 
 /** Passphrases that clear the length bar and are still among the first things

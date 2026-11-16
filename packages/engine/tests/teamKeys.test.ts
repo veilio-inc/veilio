@@ -5,6 +5,7 @@ import {
   deriveWrappingKey,
   unwrapTeamKey,
   encryptTeamMap,
+  sealTeamEnvelope,
   importTeamKey,
   decryptTeamMap,
   decryptTeamMapWithAny,
@@ -14,7 +15,8 @@ import {
   type TeamMapEnvelope,
   type WrapContext,
 } from '../src/teamKeys.js'
-import { fromBase64, toBase64 } from '../src/envelope.js'
+import { fromBase64, InvalidMapError, MAP_LIMITS, toBase64 } from '../src/envelope.js'
+import { sealingRules } from './fixtures/seal-cases.js'
 import type { CryptoKeyLike } from '../src/vault.js'
 
 // The read half of the team-key scheme: vault key -> private key -> team key
@@ -332,7 +334,7 @@ describe('encryptTeamMap', () => {
 
     // The envelope round-trips anything; a map opened for use holds names only
     // (spec 085 R2-6), so the line break refuses it there.
-    const env = await encryptTeamMap(key, map)
+    const env = await sealTeamEnvelope(key, map)
     await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
     await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
@@ -517,7 +519,7 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { ['__proto__']: 'Polluted', constructor: 'Ctor', toString: 'Str' }
 
-    const env = await encryptTeamMap(key, map)
+    const env = await sealTeamEnvelope(key, map)
     const back = (await openTeamEnvelopeWithAny([{ version: 1, key }], env)) as Record<
       string,
       string
@@ -539,7 +541,7 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { __CLS__1: '\u0000CLS', __FN__1: 'mid\u0000dle' }
 
-    const env = await encryptTeamMap(key, map)
+    const env = await sealTeamEnvelope(key, map)
     await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
     // A NUL is a control character: not a name, so not a map to use (spec 085 R2-6).
     await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
@@ -552,7 +554,7 @@ describe('encryptTeamMap', () => {
     const key = await keyFor(randomTeamKey())
     const map = { __CLS__1: 'lone\ud800surrogate' }
 
-    const env = await encryptTeamMap(key, map)
+    const env = await sealTeamEnvelope(key, map)
     await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
     // Not an identifier, so not a value a class name is made from (spec 085 R2-6).
     await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
@@ -565,13 +567,15 @@ describe('encryptTeamMap', () => {
     await expect(decryptTeamMap(key, await encryptTeamMap(key, map))).resolves.toEqual(map)
   })
 
-  it('seals what it is handed, and opens for use only placeholders (spec 085 R2-6)', async () => {
-    // Sealing stays unpoliced; opening a map for restore and masking is where a
-    // key that is not a placeholder would rewrite text, so it is refused there.
+  it('refuses to seal what it would not open; only the unchecked half seals it', async () => {
+    // A key that is not a placeholder would rewrite text in every member's
+    // restore, so the reader refuses it - and the sealer with it, or the team
+    // would be left with a map nobody can open.
     const key = await keyFor(randomTeamKey())
     const map = { 'not-a-placeholder': 'Invoice', '': 'empty' }
 
-    const env = await encryptTeamMap(key, map)
+    await expect(encryptTeamMap(key, map)).rejects.toThrow(InvalidMapError)
+    const env = await sealTeamEnvelope(key, map)
     await expect(openTeamEnvelopeWithAny([{ version: 1, key }], env)).resolves.toEqual(map)
     await expect(decryptTeamMap(key, env)).rejects.toThrow(TeamKeyError)
   })
@@ -680,7 +684,8 @@ describe('encryptTeamMap', () => {
 describe('decryptTeamMap opens only placeholders to names (R2-6)', () => {
   const key = () => importTeamKey(toBase64(new Uint8Array(32).fill(7)))
   const seal = async (map: Record<string, unknown>) =>
-    encryptTeamMap(await key(), map as Record<string, string>)
+    // The unchecked half: what another tool, or an older one, could seal.
+    sealTeamEnvelope(await key(), map)
 
   it.each([
     ['a key that is not a placeholder', { 'verify=True': 'verify=False' }],
@@ -704,5 +709,27 @@ describe('decryptTeamMap opens only placeholders to names (R2-6)', () => {
     await expect(
       decryptTeamMap(await key(), await seal({ __CLS__1: 'ZahlungsTür' }))
     ).rejects.toThrow(TeamKeyError)
+  })
+})
+
+sealingRules('a team envelope', async () => {
+  const key = await importTeamKey(toBase64(randomTeamKey()))
+  return {
+    seal: (map) => encryptTeamMap(key, map),
+    open: (sealed) => decryptTeamMap(key, sealed as TeamMapEnvelope),
+    withData: (sealed, data) => ({ ...(sealed as TeamMapEnvelope), data }),
+  }
+})
+
+describe('oversized sealed data, with several keys held', () => {
+  it('is refused for its size, not reported as no key fitting', async () => {
+    const key = await importTeamKey(toBase64(randomTeamKey()))
+    const env = await encryptTeamMap(key, { __VAR__1: 'total' })
+    const over = MAP_LIMITS.sealedLength + 1
+    await expect(
+      decryptTeamMapWithAny([{ version: 1, key }], { ...env, data: 'A'.repeat(over) })
+    ).rejects.toThrow(
+      `This sealed map is ${over} characters long; the limit is ${MAP_LIMITS.sealedLength}. It was not decrypted.`
+    )
   })
 })

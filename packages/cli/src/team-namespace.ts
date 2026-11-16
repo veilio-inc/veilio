@@ -95,7 +95,7 @@ export type TeamNamespaceResult =
    *  `refusal`: Cloud rate-limited the read (429). Numbering from the local
    *  namespace then is refused, in the words every rate-limited command
    *  uses (e85, founder 2026-11-10); the other reasons still fall back. */
-  | { status: 'unavailable'; reason: string; refusal?: Refusal }
+  | { status: 'unavailable'; reason: string; refusal?: Refusal; retryAfter?: number }
   /**
    * VEILIO_PROJECT names no project the team works in, or a name two share
    * (spec 052 FR-012a). Not 'unavailable': numbering from the local map with a
@@ -225,6 +225,8 @@ function unavailable(
     status: 'unavailable',
     reason: describe(err),
     ...(limited ? { refusal: refusalFromCloudError(err) } : {}),
+    // The seconds the refusal names, for a caller that holds its next read.
+    ...(limited && err.retryAfter !== undefined ? { retryAfter: err.retryAfter } : {}),
   }
 }
 

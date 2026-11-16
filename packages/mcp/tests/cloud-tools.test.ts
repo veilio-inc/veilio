@@ -445,6 +445,56 @@ describe('the same outcome as the CLI (SC-002)', () => {
     expect(sent).toBe(cloud.rotationOwed || cloud.keyVersionNotHeld ? 2 : 0)
   })
 
+  it('maps_create and maps_update of a map no reader would open: the CLI’s refusal, nothing sent', async () => {
+    signIn(home, { team: true, pmk: true })
+    const row = cloud.add({ scope: 'team', map_data: await sealTeam({ __FN__2: 'settle' }) })
+    // A class name the reader does not take: sealed, nobody could open the map.
+    local({ __CLS__1: 'ZahlungsTür', __FN__2: 'settle' })
+    for (const r of [
+      await callToolAsync('maps_create', { name: 'shared', scope: 'team' }, ctx),
+      await callToolAsync('maps_create', { name: 'mine', scope: 'personal' }, ctx),
+      await callToolAsync('maps_update', { id: row.id }, ctx),
+    ]) {
+      expect(r.isError).toBe(true)
+      expect(r.text).toBe(
+        'Veilio: not pushed: "__CLS__1" maps to a value its kind is never made from. Nothing was sent. ' +
+          'Shorten that value in the source, or leave its file out, then mask and push again.'
+      )
+    }
+    expect(cloud.writes()).toEqual([])
+    expect(cloud.maps).toHaveLength(1)
+  })
+
+  it('a rate limit on a tool’s read: said in one sentence, and the request is not repeated', async () => {
+    signIn(home, { pmk: true })
+    cloud.limited.add('/api/maps')
+    const before = cloud.requests.length
+    const r = await callToolAsync('maps_list', {}, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('Cloud is limiting requests from this session. Try again in a minute.')
+    expect(cloud.requests.slice(before).map((x) => x.path)).toEqual(['/api/maps'])
+  })
+
+  it.each([
+    ['7', 'Try again in 7 seconds. Run the command again; if'],
+    ['1', 'Try again in 1 second. Run the command again; if'],
+  ])('a rate limit naming %s: one wait is said, not two', async (seconds, said) => {
+    signIn(home, { pmk: true })
+    cloud.intercept = (_, path) =>
+      path === '/api/maps'
+        ? new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': seconds },
+          })
+        : null
+    const r = await callToolAsync('maps_list', {}, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain(
+      `Cloud is limiting requests from this session. ${said} it keeps failing, contact the instance’s support.`
+    )
+    expect(r.text).not.toContain('in a minute')
+  })
+
   it('maps_update under a key version not held: the approved words, the MCP prefix', async () => {
     signIn(home, { team: true })
     local({ __CLS__1: 'X', __FN__2: 'y' })

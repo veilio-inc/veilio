@@ -91,6 +91,14 @@ export const RESTORE_CASES: RestoreCase[] = [
     disputed: [],
   },
   {
+    name: 'a redaction token is never restored, whatever the map says',
+    own: { __REDACTED_SECRET__: 'opened', __CLS__1: 'PaymentGateway' },
+    team: null,
+    text: 'new __CLS__1(__REDACTED_SECRET__)',
+    restored: 'new PaymentGateway(__REDACTED_SECRET__)',
+    disputed: [],
+  },
+  {
     name: 'no team: the own map only',
     own: { __CLS__1: 'PaymentGateway' },
     team: null,

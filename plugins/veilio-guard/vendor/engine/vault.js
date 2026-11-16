@@ -16,7 +16,7 @@
 //
 // Every parameter here matches `packages/frontend/src/lib/vaultCrypto.ts`
 // exactly, and `vault-parity.test.ts` opens a fixture the browser produced.
-import { parseSymbolMap, toBase64, fromBase64, webCryptoSubtle, randomBytes, } from './envelope.js';
+import { parseSymbolMap, sealableMap, sealablePlaintext, sealedLengthRefusal, toBase64, fromBase64, webCryptoSubtle, randomBytes, } from './envelope.js';
 const ALG = 'AES-GCM';
 /** The envelope's algorithm marker. Stored, checked, never inferred. */
 export const VAULT_ENVELOPE_ALG = 'AES-256-GCM-PBKDF2';
@@ -55,9 +55,22 @@ export async function deriveVaultKey(passphrase, salt, kdf = CURRENT_VAULT_KDF) 
     const keyMaterial = await subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
     return subtle.deriveKey({ name: 'PBKDF2', salt, iterations: kdf.iterations, hash: 'SHA-256' }, keyMaterial, { name: ALG, length: 256 }, false, ['encrypt', 'decrypt']);
 }
+/** Seal a map under a vault key. Refuses, before anything is encrypted, a map
+ *  `decryptMapFromVault` would not open. */
 export async function encryptMapForVault(key, map) {
+    return sealVaultEnvelope(key, sealableMap(map));
+}
+/**
+ * Seal any JSON value into a vault envelope, unchecked - for a body that is
+ * not a map and checks its own shape (a sealed custom rule). The write half
+ * of `openVaultEnvelope`.
+ */
+export async function sealVaultEnvelope(key, body) {
+    // Refused here, before anything is encrypted, when `openVaultEnvelope`
+    // would not read the result (MAP_LIMITS.sealedLength).
+    const plaintext = sealablePlaintext(body);
     const iv = randomBytes(12);
-    const ciphertext = await webCryptoSubtle().encrypt({ name: ALG, iv }, key, new TextEncoder().encode(JSON.stringify(map)));
+    const ciphertext = await webCryptoSubtle().encrypt({ name: ALG, iv }, key, plaintext);
     return { v: 1, alg: VAULT_ENVELOPE_ALG, iv: toBase64(iv), data: toBase64(ciphertext) };
 }
 /**
@@ -81,6 +94,11 @@ export async function openVaultEnvelope(key, envelope) {
     if (envelope.v !== 1 || envelope.alg !== VAULT_ENVELOPE_ALG) {
         throw new VaultEnvelopeError();
     }
+    // Before anything is decoded: at most MAP_LIMITS.sealedLength characters of
+    // sealed data are ever read.
+    const tooLong = sealedLengthRefusal(String(envelope.data).length);
+    if (tooLong)
+        throw new VaultEnvelopeError(tooLong);
     const plaintext = await webCryptoSubtle().decrypt({ name: ALG, iv: fromBase64(envelope.iv) }, key, fromBase64(envelope.data));
     return JSON.parse(new TextDecoder().decode(plaintext));
 }

@@ -9,10 +9,10 @@
 // skip one it cannot open or must not apply, say so, and go on masking.
 
 import { ruleRefusal, type RuleBody } from './rule-checks.js'
-import { encryptTeamMap, openTeamEnvelopeWithAny, type TeamMapEnvelope } from './teamKeys.js'
+import { openTeamEnvelopeWithAny, sealTeamEnvelope, type TeamMapEnvelope } from './teamKeys.js'
 import {
-  encryptMapForVault,
   openVaultEnvelope,
+  sealVaultEnvelope,
   type CryptoKeyLike,
   type VaultEnvelope,
 } from './vault.js'
@@ -89,7 +89,7 @@ export async function sealRuleForVault(
 ): Promise<VaultEnvelope> {
   const why = ruleRefusal(rule)
   if (why) throw new Error(why)
-  return encryptMapForVault(key, toRecord(rule, bind))
+  return sealVaultEnvelope(key, toRecord(rule, bind))
 }
 
 export async function openRuleFromVault(
@@ -114,7 +114,7 @@ export async function sealTeamRule(
 ): Promise<TeamMapEnvelope> {
   const why = ruleRefusal(rule, 'team')
   if (why) throw new Error(why)
-  return encryptTeamMap(teamKey, toRecord(rule, bind))
+  return sealTeamEnvelope(teamKey, toRecord(rule, bind))
 }
 
 /** Open a team rule with whichever held version fits. */

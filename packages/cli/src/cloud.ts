@@ -100,7 +100,11 @@ export class CloudError extends Error {
     /** The failure response's JSON body, when it had one. A 409 on a map
      *  update carries `current_updated_at`, and a refusal that names the
      *  version it lost to needs it (spec 052). */
-    readonly body?: Record<string, unknown>
+    readonly body?: Record<string, unknown>,
+    /** On a 429: the whole seconds the instance asked for, when it named 1 to
+     *  3600 of them. Nothing here waits; a caller that may wait does so once,
+     *  and not for longer than it chooses to. */
+    readonly retryAfter?: number
   ) {
     // Spec 093 item 9: the message is often the server's own words.
     super(printable(message))
@@ -227,6 +231,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (!response.ok) {
     const body = await bodyOf(response)
+    // A rate limit is said as one, and never repeated here: a retry inside
+    // every call would hold a tool for a minute. The reservation cap is a 429
+    // too, with its own words and its own reader (client/blocks.ts).
+    if (response.status === 429 && body.reason !== 'cap') {
+      const wait = retryAfterSeconds(response.headers.get('retry-after'))
+      throw new CloudError(
+        'server',
+        `Cloud is limiting requests from this session. Try again in ${retryWait(wait).said}.`,
+        429,
+        body,
+        wait
+      )
+    }
     throw new CloudError(
       'server',
       typeof body.error === 'string' && body.error !== ''
@@ -375,6 +392,20 @@ export function getTeamEnvelopes(
   reservations?: PlaceholderReservation[]
 }> {
   return request(`/api/maps/team-envelopes${projectQuery(credential)}`, { credential, signal })
+}
+
+/**
+ * Every personal map of this account, with envelopes, in one request: what
+ * `vault unlock` reads to see which maps are still under the vault key. No
+ * project: a personal map has none. `unreadable` are ids the instance could
+ * not serve. An instance without the listing answers 404 (a `server`
+ * CloudError with status 404); callers fall back to one getMap per map.
+ */
+export function listPersonalEnvelopes(credential: Credential): Promise<{
+  maps: { id: string; updated_at: string; identifier_count: number | null; map_data: string }[]
+  unreadable: string[]
+}> {
+  return request('/api/maps/personal-envelopes', { credential })
 }
 
 export function getMap(
@@ -871,6 +902,24 @@ function trimSlashes(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
+/** `Retry-After` as whole seconds, 1 to 3600. A date, zero, a fraction or
+ *  anything longer is no time this client would say. */
+function retryAfterSeconds(header: string | null): number | undefined {
+  if (header === null || !/^\d{1,4}$/.test(header.trim())) return undefined
+  const seconds = Number(header.trim())
+  return seconds >= 1 && seconds <= 3600 ? seconds : undefined
+}
+
+/**
+ * The wait after a rate limit, and how it is said: the seconds the instance
+ * named, or a minute when it named none. The one place for that default, so
+ * the sentence, a closing "in a minute" and a held retry cannot disagree.
+ */
+export function retryWait(seconds?: number): { seconds: number; said: string } {
+  if (seconds === undefined) return { seconds: 60, said: 'a minute' }
+  return { seconds, said: seconds === 1 ? '1 second' : `${seconds} seconds` }
+}
+
 /** A failure response's body, or an empty object when it had none we can read. */
 async function bodyOf(response: Response): Promise<Record<string, unknown>> {
   try {
@@ -907,7 +956,8 @@ export function startDeviceLogin(instance: string, client: string): Promise<Devi
 /**
  * Exchange the long code for a session.
  *
- * Refusals arrive as RFC 8628 codes in `CloudError.message`:
+ * Refusals arrive as RFC 8628 codes in the failure's body (`error`), which a
+ * caller reads there - a 429's message is the client's own sentence:
  * `authorization_pending` while nobody has approved, `slow_down` when polling
  * faster than told, `expired_token` when the ten minutes are up or the code has
  * already been spent, `access_denied` when it was declined - or when the
