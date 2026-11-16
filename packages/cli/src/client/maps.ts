@@ -27,9 +27,12 @@ import {
   encryptMapForVault,
   encryptTeamMap,
   importTeamKey,
+  InvalidMapError,
   isEngineBase,
   isSaneBlock,
   parseVaultEnvelope,
+  sealableMap,
+  sealablePlaintext,
   LOCAL_PREFIX,
   MAX_PLACEHOLDER_NUMBER,
   teamBaseOf,
@@ -756,6 +759,22 @@ function localEntriesRefusal(map: SymbolMap): { ok: false; refusal: Refusal } | 
     : null
 }
 
+/**
+ * The refusal of a map no reader would open again (over a limit, a value its
+ * kind is never made from), or null. Asked before anything is reserved or
+ * sent: a team push reserves numbers before it seals, and the sealing
+ * functions - which run the same check - would refuse too late for that.
+ */
+function unsealableRefusal(map: SymbolMap): { ok: false; refusal: Refusal } | null {
+  try {
+    sealablePlaintext(sealableMap(map))
+    return null
+  } catch (err) {
+    if (!(err instanceof InvalidMapError)) throw err
+    return refuse('map_unsealable', { detail: err.reason })
+  }
+}
+
 function renumberNote(n: number): string[] {
   return n > 0
     ? [
@@ -855,6 +874,11 @@ export async function createCloudMap(
   if (!stored) return refuse('not_signed_in')
   let map = loadMap(opts.mapPath)
   if (Object.keys(map).length === 0) return refuse('no_local_map', { path: opts.mapPath })
+  // As it will be sealed: a personal map goes up with its old placeholders.
+  const unsealable = unsealableRefusal(
+    opts.scope === 'personal' ? { ...loadAliases(opts.mapPath), ...map } : map
+  )
+  if (unsealable) return unsealable
   // A team map lands in a project; a personal map has none, so only a team
   // push resolves VEILIO_PROJECT (and pays for the listing that takes).
   let credential: ScopedCredential = stored
@@ -1012,6 +1036,8 @@ export async function updateCloudMap(
   if (!id) return refuse('which_map')
   let local = loadMap(opts.mapPath)
   if (Object.keys(local).length === 0) return refuse('no_local_map', { path: opts.mapPath })
+  const unsealable = unsealableRefusal(local)
+  if (unsealable) return unsealable
   // VEILIO_PROJECT is a team map's question: a personal map belongs to no
   // project, so with the variable set it is found first, and a value that
   // names nothing never refuses it (FR-012a).
@@ -1140,6 +1166,9 @@ export async function updateCloudMap(
     // against the team, so they clash with nothing. The project's own map is
     // not changed.
     uploaded = { ...loadAliases(opts.mapPath), ...local }
+    // With them it is a larger map than the one checked above.
+    const tooMany = unsealableRefusal(uploaded)
+    if (tooMany) return tooMany
     const dropped = droppedBy(current, uploaded)
     if (dropped.length > 0 && opts.allowDrop !== true)
       return refuse('would_drop', { ...label, count: dropped.length, list: shortList(dropped) })

@@ -351,7 +351,7 @@ const MAX_ALIASES = 1_000_000
 /**
  * aliases.json, checked like map.json (security audit), and never thrown on
  * (security review of round 1: one bad entry cost teamNumbering every
- * retired placeholder). An entry whose name is not a name (isName: 1 to 100000
+ * retired placeholder). An entry whose name is not a name (isName: 1 to 200000
  * characters, no control or line separator), whose key is not a placeholder, or past the entry bound is
  * dropped and counted in `ignored`; the rest are kept. A file that is not an
  * object of aliases is `unreadable`: no aliases, and never written over. The

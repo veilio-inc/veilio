@@ -64,6 +64,7 @@ export const REFUSAL_CODES = [
   'rotation_owed',
   'key_version_not_held',
   'recipient_key_changed',
+  'map_unsealable',
   'too_large',
   'abuse_limit',
   'which_project',
@@ -336,6 +337,11 @@ export const WORDING: Record<RefusalCode, Words> = {
   recipient_key_changed: () => ({
     message: "That member's key changed since you read it. Nothing was stored.",
     resolve: 'Reload and try again.',
+  }),
+  // The reader's own sentence (the entry and the limit), never a value.
+  map_unsealable: (p) => ({
+    message: `not pushed: ${sentence(p.detail)} Nothing was sent.`,
+    resolve: 'Shorten that value in the source, or leave its file out, then mask and push again.',
   }),
   too_large: () => ({
     message: 'this map is too large for Cloud to accept, so nothing was stored.',

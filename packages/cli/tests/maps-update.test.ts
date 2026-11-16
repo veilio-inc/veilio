@@ -1,19 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   decryptMapFromVault,
   decryptTeamMap,
   importTeamKey,
+  MAP_LIMITS,
   parseVaultEnvelope,
+  restore,
   toBase64,
   type SymbolMap,
   type TeamMapEnvelope,
 } from '@veilio-inc/engine'
 import { main } from '../src/index.js'
 import { EXIT_ERROR, EXIT_OK, type Io } from '../src/commands.js'
-import { STORE_DIR, STORE_FILE, saveMap } from '../src/store.js'
+import { STORE_DIR, STORE_FILE, loadMap, saveMap } from '../src/store.js'
 import { importPersonalMapsKey } from '../src/client/personal-maps-key.js'
 import { writeTeamUnlock } from '../src/team-unlock.js'
 import {
@@ -519,5 +521,108 @@ describe('the ordinary refusals', () => {
     const bytes = readFileSync(mapPath(), 'utf8')
     await run(['maps', 'update', row.id])
     expect(readFileSync(mapPath(), 'utf8')).toBe(bytes)
+  })
+})
+
+// A map the reader would refuse is refused before anything is reserved or
+// sent, on each of the four paths that send one. Sealed, it would be a map
+// nobody can open again - for a team map, nobody in the team.
+describe('a map no reader would open is not pushed', () => {
+  // The store keeps any name; the reader takes a class name in ASCII only.
+  const UNOPENABLE: SymbolMap = { __CLS__1: 'ZahlungsTür', __FN__2: 'settle' }
+  const refusal = (reason: string): string =>
+    `veilio: not pushed: ${reason} Nothing was sent. Shorten that value in the source, or leave its file out, then mask and push again.\n`
+  const NOT_OF_ITS_KIND = refusal('"__CLS__1" maps to a value its kind is never made from.')
+
+  const paths: [string, () => Promise<string[]>][] = [
+    [
+      'a new team map',
+      async () => {
+        signIn(home, { team: true })
+        return ['maps', 'push', '--team', 'mine']
+      },
+    ],
+    [
+      'a new personal map',
+      async () => {
+        signIn(home, { pmk: true })
+        return ['maps', 'push', 'mine']
+      },
+    ],
+    [
+      'a team update',
+      async () => {
+        signIn(home, { team: true })
+        const row = cloud.add({ scope: 'team', map_data: await sealTeam({ __FN__2: 'settle' }) })
+        return ['maps', 'update', row.id]
+      },
+    ],
+    [
+      'a personal update',
+      async () => {
+        signIn(home, { pmk: true })
+        const row = cloud.add({ map_data: await sealPersonal({ __FN__2: 'settle' }, 'pmk') })
+        return ['maps', 'update', row.id]
+      },
+    ],
+  ]
+
+  it.each(paths)('%s: refused naming the entry, and nothing is sent', async (_, arrange) => {
+    const argv = await arrange()
+    const stored = cloud.maps.map((m) => m.map_data)
+    local(UNOPENABLE)
+    const before = readFileSync(mapPath(), 'utf8')
+
+    const r = await run(argv)
+    expect(r.code).toBe(EXIT_ERROR)
+    expect(r.err).toBe(NOT_OF_ITS_KIND)
+    expect(r.out).toBe('')
+    // No reservation, no create, no update.
+    expect(cloud.writes()).toEqual([])
+    expect(cloud.maps.map((m) => m.map_data)).toEqual(stored)
+    expect(readFileSync(mapPath(), 'utf8')).toBe(before)
+  })
+
+  it('a personal map is counted as it is sealed, with its renumbered old placeholders', async () => {
+    signIn(home, { pmk: true })
+    const full = Object.fromEntries(
+      Array.from({ length: MAP_LIMITS.entries }, (_, i) => [`__VAR__${i + 1}`, `name${i}`])
+    )
+    local(full)
+    // One old placeholder a team publish renumbered: one entry too many.
+    writeFileSync(
+      join(cwd, STORE_DIR, 'aliases.json'),
+      JSON.stringify({ version: 1, aliases: { __VAR__900001: 'name0' } })
+    )
+    const row = cloud.add({ map_data: await sealPersonal({ __VAR__1: 'name0' }, 'pmk') })
+    for (const argv of [
+      ['maps', 'push', 'mine'],
+      ['maps', 'update', row.id],
+    ]) {
+      const r = await run(argv)
+      expect(r.code).toBe(EXIT_ERROR)
+      expect(r.err).toBe(
+        refusal(`Map has ${MAP_LIMITS.entries + 1} entries; the limit is ${MAP_LIMITS.entries}.`)
+      )
+    }
+    expect(cloud.writes()).toEqual([])
+  })
+
+  it('a value of exactly the limit is pushed, pulled and restores', async () => {
+    signIn(home, { pmk: true })
+    // The fake instance's own ceiling is not what is under test.
+    cloud.maxBytes = 1_000_000
+    const long = 'a'.repeat(MAP_LIMITS.valueLength)
+    local({ __STR__1: long })
+    const pushed = await run(['maps', 'push', 'mine'])
+    expect(pushed.code, pushed.err).toBe(EXIT_OK)
+    expect(await openPersonalWithPmk(cloud.maps[0]!.map_data)).toEqual({ __STR__1: long })
+
+    rmSync(mapPath())
+    const pulled = await run(['maps', 'pull', cloud.maps[0]!.id])
+    expect(pulled.code, pulled.err).toBe(EXIT_OK)
+    expect(restore('const logo = "__STR__1"', loadMap(mapPath())).restored).toBe(
+      `const logo = "${long}"`
+    )
   })
 })

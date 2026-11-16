@@ -26,6 +26,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import {
+  MAP_LIMITS,
   STORE_DIR,
   WRITTEN_RECORD_FILE,
   isName,
@@ -123,7 +124,7 @@ export function refuseNonNames(what: string, map: SymbolMap): void {
   const bad = Object.keys(map).find((k) => !isName(map[k]))
   if (bad !== undefined)
     throw new StoreRefusal(
-      `refusing to write ${what}: the value of ${bad.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '').slice(0, 60)} is not a name (1 to 100000 characters, no control character or line break), so nothing was written.`
+      `refusing to write ${what}: the value of ${bad.replace(new RegExp(NOT_IN_A_NAME.source, 'gu'), '').slice(0, 60)} is not a name (1 to ${MAP_LIMITS.valueLength} characters, no control character or line break), so nothing was written.`
     )
 }
 
