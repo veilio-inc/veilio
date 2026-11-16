@@ -1,5 +1,11 @@
 # @veilio-inc/cli
 
+## 0.13.4
+
+### Patch Changes
+
+- [#264](https://github.com/veilio-inc/veilio/pull/264) [`884e6c3`](https://github.com/veilio-inc/veilio/commit/884e6c3aadd56c0f86f42717fe248ec445dd2a60) Thanks [@DlgSHi](https://github.com/DlgSHi)! - A push now checks the map before anything is sent and names the entry that is over a limit, so a pushed map can always be pulled. `veilio vault unlock` reads your personal maps in one request and, when Cloud limits requests, stops with one message. A map file holding a key that is not a placeholder is refused.
+
 ## 0.13.3
 
 ### Patch Changes
