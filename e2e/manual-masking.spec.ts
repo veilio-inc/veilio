@@ -4,6 +4,7 @@ import {
   editor,
   editors,
   restoreReply,
+  selectAcross,
   selectWord,
   typeInto,
   SOURCE,
@@ -51,6 +52,32 @@ test.describe('manual masking', () => {
     await page.getByRole('button', { name: 'Mask selection' }).click()
 
     await expect(page.getByRole('button', { name: 'Mask selection' })).toBeHidden()
+  })
+
+  test('C7 - a selection across lines is refused', async ({ page }) => {
+    // Every other tool refuses a map value holding a line break, so a mark the
+    // app made from it could never be sealed, synced or read by the CLI.
+    await anonymize(page, `// escalated by Kowalska,\n// acct 88412037\n${SOURCE}`)
+
+    const selected = await selectAcross(page, editors.output, 'Kowalska', 'acct')
+    expect(selected).toContain('\n')
+    await page.getByRole('button', { name: 'Mask selection' }).click()
+
+    await expect(
+      page.getByText(
+        'A mark cannot span lines or hold a tab. Nothing was masked. Mark the text on each line separately.'
+      )
+    ).toBeVisible()
+    await expect(editor(page, editors.output)).toContainText('// escalated by Kowalska,')
+    await expect(editor(page, editors.output)).toContainText('// acct 88412037')
+    await expect(editor(page, editors.output)).not.toContainText('__MANUAL__')
+    await expect(page.getByText('Marked by hand')).toBeHidden()
+
+    // One line of it is masked as before.
+    await selectWord(page, editors.output, '88412037')
+    await page.getByRole('button', { name: 'Mask selection' }).click()
+    await expect(editor(page, editors.output)).toContainText('__MANUAL__1')
+    await expect(editor(page, editors.output)).not.toContainText('88412037')
   })
 
   test('automatic placeholders are left alone by a manual mark', async ({ page }) => {
