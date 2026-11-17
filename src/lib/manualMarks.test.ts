@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { anonymize, restore, ManualMaskError } from '@veilio-inc/engine'
+import {
+  anonymize,
+  restore,
+  ManualMaskError,
+  MAP_LIMITS,
+  isName,
+  measureCommentExposure,
+  openMap,
+  sealMap,
+  sealableMap,
+} from '@veilio-inc/engine'
 import { maskSelection, unmaskTerm, previewTerm, stripOption } from './manualMarks.js'
 
 const SOURCE =
@@ -201,5 +211,180 @@ describe('previewTerm', () => {
 
   it('does not truncate at exactly the limit', () => {
     expect(previewTerm('x'.repeat(30))).toBe('x'.repeat(30))
+  })
+})
+
+/** The app's own refusals (approved texts). */
+const ONE_LINE =
+  'A mark cannot span lines or hold a tab. Nothing was masked. Mark the text on each line separately.'
+const TOO_LONG = `That selection is longer than ${MAP_LIMITS.valueLength.toLocaleString('en-US')} characters, the most one mark can hold. Nothing was masked. Mark a shorter part.`
+
+/** A state whose output holds `term` in a comment, so a mark of it would match. */
+function holding(term: string) {
+  const output = `// escalated by ${term} today\n`
+  return { output, map: {}, comments: measureCommentExposure(output) }
+}
+
+// Built at run time, so no provider-shaped secret sits in the source.
+const CREDENTIAL = 'sk_' + 'live_' + '4eC39HqLyjWDarjtT1zdp7dc'
+
+/** Every term no other tool would read back from a map: a line break, a tab,
+ *  another control character, a Unicode line or paragraph separator. */
+const ACROSS_LINES: [string, string][] = [
+  ['a line feed', 'Kowalska,\nacct'],
+  ['a CRLF', 'Kowalska,\r\nacct'],
+  ['a lone CR', 'a\rb'],
+  ['a tab', 'Sp.\tz o.o.'],
+  ['an escape', 'a\u001bb'],
+  ['a NEL', 'a\u0085b'],
+  ['a line separator', 'a\u2028b'],
+  ['a paragraph separator', 'a\u2029b'],
+]
+
+/** Accepted as before, each with the term the map should hold. */
+const ONE_LINE_TERMS: [string, string, string][] = [
+  ['a loose selection ending in a line break', '  Kowalska \n', 'Kowalska'],
+  ['a selection with a tab and CRLF at its ends', '\tKowalska\r\n', 'Kowalska'],
+  ['Polish letters', 'Zażółć gęślą jaźń', 'Zażółć gęślą jaźń'],
+  ['German letters and a digit', 'Straße 12', 'Straße 12'],
+  ['Greek letters', 'Ελλάδα', 'Ελλάδα'],
+  ['a no-break space', 'Acme Holdings', 'Acme Holdings'],
+]
+
+describe('maskSelection refuses a mark no other tool can read back', () => {
+  it.each(ACROSS_LINES)('%s is refused, and nothing changes', (_, term) => {
+    const state = holding(term)
+    const before = structuredClone(state)
+
+    let error: unknown
+    try {
+      maskSelection(state, term)
+    } catch (e) {
+      error = e
+    }
+
+    expect(error).toBeInstanceOf(ManualMaskError)
+    expect((error as Error).message).toBe(ONE_LINE)
+    expect((error as Error).message).not.toContain(term)
+    expect(state).toEqual(before)
+  })
+
+  it('a selection one character over the limit for a value is refused with its own message', () => {
+    const term = 'a'.repeat(MAP_LIMITS.valueLength + 1)
+    const state = holding(term)
+    const before = structuredClone(state)
+
+    expect(() => maskSelection(state, term)).toThrow(TOO_LONG)
+    expect(TOO_LONG).toContain('200,000')
+    expect(state).toEqual(before)
+  })
+
+  it('a selection of exactly the limit passes the app check', () => {
+    // Only the app's own refusal is asserted: the engine cannot build its
+    // pattern for a term this long and throws a SyntaxError of its own, which
+    // the page shows as "Could not mask that selection." (known, not changed here).
+    const term = 'b'.repeat(MAP_LIMITS.valueLength)
+    expect(isName(term)).toBe(true)
+    let error: unknown
+    try {
+      maskSelection(holding(term), term)
+    } catch (e) {
+      error = e
+    }
+    expect(error).not.toBeInstanceOf(ManualMaskError)
+  })
+
+  it.each(ONE_LINE_TERMS)('%s is masked as before', (_, term, kept) => {
+    const next = maskSelection(holding(kept), term)
+
+    expect(next.map['__MANUAL__1']).toBe(kept)
+    expect(next.output).not.toContain(kept)
+  })
+
+  it('a line break is named before a credential in the same selection', () => {
+    const term = `${CREDENTIAL}\nacct`
+    expect(() => maskSelection(holding(term), term)).toThrow(ONE_LINE)
+  })
+
+  it('a credential on one line still gets the engine refusal', () => {
+    let error: unknown
+    try {
+      maskSelection(holding(CREDENTIAL), CREDENTIAL)
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeInstanceOf(ManualMaskError)
+    expect((error as Error).message).toMatch(/^Refusing to mask a detected credential/)
+  })
+})
+
+describe('a map the app makes can be sealed and read by every other tool', () => {
+  const rows: [string, string][] = [
+    ...ACROSS_LINES,
+    ...ONE_LINE_TERMS.map(([name, term]) => [name, term] as [string, string]),
+    ['a line break with a credential', `${CREDENTIAL}\nacct`],
+  ]
+
+  it.each(rows)('%s', { timeout: 60_000 }, async (_, term) => {
+    let state = holding(term.trim())
+    const source = state.output
+    try {
+      state = maskSelection(state, term)
+    } catch {
+      // refused: the state is the one before the gesture
+    }
+
+    expect(() => sealableMap(state.map)).not.toThrow()
+    const opened = await openMap(
+      await sealMap(state.map, 'correct horse battery staple'),
+      'correct horse battery staple'
+    )
+    expect(opened).toEqual(state.map)
+    expect(restore(state.output, opened, { strip: 'none' }).restored).toBe(source)
+  })
+})
+
+describe('marks made by an earlier version keep working', () => {
+  const EARLIER = { __MANUAL__1: 'Acme\nHoldings', __MANUAL__2: 'Sp.\tz o.o.' }
+  const ORIGINAL = '// owned by Acme\nHoldings and Sp.\tz o.o., escalated by Kowalska\n'
+
+  function earlier() {
+    const output = '// owned by __MANUAL__1 and __MANUAL__2, escalated by Kowalska\n'
+    return { output, map: { ...EARLIER }, comments: measureCommentExposure(output) }
+  }
+
+  it('a new one-line mark is made beside them, and they are kept as written', () => {
+    const next = maskSelection(earlier(), 'Kowalska')
+
+    expect(next.map['__MANUAL__3']).toBe('Kowalska')
+    expect(next.map['__MANUAL__1']).toBe(EARLIER.__MANUAL__1)
+    expect(next.map['__MANUAL__2']).toBe(EARLIER.__MANUAL__2)
+    expect(next.output).toContain('__MANUAL__1')
+    expect(next.output).toContain('__MANUAL__2')
+  })
+
+  it('unmarking one puts its text back exactly', () => {
+    expect(unmaskTerm(earlier(), '__MANUAL__1').output).toContain('Acme\nHoldings')
+    expect(unmaskTerm(earlier(), '__MANUAL__2').output).toContain('Sp.\tz o.o.')
+  })
+
+  it('restore returns the line break and the tab', () => {
+    const state = earlier()
+    expect(restore(state.output, state.map, { strip: 'none' }).restored).toBe(ORIGINAL)
+  })
+})
+
+describe('what the engine README says about the manual option', () => {
+  // It holds both halves of the paragraph: the engine masks such a term when a
+  // program asks it to, and the map readers refuse the result.
+  it('anonymize masks a term across lines, and the map cannot be sealed', () => {
+    const { anonymized, map } = anonymize('// owned by Acme\nHoldings\n', {
+      manual: ['Acme\nHoldings'],
+    })
+
+    expect(anonymized).toContain('__MANUAL__1')
+    expect(map['__MANUAL__1']).toBe('Acme\nHoldings')
+    expect(() => sealableMap(map)).toThrow()
+    expect(isName('Acme\nHoldings')).toBe(false)
   })
 })

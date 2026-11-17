@@ -24,7 +24,7 @@ export { InvalidMapError }
 // other way round. Not security boundaries - a map under both can still be
 // hostile. They stop a single file from exhausting memory in the reader's tab.
 // The numbers are written the same in every browser.
-const counted = (n: number): string => n.toLocaleString('en-US')
+export const counted = (n: number): string => n.toLocaleString('en-US')
 
 /** Validate a decrypted map before it is allowed near a restore.
  *
@@ -70,8 +70,9 @@ export function parseSymbolMap(raw: unknown): SymbolMap {
  *
  *  The import's check, in its own sentences, then the engine's limit on the
  *  sealed data, which the import applies before it decrypts. Not the engine's
- *  rule for what each kind of placeholder is made from: a manual mark made
- *  here may span lines or hold a tab, and the app goes on reading those. */
+ *  rule for what each kind of placeholder is made from: a manual mark made by
+ *  an earlier version of the app may span lines or hold a tab, and files
+ *  holding one keep working here. */
 export function exportablePlaintext(map: SymbolMap): Uint8Array {
   try {
     return sealablePlaintext(parseSymbolMap(map))
