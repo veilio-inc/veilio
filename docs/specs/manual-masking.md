@@ -74,6 +74,8 @@ name belonged, and nothing distinguishes that from a clean run.
 | C4 | Masking a credential shows an error and leaves the output unchanged |
 | C5 | The selection clears after a successful mask |
 | C6 | Leading/trailing whitespace in a selection is trimmed before marking |
+| C7 | A selection holding a line break, a tab or another control character is refused with an error; output and map are unchanged |
+| C8 | A selection longer than the limit for one map value is refused with an error; output and map are unchanged |
 
 ### D. UI — marks panel
 

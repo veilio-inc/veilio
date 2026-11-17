@@ -1,5 +1,13 @@
-import { anonymize, measureCommentExposure, STRIPPABLE_TYPES } from '@veilio-inc/engine'
+import {
+  anonymize,
+  isName,
+  ManualMaskError,
+  MAP_LIMITS,
+  measureCommentExposure,
+  STRIPPABLE_TYPES,
+} from '@veilio-inc/engine'
 import type { CommentExposure, StrippedItemType, SymbolMap } from '@veilio-inc/engine'
+import { counted } from './importedMap.js'
 
 export interface MarkState {
   output: string
@@ -23,10 +31,26 @@ export interface MarkState {
  *
  *  Throws `ManualMaskError` from the engine when the term scans as a credential.
  *  Callers are expected to surface that rather than swallow it - the whole point
- *  is that masking a live key would write it to a map that gets exported. */
+ *  is that masking a live key would write it to a map that gets exported.
+ *
+ *  Throws one first when the term is not a value every map reader accepts (the
+ *  engine's `isName`): a line break, a tab or another control character, or
+ *  more characters than one value may hold. The engine would mask such a term,
+ *  but the map could then not be sealed, synced or read by the CLI. Judged after
+ *  the trim, so a selection that only ends in a line break is still marked. */
 export function maskSelection(state: MarkState, term: string): MarkState {
   const trimmed = term.trim()
   if (!trimmed) return state
+  // The length only picks the sentence; whether to refuse is `isName`'s call.
+  const tooLong = trimmed.length > MAP_LIMITS.valueLength
+  if (!isName(trimmed)) {
+    throw new ManualMaskError(
+      term.trim(),
+      tooLong
+        ? `That selection is longer than ${counted(MAP_LIMITS.valueLength)} characters, the most one mark can hold. Nothing was masked. Mark a shorter part.`
+        : 'A mark cannot span lines or hold a tab. Nothing was masked. Mark the text on each line separately.'
+    )
+  }
 
   const result = anonymize(state.output, { existingMap: state.map, manual: [trimmed] })
   return { output: result.anonymized, map: result.map, comments: result.comments }

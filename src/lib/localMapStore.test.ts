@@ -123,6 +123,17 @@ describe('a no-account user (local passphrase)', () => {
   })
 })
 
+describe('marks made by an earlier version of the app', () => {
+  // The store checks no value: a map holding a mark across lines, saved by an
+  // earlier version, still opens as written.
+  it('a mark with a line break and one with a tab are saved and opened as written', async () => {
+    const map = { __MANUAL__1: 'Acme\nHoldings', __MANUAL__2: 'Sp.\tz o.o.' }
+    await setLocalPassphrase(PASS, PASS)
+    const meta = await saveLocalMap('earlier', map)
+    expect(await openLocalMap(meta.id)).toEqual(map)
+  })
+})
+
 describe('purpose binding', () => {
   it('a Cloud-style envelope under the same key does not open as a local map', async () => {
     await setLocalPassphrase(PASS, PASS)

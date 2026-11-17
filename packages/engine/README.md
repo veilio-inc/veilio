@@ -484,6 +484,8 @@ given it. Marks are stored in the map under `__MANUAL__n`, which means
 import and sync without a second store. Pass `manualTermsIn(previousMap)` back
 in, or just reuse the map as `existingMap`, and prior marks re-apply.
 
+Keep a term to one line. `anonymize` masks a term that holds a line break, a tab or another control character, but the map readers (`openMap`, the sealing functions, the CLI's map store) refuse a map with such a value, so that map cannot be sealed or synced. Check a term with `isName` first; the browser app does.
+
 Three kinds of term are refused with a `ManualMaskError`:
 
 - **A credential.** A manual mask is reversible and is written to the map, so

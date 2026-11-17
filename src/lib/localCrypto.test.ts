@@ -6,7 +6,12 @@
 // a node-environment run silently skips the very code paths that break in
 // practice. The rest of the suite (the engine) stays on the default env.
 import { describe, it, expect, beforeAll, vi } from 'vitest'
-import { MAP_LIMITS, type SymbolMap } from '@veilio-inc/engine'
+import {
+  MAP_LIMITS,
+  sealableMap,
+  InvalidMapError as EngineInvalidMapError,
+  type SymbolMap,
+} from '@veilio-inc/engine'
 import { exportMap, importMap } from './localCrypto.js'
 import * as importedMap from './importedMap.js'
 import { InvalidMapError } from './importedMap.js'
@@ -107,8 +112,8 @@ describe('exportMap writes only what importMap reads', () => {
     expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
   })
 
-  // A selection across lines, or one holding a tab: the app makes such marks,
-  // so its export and its import keep taking them.
+  // A selection across lines, or one holding a tab: an earlier version of the
+  // app made such marks, so its export and its import keep taking them.
   it(
     'a manual mark with a line break and a tab exports and imports',
     { timeout: 15_000 },
@@ -117,6 +122,14 @@ describe('exportMap writes only what importMap reads', () => {
       expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
     }
   )
+
+  // What SECURITY.md says of such a file: the app imports it, the engine's
+  // own reader (and so the CLI and the MCP server) does not.
+  it('the engine refuses the same map the app imports', { timeout: 15_000 }, async () => {
+    const map: SymbolMap = { __MANUAL__1: 'Acme\nHoldings', __MANUAL__2: 'Sp.\tz o.o.' }
+    expect(await importMap(await exportMap(map, PASSPHRASE), PASSPHRASE)).toEqual(map)
+    expect(() => sealableMap(map)).toThrow(EngineInvalidMapError)
+  })
 
   it.each([
     [

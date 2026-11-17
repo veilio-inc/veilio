@@ -128,9 +128,10 @@ export default function ScrubPage() {
       setSelection('')
       showToast(`Masked “${previewTerm(term)}”`)
     } catch (e) {
-      // The engine refuses for more than one reason - a credential, or an
-      // existing placeholder - and it words each refusal itself. Repeating one
-      // of them here meant the other refusal showed the wrong explanation.
+      // A mark is refused for more than one reason - a credential, an existing
+      // placeholder, a selection across lines - and each refusal is worded
+      // where it is raised. Repeating one of them here meant the other refusals
+      // showed the wrong explanation.
       showToast(
         e instanceof ManualMaskError ? e.message : 'Could not mask that selection.',
         'error'
