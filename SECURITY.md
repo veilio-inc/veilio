@@ -45,6 +45,8 @@ you would accept a patch from, and read restored output before running it.
 
 A passphrase file written by engine 1.19.3 or older with more than 250,000 entries, or a value longer than 200,000 characters, cannot be opened. Maps within those limits written by any 1.19 version open.
 
+The app does not create a manual mark that spans lines or holds a tab or another control character. A `.veilio` file written by an earlier version of the app that holds such a mark still imports in the app; the engine's own reader, the CLI and the MCP server refuse a map with such a value.
+
 ### Saved maps are sealed, not bound to their id
 A map saved to Veilio Cloud is encrypted with a key that only you, or your team, hold, so the server can neither read one nor alter one undetected. The encryption does not bind a map to its id, though: a server that misbehaved could hand you one of your own maps in place of another one of yours. You would see the wrong names restored, never another account's.
 
